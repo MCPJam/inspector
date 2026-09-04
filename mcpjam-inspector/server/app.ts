@@ -71,6 +71,7 @@ import {
 import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog.js";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync.js";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup.js";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 import { fetchRemoteGuestJwks } from "./utils/guest-session-source.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "./utils/mcp-retry-policy.js";
 import { negotiationTelemetryLogger } from "./utils/negotiation-telemetry.js";
@@ -90,6 +91,15 @@ import {
   killLocalComputerTerminals,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal.js";
+import {
+  createLocalBrowserFramesWsHandler,
+  killLocalBrowserFrameSockets,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames.js";
+import {
+  killLocalBrowserSessions,
+  shutdownLocalBrowserSessions,
+} from "./services/browserd/local/local-browser-session.js";
 import {
   createWebMcpFramesWsHandler,
   killWebMcpFrameSockets,
@@ -133,6 +143,11 @@ export async function createHonoApp() {
 
   startGuestAuthProvisioningInBackground();
   startLocalBrowserRenderingSetupInBackground();
+  // Reports whether a local-harness runtime pack is present. Deliberately
+  // only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+  // kill switch and a consent grant is installed when the user asks, never
+  // at startup and never during a session start.
+  reportLocalHarnessRuntimeStatusInBackground();
   // Mirror of the call in server/index.ts — both production entries must
   // wire this up so the Electron/embedded path also gets a working Computer
   // tab. Memoized, so it's harmless if a process ever ran both. AWAITED (the
@@ -356,6 +371,10 @@ export async function createHonoApp() {
     app.get(
       "/api/web/computers/local-terminal",
       createLocalComputerTerminalWsHandler(upgradeWebSocket),
+    );
+    app.get(
+      "/api/web/computers/local-browser/frames",
+      createLocalBrowserFramesWsHandler(upgradeWebSocket)
     );
   }
   // WebMCP Inspector frame stream WebSocket. Never mounted hosted — there is no
@@ -670,6 +689,14 @@ export async function createHonoApp() {
     injectWebSocket,
     shutdownLocalComputerTerminals,
     killLocalComputerTerminals,
+    // A local agent browser is a real Chromium this process started. Nothing
+    // else will close it: it is not a child of the request that opened it, and
+    // `server.close()` knows nothing about it. Same latching/non-latching pair
+    // and same reason as the PTYs above.
+    shutdownLocalBrowserSessions,
+    killLocalBrowserSessions,
+    shutdownLocalBrowserFrameSockets,
+    killLocalBrowserFrameSockets,
     // The frame sockets need the same pair for the same reason: an established
     // WebSocket outlives `server.close()`, and `window-all-closed` on macOS is
     // followed by a RESTART, so its variant must not latch.

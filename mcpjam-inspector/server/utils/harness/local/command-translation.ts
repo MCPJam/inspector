@@ -68,7 +68,13 @@ export type TranslatedCommand =
   /** Create directories (recursive, owner-only). Paths are already confined. */
   | { kind: "mkdir"; paths: readonly string[] }
   /** Answer on stdout with no process at all — the framework's `pwd` probe. */
-  | { kind: "reply"; stdout: string }
+  | { kind: "reply"; stdout: string; exitCode?: number }
+  /** The framework's skills writer, which runs on EVERY prompt turn even with
+   *  zero skills. All three operate ONLY inside the synthetic home; an operand
+   *  naming anything else is refused rather than confined. */
+  | { kind: "rename"; from: string; to: string }
+  | { kind: "remove"; paths: readonly string[] }
+  | { kind: "probe-absent"; path: string }
   /** A command the managed runtime bundle already satisfies. No process runs;
    *  `reason` is recorded so an operator can see WHY nothing happened. */
   | { kind: "noop"; reason: string }
@@ -124,6 +130,19 @@ export interface CommandTranslationContext {
   bootstrapOverlayDir: string;
   /** Absolute path to the Node launcher shipped/verified with the bundle. */
   nodeExecutable: string;
+  /**
+   * The script the bridge launch actually runs, when the pack ships a launcher
+   * wrapper in front of the verbatim `bridge.mjs`.
+   *
+   * The adapters' bridges bind `0.0.0.0`, and the provider byte-compares the
+   * recipe's `bridge.mjs` against the pack's copy — so the loopback constraint
+   * cannot be applied by editing the bridge. The pack's `launcher.mjs` forces
+   * every listener onto loopback and then imports the unmodified bridge.
+   *
+   * Optional: a pack without a launcher launches the remapped `bridge.mjs`
+   * itself, and the exposure probe is what refuses it.
+   */
+  bridgeLauncherPath?: string;
   /** Absolute canonical session root: the granted workspace, and the session's
    *  `defaultWorkingDirectory`. Every writable operand must live under it or
    *  under the session state directory, and it is the default cwd for `exec`. */
@@ -155,7 +174,21 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
   // Issued by `@ai-sdk/harness` itself, for every adapter. The two `mkdir`s
   // pass their path through the environment rather than the command string,
   // which is why those two shapes have no interpolation to inspect.
-  framework: ['mkdir -p "$BOOTSTRAP_DIR"', 'mkdir -p "$WORK_DIR"', "pwd"],
+  framework: [
+    'mkdir -p "$BOOTSTRAP_DIR"',
+    'mkdir -p "$WORK_DIR"',
+    "pwd",
+    // `resolveSandboxHomeDir` probes the child's home with this exact string
+    // before every bridge start. It was missing from the grammar, so every
+    // local session failed closed at translation before it ever launched.
+    'printf "%s" "$HOME"',
+    // `writeSkills` runs on EVERY prompt turn, even with zero skills, and
+    // issues these three shapes against `$HOME/.claude/skills`. None were
+    // translated before, so no local turn could complete.
+    "mv -f '<manifest>.tmp' '<manifest>'",
+    "test ! -e '<skillDir>'",
+    "rm -rf -- '<skillDir>' …",
+  ],
   "claude-code": [
     "pnpm install --frozen-lockfile --store-dir .pnpm-store",
     "./node_modules/.bin/claude --version",
@@ -177,6 +210,8 @@ export const ADAPTER_COMMAND_SHAPES: Readonly<
  * `pwd` would mean starting a shell to learn a value we already hold.
  */
 const PWD_PROBE = "pwd";
+/** The framework's home-directory probe (`resolveSandboxHomeDir`). */
+const HOME_PROBE = 'printf "%s" "$HOME"';
 
 /**
  * The framework's two environment-indirected `mkdir`s. The path travels in
@@ -384,6 +419,75 @@ export function classifyBootstrapPath(
   );
 }
 
+// Every skills-write operand must live inside the synthetic home — that is the
+// only place the pinned framework writes skills. A shape naming anything else
+// is refused even though `confine` would happily accept it: the narrower rule
+// is what makes an adapter change visible instead of silently honoured.
+function assertUnderSyntheticHome(
+  path: string,
+  ctx: CommandTranslationContext,
+  command: string,
+): void {
+  const home = normalize(ctx.syntheticHome);
+  const p = normalize(path);
+  if (p === home || !p.startsWith(home + "/")) {
+    throw new CommandTranslationError(
+      `path operand ${JSON.stringify(path)} is outside the session's synthetic ` +
+        `home; the skills-write shapes are only honoured there`,
+      command,
+    );
+  }
+}
+
+async function translateSkillsMove(
+  command: string,
+  ctx: CommandTranslationContext,
+): Promise<TranslatedCommand> {
+  const ops = splitQuotedTokens(command.slice("mv -f ".length), command);
+  if (ops.length !== 2) {
+    throw new CommandTranslationError("mv -f needs exactly two operands", command);
+  }
+  for (const p of ops) {
+    assertPlainPathOperand(p, command);
+    assertUnderSyntheticHome(p, ctx, command);
+  }
+  return {
+    kind: "rename",
+    from: await ctx.confine(ops[0]!),
+    to: await ctx.confine(ops[1]!),
+  };
+}
+
+async function translateSkillsProbe(
+  command: string,
+  ctx: CommandTranslationContext,
+): Promise<TranslatedCommand> {
+  const ops = splitQuotedTokens(command.slice("test ! -e ".length), command);
+  if (ops.length !== 1) {
+    throw new CommandTranslationError("test ! -e needs exactly one operand", command);
+  }
+  assertPlainPathOperand(ops[0]!, command);
+  assertUnderSyntheticHome(ops[0]!, ctx, command);
+  return { kind: "probe-absent", path: await ctx.confine(ops[0]!) };
+}
+
+async function translateSkillsRemove(
+  command: string,
+  ctx: CommandTranslationContext,
+): Promise<TranslatedCommand> {
+  const ops = splitQuotedTokens(command.slice("rm -rf -- ".length), command);
+  if (ops.length === 0) {
+    throw new CommandTranslationError("rm -rf -- with no operands", command);
+  }
+  const paths: string[] = [];
+  for (const p of ops) {
+    assertPlainPathOperand(p, command);
+    assertUnderSyntheticHome(p, ctx, command);
+    paths.push(await ctx.confine(p));
+  }
+  return { kind: "remove", paths };
+}
+
 /** Translate a `mkdir -p …` command. */
 async function translateMkdir(
   command: string,
@@ -487,7 +591,9 @@ async function matchBridgeLaunch(
     );
   }
 
-  const args: string[] = [remapBootstrapPath(expectedBridge, ctx)];
+  const args: string[] = [
+    ctx.bridgeLauncherPath ?? remapBootstrapPath(expectedBridge, ctx),
+  ];
   for (let i = 0; i < flags.length; i += 1) {
     const flag = tokens[1 + i * 2]!;
     const value = tokens[2 + i * 2]!;
@@ -551,6 +657,11 @@ export async function translateAdapterCommand(
   if (command === PWD_PROBE) {
     return { kind: "reply", stdout: ctx.sessionRoot };
   }
+  // Answered from the synthetic home we handed the child, with no process at
+  // all — same reasoning as `pwd` above.
+  if (command === HOME_PROBE) {
+    return { kind: "reply", stdout: ctx.syntheticHome };
+  }
 
   // The framework's environment-indirected mkdirs. The operand never appears
   // in the command text, so it is read from the environment the caller passed
@@ -601,6 +712,10 @@ export async function translateAdapterCommand(
   if (command.startsWith("mkdir -p ")) {
     return translateMkdir(command, ctx);
   }
+  // The skills-write shapes (see `ADAPTER_COMMAND_SHAPES.framework`).
+  if (command.startsWith("mv -f ")) return translateSkillsMove(command, ctx);
+  if (command.startsWith("test ! -e ")) return translateSkillsProbe(command, ctx);
+  if (command.startsWith("rm -rf -- ")) return translateSkillsRemove(command, ctx);
 
   throw new CommandTranslationError(
     `command is not one of the ${ctx.harnessId} adapter shapes this Inspector ` +

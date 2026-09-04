@@ -53,6 +53,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog"
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -62,6 +63,11 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createLocalBrowserFramesWsHandler,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames";
+import { shutdownLocalBrowserSessions } from "./services/browserd/local/local-browser-session";
 import {
   createWebMcpFramesWsHandler,
   shutdownWebMcpFrameSockets,
@@ -326,6 +332,11 @@ startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Reports whether a local-harness runtime pack is present. Deliberately
+// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+// kill switch and a consent grant is installed when the user asks, never
+// at startup and never during a session start.
+reportLocalHarnessRuntimeStatusInBackground();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -556,6 +567,12 @@ if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
+  );
+  // The agent browser's viewport, on the same condition and for the same
+  // reason: a hosted replica runs no local browser to watch.
+  app.get(
+    "/api/web/computers/local-browser/frames",
+    createLocalBrowserFramesWsHandler(upgradeWebSocket),
   );
 }
 // WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
@@ -1035,10 +1052,16 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    // Same again for the agent browser's own viewport sockets.
+    shutdownLocalBrowserFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.
     await shutdownWebMcpSessions();
+    // The agent's own browser, for the same reason and with one more: closing
+    // the context is what makes Chromium release its profile's singleton lock,
+    // so a skipped teardown here is a browser the NEXT run cannot launch.
+    await shutdownLocalBrowserSessions();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

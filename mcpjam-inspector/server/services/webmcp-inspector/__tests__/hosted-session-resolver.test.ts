@@ -21,7 +21,7 @@ import {
   WebMcpSessionNotFoundError,
   WebMcpSessionRegistry,
 } from "../session-registry";
-import type { BrowserSessionHandle } from "../../browserd/browser-session";
+import type { HostedBrowserSessionHandle } from "../../browserd/browser-session";
 import type { BrowserCommand } from "../../browserd/protocol";
 
 const PROJECT = "proj-1";
@@ -62,7 +62,7 @@ function fakeDaemon(
     streamPassword: "hunter2",
     contextMode: "persistent",
     reused: true,
-  } as unknown as BrowserSessionHandle;
+  } as unknown as HostedBrowserSessionHandle;
   return { handle, commands, sendCommand };
 }
 

@@ -47,7 +47,7 @@ import type {
   WebMcpInputEvent,
   WebMcpViewportTransport,
 } from "@/shared/webmcp-inspector-protocol";
-import type { BrowserSessionHandle } from "../browserd/browser-session";
+import type { HostedBrowserSessionHandle } from "../browserd/browser-session";
 import type {
   BrowserAction,
   BrowserCommand,
@@ -84,9 +84,9 @@ export interface BrowserdProviderDeps {
    * neither stop the machine nor free the slot. It also put the failure where
    * no route could map it to a status.
    */
-  handle: BrowserSessionHandle;
+  handle: HostedBrowserSessionHandle;
   /** Overridable for tests; defaults to the handle's own client. */
-  transportFor?(handle: BrowserSessionHandle): BrowserdSessionTransport;
+  transportFor?(handle: HostedBrowserSessionHandle): BrowserdSessionTransport;
   /** Poll cadence; 0 disables polling (tests, and the future push path). */
   toolPollMs?: number;
   /**
@@ -169,7 +169,7 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private readonly hasWatchers: () => boolean;
 
   constructor(
-    private readonly handle: BrowserSessionHandle,
+    private readonly handle: HostedBrowserSessionHandle,
     private readonly transport: BrowserdSessionTransport,
     private readonly options: CreateWebMcpSessionOptions,
     sessionOptions: BrowserdSessionOptions,

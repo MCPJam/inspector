@@ -134,6 +134,13 @@ import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
 import { PlaygroundEnvironmentSection } from "@/components/playground/PlaygroundEnvironmentSection";
+import { ConversationTargetNotice } from "@/components/playground/ConversationTargetNotice";
+import {
+  describeConversationTargetDisclosure,
+  readConversationExecutionTarget,
+  type ComposerExecutionTarget,
+  type ConversationExecutionTarget,
+} from "@/lib/conversation-execution-target";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
@@ -577,6 +584,25 @@ export function PlaygroundMain({
   // every send. Compare gates key off this flag so the layout only steps
   // aside for genuine replay.
   const [viewingHistoryReplay, setViewingHistoryReplay] = useState(false);
+  /**
+   * The execution target the OPEN persisted conversation actually recorded,
+   * kept beside the conversation it came from.
+   *
+   * The host and environment controls are ambient per-project browser state,
+   * so a restored conversation renders under the viewer's current selection.
+   * That is only a problem when it goes UNSAID — this is what lets the composer
+   * say it (see `ConversationTargetNotice`) and what gates a reply until the
+   * user has deliberately accepted the target it will actually run on.
+   *
+   * `acknowledged` is per conversation and survives a reactive refresh of the
+   * same one; it is dropped wholesale when the conversation is (New Chat,
+   * detach, a rewind branch) because the next one is a different question.
+   */
+  const [restoredConversation, setRestoredConversation] = useState<{
+    chatSessionId: string;
+    target: ConversationExecutionTarget;
+    acknowledged: boolean;
+  } | null>(null);
   const [loadingHistorySessionId, setLoadingHistorySessionId] = useState<
     string | null
   >(null);
@@ -606,6 +632,9 @@ export function PlaygroundMain({
   // `onReset` above it, which is why this is a ref rather than the callback.
   const clearConversationUrlRef = useRef<() => void>(() => {});
   const appliedHistoryContentSignatureRef = useRef<string | null>(null);
+  // Assigned during render from `needsConversationTargetAck` below; read by the
+  // send paths, which are declared above it.
+  const needsConversationTargetAckRef = useRef(false);
   const resumedThreadSendBaselineRef = useRef<{
     sessionId: string;
     version: number;
@@ -2216,6 +2245,10 @@ export function PlaygroundMain({
     setActiveHistorySessionId(null);
     setLoadedThreadOwnerUserId(null);
     setViewingHistoryReplay(false);
+    // No persisted conversation is open any more, so there is nothing left to
+    // disclose about one — and leaving the flag set would gate sends on a
+    // fresh chat the user just started.
+    setRestoredConversation(null);
   }, [invalidatePendingReactiveHistoryLoad]);
 
   const markHistorySessionRead = useCallback(async (sessionId: string) => {
@@ -2225,6 +2258,67 @@ export function PlaygroundMain({
       // Best-effort: unread state should not block chat usage.
     }
   }, []);
+
+  // ── As-run configuration honesty ──────────────────────────────────────────
+  //
+  // Scoped to the LIVE session id: the moment the chat forks or resets (New
+  // Chat, a rewind branch, the auth-bootstrap wipe) the ids diverge and the
+  // disclosure stands down on its own, without a second clear path to keep in
+  // step with `restoredConversation`.
+  const activeRestoredConversation =
+    restoredConversation && restoredConversation.chatSessionId === chatSessionId
+      ? restoredConversation
+      : null;
+  // Where a reply typed right now would actually run. Environment mode and
+  // host mode are mutually exclusive on the wire, so this is one statement.
+  const composerExecutionTarget: ComposerExecutionTarget =
+    isEnvironmentMode && playgroundEnvironment.environmentId
+      ? {
+          kind: "environment",
+          environmentId: playgroundEnvironment.environmentId,
+        }
+      : { kind: "host", hostId: previewedHostId ?? null };
+  const conversationTargetDisclosure = describeConversationTargetDisclosure({
+    recorded: activeRestoredConversation?.target ?? null,
+    composer: composerExecutionTarget,
+  });
+  const needsConversationTargetAck =
+    conversationTargetDisclosure.kind !== "none" &&
+    !(activeRestoredConversation?.acknowledged ?? false);
+  // Read at SEND time by callbacks defined above this line, so it has to be a
+  // ref rather than a dependency — the send paths must not be re-created (and
+  // re-armed) on every host or environment change.
+  needsConversationTargetAckRef.current = needsConversationTargetAck;
+  const acknowledgeConversationTarget = useCallback(() => {
+    setRestoredConversation((previous) =>
+      previous ? { ...previous, acknowledged: true } : previous,
+    );
+  }, []);
+
+  /**
+   * Record what an EXPLICITLY opened conversation says about where it ran.
+   *
+   * Called from the two open paths only — the rail click and the
+   * `?conversation=` restore — and deliberately NOT from `loadHistorySession`,
+   * which the reactive Convex refresh also drives for the LIVE chat once
+   * `refreshCurrentHistorySession` adopts its session id. Deriving there would
+   * make the composer disclose a mismatch against a conversation the user is
+   * sitting in and just sent on.
+   */
+  const adoptRestoredConversationTarget = useCallback(
+    (detail: ChatHistoryDetailSession) => {
+      setRestoredConversation((previous) => ({
+        chatSessionId: detail.chatSessionId,
+        target: readConversationExecutionTarget(detail),
+        // Reopening the SAME conversation keeps the acknowledgement; a
+        // different one is a different question.
+        acknowledged:
+          previous?.chatSessionId === detail.chatSessionId &&
+          previous.acknowledged,
+      }));
+    },
+    [],
+  );
 
   const restoreHistoryServerSelection = useCallback(
     (savedServerNames: string[] | undefined) => {
@@ -2648,6 +2742,7 @@ export function PlaygroundMain({
         restoreHistoryServerSelection(
           detail.session.resumeConfig?.selectedServers,
         );
+        adoptRestoredConversationTarget(detail.session);
       } catch (err) {
         if (historySelectionRequestIdRef.current === selectionRequestId) {
           setActiveHistorySessionId(null);
@@ -2662,6 +2757,7 @@ export function PlaygroundMain({
       }
     },
     [
+      adoptRestoredConversationTarget,
       clearComposerDraft,
       convexProjectId,
       ensureDiscardDraftConfirmed,
@@ -2706,6 +2802,7 @@ export function PlaygroundMain({
         restoreHistoryServerSelection(
           detail.session.resumeConfig?.selectedServers,
         );
+        adoptRestoredConversationTarget(detail.session);
         // `loadHistorySession` skips the model when the catalog hasn't loaded
         // yet; remember it so the effect below can apply it on arrival.
         pendingRestoredModelRef.current = detail.session.modelId
@@ -2745,7 +2842,12 @@ export function PlaygroundMain({
         }
       }
     },
-    [convexProjectId, loadHistorySession, restoreHistoryServerSelection],
+    [
+      adoptRestoredConversationTarget,
+      convexProjectId,
+      loadHistorySession,
+      restoreHistoryServerSelection,
+    ],
   );
 
   const { isRestoringConversation, clearConversation } =
@@ -3253,6 +3355,13 @@ export function PlaygroundMain({
   const handleSendFollowUp = useCallback(
     (text: string) => {
       void (async () => {
+        // Same gate as the composer, and for the same reason: a widget-driven
+        // follow-up on a reopened conversation would otherwise be the FIRST
+        // thing that runs on a target the transcript never used, with no user
+        // action in between to make that a choice.
+        if (needsConversationTargetAckRef.current) {
+          return;
+        }
         if (!(await ensureSelectedServerReadyForChat())) {
           return;
         }
@@ -3744,6 +3853,11 @@ export function PlaygroundMain({
     if (!composerHasContent || sendBlocked) {
       return false;
     }
+    // The composer is disabled in this state, so this is the belt to that
+    // brace: Enter-to-send, starter chips and eval Quick Run all land here.
+    if (needsConversationTargetAckRef.current) {
+      return false;
+    }
     if (!(await ensureSelectedServerReadyForChat())) {
       return false;
     }
@@ -3888,6 +4002,12 @@ export function PlaygroundMain({
   const handleEditUserMessage = useCallback(
     async (message: UIMessage, text: string) => {
       if (sendBlocked) return false;
+      // A rewind IS a send, and a costlier one: it mints a branch and runs the
+      // edited turn on the CURRENT target, so on a reopened conversation it
+      // would both execute somewhere the transcript never ran AND fork the
+      // thread to record it. `editDisabled` below carries the same condition
+      // so the affordance reads as unavailable rather than failing on click.
+      if (needsConversationTargetAckRef.current) return false;
       // Same fire-and-forget exposure as the rewind below, and it lands FIRST:
       // `ensureSelectedServerReadyForChat` wraps `ensureServersReady` in
       // try/FINALLY with no catch, so a rejected connect propagates straight
@@ -4047,7 +4167,16 @@ export function PlaygroundMain({
         prompt,
         location: isCompareMode ? "playground_compare" : "playground_single",
       });
-      if (composerDisabled || sendBlocked) {
+      // Same gate as the composer. A starter chip is a one-click SEND, so
+      // without this it is the shortest path to running a reopened
+      // conversation on a target its transcript never used. Preserved as a
+      // draft rather than dropped: the chip's text is the user's input, and
+      // it is waiting for them the moment they accept the target.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        needsConversationTargetAckRef.current
+      ) {
         composer.setInput(prompt);
         return;
       }
@@ -4108,7 +4237,16 @@ export function PlaygroundMain({
   // composer as a draft). No bespoke execution path — it's a normal turn.
   const submitAgentToolPrompt = useCallback(
     async (text: string) => {
-      if (composerDisabled || sendBlocked) {
+      // Same gate as the composer, and this path is the one the user never
+      // typed into: the rail requests the send from a sibling subtree, so a
+      // disabled Send button is no protection at all. Left in the composer as
+      // a draft, which is exactly what this handler already does for every
+      // other not-ready state.
+      if (
+        composerDisabled ||
+        sendBlocked ||
+        needsConversationTargetAckRef.current
+      ) {
         composer.setInput(text);
         return;
       }
@@ -4174,6 +4312,31 @@ export function PlaygroundMain({
     !hasLiveTimelineContent &&
     !preludeTraceEnvelope?.spans?.length;
 
+  /**
+   * ONE construction site for the as-run disclosure, consumed by every surface
+   * that can be blocked by it.
+   *
+   * The gate must never be reachable from a surface that cannot lift it. The
+   * docked/centered/compare composers take it through `ChatInput`'s `notice`
+   * slot; the fullscreen overlay REPLACES those composers, so it takes the
+   * same element through its own slot; and a widget full takeover, which
+   * renders no composer at all, gets it pinned over the thread (see
+   * `showPinnedConversationTargetNotice`). Rendering it in only one of those
+   * places disables the visible Send and hides the button that re-enables it.
+   */
+  const conversationTargetNotice = needsConversationTargetAck ? (
+    <ConversationTargetNotice
+      disclosure={conversationTargetDisclosure}
+      composerHostName={previewedHost?.name ?? null}
+      composerEnvironmentId={
+        composerExecutionTarget.kind === "environment"
+          ? composerExecutionTarget.environmentId
+          : null
+      }
+      onAcknowledge={acknowledgeConversationTarget}
+    />
+  ) : null;
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: composer.input,
@@ -4223,7 +4386,12 @@ export function PlaygroundMain({
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
       // Same environment-transition gate as `sharedChatInputProps` above.
-      isEnvironmentTargetPending,
+      isEnvironmentTargetPending ||
+      // A reopened conversation whose composer does not describe it. The
+      // notice rendered directly above the input says why and carries the
+      // one-click way out.
+      needsConversationTargetAck,
+    notice: conversationTargetNotice,
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount,
@@ -4307,9 +4475,38 @@ export function PlaygroundMain({
     !shouldShowUpsell &&
     (showPostConnectGuide || !showFullscreenChatOverlay);
 
+  /**
+   * The one layout that renders NO composer: a mobile/tablet widget full
+   * takeover hides the footer input and forbids the overlay. A widget can
+   * still request a follow-up there, and the as-run gate refuses it — so
+   * without this the refusal is silent and there is nothing on screen that
+   * could lift it. Pin the disclosure over the thread instead.
+   *
+   * The two exclusions keep it from doubling up on a notice another surface
+   * is already rendering: the centered empty-state composer survives a full
+   * takeover (but only ACTUALLY renders on an empty thread, which is the
+   * condition that matters here), and the trace-diagnostics shell has its own
+   * composer with the device frame behind it set to `display: none`.
+   */
+  const showPinnedConversationTargetNotice =
+    !!conversationTargetNotice &&
+    isWidgetFullTakeover &&
+    !showLiveTraceDiagnostics &&
+    !(isThreadEmpty && showSingleModelEmptyStateComposer);
+
   // Thread content - single ChatInput that persists across empty/non-empty states
   const threadContent = (
     <div className="relative flex flex-col flex-1 min-h-0">
+      {showPinnedConversationTargetNotice ? (
+        <div
+          data-testid="pinned-conversation-target-notice"
+          className="pointer-events-auto absolute inset-x-0 top-0 z-30 px-2 pt-2"
+        >
+          <div className="rounded-md bg-background/95 shadow-lg backdrop-blur-md">
+            {conversationTargetNotice}
+          </div>
+        </div>
+      ) : null}
       {isThreadEmpty ? (
         // Empty state — centered (welcome + composer, or post-connect guide)
         <div
@@ -4516,7 +4713,7 @@ export function PlaygroundMain({
                     ? undefined
                     : handleEditUserMessage
                 }
-                editDisabled={sendBlocked}
+                editDisabled={sendBlocked || needsConversationTargetAck}
                 renderUserMessageActions={
                   chatSessionId && convexProjectId
                     ? (message) => {
@@ -4589,7 +4786,15 @@ export function PlaygroundMain({
           onInputChange={composer.setInput}
           placeholder={placeholder}
           disabled={composerDisabled}
-          canSend={!sendBlocked && composerHasContent}
+          // The overlay replaces the docked composer, so it carries the
+          // disclosure — and its "Continue here" button — itself. Disabling
+          // Send without this would leave the user unable to send AND unable
+          // to acknowledge, which is a worse failure than the one the gate
+          // exists to prevent.
+          notice={conversationTargetNotice}
+          canSend={
+            !sendBlocked && composerHasContent && !needsConversationTargetAck
+          }
           isThinking={isStreamingActive}
           onStop={stopActiveChat}
           // Same submit path as the docked composer. Its own copy dropped

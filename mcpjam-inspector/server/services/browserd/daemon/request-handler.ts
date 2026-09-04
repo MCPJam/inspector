@@ -16,14 +16,22 @@
  * `DaemonResponse`, so it is unit-testable without a socket. The thin Node-http
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
-import type {
-  BrowserCommand,
-  BrowserCommandOutcome,
+import {
+  parseBrowserdErrorCode,
+  type BrowserCommand,
+  type BrowserCommandOutcome,
 } from "../protocol";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
+import type { ViewportFrame, ViewportInputEvent } from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
-import { HandoffLease, type LeaseState } from "./lease";
+import {
+  HandoffLease,
+  leaseRefusalFor,
+  type LeaseHolderKind,
+  type LeaseRefusal,
+  type LeaseState,
+} from "./lease";
 
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
@@ -57,7 +65,7 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health">;
+  driver: Pick<BrowserDriver, "health" | "viewport">;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -74,7 +82,7 @@ export interface BrowserdHandlerDeps {
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<BrowserDriver, "health">;
+  private readonly driver: Pick<BrowserDriver, "health" | "viewport">;
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
@@ -171,16 +179,31 @@ export class BrowserdRequestHandler {
     // model-driven runs and — just as importantly — nothing OBSERVES: this
     // refusal happens before the queue, before the driver, before any frame is
     // captured, so a password being typed right now cannot reach a trace.
-    // `manual` is the person's own command, which is the one thing that must
-    // still work while they hold it.
+    //
+    // `manual` is the person's own command, the one thing that must still work
+    // while they hold it — but only THEIRS. A `manual` command that names no
+    // holder, or names someone else, is the bypass this gate exists to close:
+    // without the check, anything able to reach the daemon could drive and
+    // observe a browser someone is signing into by simply claiming the source.
+    // And a `manual` command while the lease is FREE is refused too: with
+    // nobody holding it the agent may be mid-turn, and two drivers on one page
+    // is precisely what the lease is for. Take the lease first.
     const leaseState = this.lease.state();
-    if (leaseState.state !== "free" && parsed.command.source !== "manual") {
+    const refusal: LeaseRefusal | undefined = leaseRefusalFor(
+      leaseState,
+      parsed.command,
+    );
+    if (refusal) {
       return {
         status: 423,
         body: {
-          error:
-            leaseState.state === "held" ? "lease_held" : "lease_parked",
-          holder: leaseState.holder,
+          error: refusal,
+          ...(leaseState.state === "free"
+            ? {}
+            : {
+                holder: leaseState.holder,
+                holderKind: leaseState.holderKind,
+              }),
           bootId: this.bootId,
         },
       };
@@ -203,6 +226,144 @@ export class BrowserdRequestHandler {
   }
 
   /**
+   * Watch a tab.
+   *
+   * Not an HTTP route: frames are a stream, and the local engine's transport
+   * is a function call rather than a socket. It lives on the handler anyway,
+   * beside the command gate, because the daemon is where the lease is
+   * ENFORCED — "any future path that reads the browser must go through the
+   * daemon to inherit that" (the rollout doc's own words). A viewport that
+   * subscribed straight to the driver would be exactly the reader that
+   * bypasses it.
+   *
+   * While someone holds the browser, only THEY may watch: a second pane
+   * showing a person's password field as they type it is the same leak as an
+   * agent screenshotting it, and the lease is the only thing that knows whose
+   * hands are on the page.
+   */
+  async subscribeFrames(args: {
+    tabId?: string;
+    holder?: string;
+    listener: (frame: ViewportFrame) => void;
+    /**
+     * Called once if the subscription is revoked mid-stream because the lease
+     * moved. The transport is expected to close the connection: a watcher who
+     * has lost the right to watch should be told, not silently starved.
+     */
+    onRevoked?: (reason: LeaseRefusal) => void;
+  }): Promise<
+    | {
+        ok: true;
+        unsubscribe: () => void;
+        /**
+         * Re-ask the lease question out of band.
+         *
+         * Revoking on frame delivery covers a page that is painting. A STATIC
+         * page paints nothing, so a watcher who lost the lease would sit on a
+         * frozen picture indefinitely with no way to tell that apart from a
+         * quiet page. The transport calls this on its own heartbeat.
+         */
+        revalidate: () => void;
+      }
+    | { ok: false; error: string }
+  > {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    // Re-checked after the await: resolving the viewport can open a tab and
+    // attach a CDP session, and a handoff during that is exactly the case this
+    // whole method exists to refuse.
+    const afterAwait = this.watcherRefusal(args.holder);
+    if (afterAwait) return { ok: false, error: afterAwait };
+
+    // ...and re-checked on EVERY frame. `watcherRefusal` at setup only says
+    // who was allowed to watch when the socket opened; a pane that subscribed
+    // while the lease was free would otherwise keep receiving frames for the
+    // whole time somebody else is typing into the page. This is the only check
+    // that tracks the lease rather than sampling it once.
+    let live = true;
+    let unsubscribe: (() => void) | undefined;
+    const revoke = (reason: LeaseRefusal) => {
+      if (!live) return;
+      live = false;
+      // May be called from inside `subscribe` itself, before the returned
+      // function exists; the `live` flag holds the line until it does.
+      unsubscribe?.();
+      args.onRevoked?.(reason);
+    };
+    unsubscribe = viewport.subscribe((frame) => {
+      if (!live) return;
+      const lost = this.watcherRefusal(args.holder);
+      if (lost) {
+        revoke(lost);
+        return;
+      }
+      args.listener(frame);
+    });
+    if (!live) unsubscribe();
+    return {
+      ok: true,
+      unsubscribe: () => {
+        live = false;
+        unsubscribe?.();
+      },
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (lost) revoke(lost);
+      },
+    };
+  }
+
+  /**
+   * Forward a person's input.
+   *
+   * Requires the lease, and requires it to be THEIRS — this is the one path
+   * that puts keystrokes into the page without a per-action approval, so the
+   * question "who is typing" has to have an answer that is not "whoever
+   * reached the endpoint".
+   */
+  async dispatchInput(args: {
+    tabId?: string;
+    holder: string;
+    events: readonly ViewportInputEvent[];
+  }): Promise<{ ok: true } | { ok: false; error: string }> {
+    const stillTheirs = () =>
+      leaseRefusalFor(this.lease.state(), {
+        source: "manual",
+        holder: args.holder,
+      });
+    const refusal = stillTheirs();
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    // Re-asked after the await and then before EVERY event: a batch is up to
+    // 64 keystrokes and pointer moves, and a lease that expires or is handed
+    // on midway through must not let the previous holder keep typing into
+    // somebody else's page.
+    const afterAwait = stillTheirs();
+    if (afterAwait) return { ok: false, error: afterAwait };
+    await viewport.dispatchInput(
+      args.events,
+      () => stillTheirs() === undefined,
+      args.holder,
+    );
+    return { ok: true };
+  }
+
+  /** May this watcher see frames right now? */
+  private watcherRefusal(holder: string | undefined): LeaseRefusal | undefined {
+    const lease = this.lease.state();
+    if (lease.state === "free") return undefined;
+    return holder && holder === lease.holder
+      ? undefined
+      : lease.state === "held"
+        ? "lease_held"
+        : "lease_parked";
+  }
+
+  /**
    * Lease control. Every action names its `holder` so one person's lease
    * cannot be released by another tab that happens to know the endpoint.
    */
@@ -210,7 +371,12 @@ export class BrowserdRequestHandler {
     if (req.method === "GET") {
       return { status: 200, body: this.leaseBody(this.lease.state()) };
     }
-    let parsed: { action?: unknown; holder?: unknown; ttlMs?: unknown };
+    let parsed: {
+      action?: unknown;
+      holder?: unknown;
+      ttlMs?: unknown;
+      kind?: unknown;
+    };
     try {
       parsed = JSON.parse(req.body) as typeof parsed;
     } catch {
@@ -224,11 +390,15 @@ export class BrowserdRequestHandler {
       typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs)
         ? parsed.ttlMs
         : undefined;
+    // Anything but the exact string is a person: a mislabelled script would
+    // make the resume note tell the model a human was here, and the note's
+    // whole job is to say what actually touched the page.
+    const kind: LeaseHolderKind = parsed?.kind === "script" ? "script" : "human";
 
     let state: LeaseState;
     switch (parsed?.action) {
       case "acquire":
-        state = this.lease.acquire(holder, ttlMs);
+        state = this.lease.acquire(holder, ttlMs, kind);
         break;
       case "heartbeat":
         state = this.lease.heartbeat(holder, ttlMs);
@@ -266,6 +436,33 @@ export class BrowserdRequestHandler {
   private mapOutcome(outcome: BrowserCommandOutcome): DaemonResponse {
     switch (outcome.status) {
       case "ok":
+        // A command the lease caught INSIDE the queue (at dequeue, or between
+        // an act and its capture) comes back as an ok outcome carrying
+        // `leaseBlocked`. Map it to the same 423 the gate returns: one refusal
+        // whichever side of the queue the handoff happened on.
+        if (outcome.result.leaseBlocked) {
+          const lease = this.lease.state();
+          // The ENVELOPE carries the bare code, because that is what the client
+          // codec matches on: a `lease_parked: <prose>` forwarded whole reads
+          // to it as an unknown refusal and gets reported as `held`, which is
+          // the wrong word for "the browser is parked mid-handoff". The prose
+          // is not lost — it rides along as `detail`.
+          const code =
+            parseBrowserdErrorCode(outcome.result.error) ?? "lease_held";
+          return {
+            status: 423,
+            body: {
+              error: code,
+              ...(outcome.result.error && outcome.result.error !== code
+                ? { detail: outcome.result.error }
+                : {}),
+              ...(lease.state === "free"
+                ? {}
+                : { holder: lease.holder, holderKind: lease.holderKind }),
+              bootId: outcome.bootId,
+            },
+          };
+        }
         // An `act` refused for a stale observation (L3) rides back as an OK
         // outcome carrying a `staleObservation` result; surface it as a 409 with
         // the fresh state so the caller re-decides.
@@ -312,6 +509,7 @@ function isValidCommand(value: unknown): value is BrowserCommand {
     typeof candidate.source === "string" &&
     typeof candidate.action === "object" &&
     candidate.action !== null &&
-    (candidate.tabId === undefined || typeof candidate.tabId === "string")
+    (candidate.tabId === undefined || typeof candidate.tabId === "string") &&
+    (candidate.holder === undefined || typeof candidate.holder === "string")
   );
 }

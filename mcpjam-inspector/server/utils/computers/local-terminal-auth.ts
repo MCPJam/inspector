@@ -36,7 +36,19 @@ export const LOCAL_TERMINAL_NONCE_TTL_MS = 60_000;
  *  the eviction test derives its bounds from the source of truth. */
 export const MAX_OUTSTANDING_NONCES = 64;
 
+/**
+ * What a nonce opens.
+ *
+ * Kept on the nonce and checked at redemption so the two sockets cannot be
+ * confused for one another: a terminal nonce must not open a browser stream,
+ * and a frames nonce must not open a shell. They are minted behind the same
+ * consent but they are not the same capability — one shows you a page, the
+ * other runs commands as you.
+ */
+export type LocalNonceKind = "terminal" | "browser-frames";
+
 interface IssuedNonce {
+  kind: LocalNonceKind;
   nonce: string;
   projectId: string;
   expiresAtMs: number;
@@ -64,16 +76,18 @@ function pruneExpired(now: number): void {
  * bounded path segment — the same validation the workspace resolver applies,
  * done HERE so an invalid key never reaches the WS handler at all.
  */
-export function issueLocalTerminalNonce(
-  projectId: string,
-  consentFingerprint: string
-): {
+export function issueLocalNonce(args: {
+  kind: LocalNonceKind;
+  projectId: string;
+  consentFingerprint: string;
+}): {
   nonce: string;
   expiresAtMs: number;
 } {
+  const { kind, projectId, consentFingerprint } = args;
   const validated = validateLocalProjectKey(projectId);
   if (!consentFingerprint) {
-    throw new Error("A consent capability is required to mint a terminal nonce.");
+    throw new Error("A consent capability is required to mint a local nonce.");
   }
   const now = Date.now();
   pruneExpired(now);
@@ -83,12 +97,21 @@ export function issueLocalTerminalNonce(
   const nonce = randomBytes(32).toString("base64url");
   const expiresAtMs = now + LOCAL_TERMINAL_NONCE_TTL_MS;
   outstanding.push({
+    kind,
     nonce,
     projectId: validated,
     expiresAtMs,
     consentFingerprint,
   });
   return { nonce, expiresAtMs };
+}
+
+/** The terminal's mint, unchanged for its callers. */
+export function issueLocalTerminalNonce(
+  projectId: string,
+  consentFingerprint: string,
+): { nonce: string; expiresAtMs: number } {
+  return issueLocalNonce({ kind: "terminal", projectId, consentFingerprint });
 }
 
 /**
@@ -100,8 +123,9 @@ export function issueLocalTerminalNonce(
  * The scan is unconditional (no early exit) and compares with `timingSafeEqual`,
  * so a caller learns nothing from how long a rejection took.
  */
-export function consumeLocalTerminalNonce(
-  presented: string | null | undefined
+export function consumeLocalNonce(
+  kind: LocalNonceKind,
+  presented: string | null | undefined,
 ): { projectId: string; consentFingerprint: string } | null {
   const now = Date.now();
   pruneExpired(now);
@@ -120,6 +144,10 @@ export function consumeLocalTerminalNonce(
   if (matchIndex === -1) return null;
   const [claimed] = outstanding.splice(matchIndex, 1);
   if (!claimed) return null;
+  // A nonce for the OTHER socket is spent (it was matched, so it is gone) but
+  // never honored. Consuming it either way is deliberate: leaving it
+  // outstanding would let a caller probe which kind a nonce is by trying both.
+  if (claimed.kind !== kind) return null;
   // Re-check the deadline on the CLAIMED entry: pruning ran before the compare,
   // and an entry that expires in between must not be honored.
   if (claimed.expiresAtMs <= Date.now()) return null;
@@ -127,6 +155,13 @@ export function consumeLocalTerminalNonce(
     projectId: claimed.projectId,
     consentFingerprint: claimed.consentFingerprint,
   };
+}
+
+/** The terminal's redemption, unchanged for its callers. */
+export function consumeLocalTerminalNonce(
+  presented: string | null | undefined,
+): { projectId: string; consentFingerprint: string } | null {
+  return consumeLocalNonce("terminal", presented);
 }
 
 /** Test seam: the store is process-global. */

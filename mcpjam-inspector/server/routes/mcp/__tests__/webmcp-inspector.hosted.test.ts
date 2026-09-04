@@ -370,7 +370,7 @@ describe("hosted WebMCP inspector — the invocation's answer", () => {
     });
 
   beforeEach(async () => {
-    await webMcpSessions.disposeAll("test");
+    await webMcpSessions.disposeAll();
   });
 
   it("carries the tool's OUTPUT, not just that it succeeded", async () => {

@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect, useCallback, useRef } from "react";
+import { useMemo, useState, useEffect, useCallback, useReducer } from "react";
 import { useMutation, useConvexAuth } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
@@ -12,7 +12,7 @@ import {
   EVAL_SANDBOX_CLOUD_UNREACHABLE_MESSAGE,
 } from "@/components/computer/CloudUnreachableNotice";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
-import { SuiteProjectEnvironmentsPicker } from "./suite-project-environments-picker";
+import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { toast } from "sonner";
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion";
 import {
@@ -51,6 +51,8 @@ import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
 import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
+import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
+import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
 import { ScheduleEditor } from "./schedule-editor";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
@@ -75,6 +77,18 @@ import type {
 } from "./types";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  canCommit,
+  committedSuiteSettingsValues,
+  describeDraft,
+  initSuiteSettingsDraft,
+  readSuiteSettingsValues,
+  suiteSettingsReducer,
+} from "./suite-settings-draft";
+import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
+import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
+import { ReviewAndSaveDialog } from "./review-and-save-dialog";
+import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
 import { Loader2, Trash2 } from "lucide-react";
@@ -101,13 +115,13 @@ export interface SuiteNavigation {
       replace?: boolean;
       compareToRunId?: string;
       testCaseId?: string;
-    }
+    },
   ) => void;
   toTestDetail: (suiteId: string, testId: string, iteration?: string) => void;
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string }
+    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }
@@ -150,7 +164,10 @@ function SettingsSection({
 }) {
   if (layout === "inline") {
     return (
-      <section className="py-5 first:pt-2 last:pb-2" data-setting-key={settingKey}>
+      <section
+        className="py-5 first:pt-2 last:pb-2"
+        data-setting-key={settingKey}
+      >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
             <div className="flex items-center gap-1">
@@ -170,7 +187,10 @@ function SettingsSection({
     );
   }
   return (
-    <section className="py-6 first:pt-2 last:pb-2" data-setting-key={settingKey}>
+    <section
+      className="py-6 first:pt-2 last:pb-2"
+      data-setting-key={settingKey}
+    >
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
           {label}
@@ -347,7 +367,9 @@ export function SuiteIterationsView({
   omitSuiteHeader?: boolean;
   /**
    * Evaluate (New) only: render {@link SuiteDetailOverview} — identity, run
-   * history, cases — instead of the unified dashboard on suite overview.
+   * history, cases — instead of the unified dashboard on suite overview, and
+   * {@link EvaluateRunPage} instead of the SuiteResultsSplit rail on run
+   * detail.
    *
    * OFF by default on purpose. This is a shared component: the shipped
    * Evaluate tab, CI Runs, and the desktop surfaces all mount it, and the
@@ -372,7 +394,7 @@ export function SuiteIterationsView({
   /** Per-case run from the cases overview table (Explore / CI). */
   onRunTestCase?: (
     testCase: EvalCase,
-    opts?: { iterationOverride?: number }
+    opts?: { iterationOverride?: number },
   ) => void;
   runningTestCaseId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
@@ -381,7 +403,7 @@ export function SuiteIterationsView({
   isDirectGuest?: boolean;
   /** Playground: connect suite MCP servers before compare run (same as per-case run). */
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
 }) {
   const appState = useSharedAppState();
@@ -396,18 +418,18 @@ export function SuiteIterationsView({
     route.type === "run-detail"
       ? "run-detail"
       : route.type === "test-detail"
-      ? "test-detail"
-      : route.type === "test-edit" && !readOnlyConfig
-      ? "test-edit"
-      : route.type === "test-edit"
-      ? "test-detail"
-      : "overview";
+        ? "test-detail"
+        : route.type === "test-edit" && !readOnlyConfig
+          ? "test-edit"
+          : route.type === "test-edit"
+            ? "test-detail"
+            : "overview";
   const runsViewMode: SuiteOverviewView =
     route.type === "suite-overview" && route.view === "test-cases"
       ? "test-cases"
       : route.type === "suite-overview" && route.view === "cross-host"
-      ? "cross-host"
-      : "runs";
+        ? "cross-host"
+        : "runs";
 
   // Local state that's not in the URL
   const [runDetailSortBy, setRunDetailSortBy] = useState<
@@ -430,7 +452,7 @@ export function SuiteIterationsView({
       opts?: {
         matchOptionsOverride?: EvalMatchOptions;
         iterationOverride?: number;
-      }
+      },
     ) =>
       (
         onRerun as (
@@ -438,10 +460,10 @@ export function SuiteIterationsView({
           opts?: {
             matchOptionsOverride?: EvalMatchOptions;
             iterationOverride?: number;
-          }
+          },
         ) => void
       )(s, opts),
-    [onRerun]
+    [onRerun],
   );
 
   const onRunTestCaseWithOverride = useMemo<
@@ -451,25 +473,143 @@ export function SuiteIterationsView({
       onRunTestCase
         ? (testCase: EvalCase) => onRunTestCase(testCase, { iterationOverride })
         : undefined,
-    [onRunTestCase, iterationOverride]
+    [onRunTestCase, iterationOverride],
   );
   const effectiveRunDetailSortBy = runDetailSortByOverride ?? runDetailSortBy;
   const effectiveRunDetailSortChange =
     onRunDetailSortByChange ?? setRunDetailSortBy;
-  const [defaultMinimumPassRate, setDefaultMinimumPassRate] = useState(100);
-  // Local in-progress state for the suite-default checks editor. Mirrors the
-  // case editor's `editForm.predicates.list` mediation: `ChecksSection` fires
-  // onChange on every keystroke (including the blank-template insertion from
-  // `Add check`), so we keep edits local and only persist when every check
-  // is valid. See `areAllChecksValid` and `test-template-editor.tsx`.
-  const [draftDefaultPredicates, setDraftDefaultPredicates] = useState<
-    Predicate[]
-  >(suite.defaultPredicates ?? []);
+  // ── The settings draft (S1) ─────────────────────────────────────────────
+  //
+  // One piece of state for every drafted setting, replacing the per-control
+  // local state each writer used to keep. The controls still fire on every
+  // keystroke — `ChecksSection` inserts a blank template on `Add check` — but
+  // now those keystrokes land in a draft that is saved deliberately rather
+  // than in a debounce racing its own previous write.
+  const [draft, dispatchDraft] = useReducer(
+    suiteSettingsReducer,
+    suite,
+    // Lazy: this ran on every render and threw the result away, and it is not
+    // free — it rebuilds the whole settings envelope for a suite document that
+    // changes identity on every run-progress tick.
+    (initial) =>
+      initSuiteSettingsDraft({
+        suiteId: initial._id,
+        values: readSuiteSettingsValues(initial),
+      }),
+  );
+  const [reviewOpen, setReviewOpen] = useState(false);
+  const { commit, isCommitting } = useSuiteSettingsCommit();
+  const draftDefaultPredicates = draft.current.defaultPredicates;
+  const setDraftDefaultPredicates = useCallback(
+    // Both forms, matching the `useState` setter this replaced — `AddCheckMenu`
+    // passes an updater, and the reducer resolves it against the authoritative
+    // draft rather than whatever this render closed over.
+    (next: Predicate[] | ((previous: Predicate[]) => Predicate[])) =>
+      dispatchDraft({ type: "edit", key: "defaultPredicates", value: next }),
+    [],
+  );
+  const defaultMinimumPassRate =
+    draft.current.defaultPassCriteria?.minimumPassRate ?? 100;
+  const draftChanges = useMemo(() => describeDraft(draft), [draft]);
+  // Memoized with the changes: `canCommit` re-runs `dirtyKeys` (a stringify per
+  // key) and a zod parse over every default check, and this component re-renders
+  // on every run-progress tick of every suite in the project.
+  const draftCanCommit = useMemo(
+    () => canCommit(draft, areAllChecksValid),
+    [draft],
+  );
+  const hasUnsavedSettings = draftChanges.length > 0;
+  // Discarding is what the person just agreed to when they confirmed the
+  // prompt. Without it the draft outlives the sheet: the guard re-prompts on
+  // every later navigation, ⌘S opens the review dialog from the run list, and
+  // the edits they were told they were leaving behind are still there.
+  useUnsavedChangesGuard(hasUnsavedSettings, () =>
+    dispatchDraft({ type: "discard" }),
+  );
+
+  // The suite moved under us. An untouched row simply refreshes; a row the
+  // person has edited AND someone else changed is marked rather than merged,
+  // because that is the one case an automatic answer would get wrong for one
+  // of the two people involved. A different suite id resets the draft outright
+  // — see the reducer.
+  const liveSettingsKey = useMemo(
+    () => `${suite._id}:${JSON.stringify(readSuiteSettingsValues(suite))}`,
+    [suite],
+  );
+  useEffect(() => {
+    dispatchDraft({
+      type: "rebase",
+      suiteId: suite._id,
+      live: readSuiteSettingsValues(suite),
+    });
+    // Keyed on the serialized live values so this fires when the SUITE moves,
+    // not on every render that produces a new object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [liveSettingsKey]);
+
+  const handleCommitSettings = useCallback(
+    async (note: string) => {
+      const outcome = await commit({
+        draft,
+        suiteId: suite._id,
+        note: note.trim() || undefined,
+        expectedRevisionNumber: suite.revisionNumber,
+        liveEnvironment: suite.environment,
+      });
+      if (outcome.status === "saved") {
+        setReviewOpen(false);
+        // What the save actually WROTE: the normalized form of the keys it
+        // carried, and the untouched keys exactly as they were. `toUpdateArgs`
+        // trims a dirty name, so rebasing onto the raw draft would leave the
+        // person looking at their own whitespace — and normalizing a name this
+        // save never sent would make the draft disagree with the database.
+        //
+        // `retained` keeps the keys a legacy deployment could not carry dirty,
+        // so the toast's promise that they are still there to save holds.
+        // `suiteId` is the save's OWN suite, so a mutation that resolves after
+        // the person navigated cannot land on the suite they moved to.
+        dispatchDraft({
+          type: "commitSucceeded",
+          suiteId: suite._id,
+          live: committedSuiteSettingsValues(draft),
+          retained: outcome.droppedKeys,
+        });
+      } else if (outcome.status === "conflict") {
+        // The draft SURVIVES. Throwing away someone's edits because a
+        // colleague saved first is the outcome the precondition exists to
+        // prevent, not one to implement on its refusal.
+        setReviewOpen(false);
+        toast.error(
+          "This suite changed since you opened it. Your edits are still here — review them against the new values and save again.",
+        );
+        // No rebase here on purpose. `suite` is still the document we already
+        // had — the one the server just told us is stale — so rebasing onto it
+        // would compare the draft against the same values and mark nothing.
+        // The subscription delivers the newer document a moment later, and the
+        // rebase effect above does the real comparison then.
+      }
+    },
+    [commit, draft, suite],
+  );
+
+  // ⌘S opens the review rather than saving: the shortcut means "commit what I
+  // did", and in a sheet with a review step the honest response is to show
+  // them what that is.
+  useEffect(() => {
+    if (!hasUnsavedSettings) return;
+    const handler = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key !== "s") return;
+      event.preventDefault();
+      if (draftCanCommit) setReviewOpen(true);
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [hasUnsavedSettings, draftCanCommit]);
   const suiteScenarioMigrationCount = useMemo(
     () =>
       splitPredicatesForMigration(draftDefaultPredicates).scenarioAsserts
         .length,
-    [draftDefaultPredicates]
+    [draftDefaultPredicates],
   );
   // Description editor is hidden in the current pass — handlers and draft
   // state were removed; re-add together when the About section returns.
@@ -490,7 +630,7 @@ export function SuiteIterationsView({
             .filter((it) => it.suiteRunId === selectedRunId && it.chatSessionId)
             .map((it) => it.chatSessionId as string)
         : [],
-    [allIterations, selectedRunId]
+    [allIterations, selectedRunId],
   );
 
   const updateSuite = useMutation("testSuites:updateTestSuite" as any);
@@ -500,7 +640,7 @@ export function SuiteIterationsView({
   const computersEnabled = useComputersEnabled();
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const computerEnvironments = useSandboxImages(
-    computersEnabled && projectId ? projectId : null
+    computersEnabled && projectId ? projectId : null,
   );
   const ephemeralCloudAvailable = useEphemeralCloudAvailable();
   // Cloud-sandbox preflight, derived ONCE here — the parent owns every run
@@ -518,11 +658,11 @@ export function SuiteIterationsView({
   // ids the suite itself lists — a superset cannot make it read true.
   const projectEnvironments = useProjectEnvironments(
     projectEnvironmentsEnabled ? (projectId ?? null) : null,
-    { includeAdhoc: true }
+    { includeAdhoc: true },
   );
   const suitePinsSandboxImage = evalSuitePinsSandboxImage(
     suite,
-    projectEnvironments ?? undefined
+    projectEnvironments ?? undefined,
   );
   const evalRunsDisabledReason =
     evalRunsDisabledReasonProp ??
@@ -547,13 +687,13 @@ export function SuiteIterationsView({
     iterations,
     allIterations,
     runs,
-    aggregate
+    aggregate,
   );
 
   const { caseGroupsForSelectedRun } = useRunDetailData(
     selectedRunId,
     allIterations,
-    effectiveRunDetailSortBy
+    effectiveRunDetailSortBy,
   );
 
   // Selected run details
@@ -578,7 +718,7 @@ export function SuiteIterationsView({
   });
 
   const selectedCompareBaseRunId =
-    route.type === "run-detail" ? route.compareToRunId ?? null : null;
+    route.type === "run-detail" ? (route.compareToRunId ?? null) : null;
 
   const previousCompletedRunForSelectedRun = useMemo(() => {
     if (!selectedRunDetails || selectedRunDetails.status !== "completed") {
@@ -589,7 +729,7 @@ export function SuiteIterationsView({
         (run) =>
           run._id !== selectedRunDetails._id &&
           run.status === "completed" &&
-          compareRunsBySequence(run, selectedRunDetails) < 0
+          compareRunsBySequence(run, selectedRunDetails) < 0,
       )
       .sort((a, b) => compareRunsBySequence(b, a));
     return earlierCompletedRuns[0] ?? null;
@@ -618,10 +758,10 @@ export function SuiteIterationsView({
 
   // Derive selectedIterationId from route
   const selectedIterationId =
-    route.type === "run-detail" ? route.iteration ?? null : null;
+    route.type === "run-detail" ? (route.iteration ?? null) : null;
 
   const selectedRunTestCaseId =
-    route.type === "run-detail" ? route.testCaseId ?? null : null;
+    route.type === "run-detail" ? (route.testCaseId ?? null) : null;
 
   const handleSelectTestCase = (group: RunCaseGroup) => {
     if (route.type !== "run-detail" || !group.testCaseId) {
@@ -642,7 +782,7 @@ export function SuiteIterationsView({
   const iterationsForSelectedRunTestCase = useMemo(() => {
     if (!selectedRunId || !selectedRunTestCaseId) return [];
     return caseGroupsForSelectedRun.filter(
-      (iteration) => iteration.testCaseId === selectedRunTestCaseId
+      (iteration) => iteration.testCaseId === selectedRunTestCaseId,
     );
   }, [selectedRunId, selectedRunTestCaseId, caseGroupsForSelectedRun]);
 
@@ -674,119 +814,19 @@ export function SuiteIterationsView({
     }
   };
 
-  // Sync local draft of default checks when the suite identity or its
-  // persisted value changes. `suite._id` is included so navigating to a
-  // different suite with the same persisted value (commonly
-  // `undefined → undefined`) still resets the draft — otherwise the old
-  // suite's in-progress edits would be saved into the new one on the next
-  // valid keystroke.
-  useEffect(() => {
-    setDraftDefaultPredicates(suite.defaultPredicates ?? []);
-  }, [suite._id, suite.defaultPredicates]);
-
-  // Debounced commit of the default-checks draft. Earlier this was fired
-  // directly inside ChecksSection's onChange, which kicked off one
-  // unsynchronized `updateSuite` per keystroke — out-of-order responses
-  // could land in the wrong order and persist stale predicate text, and
-  // the toast spammed once per character.
-  //
-  // The debounce alone is not enough: if a user pauses (timer fires →
-  // updateSuite A starts) and then keeps editing (timer fires again →
-  // updateSuite B starts before A resolves), Convex's "last write wins"
-  // means whichever request lands second persists, which can roll the
-  // draft back to A's stale snapshot. We serialize: the next save waits
-  // for any in-flight one to settle, then reads the latest draft and
-  // fires exactly one write.
-  const persistedDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(suite.defaultPredicates ?? []),
-    [suite.defaultPredicates]
-  );
-  const draftDefaultPredicatesKey = useMemo(
-    () => JSON.stringify(draftDefaultPredicates),
-    [draftDefaultPredicates]
-  );
-  const defaultChecksInFlightRef = useRef<Promise<unknown> | null>(null);
-  useEffect(() => {
-    if (draftDefaultPredicatesKey === persistedDefaultPredicatesKey) return;
-    if (!areAllChecksValid(draftDefaultPredicates)) return;
-    let cancelled = false;
-    const timer = setTimeout(() => {
-      void (async () => {
-        // Wait for any in-flight save to settle before starting the next
-        // one. The pending one captured an earlier draft; if we raced it
-        // and lost, Convex would persist the stale snapshot.
-        while (defaultChecksInFlightRef.current) {
-          try {
-            await defaultChecksInFlightRef.current;
-          } catch {
-            // Errors are surfaced by the call site that started the
-            // in-flight promise; we just need it to settle.
-          }
-        }
-        if (cancelled) return;
-        const snapshot = draftDefaultPredicates;
-        const promise = updateSuite({
-          suiteId: suite._id,
-          defaultPredicates: snapshot.length === 0 ? null : snapshot,
-        });
-        defaultChecksInFlightRef.current = promise as Promise<unknown>;
-        try {
-          await promise;
-          toast.success("Default checks updated");
-        } catch (error) {
-          toast.error(getBillingErrorMessage(error, "Failed to update suite"));
-          console.error("Failed to update default checks:", error);
-        } finally {
-          if (defaultChecksInFlightRef.current === promise) {
-            defaultChecksInFlightRef.current = null;
-          }
-        }
-      })();
-    }, 400);
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [
-    draftDefaultPredicatesKey,
-    persistedDefaultPredicatesKey,
-    draftDefaultPredicates,
-    suite._id,
-    updateSuite,
-  ]);
-
-  // Load default pass criteria from suite
-  useEffect(() => {
-    if (suite.defaultPassCriteria?.minimumPassRate !== undefined) {
-      setDefaultMinimumPassRate(suite.defaultPassCriteria.minimumPassRate);
-      if (typeof window !== "undefined") {
-        try {
-          localStorage.setItem(
-            `suite-${suite._id}-criteria-rate`,
-            String(suite.defaultPassCriteria.minimumPassRate)
-          );
-        } catch (error) {
-          console.warn(
-            "Failed to sync default pass criteria to localStorage",
-            error
-          );
-        }
-      }
-    } else if (typeof window !== "undefined") {
-      try {
-        const rate = localStorage.getItem(`suite-${suite._id}-criteria-rate`);
-        if (rate) setDefaultMinimumPassRate(Number(rate));
-      } catch (error) {
-        console.warn("Failed to load default pass criteria", error);
-      }
-    }
-  }, [suite._id, suite.defaultPassCriteria]);
+  // The debounced default-checks committer, the localStorage pass-criteria
+  // mirror and the per-suite draft-reset effect all lived here. All three
+  // were machinery for saving on every keystroke: a debounce that serialized
+  // its own writes so an out-of-order response could not persist stale text,
+  // and a local mirror so a value the server had not accepted yet survived a
+  // reload. The draft makes them unnecessary — nothing is written until the
+  // person says so, and `rebase` handles a suite that moves underneath.
 
   const handleUpdateHostAttachments = async (
     attachments: Array<{
       namedHostId: string;
       enabledOptionalServerIds: string[];
-    }>
+    }>,
   ) => {
     try {
       await updateSuite({
@@ -794,12 +834,28 @@ export function SuiteIterationsView({
         hostAttachments: attachments,
       });
       toast.success(
-        attachments.length === 0 ? "Clients cleared" : "Clients updated"
+        attachments.length === 0 ? "Clients cleared" : "Clients updated",
       );
     } catch (error) {
       toast.error(getBillingErrorMessage(error, "Failed to update clients"));
       console.error("Failed to update host attachments:", error);
       throw error;
+    }
+  };
+
+  const handleServerAttachmentUpdate = async (serverAttachmentId: string) => {
+    // Picker calls this synchronously inside onClick — don't rethrow,
+    // or the unawaited promise becomes an unhandled rejection.
+    try {
+      await updateSuite({
+        suiteId: suite._id,
+        serverAttachmentId,
+      });
+      toast.success("Server group updated");
+    } catch (error) {
+      toast.error(
+        getBillingErrorMessage(error, "Failed to update server group"),
+      );
     }
   };
 
@@ -815,7 +871,7 @@ export function SuiteIterationsView({
         compareToRunId: baseRunId,
       });
     },
-    [navigation, suite._id]
+    [navigation, suite._id],
   );
 
   const handleBackToOverview = () => {
@@ -850,7 +906,7 @@ export function SuiteIterationsView({
     () =>
       replayingRunId != null &&
       runs.some(
-        (run) => run._id === replayingRunId && run.hasServerReplayConfig
+        (run) => run._id === replayingRunId && run.hasServerReplayConfig,
       ) &&
       runs
         .filter((run) => run.hasServerReplayConfig)
@@ -859,7 +915,7 @@ export function SuiteIterationsView({
           const bTime = b.completedAt ?? b.createdAt ?? 0;
           return bTime - aTime;
         })[0]?._id === replayingRunId,
-    [replayingRunId, runs]
+    [replayingRunId, runs],
   );
 
   const shouldReduceMotion = useReducedMotion();
@@ -885,14 +941,13 @@ export function SuiteIterationsView({
   ]);
 
   // Evaluate (New) suite overview uses the checkout-flow identity + run
-  // history + cases layout. Run detail still folds into SuiteDashboard.
+  // history + cases layout. Run detail uses EvaluateRunPage (this run +
+  // Compare), not the SuiteResultsSplit rail.
   //
   // `viewMode` falls through to "overview" for the suite-edit route, so edit
   // mode has to be excluded explicitly: SuiteHeader is the ONLY place the
-  // edit-mode chrome lives (the name editor and Done), and the only mount
-  // point for SuiteEnvironmentComposerBar. Suppressing it there would leave
-  // the settings sheet headerless and the suite's client/model/server
-  // composer unreachable from both routes.
+  // edit-mode chrome lives (the name editor and Done). The environment
+  // composer lives on the settings sheet, not the overview header.
   const showEvaluateSuiteDetail =
     suiteDetailOverview &&
     hideRunActions &&
@@ -900,15 +955,27 @@ export function SuiteIterationsView({
     !isEditMode &&
     viewMode === "overview";
 
+  const showEvaluateRunPage =
+    suiteDetailOverview &&
+    hideRunActions &&
+    !caseListInSidebar &&
+    !isEditMode &&
+    viewMode === "run-detail" &&
+    Boolean(selectedRunDetails) &&
+    !selectedCompareBaseRunId &&
+    !selectedRunTestCaseId;
+
   const showSuiteHeader =
     !showEvaluateSuiteDetail &&
+    !showEvaluateRunPage &&
     (!omitSuiteHeader || viewMode !== "run-detail" || isEditMode);
 
   // The unified results split (run-group rail + scoped right pane) is the
   // default suite surface; the single-run detail folds into its right pane
   // wherever the dashboard renders (same guard as the overview SuiteDashboard
   // branch so the two surfaces switch together).
-  const foldRunDetail = hideRunActions && !caseListInSidebar;
+  const foldRunDetail =
+    hideRunActions && !caseListInSidebar && !suiteDetailOverview;
 
   // Keep suite chrome (name, Run all, Generate) visible in run detail — run
   // identity belongs in the body. CI opts out via omitSuiteHeader.
@@ -933,7 +1000,7 @@ export function SuiteIterationsView({
             ? {
                 ...suite,
                 hostAttachments: (suite.hostAttachments ?? []).filter(
-                  (a) => a.namedHostId === selectedRunDetails.namedHostId
+                  (a) => a.namedHostId === selectedRunDetails.namedHostId,
                 ),
               }
             : suite
@@ -952,7 +1019,7 @@ export function SuiteIterationsView({
           navigation.toTestEdit(
             suite._id,
             caseId,
-            iteration ? { iteration: iteration._id } : undefined
+            iteration ? { iteration: iteration._id } : undefined,
           );
         }}
         hostNamesById={hostNamesById}
@@ -967,7 +1034,7 @@ export function SuiteIterationsView({
       selectedRunId?: string | null;
       runDetailPane?: React.ReactNode;
       onExitRun?: () => void;
-    } = {}
+    } = {},
   ) => (
     <SuiteDashboard
       suite={suite}
@@ -999,7 +1066,7 @@ export function SuiteIterationsView({
       quickRunIterationOverride={iterationOverride}
       runningTestCaseId={runningTestCaseId}
       blockTestCaseRuns={Boolean(
-        rerunningSuiteId || replayingRunId || evalRunsDisabledReason
+        rerunningSuiteId || replayingRunId || evalRunsDisabledReason,
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
       connectedServerNames={connectedServerNames}
@@ -1052,7 +1119,7 @@ export function SuiteIterationsView({
           : "body"
       }
       hideReplayLineage
-      hideRecentRuns={foldRunDetail}
+      hideRecentRuns={foldRunDetail || showEvaluateRunPage}
       hideKpiStrip={foldRunDetail}
       hideAccuracyHero={foldRunDetail}
       caseTableSlot={runMatrixPane}
@@ -1167,9 +1234,6 @@ export function SuiteIterationsView({
             onRunTestCase={onRunTestCaseWithOverride}
             blockTestCaseRuns={Boolean(rerunningSuiteId || replayingRunId)}
             runningTestCaseId={runningTestCaseId}
-            onSuiteHostAttachmentsUpdate={
-              readOnlyConfig ? undefined : handleUpdateHostAttachments
-            }
             omitRunDetailIdentity={omitRunDetailIdentity}
           />
         </div>
@@ -1212,7 +1276,9 @@ export function SuiteIterationsView({
                     route.type === "test-edit" && Boolean(route.openCompare)
                   }
                   openCompareIterationId={
-                    route.type === "test-edit" ? route.iteration ?? null : null
+                    route.type === "test-edit"
+                      ? (route.iteration ?? null)
+                      : null
                   }
                   onContinueInChat={onContinueInChat}
                   onSelectTab={(tab) =>
@@ -1231,12 +1297,12 @@ export function SuiteIterationsView({
             ) : viewMode === "test-detail" && selectedTestId ? (
               (() => {
                 const selectedCase = cases.find(
-                  (c) => c._id === selectedTestId
+                  (c) => c._id === selectedTestId,
                 );
                 if (!selectedCase) return null;
 
                 const caseIterations = allIterations.filter(
-                  (iter) => iter.testCaseId === selectedTestId
+                  (iter) => iter.testCaseId === selectedTestId,
                 );
 
                 return (
@@ -1274,6 +1340,65 @@ export function SuiteIterationsView({
                   </motion.div>
                 );
               })()
+            ) : showEvaluateRunPage && selectedRunDetails ? (
+              <motion.div
+                key={contentKey}
+                initial={shouldReduceMotion ? false : { opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={shouldReduceMotion ? undefined : { opacity: 0 }}
+                transition={
+                  shouldReduceMotion ? { duration: 0 } : { duration: 0.15 }
+                }
+                className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+              >
+                <EvaluateRunPage
+                  run={selectedRunDetails}
+                  hostNamesById={hostNamesById}
+                  iterations={caseGroupsForSelectedRun}
+                  otherRuns={runs.filter(
+                    (candidate) =>
+                      candidate._id !== selectedRunDetails._id &&
+                      candidate.result !== "inconclusive",
+                  )}
+                  defaultCompareRunId={
+                    previousCompletedRunForSelectedRun?._id ?? null
+                  }
+                  onCompareWithRun={(baseRunId) =>
+                    handleCompareRuns(baseRunId, selectedRunDetails._id)
+                  }
+                  onExport={
+                    projectId ? () => setTracesExportOpen(true) : undefined
+                  }
+                >
+                  {projectId ? (
+                    <EvaluateRunContent
+                      projectId={projectId}
+                      run={selectedRunDetails}
+                      iterations={caseGroupsForSelectedRun}
+                      allIterations={allIterations}
+                      previousRunId={
+                        previousCompletedRunForSelectedRun?._id ?? null
+                      }
+                      decisionSummaryEnabled={Boolean(evaluateDecisionSummary)}
+                      onOpenIteration={({ testCaseId, iterationId }) =>
+                        // Same routing rule the decision card follows: an
+                        // iteration id is only consumed by the case editor, so
+                        // sending a reader to run detail would land them on the
+                        // page they are already looking at with nothing opened.
+                        navigation.toTestEdit(suite._id, testCaseId, {
+                          iteration: iterationId,
+                        })
+                      }
+                      {...(onEditTestCase
+                        ? { onEditCase: onEditTestCase }
+                        : {})}
+                      fallbackBody={runDetailView}
+                    />
+                  ) : (
+                    runDetailView
+                  )}
+                </EvaluateRunPage>
+              </motion.div>
             ) : showEvaluateSuiteDetail ? (
               <motion.div
                 key={contentKey}
@@ -1326,7 +1451,7 @@ export function SuiteIterationsView({
                         runDetailPane: runDetailView,
                         onExitRun: handleBackToOverview,
                       }
-                    : {}
+                    : {},
                 )}
               </div>
             ) : viewMode === "overview" ? (
@@ -1478,8 +1603,8 @@ export function SuiteIterationsView({
                       runningTestCaseId={runningTestCaseId}
                       blockTestCaseRuns={Boolean(
                         rerunningSuiteId ||
-                          replayingRunId ||
-                          evalRunsDisabledReason
+                        replayingRunId ||
+                        evalRunsDisabledReason,
                       )}
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
@@ -1516,7 +1641,7 @@ export function SuiteIterationsView({
                         suite._id,
                         selectedRunDetails._id,
                         undefined,
-                        { insightsFocus: true }
+                        { insightsFocus: true },
                       )
                     }
                     onOpenIteration={(runId, iterationId) =>
@@ -1557,6 +1682,31 @@ export function SuiteIterationsView({
                   pass — surface lives elsewhere when the user wants context
                   on the suite. */}
 
+              {/* ── Name ─────────────────────────────────────────────── */}
+              {/* First, and moved here from the header: renaming used to be an
+                  inline edit that saved on blur, which meant a stray click
+                  committed a half-typed name to a suite other people watch. */}
+              <SettingsSection
+                settingKey="name"
+                label="Name"
+                layout="inline"
+                inlineSlot={
+                  <input
+                    className="h-8 w-64 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                    value={draft.current.name}
+                    aria-label="Suite name"
+                    disabled={readOnlyConfig}
+                    onChange={(e) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "name",
+                        value: e.target.value,
+                      })
+                    }
+                  />
+                }
+              />
+
               {/* ── Minimum accuracy (one row) ───────────────────────── */}
               <SettingsSection
                 settingKey="minimumAccuracy"
@@ -1566,31 +1716,13 @@ export function SuiteIterationsView({
                   <PassCriteriaSelector
                     hideLabel
                     minimumPassRate={defaultMinimumPassRate}
-                    onMinimumPassRateChange={async (rate) => {
-                      setDefaultMinimumPassRate(rate);
-                      localStorage.setItem(
-                        `suite-${suite._id}-criteria-rate`,
-                        String(rate)
-                      );
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          defaultPassCriteria: { minimumPassRate: rate },
-                        });
-                        toast.success("Suite updated successfully");
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite"
-                          )
-                        );
-                        console.error("Failed to update suite:", error);
-                        setDefaultMinimumPassRate(
-                          suite.defaultPassCriteria?.minimumPassRate ?? 100
-                        );
-                      }
-                    }}
+                    onMinimumPassRateChange={(rate) =>
+                      dispatchDraft({
+                        type: "edit",
+                        key: "defaultPassCriteria",
+                        value: { minimumPassRate: rate },
+                      })
+                    }
                   />
                 }
               />
@@ -1603,33 +1735,15 @@ export function SuiteIterationsView({
                 inlineSlot={
                   <select
                     className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                    value={suite.minIterations ?? ""}
+                    value={draft.current.minIterations ?? ""}
                     aria-label="Minimum iterations per case for every run"
-                    onChange={async (e) => {
+                    onChange={(e) => {
                       const raw = e.target.value;
-                      const next = raw === "" ? null : Number(raw);
-                      try {
-                        await updateSuite({
-                          suiteId: suite._id,
-                          minIterations: next,
-                        });
-                        toast.success(
-                          next == null
-                            ? "Minimum iterations cleared"
-                            : "Minimum iterations updated"
-                        );
-                      } catch (error) {
-                        toast.error(
-                          getBillingErrorMessage(
-                            error,
-                            "Failed to update suite"
-                          )
-                        );
-                        console.error(
-                          "Failed to update minimum iterations:",
-                          error
-                        );
-                      }
+                      dispatchDraft({
+                        type: "edit",
+                        key: "minIterations",
+                        value: raw === "" ? undefined : Number(raw),
+                      });
                     }}
                   >
                     <option value="">Off</option>
@@ -1665,37 +1779,15 @@ export function SuiteIterationsView({
                   inlineSlot={
                     <select
                       className="h-8 max-w-[16rem] rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                      value={suite.environment?.computerEnvironmentId ?? ""}
+                      value={draft.current.computerEnvironmentId ?? ""}
                       aria-label="Reproducible computer environment for eval runs"
-                      onChange={async (e) => {
-                        const next = e.target.value || undefined;
-                        try {
-                          await updateSuite({
-                            suiteId: suite._id,
-                            environment: {
-                              servers: suite.environment?.servers ?? [],
-                              serverBindings: suite.environment?.serverBindings,
-                              ...(next ? { computerEnvironmentId: next } : {}),
-                            },
-                          });
-                          toast.success(
-                            next
-                              ? "Computer environment set"
-                              : "Computer environment cleared"
-                          );
-                        } catch (error) {
-                          toast.error(
-                            getBillingErrorMessage(
-                              error,
-                              "Failed to update suite"
-                            )
-                          );
-                          console.error(
-                            "Failed to update computer environment:",
-                            error
-                          );
-                        }
-                      }}
+                      onChange={(e) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "computerEnvironmentId",
+                          value: e.target.value || undefined,
+                        })
+                      }
                     >
                       <option value="">None (default image)</option>
                       {(computerEnvironments ?? []).map((env) => {
@@ -1721,7 +1813,8 @@ export function SuiteIterationsView({
                     cloud sandboxes — never on the machine running this
                     inspector.
                   </p>
-                  {suitePinsSandboxImage && ephemeralCloudAvailable === false ? (
+                  {suitePinsSandboxImage &&
+                  ephemeralCloudAvailable === false ? (
                     <div className="mt-2">
                       <CloudUnreachableNotice
                         data-testid="suite-eval-cloud-unreachable"
@@ -1733,23 +1826,22 @@ export function SuiteIterationsView({
                 </SettingsSection>
               ) : null}
 
-              {/* ── Environments (project environments, flag-gated) ────
-                  Attach-ordered bundles of one client + optional server
-                  group + pinned skills. Run all fires one run per attached
-                  environment; the backend resolves each at launch. */}
-              {projectEnvironmentsEnabled && projectId ? (
-                <SettingsSection
-                  settingKey="environments"
-                  label="Environments"
-                  layout="inline"
-                  inlineSlot={
-                    <SuiteProjectEnvironmentsPicker
-                      suiteId={suite._id}
-                      projectId={projectId}
-                      environmentIds={suite.environmentIds}
-                    />
-                  }
-                >
+              {/* ── Environments (where this runs) ─────────────────────
+                  Full composer: named environments plus clients, models,
+                  servers, and skills. Replaces the header strip so this
+                  axis is edited here rather than on the overview. A
+                  suite without project environments still gets the
+                  legacy clients/servers pills through the same bar. */}
+              <SettingsSection settingKey="environments" label="Environments">
+                <SuiteEnvironmentComposerBar
+                  containerVariant="panel"
+                  className="bg-transparent py-0"
+                  suite={suite}
+                  onUpdate={handleUpdateHostAttachments}
+                  onUpdateServerAttachment={handleServerAttachmentUpdate}
+                  omitComputers={computersEnabled && Boolean(projectId)}
+                />
+                {projectEnvironmentsEnabled && projectId ? (
                   <p className="text-[11px] text-muted-foreground/60">
                     Run all fires one run per environment, in this order. An
                     environment bundles one client, an optional server group,
@@ -1757,8 +1849,8 @@ export function SuiteIterationsView({
                     skills always apply on top; a suite skills
                     &quot;exclude&quot; override wins over both.
                   </p>
-                </SettingsSection>
-              ) : null}
+                ) : null}
+              </SettingsSection>
 
               {/* ── Tool calls ───────────────────────────────────────── */}
               <SettingsSection
@@ -1768,25 +1860,15 @@ export function SuiteIterationsView({
               >
                 <ValidatorsSection
                   title=""
-                  value={suite.defaultMatchOptions}
+                  value={draft.current.defaultMatchOptions}
                   inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                  onChange={async (next: EvalMatchOptions | undefined) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        defaultMatchOptions: next ?? null,
-                      });
-                      toast.success("Default validators updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
-                      );
-                      console.error(
-                        "Failed to update default validators:",
-                        error
-                      );
-                    }
-                  }}
+                  onChange={(next: EvalMatchOptions | undefined) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "defaultMatchOptions",
+                      value: next,
+                    })
+                  }
                 />
               </SettingsSection>
 
@@ -1872,22 +1954,15 @@ export function SuiteIterationsView({
               >
                 <JudgesSection
                   chrome="bare"
-                  value={suite.judgeConfig}
+                  value={draft.current.judgeConfig}
                   availableModels={availableModels}
-                  onChange={async (next) => {
-                    try {
-                      await updateSuite({
-                        suiteId: suite._id,
-                        judgeConfig: next ?? null,
-                      });
-                      toast.success("Judges updated");
-                    } catch (error) {
-                      toast.error(
-                        getBillingErrorMessage(error, "Failed to update suite")
-                      );
-                      console.error("Failed to update judges:", error);
-                    }
-                  }}
+                  onChange={(next) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "judgeConfig",
+                      value: next,
+                    })
+                  }
                 />
               </SettingsSection>
 
@@ -1927,9 +2002,33 @@ export function SuiteIterationsView({
                 </div>
               ) : null}
             </dl>
+            {/* The bar renders only when there is something to save, and a
+                read-only suite never drafts anything, so it never appears
+                there either. */}
+            {readOnlyConfig ? null : (
+              <SuiteSettingsCommitBar
+                changeCount={draftChanges.length}
+                conflictCount={draft.conflicts.length}
+                canCommit={draftCanCommit}
+                isCommitting={isCommitting}
+                onDiscard={() => dispatchDraft({ type: "discard" })}
+                onReview={() => setReviewOpen(true)}
+              />
+            )}
           </div>
         </div>
       )}
+      <ReviewAndSaveDialog
+        open={reviewOpen}
+        onOpenChange={setReviewOpen}
+        changes={draftChanges}
+        conflicts={draft.conflicts.map(
+          (key) =>
+            draftChanges.find((change) => change.key === key)?.label ?? key,
+        )}
+        isCommitting={isCommitting}
+        onConfirm={handleCommitSettings}
+      />
       <EvalExportModal
         open={exportState !== null}
         onOpenChange={(open) => {

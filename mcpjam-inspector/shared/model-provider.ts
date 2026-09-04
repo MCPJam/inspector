@@ -41,6 +41,12 @@ export const MODEL_ID_PREFIX_ALIASES: Record<string, ModelProvider> = {
   // the catalog files under `mistral/...`. Before this map it matched no
   // prefix and fell through to the bare-id Ollama catch-all.
   mistralai: "mistral",
+  // The catalog serves the newer Grok models under `spacexai/*`, the same
+  // vendor it files older ones under `x-ai/*`. Missing here it fell through to
+  // the bare-id Ollama catch-all at the bottom of `classifyModelIdProvider`,
+  // so a Grok model classified as Ollama BYOK for provider dispatch and eval
+  // model resolution — the `mistralai` failure above, repeated.
+  spacexai: "xai",
   "x-ai": "xai",
 };
 
@@ -153,4 +159,66 @@ export function classifyModelIdProvider(
  */
 export function providerForModelId(modelId: string): ModelProvider | null {
   return classifyModelIdProvider(modelId)?.provider ?? null;
+}
+
+/**
+ * RUNTIME-CHOSEN SENTINELS — model ids that name no provider model at all.
+ *
+ * A host whose harness reaches its model on the CUSTOMER'S OWN account with the
+ * runtime vendor (`modelAccess: "external-account"`) has no model for MCPJam to
+ * choose: the adapter passes none, and the runtime picks one on an account
+ * MCPJam cannot see. The host template still has to seed SOMETHING, so it seeds
+ * a sentinel — deliberately not a real provider model, because a concrete
+ * `anthropic/...` would put a model id into traces and eval metadata that
+ * nothing ever ran.
+ *
+ * The sentinel then has to survive every path that asks a model id a provider
+ * question, and there are two different right answers:
+ *
+ *   - PROVIDER RESOLUTION must EXEMPT it. `cursor` is a registered
+ *     {@link ModelProvider} — so the id classifies honestly instead of falling
+ *     through the bare-id rule to `ollama` — but it is NOT a provider anyone
+ *     configures a BYOK key for. Routing the sentinel into org-provider
+ *     resolution asks a customer to configure a key that cannot exist, and the
+ *     backend answers `provider_not_configured: cursor`.
+ *   - DISPLAY must RESOLVE it, to the label below rather than to the raw id.
+ *
+ * Canonical id → display name, on a null prototype so `"constructor"` and
+ * friends cannot answer the lookup. One table here, beside the classification
+ * rules, instead of `=== "cursor/auto"` scattered across server and client.
+ */
+export const RUNTIME_CHOSEN_MODEL_SENTINELS: Readonly<Record<string, string>> =
+  Object.assign(Object.create(null) as Record<string, string>, {
+    // The Cursor CLI harness. `cursor-agent` authenticates with a
+    // `CURSOR_API_KEY`, every request transits Cursor's servers, and Cursor
+    // Auto picks the model on that account.
+    "cursor/auto": "Cursor Auto",
+  });
+
+/**
+ * Is this id a runtime-chosen sentinel rather than a model some provider serves?
+ *
+ * Blank- and nullish-safe, and trim-tolerant like {@link classifyModelIdProvider}
+ * — a provider-resolution site often holds a value it has not validated yet.
+ */
+export function isRuntimeChosenModelSentinel(
+  modelId: string | undefined | null,
+): boolean {
+  if (typeof modelId !== "string") return false;
+  return Object.prototype.hasOwnProperty.call(
+    RUNTIME_CHOSEN_MODEL_SENTINELS,
+    modelId.trim(),
+  );
+}
+
+/**
+ * The display name for a runtime-chosen sentinel (e.g. `"Cursor Auto"`), or
+ * `undefined` for an ordinary model id. Use it wherever a model label is
+ * rendered so the raw sentinel never reaches a user-visible surface.
+ */
+export function runtimeChosenModelSentinelName(
+  modelId: string | undefined | null,
+): string | undefined {
+  if (typeof modelId !== "string") return undefined;
+  return RUNTIME_CHOSEN_MODEL_SENTINELS[modelId.trim()];
 }

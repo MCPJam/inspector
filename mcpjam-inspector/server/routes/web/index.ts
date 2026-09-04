@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
+import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import servers from "./servers.js";
@@ -142,9 +143,18 @@ if (HOSTED_MODE) {
     guestRateLimitMiddleware,
   );
 }
-// Cloud Skills live on the caller's Computer (E2B sandbox); every op needs a
-// bearer (forwarded to Convex for reserve/wake + authz).
-web.use("/skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Cloud Skills are a project-MEMBERSHIP resource in Convex
+// (`convex/projectSkills.ts`); every op needs a bearer (forwarded to Convex for
+// authz). Guests are closed out HERE and not left to the backend: every
+// endpoint on this router resolves a `signedIn*` function, so a guest bearer
+// could only ever be refused — the guest-reachable `*ForRuntimeExecution`
+// variants are used by the harness path, never by these routes.
+web.use(
+  "/skills/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  denyGuests("Cloud Skills"),
+);
 web.use("/server-skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 web.use(
   "/apps/mcp-apps/widget-content",

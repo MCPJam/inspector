@@ -17,6 +17,33 @@ function makeHost(hostId: string, name: string): HostListItem {
 }
 
 describe("HostCompareSelector", () => {
+  it("shows built-in logos before a live host config loads", () => {
+    render(
+      <HostCompareSelector
+        hosts={[
+          makeHost("h_chatgpt", "ChatGPT"),
+          makeHost("h_custom", "My custom client"),
+        ]}
+        selectedHostIds={[]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />
+    );
+
+    expect(
+      screen.getByTestId("host-compare-chip-h_chatgpt").querySelector("img")
+    ).toHaveAttribute("src", "/openai_logo.png");
+    expect(
+      screen.getByTestId("host-compare-chip-h_custom").querySelector("img")
+    ).not.toBeInTheDocument();
+  });
+
   it("renders a chip per host and toggles selection on click", async () => {
     const user = userEvent.setup();
     const onToggleHost = vi.fn();

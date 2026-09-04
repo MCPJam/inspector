@@ -42,6 +42,50 @@ export const SUPPORTED_LOCAL_HARNESS_IDS: readonly SupportedLocalHarnessId[] = [
  *  harness/platform tuple (`compatibility.ts`), never blanket. */
 export type LocalPlatform = "darwin" | "linux" | "win32";
 
+/**
+ * The unit a runtime pack is actually built and verified as: an OS AND an
+ * architecture.
+ *
+ * Not `LocalPlatform`. A pack contains `bin/node` and the vendor's native CLI,
+ * both of which are machine code — so `darwin-arm64` and `darwin-x64` are two
+ * different artifacts with two different digests, and a table keyed on
+ * `darwin` alone can only hold one of them. It would download the right
+ * archive, compare it against the other architecture's digest, and refuse
+ * every install on whichever machine lost the coin toss.
+ *
+ * The spellings match `PLATFORMS` in `scripts/build-local-harness-pack.mjs`
+ * and the asset names it produces, because they are the same identifier.
+ */
+export type LocalPackTarget =
+  | "darwin-arm64"
+  | "darwin-x64"
+  | "linux-x64"
+  | "linux-arm64"
+  | "win32-x64";
+
+const LOCAL_PACK_TARGETS: ReadonlySet<string> = new Set<LocalPackTarget>([
+  "darwin-arm64",
+  "darwin-x64",
+  "linux-x64",
+  "linux-arm64",
+  "win32-x64",
+]);
+
+/**
+ * The pack target for a machine, or `null` where no pack is built.
+ *
+ * `null` for an architecture nobody builds for — `linux-riscv64`, a 32-bit
+ * host — which resolves the same way a missing directory does: `bundle-absent`,
+ * an honest refusal rather than a download that could never verify.
+ */
+export function localPackTarget(
+  platform: NodeJS.Platform = process.platform,
+  arch: string = process.arch,
+): LocalPackTarget | null {
+  const key = `${platform}-${arch}`;
+  return LOCAL_PACK_TARGETS.has(key) ? (key as LocalPackTarget) : null;
+}
+
 /** Isolation backends. Presence in this union is a TYPE, not a promise —
  *  a backend is advertised only after `isolatedBackends` lists it for the
  *  harness AND its startup escape probes pass. */

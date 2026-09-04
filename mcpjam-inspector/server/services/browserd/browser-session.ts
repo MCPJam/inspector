@@ -31,6 +31,7 @@ import type {
 } from "./boot-browserd";
 import type {
   BrowserdCommandResponse,
+  BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
 import type { BrowserCommand } from "./protocol";
@@ -47,13 +48,28 @@ export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
 export const BROWSERD_PORT = 8791;
 export const BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
 
-/** A `BrowserdClient`, narrowed to what sessions need (fakeable in tests). */
+/**
+ * A `BrowserdClient`, narrowed to what sessions need (fakeable in tests).
+ *
+ * The lease pair is OPTIONAL rather than required because the narrow shape
+ * predates the pane: the hosted session path only ever needed to probe and
+ * send. Both real clients implement all four, and the surfaces that hand a
+ * person the browser (the rail, the panel) require them; a fake that only
+ * needs `sendCommand` still satisfies this.
+ */
 export interface SessionClient {
   status(): Promise<BrowserdStatus>;
   sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
+  lease?(): Promise<BrowserdLeaseState>;
+  leaseAction?(args: {
+    action: "acquire" | "heartbeat" | "resume";
+    holder: string;
+    ttlMs?: number;
+    kind?: "human" | "script";
+  }): Promise<{ took: boolean; lease: BrowserdLeaseState }>;
 }
 
 /** The sandbox pieces the ensure path needs, once connected. */
@@ -155,7 +171,21 @@ export interface EnsureBrowserSessionArgs {
   signal?: AbortSignal;
 }
 
-export interface BrowserSessionHandle {
+/**
+ * A live browserd, whichever engine is running it.
+ *
+ * A UNION rather than one shape with optional fields, because the hosted
+ * engine's identity (a Convex session row, a computer id, an E2B stream and
+ * its password) does not exist on a laptop, and the alternative to a union is
+ * placeholder strings — a `streamUrl: ""` that some future panel renders into
+ * an iframe. `engine` is the discriminant; the hosted ensure functions below
+ * return the hosted member specifically, so hosted call sites need no narrow.
+ */
+export type BrowserSessionHandle =
+  HostedBrowserSessionHandle | LocalBrowserSessionHandle;
+
+export interface HostedBrowserSessionHandle {
+  engine: "hosted";
   sessionId: string;
   computerId: string;
   bootId: string;
@@ -168,6 +198,28 @@ export interface BrowserSessionHandle {
 }
 
 /**
+ * A browserd running INSIDE this inspector process — the npm engine's
+ * Chromium, or the desktop app's. No row, no reserve, no stream: the pane
+ * reaches it through the same daemon the tools do.
+ */
+export interface LocalBrowserSessionHandle {
+  engine: "local";
+  /**
+   * Which Chromium this is: one Playwright downloaded, or the desktop app's
+   * own. `engine` stays `"local"` for both — the tools, the lease, the pane
+   * and the approval rules are identical — and this exists so the consent
+   * screen knows whether there is anything to install.
+   */
+  runtime: "playwright" | "electron";
+  bootId: string;
+  client: SessionClient;
+  contextMode: BrowserContextMode;
+  reused: boolean;
+  /** Absent in ephemeral mode, which has no profile directory at all. */
+  profileDir?: string;
+}
+
+/**
  * Ensure a verified-live browserd session on this user's desktop computer.
  * Serialized per computer (fixed port + one persistent profile per box), like
  * the probe. Throws on any failure — never leaving an unrecorded daemon
@@ -176,7 +228,7 @@ export interface BrowserSessionHandle {
 export async function ensureBrowserSession(
   deps: BrowserSessionDeps,
   args: EnsureBrowserSessionArgs,
-): Promise<BrowserSessionHandle> {
+): Promise<HostedBrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
   const { computerId } = await deps.reserveDesktop({
     bearer: args.bearer,
@@ -206,7 +258,7 @@ export async function attachBrowserSession(
     contextMode?: BrowserContextMode;
     signal?: AbortSignal;
   },
-): Promise<BrowserSessionHandle> {
+): Promise<HostedBrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
   return withKeyedLock(`browser-session:${args.computerId}`, () =>
     ensureOnComputer(deps, args.computerId, contextMode, {
@@ -221,7 +273,7 @@ async function tryReuse(
   lookup: BrowserSessionLookup,
   contextMode: BrowserContextMode,
   signal?: AbortSignal,
-): Promise<BrowserSessionHandle | null> {
+): Promise<HostedBrowserSessionHandle | null> {
   const session = lookup.session;
   if (!session) return null;
   // Belt-and-braces against the backend's own mode filter: a daemon running
@@ -247,8 +299,9 @@ function handleFromRecord(
   session: BrowserSessionRecord,
   client: SessionClient,
   reused: boolean,
-): BrowserSessionHandle {
+): HostedBrowserSessionHandle {
   return {
+    engine: "hosted",
     sessionId: session.sessionId,
     computerId: session.computerId,
     bootId: session.bootId,
@@ -274,7 +327,7 @@ async function ensureOnComputer(
   // Only the signal: the reserve's inputs are consumed by the caller, so this
   // function cannot accidentally reserve anything.
   args: { signal?: AbortSignal },
-): Promise<BrowserSessionHandle> {
+): Promise<HostedBrowserSessionHandle> {
   const bundleHash = deps.bundleHash();
   const lookupArgs = {
     computerId,
@@ -362,6 +415,7 @@ async function ensureOnComputer(
     const booted = handle;
     handle = undefined; // recorded: the daemon now outlives this call
     return {
+      engine: "hosted",
       sessionId: recorded.sessionId,
       computerId,
       bootId: booted.bootId,

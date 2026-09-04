@@ -5,6 +5,7 @@ import {
   currentLocalPlatform,
   executionTargetLabel,
   isLocalTarget,
+  localPackTarget,
   targetHasHostContainment,
   type HarnessExecutionTarget,
 } from "../targets.js";
@@ -94,5 +95,41 @@ describe("policy versions", () => {
     expect(LOCAL_HARNESS_POLICY_VERSION).not.toBe(
       LOCAL_ISOLATION_POLICY_VERSION,
     );
+  });
+});
+
+describe("pack targets", () => {
+  it("names the five targets the pack build produces", () => {
+    // These strings are one identifier shared by four places: this union, the
+    // build script's PLATFORMS, the release asset name, and the generated
+    // digest table's keys. A rename in one of them and not the rest is a
+    // download that resolves and a digest that never matches.
+    expect(localPackTarget("darwin", "arm64")).toBe("darwin-arm64");
+    expect(localPackTarget("darwin", "x64")).toBe("darwin-x64");
+    expect(localPackTarget("linux", "x64")).toBe("linux-x64");
+    expect(localPackTarget("linux", "arm64")).toBe("linux-arm64");
+    expect(localPackTarget("win32", "x64")).toBe("win32-x64");
+  });
+
+  it("distinguishes the two architectures of one OS", () => {
+    // The reason this type exists. A pack carries `bin/node` and the vendor's
+    // native CLI, so an arm64 Mac and an x64 Mac need different artifacts with
+    // different digests — and a table keyed on `darwin` alone could hold only
+    // one of them, then refuse every install on the other.
+    expect(localPackTarget("darwin", "arm64")).not.toBe(
+      localPackTarget("darwin", "x64"),
+    );
+    expect(localPackTarget("linux", "x64")).not.toBe(
+      localPackTarget("linux", "arm64"),
+    );
+  });
+
+  it("answers null for a machine no pack is built for", () => {
+    // Fail closed: no pack target means `bundle-absent`, the same answer a
+    // missing directory gets, rather than a download that could never verify.
+    expect(localPackTarget("linux", "riscv64")).toBeNull();
+    expect(localPackTarget("win32", "arm64")).toBeNull();
+    expect(localPackTarget("darwin", "ia32")).toBeNull();
+    expect(localPackTarget("freebsd", "x64")).toBeNull();
   });
 });

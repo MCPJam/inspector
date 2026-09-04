@@ -37,7 +37,7 @@
  */
 import {
   attachBrowserSession,
-  type BrowserSessionHandle,
+  type HostedBrowserSessionHandle,
 } from "../browserd/browser-session.js";
 import { liveBrowserSessionDeps } from "../browserd/live-session-deps.js";
 import { convexGetDesktopComputerStatus } from "../../utils/computers/convex-environment-client.js";
@@ -167,7 +167,9 @@ export interface HostedResolveDeps {
   statusOf?: typeof convexGetDesktopComputerStatus;
   /** Test seam for the re-check throttle. */
   now?: () => number;
-  attach?: (args: { computerId: string }) => Promise<BrowserSessionHandle>;
+  attach?: (args: {
+    computerId: string;
+  }) => Promise<HostedBrowserSessionHandle>;
   /** Poll cadence for a re-hydrated runtime; 0 disables (tests). */
   toolPollMs?: number;
   onCommand?: (info: { computerId: string; sessionId: string }) => void;

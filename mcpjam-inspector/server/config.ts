@@ -27,6 +27,18 @@ export const HOSTED_MODE = process.env.VITE_MCPJAM_HOSTED_MODE === "true";
  * is the emergency/managed-install off switch; default is on for local
  * inspectors (the per-user gate is the consent capability, not this flag).
  */
+/**
+ * The local agent BROWSER's server-side stop, separate from the shell's.
+ *
+ * Default ON like the shell (a self-hosted user asked for this by running the
+ * inspector on their own machine), forced off hosted, and independent of
+ * `MCPJAM_LOCAL_COMPUTER_ENABLED` so an operator can disable one capability
+ * without the other — driving a browser and running shell commands are
+ * different amounts of trust.
+ */
+export const LOCAL_BROWSER_ENABLED =
+  !HOSTED_MODE && process.env.MCPJAM_LOCAL_BROWSER_ENABLED !== "false";
+
 export const LOCAL_COMPUTER_ENABLED =
   !HOSTED_MODE && process.env.MCPJAM_LOCAL_COMPUTER_ENABLED !== "false";
 

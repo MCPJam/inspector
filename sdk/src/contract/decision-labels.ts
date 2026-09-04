@@ -198,6 +198,99 @@ export const STAGE_REASON_LABELS = Object.freeze({
 } satisfies Record<StageReason, string>);
 
 /**
+ * The ONE thing a reader is supposed to do next, per stage reason.
+ *
+ * {@link NEXT_ACTION_BY_FAILURE_CATEGORY} below stays, and stays the fallback:
+ * it answers at the coarse bucket, seven categories with one action each, and
+ * a category can only ever name a system to go and look at. A stage reason is
+ * the finest thing the contract records about where the chain stopped, so a
+ * remedy keyed on it can name the actual assertion, schema or recipe field to
+ * open — which is a narrower promise than the category map makes, and the only
+ * reason to keep a second map at all.
+ *
+ * ── Why this one is `Partial` ────────────────────────────────────────────────
+ *
+ * Every other map here is total over its vocabulary on purpose. This one is
+ * not, and the gap is the content. A reason that says nothing about the server
+ * — MCPJam's own provider failure, an unverified egress, a stage that simply
+ * was not measured, an earlier stage having failed, and every passing reason —
+ * has no remedy for the reader to act on, and inventing one would send them
+ * after a system that is not involved. The omission is recorded rather than
+ * implied: {@link STAGE_REASONS_WITHOUT_REMEDY} names exactly those, so a
+ * missing key is a decision somebody made and not one somebody forgot.
+ *
+ * None of these sentences diagnoses. Each says what to go and change, and
+ * where the honest answer is that either side could be the one that moved, it
+ * says both and leaves the choice to the reader — who can see the diff, and
+ * we cannot.
+ */
+export const STAGE_REASON_REMEDIES = Object.freeze({
+  missingToolCall:
+    "if this pull request intentionally renamed or removed the expected tool, update this case's expected tool call in MCPJam so the assertion matches the server; if the tool should still be chosen for this prompt, review its name and description in the tool catalog, then push again",
+  unexpectedToolCall:
+    "decide which side is right: if the extra call is correct behaviour, widen this case's expected tool calls or its match options in MCPJam; if it is not, review the names and descriptions that made the extra tool look applicable",
+  argumentMismatch:
+    "compare the recorded call against the tool's input schema: if this pull request changed the schema, update the case's expected arguments in MCPJam; otherwise review the parameter descriptions that led the model to fill them this way",
+  toolError:
+    "read the error the server returned on the tool result: fix the handler if the arguments were valid, or tighten the input schema so the model cannot send what the handler rejects",
+  protocolError:
+    "the call failed instead of returning a result: read the recorded failure for that call, and its error code where one was captured, to tell a rejection by the server from a connection that broke between the two sides",
+  renderFailed:
+    "read the recorded render status: it names the step that failed — for example no UI resource on the tool result, a widget that never mounted, or a bridge handshake that never completed",
+  predicateFailed:
+    "read the recorded reasons: either this pull request changed the response, or the case asserts something the server no longer promises",
+  connectFailed:
+    "the server was reached and initialize failed there: check the start command in the run recipe and the port the recipe declares",
+  toolsListFailed:
+    "initialize succeeded and listing tools failed: check the server's tools/list handler",
+  setupAborted:
+    "the environment was never prepared, so nothing here is a statement about the server: check the build and start steps in the run recipe",
+  evaluatorError:
+    "the evaluator itself failed, so this case says nothing about the server: check the suite's evaluator configuration",
+  blockedByPolicy:
+    "a policy stopped this run before it could be measured: check the suite's tool policy and the environment it runs against",
+  lifecycleStopped:
+    "the run was stopped mid-flight, so this case reached no verdict: re-run the check",
+  notAuthored:
+    "this case asserts nothing this stage could decide: add an assertion in MCPJam if this stage should be measured",
+  judgeFailed:
+    "read the judge's rationale on the run: either the response stopped satisfying the case's goal, or the goal needs rewording to match what the server now returns",
+  judgePartial:
+    "read the judge's rationale on the run: the response was close to the case's goal but under its threshold, so either the server's answer or the threshold needs to move",
+} satisfies Partial<Record<StageReason, string>>);
+
+/**
+ * The reasons that deliberately carry no remedy.
+ *
+ * The complement of {@link STAGE_REASON_REMEDIES}, written down in the
+ * contract instead of hand-listed inside a test, so the two can be asserted to
+ * PARTITION `STAGE_REASONS` exactly: their union is the whole vocabulary and
+ * their intersection is empty.
+ *
+ * That is the same forcing function the total maps above get from
+ * `satisfies Record<Enum, string>`, kept for the one map that cannot be total.
+ * Adding a reason to the contract breaks the partition until somebody decides
+ * which side it belongs on — a next step for the reader, or an honest nothing
+ * — rather than silently producing a failing case whose remedy line is blank
+ * and whose absence nobody can see.
+ */
+export const STAGE_REASONS_WITHOUT_REMEDY = Object.freeze([
+  "noSpanChannel",
+  "noEvidenceCaptured",
+  "matchVerdictUnavailable",
+  "traceAbsent",
+  "executorEmitsNoSpans",
+  "providerError",
+  "egressUnverified",
+  "earlierStageFailed",
+  "observed",
+  "impliedByLaterEvidence",
+  "judgeObserved",
+  "judgePending",
+  "judgeNotRequested",
+] as const satisfies readonly StageReason[]);
+
+/**
  * Why a v2 run's verdict is what it is.
  *
  * These are the audit trail an `inconclusive` run is explained by, and they are
@@ -376,6 +469,14 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
+  // NOT listed here: B7's `PREDICATE_STAGE`. This registry holds closed
+  // member LISTS, and its consumer walks the OpenAPI spec asserting that any
+  // enum overlapping one of them matches it exactly. `PREDICATE_STAGE` is a
+  // map from predicate kind to stage, so it has no member list to guard —
+  // and its VALUES are already `stages` above. Adding it would have meant
+  // weakening that check to accommodate a shape it was never about. It is
+  // exported from the contract index directly, which is how consumers reach
+  // it.
   // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
   // zod object's SHAPE rather than a `const` array, so its totality test reads
   // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here

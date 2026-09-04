@@ -73,9 +73,10 @@ import {
 } from "./host-compare-selection";
 import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
-  PUBLIC_CAN_I_USE_FIELDS,
+  clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
+  publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
@@ -84,10 +85,7 @@ import {
   fieldMatchesQuery,
   type SupportFilterMode,
 } from "./support-level";
-import {
-  groupHostConfigFields,
-  HOST_CONFIG_FIELDS,
-} from "@/lib/host-config-field-schema";
+import { groupHostConfigFields } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -329,9 +327,15 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
+  // A column of "Not yet tested" answers nothing, so both surfaces hide rows
+  // no published host has measured. The signed-in matrix adds only the
+  // temporarily retained protocol-version row.
   const compareFields = useMemo(
-    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
-    [presetOnly]
+    () =>
+      presetOnly
+        ? publicCaniuseFieldsWithData(presets.subjects)
+        : clientCompareFieldsWithData(presets.subjects),
+    [presetOnly, presets.subjects]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
   // caniuse surface and the hosted app share an origin, so stay on it (localhost)

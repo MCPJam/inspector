@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Context } from "hono";
-import type { BrowserSessionHandle } from "../../services/browserd/browser-session.js";
+import type { HostedBrowserSessionHandle } from "../../services/browserd/browser-session.js";
 import { z } from "zod";
 import "../../types/hono";
 import {
@@ -555,7 +555,7 @@ webmcpInspector.post("/sessions", async (c) => {
 
   let provider;
   /** Set on the hosted path: the reserved daemon, and who it belongs to. */
-  let handle: BrowserSessionHandle | undefined;
+  let handle: HostedBrowserSessionHandle | undefined;
   let ownerId: string | undefined;
   if (webContentsId !== undefined) {
     // Both refusals are 400s that name what the caller got wrong, because both
