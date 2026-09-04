@@ -49,6 +49,7 @@ import type { ModelVisibleMcpToolResults } from "./host-config/types.js";
 import type { HostJson } from "./host-config/public-types.js";
 import {
   extractHostExecutionPolicy,
+  resolveOpenAiCompatCapabilitiesForHostConfig,
   resolveOpenAiCompatForHostConfig,
   type HostExecutionPolicy,
 } from "./host-config/internal.js";
@@ -224,6 +225,16 @@ export class HostRunner implements HostExecutor {
     | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
+  /**
+   * Per-method `window.openai.*` surface the injected shim should expose,
+   * from the host's `apps.compatRuntime.openaiAppsOverrides`. `undefined`
+   * when the host declares none — the injector then omits the field and the
+   * runtime keeps its full-surface default, so snapshots for those hosts are
+   * byte-identical to before this was wired up.
+   */
+  private readonly openAiCompatCapabilities:
+    | Record<string, unknown>
+    | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -326,6 +337,9 @@ export class HostRunner implements HostExecutor {
       (this.hostSnapshot
         ? resolveOpenAiCompatForHostConfig(this.hostSnapshot) === true
         : false);
+    this.openAiCompatCapabilities = this.hostSnapshot
+      ? resolveOpenAiCompatCapabilitiesForHostConfig(this.hostSnapshot)
+      : undefined;
 
     // Parse the model string once to extract provider/model metadata
     try {
@@ -356,8 +370,8 @@ export class HostRunner implements HostExecutor {
       error instanceof Error
         ? `: ${error.message}`
         : error
-          ? `: ${String(error)}`
-          : "";
+        ? `: ${String(error)}`
+        : "";
     console.warn(
       `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${
         suffix || `: ${message}`
@@ -469,6 +483,11 @@ export class HostRunner implements HostExecutor {
           theme: "dark",
           viewMode: "inline",
           viewParams: {},
+          // Omitted when the host declares no overrides, which keeps the
+          // runtime on its full-surface default and the config byte-identical.
+          ...(this.openAiCompatCapabilities
+            ? { capabilities: this.openAiCompatCapabilities }
+            : {}),
         });
       }
       snapshot.injectedOpenAiCompat = this.injectOpenAiCompat;
@@ -831,10 +850,10 @@ export class HostRunner implements HostExecutor {
         abortReason instanceof Error
           ? abortReason.message
           : abortReason != null
-            ? String(abortReason)
-            : error instanceof Error
-              ? error.message
-              : String(error);
+          ? String(abortReason)
+          : error instanceof Error
+          ? error.message
+          : String(error);
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },

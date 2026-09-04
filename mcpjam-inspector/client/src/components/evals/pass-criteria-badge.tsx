@@ -42,6 +42,22 @@ export function PassCriteriaBadge({
     return null;
   }
 
+  // A run held for its judge has FINISHED executing and has NO verdict. Its
+  // `result` is the truthy "pending", so without this branch it fell through
+  // to `passed === false` and rendered "Suite Failed" in red — for a run the
+  // judge may pass ten minutes later. Amber, like running: a status, not a
+  // verdict.
+  if (status === "grading") {
+    return (
+      <span
+        className="inline-flex items-center rounded bg-warning/50 px-1.5 py-0.5 text-[11px] font-medium text-foreground"
+        aria-label="Suite is being graded"
+      >
+        Grading
+      </span>
+    );
+  }
+
   if (variant === "compact") {
     if (cancelled || timedOut) {
       const badgeLabel = timedOut ? "Timed out" : "Cancelled";
