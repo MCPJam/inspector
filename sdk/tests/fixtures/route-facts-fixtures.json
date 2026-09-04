@@ -84,7 +84,8 @@
               }
             ],
             "unexpected": [],
-            "substitutions": []
+            "substitutions": [],
+            "gradeableTrials": 1
           }
         }
       ]
@@ -192,7 +193,9 @@
               "exclusions": {}
             }
           },
-          "mismatch": { "state": "notMeasured" }
+          "mismatch": {
+            "state": "notMeasured"
+          }
         }
       ]
     },
@@ -211,7 +214,9 @@
       "updatedAt": 1,
       "totalTrials": 2,
       "includedTrials": 2,
-      "exclusions": { "cancelled": 1 },
+      "exclusions": {
+        "cancelled": 1
+      },
       "cases": []
     }
   ],

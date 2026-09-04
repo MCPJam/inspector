@@ -493,6 +493,13 @@ export const evalRouteMismatchFactsSchema = z.discriminatedUnion("state", [
   z
     .object({
       state: z.literal("measured"),
+      /**
+       * The denominator every row below is counted over: included trials
+       * that are not negative tests. Carried here so a reader never borrows
+       * the route rollup's `includedTrials`, which still counts negative
+       * trials, for a "called in n of N".
+       */
+      gradeableTrials: z.number().int().min(1),
       expected: z.array(expectedMismatchRowSchema).max(MAX_MISMATCH_TOOLS),
       unexpected: z.array(unexpectedMismatchRowSchema).max(MAX_MISMATCH_TOOLS),
       substitutions: z.array(substitutionRowSchema).max(MAX_MISMATCH_TOOLS),
@@ -510,7 +517,9 @@ export const evalRouteMismatchFactsSchema = z.discriminatedUnion("state", [
     })
     .strict(),
 ]);
-export type EvalRouteMismatchFacts = z.infer<typeof evalRouteMismatchFactsSchema>;
+export type EvalRouteMismatchFacts = z.infer<
+  typeof evalRouteMismatchFactsSchema
+>;
 
 const caseTruncationSchema = z
   .object({
@@ -574,7 +583,10 @@ function addNestedRateIssues(
 
 export const evalRunRouteFactsSchema =
   evalRunRouteFactsStructuralSchema.superRefine((row, ctx) => {
-    if (row.includedTrials + sumExclusions(row.exclusions) !== row.totalTrials) {
+    if (
+      row.includedTrials + sumExclusions(row.exclusions) !==
+      row.totalTrials
+    ) {
       ctx.addIssue({
         code: "custom",
         path: ["includedTrials"],
@@ -594,9 +606,44 @@ export const evalRunRouteFactsSchema =
       });
     }
     for (const [index, caseRow] of row.cases.entries()) {
-      addNestedRateIssues(ctx, ["cases", index, "routes", "tags", "noToolCalled"], caseRow.routes.tags.noToolCalled);
-      addNestedRateIssues(ctx, ["cases", index, "routes", "tags", "retried"], caseRow.routes.tags.retried);
-      addNestedRateIssues(ctx, ["cases", index, "routes", "tags", "looping"], caseRow.routes.tags.looping);
+      const caseExclusions = sumExclusions(caseRow.routes.exclusions);
+      if (
+        caseRow.routes.includedTrials + caseExclusions !==
+        caseRow.routes.totalTrials
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cases", index, "routes", "includedTrials"],
+          message:
+            `includedTrials ${caseRow.routes.includedTrials} plus exclusions ` +
+            `${caseExclusions} must equal totalTrials ${caseRow.routes.totalTrials}`,
+        });
+      }
+      if (
+        caseRow.mismatch.state === "measured" &&
+        caseRow.mismatch.gradeableTrials > caseRow.routes.includedTrials
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["cases", index, "mismatch", "gradeableTrials"],
+          message: "gradeableTrials cannot exceed the case's includedTrials",
+        });
+      }
+      addNestedRateIssues(
+        ctx,
+        ["cases", index, "routes", "tags", "noToolCalled"],
+        caseRow.routes.tags.noToolCalled
+      );
+      addNestedRateIssues(
+        ctx,
+        ["cases", index, "routes", "tags", "retried"],
+        caseRow.routes.tags.retried
+      );
+      addNestedRateIssues(
+        ctx,
+        ["cases", index, "routes", "tags", "looping"],
+        caseRow.routes.tags.looping
+      );
       addNestedRateIssues(
         ctx,
         ["cases", index, "routes", "endedWithQuestion"],
@@ -787,7 +834,10 @@ function mismatchClassified(
     string,
     { calledIn: number; calledInFailed: number }
   >();
-  const substitutions = new Map<string, { expected: string; observed: string; trials: number }>();
+  const substitutions = new Map<
+    string,
+    { expected: string; observed: string; trials: number }
+  >();
 
   for (const row of gradeable) {
     const expectedSet = new Set(row.expectedNames);
@@ -810,7 +860,10 @@ function mismatchClassified(
     }
 
     for (const tool of extra) {
-      const current = unexpected.get(tool) ?? { calledIn: 0, calledInFailed: 0 };
+      const current = unexpected.get(tool) ?? {
+        calledIn: 0,
+        calledInFailed: 0,
+      };
       current.calledIn += 1;
       if (!row.passed) current.calledInFailed += 1;
       unexpected.set(tool, current);
@@ -832,16 +885,37 @@ function mismatchClassified(
     }
   }
 
+  // Count-desc then name, like routes and `loopedOn`: when the cap drops
+  // rows, the ones that survive are the ones most trials touched, not the
+  // ones whose names sort first.
   const expectedRows = [...expected.entries()]
     .map(([tool, counts]) => ({ tool, ...counts }))
-    .sort((a, b) => (a.tool < b.tool ? -1 : a.tool > b.tool ? 1 : 0));
+    .sort((a, b) =>
+      a.notCalledIn !== b.notCalledIn
+        ? b.notCalledIn - a.notCalledIn
+        : a.expectedIn !== b.expectedIn
+          ? b.expectedIn - a.expectedIn
+          : a.tool < b.tool
+            ? -1
+            : a.tool > b.tool
+              ? 1
+              : 0
+    );
   const unexpectedRows = [...unexpected.entries()]
     .map(([tool, counts]) => ({
       tool,
       ...counts,
       catalog: catalogMembership(tool, catalog),
     }))
-    .sort((a, b) => (a.tool < b.tool ? -1 : a.tool > b.tool ? 1 : 0));
+    .sort((a, b) =>
+      a.calledIn !== b.calledIn
+        ? b.calledIn - a.calledIn
+        : a.tool < b.tool
+          ? -1
+          : a.tool > b.tool
+            ? 1
+            : 0
+    );
   const substitutionRows = [...substitutions.values()].sort((a, b) => {
     if (a.expected !== b.expected) {
       return a.expected < b.expected ? -1 : 1;
@@ -856,6 +930,7 @@ function mismatchClassified(
 
   return {
     state: "measured",
+    gradeableTrials: gradeable.length,
     expected: expectedRows.slice(0, MAX_MISMATCH_TOOLS),
     unexpected: unexpectedRows.slice(0, MAX_MISMATCH_TOOLS),
     substitutions: substitutionRows.slice(0, MAX_MISMATCH_TOOLS),
@@ -870,7 +945,9 @@ function mismatchClassified(
  * both call. A hand-written Convex mirror must match this output
  * byte-for-byte on the golden fixture.
  */
-export function buildEvalRunRouteFacts(input: RouteFactsInput): EvalRunRouteFacts {
+export function buildEvalRunRouteFacts(
+  input: RouteFactsInput
+): EvalRunRouteFacts {
   const classified = classifyAll(input.trials);
   const runExclusions: EvalTrialExclusions = {};
   let includedTrials = 0;
@@ -899,7 +976,16 @@ export function buildEvalRunRouteFacts(input: RouteFactsInput): EvalRunRouteFact
 
   const cases: EvalRunRouteFactsCase[] = retainedKeys.map((caseVariantKey) => {
     const rows = byCase.get(caseVariantKey)!;
-    const first = rows[0]!.trial;
+    // Every other field is sorted before it is read; the case's own labels
+    // must be too, or a shuffled input could pick a different trial's
+    // `caseKey` and break the byte-stable output.
+    const first = [...rows].sort((a, b) =>
+      a.trial.trialKey < b.trial.trialKey
+        ? -1
+        : a.trial.trialKey > b.trial.trialKey
+          ? 1
+          : 0
+    )[0]!.trial;
     return {
       caseVariantKey,
       ...(first.caseKey ? { caseKey: first.caseKey } : {}),

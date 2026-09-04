@@ -121,6 +121,7 @@
       },
       "mismatch": {
         "state": "measured",
+        "gradeableTrials": 6,
         "expected": [
           {
             "tool": "tool_a",
@@ -208,6 +209,7 @@
       },
       "mismatch": {
         "state": "measured",
+        "gradeableTrials": 1,
         "expected": [
           {
             "tool": "tool_a",

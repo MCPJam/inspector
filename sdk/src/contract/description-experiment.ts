@@ -45,6 +45,7 @@
 import { z } from "zod";
 import {
   DEFAULT_MIN_SAMPLE_SIZE,
+  DEFAULT_MIN_EFFECT_SIZE,
   newcombeDifferenceInterval,
 } from "../compare-stats.js";
 import { EVAL_RUN_MEASUREMENT_UNITS } from "./decision-summary.js";
@@ -223,6 +224,15 @@ const comparisonBlockSchema = z
     interval: descriptionExperimentIntervalSchema.nullable(),
     verdict: descriptionExperimentVerdictSchema,
     minSampleSize: z.number().int().min(1),
+    /**
+     * The smallest difference the verdict will call a difference, in the
+     * same fraction-of-trials unit as the interval. A statistically
+     * significant half-point is still `no_difference`: the gate helper in
+     * `compare-stats.ts` applies the same floor, and a report that could
+     * call "improved" what the gate would not call "regressed" would give
+     * the two words two meanings.
+     */
+    minEffectSize: z.number().min(0).max(1),
   })
   .strict();
 
@@ -279,16 +289,62 @@ export type DescriptionExperimentRegression = z.infer<
   typeof descriptionExperimentRegressionSchema
 >;
 
+/**
+ * The variables an experiment must hold still, named so a difference can be
+ * reported as a difference. Order is normative for `differences`.
+ */
+export const DESCRIPTION_EXPERIMENT_FROZEN_FIELDS = [
+  "model",
+  "engine",
+  "hostConfigId",
+  "toolSnapshotHash",
+  "judgeConfigHash",
+] as const;
+export type DescriptionExperimentFrozenField =
+  (typeof DESCRIPTION_EXPERIMENT_FROZEN_FIELDS)[number];
+export const descriptionExperimentFrozenFieldSchema = z.enum(
+  DESCRIPTION_EXPERIMENT_FROZEN_FIELDS
+);
+
+/**
+ * What both arms shared. A scalar is present only when the two arms agree
+ * on it; `model` is the sorted union of both arms' models so a divergence
+ * is visible in the list itself. `equal` is the builder's own finding, and
+ * `differences` names every field that disagreed — the report never hides
+ * a mismatch by dropping the field, because "no host recorded" and "the two
+ * arms ran on different hosts" are different facts.
+ */
 export const descriptionExperimentFrozenSchema = z
   .object({
     model: z.array(z.string().min(1)),
-    engine: z.string().min(1),
+    engine: z.string().min(1).optional(),
     hostConfigId: z.string().min(1).optional(),
     toolSnapshotHash: z.string().min(1).optional(),
     judgeConfigHash: z.string().min(1).optional(),
     environmentReset: descriptionExperimentEnvironmentResetSchema,
+    equal: z.boolean(),
+    differences: z
+      .array(descriptionExperimentFrozenFieldSchema)
+      .min(1)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((frozen, ctx) => {
+    if (frozen.equal && frozen.differences !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["differences"],
+        message: "equal arms carry no differences",
+      });
+    }
+    if (!frozen.equal && frozen.differences === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["differences"],
+        message: "unequal arms must name what differed",
+      });
+    }
+  });
 export type DescriptionExperimentFrozen = z.infer<
   typeof descriptionExperimentFrozenSchema
 >;
@@ -342,8 +398,16 @@ function addArmSampleIssues(
 
 export const descriptionExperimentReportSchema =
   descriptionExperimentReportStructuralSchema.superRefine((row, ctx) => {
-    addArmSampleIssues(ctx, ["primary", "pooled", "original"], row.primary.pooled.original);
-    addArmSampleIssues(ctx, ["primary", "pooled", "rewrite"], row.primary.pooled.rewrite);
+    addArmSampleIssues(
+      ctx,
+      ["primary", "pooled", "original"],
+      row.primary.pooled.original
+    );
+    addArmSampleIssues(
+      ctx,
+      ["primary", "pooled", "rewrite"],
+      row.primary.pooled.rewrite
+    );
     for (const [index, perCase] of row.primary.perCase.entries()) {
       addArmSampleIssues(
         ctx,
@@ -363,8 +427,7 @@ export const descriptionExperimentReportSchema =
       ctx.addIssue({
         code: "custom",
         path: ["primary", "pooled", "interval"],
-        message:
-          "interval must be null when either arm is below minSampleSize",
+        message: "interval must be null when either arm is below minSampleSize",
       });
     }
     if (belowMinimum && row.primary.pooled.verdict !== "insufficient_data") {
@@ -398,10 +461,25 @@ export type DescriptionExperimentTrialInput = {
       applied?: boolean;
     };
   };
+  /**
+   * Whether this trial ran on its own fresh computer. Absent means unknown,
+   * which counts as not reset: `controlled` is claimed only from evidence.
+   */
+  sandboxed?: boolean;
+};
+
+/** One arm's frozen variables, as its run recorded them. */
+export type DescriptionExperimentArmFrozen = {
+  model: readonly string[];
+  engine?: string;
+  hostConfigId?: string;
+  toolSnapshotHash?: string;
+  judgeConfigHash?: string;
 };
 
 export type DescriptionExperimentArmInput = {
   trials: readonly DescriptionExperimentTrialInput[];
+  frozen: DescriptionExperimentArmFrozen;
 };
 
 export type DescriptionExperimentCaseFlip = {
@@ -417,8 +495,8 @@ export type DescriptionExperimentReportInput = {
   rewrite: DescriptionExperimentArmInput;
   otherCaseFlips?: readonly DescriptionExperimentCaseFlip[];
   minSampleSize?: number;
+  minEffectSize?: number;
   outcomeSource?: DescriptionExperimentOutcomeSource;
-  frozen: DescriptionExperimentFrozen;
   assignment: DescriptionExperimentAssignment;
 };
 
@@ -452,7 +530,10 @@ export function classifyDescriptionExperimentTrial(
     return "notTerminal";
   }
   if (trial.isNegativeTest === true) return "negativeTest";
-  if (arm === "rewrite" && trial.metadata?.descriptionExperiment?.applied !== true) {
+  if (
+    arm === "rewrite" &&
+    trial.metadata?.descriptionExperiment?.applied !== true
+  ) {
     return "overrideNotApplied";
   }
   return undefined;
@@ -518,7 +599,8 @@ function toPoints(value: number): number {
 function comparisonFromSamples(
   original: DescriptionExperimentArmSample,
   rewrite: DescriptionExperimentArmSample,
-  minSampleSize: number
+  minSampleSize: number,
+  minEffectSize: number
 ): Omit<DescriptionExperimentPooled, never> {
   const belowMinimum =
     original.eligible < minSampleSize || rewrite.eligible < minSampleSize;
@@ -529,6 +611,7 @@ function comparisonFromSamples(
       interval: null,
       verdict: "insufficient_data",
       minSampleSize,
+      minEffectSize,
     };
   }
 
@@ -542,11 +625,14 @@ function comparisonFromSamples(
     upperPoints: toPoints(interval.upper),
   };
 
+  // Both directions need the interval to exclude zero AND the point
+  // estimate to clear the effect floor — the same two tests
+  // `assessPassRateRegression` applies to the negative direction.
   let verdict: DescriptionExperimentVerdict;
-  if (interval.delta > 0) {
-    verdict = interval.lower > 0 ? "improved" : "no_difference";
-  } else if (interval.delta < 0) {
-    verdict = interval.upper < 0 ? "regressed" : "no_difference";
+  if (interval.delta >= minEffectSize && interval.lower > 0) {
+    verdict = "improved";
+  } else if (interval.delta <= -minEffectSize && interval.upper < 0) {
+    verdict = "regressed";
   } else {
     verdict = "no_difference";
   }
@@ -557,6 +643,7 @@ function comparisonFromSamples(
     interval: points,
     verdict,
     minSampleSize,
+    minEffectSize,
   };
 }
 
@@ -629,23 +716,100 @@ function collectSubstitutions(
     const key = substitutionKey(expectedName, observedName);
     const existing = out.get(key);
     if (existing) existing.count += 1;
-    else out.set(key, { expected: expectedName, observed: observedName, count: 1 });
+    else
+      out.set(key, {
+        expected: expectedName,
+        observed: observedName,
+        count: 1,
+      });
   }
   return out;
 }
 
+function sortedUnique(values: readonly string[]): string[] {
+  return [...new Set(values)].sort((left, right) =>
+    left < right ? -1 : left > right ? 1 : 0
+  );
+}
+
+function sameList(left: readonly string[], right: readonly string[]): boolean {
+  const a = sortedUnique(left);
+  const b = sortedUnique(right);
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+/**
+ * Fold the two arms' frozen variables into the report's. A field is carried
+ * only when both arms agree; a disagreement is named in `differences`.
+ */
+function frozenFromArms(
+  original: DescriptionExperimentArmFrozen,
+  rewrite: DescriptionExperimentArmFrozen,
+  environmentReset: DescriptionExperimentEnvironmentReset
+): DescriptionExperimentFrozen {
+  const differences: DescriptionExperimentFrozenField[] = [];
+  if (!sameList(original.model, rewrite.model)) differences.push("model");
+  const scalar = (
+    field: Exclude<DescriptionExperimentFrozenField, "model">
+  ): string | undefined => {
+    const left = original[field];
+    const right = rewrite[field];
+    if (left !== right) {
+      differences.push(field);
+      return undefined;
+    }
+    return left;
+  };
+  const engine = scalar("engine");
+  const hostConfigId = scalar("hostConfigId");
+  const toolSnapshotHash = scalar("toolSnapshotHash");
+  const judgeConfigHash = scalar("judgeConfigHash");
+  const ordered = DESCRIPTION_EXPERIMENT_FROZEN_FIELDS.filter((field) =>
+    differences.includes(field)
+  );
+  return {
+    model: sortedUnique([...original.model, ...rewrite.model]),
+    ...(engine !== undefined ? { engine } : {}),
+    ...(hostConfigId !== undefined ? { hostConfigId } : {}),
+    ...(toolSnapshotHash !== undefined ? { toolSnapshotHash } : {}),
+    ...(judgeConfigHash !== undefined ? { judgeConfigHash } : {}),
+    environmentReset,
+    equal: ordered.length === 0,
+    ...(ordered.length > 0 ? { differences: ordered } : {}),
+  };
+}
+
+/**
+ * `controlled` is earned three ways at once: every eligible trial in BOTH
+ * arms ran on its own fresh computer, the arms ran in the same window, and
+ * nothing that was supposed to be frozen moved. Any one missing is
+ * `reproducible` — pinned and repeatable, but not an intervention on one
+ * variable. Even `controlled` says nothing about the upstream server's own
+ * state; the copy carries that caveat.
+ */
 function deriveEvidenceLabel(
   frozen: DescriptionExperimentFrozen,
   assignment: DescriptionExperimentAssignment
 ): DescriptionExperimentEvidenceLabel {
   return frozen.environmentReset === "per_trial_sandbox" &&
-    assignment.overlapVerified
+    assignment.overlapVerified &&
+    frozen.equal
     ? "controlled"
     : "reproducible";
 }
 
+function environmentResetFromTrials(
+  eligible: readonly ClassifiedTrial[]
+): DescriptionExperimentEnvironmentReset {
+  return eligible.length > 0 &&
+    eligible.every((row) => row.trial.sandboxed === true)
+    ? "per_trial_sandbox"
+    : "none";
+}
+
 function regressionFromFlips(
-  flips: readonly DescriptionExperimentCaseFlip[] | undefined
+  flips: readonly DescriptionExperimentCaseFlip[] | undefined,
+  affected: ReadonlySet<string>
 ): DescriptionExperimentRegression {
   if (flips === undefined) {
     return {
@@ -656,18 +820,28 @@ function regressionFromFlips(
       reason: "other cases were not replayed with this experiment",
     };
   }
-  const regressed = [...flips]
+  // The affected cases are the experiment's SUBJECT; a flip there is the
+  // primary result, not a regression elsewhere.
+  const others = flips.filter((flip) => !affected.has(flip.aggregationKey));
+  if (others.length === 0) {
+    return {
+      checked: true,
+      otherCases: 0,
+      regressed: [],
+      status: "non_gateable",
+      reason: "no other cases were replayed with this experiment",
+    };
+  }
+  const regressed = [...others]
     .filter(
       (flip) =>
         flip.originalStatus === "passed" && flip.rewriteStatus !== "passed"
     )
     .map((flip) => flip.aggregationKey)
-    .sort((left, right) =>
-      left < right ? -1 : left > right ? 1 : 0
-    );
+    .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
   return {
     checked: true,
-    otherCases: flips.length,
+    otherCases: others.length,
     regressed,
     status: regressed.length === 0 ? "passed" : "failed",
   };
@@ -683,6 +857,7 @@ export function buildDescriptionExperimentReport(
   input: DescriptionExperimentReportInput
 ): DescriptionExperimentReport {
   const minSampleSize = input.minSampleSize ?? DEFAULT_MIN_SAMPLE_SIZE;
+  const minEffectSize = input.minEffectSize ?? DEFAULT_MIN_EFFECT_SIZE;
   const outcomeSource = input.outcomeSource ?? "deterministic";
   const affected = new Set(input.affectedAggregationKeys);
 
@@ -699,7 +874,8 @@ export function buildDescriptionExperimentReport(
   const pooled = comparisonFromSamples(
     sampleFromClassified(originalAffected),
     sampleFromClassified(rewriteAffected),
-    minSampleSize
+    minSampleSize,
+    minEffectSize
   );
 
   const keys = [...affected].sort((left, right) =>
@@ -707,14 +883,18 @@ export function buildDescriptionExperimentReport(
   );
   const perCase = keys.map((aggregationKey) => {
     const original = sampleFromClassified(
-      originalAffected.filter((row) => row.trial.aggregationKey === aggregationKey)
+      originalAffected.filter(
+        (row) => row.trial.aggregationKey === aggregationKey
+      )
     );
     const rewrite = sampleFromClassified(
-      rewriteAffected.filter((row) => row.trial.aggregationKey === aggregationKey)
+      rewriteAffected.filter(
+        (row) => row.trial.aggregationKey === aggregationKey
+      )
     );
     return {
       aggregationKey,
-      ...comparisonFromSamples(original, rewrite, minSampleSize),
+      ...comparisonFromSamples(original, rewrite, minSampleSize, minEffectSize),
     };
   });
 
@@ -746,6 +926,16 @@ export function buildDescriptionExperimentReport(
                 : 0;
           });
 
+  const environmentReset = environmentResetFromTrials([
+    ...originalAll.filter((row) => !row.exclusion),
+    ...rewriteAll.filter((row) => !row.exclusion),
+  ]);
+  const frozen = frozenFromArms(
+    input.original.frozen,
+    input.rewrite.frozen,
+    environmentReset
+  );
+
   const report: DescriptionExperimentReport = {
     schemaVersion: DESCRIPTION_EXPERIMENT_SCHEMA_VERSION,
     toolName: input.toolName,
@@ -762,10 +952,10 @@ export function buildDescriptionExperimentReport(
       },
       ...(substitutions ? { substitutions } : {}),
     },
-    regression: regressionFromFlips(input.otherCaseFlips),
-    frozen: input.frozen,
+    regression: regressionFromFlips(input.otherCaseFlips, affected),
+    frozen,
     assignment: input.assignment,
-    evidenceLabel: deriveEvidenceLabel(input.frozen, input.assignment),
+    evidenceLabel: deriveEvidenceLabel(frozen, input.assignment),
     reportOnly: true,
   };
 
@@ -829,7 +1019,10 @@ export function diffDescriptionWords(
       tokens.push({ type: "eq", text: left[i - 1]! });
       i -= 1;
       j -= 1;
-    } else if (j > 0 && (i === 0 || (table[i]![j - 1] ?? 0) >= (table[i - 1]![j] ?? 0))) {
+    } else if (
+      j > 0 &&
+      (i === 0 || (table[i]![j - 1] ?? 0) >= (table[i - 1]![j] ?? 0))
+    ) {
       tokens.push({ type: "add", text: right[j - 1]! });
       j -= 1;
     } else {
@@ -840,8 +1033,12 @@ export function diffDescriptionWords(
   tokens.reverse();
 
   return {
-    added: tokens.filter((token) => token.type === "add").map((token) => token.text),
-    removed: tokens.filter((token) => token.type === "del").map((token) => token.text),
+    added: tokens
+      .filter((token) => token.type === "add")
+      .map((token) => token.text),
+    removed: tokens
+      .filter((token) => token.type === "del")
+      .map((token) => token.text),
     tokens,
   };
 }

@@ -28,7 +28,8 @@
             "upperPoints": 42.0536441641
           },
           "verdict": "no_difference",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": [
           {
@@ -51,7 +52,8 @@
               "upperPoints": 42.0536441641
             },
             "verdict": "no_difference",
-            "minSampleSize": 5
+            "minSampleSize": 5,
+            "minEffectSize": 0.01
           }
         ]
       },
@@ -70,7 +72,8 @@
       "frozen": {
         "model": ["anthropic/claude-haiku-4.5"],
         "engine": "emulated",
-        "environmentReset": "none"
+        "environmentReset": "none",
+        "equal": true
       },
       "assignment": {
         "method": "concurrent_two_run",
@@ -90,18 +93,48 @@
       "primary": {
         "outcomeSource": "deterministic",
         "pooled": {
-          "original": { "eligible": 5, "passed": 3, "failed": 2, "exclusions": {} },
-          "rewrite": { "eligible": 5, "passed": 4, "failed": 1, "exclusions": {} },
+          "original": {
+            "eligible": 5,
+            "passed": 3,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 4,
+            "failed": 1,
+            "exclusions": {}
+          },
           "interval": null,
           "verdict": "insufficient_data",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": []
       },
-      "secondary": { "expectedToolNotCalled": { "original": 0, "rewrite": 0 } },
-      "regression": { "checked": false, "otherCases": 0, "regressed": [], "status": "non_gateable", "reason": "x" },
-      "frozen": { "model": ["m"], "engine": "emulated", "environmentReset": "none" },
-      "assignment": { "method": "concurrent_two_run", "overlapVerified": false },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": false,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "non_gateable",
+        "reason": "x"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
       "evidenceLabel": "reproducible",
       "reportOnly": true,
       "extra": true
@@ -115,18 +148,48 @@
       "primary": {
         "outcomeSource": "deterministic",
         "pooled": {
-          "original": { "eligible": 5, "passed": 3, "failed": 2, "exclusions": {} },
-          "rewrite": { "eligible": 5, "passed": 4, "failed": 1, "exclusions": {} },
+          "original": {
+            "eligible": 5,
+            "passed": 3,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 4,
+            "failed": 1,
+            "exclusions": {}
+          },
           "interval": null,
           "verdict": "insufficient_data",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": []
       },
-      "secondary": { "expectedToolNotCalled": { "original": 0, "rewrite": 0 } },
-      "regression": { "checked": false, "otherCases": 0, "regressed": [], "status": "non_gateable", "reason": "x" },
-      "frozen": { "model": ["m"], "engine": "emulated", "environmentReset": "none" },
-      "assignment": { "method": "concurrent_two_run", "overlapVerified": false },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": false,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "non_gateable",
+        "reason": "x"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
       "evidenceLabel": "reproducible",
       "reportOnly": false
     },
@@ -139,18 +202,53 @@
       "primary": {
         "outcomeSource": "deterministic",
         "pooled": {
-          "original": { "eligible": 5, "passed": 5, "failed": 0, "exclusions": { "skipped": 1 } },
-          "rewrite": { "eligible": 5, "passed": 5, "failed": 0, "exclusions": {} },
-          "interval": { "deltaPoints": 0, "lowerPoints": -1, "upperPoints": 1 },
+          "original": {
+            "eligible": 5,
+            "passed": 5,
+            "failed": 0,
+            "exclusions": {
+              "skipped": 1
+            }
+          },
+          "rewrite": {
+            "eligible": 5,
+            "passed": 5,
+            "failed": 0,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 0,
+            "lowerPoints": -1,
+            "upperPoints": 1
+          },
           "verdict": "no_difference",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": []
       },
-      "secondary": { "expectedToolNotCalled": { "original": 0, "rewrite": 0 } },
-      "regression": { "checked": true, "otherCases": 0, "regressed": [], "status": "passed" },
-      "frozen": { "model": ["m"], "engine": "emulated", "environmentReset": "none" },
-      "assignment": { "method": "concurrent_two_run", "overlapVerified": false },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
       "evidenceLabel": "reproducible",
       "reportOnly": true
     },
@@ -163,18 +261,51 @@
       "primary": {
         "outcomeSource": "deterministic",
         "pooled": {
-          "original": { "eligible": 9, "passed": 8, "failed": 2, "exclusions": {} },
-          "rewrite": { "eligible": 10, "passed": 9, "failed": 1, "exclusions": {} },
-          "interval": { "deltaPoints": 10, "lowerPoints": -20, "upperPoints": 40 },
+          "original": {
+            "eligible": 9,
+            "passed": 8,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 10,
+            "passed": 9,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 10,
+            "lowerPoints": -20,
+            "upperPoints": 40
+          },
           "verdict": "no_difference",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": []
       },
-      "secondary": { "expectedToolNotCalled": { "original": 0, "rewrite": 0 } },
-      "regression": { "checked": true, "otherCases": 0, "regressed": [], "status": "passed" },
-      "frozen": { "model": ["m"], "engine": "emulated", "environmentReset": "none" },
-      "assignment": { "method": "concurrent_two_run", "overlapVerified": false },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
       "evidenceLabel": "reproducible",
       "reportOnly": true
     },
@@ -187,18 +318,51 @@
       "primary": {
         "outcomeSource": "deterministic",
         "pooled": {
-          "original": { "eligible": 3, "passed": 1, "failed": 2, "exclusions": {} },
-          "rewrite": { "eligible": 3, "passed": 2, "failed": 1, "exclusions": {} },
-          "interval": { "deltaPoints": 33, "lowerPoints": -20, "upperPoints": 70 },
+          "original": {
+            "eligible": 3,
+            "passed": 1,
+            "failed": 2,
+            "exclusions": {}
+          },
+          "rewrite": {
+            "eligible": 3,
+            "passed": 2,
+            "failed": 1,
+            "exclusions": {}
+          },
+          "interval": {
+            "deltaPoints": 33,
+            "lowerPoints": -20,
+            "upperPoints": 70
+          },
           "verdict": "insufficient_data",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": []
       },
-      "secondary": { "expectedToolNotCalled": { "original": 0, "rewrite": 0 } },
-      "regression": { "checked": true, "otherCases": 0, "regressed": [], "status": "passed" },
-      "frozen": { "model": ["m"], "engine": "emulated", "environmentReset": "none" },
-      "assignment": { "method": "concurrent_two_run", "overlapVerified": false },
+      "secondary": {
+        "expectedToolNotCalled": {
+          "original": 0,
+          "rewrite": 0
+        }
+      },
+      "regression": {
+        "checked": true,
+        "otherCases": 0,
+        "regressed": [],
+        "status": "passed"
+      },
+      "frozen": {
+        "model": ["m"],
+        "engine": "emulated",
+        "environmentReset": "none",
+        "equal": true
+      },
+      "assignment": {
+        "method": "concurrent_two_run",
+        "overlapVerified": false
+      },
       "evidenceLabel": "reproducible",
       "reportOnly": true
     }
@@ -230,7 +394,8 @@
             "upperPoints": 42.0536441641
           },
           "verdict": "no_difference",
-          "minSampleSize": 5
+          "minSampleSize": 5,
+          "minEffectSize": 0.01
         },
         "perCase": [
           {
@@ -253,7 +418,8 @@
               "upperPoints": 42.0536441641
             },
             "verdict": "no_difference",
-            "minSampleSize": 5
+            "minSampleSize": 5,
+            "minEffectSize": 0.01
           }
         ]
       },
@@ -272,7 +438,8 @@
       "frozen": {
         "model": ["anthropic/claude-haiku-4.5"],
         "engine": "emulated",
-        "environmentReset": "none"
+        "environmentReset": "none",
+        "equal": true
       },
       "assignment": {
         "method": "concurrent_two_run",

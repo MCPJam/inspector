@@ -26,8 +26,8 @@ import {
   isDescriptionExperimentArm,
   isDescriptionExperimentEvidenceLabel,
   isDescriptionExperimentExclusionReason,
+  type DescriptionExperimentArmFrozen,
   type DescriptionExperimentArmInput,
-  type DescriptionExperimentFrozen,
   type DescriptionExperimentReportInput,
   type DescriptionExperimentTrialInput,
 } from "../src/contract/index.js";
@@ -98,27 +98,38 @@ const nTrials = (
     })
   );
 
-const frozen = (
-  over: Partial<DescriptionExperimentFrozen> = {}
-): DescriptionExperimentFrozen => ({
+const armFrozen = (
+  over: Partial<DescriptionExperimentArmFrozen> = {}
+): DescriptionExperimentArmFrozen => ({
   model: ["anthropic/claude-haiku-4.5"],
   engine: "emulated",
-  environmentReset: "none",
   ...over,
 });
 
+/** An arm with the default frozen variables; `frozen` overrides per arm. */
+const arm = (
+  trials: DescriptionExperimentTrialInput[],
+  frozen: Partial<DescriptionExperimentArmFrozen> = {}
+): DescriptionExperimentArmInput => ({ trials, frozen: armFrozen(frozen) });
+
 const build = (
   over: Partial<DescriptionExperimentReportInput> & {
-    original: DescriptionExperimentArmInput;
-    rewrite: DescriptionExperimentArmInput;
+    original:
+      | DescriptionExperimentArmInput
+      | { trials: DescriptionExperimentTrialInput[] };
+    rewrite:
+      | DescriptionExperimentArmInput
+      | { trials: DescriptionExperimentTrialInput[] };
   }
 ) =>
   buildDescriptionExperimentReport({
     toolName: "tool_a",
     affectedAggregationKeys: ["case_a\u0000"],
     assignment: { method: "concurrent_two_run", overlapVerified: false },
-    frozen: frozen(),
     ...over,
+    original:
+      "frozen" in over.original ? over.original : arm(over.original.trials),
+    rewrite: "frozen" in over.rewrite ? over.rewrite : arm(over.rewrite.trials),
   });
 
 describe("closed vocabularies", () => {
@@ -252,7 +263,9 @@ describe("buildDescriptionExperimentReport", () => {
       upperPoints: expected.upper * 100,
     });
     expect(report.primary.pooled.interval!.lowerPoints).toBeGreaterThan(0);
-    expect(report.primary.pooled.interval!.upperPoints).toBeLessThanOrEqual(100);
+    expect(report.primary.pooled.interval!.upperPoints).toBeLessThanOrEqual(
+      100
+    );
     expect(report.primary.pooled.verdict).toBe("improved");
   });
 
@@ -301,36 +314,100 @@ describe("buildDescriptionExperimentReport", () => {
     expect(report.regression.reason).toMatch(/not replayed/);
   });
 
-  test("evidenceLabel is controlled only with sandbox reset AND overlap", () => {
-    const reproducible = build({
-      original: { trials: nTrials(5, "passed", "o") },
-      rewrite: { trials: nTrials(5, "passed", "r") },
-      frozen: frozen({ environmentReset: "per_trial_sandbox" }),
+  test("evidenceLabel is controlled only with sandbox reset AND overlap AND equal frozen variables", () => {
+    const sandboxed = (n: number, prefix: string) =>
+      nTrials(n, "passed", prefix, { sandboxed: true });
+
+    const noOverlap = build({
+      original: { trials: sandboxed(5, "o") },
+      rewrite: { trials: sandboxed(5, "r") },
       assignment: { method: "concurrent_two_run", overlapVerified: false },
     });
-    expect(reproducible.evidenceLabel).toBe("reproducible");
+    expect(noOverlap.frozen.environmentReset).toBe("per_trial_sandbox");
+    expect(noOverlap.evidenceLabel).toBe("reproducible");
 
-    const alsoReproducible = build({
-      original: { trials: nTrials(5, "passed", "o") },
-      rewrite: { trials: nTrials(5, "passed", "r") },
-      frozen: frozen({ environmentReset: "none" }),
+    const oneTrialNotSandboxed = build({
+      original: { trials: sandboxed(5, "o") },
+      rewrite: {
+        trials: sandboxed(4, "r").concat(nTrials(1, "passed", "rx")),
+      },
       assignment: { method: "concurrent_two_run", overlapVerified: true },
     });
-    expect(alsoReproducible.evidenceLabel).toBe("reproducible");
+    expect(oneTrialNotSandboxed.frozen.environmentReset).toBe("none");
+    expect(oneTrialNotSandboxed.evidenceLabel).toBe("reproducible");
+
+    const armsDiffer = build({
+      original: arm(sandboxed(5, "o"), { toolSnapshotHash: "aaaa" }),
+      rewrite: arm(sandboxed(5, "r"), { toolSnapshotHash: "bbbb" }),
+      assignment: { method: "concurrent_two_run", overlapVerified: true },
+    });
+    expect(armsDiffer.frozen.equal).toBe(false);
+    expect(armsDiffer.frozen.differences).toEqual(["toolSnapshotHash"]);
+    // A disagreement is named, never hidden as "no hash recorded".
+    expect(armsDiffer.frozen.toolSnapshotHash).toBeUndefined();
+    expect(armsDiffer.evidenceLabel).toBe("reproducible");
+
+    const modelsDiffer = build({
+      original: arm(sandboxed(5, "o"), { model: ["m1"] }),
+      rewrite: arm(sandboxed(5, "r"), { model: ["m2"] }),
+      assignment: { method: "concurrent_two_run", overlapVerified: true },
+    });
+    expect(modelsDiffer.frozen.model).toEqual(["m1", "m2"]);
+    expect(modelsDiffer.frozen.differences).toEqual(["model"]);
 
     const controlled = build({
-      original: { trials: nTrials(5, "passed", "o") },
-      rewrite: { trials: nTrials(5, "passed", "r") },
-      frozen: frozen({ environmentReset: "per_trial_sandbox" }),
+      original: arm(sandboxed(5, "o"), { toolSnapshotHash: "same" }),
+      rewrite: arm(sandboxed(5, "r"), { toolSnapshotHash: "same" }),
       assignment: { method: "concurrent_two_run", overlapVerified: true },
     });
+    expect(controlled.frozen.equal).toBe(true);
+    expect(controlled.frozen.differences).toBeUndefined();
     expect(controlled.evidenceLabel).toBe("controlled");
+  });
+
+  test("regression is checked over non-affected cases only, and never passes on zero", () => {
+    const flipsOnlyAffected = build({
+      original: { trials: nTrials(6, "passed", "o") },
+      rewrite: { trials: nTrials(6, "passed", "r") },
+      otherCaseFlips: [
+        {
+          aggregationKey: "case_a\u0000",
+          originalStatus: "passed",
+          rewriteStatus: "failed",
+        },
+      ],
+    });
+    expect(flipsOnlyAffected.regression.status).toBe("non_gateable");
+    expect(flipsOnlyAffected.regression.otherCases).toBe(0);
+    expect(flipsOnlyAffected.regression.checked).toBe(true);
+
+    const empty = build({
+      original: { trials: nTrials(6, "passed", "o") },
+      rewrite: { trials: nTrials(6, "passed", "r") },
+      otherCaseFlips: [],
+    });
+    expect(empty.regression.status).toBe("non_gateable");
+  });
+
+  test("a difference below the effect floor is no_difference even when significant", () => {
+    // 400 vs 400 with a 0.5-point gap: the interval can exclude zero while
+    // the point estimate stays under DEFAULT_MIN_EFFECT_SIZE.
+    const report = build({
+      original: {
+        trials: nTrials(398, "passed", "o").concat(nTrials(2, "failed", "of")),
+      },
+      rewrite: { trials: nTrials(400, "passed", "r") },
+    });
+    expect(report.primary.pooled.verdict).toBe("no_difference");
+    expect(report.primary.pooled.minEffectSize).toBe(0.01);
   });
 
   test("reportOnly is the literal true and the document parses", () => {
     const report = build({
       original: { trials: nTrials(8, "passed", "o") },
-      rewrite: { trials: nTrials(9, "passed", "r").concat(nTrials(1, "failed", "rf")) },
+      rewrite: {
+        trials: nTrials(9, "passed", "r").concat(nTrials(1, "failed", "rf")),
+      },
     });
     expect(report.reportOnly).toBe(true);
     expect(report.population).toBe("trial");

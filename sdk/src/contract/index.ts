@@ -631,7 +631,9 @@ export {
 // ── description-experiment report (report-only; never a verdict input) ───────
 export type {
   DescriptionExperimentArm,
+  DescriptionExperimentArmFrozen,
   DescriptionExperimentArmInput,
+  DescriptionExperimentFrozenField,
   DescriptionExperimentArmSample,
   DescriptionExperimentAssignment,
   DescriptionExperimentAssignmentMethod,
@@ -674,6 +676,8 @@ export {
   descriptionExperimentAssignmentSchema,
   descriptionExperimentEvidenceLabelSchema,
   descriptionExperimentExclusionReasonSchema,
+  DESCRIPTION_EXPERIMENT_FROZEN_FIELDS,
+  descriptionExperimentFrozenFieldSchema,
   descriptionExperimentFrozenSchema,
   descriptionExperimentIntervalSchema,
   descriptionExperimentReportSchema,
