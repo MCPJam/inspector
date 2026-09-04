@@ -22,6 +22,14 @@ interface ScenarioShareSectionProps {
   onUpdated?: (scenario: ScenarioSettings) => void;
   /** Shown as the project-wide access option label (e.g. current project name). */
   projectName?: string | null;
+  /** Off in the Share modal — roster management stays on the settings page. */
+  showMembers?: boolean;
+  /**
+   * Off in the Share modal. Rotating invalidates every URL already handed
+   * out; it belongs behind the settings page, not one click from a button
+   * whose whole job is handing the URL out.
+   */
+  allowRotate?: boolean;
 }
 
 function memberView(member: ScenarioMember): ShareMemberView {
@@ -40,6 +48,8 @@ export function ScenarioShareSection({
   scenario,
   onUpdated,
   projectName,
+  showMembers = true,
+  allowRotate = true,
 }: ScenarioShareSectionProps) {
   const { isAuthenticated } = useConvexAuth();
   const { user } = useAuth();
@@ -127,6 +137,7 @@ export function ScenarioShareSection({
       currentPreset={accessPreset}
       presets={presets}
       disabledReason={unrunnableReason}
+      showMembers={showMembers}
       activeNote={
         accessPreset === "link_guests" ? (
           <p className="text-xs leading-relaxed text-muted-foreground">
@@ -174,10 +185,13 @@ export function ScenarioShareSection({
           memberIdOrEmail: member.email,
         })) as ScenarioSettings
       }
-      onRotateLink={async () =>
-        (await rotateScenarioLink({
-          scenarioId: settings.scenarioId,
-        })) as ScenarioSettings
+      onRotateLink={
+        allowRotate
+          ? async () =>
+              (await rotateScenarioLink({
+                scenarioId: settings.scenarioId,
+              })) as ScenarioSettings
+          : undefined
       }
     />
   );

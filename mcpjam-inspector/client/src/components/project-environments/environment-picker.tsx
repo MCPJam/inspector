@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
+import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { environmentLabel, isNamedEnvironment } from "@/lib/environment-label";
 
 /** Backend cap on `suite.environmentIds` (and the journey fan-out list). */
@@ -100,34 +101,39 @@ export function EnvironmentPicker({
     includeArchived: true,
     includeAdhoc: true,
   });
+  const environmentsEnabled = useProjectEnvironmentsEnabled();
 
   const [open, setOpen] = useState(false);
 
   const selected = useMemo(
     () =>
-      multi ? (value as string[] | null) ?? [] : value ? [value as string] : [],
-    [multi, value]
+      multi
+        ? ((value as string[] | null) ?? [])
+        : value
+          ? [value as string]
+          : [],
+    [multi, value],
   );
 
   const environmentsById = useMemo(
     () => new Map((environments ?? []).map((e) => [e.environmentId, e])),
-    [environments]
+    [environments],
   );
   const liveEnvironments = useMemo(
     () =>
       (environments ?? []).filter(
-        (e) => !e.archivedAt && isNamedEnvironment(e)
+        (e) => !e.archivedAt && isNamedEnvironment(e),
       ),
-    [environments]
+    [environments],
   );
   const archivedSelected = useMemo(
     () =>
       selected
         .map((id) => environmentsById.get(id))
         .filter(
-          (e): e is NonNullable<typeof e> => !!e && e.archivedAt !== undefined
+          (e): e is NonNullable<typeof e> => !!e && e.archivedAt !== undefined,
         ),
-    [selected, environmentsById]
+    [selected, environmentsById],
   );
   // Gated on the query having settled so a loading list doesn't flash every
   // selected id as an orphan.
@@ -136,7 +142,7 @@ export function EnvironmentPicker({
       environments === undefined
         ? []
         : selected.filter((id) => !environmentsById.has(id)),
-    [environments, selected, environmentsById]
+    [environments, selected, environmentsById],
   );
 
   const emit = (next: string[]) => {
@@ -190,7 +196,7 @@ export function EnvironmentPicker({
               ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
               : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-60",
-            className
+            className,
           )}
         >
           <Layers className="size-3.5 shrink-0 text-muted-foreground" />
@@ -240,7 +246,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     (capBlocked || inert) &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   <Checkbox
@@ -273,7 +279,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     inert &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   {/* Archived: uncheck to detach only — never re-attachable. */}
@@ -305,7 +311,7 @@ export function EnvironmentPicker({
                   className={cn(
                     "flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent/30",
                     inert &&
-                      "cursor-not-allowed opacity-60 hover:bg-transparent"
+                      "cursor-not-allowed opacity-60 hover:bg-transparent",
                   )}
                 >
                   {/* Unresolvable: uncheck to detach only. There is no name to
@@ -337,28 +343,33 @@ export function EnvironmentPicker({
             Cap reached — at most {max} environments.
           </p>
         ) : null}
-        <div className="mt-0.5 border-t pt-0.5">
-          {footerSlot ? (
-            // Close on the bubbled CLICK only. A keydown handler here would fire
-            // before the browser dispatches a button's synthetic click for Enter
-            // and Space, unmounting the footer action before it ever ran; the
-            // click covers pointer and keyboard activation alike.
-            <div className="contents" onClick={() => setOpen(false)}>
-              {footerSlot}
-            </div>
-          ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              setOpen(false);
-              navigateApp(routePaths.environments);
-            }}
-            className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-          >
-            <ExternalLink className="size-3.5 shrink-0" />
-            Manage environments →
-          </button>
-        </div>
+        {footerSlot || environmentsEnabled ? (
+          <div className="mt-0.5 border-t pt-0.5">
+            {footerSlot ? (
+              // Close on the bubbled CLICK only. A keydown handler here would fire
+              // before the browser dispatches a button's synthetic click for Enter
+              // and Space, unmounting the footer action before it ever ran; the
+              // click covers pointer and keyboard activation alike.
+              <div className="contents" onClick={() => setOpen(false)}>
+                {footerSlot}
+              </div>
+            ) : null}
+            {/* With the flag off, /environments redirects to /servers. */}
+            {environmentsEnabled ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  navigateApp(routePaths.environments);
+                }}
+                className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              >
+                <ExternalLink className="size-3.5 shrink-0" />
+                Manage environments →
+              </button>
+            ) : null}
+          </div>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

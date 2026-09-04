@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
@@ -20,6 +21,14 @@ const mocks = vi.hoisted(() => {
   const requests: Array<{ kind: string; name: string; args: unknown }> = [];
   return {
     user: { value: null as { id: string } | null },
+    /**
+     * What `users:getCurrentUser` answers — the identity CONVEX resolved from
+     * the JWT it actually received, which is what `useIsMemberActor` reads and
+     * what the gate now turns on. `undefined` is "not resolved yet".
+     */
+    currentUser: {
+      value: undefined as { isAnonymous?: boolean } | null | undefined,
+    },
     isAuthenticated: { value: true },
     isUserReady: { value: true },
     useQuery: vi.fn(),
@@ -55,7 +64,14 @@ vi.mock("convex/react", () => ({
     isAuthenticated: mocks.isAuthenticated.value,
     isLoading: false,
   }),
-  useQuery: (name: unknown, args: unknown) => mocks.useQuery(name, args),
+  // `users:getCurrentUser` is answered from its own handle, so the assertions
+  // below can keep watching `mocks.useQuery` for the availability query alone.
+  useQuery: (name: unknown, args: unknown) =>
+    name === "users:getCurrentUser"
+      ? args === "skip"
+        ? undefined
+        : mocks.currentUser.value
+      : mocks.useQuery(name, args),
 }));
 
 vi.mock("@/contexts/db-user-ready-context", () => ({
@@ -95,6 +111,7 @@ function renderProbe(organizationId: string | null | undefined = "org-1") {
 describe("useGithubChecksAvailability", () => {
   beforeEach(() => {
     mocks.user.value = null;
+    mocks.currentUser.value = { isAnonymous: true };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     vi.clearAllMocks();
@@ -119,15 +136,38 @@ describe("useGithubChecksAvailability", () => {
     expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
   });
 
+  it("does NOT query while the WorkOS user is set but Convex still holds the guest", () => {
+    // CONVEX-19R's other half, and the reason the gate moved off
+    // `useAuth().user`. Hosted prod injects a guest bearer into EVERY document
+    // (`server/app.ts`), so the guest JWT is installed first and Convex
+    // confirms auth on it; AuthKit resolves the real user one commit before the
+    // token swap lands. Every term the old gate asked was true, and the socket
+    // was still carrying `guest|<uuid>`.
+    mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: true };
+
+    renderProbe();
+
+    expect(screen.getByText("unavailable")).toBeInTheDocument();
+    expect(mocks.useQuery).toHaveBeenCalledWith(
+      "github/checkRepoConfigs:getGithubChecksSettingsAvailability",
+      "skip"
+    );
+    expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
+  });
+
   it.each([
-    ["an unauthenticated session", false, true, "org-1"],
-    ["an unready user", true, false, "org-1"],
-    ["a null organization id", true, true, null],
-    ["an empty organization id", true, true, ""],
+    ["an unauthenticated session", false, true, "org-1", { isAnonymous: false }],
+    ["an unready user", true, false, "org-1", { isAnonymous: false }],
+    ["an unresolved actor", true, true, "org-1", undefined],
+    ["an identity with no readable row", true, true, "org-1", null],
+    ["a null organization id", true, true, null, { isAnonymous: false }],
+    ["an empty organization id", true, true, "", { isAnonymous: false }],
   ] as const)(
     "skips the query and reporting for %s",
-    (_state, isAuthenticated, isUserReady, organizationId) => {
+    (_state, isAuthenticated, isUserReady, organizationId, currentUser) => {
       mocks.user.value = { id: "user-1" };
+      mocks.currentUser.value = currentUser;
       mocks.isAuthenticated.value = isAuthenticated;
       mocks.isUserReady.value = isUserReady;
 
@@ -142,8 +182,9 @@ describe("useGithubChecksAvailability", () => {
     }
   );
 
-  it("still asks the backend for a signed-in WorkOS user", () => {
+  it("asks the backend once Convex reports a signed-in member", () => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.useQuery.mockReturnValue({ state: "enabled" });
 
     renderProbe();
@@ -157,6 +198,7 @@ describe("useGithubChecksAvailability", () => {
 
   it("contains a signed-in membership refusal in the error boundary", () => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     const refusal = new ConvexError({
       kind: "forbidden",
       message: "Not a member of this organization",
@@ -203,6 +245,11 @@ describe("useGithubChecksAvailability", () => {
 describe("useGithubChecksSettings writes", () => {
   function SettingsProbe() {
     const settings = useGithubChecksSettings("org-1");
+    // What the HOOK's own promise did, rendered. Every other button here can
+    // `void` its call because the assertion is on the request that went out;
+    // a rejection assertion cannot, because the thing under test is what comes
+    // back through the hook rather than what the mock did.
+    const [feedbackOutcome, setFeedbackOutcome] = useState("pending");
     return (
       <div>
         <button
@@ -234,6 +281,49 @@ describe("useGithubChecksSettings writes", () => {
         <button
           type="button"
           onClick={() =>
+            void settings.setRepoFeedbackComments({
+              configId: "cfg-1",
+              feedbackComments: "off",
+            })
+          }
+        >
+          set feedback comments
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void settings.setRepoFeedbackComments({
+              configId: "cfg-1",
+              feedbackComments: "on",
+            })
+          }
+        >
+          set feedback comments on
+        </button>
+        <button
+          type="button"
+          onClick={() =>
+            void settings
+              .setRepoFeedbackComments({
+                configId: "cfg-1",
+                feedbackComments: "off",
+              })
+              .then(() => setFeedbackOutcome("resolved"))
+              .catch((error: unknown) =>
+                setFeedbackOutcome(
+                  `rejected: ${
+                    error instanceof Error ? error.message : "unknown"
+                  }`
+                )
+              )
+          }
+        >
+          set feedback comments observed
+        </button>
+        <div data-testid="feedback-outcome">{feedbackOutcome}</div>
+        <button
+          type="button"
+          onClick={() =>
             void settings.unbindInstallation({ installationRef: "bind-1" })
           }
         >
@@ -251,6 +341,7 @@ describe("useGithubChecksSettings writes", () => {
 
   beforeEach(() => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     mocks.resetConvexBindings();
@@ -284,6 +375,7 @@ describe("useGithubChecksSettings writes", () => {
         "mutation:github/checkRepoConfigs:disconnectRepo",
         "mutation:github/checkRepoConfigs:setRepoConformance",
         "mutation:github/checkRepoConfigs:setRepoEnabled",
+        "mutation:github/checkRepoConfigs:setRepoFeedbackComments",
         "mutation:github/checkRepoConfigs:setRepoOutagePolicy",
         "mutation:github/checkRepoConfigs:setRepoSuite",
       ].sort()
@@ -359,6 +451,90 @@ describe("useGithubChecksSettings writes", () => {
     ]);
   });
 
+  it("sends the feedback-comment policy as an explicit literal", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("set feedback comments").click();
+
+    // A LITERAL, never a boolean, and never omitted. Absent already means
+    // something on this field — `on` — so a caller that could leave it out
+    // would be sending the ON default under the name of a change.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "mutation",
+        name: "github/checkRepoConfigs:setRepoFeedbackComments",
+        args: {
+          organizationId: "org-1",
+          configId: "cfg-1",
+          feedbackComments: "off",
+        },
+      },
+    ]);
+  });
+
+  it("sends `on` as a literal too, not as an omission", () => {
+    render(<SettingsProbe />);
+
+    screen.getByText("set feedback comments on").click();
+
+    // The other half of the inversion. Absent already MEANS `on`, so turning a
+    // repository back on has to say so explicitly — a caller that expressed it
+    // by omitting the field would send nothing and change nothing, and the
+    // switch would appear to be stuck off.
+    expect(mocks.requests).toEqual([
+      {
+        kind: "mutation",
+        name: "github/checkRepoConfigs:setRepoFeedbackComments",
+        args: {
+          organizationId: "org-1",
+          configId: "cfg-1",
+          feedbackComments: "on",
+        },
+      },
+    ]);
+  });
+
+  it("lets a refused feedback-comment write reject, rather than swallowing it", async () => {
+    render(<SettingsProbe />);
+    const handle = mocks.handles.get(
+      "mutation:github/checkRepoConfigs:setRepoFeedbackComments"
+    ) as ReturnType<typeof vi.fn>;
+    handle.mockRejectedValueOnce(
+      new Error("Repository configuration not found")
+    );
+
+    // Driven THROUGH THE HOOK, and that is the whole point of the test.
+    //
+    // An earlier version of this made the mock reject and then awaited the mock
+    // — which asserts only that a rejected promise rejects, and would have
+    // passed just as happily if the hook swallowed the error. The regression it
+    // claims to guard is the hook eating a refusal, so it has to be the hook's
+    // own promise that is observed: the component's `catch` is what becomes the
+    // toast, and a hook that resolved on failure would leave the switch showing
+    // a state the backend never accepted.
+    fireEvent.click(screen.getByText("set feedback comments observed"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-outcome").textContent).toBe(
+        "rejected: Repository configuration not found"
+      )
+    );
+  });
+
+  it("resolves through the hook when the write succeeds", async () => {
+    // The other side of the same observation, so the assertion above is known
+    // to distinguish the two outcomes rather than matching any settled state.
+    render(<SettingsProbe />);
+
+    fireEvent.click(screen.getByText("set feedback comments observed"));
+
+    await waitFor(() =>
+      expect(screen.getByTestId("feedback-outcome").textContent).toBe(
+        "resolved"
+      )
+    );
+  });
+
   it("sets a repository's outage policy through the org-scoped mutation", () => {
     render(<SettingsProbe />);
 
@@ -422,6 +598,7 @@ describe("useGithubInstallCallbacks", () => {
 
   beforeEach(() => {
     mocks.user.value = { id: "user-1" };
+    mocks.currentUser.value = { isAnonymous: false };
     mocks.isAuthenticated.value = true;
     mocks.isUserReady.value = true;
     mocks.resetConvexBindings();
