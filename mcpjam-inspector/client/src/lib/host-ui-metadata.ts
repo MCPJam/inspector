@@ -1,6 +1,7 @@
 import type { HostThemeMode } from "@/lib/client-styles";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -25,12 +26,16 @@ export const UNKNOWN_HOST_LOGO = "/mcp.svg";
 const LOGO_BY_HOST_ID: Record<string, string> = {
   mcpjam: mcpjamLogo,
   claude: claudeLogo,
+  "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
   chatgpt: openaiLogo,
   mistral: mistralLogo,
   goose: gooseLogoLight,
   slack: slackLogo,
   cursor: cursorLogo,
+  // Same mark as the IDE: one Cursor brand, two products. Mapped explicitly
+  // because an id absent from this record falls back to the anonymous MCP mark.
+  "cursor-cli": cursorLogo,
   codex: codexLogo,
   copilot: copilotLogo,
   vscode: vscodeLogo,
@@ -57,7 +62,7 @@ const LOGO_BY_HOST_ID_AND_THEME: Record<
 
 export function getHostLogoSrc(
   hostId: string,
-  themeMode?: HostThemeMode | null
+  themeMode?: HostThemeMode | null,
 ): string {
   return (
     (themeMode ? LOGO_BY_HOST_ID_AND_THEME[hostId]?.[themeMode] : undefined) ??
@@ -71,5 +76,5 @@ export const HOST_LOGO_OPTIONS = Object.entries(LOGO_BY_HOST_ID).map(
     id,
     logoSrc,
     logoSrcByTheme: LOGO_BY_HOST_ID_AND_THEME[id],
-  })
+  }),
 );

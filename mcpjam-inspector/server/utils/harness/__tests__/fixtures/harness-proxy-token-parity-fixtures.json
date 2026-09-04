@@ -1,0 +1,123 @@
+{
+  "__readme": [
+    "Shared ground truth for the two hand-mirrored harness MCP proxy token",
+    "verifiers: the inspector's PRODUCTION verifier",
+    "(mcpjam-inspector/server/utils/harness/harness-proxy-token.ts) and the",
+    "backend's parity verifier (convex/lib/harnessMcpProxyToken.ts). Neither can",
+    "import the other, so each side runs its own verifier against THESE BYTES.",
+    "",
+    "The two copies are BYTE-IDENTICAL by design \u2014 this file is pinned whole in",
+    "convex/lib/mirrors.json, so `check:mirrors --upstream` compares them",
+    "directly and any drift is real drift rather than a wording difference.",
+    "Copies live at tests/convex/fixtures/ (backend) and",
+    "server/utils/harness/__tests__/fixtures/ (inspector).",
+    "",
+    "The tokens are signed with `secret` below \u2014 a fixture-only value, never a",
+    "deployment secret. `nowSeconds`/`expSeconds` fix the clock so the expiry",
+    "boundary is testable exactly: a token is expired AT exp, not after it, and",
+    "both verifiers must agree on that single second. They did not before",
+    "2026-08-31: the backend used `>` and accepted a token for the whole second",
+    "it expired in while the inspector used `>=` and rejected it \u2014 a token the",
+    "control plane calls valid and the data plane refuses, which presents as",
+    "'the harness randomly loses its tools'.",
+    "",
+    "The eval-scope claims (runId/iterationId) travel TOGETHER or not at all.",
+    "The `halfPair*` vectors are FORGED \u2014 validly signed, but carrying one of",
+    "the pair \u2014 because no minter produces that shape; they exist so both",
+    "verifiers prove they drop a half-present scope rather than surfacing an",
+    "iteration claim nothing authorized."
+  ],
+  "secret": "harness-proxy-token-parity-fixture-secret",
+  "nowSeconds": 1760000000,
+  "expSeconds": 1760003600,
+  "serverId": "jx9server111aaa222bbb333",
+  "vectors": [
+    {
+      "name": "claimless (playground mint)",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwiaWF0IjoxNzYwMDAwMDAwLCJleHAiOjE3NjAwMDM2MDB9.kLI6UT45EiV0KgQ-nWlRnD3OSrlRU6okEaMUo4Be6CY",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null
+      }
+    },
+    {
+      "name": "claim-bearing (authorized eval iteration)",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwicnVuSWQiOiJqaDRydW4xMTFhYWEyMjJiYmIzMzNjY2MiLCJpdGVyYXRpb25JZCI6Imp0Nml0ZXIxMTFhYWEyMjJiYmIzMzNkZCIsImlhdCI6MTc2MDAwMDAwMCwiZXhwIjoxNzYwMDAzNjAwfQ.z9XkGcW5LJbjfW-8LJzLB94Kouis4U1bdM57stYX4G0",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": {
+          "runId": "jh4run111aaa222bbb333ccc",
+          "iterationId": "jt6iter111aaa222bbb333dd"
+        }
+      }
+    },
+    {
+      "name": "forged half pair \u2014 iterationId with no runId",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwiaWF0IjoxNzYwMDAwMDAwLCJleHAiOjE3NjAwMDM2MDAsIml0ZXJhdGlvbklkIjoianQ2aXRlcjExMWFhYTIyMmJiYjMzM2RkIn0.KwJnyBROcSIeFbZxmhSZwU5uy8YRUwHCwqjzV0jxITA",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null
+      }
+    },
+    {
+      "name": "forged half pair \u2014 runId with no iterationId",
+      "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJodHRwczovL2FwaS5tY3BqYW0uY29tL2hhcm5lc3MtbWNwLXByb3h5IiwicHVycG9zZSI6Imhhcm5lc3MtbWNwLXByb3h5Iiwic3ViIjoiamQ3YWJjMTIzZGVmNDU2Z2hpNzg5amtsIiwiZXh0IjoidXNlcl8wMUhRWlg5S1BXTTNONEI1QzZEN0U4RjlHMCIsIm9yZyI6ImtuMnh5ejk4N3d2dTY1NHRzcjMyMXFwbyIsInByb2plY3RJZCI6ImpzNW1ubzExMXBwcDIyMnFxcTMzM3JyciIsInNlcnZlcklkIjoiang5c2VydmVyMTExYWFhMjIyYmJiMzMzIiwiaWF0IjoxNzYwMDAwMDAwLCJleHAiOjE3NjAwMDM2MDAsInJ1bklkIjoiamg0cnVuMTExYWFhMjIyYmJiMzMzY2NjIn0.THBf1l5su7oWvdwmnHnmEyUM67pj54FsfQc2Xkgb41Q",
+      "expect": {
+        "valid": true,
+        "claims": {
+          "userId": "jd7abc123def456ghi789jkl",
+          "externalId": "user_01HQZX9KPWM3N4B5C6D7E8F9G0",
+          "orgId": "kn2xyz987wvu654tsr321qpo",
+          "projectId": "js5mno111ppp222qqq333rrr",
+          "serverId": "jx9server111aaa222bbb333"
+        },
+        "evalScope": null
+      }
+    }
+  ],
+  "expiryBoundary": {
+    "__note": [
+      "Applied to EVERY vector above, by both verifiers. `atExp` is the case",
+      "the two implementations disagreed on: JWT NumericDate says the token is",
+      "expired at exp, so it must be rejected."
+    ],
+    "beforeExp": {
+      "nowSeconds": 1760003599,
+      "valid": true
+    },
+    "atExp": {
+      "nowSeconds": 1760003600,
+      "valid": false
+    },
+    "afterExp": {
+      "nowSeconds": 1760003601,
+      "valid": false
+    },
+    "longAfterExp": {
+      "nowSeconds": 1760007200,
+      "valid": false
+    }
+  },
+  "wrongServerId": "jx9other222ccc333ddd444e"
+}

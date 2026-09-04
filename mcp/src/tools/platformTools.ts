@@ -45,6 +45,8 @@ import {
   compareEvalRunOperation,
   getEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
   getEvalSuiteOperation,
@@ -52,6 +54,7 @@ import {
   ensureAdhocEnvironmentOperation,
   getPluginVersionOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   getProjectServerOperation,
   getServerPromptOperation,
   isPlatformApiError,
@@ -64,6 +67,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listImagesOperation,
   getImageOperation,
@@ -97,6 +101,9 @@ import {
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
   listJourneysOperation,
   getJourneyOperation,
@@ -204,6 +211,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // do with it is produce a private link for the requester to open.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -239,6 +247,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // for asking ahead of that decision, same rationale as `get_capabilities`.
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  // The suite's settings HISTORY, beside the edit that writes it: "who changed
+  // this, and when" is the first question after an unexplained result, and its
+  // `revisionNumber` is what makes an `update_eval_suite` a compare-and-set.
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -250,6 +262,12 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   deleteEvalCaseOperation,
   generateEvalCasesOperation,
   getEvalRunOperation,
+  // The DENOMINATOR half of the chain story, beside the run read that is
+  // the numerator half. `get_eval_run` says what one trial did and where it
+  // stopped; these say how much of the run was measured at all — and until
+  // now nothing outside the web app could ask.
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
   // carries `gateWaiver`, so withholding the dedicated read would hide nothing
@@ -329,6 +347,13 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   createPersonaOperation,
   updatePersonaOperation,
   deletePersonaOperation,
+  // PROJECT SECRETS — the metadata reads plus the revoke. The two write ops
+  // that carry a plaintext are in EXCLUDED_FROM_CATALOG; `delete_secret` is
+  // here because revoking a leaked credential is exactly the thing an
+  // unattended caller should be able to do without a human in the loop.
+  listSecretsOperation,
+  getSecretOperation,
+  deleteSecretOperation,
   generatePersonasOperation,
   listJourneysOperation,
   getJourneyOperation,
@@ -490,24 +515,64 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Scenario exposure is already update_user_testing_scenario. The unified setter also changes who can open a conformance or eval share URL; shipping it now would add a second spelling of scenario mode on the unattended catalog.",
   rotate_share_link:
     "Scenario rotation is already rotate_user_testing_link. The unified rotate is destructive across resource types and should land with the same share group as the get/set pair, not as a third rotate tool.",
+  // PROJECT SECRET WRITES. Excluded for a reason that has nothing to do with
+  // how destructive they are, and everything to do with their INPUT: the
+  // plaintext credential is an argument, so it would transit model context and
+  // be written into chat transcripts before any approval card could render.
+  // An approval that runs after the value has already been logged is not an
+  // approval. The reads (list_secrets, get_secret) are in the catalog — they
+  // return metadata only and cannot produce a value.
+  create_secret:
+    "The plaintext value is an argument, so it would transit model context and be written into chat transcripts before any approval could run — an approval that fires after the credential is already logged is not one. Available on REST, the SDK and the CLI, where the caller controls where the value comes from. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument, so it would reach model context and the transcript before any approval could run. Available on REST, the SDK and the CLI. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
+  // `create_secret` argument above: the vendor headers are arguments, so they
+  // would transit model context and be written into chat transcripts before
+  // any approval card could render.
+  //
+  // The other eight — including the three metadata READS, which is where this
+  // departs from the secrets precedent — are excluded because the whole
+  // surface is organization administration whose effects land in a third
+  // party's system. A catalog that could read an organization's vendor
+  // bindings but not act on them would be an admin console with the buttons
+  // removed; the Observability section in organization settings is the view,
+  // and REST/SDK/CLI are the programmatic route.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same pre-approval exposure. Available on REST, the SDK and the CLI.",
+  delete_trace_destination:
+    "Discards a live export and its stored credentials, and cannot retract what has already been delivered to the vendor. An organization-admin decision, available on REST, the SDK and the CLI.",
+  pause_trace_destination:
+    "Nothing is queued while a destination is paused, so an unattended pause becomes a permanent gap in a customer's observability. Available on REST, the SDK and the CLI.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something about it was wrong. Whether the cause is fixed is a judgement about a third party's system. Available on REST, the SDK and the CLI.",
+  test_trace_destination:
+    "An outbound call to a third party's intake on the organization's credentials. Available on REST, the SDK and the CLI.",
+  backfill_trace_destination:
+    "Can queue a month of an organization's history at a vendor that bills on ingest. Available on REST, the SDK and the CLI.",
+  list_trace_destinations:
+    "Organization observability configuration — an admin surface, not a catalog one. Available on REST, the SDK and the CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
+  list_trace_destination_backfills:
+    "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
 };
 
 const catalogOperationNames = new Set(
-  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name),
+  PLATFORM_CATALOG_OPERATIONS.map((operation) => operation.name)
 );
 const allOperationNames = new Set(
-  ALL_OPERATIONS.map((operation) => operation.name),
+  ALL_OPERATIONS.map((operation) => operation.name)
 );
 const staleCatalogExclusions = Object.keys(EXCLUDED_FROM_CATALOG).filter(
-  (name) => !allOperationNames.has(name),
+  (name) => !allOperationNames.has(name)
 );
 const uncoveredCatalogOperations = ALL_OPERATIONS.filter(
   (operation) =>
     !catalogOperationNames.has(operation.name) &&
-    !Object.prototype.hasOwnProperty.call(
-      EXCLUDED_FROM_CATALOG,
-      operation.name,
-    ),
+    !Object.prototype.hasOwnProperty.call(EXCLUDED_FROM_CATALOG, operation.name)
 );
 if (
   staleCatalogExclusions.length > 0 ||
@@ -515,10 +580,10 @@ if (
 ) {
   throw new Error(
     `Platform MCP catalog partition drift: stale=${staleCatalogExclusions.join(
-      ",",
+      ","
     )}; uncovered=${uncoveredCatalogOperations
       .map((operation) => operation.name)
-      .join(",")}`,
+      .join(",")}`
   );
 }
 
@@ -562,8 +627,8 @@ const DESTRUCTIVE_OPERATION_NAMES: ReadonlySet<string> = new Set(
   ALL_OPERATIONS.filter(
     (operation) =>
       operation.risk === "destructive" ||
-      LEGACY_DESTRUCTIVE_NAMES.has(operation.name),
-  ).map((operation) => operation.name),
+      LEGACY_DESTRUCTIVE_NAMES.has(operation.name)
+  ).map((operation) => operation.name)
 );
 
 /**
@@ -585,10 +650,36 @@ const NON_IDEMPOTENT_DESTRUCTIVE_NAMES: ReadonlySet<string> = new Set([
   // not retryable), never looser.
   renderServerWidgetOperation.name,
   deletePersonaOperation.name,
+  // A HARD delete of a credential: the row and the ciphertext both go, and a
+  // second call cannot find the row to report the same outcome.
+  deleteSecretOperation.name,
   archiveJourneyOperation.name,
   archiveSwarmOperation.name,
   removeUserTestingMemberOperation.name,
   rotateUserTestingLinkOperation.name,
+]);
+
+/**
+ * Non-destructive writes a client MAY safely repeat.
+ *
+ * The default for this branch is `false`, and for its usual inhabitants that is
+ * right: starting a run or creating a suite twice produces two of them, so a
+ * client that auto-retried a dropped response would silently double the work.
+ *
+ * Cancelling is the opposite shape. The backend treats cancelling an
+ * already-terminal request as a no-op that returns the row rather than an
+ * error, so a repeat after a dropped response lands on exactly the state the
+ * first call produced. Declaring that is not a nicety: `idempotentHint: false`
+ * tells a client NOT to retry, which on a lost response leaves the request
+ * holding one of the owner's connection slots — the precise failure this
+ * operation exists to clear.
+ *
+ * OPT-IN, one name at a time. Idempotency is a promise about a specific
+ * handler's behavior, and the honest default for anything not examined is the
+ * conservative `false` above.
+ */
+const IDEMPOTENT_WRITE_NAMES: ReadonlySet<string> = new Set([
+  cancelProjectServerConnectionOperation.name,
 ]);
 
 /**
@@ -613,7 +704,7 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
 
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
-  context: PlatformToolContext,
+  context: PlatformToolContext
 ): void {
   for (const operation of PLATFORM_CATALOG_OPERATIONS) {
     const view = PLATFORM_TOOL_WIDGET_VIEWS[operation.name];
@@ -626,7 +717,7 @@ export function registerPlatformCatalogTools(
         annotations: operationAnnotations(operation),
       },
       async (input) => runPlatformOperation(context, operation, input),
-      view ? platformWidgetUi(context, operation, view) : undefined,
+      view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
 }
@@ -641,7 +732,7 @@ export function registerPlatformCatalogTools(
 export function platformWidgetUi(
   context: PlatformToolContext,
   operation: PlatformOperation<any, any>,
-  view: PlatformWidgetView,
+  view: PlatformWidgetView
 ) {
   return {
     resourceUri: PLATFORM_WIDGET_RESOURCE_URIS[view],
@@ -654,13 +745,13 @@ export function platformWidgetUi(
     },
     callback: async (input: unknown) =>
       runPlatformOperation(context, operation, input, (payload) =>
-        tagPlatformWidgetPayload(view, payload),
+        tagPlatformWidgetPayload(view, payload)
       ),
   };
 }
 
 export function operationAnnotations(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): ToolAnnotations {
   if (operation.readOnly) {
     return { readOnlyHint: true };
@@ -685,8 +776,13 @@ export function operationAnnotations(
     return { readOnlyHint: false };
   }
   // Remaining non-read operations (run_eval_suite, create_eval_suite) create
-  // resources but never destroy or overwrite them.
-  return { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+  // resources but never destroy or overwrite them — and creating twice makes
+  // two, so only the names that have been checked claim a safe repeat.
+  return {
+    readOnlyHint: false,
+    destructiveHint: false,
+    idempotentHint: IDEMPOTENT_WRITE_NAMES.has(operation.name),
+  };
 }
 
 /**
@@ -703,7 +799,7 @@ export function operationAnnotations(
  * before the call, not from the invoice.
  */
 export function operationDescription(
-  operation: PlatformOperation<unknown, unknown>,
+  operation: PlatformOperation<unknown, unknown>
 ): string {
   return operation.risk === "spend"
     ? `${operation.description} COSTS MONEY: this consumes the organization's credits or configured provider keys.`
@@ -714,7 +810,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
   input: TInput,
-  transformPayload?: (payload: TOutput) => object,
+  transformPayload?: (payload: TOutput) => object
 ) {
   // Resolve the bearer: the verified token for an authed session, or a
   // lazily-minted guest token for an anonymous one. Minting happens here (on
@@ -761,7 +857,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
   } catch (error) {
     return toolError(
       describeOperationError(error),
-      errorStructuredContent(error),
+      errorStructuredContent(error)
     );
   }
 }
@@ -772,7 +868,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
 // calmly instead of with the alarming destructive styling. The model/CLI still
 // see `isError` plus the human-readable text message.
 function errorStructuredContent(
-  error: unknown,
+  error: unknown
 ): Record<string, unknown> | undefined {
   if (isPlatformApiError(error)) {
     return { error: { code: error.code, message: error.message } };
@@ -948,7 +1044,7 @@ function toolSuccess(payload: object, permalinks: PlatformPermalink[] = []) {
 
 function toolError(
   message: string,
-  structuredContent?: Record<string, unknown>,
+  structuredContent?: Record<string, unknown>
 ) {
   return {
     isError: true,

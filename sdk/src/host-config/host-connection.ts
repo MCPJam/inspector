@@ -43,6 +43,14 @@ export interface HostConnectionProfile {
    */
   supportsMrtr?: false;
   /**
+   * Per-era cancellation, forwarded verbatim rather than reduced to one flag:
+   * the era is only known after the connection negotiates, which on an
+   * unpinned host has not happened yet. Maps onto
+   * `MCPServerConfig.toolCallCancellation`, where the manager picks the leaf
+   * for the era actually negotiated.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  /**
    * `true` = the client never opens the server→client notification channel
    * (legacy: the standalone GET SSE stream; 2026-07-28:
    * `subscriptions/listen`). ChatGPT measures this way — prober saw it never
@@ -120,6 +128,20 @@ export function hostConnectionProfile(
       : undefined;
   const supportsMrtr =
     mcpProfile?.mrtrSupport === "none" ? (false as const) : undefined;
+  // Nested record, same discipline as the enum knobs: only an explicit `false`
+  // leaf degrades, and an absent or malformed leaf stays conforming. Reduced
+  // to just the degraded leaves so an all-conforming host still emits nothing.
+  const rawCancellation =
+    mcpProfile && isRecord(mcpProfile.toolCallCancellation)
+      ? mcpProfile.toolCallCancellation
+      : undefined;
+  const toolCallCancellation = rawCancellation
+    ? Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => rawCancellation[key] === false)
+          .map((key) => [key, false])
+      )
+    : undefined;
   // A nested record rather than an enum, but the same discipline: only an
   // explicit `false` leaf degrades, and absent stays absent. Narrowed like
   // `initialize` above — `mcpProfile` is an untyped record here.
@@ -150,6 +172,9 @@ export function hostConnectionProfile(
       : {}),
     ...(firstPageOnly ? { firstPageOnly } : {}),
     ...(supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(toolCallCancellation && Object.keys(toolCallCancellation).length > 0
+      ? { toolCallCancellation }
+      : {}),
     ...(suppressListenChannel ? { suppressListenChannel } : {}),
     ...(dropToolListChanged ? { dropToolListChanged } : {}),
     respectToolVisibility,
