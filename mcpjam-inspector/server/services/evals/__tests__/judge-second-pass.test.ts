@@ -1213,7 +1213,20 @@ describe("the projected judge definition carries the run's role", () => {
     const explicit = ports({ fetchRun: withRole("advisory") });
     await runJudgeSecondPass("run1", explicit.value);
 
-    expect(explicit.applied[0]!.body).toEqual(absent.applied[0]!.body);
+    // `judgeStageDerivedAt` is `Date.now()` at the moment each pass ran, so
+    // the two differ whenever the second pass lands in a later millisecond —
+    // which under a loaded suite it sometimes does. It is asserted as a number
+    // and then set aside, the same way the shape test above treats it; what
+    // this test is about is everything else being identical.
+    const withoutClock = (body: JudgeStageDerivationBody) => {
+      const { judgeStageDerivedAt, ...rest } = body as Record<string, unknown>;
+      expect(typeof judgeStageDerivedAt).toBe("number");
+      return rest;
+    };
+
+    expect(withoutClock(explicit.applied[0]!.body)).toEqual(
+      withoutClock(absent.applied[0]!.body),
+    );
     expect(judgeDefinition(absent.applied[0]!.body)?.role).toBe("advisory");
   });
 });
