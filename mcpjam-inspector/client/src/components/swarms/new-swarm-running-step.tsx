@@ -857,7 +857,12 @@ export function NewSwarmRunningStep({
    * envelope.
    */
   const runFailure = useMemo(() => {
-    if (!allTerminal || rateLimited + failed === 0) return null;
+    // Every line of the banner asserts that nothing ran, so one success
+    // silences it: on a mixed run it contradicted the title above it, which
+    // counts the run as finished. Those sessions speak through their own chips.
+    if (!allTerminal || succeeded > 0 || rateLimited + failed === 0) {
+      return null;
+    }
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited" && attempt.status !== "failed") {
@@ -876,7 +881,7 @@ export function NewSwarmRunningStep({
       }
     }
     return null;
-  }, [allTerminal, failed, rateLimited, snapshots]);
+  }, [allTerminal, failed, rateLimited, snapshots, succeeded]);
 
   const progress = total > 0 ? Math.min(1, done / total) : allTerminal ? 1 : 0;
   const finding = useMemo(() => findFirstFinding(snapshots), [snapshots]);
