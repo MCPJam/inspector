@@ -61,6 +61,14 @@ export type SuiteJudgeAgreement = {
   /** `null` at zero reviews — 0/0 is no evidence, not 0% agreement. */
   rate: number | null;
   lowerBound: number | null;
+  /**
+   * Cohen's kappa over the same blind labels: agreement corrected for what
+   * two raters would reach by chance on this corpus's class mix. `null` at
+   * zero reviews, or when both raters were constant on one class (undefined,
+   * not 1). Reported beside the rate, never gated on; absent on a backend that
+   * predates it.
+   */
+  kappa?: number | null;
   threshold: number;
   minReviews: number;
   eligible: boolean;

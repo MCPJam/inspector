@@ -16,6 +16,16 @@
  * refusals — a guest, a trial from a quick run, a deployment that predates it.
  * Any of them would take the whole trial view down. A rejection is a value
  * here, and the panel simply renders without a label.
+ *
+ * WHY THE READ IS SCOPED TO THE TRIAL. A label is attributed to whichever
+ * trial the panel was showing when it was chosen, and "no label yet" is what
+ * unlocks the blind control. So the panel must never show one trial's label
+ * under another trial's verdict, and must never offer the blind control before
+ * it knows whether a label exists — a label submitted then would be a fresh
+ * `blind: true` row superseding one the reviewer never saw. Both are the same
+ * fix: the fetched row remembers which trial it answers for, and until the
+ * answer for THIS trial has landed the panel renders a placeholder with no
+ * control and no reveal.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -61,7 +71,16 @@ export function TrialJudgeReviewPanel({
   canReview?: boolean;
 }) {
   const convex = useConvex();
-  const [review, setReview] = useState<TrialJudgeReviewRow | null>(null);
+  // The row is stamped with the trial it answers for, and `loaded` below is
+  // derived from that stamp rather than from a flag reset in an effect: an
+  // effect runs AFTER the render that would have shown the previous trial's
+  // label, and a derivation never does.
+  const [fetched, setFetched] = useState<{
+    iterationId: string;
+    review: TrialJudgeReviewRow | null;
+  } | null>(null);
+  const loaded = fetched !== null && fetched.iterationId === iterationId;
+  const review = loaded ? fetched.review : null;
   const [refreshKey, setRefreshKey] = useState(0);
 
   const submitJudgeReview = useMutation(
@@ -76,18 +95,20 @@ export function TrialJudgeReviewPanel({
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      let review: TrialJudgeReviewRow | null;
       try {
         const row = await convex.query(
           "evalJudgeReviews:getIterationJudgeReview" as never,
           { iterationId } as never,
         );
-        if (!cancelled) {
-          setReview((row as TrialJudgeReviewRow | null) ?? null);
-        }
+        review = (row as TrialJudgeReviewRow | null) ?? null;
       } catch {
         // A refused or undeployed read is "no label", not a broken page.
-        if (!cancelled) setReview(null);
+        review = null;
       }
+      // `cancelled` is belt; the stamp is braces. A read that outlives a
+      // trial switch cannot be mistaken for the new trial's answer.
+      if (!cancelled) setFetched({ iterationId, review });
     })();
     return () => {
       cancelled = true;
@@ -120,6 +141,22 @@ export function TrialJudgeReviewPanel({
     },
     [iterationId, submitJudgeReview],
   );
+
+  if (!loaded) {
+    // No label control and no reveal until this trial's row is known: a
+    // label chosen now would be recorded blind over one the reviewer has
+    // not seen, and a reveal now would un-blind the one they are about to
+    // give. On a refresh after a submit the previous row stays up instead —
+    // it is this trial's, and the stamp says so.
+    return (
+      <div
+        className="rounded-lg border border-border/50 p-2 text-xs text-muted-foreground"
+        data-testid="trial-review-loading"
+      >
+        Checking for a label…
+      </div>
+    );
+  }
 
   return (
     <JudgeVerdictPanel

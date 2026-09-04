@@ -5398,6 +5398,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "executionConfig",
       "hosts",
       "settings",
+      "expectedRevisionNumber",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }

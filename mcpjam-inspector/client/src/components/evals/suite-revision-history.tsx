@@ -31,6 +31,10 @@ import {
 } from "@mcpjam/design-system/sheet";
 import { Button } from "@mcpjam/design-system/button";
 import { formatRelativeTime } from "./helpers";
+import {
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  type EvalSuiteSettingKey,
+} from "@/shared/eval-suite-settings-manifest";
 
 /** Where a revision came from. `unattributed` is a write nothing claimed. */
 export const REVISION_SOURCE_LABELS: Record<string, string> = {
@@ -44,27 +48,52 @@ export const REVISION_SOURCE_LABELS: Record<string, string> = {
 };
 
 /**
- * Storage key → the settings row a reader edited.
+ * Manifest key → the label the settings page shows for that row.
  *
- * Built from the manifest, so a row that is renamed on the settings page is
- * renamed here too. The mapping is by DOTTED API LEAF where one exists, because
- * that is the closest thing the manifest has to a storage name.
+ * Read from the manifest rather than copied out of it, so a row renamed on the
+ * settings page is renamed here in the same edit.
  */
-const FIELD_LABELS: Record<string, string> = {
-  name: "Name",
+const MANIFEST_LABELS: Record<string, string> = Object.fromEntries(
+  EVAL_SUITE_SETTINGS_MANIFEST.map((row) => [row.key, row.label]),
+);
+
+/**
+ * Storage key → manifest key, for the keys whose two spellings differ.
+ *
+ * A snapshot key that is ALREADY a manifest key (`name`, `judgeRubric`, …)
+ * needs no entry. The value type is the manifest's key union, so an alias to a
+ * row that no longer exists is a type error rather than a raw key on screen.
+ */
+const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
+  defaultPassCriteria: "minimumAccuracy",
+  minIterations: "minimumIterations",
+  defaultMatchOptions: "matchOptions",
+  defaultPredicates: "checks",
+  judgeConfig: "judge",
+  verdictPolicyVersion: "policy",
+  environment: "computerEnvironment",
+  environmentIds: "environments",
+};
+
+/**
+ * Storage keys with NO settings row to borrow a label from.
+ *
+ * Each is stored on the suite and can appear in `changedFields`, but is
+ * written from somewhere other than the settings sheet — the suite header
+ * (`description`, `tags`), the host and skill pickers (`hostConfigId`,
+ * `serverAttachmentId`, `namedHostId`, `hostAttachments`,
+ * `selectedSkillIds`), the environment resolver (`environmentFingerprints`),
+ * or the policy upgrade and rollout machinery (`verdictPolicyDefaults`,
+ * `verdictPolicyRolloutMode`, `gradingEngine`). The manifest's `repetitions`,
+ * `passThreshold` and `validity` rows all edit `verdictPolicyDefaults`, so it
+ * gets one label of its own rather than three. Add a row to the manifest and
+ * an alias above before adding here.
+ */
+const UNLISTED_FIELD_LABELS: Record<string, string> = {
   description: "Description",
-  defaultPassCriteria: "Minimum accuracy",
-  minIterations: "Minimum iterations",
-  defaultMatchOptions: "Tool-call matching",
-  defaultPredicates: "Checks",
-  judgeConfig: "Judge",
-  judgeRubric: "Judge criteria",
-  verdictPolicyVersion: "Policy",
   verdictPolicyDefaults: "Policy defaults",
   verdictPolicyRolloutMode: "Policy rollout",
   gradingEngine: "Grading engine",
-  environment: "Environment",
-  environmentIds: "Environments",
   environmentFingerprints: "Environment fingerprints",
   hostConfigId: "Execution config",
   serverAttachmentId: "Server attachment",
@@ -75,7 +104,8 @@ const FIELD_LABELS: Record<string, string> = {
 };
 
 export function fieldLabel(key: string): string {
-  return FIELD_LABELS[key] ?? key;
+  const manifestKey = SNAPSHOT_KEY_TO_MANIFEST_KEY[key] ?? key;
+  return MANIFEST_LABELS[manifestKey] ?? UNLISTED_FIELD_LABELS[key] ?? key;
 }
 
 type RevisionRow = {
@@ -226,10 +256,16 @@ function RevisionList({
                 </span>
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-                {/* `createdByName` is null for a write nobody is attributed
-                    for — a scheduled job, a system migration. "System" is the
-                    honest rendering; a blank would read as a missing name. */}
-                <span>{row.createdByName ?? "System"}</span>
+                {/* `createdByName` is null in two cases that must not read
+                    the same. A write with an author who has since left the
+                    organization keeps its `createdBy` and loses the name; a
+                    write nobody is attributed for — a scheduled job, a system
+                    migration — has neither. Calling the first "System" would
+                    hide that a person made the change. */}
+                <span>
+                  {row.createdByName ??
+                    (row.createdBy ? "A former member" : "System")}
+                </span>
                 <span aria-hidden>·</span>
                 <span>{REVISION_SOURCE_LABELS[row.source] ?? row.source}</span>
                 <span aria-hidden>·</span>

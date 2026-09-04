@@ -298,6 +298,40 @@ function SuiteGithubChecksSettingsSection({
   );
 }
 
+/**
+ * The suite's runs NEWEST FIRST. `compareRunsBySequence` sorts ascending by
+ * run number, so a bare sort puts run #1 first — which is how a suite with
+ * fifty runs once backtested a draft rubric against its very first run.
+ */
+export function sortRunsNewestFirst(runs: EvalSuiteRun[]): EvalSuiteRun[] {
+  return [...runs].sort((a, b) => compareRunsBySequence(b, a));
+}
+
+const TERMINAL_RUN_STATUSES = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "timed_out",
+]);
+
+/**
+ * S6 — the run a rubric edit can be backtested against.
+ *
+ * The newest TERMINAL run that was actually judged: a run whose
+ * `goalCompletion` is absent or `null` has no stored verdict to compare a
+ * draft against, and a run still going has nothing to re-grade at all.
+ * `null` means the panel is not offered rather than offered and refused.
+ */
+export function pickBacktestableRun(runs: EvalSuiteRun[]): EvalSuiteRun | null {
+  return (
+    sortRunsNewestFirst(runs).find(
+      (run) =>
+        TERMINAL_RUN_STATUSES.has(run.status ?? "") &&
+        run.goalCompletion != null,
+    ) ?? null
+  );
+}
+
 export function SuiteIterationsView({
   suite,
   cases,
@@ -642,23 +676,8 @@ export function SuiteIterationsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSettingsKey]);
 
-  // S6 — the run a rubric edit can be backtested against.
-  //
-  // The newest TERMINAL run that was actually judged: a run with no
-  // `goalCompletion` has no stored verdict to compare a draft against, and a
-  // run still going has nothing to re-grade at all. Absent means the panel is
-  // not offered rather than offered and refused.
-  const backtestableRun = useMemo(() => {
-    const terminal = new Set(["completed", "failed", "cancelled", "timed_out"]);
-    return (
-      [...runs]
-        .sort(compareRunsBySequence)
-        .find(
-          (run) =>
-            terminal.has(run.status ?? "") && run.goalCompletion !== undefined,
-        ) ?? null
-    );
-  }, [runs]);
+  // S6 — the run a rubric edit can be backtested against (see the helper).
+  const backtestableRun = useMemo(() => pickBacktestableRun(runs), [runs]);
 
   const handleCommitSettings = useCallback(
     async (note: string) => {
@@ -978,13 +997,14 @@ export function SuiteIterationsView({
     });
   };
 
-  // The suite's newest run, for the history panel's "Compare with run". Absent
-  // on a suite that has never run, in which case the footer action is not
-  // offered rather than being offered and doing nothing.
-  const latestRunForCompare = useMemo(
-    () => [...runs].sort(compareRunsBySequence)[0] ?? null,
-    [runs],
-  );
+  // The suite's newest run, for the history panel's "Compare with run", and
+  // the one before it as the compare base. Absent on a suite that has never
+  // run, in which case the footer action is not offered rather than being
+  // offered and doing nothing; a suite with a single run opens it uncompared.
+  const [latestRunForCompare, previousRunForCompare] = useMemo(() => {
+    const newestFirst = sortRunsNewestFirst(runs);
+    return [newestFirst[0] ?? null, newestFirst[1] ?? null] as const;
+  }, [runs]);
 
   const handleCompareRuns = useCallback(
     (baseRunId: string, compareRunId: string) => {
@@ -2309,7 +2329,7 @@ export function SuiteIterationsView({
                   suite._id,
                   latestRunForCompare._id,
                   undefined,
-                  {},
+                  { compareToRunId: previousRunForCompare?._id },
                 );
               }
             : undefined

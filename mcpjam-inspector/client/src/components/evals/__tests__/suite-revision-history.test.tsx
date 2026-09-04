@@ -30,6 +30,13 @@ vi.mock("convex/react", () => ({
 }));
 
 import { SuiteRevisionHistory, fieldLabel } from "../suite-revision-history";
+import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manifest";
+
+function manifestLabel(key: string): string {
+  const row = EVAL_SUITE_SETTINGS_MANIFEST.find((entry) => entry.key === key);
+  if (!row) throw new Error(`no manifest row for ${key}`);
+  return row.label;
+}
 
 function row(overrides: Record<string, unknown> = {}) {
   return {
@@ -94,8 +101,16 @@ describe("SuiteRevisionHistory", () => {
   });
 
   it("attributes an unclaimed write to System, not to nobody", () => {
-    renderHistory([row({ createdByName: null })]);
+    renderHistory([row({ createdBy: null, createdByName: null })]);
     expect(screen.getByText("System")).toBeTruthy();
+  });
+
+  it("does not call a former member's edit System", () => {
+    // The author left the organization: the id survives, the name does not.
+    // "System" would hide that a person made this change.
+    renderHistory([row({ createdBy: "user-gone", createdByName: null })]);
+    expect(screen.getByText("A former member")).toBeTruthy();
+    expect(screen.queryByText("System")).toBeNull();
   });
 
   it("offers Load more only while there are more pages", () => {
@@ -134,10 +149,25 @@ describe("SuiteRevisionHistory", () => {
 });
 
 describe("fieldLabel", () => {
-  it("maps the storage keys the revision log actually records", () => {
-    expect(fieldLabel("judgeRubric")).toBe("Judge criteria");
+  it("reads a labelled row's name from the manifest, not a copy of it", () => {
+    // Asserted against the manifest row rather than a literal, so a rename on
+    // the settings page is a rename here without a second edit. Both the
+    // aliased spelling and the shared one go through the manifest.
+    expect(fieldLabel("defaultPredicates")).toBe(manifestLabel("checks"));
+    expect(fieldLabel("environmentIds")).toBe(manifestLabel("environments"));
+    expect(fieldLabel("environment")).toBe(
+      manifestLabel("computerEnvironment"),
+    );
+    expect(fieldLabel("judgeRubric")).toBe(manifestLabel("judgeRubric"));
+  });
+
+  it("keeps a hand-written label only for a key with no settings row", () => {
+    expect(
+      EVAL_SUITE_SETTINGS_MANIFEST.some(
+        (entry) => entry.key === "verdictPolicyDefaults",
+      ),
+    ).toBe(false);
     expect(fieldLabel("verdictPolicyDefaults")).toBe("Policy defaults");
-    expect(fieldLabel("environmentIds")).toBe("Environments");
     expect(fieldLabel("unknownKey")).toBe("unknownKey");
   });
 });

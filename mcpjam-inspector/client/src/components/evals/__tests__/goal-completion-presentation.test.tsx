@@ -264,6 +264,23 @@ describe("resolveIterationJudge (case drill-in join)", () => {
       ).toBe(0.9);
     });
 
+    it("returns null on a keyed run when this trial has no verdict", () => {
+      // Trial 3 was skipped, errored, or is not yet graded: the run carries
+      // trial keys, so a miss is the answer. A `caseKey` join here would show
+      // trial 1's 0.1 as trial 3's — and let a reviewer label it.
+      expect(
+        resolveIterationJudge(
+          {
+            _id: "it-3",
+            suiteRunId: "run-A",
+            iterationNumber: 3,
+            testCaseSnapshot: { caseKey: "case-1" },
+          },
+          repeated,
+        ),
+      ).toBeNull();
+    });
+
     it("still joins a legacy run by caseKey alone", () => {
       // Runs judged before either key existed carry neither, and on those
       // `caseKey` is exactly what their verdicts were keyed by.

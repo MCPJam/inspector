@@ -37,8 +37,8 @@ eval run` and `eval gate` extend their own wait by the backend's 30-minute hold
 when the caller did not pin `--wait-timeout` (an explicit budget is still
 honoured exactly); the GitHub check worker waits out the hold while it still
 holds its lease, and stops waiting the moment it does not; and the Slack watcher
-posts "grading" as an informational update with no counts and no chain, because
-a held run has no chain to show yet.
+extends its own deadline through the hold instead of posting an outcome for a
+run that has none (it posts nothing until the verdict lands).
 
 **Nothing about the exit-code contract changed.** A run that finishes grading
 exits on its real result, and a run still grading when an explicit deadline

@@ -199,6 +199,10 @@ export function resolveCellWorkflow(
  *   3. `caseKey` — the LEGACY fallback, correct only when a case ran once.
  *      Kept for runs judged before the keys existed, which is the only
  *      population it can still be wrong for and the only one it can serve.
+ *      It fires ONLY when no case in the array carries either key: on a keyed
+ *      run, a trial with no match has no verdict (skipped, errored, not yet
+ *      graded), and borrowing a sibling repetition's would show the wrong one
+ *      — and let a reviewer label it.
  */
 export function resolveIterationJudge(
   iteration:
@@ -231,9 +235,14 @@ export function resolveIterationJudge(
     const byGradingKey = cases.find((c) => c.gradingKey === gradingKey);
     if (byGradingKey) return byGradingKey;
   }
-  // Legacy only. A run whose cases carry EITHER new key has already been
-  // handled above, so falling through here means this run predates them —
+  // Legacy only. On a run whose cases carry EITHER new key, a miss above is
+  // the answer: this trial has no verdict, and a `caseKey` join would hand it
+  // a sibling repetition's. Only a run that predates both keys falls through —
   // and on such a run `caseKey` is what its verdicts were keyed by.
+  const keyed = cases.some(
+    (c) => c.iterationId !== undefined || c.gradingKey !== undefined,
+  );
+  if (keyed) return null;
   return cases.find((c) => c.caseKey === caseKey) ?? null;
 }
 

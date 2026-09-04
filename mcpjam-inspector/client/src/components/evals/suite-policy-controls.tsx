@@ -15,7 +15,7 @@
  * `entered / 100`, and nothing else on this path divides by anything.
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
 
@@ -38,6 +38,17 @@ const VALIDITY_PLACEHOLDERS = {
  * without the field rewriting itself to 8% under their cursor. Commits on blur
  * and on Enter, clamped into [0,1] — the backend refuses anything outside, and
  * a refusal after the save is a worse way to learn it.
+ *
+ * ONLY A CHANGE COMMITS. The field shows a ROUNDED percent, so a stored 0.855
+ * reads "86"; if merely focusing and leaving committed what was on screen, the
+ * suite would be rewritten to 0.86 by a reader who edited nothing. So the
+ * typed number is compared with the stored one — the exact fraction, or the
+ * percent the field already showed — and a match drafts nothing.
+ *
+ * A BLANK means two things, so the caller says which. On an optional field
+ * (`required` unset) it commits `undefined`: the contract default. On a
+ * required one it reverts to the stored value: there is no default to fall
+ * back to, and committing 0 would turn an empty box into "accept anything".
  */
 function PercentInput({
   label,
@@ -45,25 +56,42 @@ function PercentInput({
   placeholder,
   onCommit,
   ariaLabel,
+  required = false,
 }: {
   label?: string;
   value: number | undefined;
   placeholder?: string;
+  /** Receives `undefined` only when the field is optional and left blank. */
   onCommit: (fraction: number | undefined) => void;
   ariaLabel: string;
+  /** A blank reverts to the stored value instead of committing `undefined`. */
+  required?: boolean;
 }) {
   const asPercent = value === undefined ? "" : String(Math.round(value * 100));
   const [text, setText] = useState(asPercent);
   const [editing, setEditing] = useState(false);
+  // Escape reverts. It does so by blurring, and `blur()` runs the blur handler
+  // synchronously against the text that was on screen, so the handler needs
+  // to be told the blur is a revert before it can read anything.
+  const revertOnBlur = useRef(false);
   useEffect(() => {
     if (!editing) setText(asPercent);
   }, [asPercent, editing]);
 
   const commit = () => {
     setEditing(false);
+    if (revertOnBlur.current) {
+      revertOnBlur.current = false;
+      setText(asPercent);
+      return;
+    }
     const trimmed = text.trim();
     if (trimmed === "") {
-      onCommit(undefined);
+      if (required) {
+        setText(asPercent);
+        return;
+      }
+      if (value !== undefined) onCommit(undefined);
       return;
     }
     const parsed = Number(trimmed);
@@ -71,8 +99,16 @@ function PercentInput({
       setText(asPercent);
       return;
     }
-    const clamped = Math.min(100, Math.max(0, parsed));
-    onCommit(clamped / 100);
+    // Compared BEFORE clamping: "140" over a stored 100% is still an edit,
+    // and the commit is what snaps the field back into range.
+    const unchanged =
+      value !== undefined &&
+      (parsed / 100 === value || parsed === Math.round(value * 100));
+    if (unchanged) {
+      setText(asPercent);
+      return;
+    }
+    onCommit(Math.min(100, Math.max(0, parsed)) / 100);
   };
 
   return (
@@ -91,8 +127,7 @@ function PercentInput({
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
-              setEditing(false);
-              setText(asPercent);
+              revertOnBlur.current = true;
               event.currentTarget.blur();
             }
           }}
@@ -151,9 +186,14 @@ export function VerdictPolicyV2Controls({
           label="Pass threshold"
           value={current.passThreshold}
           ariaLabel="Fraction of a case's trials that must pass"
-          onCommit={(fraction) =>
-            onChange({ ...current, passThreshold: fraction ?? 0 })
-          }
+          required
+          onCommit={(fraction) => {
+            // A required field never commits a blank, so `undefined` cannot
+            // reach here; the guard is so it can never be read as a 0 either.
+            if (fraction !== undefined) {
+              onChange({ ...current, passThreshold: fraction });
+            }
+          }}
         />
       </div>
       <p className="text-[11px] text-muted-foreground/60">
