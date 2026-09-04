@@ -17,13 +17,28 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_DIFF=$(gh api \
-            -H "Accept: application/vnd.github.v3.diff" \
-            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }})
-
-          FILES_CHANGED=$(gh api \
+          # The diff travels to the next step through the ENVIRONMENT, and a
+          # single environment variable cannot exceed 128 KiB on Linux
+          # (MAX_ARG_STRLEN). A PR touching a checked-in generated bundle — the
+          # browserd daemon ships as one base64 blob, and its diff ran to 400 KB
+          # — died here with "Argument list too long" before the agent ran at
+          # all. It is the diff's SIZE that matters, not the number of files, so
+          # any large PR could hit this.
+          #
+          # Two guards, because either alone leaves the job breakable: skip
+          # generated and vendored files, then hard-cap what is left well under
+          # the limit. Nothing dropped could teach a documentation agent
+          # anything; all of it is enough to break the job.
+          PR_DIFF=$(gh api --paginate \
             /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
-            --jq '[.[] | .filename] | join(", ")')
+            --jq '.[]
+              | select((.filename | test("(^|/)dist/|\\.generated\\.|(^|/)(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock)$")) | not)
+              | "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")"' \
+            | head -c 100000)
+
+          FILES_CHANGED=$(gh api --paginate \
+            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
+            --jq '[.[] | .filename] | join(", ")' | head -c 10000)
 
           echo "pr_diff<<EOF" >> $GITHUB_OUTPUT
           echo "$PR_DIFF" >> $GITHUB_OUTPUT
