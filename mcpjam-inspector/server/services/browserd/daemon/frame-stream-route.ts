@@ -323,11 +323,7 @@ export function createFrameStreamHost(
     beatTimer = timers.setTimer(beat, heartbeatMs);
   }
 
-  function writeJson(
-    res: ServerResponse,
-    status: number,
-    body: Record<string, unknown> | undefined,
-  ): void {
+  function writeJson(res: ServerResponse, status: number, body: unknown): void {
     const payload = body === undefined ? undefined : JSON.stringify(body);
     res.writeHead(status, {
       "content-type": "application/json",
