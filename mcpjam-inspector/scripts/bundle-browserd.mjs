@@ -59,7 +59,18 @@ const result = await build({
   platform: "node",
   format: "esm",
   target: "node20",
-  external: ["playwright", "playwright-core"],
+  // `electron` is external for a DIFFERENT reason than the Playwright pair,
+  // and the difference is the whole point. Playwright is external because the
+  // sandbox resolves it at runtime. Electron is external because it must never
+  // resolve AT ALL: this bundle is uploaded to a box that has no Electron, and
+  // left non-external esbuild does not fail on an accidental import — it walks
+  // into `node_modules/electron` and INLINES the npm shim, which runs
+  // `getElectronPath()` at import and `spawnSync`s the package's `install.js`.
+  // The artifact then carries no bare `"electron"` specifier for a guard to
+  // find, so the check in `bundle-freshness.test.ts` passes on a bundle that
+  // would try to download Electron inside E2B. Listing it here is what makes
+  // that guard's premise true: an external import survives as a literal.
+  external: ["playwright", "playwright-core", "electron"],
   legalComments: "none",
   metafile: true,
   banner: {
@@ -69,9 +80,14 @@ const result = await build({
 
 // Local inputs only: a bare specifier here would be an external (`playwright`),
 // which is resolved inside the sandbox at runtime and has no bytes to hash.
+// `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
+// the workspace root, so a package that does get bundled arrives as
+// `../node_modules/<name>/…` and a prefix test walks straight past it — into
+// the hash, and past the leaked-file guard, which only recognises paths under
+// `services/browserd/electron/`.
 const sourceFiles = Object.keys(result.metafile.inputs)
   .map((input) => input.replaceAll("\\", "/"))
-  .filter((input) => !input.startsWith("node_modules/"))
+  .filter((input) => !input.includes("node_modules/"))
   .sort();
 
 // Also emit the bundle base64-encoded as a TS const. The inspector server reads
