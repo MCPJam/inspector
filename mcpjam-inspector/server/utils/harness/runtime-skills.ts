@@ -66,7 +66,7 @@ export type FetchRuntimeSkillsResult =
 export async function fetchRuntimeSkills(
   bearer: string,
   projectId: string,
-  executionScope?: ExecutionScope
+  executionScope?: ExecutionScope,
 ): Promise<FetchRuntimeSkillsResult> {
   try {
     const skills = executionScope
@@ -99,7 +99,7 @@ export type FetchRuntimeSkillFilesResult =
 export async function fetchRuntimeSkillFiles(
   bearer: string,
   projectId: string,
-  executionScope?: ExecutionScope
+  executionScope?: ExecutionScope,
 ): Promise<FetchRuntimeSkillFilesResult> {
   try {
     const files = executionScope
@@ -111,7 +111,7 @@ export async function fetchRuntimeSkillFiles(
       "[runtime-skills] file fetch failed; skipping materialization",
       {
         error: error instanceof Error ? error.message : String(error),
-      }
+      },
     );
     return { ok: false };
   }
@@ -191,7 +191,7 @@ export function toYamlDoubleQuoted(value: string): string {
  * adapter that composes frontmatter structurally must NOT use this.
  */
 export function frontmatterSafeSkills(
-  skills: RuntimeSkill[]
+  skills: RuntimeSkill[],
 ): HarnessSkillPayload[] {
   return skills.map((s) => ({
     name: s.name,
@@ -214,7 +214,7 @@ export interface PreparedHarnessSkills {
 
 /** Claude Code: every runtime skill is delivered, descriptions YAML-encoded. */
 export function prepareClaudeCodeSkills(
-  skills: RuntimeSkill[]
+  skills: RuntimeSkill[],
 ): PreparedHarnessSkills {
   return {
     payload: frontmatterSafeSkills(skills),
@@ -237,7 +237,7 @@ export function prepareClaudeCodeSkills(
  * (every other pass validates it the same way), so it is dropped with a reason.
  */
 export function prepareCodexSkills(
-  skills: RuntimeSkill[]
+  skills: RuntimeSkill[],
 ): PreparedHarnessSkills {
   const delivered: RuntimeSkill[] = [];
   const skipped: Array<{ name: string; reason: string }> = [];
@@ -254,4 +254,25 @@ export function prepareCodexSkills(
     });
   }
   return { payload: frontmatterSafeSkills(delivered), delivered, skipped };
+}
+
+/**
+ * A harness that delivers no skills at all (`supportsSkills: false`).
+ *
+ * `runHarnessTurn` never calls `prepareSkills` for such an adapter, so this is
+ * reached only if that guard is ever removed. It reports the honest answer —
+ * nothing delivered, nothing skipped — rather than a payload that would claim a
+ * delivery the runtime does not perform. Every skill is listed as skipped so a
+ * caller inspecting the result can say WHY the skills it fetched are missing
+ * from the box instead of finding an empty structure with no explanation.
+ */
+export function prepareNoSkills(skills: RuntimeSkill[]): PreparedHarnessSkills {
+  return {
+    payload: [],
+    delivered: [],
+    skipped: skills.map((skill) => ({
+      name: skill.name,
+      reason: "harness-does-not-deliver-skills",
+    })),
+  };
 }

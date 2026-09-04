@@ -8,13 +8,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // value of this may keep the page from rendering.
 let flagState: boolean | undefined = undefined;
 
-const { mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+const { memberActor, mockRouteContext, mockNavigate } = vi.hoisted(() => ({
+  // The Convex actor behind the cloud half's other term. Held at a resolved
+  // member for this file so each case varies the FLAG alone; the actor's own
+  // tri-state is pinned in SkillsRoute.local-connect-chrome.test.tsx.
+  memberActor: { value: true as boolean | undefined },
   mockRouteContext: {
     convexProjectId: "project-1" as string | null,
     isAuthenticated: true,
     isGuestProjectActor: false,
   },
   mockNavigate: vi.fn(),
+}));
+
+vi.mock("../hooks/use-is-member-actor", () => ({
+  useIsMemberActor: () => memberActor.value,
 }));
 
 vi.mock("../hooks/useSkillsEnabled", () => ({
@@ -110,6 +118,7 @@ beforeEach(() => {
   mockRouteContext.convexProjectId = "project-1";
   mockRouteContext.isAuthenticated = true;
   mockRouteContext.isGuestProjectActor = false;
+  memberActor.value = true;
 });
 
 afterEach(() => {
@@ -193,6 +202,7 @@ describe("SkillsRoute — cloud-skills flag + Connect chrome", () => {
   it("renders the bare view without Connect chrome for a guest actor", () => {
     flagState = true;
     mockRouteContext.isGuestProjectActor = true;
+    memberActor.value = false;
     renderRoute(<SkillsRoute />);
     expect(screen.getByTestId("skills-view")).toBeInTheDocument();
     expect(screen.queryByTestId("connect-header")).not.toBeInTheDocument();

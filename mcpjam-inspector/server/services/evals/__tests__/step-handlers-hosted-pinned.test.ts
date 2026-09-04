@@ -27,6 +27,7 @@ const PINNED_STEP = {
 function makeAcc() {
   return {
     messageHistory: [] as any[],
+    traceMessageHistory: [] as any[],
     capturedSpans: [] as any[],
     accumulatedUsage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
     toolsCalledByPrompt: [] as any[][],

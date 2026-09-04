@@ -1,4 +1,6 @@
+import { useState } from "react";
 import { Gavel, Wrench } from "lucide-react";
+import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
 import type { EvalSuiteRun } from "./types";
 import type { RunCaseGroup } from "./run-case-groups";
@@ -183,15 +185,31 @@ export function resolveCellWorkflow(
 }
 
 /**
- * Resolve the judge verdict for a single iteration shown in the case drill-in,
- * by joining the iteration's `suiteRunId` + snapshot `caseKey` against the
- * loaded runs' `goalCompletion`. Returns null when the iteration's run wasn't
- * judged or the iteration lacks the join keys.
+ * Resolve the judge verdict for a single iteration shown in the case drill-in.
+ *
+ * THREE JOIN KEYS, MOST SPECIFIC FIRST, and the order is the correctness. A
+ * case that runs more than once — every case under verdict policy v2 — produces
+ * one verdict per trial, and `caseKey` names the CASE rather than the trial. So
+ * a `caseKey` join returns whichever trial's verdict happens to be first in the
+ * array and attributes it to the trial the reader is looking at. That is not a
+ * missing verdict; it is the wrong one, shown confidently.
+ *
+ *   1. `iterationId` — the backend resolved this verdict to this trial.
+ *   2. `gradingKey` — `${caseKey}#${iterationNumber}`, the trial's own key.
+ *   3. `caseKey` — the LEGACY fallback, correct only when a case ran once.
+ *      Kept for runs judged before the keys existed, which is the only
+ *      population it can still be wrong for and the only one it can serve.
+ *      It fires ONLY when no case in the array carries either key: on a keyed
+ *      run, a trial with no match has no verdict (skipped, errored, not yet
+ *      graded), and borrowing a sibling repetition's would show the wrong one
+ *      — and let a reviewer label it.
  */
 export function resolveIterationJudge(
   iteration:
     | {
+        _id?: string;
         suiteRunId?: string | null;
+        iterationNumber?: number;
         testCaseSnapshot?: { caseKey?: string } | null;
       }
     | null
@@ -204,9 +222,28 @@ export function resolveIterationJudge(
     return null;
   }
   const run = runs.find((r) => r._id === runId);
-  return (
-    run?.goalCompletion?.cases.find((c) => c.caseKey === caseKey) ?? null
+  const cases = run?.goalCompletion?.cases;
+  if (!cases) return null;
+
+  const iterationId = iteration?._id;
+  if (iterationId) {
+    const byIteration = cases.find((c) => c.iterationId === iterationId);
+    if (byIteration) return byIteration;
+  }
+  if (iteration?.iterationNumber !== undefined) {
+    const gradingKey = `${caseKey}#${iteration.iterationNumber}`;
+    const byGradingKey = cases.find((c) => c.gradingKey === gradingKey);
+    if (byGradingKey) return byGradingKey;
+  }
+  // Legacy only. On a run whose cases carry EITHER new key, a miss above is
+  // the answer: this trial has no verdict, and a `caseKey` join would hand it
+  // a sibling repetition's. Only a run that predates both keys falls through —
+  // and on such a run `caseKey` is what its verdicts were keyed by.
+  const keyed = cases.some(
+    (c) => c.iterationId !== undefined || c.gradingKey !== undefined,
   );
+  if (keyed) return null;
+  return cases.find((c) => c.caseKey === caseKey) ?? null;
 }
 
 /**
@@ -218,17 +255,218 @@ export function resolveIterationJudge(
  * compact score, the rail carries the run summary + disagreements, and this is
  * the per-case home.
  */
-export function JudgeVerdictPanel({ judgeCase }: { judgeCase: JudgeCase }) {
-  // Thin adapter: the panel itself is product-neutral (shared with the Swarms
-  // session viewer); this keeps the historical eval-shaped signature.
+export function JudgeVerdictPanel({
+  judgeCase,
+  review,
+  onReview,
+}: {
+  judgeCase: JudgeCase;
+  /** An existing calibration label for this trial, when there is one. */
+  review?: TrialJudgeReview | null;
+  /**
+   * Record a calibration label. Absent means labelling is not offered here —
+   * a quick-run trial, or a caller without the permission.
+   *
+   * `blind` is ASSERTED by this component: it passes `true` only when the
+   * judge's band was still hidden at the moment the label was chosen. The
+   * backend counts only blind rows toward the agreement rate, so a lie here
+   * would inflate a calibration that gates other people's builds.
+   */
+  onReview?: (
+    verdict: ReviewerVerdict,
+    options: { blind: boolean; note?: string },
+  ) => void | Promise<void>;
+}) {
+  // The blind protocol. The judge's band starts HIDDEN and stays hidden until
+  // somebody asks for it — a label chosen while looking at the judge's answer
+  // measures anchoring, not judgement, which is why the backend refuses to
+  // count it. Revealing is allowed and honest; it just does not calibrate.
+  const [revealed, setRevealed] = useState(
+    review !== null && review !== undefined,
+  );
+  const canLabel = onReview !== undefined;
+
   return (
-    <JudgeVerdictCard
-      verdict={{
-        score: judgeCase.score,
-        passed: judgeCase.passed,
-        reason: judgeCase.reason,
-      }}
-    />
+    <div className="space-y-2">
+      {canLabel && !review ? (
+        <TrialReviewControl
+          revealed={revealed}
+          onSubmit={(verdict, note) =>
+            onReview?.(verdict, { blind: !revealed, ...(note ? { note } : {}) })
+          }
+          onReveal={() => setRevealed(true)}
+        />
+      ) : null}
+      {review ? (
+        <TrialReviewProvenance
+          review={review}
+          judgeCase={judgeCase}
+          onChange={
+            canLabel
+              ? (verdict, note) =>
+                  onReview?.(verdict, {
+                    // A CHANGED label is never blind: the reader has seen the
+                    // judge's verdict by now, on this very panel.
+                    blind: false,
+                    ...(note ? { note } : {}),
+                  })
+              : undefined
+          }
+        />
+      ) : null}
+      {revealed || !canLabel ? (
+        // Thin adapter: the card itself is product-neutral (shared with the
+        // Swarms session viewer); this keeps the historical eval-shaped
+        // signature.
+        <JudgeVerdictCard
+          verdict={{
+            score: judgeCase.score,
+            passed: judgeCase.passed,
+            reason: judgeCase.reason,
+          }}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+/** A reviewer's own read of a trial. Never a verdict override. */
+export type ReviewerVerdict = "pass" | "partial" | "fail";
+
+/** What `evalJudgeReviews:getIterationJudgeReview` returns for one trial. */
+export type TrialJudgeReview = {
+  reviewerVerdict: ReviewerVerdict;
+  judgeVerdict: string;
+  reviewerUserId?: string;
+  note: string | null;
+  blind: boolean;
+  createdAt: number;
+};
+
+const REVIEWER_VERDICTS: ReviewerVerdict[] = ["pass", "partial", "fail"];
+
+/**
+ * Label first, reveal second.
+ *
+ * The order on screen IS the protocol: the control that records a judgement
+ * comes before the button that shows the judge's, so the default path produces
+ * a blind label. Revealing first is allowed and says so — an honest
+ * non-calibrating label beats a reader who quietly agrees with a number they
+ * already saw.
+ */
+function TrialReviewControl({
+  revealed,
+  onSubmit,
+  onReveal,
+}: {
+  revealed: boolean;
+  onSubmit: (verdict: ReviewerVerdict, note: string) => void;
+  onReveal: () => void;
+}) {
+  const [note, setNote] = useState("");
+  return (
+    <div
+      className="space-y-1.5 rounded-lg border border-border/50 p-2 text-xs"
+      data-testid="trial-review-control"
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted-foreground">Label this trial</span>
+        {revealed ? null : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[11px]"
+            onClick={onReveal}
+          >
+            Reveal judge verdict
+          </Button>
+        )}
+      </div>
+      <div className="flex items-center gap-1.5">
+        {REVIEWER_VERDICTS.map((verdict) => (
+          <Button
+            key={verdict}
+            type="button"
+            variant="outline"
+            size="sm"
+            className="h-6 text-[11px] capitalize"
+            onClick={() => onSubmit(verdict, note.trim())}
+          >
+            {verdict}
+          </Button>
+        ))}
+      </div>
+      <input
+        className="h-7 w-full rounded-md border border-input bg-background px-2 text-[11px] text-foreground"
+        value={note}
+        placeholder="Optional note"
+        aria-label="Reviewer note"
+        onChange={(event) => setNote(event.target.value)}
+      />
+      {revealed ? (
+        <p
+          className="text-[11px] text-muted-foreground"
+          data-testid="trial-review-not-blind"
+        >
+          Not blind — won&apos;t count toward calibration.
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+/** Both readings side by side, once a label exists. */
+function TrialReviewProvenance({
+  review,
+  judgeCase,
+  onChange,
+}: {
+  review: TrialJudgeReview;
+  judgeCase: JudgeCase;
+  onChange?: (verdict: ReviewerVerdict, note: string) => void;
+}) {
+  const [changing, setChanging] = useState(false);
+  return (
+    <div
+      className="space-y-1.5 rounded-lg border border-border/50 p-2 text-xs"
+      data-testid="trial-review-provenance"
+    >
+      <p className="text-muted-foreground">
+        Judge: {review.judgeVerdict} ({formatScore(judgeCase.score)}) ·
+        Reviewer: {review.reviewerVerdict}
+        {review.note ? ` — ${review.note}` : ""}
+      </p>
+      {review.blind ? null : (
+        <p className="text-[11px] text-muted-foreground/60">
+          Not blind — not counted toward calibration.
+        </p>
+      )}
+      {onChange ? (
+        changing ? (
+          <TrialReviewControl
+            // A change is made with the judge's verdict already on screen, so
+            // it can never be blind — see `onReview` above.
+            revealed
+            onSubmit={(verdict, note) => {
+              setChanging(false);
+              onChange(verdict, note);
+            }}
+            onReveal={() => {}}
+          />
+        ) : (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 text-[11px]"
+            onClick={() => setChanging(true)}
+          >
+            Change label
+          </Button>
+        )
+      ) : null}
+    </div>
   );
 }
 

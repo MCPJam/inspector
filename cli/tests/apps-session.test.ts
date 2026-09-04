@@ -1,8 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import http from "node:http";
-import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -14,6 +12,7 @@ import {
   type WidgetSessionActionResponse,
   type WidgetSessionStartResponse,
 } from "../src/lib/widget-session.js";
+import { runCli } from "./support/task-cli-harness.js";
 import { CliError } from "../src/lib/output.js";
 
 /* ------------------------------------------------------------------ *
@@ -135,56 +134,11 @@ test("buildWidgetSessionActionOutput surfaces tool calls, note, and TTL", () => 
  * Subprocess integration — start -> action -> close against a mock Inspector.
  * ------------------------------------------------------------------ */
 
-const CLI_DIR = process.cwd().endsWith(`${path.sep}cli`)
-  ? process.cwd()
-  : path.join(process.cwd(), "cli");
-const requireFromCli = createRequire(path.join(CLI_DIR, "package.json"));
-const TSX_CLI_PATH = requireFromCli.resolve("tsx/cli");
-const CLI_ENTRY_PATH = path.join(CLI_DIR, "src", "index.ts");
-
 const PNG_BYTES = Buffer.concat([
   Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
   Buffer.from("frame"),
 ]);
 const PNG_B64 = PNG_BYTES.toString("base64");
-
-async function runCli(
-  args: string[],
-): Promise<{ exitCode: number; stdout: string; stderr: string }> {
-  return await new Promise((resolve, reject) => {
-    execFile(
-      process.execPath,
-      [TSX_CLI_PATH, CLI_ENTRY_PATH, ...args],
-      {
-        cwd: CLI_DIR,
-        encoding: "utf8",
-        env: {
-          ...process.env,
-          MCPJAM_CLI_DISABLE_BROWSER_OPEN: "1",
-          MCPJAM_TELEMETRY_DISABLED: "1",
-        },
-      },
-      (error, stdout, stderr) => {
-        if (
-          error &&
-          (error as NodeJS.ErrnoException).code !== undefined &&
-          typeof (error as NodeJS.ErrnoException).code !== "number"
-        ) {
-          reject(new Error(`Failed to execute CLI: ${String(error)}`));
-          return;
-        }
-        resolve({
-          exitCode:
-            typeof (error as NodeJS.ErrnoException | null)?.code === "number"
-              ? Number((error as NodeJS.ErrnoException).code)
-              : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
-  });
-}
 
 function lastJsonLine(stdout: string): string {
   const lines = stdout.trim().split(/\r?\n/);

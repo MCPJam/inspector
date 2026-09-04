@@ -6,7 +6,7 @@ icon: "book"
 
 Complete flag tables for every `mcpjam` command. For guides and recipes, see the individual command pages.
 
-Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` are declared on `mcpjam cloud` and work before or after descendants. Hosted `readiness` stays at the root and still takes leaf `--api-key`. See [Migrating to CLI 4.0](/cli/migration).
+Account-bound Cloud commands live under `mcpjam cloud`. Local MCP testing stays at the top level (`mcpjam server`, `mcpjam oauth login`, …). Credential flags `--api-key` / `--api-url` / `--api-header` are declared on `mcpjam cloud` and work before or after descendants. Hosted `readiness` stays at the root and still takes leaf `--api-key`. See [Migrating to CLI 4.0](/cli/migration).
 
 ## Global flags
 
@@ -354,6 +354,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--url <url>` | Yes | OAuth metadata URL to fetch |
+| `--https-only` | No | Apply the hosted policy: reject non-HTTPS and private targets |
 
 ### `oauth proxy` / `oauth debug-proxy`
 
@@ -363,6 +364,13 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--method <method>` | No | `GET` | HTTP method |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
 | `--body <value>` | No | | Request body as JSON, raw string, `@path`, or `-` for stdin |
+| `--https-only` | No | | Apply the hosted policy: reject non-HTTPS and private targets |
+
+These three commands reach private destinations by default — a server on
+loopback, on your LAN, or on a hostname that resolves to one — because the CLI
+runs on your own machine. `--https-only` opts in to the policy the hosted web
+app enforces, which is what you want when reproducing a hosted failure. Neither
+mode will dial a link-local or cloud-metadata address.
 
 ---
 
@@ -495,6 +503,7 @@ On a conflict, re-run `get` and retry with the fresh value.
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### `cloud clients templates`
 
@@ -625,6 +634,7 @@ All `environments` commands require an `sk_` API key (via `--api-key` or the `MC
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### The revision workflow
 
@@ -671,7 +681,7 @@ Preview what the environment resolves to right now: the host's current config, t
 | `--file <path>` | No | Environment JSON file (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, and `pluginVersionIds`:
+\* `--name` and `--host-id` may instead be supplied inside `--file`/`--json`; explicit flags override the same key in the JSON body. Use the JSON body for the structured fields that have no flag — `serverAttachmentId`, `skillSelection`, `secretSelection`, and `pluginVersionIds`:
 
 ```bash
 mcpjam cloud environments create --project Acme --json '{
@@ -694,7 +704,7 @@ mcpjam cloud environments create --project Acme --json '{
 | `--file <path>` | No | Environment JSON with the fields to change (or `-` for stdin) |
 | `--json <json>` | No | Inline environment JSON (or `@file`, or `-`) |
 
-Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
+Only the fields you pass change. To **clear** `serverAttachmentId`, `skillSelection`, `secretSelection`, or `pluginVersionIds`, send an explicit `null` in the JSON body — an empty array is rejected, it is not a way to clear:
 
 ```bash
 mcpjam cloud environments update --environment Staging --expected-revision 3 \
@@ -734,6 +744,7 @@ Requires project membership, not admin (pinning plugin versions still requires a
 | `--model <id>` | No | Model to run instead of the host's pinned one |
 | `--computer <id-or-name>` | No | Project-shared sandbox image to pin, so runs boot a fresh computer from it |
 | `--skill <id...>` | No | Project-shared skill IDs to pin |
+| `--secret <id...>` | No | Project secret IDs the stack grants to its runs (`secrets list` shows them) |
 | `--project <id-or-name>` | No | Project name or ID |
 
 ### `cloud environments name`
@@ -750,10 +761,37 @@ Promote an ad-hoc environment to a named one **in place** — the same id every 
 
 ### What can be pinned
 
-Both pin fields are narrower than they look:
+The pin fields are narrower than they look:
 
 - **`skillSelection`** accepts project-shared skills only. Personal skills, skills with supporting files or extra frontmatter, and plugin-component skills are all rejected.
 - **`pluginVersionIds`** accepts a plugin version only when its plugin is installed and enabled, the version is `ready`, at most one version per plugin is pinned, and none of the version's skills carry supporting files.
+- **`secretSelection`** is a GRANT, not a pin: the environment is the boundary, so a run receives the secrets it lists and nothing else. There is no "all of them" mode, an empty list is rejected (revoke with `"secretSelection": null` on update), and a `sharing: "user"` secret still reaches only sessions its owner started.
+
+### Deployment support for model overrides and secret grants
+
+<Note>
+  `--model` / `"modelId"` and `--secret` / `"secretSelection"` are answered by
+  the deployment, not by your account: a self-hosted or older MCPJam whose
+  environment surface predates a field rejects it outright. The CLI asks first
+  — `GET /projects/:id/environments/capabilities` reports `modelOverrides` and
+  `secretGrants` — and refuses before sending, rather than letting the field
+  die in a validator. Absence reads as a no, so a deployment too old to answer
+  the probe at all is treated as not supporting either.
+
+  The refusal opens with one of these two sentences:
+
+  - **This MCPJam deployment does not support environment model overrides.**
+  - **This MCPJam deployment does not support environment secret grants.**
+
+  A second sentence then names what to drop, and it differs by surface —
+  `--model` / `--clear-model` / `"modelId"` on the environment writes,
+  `--compose-model` / `compose.models` on a composed launch, and the
+  `--secret` / `--compose-secret` equivalents. Grep for the sentence above,
+  not for the whole message.
+
+  Every other flag on these commands works regardless; only the calls that
+  actually carry a model or a grant are checked.
+</Note>
 
 ---
 
@@ -781,6 +819,7 @@ knowledge:
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### `cloud images list`
 
@@ -888,6 +927,7 @@ All `skills` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_A
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### `cloud skills list`
 
@@ -905,6 +945,56 @@ Show one skill, including its SKILL.md body.
 |------|----------|-------------|
 | `--skill <id>` | Yes | Skill ID, from `cloud skills list` |
 | `--project <id-or-name>` | No | Project name or ID |
+
+---
+
+## `cloud projects servers` commands
+
+Manage the MCP servers saved in a project and connect new ones. All `projects servers` commands require an `sk_` API key (via `--api-key` or the `MCPJAM_API_KEY` environment variable) or a prior `mcpjam cloud login`.
+
+### Shared platform flags
+
+| Flag | Description |
+|------|-------------|
+| `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
+| `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
+
+### `cloud projects servers connect`
+
+Start a connection request for an MCP server URL. Discovery, browser consent, and validation happen asynchronously. When the server requires OAuth, the command prints a private authorization link and (by default) opens it in a browser. The command then polls until the request reaches a terminal status.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--url <url>` | Yes | MCP server URL to connect |
+| `--project <id-or-name>` | No | Project name or ID |
+| `--server <id>` | No | Existing server ID, when the project has several on this URL |
+| `--name <name>` | No | Name for the server, if one is created |
+| `--reauthorize` | No | Force a fresh authorization |
+| `--no-browser` | No | Print the authorization link instead of opening it |
+| `--no-wait` | No | Return as soon as the request is created |
+
+With `--no-wait`, the command prints the request id and exits immediately. The request continues in the cloud; use `connect-status` to check it and `connect-cancel` to stop it.
+
+Each pending request holds one of the account's five concurrent-connection slots for up to an hour. If `connect` reports `ACTIVE_REQUEST_LIMIT`, the error details include the ids of the open requests — cancel the abandoned ones with `connect-cancel` to free slots.
+
+### `cloud projects servers connect-status`
+
+Check the current state of a connection request started by `connect`.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--request <id>` | Yes | Connection request id (`scr_…`) |
+
+### `cloud projects servers connect-cancel`
+
+Cancel a pending connection request, releasing the concurrent-connection slot it holds. Cancelling an already-terminal request is a no-op.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--request <id>` | Yes | Connection request id (`scr_…`) |
+
+Cancelling is idempotent — calling it twice on the same request is safe. Use this when an authorization was abandoned (link opened in the wrong browser, consent screen closed) and you want to free the slot before starting over.
 
 ---
 
@@ -980,6 +1070,7 @@ All `readiness` hosted commands require an `sk_` API key (via `--api-key` or the
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### `readiness start claude`
 
@@ -1054,6 +1145,7 @@ All `eval` commands accept the shared platform flags below.
 |------|-------------|
 | `--api-key <key>` | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`) |
 | `--api-url <url>` | MCPJam API base URL (defaults to `https://app.mcpjam.com/api/v1`) |
+| `--api-header <header...>` | Extra request header as `"Name: value"`, repeatable — for a deployment behind Cloudflare Access, a WAF, or a corporate proxy. Also `MCPJAM_API_HEADERS`, one per line. Cannot set `authorization`, `idempotency-key`, or `content-type`. |
 
 ### `cloud eval create`
 
@@ -1124,14 +1216,21 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
 
 #### Composing a target instead of naming one
 
 `--compose-host <id-or-name>` builds an execution stack for this run instead of
 naming a saved environment, refined by `--compose-computer`, `--compose-model`,
-`--compose-server-group` and `--compose-skill`. The stack becomes an unnamed,
+`--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
 content-addressed environment (the same one `environments ensure-adhoc`
 produces), so composing the same stack twice reuses one environment.
+
+`--compose-model` and `--compose-secret` carry the deployment requirement
+described under [Deployment support for model overrides and secret
+grants](#deployment-support-for-model-overrides-and-secret-grants): a launch that names
+either is refused before it composes anything if this deployment does not
+publish the capability.
 
 <Warning>
   **This edits the suite.** The composed environment is appended to the suite's
@@ -1345,11 +1444,34 @@ Get the status and summary of an eval run.
 |------|----------|-------------|
 | `--run <id>` | Yes | Eval run ID (from `eval run`) |
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--diagnostics-limit <n>` | No | Failure diagnostics per page (1–200; default 20) |
+| `--diagnostics-cursor <cursor>` | No | Cursor from a previous response's `decisionSummary.diagnostics.nextCursor` |
+| `--stages` | No | Print all six user-value chain rows for each failing trial (`--format human`) |
 
 The response carries a `judges` block with each advisory grader's state and
 per-case grades. `status: null` means that judge was never requested for the
 run — different from a judge that ran and graded nothing. In `--format human`,
 each judge that actually graded gets a one-line summary.
+
+The failure diagnostics inside `decisionSummary` are **paginated**, and a page
+that is not the whole set says so: `diagnostics.complete` is `false` and
+`diagnostics.nextCursor` carries the next page. Without `--diagnostics-cursor`
+a run with more failures than the page size reports only its first 20, so a
+script that concludes "only these failed" from one page is reading a sample.
+Walk the pages:
+
+```bash
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 --format json
+# then, while .decisionSummary.diagnostics.complete is false:
+mcpjam cloud eval status --run "$RUN_ID" --diagnostics-limit 200 \
+  --diagnostics-cursor "$NEXT_CURSOR" --format json
+```
+
+`--stages` expands each failing trial from one first-failed-stage line to all
+six chain rows — connection, discovery, selection, tool call, response, user
+value — with each row's state and reason in words. It is off by default because
+six rows per trial is a lot of terminal on a run with twenty failures; the
+first-break line above the per-trial detail is printed either way.
 
 ### `cloud eval judge`
 
@@ -1370,6 +1492,54 @@ for the suite does not reach a run that was already recorded — `--enable` is
 what grades it, and it changes nothing beyond that run. Passing neither
 `--judge-model` nor `--judge-threshold` grades with the suite's own config,
 clearing any override a previous request left on the run.
+
+### `cloud eval stage-analytics`
+
+Read the user-value chain funnel — how far value travelled through
+`connection → discovery → selection → call → response → userValue`, and how
+much of the run was measured at each stage.
+
+Address it two ways, and exactly one of them per invocation:
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | XOR `--suite` | One run's funnel, as a single document |
+| `--suite <id-or-name>` | XOR `--run` | One page of that suite's runs, newest completion first — one document per run |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous response (`--suite` only) |
+| `--limit <n>` | No | Documents per page, 1–100 (`--suite` only) |
+
+```bash
+mcpjam cloud eval stage-analytics --run "$RUN_ID" --format json
+mcpjam cloud eval stage-analytics --suite checkout --limit 10 --format json
+```
+
+**Counts are returned; rates are not.** Every field is a count of trials, and
+the arithmetic is stated on the document: `passed + failed = measured`,
+`measured + notMeasured = reached`, `reached + notReached + reachUnknown =
+applicable`. Derive a rate only with its denominator in hand — **a zero
+denominator means not measured**, never 0% and never 100%.
+
+**Never sum across stages, and never merge across runs.** One trial is counted
+in every stage's tally, so adding the six counts the same trial six times. Each
+document describes one run's population; the `--suite` listing renders runs
+side by side as a trend series and never aggregates them.
+
+**A listing is only comparable within a partition.** Two funnels drawn beside
+each other *is* a comparability claim, and it holds only across runs that share
+`runGroupId`, `configRevision`, `caseSetFingerprint`, `stageAnalyzerVersion`
+and `measurementsSchemaVersion`, and whose `materializationState` is `final`.
+An **absent** `runGroupId`, `configRevision` or `caseSetFingerprint` blocks
+comparability rather than being assumed compatible — two runs that both record
+nothing compare equal while sharing nothing at all.
+
+**Three absences, three different answers.** A run that does not exist fails as
+a run-not-found error. A deployment that does not serve this route fails with a
+message saying so — that is a fact about the deployment, not about the run. Only
+a run that was retrieved and has no document reports `analyticsState:
+"unmeasured"` with `analytics: null`, and that state is permanent: there is no
+backfill, so a run that finished before stage measurement shipped will never
+gain a funnel.
 
 ### `cloud eval iterations`
 
@@ -1790,6 +1960,23 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
 
+### `cloud eval revisions`
+
+List a suite's settings history, newest first: one entry per committed edit,
+with who made it, which stored fields moved, the note they left, and how many
+runs were launched against it. Rows carry no configuration snapshots.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum revisions to return, 1–100 (defaults to 25) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous page |
+
+```bash
+mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
+```
+
 ### `cloud eval checks list`
 
 List the repositories whose pull requests run an eval suite, plus the
@@ -1822,6 +2009,11 @@ people's pull requests during an MCPJam outage, and it is not editable from
 this command afterwards. Retargeting a repository at a different suite, pausing
 it, and disconnecting all live in the app's Settings → Integrations, where every
 connected repository is visible at once.
+
+Connecting also turns on pull-request comments: MCPJam posts one comment on each
+pull request to the repository and keeps that same comment updated on every later
+push. Comments are on for every connected repository, and can be turned off per
+repository in the app's Settings → Integrations → GitHub.
 
 ### `cloud eval delete`
 
@@ -1926,6 +2118,7 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
 | `--compose-skill <id...>` | No | Project-shared skill IDs to pin on the composed stack |
+| `--compose-secret <id...>` | No | Project secret IDs the composed stack grants to its runs (`secrets list` shows them) |
 | `--iterations <n>` | No | Run the case this many times (1-10) |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 

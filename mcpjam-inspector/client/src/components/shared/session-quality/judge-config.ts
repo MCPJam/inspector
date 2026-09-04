@@ -21,6 +21,21 @@ export type GoalJudgeConfig = {
      * off so surfaces preserve cost-conscious behavior until they opt in.
      */
     autoRun?: boolean;
+    /**
+     * Whether this judge's verdict may DECIDE a trial, or only describe it.
+     *
+     * Absent means advisory, which is what every suite written before the gate
+     * means — so a missing field can never be read as an accidental gate. The
+     * backend refuses to store `gating` unless the suite is calibrated against
+     * its current rubric and judge template, or an organization owner has
+     * acknowledged the gap.
+     *
+     * Mirrors `goalCompletionConfigFieldsValidator` in the backend's
+     * `convex/lib/judgeConfig.ts`. Deliberately absent from
+     * `GoalJudgeConfigOverride` below: the backend admits no per-case role, and
+     * a per-run override may only lower to `"advisory"`.
+     */
+    role?: "advisory" | "gating";
   };
 };
 
