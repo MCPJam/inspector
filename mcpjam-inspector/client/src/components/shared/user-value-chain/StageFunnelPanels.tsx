@@ -18,6 +18,7 @@
  * dark-ship argument does not rest on every mount site remembering.
  */
 
+import { useEffect } from "react";
 import { useQuery } from "convex/react";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { StageFunnel } from "./StageFunnel";
@@ -55,7 +56,7 @@ function ScenarioStageFunnel({
 }) {
   const summary = useQuery(
     "chatSessionStageDerivation:getScenarioStageFunnel" as never,
-    (scenarioId ? { scenarioId } : "skip") as never
+    (scenarioId ? { scenarioId } : "skip") as never,
   ) as ChatSessionStageFunnel | null | undefined;
 
   // `undefined` is still loading and `null` is a scenario we cannot read.
@@ -88,15 +89,20 @@ export function SwarmRunStageFunnelPanels({
   className?: string;
 }) {
   if (journeyRunIds.length === 0) return null;
+  // A wave can carry many journey runs. Stacking every funnel as shrink-0
+  // used to push the session list off the tab; cap the stack and let it
+  // scroll so Sessions stays usable.
   return (
     <ErrorBoundary fallback={null}>
       <div className={className}>
-        {journeyRunIds.map((journeyRunId) => (
-          <SwarmRunStageFunnelPanel
-            key={journeyRunId}
-            journeyRunId={journeyRunId}
-          />
-        ))}
+        <div className="max-h-[min(40vh,20rem)] min-h-0 space-y-2 overflow-y-auto">
+          {journeyRunIds.map((journeyRunId) => (
+            <SwarmRunStageFunnelPanel
+              key={journeyRunId}
+              journeyRunId={journeyRunId}
+            />
+          ))}
+        </div>
       </div>
     </ErrorBoundary>
   );
@@ -105,10 +111,13 @@ export function SwarmRunStageFunnelPanels({
 function SwarmRunStageFunnelPanel({ journeyRunId }: { journeyRunId: string }) {
   const summary = useQuery(
     "chatSessionStageDerivation:getSwarmRunStageFunnel" as never,
-    { journeyRunId } as never
+    { journeyRunId } as never,
   ) as ChatSessionStageFunnel | null | undefined;
 
   if (!summary) return null;
+  // A wave member with no sessions is not a funnel — rendering one card per
+  // empty run is what made the Sessions chrome taller than the viewport.
+  if (summary.total === 0) return null;
 
   return (
     <StageFunnel
@@ -147,6 +156,114 @@ export function SuiteRunStageFunnelPanel({
   );
 }
 
+/**
+ * Reports whether the suite-run funnel HAS anything to draw. Renders nothing.
+ *
+ * A container that decides whether to open at all cannot ask the panel — the
+ * panel only exists once the container has opened. So the question is asked
+ * here instead, by a probe mounted unconditionally and outside whatever the
+ * answer gates.
+ *
+ * It re-runs the panel's own query rather than deriving an answer from
+ * iteration rows: "the rollup exists" is the panel's actual render condition,
+ * and any local approximation of it would be a second, drifting definition of
+ * when the funnel appears. Convex de-duplicates identical subscriptions, so
+ * asking twice costs one query.
+ *
+ * The `ErrorBoundary` is the same guarantee the panels above carry, for the
+ * same reason: `useQuery` throws when the query is not deployed (dark ship) or
+ * when there is no `ConvexProvider` (a test tree), and a probe that took a
+ * whole run-detail page down with it would be worse than the empty rail it
+ * exists to prevent. Undeployed reads as "no funnel", which is correct.
+ */
+/**
+ * The two failure shapes this probe genuinely EXPECTS, and nothing else.
+ *
+ * `useQuery` throws a plain `Error` when the deployed backend has no such
+ * function — the dark-ship window, which is an intended state, not a
+ * malfunction — and again when there is no `ConvexProvider` above it, which is
+ * every test tree that renders this component without one.
+ *
+ * Matched on the message because that is all Convex gives us: neither throw
+ * carries a code or a distinguishing class. Narrow by design — a query that
+ * fails for any OTHER reason is a real failure and still reports. Anyone
+ * widening this list is turning off an alarm, and should have to say so here.
+ */
+export function isConvexQueryUnavailable(error: Error): boolean {
+  const message = typeof error?.message === "string" ? error.message : "";
+  return (
+    // The function is not deployed (dark ship, or a browser outliving a rollback).
+    message.includes("Could not find public function") ||
+    // No ConvexProvider above this tree.
+    message.includes("Could not find Convex client")
+  );
+}
+
+export function SuiteRunStageFunnelAvailability({
+  suiteRunId,
+  onChange,
+}: {
+  suiteRunId: string | undefined;
+  /**
+   * Called with the run the answer is ABOUT, not just the answer. The caller
+   * renders one run at a time from a component the run selector REUSES, so an
+   * answer that does not name its run cannot be told apart from the previous
+   * run's — and a stale `true` opens an empty rail on the run you switched to.
+   */
+  onChange: (suiteRunId: string | undefined, hasFunnel: boolean) => void;
+}) {
+  return (
+    // KEYED by the run. An ErrorBoundary that has caught stays in its fallback
+    // for the life of the element, so an unkeyed one would swallow the probe
+    // for every LATER run too: one transient failure would hide the chain on
+    // every run after it until the whole view remounted.
+    //
+    // `onError` covers the other half of that: a query that throws AFTER
+    // answering for the run still on screen renders the fallback silently, so
+    // without this the caller would keep the last good `true` and hold the
+    // rail open over a funnel that is no longer there. Reporting `false` from
+    // here makes the failure say the same thing the dark-ship case does —
+    // no funnel.
+    <ErrorBoundary
+      key={suiteRunId ?? "no-run"}
+      fallback={null}
+      // The dark-ship window is the state this probe is DESIGNED to sit in,
+      // and it is mounted on a page users open again and again — so without
+      // this every run viewed would file one Sentry issue and one PostHog
+      // event for a condition we deliberately shipped. `onError` below still
+      // fires, so the rail still closes; only the telemetry is suppressed, and
+      // only for the two shapes `isConvexQueryUnavailable` can name.
+      isExpectedError={isConvexQueryUnavailable}
+      onError={() => onChange(suiteRunId, false)}
+    >
+      <SuiteRunStageFunnelProbe suiteRunId={suiteRunId} onChange={onChange} />
+    </ErrorBoundary>
+  );
+}
+
+function SuiteRunStageFunnelProbe({
+  suiteRunId,
+  onChange,
+}: {
+  suiteRunId: string | undefined;
+  onChange: (suiteRunId: string | undefined, hasFunnel: boolean) => void;
+}) {
+  const funnel = useQuery(
+    "evalStageRollups:getSuiteRunStageFunnel" as never,
+    (suiteRunId ? { suiteRunId } : "skip") as never,
+  ) as SuiteRunStageFunnel | null | undefined;
+
+  // Exactly the panel's condition: `undefined` is still loading and `null` is
+  // a run with no rollup. Neither draws anything, so neither should keep a
+  // rail open.
+  const hasFunnel = Boolean(funnel);
+  useEffect(() => {
+    onChange(suiteRunId, hasFunnel);
+  }, [suiteRunId, hasFunnel, onChange]);
+
+  return null;
+}
+
 function SuiteRunStageFunnel({
   suiteRunId,
   className,
@@ -159,7 +276,7 @@ function SuiteRunStageFunnel({
   // read — the rollup is the only place this funnel comes from.
   const funnel = useQuery(
     "evalStageRollups:getSuiteRunStageFunnel" as never,
-    (suiteRunId ? { suiteRunId } : "skip") as never
+    (suiteRunId ? { suiteRunId } : "skip") as never,
   ) as SuiteRunStageFunnel | null | undefined;
 
   if (!funnel) return null;
@@ -209,7 +326,7 @@ type SuiteRunStageFunnel = {
  * produces an absent section rather than a confident "0".
  */
 function toChatSessionFunnel(
-  funnel: SuiteRunStageFunnel
+  funnel: SuiteRunStageFunnel,
 ): ChatSessionStageFunnel {
   return {
     // An eval trial is a pinned case against a pinned config: not a real

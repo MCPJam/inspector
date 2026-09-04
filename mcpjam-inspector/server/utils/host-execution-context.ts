@@ -137,6 +137,16 @@ export interface ResolvedExecutionContext {
    * `built-in-tools/registry.ts` at the call site.
    */
   builtInToolIds: string[] | undefined;
+  /**
+   * What the hosted `browser_*` tools may do in an UNATTENDED run.
+   *
+   * HOST-ONLY, read here rather than from the request body, for exactly the
+   * reason `tasksPolicy` is: a share-link visitor owns the body, and a
+   * body-supplied policy that could widen what a browser may reach — which
+   * origins, which page tools — would be an authorization the host never
+   * granted. Absent ⇒ no browser tools in unattended runs at all.
+   */
+  browserToolPolicy: unknown | undefined;
   /** Raw model-visible MCP tool-result policy, before SDK defaults are applied. */
   modelVisibleMcpToolResults: ModelVisibleMcpToolResults | undefined;
   /** Human-facing MCP tool-result image rendering policy. */
@@ -318,6 +328,9 @@ export function resolveExecutionContext(args: {
       tasksPolicy: "unset",
       selectedServerIds: overrides.selectedServerIds,
       builtInToolIds: overrides.builtInToolIds,
+      // No host config ⇒ no host said what a browser may do ⇒ unattended runs
+      // get no browser tools. There is deliberately no override path.
+      browserToolPolicy: undefined,
       modelVisibleMcpToolResults: overrides.modelVisibleMcpToolResults,
       mcpToolResultImageRendering: overrides.mcpToolResultImageRendering,
       hostPolicy,
@@ -337,6 +350,10 @@ export function resolveExecutionContext(args: {
     selectedServerIds: readStringArray(hostConfig, "selectedServerIds"),
     builtInToolIds: readStringArray(hostConfig, "builtInToolIds"),
   };
+  // Host-only (see the field docs): never merged with an override.
+  const browserToolPolicy = isRecord(hostConfig)
+    ? hostConfig.browserToolPolicy
+    : undefined;
 
   const systemPrompt = pickField(
     "systemPrompt",
@@ -453,6 +470,9 @@ export function resolveExecutionContext(args: {
     tasksPolicy: readTasksPolicy(hostConfig as Parameters<typeof readTasksPolicy>[0]),
     selectedServerIds: selectedServerIds.value,
     builtInToolIds: builtInToolIds.value,
+    // Host-only, like `harness` and `tasksPolicy`: no override path exists,
+    // so a body-supplied policy can never widen what a browser may reach.
+    browserToolPolicy,
     modelVisibleMcpToolResults: modelVisibleMcpToolResults.value,
     mcpToolResultImageRendering: mcpToolResultImageRendering.value,
     hostPolicy,

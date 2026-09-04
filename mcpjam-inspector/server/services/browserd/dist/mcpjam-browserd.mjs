@@ -7,16 +7,82 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
+var BROWSERD_OBSERVATION_VIEWPORT = {
+  width: 1024,
+  height: 768
+};
+function isPointInViewport(x, y) {
+  return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
+}
 var DEFAULT_COMMAND_QUEUE_OPTIONS = {
   maxRetained: 512,
   retainTtlMs: 15 * 60 * 1e3,
   perQueueDepthCap: 8,
   maxCommandsPerBoot: 5e4
 };
+var BROWSERD_ERROR_CODES = [
+  // --- transport / control plane (HTTP envelope) -------------------------
+  "cross_origin_forbidden",
+  "invalid_json",
+  "invalid_command",
+  "invalid_lease_action",
+  "holder_required",
+  "command_unknown_boot",
+  "command_expired",
+  "daemon_at_capacity",
+  "stale_observation",
+  /** A person holds the browser; nothing ran and nothing was observed. */
+  "lease_held",
+  /** Their lease ran out mid-flow; still blocked until they hand it back. */
+  "lease_parked",
+  /** A `manual` command arrived while nobody holds the lease. */
+  "lease_required",
+  /** A `manual` command named a holder who is not the one holding it. */
+  "lease_held_by_other",
+  // --- driver (result `error`, `"<code>: <detail>"`) ---------------------
+  "unknown_tab",
+  "tab_exists",
+  "unknown_selector",
+  "target_not_found",
+  "act_failed",
+  "out_of_viewport",
+  "unsupported_target",
+  /** An `a11yRef` whose node has left the page — distinct from not found. */
+  "stale_ref",
+  "webmcp_unsupported",
+  "webmcp_error",
+  /** A dialog is open and waiting for the person who holds the lease. */
+  "dialog_pending",
+  /** A download exceeded the per-file or per-session cap and was cancelled. */
+  "download_over_cap",
+  /** The browser is being torn down; nothing new is opened on it. */
+  "driver_closed",
+  // --- session establishment (never reaches the daemon) ------------------
+  /** This engine needs a Chromium that is not installed on this machine. */
+  "chromium_not_installed",
+  /** Another live process owns this profile directory. */
+  "profile_in_use",
+  /** A result's URL is outside an unattended run's origin allowlist. */
+  "origin_not_allowed"
+];
+var BROWSERD_ERROR_CODE_SET = new Set(
+  BROWSERD_ERROR_CODES
+);
+function formatBrowserdError(code, detail) {
+  return detail ? `${code}: ${detail}` : code;
+}
+function parseBrowserdErrorCode(error) {
+  if (!error) return void 0;
+  const head = error.split(":", 1)[0]?.trim() ?? "";
+  return BROWSERD_ERROR_CODE_SET.has(head) ? head : void 0;
+}
 
 // server/services/browserd/daemon/command-queue.ts
 function queueKeyFor(command) {
   return command.tabId ?? DEFAULT_QUEUE_KEY;
+}
+function isReplayable(command) {
+  return command.action.kind === "observe";
 }
 function normalizeError(err) {
   return { ok: false, error: err instanceof Error ? err.message : String(err) };
@@ -51,13 +117,19 @@ var CommandQueue = class {
     this.maxCommandsPerBoot = options.maxCommandsPerBoot ?? DEFAULT_COMMAND_QUEUE_OPTIONS.maxCommandsPerBoot;
     this.now = options.now ?? Date.now;
     if (!Number.isInteger(this.maxRetained) || this.maxRetained < 0) {
-      throw new RangeError(`maxRetained must be an integer >= 0, got ${this.maxRetained}`);
+      throw new RangeError(
+        `maxRetained must be an integer >= 0, got ${this.maxRetained}`
+      );
     }
     if (!Number.isInteger(this.perQueueDepthCap) || this.perQueueDepthCap < 1) {
-      throw new RangeError(`perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`);
+      throw new RangeError(
+        `perQueueDepthCap must be an integer >= 1, got ${this.perQueueDepthCap}`
+      );
     }
     if (!Number.isFinite(this.retainTtlMs) || this.retainTtlMs < 0) {
-      throw new RangeError(`retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`);
+      throw new RangeError(
+        `retainTtlMs must be a finite number >= 0, got ${this.retainTtlMs}`
+      );
     }
     if (!Number.isInteger(this.maxCommandsPerBoot) || this.maxCommandsPerBoot < this.maxRetained) {
       throw new RangeError(
@@ -66,6 +138,7 @@ var CommandQueue = class {
     }
   }
   async submit(command) {
+    if (isReplayable(command)) return this.runUntracked(command);
     const existing = this.lookup(command.commandId);
     if (existing) {
       const result2 = existing.state === "running" ? await existing.promise : existing.result;
@@ -86,7 +159,10 @@ var CommandQueue = class {
     const raw = prior.catch(() => void 0).then(() => this.executor(command));
     this.tails.set(key, raw);
     const normalized = raw.then((r) => r, normalizeError);
-    this.commands.set(command.commandId, { state: "running", promise: normalized });
+    this.commands.set(command.commandId, {
+      state: "running",
+      promise: normalized
+    });
     let result;
     try {
       result = await normalized;
@@ -96,6 +172,28 @@ var CommandQueue = class {
     }
     this.settle(command.commandId, result);
     return { status: "ok", result, bootId: this.bootId };
+  }
+  /**
+   * Run a command without claiming its id: no result cache, no tombstone, no
+   * charge against the per-boot ceiling. Still queued and still depth-capped,
+   * so it cannot stampede the browser.
+   */
+  async runUntracked(command) {
+    const key = queueKeyFor(command);
+    if ((this.depth.get(key) ?? 0) >= this.perQueueDepthCap) {
+      return { status: "busy", bootId: this.bootId };
+    }
+    this.depth.set(key, (this.depth.get(key) ?? 0) + 1);
+    const prior = this.tails.get(key) ?? Promise.resolve();
+    const raw = prior.catch(() => void 0).then(() => this.executor(command));
+    this.tails.set(key, raw);
+    try {
+      const result = await raw.then((r) => r, normalizeError);
+      return { status: "ok", result, bootId: this.bootId };
+    } finally {
+      this.depth.set(key, (this.depth.get(key) ?? 1) - 1);
+      if (this.tails.get(key) === raw) this.tails.delete(key);
+    }
   }
   /** Current retained-result count. Exposed for tests. */
   get retainedCount() {
@@ -178,17 +276,203 @@ function constantTimeEquals(a, b) {
   return timingSafeEqual(digestA, digestB);
 }
 
+// server/services/browserd/daemon/lease.ts
+var DEFAULT_TTL_MS = 5 * 60 * 1e3;
+var MAX_TTL_MS = 30 * 60 * 1e3;
+var HandoffLease = class {
+  current = { state: "free" };
+  /**
+   * Set by `resume`, consumed once by the next observation. This is what makes
+   * the resume LOUD: the model is told the state may have changed — including
+   * logins and cookies — instead of continuing against a page it last saw
+   * before a human touched it.
+   */
+  resumedDirty = false;
+  /**
+   * When the CURRENT hold began — the start of the window whose captured
+   * console must not outlive the handoff. Set on the free→held transition
+   * only, so a heartbeat or a re-acquire out of `parked` does not shorten the
+   * window and leave the earliest (most sensitive) entries readable.
+   */
+  heldSince;
+  /** The kind of the current (or just-ended) hold; see `LeaseHolderKind`. */
+  holderKind = "human";
+  /** The kind of the hold the pending resume note describes. */
+  resumedHolderKind;
+  /**
+   * Start of the EARLIEST hold that has ended without its console being purged
+   * yet, consumed alongside the flag.
+   *
+   * Earliest, not latest, because the purge is consumed lazily — by the next
+   * command — and nothing says a second handoff cannot happen first. Two
+   * complete cycles back to back (sign in, hand back, solve a CAPTCHA, hand
+   * back) with no command in between would otherwise overwrite this with the
+   * SECOND hold's start, and the first hold's console — the sign-in, the most
+   * sensitive window of the two — would survive the purge and be readable.
+   */
+  resumedHeldSince;
+  now;
+  defaultTtlMs;
+  maxTtlMs;
+  constructor(options = {}) {
+    this.now = options.now ?? Date.now;
+    this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
+    this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+  }
+  /**
+   * The lease as of NOW. Expiry is evaluated lazily on every read — there is
+   * no timer to miss, and a state read after a restart or a long pause is
+   * still correct.
+   */
+  state() {
+    if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
+      this.current = {
+        state: "parked",
+        holder: this.current.holder,
+        holderKind: this.current.holderKind
+      };
+    }
+    return this.current;
+  }
+  /** True while any model-driven command (and every observation) is blocked. */
+  isBlocking() {
+    return this.state().state !== "free";
+  }
+  acquire(holder, ttlMs, kind = "human") {
+    const state = this.state();
+    if (state.state !== "free" && state.holder !== holder) {
+      return state;
+    }
+    const ttl = Math.min(
+      Math.max(1e3, ttlMs ?? this.defaultTtlMs),
+      this.maxTtlMs
+    );
+    if (state.state === "free") {
+      this.heldSince = this.now();
+      this.holderKind = kind;
+    }
+    this.current = {
+      state: "held",
+      holder,
+      holderKind: this.holderKind,
+      expiresAt: this.now() + ttl
+    };
+    return this.current;
+  }
+  /** Extend the holder's own lease; a no-op for anyone else. */
+  heartbeat(holder, ttlMs) {
+    const state = this.state();
+    if (state.state !== "held" || state.holder !== holder) return state;
+    return this.acquire(holder, ttlMs, state.holderKind);
+  }
+  /**
+   * Hand control back. Only the holder may — including from `parked`, which
+   * is the ordinary "I'm done, carry on" path after a lease ran out while a
+   * person was still working.
+   */
+  resume(holder) {
+    const state = this.state();
+    if (state.state === "free") return state;
+    if (state.holder !== holder) return state;
+    this.current = { state: "free" };
+    this.resumedDirty = true;
+    if (this.resumedHeldSince === void 0) {
+      this.resumedHeldSince = this.heldSince;
+      this.resumedHolderKind = this.holderKind;
+    }
+    this.heldSince = void 0;
+    return this.current;
+  }
+  /** `resume` under its user-facing name; identical semantics. */
+  release(holder) {
+    return this.resume(holder);
+  }
+  /**
+   * Whether the next observation must carry the loud-resume note, consumed
+   * once. The daemon asks this AFTER a command runs, so the note rides the
+   * first result a human handoff could have invalidated.
+   */
+  consumeResumedDirty() {
+    const dirty = this.resumedDirty;
+    this.resumedDirty = false;
+    return dirty;
+  }
+  /**
+   * The start of the hold that just ended, consumed once.
+   *
+   * The daemon uses it to DISCARD console captured while a person held the
+   * browser. The 423 gate stops an agent reading during the handoff, but the
+   * console ring fills eagerly from a page listener that knows nothing about
+   * leases — so without this, an auth token or a form value the page logged
+   * during someone's login is simply readable the moment they hand back. That
+   * would make the guarantee "you must wait to read it", not "it is private".
+   */
+  consumeResumedHeldSince() {
+    const since = this.resumedHeldSince;
+    this.resumedHeldSince = void 0;
+    return since;
+  }
+  /**
+   * What held the browser across the handoff the next observation describes.
+   * Read (not consumed) alongside `consumeResumedDirty`, which owns the
+   * once-only semantics — two independent consume flags would let the note and
+   * its subject come apart.
+   */
+  resumedFromKind() {
+    return this.resumedHolderKind ?? this.holderKind;
+  }
+};
+function leaseRefusalFor(lease, command) {
+  if (command.source !== "manual") {
+    if (lease.state === "free") return void 0;
+    return lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  if (lease.state === "free") return "lease_required";
+  if (!command.holder || command.holder !== lease.holder) {
+    return "lease_held_by_other";
+  }
+  return void 0;
+}
+var RESUMED_AFTER_HANDOFF_NOTE = "A person took control of this browser and has handed it back. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before the handoff.";
+var RESUMED_AFTER_SCRIPT_NOTE = "A script took control of this browser over its debugging endpoint and has released it. The page state may have changed \u2014 including logins, cookies and navigation. This observation is fresh; do not rely on anything you saw before it ran.";
+function handoffNoteFor(kind) {
+  return kind === "script" ? RESUMED_AFTER_SCRIPT_NOTE : RESUMED_AFTER_HANDOFF_NOTE;
+}
+
 // server/services/browserd/daemon/request-handler.ts
+var MAX_INPUT_EVENTS = 64;
 var BrowserdRequestHandler = class {
   queue;
   driver;
   bootId;
   token;
+  lease;
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
+    this.lease = deps.lease ?? new HandoffLease();
+  }
+  /**
+   * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
+   * the refusal to write back.
+   *
+   * Extracted so the STREAMING route can share it. That route cannot go through
+   * `handle` — its response is a chunked body, not a `DaemonResponse` — and a
+   * second copy of an auth check is how one of them quietly stops matching the
+   * other. Order matters and is preserved: an unauthenticated request carrying
+   * an Origin gets 401, not 403, so a caller learns nothing about the second
+   * check from failing the first.
+   */
+  authorize(req) {
+    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
+      return { status: 401 };
+    }
+    if (req.origin !== void 0) {
+      return { status: 403, body: { error: "cross_origin_forbidden" } };
+    }
+    return void 0;
   }
   async handle(req) {
     if (req.path === "/healthz") {
@@ -198,19 +482,77 @@ var BrowserdRequestHandler = class {
       const health = await this.driver.health();
       return health.ok ? { status: 200, body: { ok: true } } : { status: 503, body: { ok: false, detail: health.detail } };
     }
-    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
-      return { status: 401 };
-    }
-    if (req.origin !== void 0) {
-      return { status: 403, body: { error: "cross_origin_forbidden" } };
-    }
+    const refusal = this.authorize(req);
+    if (refusal) return refusal;
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
       }
       return this.handleCommand(req);
     }
+    if (req.path === "/v1/status") {
+      if (req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET" } };
+      }
+      const health = await this.driver.health();
+      return health.ok ? { status: 200, body: { ok: true, bootId: this.bootId } } : {
+        status: 503,
+        body: { ok: false, detail: health.detail, bootId: this.bootId }
+      };
+    }
+    if (req.path === "/v1/lease") {
+      if (req.method !== "POST" && req.method !== "GET") {
+        return { status: 405, headers: { allow: "GET, POST" } };
+      }
+      return this.handleLease(req);
+    }
+    if (req.path === "/v1/input") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleInput(req);
+    }
     return { status: 404 };
+  }
+  async handleInput(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+    }
+    const { holder, tabId, events } = parsed;
+    if (typeof holder !== "string" || holder.length === 0) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    if (!Array.isArray(events)) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId }
+      };
+    }
+    if (events.length > MAX_INPUT_EVENTS) {
+      return {
+        status: 413,
+        body: { error: "too_many_events", bootId: this.bootId }
+      };
+    }
+    const outcome = await this.dispatchInput({
+      ...typeof tabId === "string" ? { tabId } : {},
+      holder,
+      events
+    });
+    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    return {
+      status: outcome.error === "unknown_tab" ? 404 : 423,
+      body: { error: outcome.error, bootId: this.bootId }
+    };
   }
   async handleCommand(req) {
     let parsed;
@@ -225,6 +567,24 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_command", bootId: this.bootId }
       };
     }
+    const leaseState = this.lease.state();
+    const refusal = leaseRefusalFor(
+      leaseState,
+      parsed.command
+    );
+    if (refusal) {
+      return {
+        status: 423,
+        body: {
+          error: refusal,
+          ...leaseState.state === "free" ? {} : {
+            holder: leaseState.holder,
+            holderKind: leaseState.holderKind
+          },
+          bootId: this.bootId
+        }
+      };
+    }
     if (parsed.expectedBootId !== void 0 && parsed.expectedBootId !== this.bootId) {
       return {
         status: 409,
@@ -234,10 +594,179 @@ var BrowserdRequestHandler = class {
     const outcome = await this.queue.submit(parsed.command);
     return this.mapOutcome(outcome);
   }
+  /**
+   * Watch a tab.
+   *
+   * Not an HTTP route: frames are a stream, and the local engine's transport
+   * is a function call rather than a socket. It lives on the handler anyway,
+   * beside the command gate, because the daemon is where the lease is
+   * ENFORCED — "any future path that reads the browser must go through the
+   * daemon to inherit that" (the rollout doc's own words). A viewport that
+   * subscribed straight to the driver would be exactly the reader that
+   * bypasses it.
+   *
+   * While someone holds the browser, only THEY may watch: a second pane
+   * showing a person's password field as they type it is the same leak as an
+   * agent screenshotting it, and the lease is the only thing that knows whose
+   * hands are on the page.
+   */
+  async subscribeFrames(args) {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    const afterAwait = this.watcherRefusal(args.holder);
+    if (afterAwait) return { ok: false, error: afterAwait };
+    let live = true;
+    let unsubscribe;
+    const revoke = (reason) => {
+      if (!live) return;
+      live = false;
+      unsubscribe?.();
+      args.onRevoked?.(reason);
+    };
+    unsubscribe = viewport.subscribe((frame) => {
+      if (!live) return;
+      const lost = this.watcherRefusal(args.holder);
+      if (lost) {
+        revoke(lost);
+        return;
+      }
+      args.listener(frame);
+    });
+    if (!live) unsubscribe();
+    return {
+      ok: true,
+      unsubscribe: () => {
+        live = false;
+        unsubscribe?.();
+      },
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (lost) revoke(lost);
+      },
+      // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
+      // tab that was closed and reopened, so "something is there" would answer
+      // true while this subscription pointed at a dead object.
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return await this.driver.viewport?.(args.tabId) === viewport;
+        } catch {
+          return false;
+        }
+      }
+    };
+  }
+  /**
+   * Forward a person's input.
+   *
+   * Requires the lease, and requires it to be THEIRS — this is the one path
+   * that puts keystrokes into the page without a per-action approval, so the
+   * question "who is typing" has to have an answer that is not "whoever
+   * reached the endpoint".
+   */
+  async dispatchInput(args) {
+    const stillTheirs = () => leaseRefusalFor(this.lease.state(), {
+      source: "manual",
+      holder: args.holder
+    });
+    const refusal = stillTheirs();
+    if (refusal) return { ok: false, error: refusal };
+    const viewport = await this.driver.viewport?.(args.tabId);
+    if (!viewport) return { ok: false, error: "unknown_tab" };
+    const afterAwait = stillTheirs();
+    if (afterAwait) return { ok: false, error: afterAwait };
+    await viewport.dispatchInput(
+      args.events,
+      () => stillTheirs() === void 0,
+      args.holder
+    );
+    return { ok: true };
+  }
+  /** May this watcher see frames right now? */
+  watcherRefusal(holder) {
+    const lease = this.lease.state();
+    if (lease.state === "free") return void 0;
+    return holder && holder === lease.holder ? void 0 : lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  /**
+   * Lease control. Every action names its `holder` so one person's lease
+   * cannot be released by another tab that happens to know the endpoint.
+   */
+  handleLease(req) {
+    if (req.method === "GET") {
+      return { status: 200, body: this.leaseBody(this.lease.state()) };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body);
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
+    if (!holder) {
+      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+    }
+    const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
+    const kind = parsed?.kind === "script" ? "script" : "human";
+    let state;
+    switch (parsed?.action) {
+      case "acquire":
+        state = this.lease.acquire(holder, ttlMs, kind);
+        break;
+      case "heartbeat":
+        state = this.lease.heartbeat(holder, ttlMs);
+        break;
+      case "resume":
+      case "release":
+        state = this.lease.resume(holder);
+        break;
+      default:
+        return {
+          status: 400,
+          body: { error: "invalid_lease_action", bootId: this.bootId }
+        };
+    }
+    const took = parsed.action !== "acquire" || state.state === "held" && state.holder === holder;
+    return {
+      status: took ? 200 : 409,
+      body: this.leaseBody(state)
+    };
+  }
+  leaseBody(state) {
+    return {
+      lease: state,
+      bootId: this.bootId
+    };
+  }
   /** Map a queue outcome to an HTTP response. */
   mapOutcome(outcome) {
     switch (outcome.status) {
       case "ok":
+        if (outcome.result.leaseBlocked) {
+          const lease = this.lease.state();
+          const code = parseBrowserdErrorCode(outcome.result.error) ?? "lease_held";
+          return {
+            status: 423,
+            body: {
+              error: code,
+              ...outcome.result.error && outcome.result.error !== code ? { detail: outcome.result.error } : {},
+              ...lease.state === "free" ? {} : { holder: lease.holder, holderKind: lease.holderKind },
+              bootId: outcome.bootId
+            }
+          };
+        }
         if (outcome.result.staleObservation) {
           return {
             status: 409,
@@ -273,20 +802,317 @@ var BrowserdRequestHandler = class {
 function isValidCommand(value) {
   if (typeof value !== "object" || value === null) return false;
   const candidate = value;
-  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string");
+  return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
+}
+
+// server/services/browserd/frame-stream.ts
+var FRAME_STREAM_VERSION = 1;
+var FRAME_STREAM_HEADER_BYTES = 24;
+var FRAME_STREAM_KIND = {
+  /** A painted JPEG. */
+  frame: 1,
+  /**
+   * Proof of life on a page that is not painting.
+   *
+   * Load-bearing in both directions: it is what lets a reader tell "connected
+   * and subscribed" from "connected", and on the daemon side the same tick
+   * drives the lease re-check that a one-way stream would otherwise never run.
+   */
+  heartbeat: 2,
+  /** The last record. Payload is a UTF-8 reason. */
+  end: 3
+};
+var FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
+function encodeFrameStreamRecord(record) {
+  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : new Uint8Array(0);
+  const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, FRAME_STREAM_VERSION);
+  view.setUint8(1, record.kind);
+  if (record.kind === FRAME_STREAM_KIND.frame) {
+    view.setUint16(2, clampU16(record.deviceWidth), true);
+    view.setUint16(4, clampU16(record.deviceHeight), true);
+    view.setUint16(6, clampU16(Math.round(record.scale * 1e3)), true);
+    view.setFloat64(8, record.ts, true);
+    view.setUint32(16, record.seq >>> 0, true);
+  }
+  view.setUint32(20, payload.byteLength, true);
+  bytes.set(payload, FRAME_STREAM_HEADER_BYTES);
+  return bytes;
+}
+function clampU16(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(65535, Math.round(value));
+}
+
+// server/services/webmcp-inspector/frame-pacer.ts
+function createFramePacer(sink, onDrop) {
+  let inFlight = false;
+  let pending;
+  let closed = false;
+  const ship = (bytes) => {
+    inFlight = true;
+    sink.send(bytes, () => {
+      inFlight = false;
+      if (closed) return;
+      const next = pending;
+      pending = void 0;
+      if (next) ship(next);
+    });
+  };
+  return {
+    push(bytes) {
+      if (closed) return;
+      if (inFlight) {
+        if (pending !== void 0) onDrop?.();
+        pending = bytes;
+        return;
+      }
+      ship(bytes);
+    },
+    close() {
+      closed = true;
+      pending = void 0;
+    }
+  };
+}
+
+// server/services/browserd/daemon/frame-stream-route.ts
+var HEARTBEAT_MS = 1e4;
+var WRITE_STALL_MS = 15e3;
+var MAX_CONCURRENT_STREAMS = 4;
+var PROBE_BEATS = 3;
+var PROBE_INTERVAL_MS = 1e3;
+function createFrameStreamHost(handler, options = {}) {
+  const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
+  const stallMs = options.stallMs ?? WRITE_STALL_MS;
+  const maxStreams = options.maxStreams ?? MAX_CONCURRENT_STREAMS;
+  const timers = options.timers ?? {
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h)
+  };
+  const open = /* @__PURE__ */ new Set();
+  function handle(args) {
+    const { req, res, daemonRequest } = args;
+    const refusal = handler.authorize(daemonRequest);
+    if (refusal) {
+      writeJson(res, refusal.status, refusal.body);
+      return true;
+    }
+    if (daemonRequest.method !== "GET") {
+      res.writeHead(405, { allow: "GET" });
+      res.end();
+      return true;
+    }
+    if (open.size >= maxStreams) {
+      writeJson(res, 503, { error: "too_many_watchers" });
+      return true;
+    }
+    req.resume();
+    const query = daemonRequest.query;
+    const tabId = query?.get("tabId") ?? void 0;
+    const holder = query?.get("holder") ?? void 0;
+    const probe = query?.get("probe") === "1";
+    beginStream(res);
+    if (probe) {
+      runProbe(res);
+      return true;
+    }
+    void startSubscription({ res, tabId, holder }).catch(() => {
+      writeEndAndClose(res, "tab_gone");
+    });
+    return true;
+  }
+  function writeEndAndClose(res, reason) {
+    try {
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.end();
+    } catch {
+    }
+  }
+  function beginStream(res) {
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      // No content-length: this body has no length. `no-transform` matters as
+      // much as `no-store` — an intermediary that "helpfully" buffers or
+      // re-encodes turns a live stream into a download that arrives at the end.
+      "cache-control": "no-store, no-transform",
+      // nginx and friends buffer proxied responses by default.
+      "x-accel-buffering": "no"
+    });
+    res.flushHeaders();
+    res.socket?.setNoDelay(true);
+    res.setTimeout(0);
+    res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+  }
+  function runProbe(res) {
+    let sent = 0;
+    const entry = { end: (reason) => finish(reason) };
+    open.add(entry);
+    let timer;
+    const finish = (reason) => {
+      timers.clearTimer(timer);
+      if (!open.delete(entry)) return;
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+      );
+      res.end();
+    };
+    const beat = () => {
+      if (sent >= PROBE_BEATS) {
+        finish("probe_complete");
+        return;
+      }
+      sent += 1;
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+    };
+    res.on("close", () => {
+      timers.clearTimer(timer);
+      open.delete(entry);
+    });
+    timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+  }
+  async function startSubscription(args) {
+    const { res, tabId, holder } = args;
+    let ended = false;
+    let stallTimer;
+    let beatTimer;
+    let unsubscribe;
+    const entry = {
+      end: (reason) => end(reason)
+    };
+    const end = (reason) => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+        );
+        res.end();
+      } catch {
+      }
+    };
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? void 0);
+        });
+      }
+    });
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+    });
+    const subscription = await handler.subscribeFrames({
+      ...tabId ? { tabId } : {},
+      ...holder ? { holder } : {},
+      listener: (frame) => {
+        pacer.push(
+          encodeFrameStreamRecord({
+            kind: FRAME_STREAM_KIND.frame,
+            deviceWidth: frame.deviceWidth,
+            deviceHeight: frame.deviceHeight,
+            scale: frame.scale,
+            ts: frame.ts,
+            seq: frame.seq,
+            // The viewport hands out base64; the wire carries the bytes.
+            jpeg: new Uint8Array(Buffer.from(frame.data, "base64"))
+          })
+        );
+      },
+      onRevoked: (reason) => {
+        end(reason === "lease_parked" ? "lease_parked" : "lease_held");
+      }
+    });
+    if (!subscription.ok) {
+      end(subscription.error === "unknown_tab" ? "unknown_tab" : "lease_held");
+      return;
+    }
+    if (ended) {
+      subscription.unsubscribe();
+      return;
+    }
+    unsubscribe = subscription.unsubscribe;
+    const beat = () => {
+      if (ended) return;
+      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      subscription.revalidate();
+      if (ended) return;
+      void subscription.stillCurrent().then(
+        (current) => {
+          if (!current && !ended) end("tab_gone");
+          else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
+        },
+        // A REJECTION IS NOT A NON-ANSWER YOU CAN IGNORE. `stillCurrent` asks
+        // the driver for the tab's viewport, and that throws on ordinary
+        // paths — a context that is closing answers "this browser is shutting
+        // down" rather than a value. Left unhandled it did two things, and
+        // the quieter one is worse: the tick never rescheduled, so the lease
+        // stopped being re-asked for the life of the stream, which is exactly
+        // the privacy hole the heartbeat exists to close on a page that does
+        // not paint. And an unhandled rejection ends a Node process, so the
+        // one that died was the daemon, taking every hosted session on the
+        // box with it. Unable to prove the tab is still ours, we say so and
+        // stop.
+        () => {
+          if (!ended) end("tab_gone");
+        }
+      );
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
+  }
+  function writeJson(res, status, body) {
+    const payload = body === void 0 ? void 0 : JSON.stringify(body);
+    res.writeHead(status, {
+      "content-type": "application/json",
+      "content-length": payload === void 0 ? 0 : Buffer.byteLength(payload)
+    });
+    res.end(payload);
+  }
+  return {
+    handle,
+    closeAll(reason) {
+      for (const entry of [...open]) entry.end(reason);
+    },
+    count: () => open.size
+  };
 }
 
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
 }
-function guardStaleness(driver) {
+function guardStaleness(driver, lease) {
   return async (command) => {
     const { action } = command;
     if (action.kind !== "act" || action.expectedState === void 0) {
       return driver.execute(command);
     }
     const current = await driver.currentStateToken(command.tabId);
+    const refusal = lease && leaseRefusalFor(lease.state(), command);
+    if (refusal) return leaseBlockedResult(refusal);
     if (current !== void 0 && !stateTokensMatch(current, action.expectedState)) {
       return {
         ok: false,
@@ -296,6 +1122,23 @@ function guardStaleness(driver) {
       };
     }
     return driver.execute(command);
+  };
+}
+function leaseBlockedResult(refusal) {
+  return {
+    ok: false,
+    leaseBlocked: true,
+    error: formatBrowserdError(
+      refusal,
+      "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+    )
+  };
+}
+function guardLease(lease, executor) {
+  return async (command) => {
+    const refusal = leaseRefusalFor(lease.state(), command);
+    if (refusal) return leaseBlockedResult(refusal);
+    return executor(command);
   };
 }
 
@@ -342,15 +1185,34 @@ function writeResponse(res, response) {
 }
 function createDaemonServer(handler, options = {}) {
   const bodyLimit = options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES;
-  return createServer((req, res) => {
+  const frames = createFrameStreamHost(handler, options.frames ?? {});
+  const server = createServer((req, res) => {
+    let path;
+    let query;
+    try {
+      const url = new URL(req.url ?? "/", "http://browserd.invalid");
+      path = url.pathname;
+      query = url.searchParams;
+    } catch {
+      writeResponse(res, { status: 404 });
+      return;
+    }
+    if (path === "/v1/frames") {
+      frames.handle({
+        req,
+        res,
+        daemonRequest: {
+          method: req.method ?? "GET",
+          path,
+          origin: headerValue(req.headers.origin),
+          authorization: headerValue(req.headers.authorization),
+          body: "",
+          query
+        }
+      });
+      return;
+    }
     void (async () => {
-      let path;
-      try {
-        path = new URL(req.url ?? "/", "http://browserd.invalid").pathname;
-      } catch {
-        writeResponse(res, { status: 404 });
-        return;
-      }
       let body = "";
       if (req.method === "POST" || req.method === "PUT") {
         try {
@@ -367,7 +1229,8 @@ function createDaemonServer(handler, options = {}) {
         path,
         origin: headerValue(req.headers.origin),
         authorization: headerValue(req.headers.authorization),
-        body
+        body,
+        query
       });
       writeResponse(res, response);
     })().catch(() => {
@@ -375,23 +1238,37 @@ function createDaemonServer(handler, options = {}) {
       else res.end();
     });
   });
+  return { server, frames };
 }
 function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
 }
 function buildBrowserdStack(driver, config) {
   const bootId = config.bootId ?? randomUUID();
-  const queue = new CommandQueue(guardStaleness(driver), bootId);
+  const lease = config.lease ?? new HandoffLease();
+  const queue = new CommandQueue(
+    guardLease(lease, guardStaleness(driver, lease)),
+    bootId
+  );
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
     bootId,
-    token: config.token
+    token: config.token,
+    lease
   });
-  const server = createDaemonServer(handler, {
-    bodyLimitBytes: config.bodyLimitBytes
+  const { server, frames } = createDaemonServer(handler, {
+    bodyLimitBytes: config.bodyLimitBytes,
+    ...config.frames ? { frames: config.frames } : {}
   });
-  return { server, handler, queue, bootId };
+  return {
+    server,
+    handler,
+    queue,
+    bootId,
+    lease,
+    closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
+  };
 }
 
 // server/services/browserd/daemon/state-token.ts
@@ -406,6 +1283,936 @@ function computeStateToken(inputs) {
     urlHash: shortHash(inputs.url),
     domHash: shortHash(inputs.domSignal)
   };
+}
+
+// server/services/browserd/daemon/observation-budget.ts
+var DEFAULT_A11Y_BUDGET = { maxNodes: 400, maxDepth: 12 };
+function countNodes(node) {
+  let total = 0;
+  const stack = [node];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    total += 1;
+    const children = current.children;
+    if (children) {
+      for (const child of children) stack.push(child);
+    }
+  }
+  return total;
+}
+function omissionMarker(node, hiddenNodes) {
+  const label = node.name ? `${node.role ?? "node"} "${node.name}"` : node.role ?? "node";
+  return {
+    role: "omitted",
+    name: `${hiddenNodes} node(s) under ${label} omitted \u2014 re-observe with {mode:"a11y", rootSelector:"<selector for this element>"} to read this subtree`
+  };
+}
+function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
+  if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
+  const totalNodes = countNodes(root);
+  let remaining = Math.max(1, budget.maxNodes);
+  let omittedSubtrees = 0;
+  const visit = (node, depth) => {
+    remaining -= 1;
+    const { children, ...rest } = node;
+    if (!children || children.length === 0) return { ...rest };
+    if (depth >= budget.maxDepth || remaining <= 0) {
+      omittedSubtrees += 1;
+      const hidden = children.reduce((sum, child) => sum + countNodes(child), 0);
+      return { ...rest, children: [omissionMarker(node, hidden)] };
+    }
+    const kept = [];
+    for (let index = 0; index < children.length; index += 1) {
+      if (remaining <= 0) {
+        omittedSubtrees += 1;
+        const hidden = children.slice(index).reduce((sum, child) => sum + countNodes(child), 0);
+        kept.push(omissionMarker(node, hidden));
+        break;
+      }
+      kept.push(visit(children[index], depth + 1));
+    }
+    return { ...rest, children: kept };
+  };
+  return { tree: visit(root, 0), omittedSubtrees, totalNodes };
+}
+function truncationMarker(shownBytes, totalBytes, retrieval) {
+  return `
+\u2026[truncated: showing ${shownBytes} of ${totalBytes} bytes` + (retrieval ? `; ${retrieval}` : "") + "]";
+}
+function capText(text, maxBytes, retrieval) {
+  const encoder = new TextEncoder();
+  const bytes = encoder.encode(text);
+  if (bytes.byteLength <= maxBytes) return text;
+  const reserve = encoder.encode(
+    truncationMarker(maxBytes, bytes.byteLength, retrieval)
+  ).byteLength;
+  if (maxBytes < reserve) {
+    return decodeUpTo(bytes, maxBytes);
+  }
+  const head = decodeUpTo(bytes, maxBytes - reserve);
+  return head + truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval);
+}
+function decodeUpTo(bytes, limit) {
+  let end = Math.max(0, Math.min(limit, bytes.byteLength));
+  while (end > 0 && (bytes[end] & 192) === 128) end -= 1;
+  return new TextDecoder("utf-8").decode(bytes.subarray(0, end));
+}
+var DEFAULT_CONSOLE_BUDGET = {
+  maxEntries: 50,
+  maxEntryBytes: 2e3
+};
+function capConsole(entries, budget = DEFAULT_CONSOLE_BUDGET) {
+  const kept = entries.slice(-budget.maxEntries);
+  return {
+    entries: kept.map((entry) => ({
+      ...entry,
+      text: capText(entry.text, budget.maxEntryBytes)
+    })),
+    omitted: Math.max(0, entries.length - kept.length)
+  };
+}
+function capToolOutput(output, maxBytes) {
+  if (typeof output === "string") {
+    const capped = capText(output, maxBytes);
+    return { output: capped, omitted: capped !== output };
+  }
+  let serialized;
+  try {
+    serialized = JSON.stringify(output) ?? "null";
+  } catch {
+    return {
+      output: "[output could not be serialized]",
+      omitted: true
+    };
+  }
+  if (new TextEncoder().encode(serialized).byteLength <= maxBytes) {
+    return { output, omitted: false };
+  }
+  return {
+    output: `[tool output omitted: ${serialized.length} chars exceeds the ${maxBytes}-byte budget \u2014 have the page return a smaller result, or read the rendered page instead]`,
+    omitted: true
+  };
+}
+
+// server/services/browserd/daemon/page-text.ts
+var PAGE_TEXT_FN = `() => {
+  const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
+  // INPUT/SELECT/TEXTAREA hold no text of the page's own \u2014 a control's value is
+  // the user's, and the a11y tree already reports it next to the control it
+  // belongs to. BUTTON is NOT here: its label ("Continue", "Delete everything")
+  // is often the most important sentence on a confirmation page.
+  const DROP = new Set(["IMG","PICTURE","VIDEO","AUDIO","SOURCE","TRACK","INPUT","SELECT","TEXTAREA"]);
+  const BLOCK = new Set(["P","DIV","SECTION","ARTICLE","MAIN","HEADER","FOOTER","NAV","BLOCKQUOTE","TABLE","TR","UL","OL","DL","DT","DD","FORM","FIELDSET","FIGURE","FIGCAPTION","ASIDE","HR","ADDRESS","DETAILS","SUMMARY"]);
+  // Far above the observation's byte budget, so it never changes what a caller
+  // sees \u2014 it only stops a pathological page from building a huge string in
+  // the renderer before anything gets the chance to trim it.
+  const MAX_CHARS = 400000;
+  const chunks = [];
+  let total = 0;
+  let pre = 0;
+  const push = (t, isPre) => {
+    if (!t || total >= MAX_CHARS) return;
+    total += t.length;
+    chunks.push({ t: t, pre: !!isPre });
+  };
+  const hidden = (el) => {
+    if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+    if (el.hidden) return true;
+    if (typeof el.checkVisibility === "function") {
+      // opacityProperty included: text at opacity 0 is invisible to the person
+      // whose page this is, and reading it back is how a page says something to
+      // the model that it never said to anyone else.
+      return !el.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true, opacityProperty: true });
+    }
+    const style = window.getComputedStyle(el);
+    return style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
+  };
+  const absolute = (href) => {
+    try { return new URL(href, document.baseURI).href; } catch (e) { return href; }
+  };
+  // An EXPLICIT stack, not recursion. DOM depth is unbounded, and a page nested
+  // deeply enough to overflow the in-page call stack would fail the whole
+  // observation rather than returning a long page \u2014 the same reason the node
+  // counter in the observation budget is iterative.
+  const stack = [{ k: "node", n: document.body }];
+  while (stack.length > 0) {
+    const job = stack.pop();
+    if (job.k === "text") { push(job.t, false); continue; }
+    if (job.k === "preEnd") { pre -= 1; push("\\n" + job.fence + "\\n\\n", false); continue; }
+    if (job.k === "linkEnd") {
+      // The label may be several nodes deep, so it is collected and re-emitted
+      // as one unit once its children are done.
+      const parts = chunks.splice(job.start);
+      let label = "";
+      for (let i = 0; i < parts.length; i++) label += parts[i].t;
+      label = label.trim();
+      if (label) push(job.href ? "[" + label + "](" + absolute(job.href) + ")" : label, false);
+      continue;
+    }
+    const node = job.n;
+    if (!node) continue;
+    if (node.nodeType === 3) {
+      const raw = node.nodeValue || "";
+      push(pre > 0 ? raw : raw.replace(/\\s+/g, " "), pre > 0);
+      continue;
+    }
+    if (node.nodeType !== 1) continue;
+    const tag = node.tagName;
+    if (SKIP.has(tag) || DROP.has(tag)) continue;
+    if (hidden(node)) continue;
+    if (tag === "BR") { push("\\n", false); continue; }
+    const kids = node.childNodes;
+    // Pushed in reverse so the first child is the next thing popped, and any
+    // closing job pushed before them pops last.
+    const descend = () => { for (let i = kids.length - 1; i >= 0; i--) stack.push({ k: "node", n: kids[i] }); };
+    if (tag === "A") {
+      stack.push({ k: "linkEnd", start: chunks.length, href: node.getAttribute("href") });
+      descend();
+      continue;
+    }
+    if (/^H[1-6]$/.test(tag)) {
+      push("\\n\\n" + "#".repeat(Number(tag[1])) + " ", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
+    }
+    if (tag === "LI") {
+      push("\\n- ", false);
+      stack.push({ k: "text", t: "\\n" });
+      descend();
+      continue;
+    }
+    if (tag === "PRE") {
+      // A fence long enough that the content cannot close it. Page text
+      // containing three backticks would otherwise end the block early and the
+      // prose after it would read as code.
+      const body = node.textContent || "";
+      let fence = "\\u0060\\u0060\\u0060";
+      while (body.indexOf(fence) !== -1) fence += "\\u0060";
+      push("\\n\\n" + fence + "\\n", false);
+      pre += 1;
+      stack.push({ k: "preEnd", fence: fence });
+      descend();
+      continue;
+    }
+    if (tag === "TD" || tag === "TH") {
+      stack.push({ k: "text", t: " | " });
+      descend();
+      continue;
+    }
+    if (BLOCK.has(tag)) {
+      push("\\n\\n", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
+    }
+    descend();
+  }
+  // Collapse whitespace only OUTSIDE fenced runs, where it is markup rather
+  // than content. Tracked as the walk goes rather than recovered afterwards by
+  // splitting on the fence: page content can contain a fence, and a split
+  // would then mistake ordinary prose for code.
+  let out = "";
+  let buffer = "";
+  let bufferPre = false;
+  const flush = () => {
+    out += bufferPre
+      ? buffer
+      : buffer.replace(/[ \\t]+/g, " ").replace(/ ?\\n ?/g, "\\n").replace(/\\n{3,}/g, "\\n\\n");
+    buffer = "";
+  };
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks[i].pre !== bufferPre) { flush(); bufferPre = chunks[i].pre; }
+    buffer += chunks[i].t;
+  }
+  flush();
+  return out.trim();
+}`;
+var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
+var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
+
+// server/services/browserd/daemon/webmcp-bridge.ts
+var WebMcpBridgeError = class extends Error {
+  constructor(failure, message, cancelReason) {
+    super(message);
+    this.failure = failure;
+    this.cancelReason = cancelReason;
+    this.name = "WebMcpBridgeError";
+  }
+};
+var MAX_EARLY_RESPONSES = 16;
+var DEFAULT_INVOCATION_TIMEOUT_MS = 6e4;
+var DEFAULT_CANCEL_SETTLE_GRACE_MS = 1e3;
+function originOf(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return "about:blank";
+  }
+}
+var WebMcpBridge = class {
+  constructor(cdp, options = {}) {
+    this.cdp = cdp;
+    this.invocationTimeoutMs = options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
+    this.cancelSettleGraceMs = options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
+    this.onChange = options.onChange;
+    this.onExternalInvocation = options.onExternalInvocation;
+  }
+  /** Tools keyed `${frameId} ${name}` — the browser's own notion of identity. */
+  tools = /* @__PURE__ */ new Map();
+  /** frameId → last known URL, for origin labelling. */
+  frames = /* @__PURE__ */ new Map();
+  pending = /* @__PURE__ */ new Map();
+  /** Responses that arrived before their invocation was registered. */
+  earlyResponses = /* @__PURE__ */ new Map();
+  mainFrameId = "";
+  /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
+  outstandingSends = 0;
+  invocationTimeoutMs;
+  cancelSettleGraceMs;
+  supported = false;
+  disposed = false;
+  onChange;
+  onExternalInvocation;
+  /**
+   * Announce the current tool set.
+   *
+   * Every mutation path funnels through here so no path can forget. A throwing
+   * subscriber is swallowed: it is the consumer's own reaction to a browser
+   * event, and letting it escape would take down the CDP handler that is also
+   * responsible for the bridge's own bookkeeping.
+   */
+  announce() {
+    if (!this.onChange) return;
+    try {
+      this.onChange(this.list());
+    } catch {
+    }
+  }
+  /**
+   * Enable the domains and wire the events. `probeSupported` is the page-side
+   * check for `document.modelContext`: `WebMCP.enable` RESOLVES even on a
+   * browser with the feature off (it just never reports a tool), so the domain
+   * is never the probe.
+   */
+  async start(probeSupported) {
+    this.wire();
+    await this.cdp.send("Page.enable").catch(() => {
+    });
+    let domainEnabled = true;
+    await this.cdp.send("WebMCP.enable").catch(() => {
+      domainEnabled = false;
+    });
+    const probed = await probeSupported().catch(() => false);
+    this.supported = domainEnabled && probed;
+  }
+  isSupported() {
+    return this.supported;
+  }
+  wire() {
+    this.cdp.on("WebMCP.toolsAdded", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.set(this.key(tool.frameId, tool.name), tool);
+      }
+      this.announce();
+    });
+    this.cdp.on("WebMCP.toolsRemoved", (payload) => {
+      const { tools } = payload ?? {};
+      for (const tool of tools ?? []) {
+        this.tools.delete(this.key(tool.frameId, tool.name));
+      }
+      this.announce();
+    });
+    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+      const invoked = payload ?? {};
+      if (!invoked.invocationId) return;
+      if (this.pending.has(invoked.invocationId)) return;
+      if (this.outstandingSends > 0) return;
+      this.onExternalInvocation?.(invoked.toolName ?? "");
+    });
+    this.cdp.on("WebMCP.toolResponded", (payload) => {
+      const responded = payload ?? {};
+      const id = responded.invocationId;
+      if (!id) return;
+      const waiter = this.pending.get(id);
+      if (!waiter) {
+        if (this.earlyResponses.size >= MAX_EARLY_RESPONSES) {
+          const oldest = this.earlyResponses.keys().next().value;
+          if (oldest !== void 0) this.earlyResponses.delete(oldest);
+        }
+        this.earlyResponses.set(id, responded);
+        return;
+      }
+      this.settle(id);
+      this.deliver(waiter, responded);
+    });
+    this.cdp.on("Page.frameNavigated", (payload) => {
+      const { frame } = payload ?? {};
+      if (!frame) return;
+      this.frames.set(frame.id, frame.url);
+      this.dropFrame(frame.id);
+      if (!frame.parentId) this.mainFrameId = frame.id;
+      this.announce();
+    });
+    this.cdp.on("Page.frameDetached", (payload) => {
+      const { frameId } = payload ?? {};
+      if (!frameId) return;
+      this.frames.delete(frameId);
+      this.dropFrame(frameId);
+      this.announce();
+    });
+  }
+  key(frameId, name) {
+    return `${frameId} ${name}`;
+  }
+  dropFrame(frameId) {
+    for (const key of [...this.tools.keys()]) {
+      if (key.startsWith(`${frameId} `)) this.tools.delete(key);
+    }
+  }
+  settle(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter?.timer) clearTimeout(waiter.timer);
+    if (waiter?.cancelTimer) clearTimeout(waiter.cancelTimer);
+    this.pending.delete(invocationId);
+  }
+  /** Resolve or reject a waiter from the page's response. */
+  deliver(waiter, responded) {
+    if (responded.status === "Completed") {
+      waiter.resolve({ output: responded.output });
+      return;
+    }
+    if (responded.status === "Canceled") {
+      const reason = waiter.cancelReason ?? "cancelled";
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+          reason
+        )
+      );
+      return;
+    }
+    waiter.reject(
+      new WebMcpBridgeError(
+        "webmcp_error",
+        responded.exception?.description?.split("\n")[0] || responded.errorText || "The page tool failed without a message."
+      )
+    );
+  }
+  /** The tools currently on offer, as the model should see them. */
+  list() {
+    return [...this.tools.values()].map((tool) => ({
+      frameId: tool.frameId,
+      name: tool.name,
+      description: tool.description ?? "",
+      ...tool.inputSchema !== void 0 ? { inputSchema: tool.inputSchema } : {},
+      ...tool.annotations !== void 0 ? { annotations: tool.annotations } : {},
+      origin: originOf(this.frames.get(tool.frameId) ?? ""),
+      isMainFrame: tool.frameId === this.mainFrameId,
+      registrationKind: tool.backendNodeId !== void 0 ? "declarative" : tool.stackTrace ? "imperative" : "unknown"
+    }));
+  }
+  /**
+   * Resolve a tool NAME to the frame currently offering it, preferring the
+   * main frame. Frame ids churn across navigations, so this happens at invoke
+   * time rather than being carried around as identity.
+   */
+  resolveFrame(toolName) {
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName && tool.frameId === this.mainFrameId) {
+        return tool.frameId;
+      }
+    }
+    for (const tool of this.tools.values()) {
+      if (tool.name === toolName) return tool.frameId;
+    }
+    throw new WebMcpBridgeError(
+      "webmcp_tool_gone",
+      `The page no longer offers a tool named "${toolName}".`
+    );
+  }
+  /**
+   * Pick the frame to invoke in: the caller's, when it still offers the tool.
+   *
+   * A frame id the caller listed a moment ago can be gone (the page navigated,
+   * the subframe detached), so an id that no longer matches falls back to
+   * resolution rather than being sent to the browser to fail obscurely.
+   */
+  frameFor(frameId, toolName) {
+    if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    return this.resolveFrame(toolName);
+  }
+  /**
+   * Invoke a page tool and wait for the page's own response.
+   *
+   * TIMEOUT OWNERSHIP. With no `signal`, this bridge owns the deadline and
+   * cancels the page after `invocationTimeoutMs`. With a `signal`, the CALLER
+   * owns it and the internal deadline is not armed at all — two deadlines on
+   * one invocation means whichever fires first decides what the failure is
+   * called, and the caller's is the one whose reason the user will read. The
+   * reason is taken from `signal.reason` for the same purpose: a caller that
+   * aborts with `"timeout"` gets a timeout, and naive adoption of this bridge
+   * would otherwise report every caller-side timeout as a user cancellation.
+   */
+  async invoke(args) {
+    if (this.disposed) {
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        "The browser tab was closed.",
+        "cancelled"
+      );
+    }
+    if (!this.supported) {
+      throw new WebMcpBridgeError(
+        "webmcp_unsupported",
+        "This browser build does not expose the WebMCP page API, so the page's tools cannot be invoked."
+      );
+    }
+    if (args.signal?.aborted) {
+      const reason = args.signal.reason === "timeout" ? "timeout" : "cancelled";
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        reason === "timeout" ? "The page tool did not respond in time." : "Cancelled before it started.",
+        reason
+      );
+    }
+    const frameId = this.frameFor(args.frameId, args.toolName);
+    let invocationId;
+    try {
+      this.outstandingSends += 1;
+      let result;
+      try {
+        result = await this.cdp.send("WebMCP.invokeTool", {
+          frameId,
+          toolName: args.toolName,
+          input: args.input
+        });
+      } finally {
+        this.outstandingSends -= 1;
+      }
+      if (!result?.invocationId) {
+        throw new WebMcpBridgeError(
+          "webmcp_error",
+          "The browser accepted the invocation but returned no invocation id."
+        );
+      }
+      invocationId = result.invocationId;
+    } catch (error) {
+      if (error instanceof WebMcpBridgeError) throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      if (/tool not found/i.test(message)) {
+        throw new WebMcpBridgeError(
+          "webmcp_tool_gone",
+          `The page no longer offers a tool named "${args.toolName}".`
+        );
+      }
+      throw error;
+    }
+    const output = await new Promise((resolve, reject) => {
+      const waiter = { resolve, reject };
+      const early = this.earlyResponses.get(invocationId);
+      if (early) {
+        this.earlyResponses.delete(invocationId);
+        this.deliver(waiter, early);
+        return;
+      }
+      this.pending.set(invocationId, waiter);
+      let cancelling = false;
+      const cancel = (reason) => {
+        if (cancelling) return;
+        cancelling = true;
+        waiter.cancelReason = reason;
+        if (waiter.timer) clearTimeout(waiter.timer);
+        void Promise.resolve(
+          this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+        ).catch(() => {
+        });
+        waiter.cancelTimer = setTimeout(() => {
+          if (!this.pending.has(invocationId)) return;
+          this.pending.delete(invocationId);
+          reject(
+            new WebMcpBridgeError(
+              "webmcp_cancelled",
+              reason === "timeout" ? "The page tool did not respond in time." : "The invocation was cancelled.",
+              reason
+            )
+          );
+        }, this.cancelSettleGraceMs);
+      };
+      if (!args.signal) {
+        waiter.timer = setTimeout(
+          () => cancel("timeout"),
+          this.invocationTimeoutMs
+        );
+      }
+      args.signal?.addEventListener(
+        "abort",
+        () => cancel(args.signal?.reason === "timeout" ? "timeout" : "cancelled"),
+        { once: true }
+      );
+      if (args.signal?.aborted) {
+        cancel(args.signal.reason === "timeout" ? "timeout" : "cancelled");
+      }
+    });
+    return { invocationId, output: output.output };
+  }
+  /**
+   * Cancel an in-flight invocation by id (the `webmcp_cancel` action). The
+   * browser is told to stop either way — a caller may hold an id whose
+   * invocation this bridge no longer tracks — and the boolean reports whether
+   * we had a waiter to mark, so the caller can say "already finished".
+   */
+  async cancel(invocationId) {
+    const waiter = this.pending.get(invocationId);
+    if (waiter) waiter.cancelReason = "cancelled";
+    await Promise.resolve(
+      this.cdp.send("WebMCP.cancelInvocation", { invocationId })
+    ).catch(() => {
+    });
+    return Boolean(waiter);
+  }
+  /** Reject every waiter; called when the tab or daemon goes away. */
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const [id, waiter] of this.pending) {
+      if (waiter.timer) clearTimeout(waiter.timer);
+      if (waiter.cancelTimer) clearTimeout(waiter.cancelTimer);
+      waiter.reject(
+        new WebMcpBridgeError(
+          "webmcp_cancelled",
+          "The browser tab was closed.",
+          "cancelled"
+        )
+      );
+      this.pending.delete(id);
+    }
+  }
+};
+
+// server/services/webmcp-inspector/frame-throttle.ts
+function createFrameThrottle(options) {
+  const now = options.now ?? Date.now;
+  const setTimer = options.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
+  const clearTimer = options.clearTimer ?? ((handle) => clearTimeout(handle));
+  let lastEmitAt = Number.NEGATIVE_INFINITY;
+  let trailing;
+  let timer;
+  let boostUntil = Number.NEGATIVE_INFINITY;
+  let boostIntervalMs = options.minIntervalMs;
+  const interval = () => now() < boostUntil ? boostIntervalMs : options.minIntervalMs;
+  const flush = () => {
+    timer = void 0;
+    if (!trailing) return;
+    const remaining = interval() - (now() - lastEmitAt);
+    if (remaining > 0) {
+      timer = setTimer(flush, remaining);
+      return;
+    }
+    const { value } = trailing;
+    trailing = void 0;
+    lastEmitAt = now();
+    options.emit(value);
+  };
+  return {
+    push(value) {
+      const elapsed = now() - lastEmitAt;
+      const minIntervalMs = interval();
+      if (elapsed >= minIntervalMs) {
+        trailing = void 0;
+        if (timer !== void 0) {
+          clearTimer(timer);
+          timer = void 0;
+        }
+        lastEmitAt = now();
+        options.emit(value);
+        return;
+      }
+      trailing = { value };
+      if (timer === void 0) {
+        timer = setTimer(flush, minIntervalMs - elapsed);
+      }
+    },
+    boost(intervalMs, windowMs) {
+      boostIntervalMs = intervalMs;
+      boostUntil = now() + windowMs;
+      if (trailing === void 0 || timer === void 0) return;
+      const remaining = intervalMs - (now() - lastEmitAt);
+      clearTimer(timer);
+      timer = void 0;
+      if (remaining <= 0) {
+        flush();
+        return;
+      }
+      timer = setTimer(flush, remaining);
+    },
+    reset() {
+      trailing = void 0;
+      if (timer !== void 0) {
+        clearTimer(timer);
+        timer = void 0;
+      }
+      lastEmitAt = Number.NEGATIVE_INFINITY;
+      boostUntil = Number.NEGATIVE_INFINITY;
+      boostIntervalMs = options.minIntervalMs;
+    }
+  };
+}
+
+// shared/jpeg-dimensions.ts
+function isStandalone(marker) {
+  return marker >= 208 && marker <= 215 || marker === 1;
+}
+function isStartOfFrame(marker) {
+  if (marker < 192 || marker > 207) return false;
+  return marker !== 196 && marker !== 200 && marker !== 204;
+}
+function readJpegDimensions(bytes) {
+  if (bytes.length < 4 || bytes[0] !== 255 || bytes[1] !== 216) {
+    return void 0;
+  }
+  let offset = 2;
+  while (offset + 1 < bytes.length) {
+    if (bytes[offset] !== 255) return void 0;
+    let marker = bytes[offset + 1];
+    while (marker === 255 && offset + 2 < bytes.length) {
+      offset += 1;
+      marker = bytes[offset + 1];
+    }
+    if (marker === 217 || marker === 218) return void 0;
+    if (isStandalone(marker)) {
+      offset += 2;
+      continue;
+    }
+    if (offset + 3 >= bytes.length) return void 0;
+    const length = bytes[offset + 2] << 8 | bytes[offset + 3];
+    if (length < 2) return void 0;
+    if (isStartOfFrame(marker)) {
+      if (length < 8 || offset + 8 >= bytes.length) return void 0;
+      const height = bytes[offset + 5] << 8 | bytes[offset + 6];
+      const width = bytes[offset + 7] << 8 | bytes[offset + 8];
+      if (width <= 0 || height <= 0) return void 0;
+      return { width, height };
+    }
+    offset += 2 + length;
+  }
+  return void 0;
+}
+
+// server/services/browserd/daemon/viewport.ts
+var DEFAULT_QUALITY = 75;
+var DEFAULT_MIN_INTERVAL_MS = 100;
+var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
+function createTabViewport(cdp, options) {
+  const quality = options.quality ?? DEFAULT_QUALITY;
+  const maxBytes = options.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
+  const now = options.now ?? Date.now;
+  const listeners = /* @__PURE__ */ new Set();
+  let streaming = false;
+  let streamGeneration = 0;
+  let disposed = false;
+  let buttonMask = 0;
+  let inputChain = Promise.resolve();
+  let inputHolder;
+  let lastData;
+  let seq = 0;
+  const publish = (frame) => {
+    for (const listener of listeners) {
+      try {
+        listener(frame);
+      } catch {
+      }
+    }
+  };
+  const throttle = createFrameThrottle({
+    minIntervalMs: options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS,
+    emit: publish,
+    ...options.now ? { now: options.now } : {},
+    ...options.setTimer ? { setTimer: options.setTimer } : {},
+    ...options.clearTimer ? { clearTimer: options.clearTimer } : {}
+  });
+  cdp.on("Page.screencastFrame", (payload) => {
+    const frame = payload;
+    if (frame.sessionId !== void 0) {
+      void cdp.send("Page.screencastFrameAck", { sessionId: frame.sessionId }).catch(() => {
+      });
+    }
+    if (!streaming || disposed || !frame.data) return;
+    if (frame.data === lastData) return;
+    lastData = frame.data;
+    const bytes = Math.floor(frame.data.length * 3 / 4);
+    if (bytes > maxBytes) return;
+    const measured = measure(frame.data, options.surface);
+    throttle.push({
+      data: frame.data,
+      deviceWidth: measured.width,
+      deviceHeight: measured.height,
+      scale: measured.scale,
+      ts: now(),
+      seq: seq += 1
+    });
+  });
+  const start = async () => {
+    if (streaming || disposed) return;
+    streaming = true;
+    const generation = ++streamGeneration;
+    lastData = void 0;
+    await cdp.send("Page.startScreencast", {
+      format: "jpeg",
+      quality,
+      // Not multiplied by any device scale: Chromium clamps a screencast to
+      // the CSS size of the surface, so asking for more is a no-op that only
+      // makes this line look like a promise.
+      maxWidth: options.surface.width,
+      maxHeight: options.surface.height
+    }).catch(() => {
+      if (generation === streamGeneration) streaming = false;
+    });
+  };
+  const stop = async () => {
+    if (!streaming) return;
+    streaming = false;
+    streamGeneration += 1;
+    throttle.reset();
+    await cdp.send("Page.stopScreencast").catch(() => {
+    });
+  };
+  return {
+    subscribe(listener) {
+      listeners.add(listener);
+      if (listeners.size === 1) void start();
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size === 0) void stop();
+      };
+    },
+    subscriberCount: () => listeners.size,
+    async dispatchInput(events, stillPermitted, holder) {
+      const run = inputChain.then(
+        () => dispatchBatch(events, stillPermitted, holder)
+      );
+      inputChain = run.catch(() => {
+      });
+      return run;
+    },
+    async dispose() {
+      disposed = true;
+      buttonMask = 0;
+      listeners.clear();
+      await stop();
+    }
+  };
+  async function dispatchBatch(events, stillPermitted, holder) {
+    if (holder !== inputHolder) {
+      buttonMask = 0;
+      inputHolder = holder;
+    }
+    if (disposed) return;
+    for (const event of events) {
+      if (stillPermitted && !stillPermitted()) {
+        buttonMask = 0;
+        return;
+      }
+      const next = event.type === "mouse_down" ? buttonMask | (BUTTON_MASK[event.button] ?? 1) : event.type === "mouse_up" ? buttonMask & ~(BUTTON_MASK[event.button] ?? 1) : buttonMask;
+      try {
+        await dispatchOne(cdp, event, next);
+        buttonMask = next;
+      } catch {
+      }
+    }
+  }
+}
+function measure(base64, surface) {
+  const dimensions = readJpegDimensions(decodeBase64(base64));
+  if (!dimensions) {
+    return { width: surface.width, height: surface.height, scale: 1 };
+  }
+  const scale = dimensions.width > 0 ? dimensions.width / surface.width : 1;
+  return {
+    width: dimensions.width,
+    height: dimensions.height,
+    scale: Number.isFinite(scale) && scale > 0 ? scale : 1
+  };
+}
+function decodeBase64(value) {
+  const prefix = value.slice(0, 4096);
+  const binary = Buffer.from(prefix, "base64");
+  return new Uint8Array(binary.buffer, binary.byteOffset, binary.byteLength);
+}
+var BUTTON_MASK = { left: 1, middle: 4, right: 2 };
+async function dispatchOne(cdp, event, buttons) {
+  switch (event.type) {
+    case "mouse_move":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        x: event.x,
+        y: event.y,
+        // Carried on MOVES too: this is how Chromium tells a drag from a
+        // hover, and a drag with no buttons held moves nothing.
+        buttons,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "mouse_down":
+    case "mouse_up":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: event.type === "mouse_down" ? "mousePressed" : "mouseReleased",
+        x: event.x,
+        y: event.y,
+        button: event.button,
+        buttons,
+        clickCount: event.clickCount ?? 1,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "wheel":
+      await cdp.send("Input.dispatchMouseEvent", {
+        type: "mouseWheel",
+        x: event.x,
+        y: event.y,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+        buttons,
+        modifiers: event.modifiers ?? 0
+      });
+      return;
+    case "text":
+      await cdp.send("Input.insertText", { text: event.text });
+      return;
+    case "key_down":
+    case "key_up": {
+      const descriptor = describeKey(event.key, event.code);
+      await cdp.send("Input.dispatchKeyEvent", {
+        type: event.type === "key_down" ? "keyDown" : "keyUp",
+        modifiers: event.modifiers ?? 0,
+        key: event.key,
+        ...descriptor
+      });
+      return;
+    }
+  }
+}
+var KEY_CODES = {
+  Enter: { code: "Enter", windowsVirtualKeyCode: 13 },
+  Tab: { code: "Tab", windowsVirtualKeyCode: 9 },
+  Backspace: { code: "Backspace", windowsVirtualKeyCode: 8 },
+  Delete: { code: "Delete", windowsVirtualKeyCode: 46 },
+  Escape: { code: "Escape", windowsVirtualKeyCode: 27 },
+  ArrowUp: { code: "ArrowUp", windowsVirtualKeyCode: 38 },
+  ArrowDown: { code: "ArrowDown", windowsVirtualKeyCode: 40 },
+  ArrowLeft: { code: "ArrowLeft", windowsVirtualKeyCode: 37 },
+  ArrowRight: { code: "ArrowRight", windowsVirtualKeyCode: 39 },
+  Home: { code: "Home", windowsVirtualKeyCode: 36 },
+  End: { code: "End", windowsVirtualKeyCode: 35 },
+  PageUp: { code: "PageUp", windowsVirtualKeyCode: 33 },
+  PageDown: { code: "PageDown", windowsVirtualKeyCode: 34 }
+};
+function describeKey(key, code) {
+  const known = KEY_CODES[key];
+  if (known) return known;
+  return code ? { code } : {};
 }
 
 // server/services/browserd/daemon/settle.ts
@@ -432,27 +2239,114 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
+function parsePoint(value) {
+  if (!value) return null;
+  const match = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(value);
+  return match ? { x: Number(match[1]), y: Number(match[2]) } : null;
+}
+var DEFAULT_SCROLL_STEP = 600;
+var CLOSE_PENDING_TAB_GRACE_MS = 2e3;
+function parseScrollDelta(value) {
+  const point = parsePoint(value);
+  if (point) return [point.x, point.y];
+  const trimmed = value?.trim().toLowerCase() ?? "";
+  if (trimmed === "up") return [0, -DEFAULT_SCROLL_STEP];
+  if (trimmed === "down" || trimmed === "") return [0, DEFAULT_SCROLL_STEP];
+  if (trimmed === "top") return [0, -1e6];
+  if (trimmed === "bottom") return [0, 1e6];
+  const pixels = Number(trimmed);
+  if (Number.isFinite(pixels)) return [0, pixels];
+  return [0, DEFAULT_SCROLL_STEP];
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
+  a11yBudget;
+  consoleBudget;
+  webmcpOutputBudgetBytes;
+  pageTextMaxBytes;
+  lease;
   tabs = /* @__PURE__ */ new Map();
+  /**
+   * One viewport per tab, created on first watch.
+   *
+   * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
+   * encoding JPEGs for a tab nobody is looking at is work done for nobody.
+   */
+  viewports = /* @__PURE__ */ new Map();
+  /**
+   * Tab creations already under way, by tabId.
+   *
+   * `context.newPage()` is awaited, so without this two callers arriving
+   * together — a navigate and the pane opening, say — each open a page and the
+   * second overwrites the first in `tabs`. The result is an orphaned renderer
+   * and subscribers split across two pages, one of which nothing will ever
+   * drive again.
+   */
+  pendingTabs = /* @__PURE__ */ new Map();
+  /**
+   * Teardown has begun; no new page is opened on this browser.
+   *
+   * `close()` can only settle the creations it can SEE. Without a latch, a
+   * caller arriving one tick later opens a page after the sweep has run and
+   * leaves a renderer nobody will ever close — the exact leak `pendingTabs`
+   * was added to prevent, moved one step later.
+   */
+  closing = false;
   constructor(context, options = {}) {
     this.context = context;
     this.settleOptions = options.settle ?? DEFAULT_SETTLE_OPTIONS;
+    this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
+    this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
+    this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    this.lease = options.lease;
   }
   async execute(command) {
+    this.purgeHandoffConsole();
+    const permit = this.permitFor(command);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before this action ran; nothing was run and nothing was observed"
+      );
+    }
     const tabId = command.tabId ?? DEFAULT_TAB;
     const action = command.action;
     switch (action.kind) {
-      case "navigate":
+      case "navigate": {
         if (action.newTab) {
-          return { ok: false, error: "unimplemented_in_w1: navigate/newTab" };
+          if (command.tabId === void 0) {
+            return {
+              ok: false,
+              error: "newTab requires an explicit tabId to address the new tab by"
+            };
+          }
+          const existing = this.tabs.get(tabId);
+          if (existing && !existing.page.isClosed()) {
+            return {
+              ok: false,
+              error: `tab_exists: ${tabId} \u2014 omit newTab to navigate it, or choose another tabId`
+            };
+          }
+        }
+        const entry = await this.getOrCreateTab(tabId);
+        if (!entry) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "driver_closed",
+              "this browser is shutting down; no new tab was opened"
+            )
+          };
         }
         return this.navigateVerb(
           tabId,
-          await this.getOrCreateTab(tabId),
-          (page) => page.goto(action.url)
+          entry,
+          (page) => page.goto(action.url),
+          permit
         );
+      }
       case "back":
       case "reload": {
         const entry = this.tabs.get(tabId);
@@ -462,16 +2356,214 @@ var ChromiumDriver = class {
         return this.navigateVerb(
           tabId,
           entry,
-          (page) => action.kind === "back" ? page.goBack() : page.reload()
+          (page) => action.kind === "back" ? page.goBack() : page.reload(),
+          permit
         );
       }
       case "observe":
-        return this.observe(tabId, action);
+        return this.observe(tabId, action, permit);
       case "act":
+        return this.act(tabId, action, permit);
       case "webmcp_invoke":
+        return this.webmcpInvoke(tabId, action, permit);
       case "webmcp_cancel":
-        return { ok: false, error: `unimplemented_in_w1: ${action.kind}` };
+        return this.webmcpCancel(tabId, action, permit);
     }
+  }
+  /**
+   * Run one act verb, then FOLD THE OBSERVATION IN (L1): every act settles and
+   * returns the post-act screenshot + URL with a fresh state token, so the
+   * model never has to spend a turn asking "what happened?" — and the token it
+   * gets back is the one its NEXT act should be pinned to.
+   *
+   * L3 staleness is enforced upstream by `guardStaleness`, which compares the
+   * act's `expectedState` before this runs.
+   */
+  async act(tabId, action, permit) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const page = entry.page;
+    if (action.verb === "close_tab") {
+      await page.close().catch(() => {
+      });
+      await this.dropTab(tabId);
+      return { ok: true, output: { closed: tabId } };
+    }
+    if (action.verb === "activate_tab") {
+      await page.bringToFront();
+      const frame2 = await this.snapshot(page);
+      return this.observation(tabId, entry, { url: frame2.url }, frame2, permit);
+    }
+    try {
+      await this.dispatchVerb(page, action);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const before = permit() ? await this.snapshot(page).catch(() => null) : null;
+      const frame2 = permit() ? before : null;
+      return {
+        ok: false,
+        error: `${kind}: ${message.split("\n")[0]}`,
+        // Hand back the CURRENT state anyway: a failed act still moves the
+        // model forward if it can see what the page actually looks like. It
+        // carries the handoff note too — an act that failed right after a
+        // person used the browser most likely failed BECAUSE the page is now
+        // somewhere else, and "your click missed" would be the wrong lesson.
+        ...frame2 ? {
+          stateToken: this.tokenFor(tabId, entry, frame2),
+          output: this.withHandoffNote({ url: frame2.url })
+        } : {}
+      };
+    }
+    const settled = await this.settle(page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+      );
+    }
+    const frame = await this.snapshot(page);
+    const screenshot = await page.screenshotBase64().catch(() => void 0);
+    return {
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url, ...screenshot ? { screenshot } : {} },
+        frame,
+        permit,
+        "the action ran, but a person took control of this browser before its result could be observed; re-observe after they hand it back"
+      ),
+      settled
+    };
+  }
+  /** Map an act verb onto the page primitives. */
+  async dispatchVerb(page, action) {
+    const target = action.target;
+    const point = target && "coordinates" in target ? { x: target.coordinates[0], y: target.coordinates[1] } : null;
+    if (point && !isPointInViewport(point.x, point.y)) {
+      throw new Error(
+        `out_of_viewport: (${point.x}, ${point.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport; coordinates are CSS pixels with (0, 0) at the top-left of the last screenshot`
+      );
+    }
+    const selector = target && "selector" in target ? target.selector : null;
+    if (target && "a11yRef" in target) {
+      throw new Error(
+        "unsupported_target: a11yRef targeting is not available; use coordinates or a selector"
+      );
+    }
+    switch (action.verb) {
+      case "click":
+        if (point) return page.clickAt(point);
+        if (selector) return page.clickSelector(selector);
+        throw new Error("no element: click needs coordinates or a selector");
+      case "hover":
+        if (point) return page.hoverAt(point);
+        if (selector) return page.hoverSelector(selector);
+        throw new Error("no element: hover needs coordinates or a selector");
+      case "type": {
+        const text = action.value ?? "";
+        if (selector) return page.fillSelector(selector, text);
+        return page.typeText(text);
+      }
+      case "press":
+        if (!action.value) throw new Error("press needs a key in `value`");
+        return page.press(action.value);
+      case "scroll": {
+        const [dx, dy] = parseScrollDelta(action.value);
+        return page.scrollBy({ dx, dy });
+      }
+      case "drag": {
+        if (!point) throw new Error("drag needs start coordinates");
+        const to = parsePoint(action.value);
+        if (!to) {
+          throw new Error(
+            'drag needs a destination in `value` as "x,y" (viewport coordinates)'
+          );
+        }
+        if (!isPointInViewport(to.x, to.y)) {
+          throw new Error(
+            `out_of_viewport: drag destination (${to.x}, ${to.y}) is outside the ${BROWSERD_OBSERVATION_VIEWPORT.width}x${BROWSERD_OBSERVATION_VIEWPORT.height} observation viewport`
+          );
+        }
+        return page.dragTo(point, to);
+      }
+      case "select":
+        if (!selector) throw new Error("select needs a selector");
+        if (action.value === void 0) {
+          throw new Error("select needs the option value in `value`");
+        }
+        return page.selectOption(selector, action.value);
+      case "close_tab":
+      case "activate_tab":
+        return;
+    }
+  }
+  async webmcpInvoke(tabId, action, permit) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge || !bridge.isSupported()) {
+      return {
+        ok: false,
+        error: "webmcp_unsupported: this page (or this browser build) does not expose WebMCP tools"
+      };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the page's tool could be called; nothing was run"
+      );
+    }
+    try {
+      const { invocationId, output } = await bridge.invoke({
+        toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...action.frameId ? { frameId: action.frameId } : {},
+        input: action.input
+      });
+      const { output: capped, omitted } = capToolOutput(
+        output,
+        this.webmcpOutputBudgetBytes
+      );
+      const frame = await this.snapshot(entry.page);
+      return {
+        ...this.observation(
+          tabId,
+          entry,
+          { invocationId, result: capped, ...omitted ? { omitted } : {} },
+          frame,
+          permit,
+          "the page's tool ran, but a person took control of this browser before its result could be read; re-run it after they hand it back"
+        )
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
+      };
+    }
+  }
+  async webmcpCancel(tabId, action, permit) {
+    const entry = this.tabs.get(tabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${tabId}` };
+    }
+    const bridge = await entry.page.webmcp();
+    if (!bridge) {
+      return { ok: false, error: "webmcp_unsupported: no WebMCP session" };
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person took control of this browser before the cancellation could be delivered"
+      );
+    }
+    const known = await bridge.cancel(action.invocationId);
+    return { ok: true, output: { cancelled: known } };
   }
   /**
    * Run a navigation on an already-resolved tab, bump its nav counter, settle
@@ -479,17 +2571,34 @@ var ChromiumDriver = class {
    * (L3). Every W1 navigating verb funnels through here so settle + token are
    * never skipped. Tab creation is the caller's decision (only `navigate`).
    */
-  async navigateVerb(tabId, entry, navigate) {
+  async navigateVerb(tabId, entry, navigate, permit) {
     await navigate(entry.page);
     entry.navCounter += 1;
     const settled = await this.settle(entry.page);
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      );
+    }
     const frame = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { url: frame.url }, frame),
+      ...this.observation(
+        tabId,
+        entry,
+        { url: frame.url },
+        frame,
+        permit,
+        "the navigation ran, but a person took control of this browser before the page could be observed; re-observe after they hand it back"
+      ),
       settled
     };
   }
-  async observe(tabId, action) {
+  async observe(tabId, action, permit) {
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
+    }
     const entry = this.tabs.get(tabId);
     if (!entry || entry.page.isClosed()) {
       return { ok: false, error: `unknown_tab: ${tabId}` };
@@ -497,19 +2606,129 @@ var ChromiumDriver = class {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame);
+        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
       }
       case "dom": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { dom: frame.domSignal }, frame);
+        return this.observation(
+          tabId,
+          entry,
+          { dom: frame.domSignal },
+          frame,
+          permit
+        );
       }
       case "screenshot":
-        return this.observeScreenshot(tabId, entry);
-      case "a11y":
-      case "console":
-      case "webmcp_tools":
-        return { ok: false, error: `unimplemented_in_w1: observe/${action.mode}` };
+        return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
+      case "a11y": {
+        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
+        if (action.rootSelector && snapshot === null) {
+          return {
+            ok: false,
+            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
+          };
+        }
+        const frame = await this.snapshot(entry.page);
+        const { tree, omittedSubtrees, totalNodes } = capA11yTree(
+          snapshot,
+          this.a11yBudget
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            a11y: tree,
+            ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
+          },
+          frame,
+          permit
+        );
+      }
+      case "console": {
+        const { entries, omitted } = capConsole(
+          entry.page.consoleEntries(),
+          this.consoleBudget
+        );
+        const frame = await this.snapshot(entry.page);
+        return this.observation(
+          tabId,
+          entry,
+          { console: entries, ...omitted > 0 ? { omitted } : {} },
+          frame,
+          permit
+        );
+      }
+      case "webmcp_tools": {
+        const bridge = await entry.page.webmcp();
+        const frame = await this.snapshot(entry.page);
+        if (!bridge || !bridge.isSupported()) {
+          return this.observation(
+            tabId,
+            entry,
+            { webmcpSupported: false, tools: [] },
+            frame,
+            permit
+          );
+        }
+        return this.observation(
+          tabId,
+          entry,
+          { webmcpSupported: true, tools: bridge.list() },
+          frame,
+          permit
+        );
+      }
     }
+  }
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  async observeText(tabId, entry, permit) {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text2 = await entry.page.pageText();
+      const after2 = await this.snapshot(entry.page);
+      const output = this.cappedText(text2);
+      if (before.url === after2.url && before.domSignal === after2.domSignal) {
+        return this.observation(tabId, entry, output, after2, permit);
+      }
+      before = after2;
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false
+    };
+  }
+  /** The text observation's payload, cut to budget with the counted marker. */
+  cappedText(text) {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT
+    );
+    return { text: capped, ...capped !== text ? { truncated: true } : {} };
   }
   /**
    * Capture a screenshot whose state token provably describes the SAME frame the
@@ -520,20 +2739,30 @@ var ChromiumDriver = class {
    * `settled: false` (its token from the post-capture read) so the caller
    * re-observes rather than pinning an act to it.
    */
-  async observeScreenshot(tabId, entry) {
+  async observeScreenshot(tabId, entry, permit) {
     const STABLE_ATTEMPTS = 2;
     for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt++) {
+      if (!permit()) {
+        return this.leaseBlockedResult(
+          "a person has taken control of this browser; nothing was observed"
+        );
+      }
       const before = await this.snapshot(entry.page);
       const screenshot2 = await entry.page.screenshotBase64();
       const after2 = await this.snapshot(entry.page);
       if (before.url === after2.url && before.domSignal === after2.domSignal) {
-        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2);
+        return this.observation(tabId, entry, { screenshot: screenshot2 }, after2, permit);
       }
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
     }
     const screenshot = await entry.page.screenshotBase64();
     const after = await this.snapshot(entry.page);
     return {
-      ...this.observation(tabId, entry, { screenshot }, after),
+      ...this.observation(tabId, entry, { screenshot }, after, permit),
       settled: false
     };
   }
@@ -547,10 +2776,57 @@ var ChromiumDriver = class {
       domSignal: await entry.page.domStructureSignal()
     });
   }
+  /**
+   * The live picture of a tab.
+   *
+   * Deliberately NOT routed through the command queue. Input arrives as
+   * pointer batches at up to twenty a second while someone drags a scrollbar,
+   * and every command consumes an idempotency slot from a per-boot ledger that
+   * refuses new ids once exhausted — a person scrolling for a few minutes
+   * would rotate the daemon. The lease is the gate on this path instead, which
+   * is the right one: it is the person's own hands, and the lease is what says
+   * the hands are theirs.
+   */
+  async viewport(tabId) {
+    const key = tabId ?? DEFAULT_TAB;
+    const live = this.tabs.get(key);
+    if (live && !live.page.isClosed()) {
+      const cached = this.viewports.get(key);
+      if (cached) return cached;
+    } else {
+      await this.dropViewport(key);
+    }
+    const entry = tabId === void 0 || key === DEFAULT_TAB ? await this.getOrCreateTab(key) : this.tabs.get(key);
+    if (!entry || entry.page.isClosed()) return null;
+    const raced = this.viewports.get(key);
+    if (raced) return raced;
+    const created = (async () => {
+      const cdp = await entry.page.cdp();
+      if (!cdp) return null;
+      return createTabViewport(cdp, {
+        surface: BROWSERD_OBSERVATION_VIEWPORT
+      });
+    })();
+    this.viewports.set(key, created);
+    return created;
+  }
   async health() {
     return this.context.isConnected() ? { ok: true } : { ok: false, detail: "browser context disconnected" };
   }
   async close() {
+    this.closing = true;
+    await Promise.race([
+      Promise.allSettled([...this.pendingTabs.values()]),
+      new Promise((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+        timer.unref?.();
+      })
+    ]);
+    for (const viewport of this.viewports.values()) {
+      await viewport.then((v) => v?.dispose()).catch(() => {
+      });
+    }
+    this.viewports.clear();
     for (const entry of this.tabs.values()) {
       if (!entry.page.isClosed()) await entry.page.close().catch(() => {
       });
@@ -565,14 +2841,97 @@ var ChromiumDriver = class {
    * in, never re-read here — so the token can never describe a different state
    * than the returned output (P1).
    */
-  observation(tabId, entry, output, frame) {
-    const stateToken = computeStateToken({
+  /**
+   * The ONE funnel every page-derived result leaves through — which is why the
+   * last permit check lives here rather than at each caller.
+   *
+   * Every observation is read from the page across at least one `await`, and a
+   * check made before that await can only say the lease was free when the read
+   * STARTED. Asking again here, on the result's way out, is what makes "while a
+   * person holds the browser the agent observes nothing" true rather than
+   * nearly true: whatever was read is dropped instead of returned. Callers
+   * keep their own earlier checks — those refuse cheaply, before the read —
+   * and pass the prose that fits what already happened.
+   */
+  observation(tabId, entry, output, frame, permit, blockedDetail = "a person took control of this browser while this was running; the result was discarded and nothing was observed") {
+    if (!permit()) return this.leaseBlockedResult(blockedDetail);
+    return {
+      ok: true,
+      // WHERE this came from, on every observation without exception. The
+      // unattended origin allowlist is enforced against the result's `url`
+      // (`enforceResultOrigin` in built-in-tools/browser.ts), and a result
+      // carrying none fails that check OPEN — a screenshot of an off-allowlist
+      // page would reach the model unfiltered. Stamped at the funnel so no
+      // future observation mode can forget it. An explicit `url` in `output`
+      // still wins; today it is the same value.
+      output: this.withHandoffNote({ url: frame.url, ...output }),
+      stateToken: this.tokenFor(tabId, entry, frame)
+    };
+  }
+  /**
+   * L6 — LOUD RESUME. The first result after a person handed the browser back
+   * says so, explicitly naming auth and cookies: the common handoff is a
+   * login, and "something may have changed" would understate exactly the
+   * change that just happened. Consumed once, so it marks the result that
+   * actually crossed the handoff rather than every later one.
+   */
+  withHandoffNote(output) {
+    return this.lease?.consumeResumedDirty() ? {
+      ...output,
+      handoffNote: handoffNoteFor(this.lease.resumedFromKind())
+    } : output;
+  }
+  /**
+   * May THIS command look at the page right now?
+   *
+   * Bound to the command rather than read globally, because "a lease is held"
+   * is not the same as "you may not look": the holder's own `manual` commands
+   * are exactly what a lease is for. It is the same predicate the handler and
+   * the dequeue guard ask, asked a third time — and passed down as a closure
+   * rather than stored on the instance, because two tabs run concurrently and
+   * a shared field would answer one command's question with another's.
+   *
+   * Asked immediately before EVERY capture rather than once per command: a
+   * command can take seconds (a navigation settles for up to ten), and the
+   * handoff it must respect is the one happening NOW.
+   */
+  permitFor(command) {
+    const lease = this.lease;
+    if (!lease) return () => true;
+    return () => leaseRefusalFor(lease.state(), command) === void 0;
+  }
+  /** The result a capture-time handoff produces: no output, no token, no frame. */
+  leaseBlockedResult(detail) {
+    return {
+      ok: false,
+      leaseBlocked: true,
+      error: formatBrowserdError("lease_held", detail)
+    };
+  }
+  /**
+   * Drop console captured while a person held the browser, across EVERY tab —
+   * they may have opened one, and a leak in a tab nobody was watching is
+   * still a leak. Consumed once per handoff.
+   */
+  purgeHandoffConsole() {
+    const since = this.lease?.consumeResumedHeldSince?.();
+    if (since === void 0) return;
+    for (const entry of this.tabs.values()) {
+      if (entry.page.isClosed()) continue;
+      try {
+        entry.page.dropConsoleSince(since);
+      } catch {
+      }
+    }
+  }
+  /** The L3 token for a frame snapshot the caller already captured. */
+  tokenFor(tabId, entry, frame) {
+    return computeStateToken({
       tabId,
       navCounter: entry.navCounter,
       url: frame.url,
       domSignal: frame.domSignal
     });
-    return { ok: true, output, stateToken };
   }
   /** Read a tab's URL and DOM signal together, as one frame snapshot. */
   async snapshot(page) {
@@ -591,13 +2950,51 @@ var ChromiumDriver = class {
     const { settled } = await settlePage(steps, this.settleOptions);
     return settled;
   }
+  /** `null` means teardown has begun and no new page will be opened. */
   async getOrCreateTab(tabId) {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
-    const page = await this.context.newPage();
-    const entry = { page, navCounter: 0 };
-    this.tabs.set(tabId, entry);
-    return entry;
+    const inFlight = this.pendingTabs.get(tabId);
+    if (inFlight) return inFlight;
+    if (this.closing) return null;
+    const creating = (async () => {
+      await this.dropTab(tabId);
+      const page = await this.context.newPage();
+      if (this.closing) {
+        await page.close().catch(() => {
+        });
+        return null;
+      }
+      const entry = { page, navCounter: 0 };
+      this.tabs.set(tabId, entry);
+      return entry;
+    })();
+    this.pendingTabs.set(tabId, creating);
+    try {
+      return await creating;
+    } finally {
+      this.pendingTabs.delete(tabId);
+    }
+  }
+  /** Forget a tab and everything attached to it. */
+  async dropTab(tabId) {
+    this.tabs.delete(tabId);
+    await this.dropViewport(tabId);
+  }
+  /**
+   * Retire a tab's viewport.
+   *
+   * The cache is keyed by tabId but its contents belong to a PAGE. A closed or
+   * replaced tab left its viewport in place, still holding the dead page's CDP
+   * session: it published no more frames and swallowed the new page's input,
+   * so the recreated tab could be neither watched nor driven.
+   */
+  async dropViewport(tabId) {
+    const viewport = this.viewports.get(tabId);
+    if (!viewport) return;
+    this.viewports.delete(tabId);
+    await viewport.then((v) => v?.dispose()).catch(() => {
+    });
   }
 };
 
@@ -607,6 +3004,21 @@ var WEBMCP_LAUNCH_ARGS = [
 ];
 
 // server/services/browserd/daemon/launch-args.ts
+var ENABLE_FEATURES = "--enable-features=";
+var DISABLE_FEATURES = "--disable-features=";
+function featuresEnabledBy(args) {
+  return args.flatMap(
+    (arg) => arg.startsWith(ENABLE_FEATURES) ? arg.slice(ENABLE_FEATURES.length).split(",").filter(Boolean) : []
+  );
+}
+var BROWSERD_ENABLED_FEATURES = [
+  ...featuresEnabledBy(WEBMCP_LAUNCH_ARGS),
+  // Playwright enables this itself (unless PLAYWRIGHT_LEGACY_SCREENSHOT is
+  // set) and our switch would otherwise drop it, quietly moving every capture
+  // back to the legacy screenshot surface. Restated to preserve the pinned
+  // version's own default rather than to change it.
+  "CDPScreenshotNewSurface"
+];
 var BROWSERD_HARDENING_ARGS = [
   // Crash-avoidance in a container with a small /dev/shm. Its ABSENCE is exactly
   // what reads as "E2B is flaky" under load. (Local inspector carries this too.)
@@ -616,9 +3028,13 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-blink-features=AutomationControlled",
   // Determinism for the eval double-run bar: identical color across hosts.
   "--force-color-profile=srgb",
-  // Otherwise a navigation can hold the OLD frame and we screenshot a page that
-  // no longer exists — poison for both the agent and the eval.
-  "--disable-features=PaintHolding",
+  // NOTE — there is deliberately no `--disable-features=PaintHolding` here.
+  // Holding the old frame across a navigation really would poison a capture,
+  // but Playwright ALREADY disables PaintHolding in its own combined switch;
+  // restating it bought nothing and destroyed the other eleven entries in that
+  // list (see the ENABLE_FEATURES/DISABLE_FEATURES note above). Anything
+  // browserd genuinely needs disabled has to be added to Playwright's list,
+  // not emitted as a competing switch.
   // The panel/stream is frequently occluded and the driven tab is often not
   // foreground; without these, timers throttle and the agent sees a frozen app.
   "--disable-background-timer-throttling",
@@ -639,7 +3055,6 @@ var BROWSERD_HARDENING_ARGS = [
   "--disable-gpu",
   "--use-angle=swiftshader-webgl"
 ];
-var BROWSERD_OBSERVATION_VIEWPORT = { width: 1024, height: 768 };
 var BROWSERD_CONTEXT_OPTIONS = {
   viewport: BROWSERD_OBSERVATION_VIEWPORT,
   deviceScaleFactor: 1,
@@ -650,18 +3065,46 @@ var BROWSERD_CONTEXT_OPTIONS = {
   userAgent: "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36 MCPJam-Browser/1.0"
 };
 function buildBrowserdLaunchArgs(extra = []) {
-  return [...WEBMCP_LAUNCH_ARGS, ...BROWSERD_HARDENING_ARGS, ...extra];
+  const passthrough = WEBMCP_LAUNCH_ARGS.filter(
+    (arg) => !arg.startsWith(ENABLE_FEATURES)
+  );
+  const args = [
+    ...passthrough,
+    `${ENABLE_FEATURES}${BROWSERD_ENABLED_FEATURES.join(",")}`,
+    ...BROWSERD_HARDENING_ARGS,
+    ...extra
+  ];
+  const clobbering = args.find((arg) => arg.startsWith(DISABLE_FEATURES));
+  if (clobbering) {
+    throw new Error(
+      `browserd launch args must not carry ${DISABLE_FEATURES} (got "${clobbering}"): Chromium honours only the last occurrence, so this would discard Playwright's own disabled-feature list wholesale`
+    );
+  }
+  return args;
 }
 
 // server/services/browserd/daemon/profile-lock.ts
-import { unlink } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readlink, unlink } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 var SINGLETON_FILES = [
   "SingletonLock",
   "SingletonSocket",
   "SingletonCookie"
 ];
-async function clearStaleSingletonLock(userDataDir) {
+async function clearStaleSingletonLock(userDataDir, probe = probeSingletonOwner) {
+  const owner = await probe(userDataDir);
+  if (owner.live) {
+    return {
+      removed: [],
+      failed: [],
+      heldBy: {
+        ...owner.pid !== void 0 ? { pid: owner.pid } : {},
+        ...owner.host !== void 0 ? { host: owner.host } : {}
+      }
+    };
+  }
   const result = { removed: [], failed: [] };
   for (const name of SINGLETON_FILES) {
     try {
@@ -680,8 +3123,180 @@ async function clearStaleSingletonLock(userDataDir) {
 function isNotFound(err) {
   return typeof err === "object" && err !== null && err.code === "ENOENT";
 }
+async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, describeProcess = defaultDescribeProcess) {
+  let target;
+  try {
+    target = await readlink(join(userDataDir, "SingletonLock"));
+  } catch {
+    return { live: false };
+  }
+  const separator = target.lastIndexOf("-");
+  if (separator <= 0) return { live: false };
+  const host = target.slice(0, separator);
+  const pid = Number(target.slice(separator + 1));
+  if (!Number.isInteger(pid) || pid <= 0) return { live: false };
+  if (host !== hostname()) return { live: true, pid, host };
+  if (!isAlive(pid)) return { live: false, pid };
+  const command = describeProcess(pid)?.trim();
+  if (command && !looksLikeBrowser(command)) {
+    return { live: false, pid };
+  }
+  return { live: true, pid };
+}
+function looksLikeBrowser(command) {
+  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron/i.test(
+    command
+  );
+}
+function defaultDescribeProcess(pid) {
+  if (process.platform === "win32") return void 0;
+  try {
+    return execFileSync("ps", ["-p", String(pid), "-o", "comm="], {
+      encoding: "utf8",
+      timeout: 2e3,
+      stdio: ["ignore", "pipe", "ignore"]
+    }).trim();
+  } catch {
+    return void 0;
+  }
+}
+function defaultIsAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
+// server/services/browserd/daemon/aria-snapshot.ts
+var ROLE_LINE = /^([^\s":]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*(.*)$/;
+var ATTRIBUTE = /\[([^\]=]+)(?:=([^\]]*))?\]/g;
+function parseAriaSnapshot(yaml) {
+  if (!yaml) return null;
+  const lines = yaml.split("\n");
+  const roots = [];
+  const stack = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
+    if (raw.trim().length === 0) continue;
+    const parsed = parseLine(raw);
+    if (!parsed) continue;
+    while (stack.length > 0 && stack[stack.length - 1].indent >= parsed.indent) {
+      stack.pop();
+    }
+    const parent = stack[stack.length - 1];
+    if (parent) {
+      (parent.node.children ??= []).push(parsed.node);
+    } else {
+      roots.push(parsed.node);
+    }
+    if (parsed.blockScalar) {
+      const { text, next } = readBlockScalar(lines, index + 1, parsed.indent);
+      if (text) parsed.node.name = text;
+      index = next - 1;
+      continue;
+    }
+    if (parsed.opensChildren) {
+      stack.push({ indent: parsed.indent, node: parsed.node });
+    }
+  }
+  if (roots.length === 0) return null;
+  if (roots.length === 1) return roots[0];
+  return { role: "document", children: roots };
+}
+function parseLine(raw) {
+  const indent = raw.length - raw.trimStart().length;
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith("- ") && trimmed !== "-") return null;
+  let body = trimmed.slice(1).trim();
+  if (body.length === 0) return null;
+  const opensChildren = body.endsWith(":");
+  if (opensChildren) body = body.slice(0, -1).trimEnd();
+  const property = matchProperty(body);
+  if (property) {
+    if (property.value === "|" || property.value === "|-") {
+      return {
+        indent,
+        node: { role: property.key },
+        opensChildren: false,
+        blockScalar: true
+      };
+    }
+    return {
+      indent,
+      node: { role: property.key, name: property.value },
+      opensChildren: false,
+      blockScalar: false
+    };
+  }
+  const match = ROLE_LINE.exec(body);
+  if (!match) {
+    return {
+      indent,
+      node: { role: "text", name: body },
+      opensChildren,
+      blockScalar: false
+    };
+  }
+  const [, role, name, tail] = match;
+  const node = { role };
+  if (name !== void 0) node.name = unescapeName(name);
+  applyAttributes(node, tail);
+  return { indent, node, opensChildren, blockScalar: false };
+}
+function matchProperty(body) {
+  const colon = body.indexOf(": ");
+  const bare = body.endsWith(":") ? body.length - 1 : -1;
+  const at = colon >= 0 ? colon : bare;
+  if (at <= 0) return null;
+  const key = body.slice(0, at);
+  if (key.includes('"') || key.includes(" ")) return null;
+  return { key, value: body.slice(at + 1).trim() };
+}
+function applyAttributes(node, tail) {
+  if (!tail) return;
+  for (const match of tail.matchAll(ATTRIBUTE)) {
+    const key = match[1].trim();
+    if (!key) continue;
+    const value = match[2];
+    if (value === void 0) {
+      node[key] = true;
+      continue;
+    }
+    const trimmed = value.trim();
+    const numeric = Number(trimmed);
+    node[key] = trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed;
+  }
+}
+function unescapeName(name) {
+  return name.replace(/\\(["\\])/g, "$1");
+}
+function readBlockScalar(lines, from, parentIndent) {
+  const collected = [];
+  let cursor = from;
+  let blockIndent = null;
+  while (cursor < lines.length) {
+    const line = lines[cursor];
+    if (line.trim().length === 0) {
+      collected.push("");
+      cursor += 1;
+      continue;
+    }
+    const indent = line.length - line.trimStart().length;
+    if (indent <= parentIndent) break;
+    blockIndent ??= indent;
+    collected.push(line.slice(Math.min(blockIndent, indent)));
+    cursor += 1;
+  }
+  while (collected.length > 0 && collected[collected.length - 1] === "") {
+    collected.pop();
+  }
+  return { text: collected.join("\n"), next: cursor };
+}
 
 // server/services/browserd/daemon/chromium-launch.ts
+var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
 var DOM_SIGNAL_FN = `() => {
   const parts = [];
@@ -701,8 +3316,39 @@ function abortPromise(signal) {
     });
   });
 }
+var CONSOLE_RING_SIZE = 200;
+var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
+var ACT_TIMEOUT_MS = 15e3;
+var A11Y_TIMEOUT_MS = 5e3;
+var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
-  return {
+  const consoleRing = [];
+  page.on("console", (message) => {
+    try {
+      const text = message.text?.() ?? "";
+      consoleRing.push({
+        type: message.type?.() ?? "log",
+        text: capText(text, CONSOLE_ENTRY_CAPTURE_BYTES),
+        at: Date.now()
+      });
+      if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+    } catch {
+    }
+  });
+  page.on("pageerror", (error) => {
+    consoleRing.push({
+      type: "pageerror",
+      text: capText(
+        error instanceof Error ? error.message : String(error),
+        CONSOLE_ENTRY_CAPTURE_BYTES
+      ),
+      at: Date.now()
+    });
+    if (consoleRing.length > CONSOLE_RING_SIZE) consoleRing.shift();
+  });
+  let webmcpPromise = null;
+  let cdpPromise = null;
+  const adapted = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -730,40 +3376,162 @@ function wrapPage(page) {
       return page.evaluate(`(${DOM_SIGNAL_FN})()`);
     },
     async screenshotBase64() {
-      const buffer = await page.screenshot({ type: "png" });
+      const buffer = await page.screenshot({
+        type: "jpeg",
+        quality: SCREENSHOT_JPEG_QUALITY
+      });
       return buffer.toString("base64");
     },
     url: () => page.url(),
     close: () => page.close(),
-    isClosed: () => page.isClosed()
+    isClosed: () => page.isClosed(),
+    bringToFront: () => page.bringToFront(),
+    // --- act primitives -----------------------------------------------------
+    // Coordinates are already in the canonical observation viewport (L5), so
+    // no scaling happens here: what the model saw IS what it clicks.
+    clickAt: (point, options) => page.mouse.click(point.x, point.y, {
+      ...options?.button ? { button: options.button } : {}
+    }),
+    clickSelector: (selector) => page.click(selector, { timeout: ACT_TIMEOUT_MS }),
+    hoverAt: (point) => page.mouse.move(point.x, point.y),
+    hoverSelector: (selector) => page.hover(selector, { timeout: ACT_TIMEOUT_MS }),
+    typeText: (text) => page.keyboard.type(text),
+    fillSelector: (selector, text) => page.fill(selector, text, { timeout: ACT_TIMEOUT_MS }),
+    press: (key) => page.keyboard.press(key),
+    scrollBy: ({ dx, dy }) => page.mouse.wheel(dx, dy),
+    async dragTo(from, to) {
+      await page.mouse.move(from.x, from.y);
+      await page.mouse.down();
+      await page.mouse.move((from.x + to.x) / 2, (from.y + to.y) / 2);
+      await page.mouse.move(to.x, to.y);
+      await page.mouse.up();
+    },
+    async selectOption(selector, value) {
+      await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
+    },
+    // --- observation --------------------------------------------------------
+    async a11ySnapshot(rootSelector) {
+      const target = rootSelector ? page.locator(rootSelector).first() : page;
+      try {
+        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
+        return parseAriaSnapshot(yaml);
+      } catch {
+        return null;
+      }
+    },
+    async pageText() {
+      try {
+        const text = await page.evaluate(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
+      }
+    },
+    consoleEntries: () => consoleRing,
+    dropConsoleSince: (since) => {
+      let keep = consoleRing.length;
+      while (keep > 0 && consoleRing[keep - 1].at >= since) keep -= 1;
+      consoleRing.length = keep;
+    },
+    webmcp() {
+      webmcpPromise ??= (async () => {
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
+      return webmcpPromise;
+    },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
+    }
   };
+  return adapted;
+}
+async function attachWebMcp(page, session) {
+  try {
+    const bridge = new WebMcpBridge(session);
+    await bridge.start(async () => {
+      const supported = await page.evaluate(`(() => ${PAGE_API_PROBE})()`).catch(() => false);
+      return supported === true;
+    });
+    return bridge;
+  } catch {
+    return null;
+  }
+}
+var cdpAttachers = /* @__PURE__ */ new WeakMap();
+function registerCdpAttacher(page, attach) {
+  cdpAttachers.set(page, attach);
 }
 async function launchBrowserdContext(options) {
-  await clearStaleSingletonLock(options.userDataDir);
   const { chromium } = await import("playwright");
-  const context = await chromium.launchPersistentContext(options.userDataDir, {
+  const launchArgs = {
     headless: options.headless ?? false,
+    ...options.channel ? { channel: options.channel } : {},
+    ...options.executablePath ? { executablePath: options.executablePath } : {},
+    // Chromium cannot start its renderer sandbox as uid 0 (the image builds
+    // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
-    args: buildBrowserdLaunchArgs(options.extraArgs),
+    args: buildBrowserdLaunchArgs(options.extraArgs)
+  };
+  if (options.contextMode === "ephemeral") {
+    const browser = await chromium.launch(launchArgs);
+    let context2;
+    try {
+      context2 = await browser.newContext({
+        acceptDownloads: false,
+        permissions: [],
+        ...BROWSERD_CONTEXT_OPTIONS
+      });
+    } catch (error) {
+      await browser.close().catch(() => {
+      });
+      throw error;
+    }
+    return adaptContext(context2, {
+      // The browser outlives the context, so closing the context alone would
+      // leave a Chromium process behind in the box.
+      onClose: () => browser.close()
+    });
+  }
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds this profile; close it and try again`
+    );
+  }
+  const context = await chromium.launchPersistentContext(options.userDataDir, {
+    ...launchArgs,
     acceptDownloads: false,
     permissions: [],
     ...BROWSERD_CONTEXT_OPTIONS
   });
   return adaptContext(context);
 }
-function adaptContext(context) {
+function adaptContext(context, options = {}) {
   const startup = [...context.pages()];
   let adopted = 0;
   return {
     async newPage() {
       const page = adopted < startup.length ? startup[adopted++] : await context.newPage();
+      if (context.newCDPSession) {
+        registerCdpAttacher(page, () => context.newCDPSession(page));
+      }
       return wrapPage(page);
     },
     isConnected() {
       return context.browser()?.isConnected() ?? true;
     },
-    close() {
-      return context.close();
+    async close() {
+      try {
+        await context.close();
+      } finally {
+        await options.onClose?.();
+      }
     }
   };
 }
@@ -792,7 +3560,11 @@ function readBrowserdConfig(env = process.env) {
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
     headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
-    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0
+    windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent"
   };
 }
 function extraArgsFor(config) {
@@ -812,14 +3584,17 @@ async function main() {
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
-    extraArgs: extraArgsFor(config)
+    extraArgs: extraArgsFor(config),
+    contextMode: config.contextMode
   });
-  const driver = new ChromiumDriver(context);
-  const stack = buildBrowserdStack(driver, { token: config.token });
+  const lease = new HandoffLease();
+  const driver = new ChromiumDriver(context, { lease });
+  const stack = buildBrowserdStack(driver, { token: config.token, lease });
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stack.closeStreams();
     stack.server.close();
     await driver.close().catch(() => {
     });
