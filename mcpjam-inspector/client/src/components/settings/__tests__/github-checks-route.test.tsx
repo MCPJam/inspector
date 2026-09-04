@@ -17,6 +17,7 @@ const {
   mockSetRepoSuite,
   mockSetRepoOutagePolicy,
   mockSetRepoConformance,
+  mockSetRepoFeedbackComments,
   mockDisconnectRepo,
   mockConnectRepo,
   mockConnectVerifiedRepo,
@@ -38,6 +39,7 @@ const {
   mockSetRepoSuite: vi.fn(async () => ({ changed: true })),
   mockSetRepoOutagePolicy: vi.fn(async () => ({ changed: true })),
   mockSetRepoConformance: vi.fn(async () => ({ changed: true })),
+  mockSetRepoFeedbackComments: vi.fn(async () => ({ changed: true })),
   mockDisconnectRepo: vi.fn(async () => ({ removed: true })),
   // The unverified connect the backend still exposes for the two-deploy
   // window. It is handed to the component so that reaching for it is a
@@ -90,6 +92,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
     setRepoSuite: mockSetRepoSuite,
     setRepoOutagePolicy: mockSetRepoOutagePolicy,
     setRepoConformance: mockSetRepoConformance,
+    setRepoFeedbackComments: mockSetRepoFeedbackComments,
     disconnectRepo: mockDisconnectRepo,
     listInstallationRepos: mockListInstallationRepos,
     startInstallation: mockStartInstallation,
@@ -193,6 +196,15 @@ function binding(
 /** A row connected before the outage policy existed: nothing was stored. */
 const UNSET_POLICY_ROW = ROW;
 const FAIL_OPEN_ROW = { ...ROW, outagePolicy: "fail_open" as const };
+
+/**
+ * A repository whose admin has opted OUT of comments.
+ *
+ * `ROW` itself is the other case and the important one: it carries no
+ * `feedbackComments` at all, which is what every repository connected before
+ * this existed looks like — and it means ON.
+ */
+const COMMENTS_OFF_ROW = { ...ROW, feedbackComments: "off" as const };
 
 function routeTree(activeOrganizationId: string | null) {
   return (
@@ -775,6 +787,200 @@ describe("GithubChecksRoute row outage policy", () => {
 });
 
 /**
+ * The per-repository comment toggle, and the one reading that makes it wrong.
+ *
+ * `feedbackComments` is ABSENT ⇒ `on`, which inverts every other optional
+ * policy on the row. A UI that treats absent the way it treats
+ * `conformanceEnabled` renders the control off for every repository that has
+ * never been touched — which is every repository — and tells an administrator
+ * the opposite of what MCPJam is doing on their pull requests.
+ */
+describe("GithubChecksRoute pull-request comments", () => {
+  const COMMENTS_LABEL =
+    "Post feedback comments on pull requests for mcpjam/mcp-check-fixture";
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [binding("mcpjam")];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+    mockSetRepoFeedbackComments.mockReset();
+    mockSetRepoFeedbackComments.mockResolvedValue({ changed: true });
+  });
+
+  it("renders a row with NO stored setting as ON, and turns it off", () => {
+    // The load-bearing case. Nothing is stored, so MCPJam IS commenting.
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    expect(toggle).toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      feedbackComments: "off",
+    });
+  });
+
+  it("renders a row stored as off, and turns it back on", () => {
+    mockRepos.value = [COMMENTS_OFF_ROW];
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    expect(toggle).not.toBeChecked();
+
+    fireEvent.click(toggle);
+
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledWith({
+      configId: "cfg-1",
+      feedbackComments: "on",
+    });
+  });
+
+  it("says what the toggle does, and what survives turning it off", () => {
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    expect(
+      screen.getByText(
+        /MCPJam posts one comment per pull request and updates it in place\. Turning this off stops the comments and changes nothing else\./
+      )
+    ).toBeInTheDocument();
+  });
+
+  it("announces what changed, without claiming the check is running", async () => {
+    // This toggle is independent of the per-repository enable switch, so the
+    // toast is reachable on a repository whose checks are paused. Copy that
+    // said "the check still runs" would then be a confident, false statement
+    // about a control this one does not touch.
+    mockRepos.value = [ROW];
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.success).toHaveBeenCalledWith(
+        "MCPJam will stop commenting on pull requests in this repository. This setting does not change whether the check itself runs."
+      )
+    );
+  });
+
+  it("announces NOTHING when the write was a successful no-op", async () => {
+    // `{ changed: false }` means the stored value already said this, which is
+    // reachable whenever the row is stale — another tab, or a write that landed
+    // before this list refetched. The toast would otherwise tell an admin
+    // MCPJam "will stop commenting" on a repository whose setting nobody moved.
+    // Same rule the outage-policy select follows.
+    mockRepos.value = [ROW];
+    mockSetRepoFeedbackComments.mockResolvedValueOnce({ changed: false });
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() => expect(mockSetRepoFeedbackComments).toHaveBeenCalled());
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("shows the backend's own refusal when the write is rejected", async () => {
+    mockRepos.value = [ROW];
+    mockSetRepoFeedbackComments.mockRejectedValueOnce(
+      new Error("You are not an administrator of this organization.")
+    );
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "You are not an administrator of this organization."
+      )
+    );
+  });
+
+  it("says nothing changed when the refusal carried no message", async () => {
+    mockRepos.value = [ROW];
+    // A `ConvexError`-less throw — a dropped connection, not a refusal the
+    // backend worded. The generic "something went wrong" would leave an admin
+    // unsure whether MCPJam is still commenting.
+    mockSetRepoFeedbackComments.mockRejectedValueOnce(new Error(""));
+    renderRoute();
+
+    fireEvent.click(screen.getByLabelText(COMMENTS_LABEL));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "We could not change pull-request comments for that repository. Nothing changed — try again."
+      )
+    );
+  });
+
+  it("stays answerable while checks are paused", () => {
+    // Not gated on `enabled` the way conformance is: this decides what MCPJam
+    // may WRITE on other people's pull requests, and a paused repository is
+    // still a repository an admin may want to settle that for.
+    mockRepos.value = [{ ...ROW, enabled: false }];
+    renderRoute();
+
+    expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled();
+  });
+
+  it("drops a second click while the first write is still in flight", async () => {
+    mockRepos.value = [ROW];
+    let release: (() => void) | undefined;
+    mockSetRepoFeedbackComments.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ changed: true });
+        })
+    );
+    renderRoute();
+
+    const toggle = screen.getByLabelText(COMMENTS_LABEL);
+    fireEvent.click(toggle);
+    expect(toggle).toBeDisabled();
+    fireEvent.click(toggle);
+    expect(mockSetRepoFeedbackComments).toHaveBeenCalledTimes(1);
+
+    // The enable toggle is a DIFFERENT write on the same row and must not be
+    // frozen by this one.
+    expect(
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+    ).toBeEnabled();
+
+    await act(async () => {
+      release?.();
+    });
+    await waitFor(() =>
+      expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled()
+    );
+  });
+
+  it("says at CONNECT time that MCPJam will comment, and that it is reversible", async () => {
+    // The consent moment: connecting starts MCPJam writing on pull requests in
+    // a repository other people open them against.
+    mockRepos.value = [];
+    renderRoute();
+
+    await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
+
+    expect(
+      screen.getByText(
+        /MCPJam will also post a comment on each pull request in this repository, updated in place as new commits land\. You can turn that off per repository after connecting\./
+      )
+    ).toBeInTheDocument();
+  });
+});
+
+/**
  * Visibility is a LIVE GitHub fact, joined from the installation listing and
  * persisted nowhere. Everything that is not an explicit boolean is unknown, and
  * unknown renders nothing — labelling a private repository "Public" on the
@@ -949,6 +1155,198 @@ describe("GithubChecksRoute organization switching", () => {
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
       "Fail open"
     );
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BINDING CHANGES — the listing has to follow them
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// The offerable repositories come from an ACTION: a one-shot read that nothing
+// re-runs on its own. What decides its answer — which installations this
+// organization holds — arrives on a LIVE QUERY. So connecting an account has to
+// be what re-reads the listing, and the bug that says otherwise is not subtle:
+// a claim that succeeded server-side, repositories waiting behind it, and a
+// page still saying "Connect a GitHub account above first" until a reload.
+//
+// The other half is just as load-bearing. A Convex subscription hands back a
+// fresh array on every delivery, including one that re-sends identical rows, so
+// anything that watched the array itself would ask GitHub again on every poll.
+describe("GithubChecksRoute binding changes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockBindings.value = [];
+    mockListInstallationRepos.mockReset();
+    mockConnectVerifiedRepo.mockReset();
+    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-new" });
+  });
+
+  it("re-lists repositories when an account is connected, with no reload", async () => {
+    mockListInstallationRepos
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([repo("acme/widgets", { accountLogin: "acme" })]);
+
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+
+    // Where the user starts: nothing connected, so nothing to offer.
+    expect(
+      await screen.findByText(
+        /No repositories available\. Connect a GitHub account above first\./
+      )
+    ).toBeInTheDocument();
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+
+    // The bind lands. NOTHING else about this page changes — same org, still
+    // enabled, same memoized callbacks — which is exactly why the listing used
+    // to sit there stale.
+    mockBindings.value = [binding("acme")];
+    rerender(routeTree("org-1"));
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText(/No repositories available/)
+      ).not.toBeInTheDocument()
+    );
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "acme/widgets" })
+    ).toBeInTheDocument();
+  });
+
+  it("re-lists when a binding's status changes, not only when one appears", async () => {
+    mockBindings.value = [binding("acme")];
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    // Suspended, removed and unbound each stop an installation answering for
+    // its repositories, so the set being unchanged is not the question.
+    mockBindings.value = [binding("acme", { status: "suspended" })];
+    rerender(routeTree("org-1"));
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+  });
+
+  it("does not re-list when the live query re-delivers the same bindings", async () => {
+    mockBindings.value = [binding("acme"), binding("beta")];
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    // A new array, equal content, and the rows in the other order — all three
+    // are ordinary for a subscription and none of them is a change.
+    mockBindings.value = [binding("beta"), binding("acme")];
+    rerender(routeTree("org-1"));
+    await act(async () => {});
+
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-list when the bindings query answers for the first time", async () => {
+    // `undefined` is the state every cold load starts in: the bindings query is
+    // not even subscribed until availability says `enabled`, so it answers
+    // AFTER the first listing was asked for. That answer describes the same
+    // installations that request was made against — reading it as a change
+    // would double every page load.
+    mockBindings.value = undefined;
+    mockListInstallationRepos.mockResolvedValue([repo("acme/widgets")]);
+
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    mockBindings.value = [binding("acme")];
+    rerender(routeTree("org-1"));
+    await act(async () => {});
+
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
+    // …and the listing that was in flight is still the one on screen.
+    expect(
+      await screen.findByRole("combobox", { name: "Repository" })
+    ).toBeInTheDocument();
+  });
+
+  it("still resets the picker on an org switch, and still drops the stale listing", async () => {
+    // The org-switch guarantees have to survive the refetch machinery: the
+    // reset moved out of the listing effect, and the in-flight guard is now a
+    // generation rather than a per-run flag.
+    mockBindings.value = [binding("acme")];
+    let resolveStale: ((repos: unknown[]) => void) | undefined;
+    mockListInstallationRepos
+      .mockResolvedValueOnce([repo("acme/widgets")])
+      // The refetch caused by the bind below, left hanging so that the ORG
+      // SWITCH happens while it is still in flight.
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveStale = resolve as (repos: unknown[]) => void;
+          })
+      )
+      .mockResolvedValue([repo("beta/gadgets", { accountLogin: "beta" })]);
+
+    const user = userEvent.setup();
+    const { rerender } = render(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+    await chooseOption(user, "Repository", "acme/widgets");
+    await chooseOption(user, "Outage policy", "Fail closed");
+
+    // A second account is connected: the listing is re-read, and the choice
+    // just made is deliberately KEPT — the organization it belongs to has not
+    // changed, and losing it would punish someone for someone else's bind.
+    mockBindings.value = [binding("acme"), binding("beta")];
+    rerender(routeTree("org-1"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Fail closed"
+    );
+
+    // Now the org changes while that refetch is still in flight.
+    rerender(routeTree("org-2"));
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(3)
+    );
+    expect(screen.getByLabelText("Repository")).toHaveTextContent(
+      "Select a repository"
+    );
+    expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
+      "Select an outage policy"
+    );
+
+    // org-1's answer, arriving late. It must not repopulate org-2's picker.
+    await act(async () => {
+      resolveStale?.([repo("acme/widgets")]);
+    });
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "beta/gadgets" })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "acme/widgets" })
+    ).not.toBeInTheDocument();
   });
 });
 

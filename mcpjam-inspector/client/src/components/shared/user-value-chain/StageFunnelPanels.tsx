@@ -89,15 +89,20 @@ export function SwarmRunStageFunnelPanels({
   className?: string;
 }) {
   if (journeyRunIds.length === 0) return null;
+  // A wave can carry many journey runs. Stacking every funnel as shrink-0
+  // used to push the session list off the tab; cap the stack and let it
+  // scroll so Sessions stays usable.
   return (
     <ErrorBoundary fallback={null}>
       <div className={className}>
-        {journeyRunIds.map((journeyRunId) => (
-          <SwarmRunStageFunnelPanel
-            key={journeyRunId}
-            journeyRunId={journeyRunId}
-          />
-        ))}
+        <div className="max-h-[min(40vh,20rem)] min-h-0 space-y-2 overflow-y-auto">
+          {journeyRunIds.map((journeyRunId) => (
+            <SwarmRunStageFunnelPanel
+              key={journeyRunId}
+              journeyRunId={journeyRunId}
+            />
+          ))}
+        </div>
       </div>
     </ErrorBoundary>
   );
@@ -110,6 +115,9 @@ function SwarmRunStageFunnelPanel({ journeyRunId }: { journeyRunId: string }) {
   ) as ChatSessionStageFunnel | null | undefined;
 
   if (!summary) return null;
+  // A wave member with no sessions is not a funnel — rendering one card per
+  // empty run is what made the Sessions chrome taller than the viewport.
+  if (summary.total === 0) return null;
 
   return (
     <StageFunnel

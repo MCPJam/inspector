@@ -119,127 +119,29 @@ function client(): PlatformApiClient {
  * path shape but not this method. Everything else at 404 is the route's own
  * "Eval suite not found", which is a fact about the suite.
  */
-function isRouteUnavailable(status: number, code: string): boolean {
+function isRouteUnavailable(
+  status: number,
+  code: string,
+  codeSource?: "envelope" | "status",
+): boolean {
   return (
     code === "FEATURE_NOT_SUPPORTED" ||
     code === "NOT_IMPLEMENTED" ||
     status === 501 ||
-    status === 405
+    status === 405 ||
+    // A 404 the server did not put a code on. An API that MEANS "no such
+    // resource" answers `{ code: "NOT_FOUND" }`; a deployment that never
+    // shipped this function answers a bare 404 from its router, with no
+    // envelope at all. `STATUS_FALLBACK_CODES` maps both to `NOT_FOUND`, so
+    // `code` alone cannot separate them — which is why this reads
+    // `codeSource`, and why a discriminator built on the code was never
+    // going to work.
+    //
+    // Getting this wrong is not cosmetic during a dark ship: the run detail
+    // renders an undeployed route as "this run was never measured" instead of
+    // falling back to the legacy funnel it should still be showing.
+    (status === 404 && codeSource === "status")
   );
-}
-
-export async function fetchEvalSuiteStageAnalytics(
-  params: {
-    projectId: string;
-    suiteId: string;
-    /** Inclusive epoch ms over `runCompletedAt`. */
-    from?: number;
-    to?: number;
-    runGroupId?: string;
-    cursor?: string;
-    limit?: number;
-  },
-  signal?: AbortSignal,
-): Promise<EvalStageAnalyticsPage> {
-  let raw: unknown;
-  try {
-    raw = await client().listEvalSuiteStageAnalytics(
-      {
-        projectId: params.projectId,
-        suiteId: params.suiteId,
-        ...(params.from !== undefined ? { from: params.from } : {}),
-        ...(params.to !== undefined ? { to: params.to } : {}),
-        ...(params.runGroupId ? { runGroupId: params.runGroupId } : {}),
-        ...(params.cursor ? { cursor: params.cursor } : {}),
-        ...(params.limit !== undefined ? { limit: params.limit } : {}),
-      },
-      { signal },
-    );
-  } catch (error) {
-    // A caller's abort is the caller's, not a failure of the read. Rethrow it
-    // untouched so the controller can tell "we cancelled this" from "the API
-    // said no".
-    if (signal?.aborted) throw error;
-    if (isPlatformApiError(error)) {
-      if (isRouteUnavailable(error.status, error.code)) {
-        throw new EvalStageAnalyticsError(
-          "routeUnavailable",
-          "This deployment does not serve eval stage analytics.",
-          { status: error.status, cause: error },
-        );
-      }
-      if (error.status === 404) {
-        throw new EvalStageAnalyticsError("notFound", error.message, {
-          status: error.status,
-          cause: error,
-        });
-      }
-      throw new EvalStageAnalyticsError("requestFailed", error.message, {
-        status: error.status,
-        cause: error,
-      });
-    }
-    throw new EvalStageAnalyticsError(
-      "requestFailed",
-      error instanceof Error ? error.message : String(error),
-      { cause: error },
-    );
-  }
-
-  const envelope = raw as { items?: unknown; nextCursor?: unknown } | null;
-  if (
-    !envelope ||
-    typeof envelope !== "object" ||
-    !Array.isArray(envelope.items)
-  ) {
-    throw new EvalStageAnalyticsError(
-      "invalidContract",
-      "The stage analytics response was not a page envelope.",
-    );
-  }
-  if (
-    envelope.nextCursor !== undefined &&
-    typeof envelope.nextCursor !== "string"
-  ) {
-    throw new EvalStageAnalyticsError(
-      "invalidContract",
-      "The stage analytics page cursor was not a string.",
-    );
-  }
-
-  const rows: EvalStageAnalyticsV1[] = [];
-  for (const item of envelope.items) {
-    // Parsed HERE rather than trusted from the wire, with the REFINED schema —
-    // the structural one would admit a document with two `overall` slices or an
-    // overall slice that disagrees with the row's own trial count, and those
-    // are exactly the invariants every number below rests on.
-    const parsed = evalStageAnalyticsSchema.safeParse(item);
-    if (!parsed.success) {
-      throw new EvalStageAnalyticsError(
-        "invalidContract",
-        "A stage analytics document did not match the published contract.",
-        { cause: parsed.error },
-      );
-    }
-    // Shape is not identity. `suiteId` is only `string().min(1)` to the schema,
-    // so a valid document for a DIFFERENT suite parses perfectly — and would
-    // then render under this suite's heading as its funnel. Nothing upstream
-    // binds the answer to the question; this does.
-    if (parsed.data.suiteId !== params.suiteId) {
-      throw new EvalStageAnalyticsError(
-        "invalidContract",
-        "A stage analytics document is for a different suite than the one requested.",
-      );
-    }
-    rows.push(parsed.data as EvalStageAnalyticsV1);
-  }
-
-  return {
-    rows,
-    ...(typeof envelope.nextCursor === "string"
-      ? { nextCursor: envelope.nextCursor }
-      : {}),
-  };
 }
 
 /**
@@ -270,7 +172,7 @@ export async function fetchEvalRunStageAnalytics(
     // A caller's abort is the caller's, not a failure of the read.
     if (signal?.aborted) throw error;
     if (isPlatformApiError(error)) {
-      if (isRouteUnavailable(error.status, error.code)) {
+      if (isRouteUnavailable(error.status, error.code, error.codeSource)) {
         throw new EvalStageAnalyticsError(
           "routeUnavailable",
           "This deployment does not serve eval stage analytics.",

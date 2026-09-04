@@ -27,8 +27,25 @@ import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
 import {
   fetchEvalRunStageAnalytics,
   isEvalStageAnalyticsError,
+  type StageAnalyticsFailureKind,
 } from "@/lib/apis/eval-stage-analytics-api";
-import type { StageAnalyticsErrorInfo } from "@/hooks/use-eval-suite-stage-analytics";
+
+export interface StageAnalyticsErrorInfo {
+  message: string;
+  /**
+   * WHICH failure, kept apart rather than collapsed into "error".
+   *
+   * `routeUnavailable` and `requestFailed` are SERVICE states ("we could not
+   * measure this"), while `invalidContract` is a bug report and `notFound` is
+   * a fact about the run. None of them is an empty chart.
+   *
+   * Declared here since the suite-scoped reader was removed: this hook is the
+   * only consumer left, and a type outliving the module it was defined in is
+   * how an import survives the thing it belonged to.
+   */
+  kind: StageAnalyticsFailureKind;
+  status?: number;
+}
 
 /**
  * `absent` is its own state, beside `ready` and `error`.
@@ -85,6 +102,24 @@ const TERMINAL_RUN_STATUSES = new Set([
   "cancelled",
   "timed_out",
 ]);
+
+/**
+ * How long to keep asking while the document says it is not settled yet.
+ *
+ * A document is materialized `provisional` when a judge fanout is still
+ * pending, and REPLACED by a `final` one once that settles. The effect keys on
+ * ids and the run's terminal status, neither of which changes at that moment —
+ * so a page open across the transition kept showing provisional numbers until
+ * someone reloaded it.
+ *
+ * This is the same rule the run-status re-ask already implements ("ask again
+ * exactly when the answer can still change"), applied to the one remaining
+ * transition it did not cover. Bounded and self-terminating rather than a
+ * poll: it stops at `final`, and it stops when the attempts run out, so a
+ * fanout that never settles costs a handful of reads and not one per interval
+ * forever. Backs off so a slow judge is not hammered.
+ */
+const PROVISIONAL_REFRESH_DELAYS_MS = [3_000, 8_000, 20_000, 45_000] as const;
 
 export function useEvalRunStageAnalytics({
   projectId,
@@ -178,6 +213,33 @@ export function useEvalRunStageAnalytics({
     if (!active) return;
     setAttempt((n) => n + 1);
   }, [active]);
+
+  // Re-ask while the document itself says a judge pass is still coming.
+  //
+  // Keyed on the document's state rather than on a timer that runs regardless:
+  // when the read comes back `final` this effect has nothing to schedule and
+  // the loop ends on its own. `provisionalAttempt` counts only these automatic
+  // re-asks, so a manual `refetch` never consumes the budget.
+  const [provisionalAttempt, setProvisionalAttempt] = useState(0);
+  const provisional =
+    status === "ready" && document?.materializationState === "provisional";
+
+  useEffect(() => {
+    if (!active || !provisional) {
+      // Settled (or gone). Reset so a LATER provisional document — a
+      // re-triggered judge pass reopens one — gets the full budget again
+      // rather than inheriting a spent one.
+      setProvisionalAttempt(0);
+      return;
+    }
+    const delay = PROVISIONAL_REFRESH_DELAYS_MS[provisionalAttempt];
+    if (delay === undefined) return;
+    const timer = setTimeout(() => {
+      setProvisionalAttempt((n) => n + 1);
+      setAttempt((n) => n + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [active, provisional, provisionalAttempt]);
 
   // `idle` means "never asked", and while ACTIVE that is only ever true for a
   // single render: `active` is computed here, but the effect that sets

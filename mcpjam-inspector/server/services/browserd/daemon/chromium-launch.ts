@@ -18,6 +18,7 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
+import { PAGE_TEXT_FN } from "./page-text";
 import { parseAriaSnapshot } from "./aria-snapshot";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
@@ -166,10 +167,18 @@ export function wrapPage(page: AnyPage): DriverPage {
   });
 
   // The WebMCP bridge is attached lazily and ONCE: a tab that never invokes a
-  // page tool should not pay for a CDP session.
+  // page tool should not pay for a CDP session. It reuses the memoized session
+  // below rather than attaching its own — a page serving both a tool call and
+  // the pane would otherwise hold two.
   let webmcpPromise: Promise<WebMcpBridge | null> | null = null;
+  // The CDP session itself is memoized separately and shared: the WebMCP
+  // bridge and the viewport both want one, and attaching twice to the same
+  // page gives two sessions whose events interleave unpredictably.
+  let cdpPromise: Promise<CdpLike | null> | null = null;
 
-  return {
+  // Named rather than returned inline so `webmcp()` can reach `cdp()` — one
+  // attach, two consumers.
+  const adapted: DriverPage = {
     async goto(url) {
       await page.goto(url, { waitUntil: "domcontentloaded", timeout: NAV_TIMEOUT_MS });
     },
@@ -266,6 +275,18 @@ export function wrapPage(page: AnyPage): DriverPage {
         return null;
       }
     },
+    async pageText() {
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
+      try {
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
+      }
+    },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since: number) => {
       // Walk from the end: the ring is chronological, so the tail is the
@@ -275,25 +296,41 @@ export function wrapPage(page: AnyPage): DriverPage {
       consoleRing.length = keep;
     },
     webmcp() {
-      webmcpPromise ??= attachWebMcp(page);
+      webmcpPromise ??= (async () => {
+        // Through the memoized session, so the bridge and the viewport share
+        // ONE attach. Two sessions on a page is two of everything the CDP
+        // domains keep per session, for one page's worth of truth.
+        const session = await adapted.cdp();
+        return session ? attachWebMcp(page, session) : null;
+      })();
       return webmcpPromise;
     },
+    cdp() {
+      cdpPromise ??= (async () => {
+        const attach = cdpAttachers.get(page);
+        if (!attach) return null;
+        return attach().catch(() => null);
+      })();
+      return cdpPromise;
+    },
   };
+  return adapted;
 }
 
 /**
- * Attach a WebMCP bridge to a page over its own CDP session. Returns null when
- * this browser cannot speak the domain at all — a page with no WebMCP tools is
- * the normal case, not a failure, so nothing here throws.
+ * Attach a WebMCP bridge to a page over the session its adapter already holds.
+ * Returns null when this browser cannot speak the domain at all — a page with
+ * no WebMCP tools is the normal case, not a failure, so nothing here throws.
  *
- * The CDP session comes from the page's context; `attachCdp` is set by
- * `adaptContext` so this file stays the only one that knows about CDP.
+ * The session is passed IN rather than attached here: the page adapter
+ * memoizes one, and a bridge that opened its own would give a page serving
+ * both a tool call and the pane two sessions.
  */
-async function attachWebMcp(page: AnyPage): Promise<WebMcpBridge | null> {
-  const attach = cdpAttachers.get(page);
-  if (!attach) return null;
+async function attachWebMcp(
+  page: AnyPage,
+  session: CdpLike,
+): Promise<WebMcpBridge | null> {
   try {
-    const session = await attach();
     const bridge = new WebMcpBridge(session);
     await bridge.start(async () => {
       // `WebMCP.enable` resolves even where the feature is off — the page API
@@ -338,6 +375,28 @@ export interface LaunchBrowserdContextOptions {
    * inherit the previous one's cookies.
    */
   contextMode?: "persistent" | "ephemeral";
+  /**
+   * Which Chromium build to launch.
+   *
+   * Unset means Playwright's own default, which is what the hosted desktop
+   * wants (headed under Xfce, from the template's install). The local engine
+   * passes `"chromium"` deliberately: without a channel, `headless: true`
+   * resolves to the `chromium-headless-shell` binary — the OLD headless, a
+   * different executable with a different compositor path and a fingerprint
+   * public sites recognise. "No window" must not mean "a browser sites
+   * refuse", so the local engine runs the same full build a headed launch
+   * would and merely declines to show it.
+   */
+  channel?: string;
+  /**
+   * An explicit Chromium binary.
+   *
+   * For environments that ship one at a path Playwright's resolver does not
+   * know (a prebuilt CI image). Production never sets it — a user's machine
+   * has the browser Playwright installed, and pinning a path here would make
+   * the engine depend on a filesystem layout we do not control.
+   */
+  executablePath?: string;
 }
 
 /**
@@ -352,6 +411,10 @@ export async function launchBrowserdContext(
   const { chromium } = await import("playwright");
   const launchArgs = {
     headless: options.headless ?? false,
+    ...(options.channel ? { channel: options.channel } : {}),
+    ...(options.executablePath
+      ? { executablePath: options.executablePath }
+      : {}),
     // Chromium cannot start its renderer sandbox as uid 0 (the image builds
     // as root), so it is disabled only in that case.
     chromiumSandbox: process.getuid?.() !== 0,
@@ -385,7 +448,17 @@ export async function launchBrowserdContext(
     });
   }
 
-  await clearStaleSingletonLock(options.userDataDir);
+  const cleared = await clearStaleSingletonLock(options.userDataDir);
+  if (cleared.heldBy) {
+    // Somebody took the profile between the session layer's check and this
+    // launch. Refusing here beats Chromium's own message, and beats removing a
+    // live owner's lock to make room for ourselves.
+    throw new Error(
+      `profile_in_use: another browser (pid ${cleared.heldBy.pid ?? "unknown"}` +
+        `${cleared.heldBy.host ? ` on ${cleared.heldBy.host}` : ""}) holds ` +
+        "this profile; close it and try again",
+    );
+  }
   const context = await chromium.launchPersistentContext(options.userDataDir, {
     ...launchArgs,
     acceptDownloads: false,

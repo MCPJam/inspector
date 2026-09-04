@@ -51,7 +51,10 @@
  */
 import type { ReactNode } from "react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
-import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
+import type {
+  EvalStageAnalyticsV1,
+  UserValueStage,
+} from "@mcpjam/sdk/contract";
 import { RunDocument } from "@/components/evaluate/stage-analytics-panel";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 
@@ -182,12 +185,24 @@ export function RunUserValueChainSlot({
   chain,
   legacy,
   className,
+  renderFindings,
+  runLevelFindings,
 }: {
   /** The caller's ONE `useRunUserValueChainChoice` result. See the docblock. */
   chain: RunUserValueChain;
   /** The existing rollup panel, built by the caller. */
   legacy: ReactNode;
   className?: string;
+  /**
+   * The trial evidence behind a stage's failures, when the caller can join it.
+   *
+   * Passed IN for the same reason the chain choice is: the caller already
+   * holds the run, and this component owns rendering rather than fetching.
+   * Absent on the legacy branch by construction — the rollup has no stages to
+   * hang evidence on.
+   */
+  renderFindings?: (stage: UserValueStage) => ReactNode;
+  runLevelFindings?: ReactNode;
 }) {
   const { choice, document, serviceNote, attempted, fallbackReason } = chain;
 
@@ -196,7 +211,11 @@ export function RunUserValueChainSlot({
   if (choice === "canonical" && document) {
     return (
       <div className={className} data-testid="run-stage-analytics-canonical">
-        <RunDocument row={document} />
+        <RunDocument
+          row={document}
+          {...(renderFindings ? { renderFindings } : {})}
+          {...(runLevelFindings ? { runLevelFindings } : {})}
+        />
       </div>
     );
   }

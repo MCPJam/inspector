@@ -27,14 +27,16 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
- * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
- * judge's row is ADVISORY, so it is structurally excluded from the gating
- * arithmetic that decides the result; the backend refuses lifecycle fields on
- * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
- * backend's own verify seam runs on the merged rows, so if a re-derivation ever
- * DID move the verdict, the run is marked non-gateable rather than quietly
- * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
- * rows `dual_write` writes) and nothing about what it may touch.
+ * THAT HOLDS AT `enforce` TOO, AND IT HOLDS FOR A GATING JUDGE. The judge's row
+ * now carries the role the RUN froze — advisory by default, gating when the
+ * suite earned it — so on a gating run the row does enter the arithmetic that
+ * decides a verdict. What does not change is who applies it: this pass still
+ * posts rows and nothing else. The backend refuses lifecycle fields on this
+ * route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`), and it is
+ * `finalizeAfterJudge` — not this module — that reads the judge's row,
+ * downgrades STRICTER-ONLY, quarantines an unanswered trial, and then decides
+ * the run once. `enforce` therefore changes what this pass runs FOR (the same
+ * real rows `dual_write` writes) and nothing about what it may touch.
  *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale job id and refuses terminal iterations,
@@ -136,6 +138,15 @@ type JudgeVerdictMetadata = {
    */
   reason?: unknown;
   reasons?: unknown;
+  /**
+   * Whether the run's frozen config let this judge DECIDE the trial.
+   *
+   * Forwarded to `hostedScoreDefinitionInputs` with the rest of the object,
+   * which reads the literal `"gating"` and treats everything else as advisory.
+   * Read here rather than resolved from the suite, because a role resolved at
+   * projection time could disagree with the one the run was actually held for.
+   */
+  role?: unknown;
 };
 
 /** A finite number, or `undefined` — judge scores arrive as `unknown`. */
@@ -219,22 +230,41 @@ function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
  * compared only score-to-boundary, so a threshold of 0.7001 and a floor of
  * 0.6999 both rendered `0.7` while the score sat far from either — erasing the
  * partial band's configured width in a line whose whole job is to show it.
+ *
+ * AND WHEN SIX IS NOT ENOUGH, the line says so rather than asserting a false
+ * equality. The cap used to fall through to the six-decimal rendering anyway,
+ * so two values differing past it printed identically — "scored 0.7 against a
+ * 0.7 threshold" for numbers that were never equal, which is the exact defect
+ * every paragraph above is about, reintroduced at the boundary. Values still
+ * colliding at the cap are marked approximate. Equal values are not: they ARE
+ * equal, and `≈` would make a true statement look uncertain.
  */
+const APPROX = "\u2248";
+
 function showAgainst(
   score: number,
   bounds: readonly number[],
 ): (n: number) => string {
   const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
   const values = [score, ...bounds];
+  const collidesAt = (digits: number) =>
+    values.some((a, i) =>
+      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
+    );
   // Six is the floor of usefulness, not an arbitrary cap: past it a judge
   // score is float noise, and a line no one can read explains nothing.
   for (let digits = 2; digits <= 6; digits += 1) {
-    const collides = values.some((a, i) =>
-      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
-    );
-    if (!collides) return (n: number) => at(n, digits);
+    if (!collidesAt(digits)) return (n: number) => at(n, digits);
   }
-  return (n: number) => at(n, 6);
+  // Past the cap the numbers cannot be told apart on screen, so the honest
+  // rendering admits the rounding instead of claiming two of them are the
+  // same. Marked per VALUE, not blanket: only one that shares its rendering
+  // with a DIFFERENT value is uncertain.
+  return (n: number) => {
+    const shown = at(n, 6);
+    const ambiguous = values.some((v) => v !== n && at(v, 6) === shown);
+    return ambiguous ? `${APPROX}${shown}` : shown;
+  };
 }
 
 function readJudgeVerdict(
@@ -386,23 +416,30 @@ function isPredicateRow(value: unknown): value is StoredPredicateRow {
 }
 
 /**
- * Recover the FIRST derivation's verdict about the model layer from the chain
- * it wrote.
+ * Recover the FIRST derivation's verdict about the model layer.
  *
- * `stepError` is transient runner state — an INPUT to that derivation, never
- * persisted — so the judge second pass re-derived without it and silently
- * dropped `providerError` and the `setup` category the moment a verdict
- * arrived. A run our own provider killed went back to being filed against the
- * server, which is exactly what that reason exists to prevent.
+ * `stepError` is transient runner state — an INPUT to that derivation — so a
+ * second pass that does not receive it derives from strictly less evidence
+ * than the first, and silently drops `providerError` and the `setup` category
+ * the moment a verdict arrives. A run our own provider killed goes back to
+ * being filed against the server, which is what that reason exists to prevent.
  *
- * Read from the stored chain rather than from a new persisted field, because
- * the chain already says it: `providerError` is written if and only if the
- * model layer was classified as the failure, so its presence is a faithful
- * witness of that input. Nothing is invented here.
+ * PREFERRED SOURCE: `metadata.stageStepErrorSource`, written beside the chain
+ * at finalize time. An earlier revision recovered it from the chain alone, on
+ * the stated grounds that "`providerError` is written if and only if the model
+ * layer was classified as the failure". THAT WAS NOT TRUE. `categoryFor`
+ * returns `setup` for a model-call failure where NOTHING failed — there was
+ * nothing to fail against — and on that shape no row is relabelled at all. The
+ * witness was empty exactly when the fact was true, and the category vanished
+ * with no missing row to show for it.
  *
- * `code` and `httpStatus` are not recoverable and are not recovered. They are
- * diagnostics for a reader and were explicitly never part of the
- * classification, so their absence changes no verdict.
+ * The chain scan REMAINS as a fallback, for iterations finalized before the
+ * marker shipped. It is still a faithful witness where it fires; it was only
+ * ever incomplete.
+ *
+ * `code` and `httpStatus` are not recovered by either route. They are
+ * diagnostics for a reader, were never part of the classification, and their
+ * absence changes no verdict.
  */
 export function stepErrorFromStoredChain(
   stageResults: unknown,
@@ -482,7 +519,10 @@ export function deriveIterationPayload(args: {
   // failed.
   const traceUsable = iteration.traceComplete !== false;
 
-  const recoveredStepError = stepErrorFromStoredChain(metadata.stageResults);
+  const recoveredStepError =
+    metadata.stageStepErrorSource === "model"
+      ? ({ source: "model" } as const)
+      : stepErrorFromStoredChain(metadata.stageResults);
 
   const stage = traceUsable
     ? buildStageMetadata({
@@ -491,8 +531,8 @@ export function deriveIterationPayload(args: {
         ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
         ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
         ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-        // UVH-IN2: recovered from the stored chain, because `stepError` is
-        // transient runner state this pass never receives.
+        // UVH-IN2: read back from the marker the first pass persisted, because
+        // `stepError` is transient runner state this pass never receives.
         ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
         ...(iteration.toolSignals
           ? { toolSignals: iteration.toolSignals }

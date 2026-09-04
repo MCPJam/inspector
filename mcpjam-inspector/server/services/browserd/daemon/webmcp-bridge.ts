@@ -19,7 +19,16 @@
  *     left waiting on a browser that is gone.
  *
  * Written against an injected `CdpLike`, so all of it is unit-testable with a
- * fake CDP session — no Chromium required.
+ * fake CDP session — no Chromium required. That zero-import design is also what
+ * lets it be the SINGLE copy of this machine: the local inspector's
+ * `webmcp-inspector/playwright-provider.ts` instantiates it too, because
+ * Playwright's `CDPSession` satisfies `CdpLike` structurally.
+ *
+ * That import direction — inspector reaching into `browserd/daemon/` — is
+ * deliberate but temporary. This file has no imports at all, so the eventual
+ * move into a shared `webmcp-runtime/` package consumed by both is a file move
+ * and nothing else. Anyone doing that extraction should move this rather than
+ * inverting the dependency in place.
  */
 
 /** The CDP surface this bridge uses; `chromium-launch.ts` supplies the real one. */
@@ -46,8 +55,26 @@ export interface WebMcpCdpTool {
 
 /** A tool as the MODEL sees it (frame identity flattened into origin facts). */
 export interface WebMcpToolDescriptor {
+  /**
+   * CDP frame id, carried so a caller can invoke against the EXACT frame it
+   * listed rather than re-resolving the name later.
+   *
+   * Churns across page loads, so it is never identity — the inspector builds
+   * `origin::name` on top of this and resolves back to a frame at invoke time.
+   * It is reported anyway because a consumer that never sees it cannot tell two
+   * same-named tools apart at all, which is how the hosted provider's tool
+   * parser ended up dropping every tool it was handed.
+   */
+  frameId: string;
   name: string;
-  description?: string;
+  /**
+   * Always present, empty string when the page gave none.
+   *
+   * Non-optional because every consumer has to render something here, and an
+   * `undefined` that each one defaults differently is three different
+   * placeholder strings for one absent value.
+   */
+  description: string;
   inputSchema?: Record<string, unknown>;
   annotations?: WebMcpCdpTool["annotations"];
   origin: string;
@@ -119,10 +146,31 @@ interface RespondedPayload {
 const MAX_EARLY_RESPONSES = 16;
 
 export interface WebMcpBridgeOptions {
-  /** How long a page has to answer before we cancel it. */
+  /**
+   * How long a page has to answer before we cancel it.
+   *
+   * Only used for an invocation with NO `signal`. A caller that supplies one
+   * owns the deadline — see {@link WebMcpBridge.invoke}.
+   */
   invocationTimeoutMs?: number;
   /** Grace for the browser's own `Canceled` after we ask it to stop. */
   cancelSettleGraceMs?: number;
+  /**
+   * The COMPLETE current tool set, every time anything changes.
+   *
+   * A push channel rather than a thing to poll. Snapshots, not deltas, for the
+   * reason navigation makes unavoidable: Chromium fires no `toolsRemoved` when
+   * a page goes away, so a consumer stitching deltas would serve tools from the
+   * previous page forever. A snapshot is correct on arrival no matter what its
+   * consumer missed, which also makes a dropped notification harmless.
+   */
+  onChange?: (tools: WebMcpToolDescriptor[]) => void;
+  /**
+   * A tool ran that this bridge did not start — the page's own agent, or a
+   * devtools panel. Worth surfacing: it explains state changes that would
+   * otherwise be attributed to nothing.
+   */
+  onExternalInvocation?: (toolName: string) => void;
 }
 
 const DEFAULT_INVOCATION_TIMEOUT_MS = 60_000;
@@ -149,10 +197,17 @@ export class WebMcpBridge {
   /** Responses that arrived before their invocation was registered. */
   private readonly earlyResponses = new Map<string, RespondedPayload>();
   private mainFrameId = "";
+  /** `WebMCP.invokeTool` calls whose reply has not come back yet. See `wire`. */
+  private outstandingSends = 0;
   private readonly invocationTimeoutMs: number;
   private readonly cancelSettleGraceMs: number;
   private supported = false;
   private disposed = false;
+
+  private readonly onChange:
+    ((tools: WebMcpToolDescriptor[]) => void) | undefined;
+  private readonly onExternalInvocation:
+    ((toolName: string) => void) | undefined;
 
   constructor(
     private readonly cdp: CdpLike,
@@ -162,6 +217,25 @@ export class WebMcpBridge {
       options.invocationTimeoutMs ?? DEFAULT_INVOCATION_TIMEOUT_MS;
     this.cancelSettleGraceMs =
       options.cancelSettleGraceMs ?? DEFAULT_CANCEL_SETTLE_GRACE_MS;
+    this.onChange = options.onChange;
+    this.onExternalInvocation = options.onExternalInvocation;
+  }
+
+  /**
+   * Announce the current tool set.
+   *
+   * Every mutation path funnels through here so no path can forget. A throwing
+   * subscriber is swallowed: it is the consumer's own reaction to a browser
+   * event, and letting it escape would take down the CDP handler that is also
+   * responsible for the bridge's own bookkeeping.
+   */
+  private announce(): void {
+    if (!this.onChange) return;
+    try {
+      this.onChange(this.list());
+    } catch {
+      /* ignore */
+    }
   }
 
   /**
@@ -173,8 +247,23 @@ export class WebMcpBridge {
   async start(probeSupported: () => Promise<boolean>): Promise<void> {
     this.wire();
     await this.cdp.send("Page.enable").catch(() => {});
-    await this.cdp.send("WebMCP.enable").catch(() => {});
-    this.supported = await probeSupported().catch(() => false);
+    // BOTH halves have to hold. The page probe alone would accept a browser
+    // that exposes `document.modelContext` while the CDP domain is unavailable
+    // — a session that can never be told about a tool, reported as healthy and
+    // showing an empty registry that looks like the page's fault.
+    let domainEnabled = true;
+    await this.cdp.send("WebMCP.enable").catch(() => {
+      domainEnabled = false;
+    });
+    // Run the probe REGARDLESS of the domain, then combine. `&&` would
+    // short-circuit past it, and the callback is the caller's only hook for
+    // work that has to happen inside `start` — the inspector navigates the
+    // page there, between the domains being enabled and the page being asked
+    // about itself. Skipping it leaves the page on `about:blank`, which an
+    // embedded session then streams, under an error that says the page loaded
+    // normally.
+    const probed = await probeSupported().catch(() => false);
+    this.supported = domainEnabled && probed;
   }
 
   isSupported(): boolean {
@@ -187,6 +276,7 @@ export class WebMcpBridge {
       for (const tool of tools ?? []) {
         this.tools.set(this.key(tool.frameId, tool.name), tool);
       }
+      this.announce();
     });
 
     this.cdp.on("WebMCP.toolsRemoved", (payload) => {
@@ -196,6 +286,25 @@ export class WebMcpBridge {
       for (const tool of tools ?? []) {
         this.tools.delete(this.key(tool.frameId, tool.name));
       }
+      this.announce();
+    });
+
+    this.cdp.on("WebMCP.toolInvoked", (payload) => {
+      const invoked = (payload ?? {}) as {
+        invocationId?: string;
+        toolName?: string;
+      };
+      if (!invoked.invocationId) return;
+      if (this.pending.has(invoked.invocationId)) return;
+      // An id we do not know is USUALLY someone else's — the page's own agent,
+      // or a devtools panel. But we only learn our OWN id from `invokeTool`'s
+      // reply, and this event can be dispatched before that reply's
+      // continuation runs, so an id is genuinely ambiguous while a send of ours
+      // is outstanding. Stay quiet then: a false "someone else drove your page"
+      // actively misleads whoever reads the timeline, while a missed note is a
+      // gap in an advisory one.
+      if (this.outstandingSends > 0) return;
+      this.onExternalInvocation?.(invoked.toolName ?? "");
     });
 
     this.cdp.on("WebMCP.toolResponded", (payload) => {
@@ -230,6 +339,7 @@ export class WebMcpBridge {
       // registry serving tools that no longer exist.
       this.dropFrame(frame.id);
       if (!frame.parentId) this.mainFrameId = frame.id;
+      this.announce();
     });
 
     this.cdp.on("Page.frameDetached", (payload) => {
@@ -237,6 +347,7 @@ export class WebMcpBridge {
       if (!frameId) return;
       this.frames.delete(frameId);
       this.dropFrame(frameId);
+      this.announce();
     });
   }
 
@@ -258,7 +369,10 @@ export class WebMcpBridge {
   }
 
   /** Resolve or reject a waiter from the page's response. */
-  private deliver(waiter: PendingInvocation, responded: RespondedPayload): void {
+  private deliver(
+    waiter: PendingInvocation,
+    responded: RespondedPayload,
+  ): void {
     if (responded.status === "Completed") {
       waiter.resolve({ output: responded.output });
       return;
@@ -291,10 +405,9 @@ export class WebMcpBridge {
   /** The tools currently on offer, as the model should see them. */
   list(): WebMcpToolDescriptor[] {
     return [...this.tools.values()].map((tool) => ({
+      frameId: tool.frameId,
       name: tool.name,
-      ...(tool.description !== undefined
-        ? { description: tool.description }
-        : {}),
+      description: tool.description ?? "",
       ...(tool.inputSchema !== undefined
         ? { inputSchema: tool.inputSchema }
         : {}),
@@ -332,10 +445,42 @@ export class WebMcpBridge {
     );
   }
 
-  /** Invoke a page tool and wait for the page's own response. */
+  /**
+   * Pick the frame to invoke in: the caller's, when it still offers the tool.
+   *
+   * A frame id the caller listed a moment ago can be gone (the page navigated,
+   * the subframe detached), so an id that no longer matches falls back to
+   * resolution rather than being sent to the browser to fail obscurely.
+   */
+  private frameFor(frameId: string | undefined, toolName: string): string {
+    if (frameId && this.tools.has(this.key(frameId, toolName))) return frameId;
+    return this.resolveFrame(toolName);
+  }
+
+  /**
+   * Invoke a page tool and wait for the page's own response.
+   *
+   * TIMEOUT OWNERSHIP. With no `signal`, this bridge owns the deadline and
+   * cancels the page after `invocationTimeoutMs`. With a `signal`, the CALLER
+   * owns it and the internal deadline is not armed at all — two deadlines on
+   * one invocation means whichever fires first decides what the failure is
+   * called, and the caller's is the one whose reason the user will read. The
+   * reason is taken from `signal.reason` for the same purpose: a caller that
+   * aborts with `"timeout"` gets a timeout, and naive adoption of this bridge
+   * would otherwise report every caller-side timeout as a user cancellation.
+   */
   async invoke(args: {
     toolName: string;
     input: unknown;
+    /**
+     * Invoke against THIS frame rather than re-resolving the name.
+     *
+     * For a caller that listed the tools and is acting on one it saw: name
+     * resolution prefers the main frame, so a subframe's tool would otherwise
+     * be shadowed by a same-named main-frame one. Falls back to resolution when
+     * omitted, and when the frame given no longer offers the tool.
+     */
+    frameId?: string;
     signal?: AbortSignal;
   }): Promise<{ invocationId: string; output: unknown }> {
     if (this.disposed) {
@@ -351,15 +496,39 @@ export class WebMcpBridge {
         "This browser build does not expose the WebMCP page API, so the page's tools cannot be invoked.",
       );
     }
-    const frameId = this.resolveFrame(args.toolName);
+    // BEFORE the CDP round trip, not after. A caller that aborted while this
+    // invocation was queued behind another would otherwise have its tool
+    // started anyway, and then immediately cancelled — a page mutated by a call
+    // the user had already stopped.
+    if (args.signal?.aborted) {
+      const reason = args.signal.reason === "timeout" ? "timeout" : "cancelled";
+      throw new WebMcpBridgeError(
+        "webmcp_cancelled",
+        reason === "timeout"
+          ? "The page tool did not respond in time."
+          : "Cancelled before it started.",
+        reason,
+      );
+    }
+    const frameId = this.frameFor(args.frameId, args.toolName);
 
     let invocationId: string;
     try {
-      const result = (await this.cdp.send("WebMCP.invokeTool", {
-        frameId,
-        toolName: args.toolName,
-        input: args.input,
-      })) as { invocationId?: string };
+      // Counted around the await with try/finally rather than a `.finally()`
+      // on the promise: chaining would insert an extra microtask between the
+      // browser's reply and this invocation being registered as pending, and a
+      // dispose or a response landing in that gap would find nothing to settle.
+      this.outstandingSends += 1;
+      let result: { invocationId?: string };
+      try {
+        result = (await this.cdp.send("WebMCP.invokeTool", {
+          frameId,
+          toolName: args.toolName,
+          input: args.input,
+        })) as { invocationId?: string };
+      } finally {
+        this.outstandingSends -= 1;
+      }
       if (!result?.invocationId) {
         throw new WebMcpBridgeError(
           "webmcp_error",
@@ -422,17 +591,27 @@ export class WebMcpBridge {
         }, this.cancelSettleGraceMs);
       };
 
-      waiter.timer = setTimeout(
-        () => cancel("timeout"),
-        this.invocationTimeoutMs,
+      // Armed ONLY when nobody else owns the deadline. Two deadlines on one
+      // invocation means whichever fires first decides what the failure is
+      // called, and the caller's reason is the one the user reads.
+      if (!args.signal) {
+        waiter.timer = setTimeout(
+          () => cancel("timeout"),
+          this.invocationTimeoutMs,
+        );
+      }
+      args.signal?.addEventListener(
+        "abort",
+        () =>
+          cancel(args.signal?.reason === "timeout" ? "timeout" : "cancelled"),
+        { once: true },
       );
-      args.signal?.addEventListener("abort", () => cancel("cancelled"), {
-        once: true,
-      });
       // The listener is registered only after `invokeTool` resolved, so an
       // abort during that round trip has already fired and would never reach
       // it — leaving the page running a tool nobody will cancel.
-      if (args.signal?.aborted) cancel("cancelled");
+      if (args.signal?.aborted) {
+        cancel(args.signal.reason === "timeout" ? "timeout" : "cancelled");
+      }
     });
 
     return { invocationId, output: output.output };

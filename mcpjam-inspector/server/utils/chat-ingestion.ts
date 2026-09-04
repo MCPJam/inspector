@@ -1,6 +1,7 @@
 import type { Context } from "hono";
 import type { ChatRewind } from "@/shared/chat-v2";
 import type {
+  Harness,
   McpToolResultImageRenderingPolicy,
   ModelVisibleMcpToolResults,
 } from "@mcpjam/sdk/host-config/internal";
@@ -12,6 +13,7 @@ import {
   type PersistReceiptData,
 } from "@/shared/persist-receipt";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
+import type { SecretScrubber } from "./secrets/secret-scrubber";
 import type { LiveChatTraceUsage } from "@/shared/live-chat-trace";
 
 const DEFAULT_INGEST_TIMEOUT_MS = 5_000;
@@ -82,7 +84,7 @@ const ENRICHMENT_HEADERS_TO_FORWARD = [
  * forwarded to the Convex `/ingest-chat` endpoint.
  */
 export function pickEnrichmentHeaders(
-  reqHeaders: { get(name: string): string | null | undefined } | Headers
+  reqHeaders: { get(name: string): string | null | undefined } | Headers,
 ): Record<string, string> {
   const result: Record<string, string> = {};
   for (const name of ENRICHMENT_HEADERS_TO_FORWARD) {
@@ -280,7 +282,17 @@ export type ChatOrigin =
 interface PersistChatSessionOptions {
   chatSessionId: string;
   modelId: string;
-  modelSource: "mcpjam" | "byok" | "local_byok";
+  /**
+   * Who paid for the turn's model spend. Hand-mirrors the backend's
+   * `chatModelSourceValidator`.
+   *
+   * `"external-account"` — the customer's own account with the RUNTIME vendor
+   * (Cursor), where MCPJam holds no model credential at all. Distinct from
+   * `"byok"` on purpose: both mean "MCPJam is not charged", but byok also
+   * asserts a configured model PROVIDER and its key, which an external-account
+   * turn does not have.
+   */
+  modelSource: "mcpjam" | "byok" | "local_byok" | "external-account";
   authHeader?: string;
   projectId?: string;
   sourceType?: "scenario" | "direct" | "eval" | "swarm";
@@ -320,6 +332,20 @@ interface PersistChatSessionOptions {
   rewind?: ChatRewind;
   turnTrace?: PersistedTurnTrace;
   /**
+   * Materialized project secrets this turn delivered into the sandbox, so their
+   * values are replaced with `[secret:NAME]` before anything is persisted.
+   *
+   * Applied at the SERIALIZED body (see `buildIngestBody`) rather than field by
+   * field: this options object grows a new payload-bearing field every few
+   * releases, and a per-field scrub is a list somebody eventually forgets to
+   * extend. One pass over the bytes that actually leave the process cannot be
+   * partially applied.
+   *
+   * Absent on every caller that delivers no secrets, which is almost all of
+   * them — a session with nothing registered does no work here at all.
+   */
+  secretScrubber?: SecretScrubber;
+  /**
    * §3: chat-backed harness resume-state commit. Applied ATOMICALLY with the
    * transcript inside the ingest mutation (a failed sidecar commit rolls back
    * the transcript write). Opaque pass-through. `harnessId` is a lane-key
@@ -333,7 +359,9 @@ interface PersistChatSessionOptions {
     scenarioId?: string;
     leaseId: string;
     expectedStateVersion: number;
-    harnessId: "claude-code" | "codex";
+    // The SDK union itself, not a copy: a stale copy here silently drops the
+    // session commit for a harness the rest of the stack already runs.
+    harnessId: Harness;
     harnessSessionId: string;
     resumeState: unknown;
     computerId: string;
@@ -423,14 +451,14 @@ export function stampSenderUserIdsOnSessionMessages(
   sourceMessages: unknown[],
   options?: {
     authenticatedUserId?: string | null;
-  }
+  },
 ): unknown[] {
   if (!Array.isArray(sessionMessages) || !Array.isArray(sourceMessages)) {
     return sessionMessages;
   }
 
   const authenticatedUserId = normalizeSenderUserId(
-    options?.authenticatedUserId
+    options?.authenticatedUserId,
   );
   const senderUserIdsByUserOrdinal = sourceMessages
     .filter((message) => isRecord(message) && message.role === "user")
@@ -474,12 +502,12 @@ function sanitizeDiagnosticText(text: string): string {
     .replace(
       /(\bauthorization\b\s*[:=]\s*)(bearer\s+)?([^"',\s}]+)/gi,
       (_match, prefix: string, scheme?: string) =>
-        `${prefix}${scheme ?? ""}[redacted-token]`
+        `${prefix}${scheme ?? ""}[redacted-token]`,
     )
     .replace(/\b(Bearer\s+)[A-Za-z0-9._\-+/=]+\b/gi, "$1[redacted-token]")
     .replace(
       /(["']?(?:api[_-]?key|token|access[_-]?token|refresh[_-]?token)["']?\s*[:=]\s*["']?)([^"',\s}]+)/gi,
-      "$1[redacted-secret]"
+      "$1[redacted-secret]",
     )
     .replace(/\bsk-[A-Za-z0-9]+\b/g, "[redacted-secret]");
 
@@ -500,7 +528,7 @@ async function readResponsePreview(response: Response): Promise<string> {
  * retry as the same turn.
  */
 function buildIngestBody(options: PersistChatSessionOptions): string {
-  return JSON.stringify({
+  const body = JSON.stringify({
     chatSessionId: options.chatSessionId,
     modelId: options.modelId,
     modelSource: options.modelSource,
@@ -562,6 +590,21 @@ function buildIngestBody(options: PersistChatSessionOptions): string {
     ...(options.hostId ? { hostId: options.hostId } : {}),
     ...(options.targetId ? { targetId: options.targetId } : {}),
   });
+  // AFTER serialization, on purpose. Every payload this body can carry —
+  // messages, tool inputs, tool outputs, the assistant's own text, a nested
+  // JSON string a tool returned — is inside these bytes by now, and the
+  // scrubber searches both the raw and the JSON-escaped form of each value, so
+  // a credential that was quoted or newline-bearing is found either way.
+  //
+  // Byte-identity across retries is preserved: the scrub is deterministic and
+  // runs once, outside the retry loop, exactly like the stringify it follows.
+  // `scrubSerializedJson`, not `scrubString`: this input is a JSON document, so
+  // only the ESCAPED form of a value can appear in real content. Searching the
+  // raw form here could match the document's own punctuation and produce
+  // invalid JSON out of a payload that never held the secret.
+  return options.secretScrubber
+    ? options.secretScrubber.scrubSerializedJson(body)
+    : body;
 }
 
 type IngestAttemptResult =
@@ -633,7 +676,7 @@ async function attemptChatIngest(
   url: string,
   headers: Record<string, string>,
   body: string,
-  timeoutMs: number
+  timeoutMs: number,
 ): Promise<IngestAttemptResult> {
   // A fresh controller per attempt. Reusing one across retries would poison
   // every later attempt: once aborted, an AbortSignal stays aborted, so retry 1
@@ -749,7 +792,7 @@ function sleep(ms: number): Promise<void> {
 
 export async function persistChatSessionToConvex(
   options: PersistChatSessionOptions,
-  c?: Context
+  c?: Context,
 ): Promise<PersistChatOutcome> {
   const convexUrl = process.env.CONVEX_HTTP_URL;
   if (!convexUrl) {
@@ -789,7 +832,7 @@ export async function persistChatSessionToConvex(
           sourceType: options.sourceType,
           origin: options.origin,
         },
-        error ? { error } : undefined
+        error ? { error } : undefined,
       );
       return;
     }
@@ -803,7 +846,7 @@ export async function persistChatSessionToConvex(
     if (failureKind === "timeout") {
       logger.warn(
         "[chat-session-persistence] Timed out persisting chat session",
-        { timeoutMs: perAttemptTimeoutMs }
+        { timeoutMs: perAttemptTimeoutMs },
       );
       return;
     }
@@ -817,7 +860,7 @@ export async function persistChatSessionToConvex(
       `[chat-session-persistence] Failed to persist chat session${
         status !== undefined ? ` (${status})` : ""
       }${preview ? `: ${preview}` : ""}`,
-      { status, responsePreview: preview }
+      { status, responsePreview: preview },
     );
   };
 
@@ -838,7 +881,7 @@ export async function persistChatSessionToConvex(
       body,
       // Truncated rather than allowed to overrun: the caller may be holding a
       // stream open on this promise.
-      Math.min(perAttemptTimeoutMs, remainingMs)
+      Math.min(perAttemptTimeoutMs, remainingMs),
     );
 
     if (result.kind === "settled") {
@@ -866,11 +909,11 @@ export async function persistChatSessionToConvex(
               sourceType: options.sourceType,
               origin: options.origin,
               hasTurnId: Boolean(options.turnTrace?.turnId),
-            }
+            },
           );
         } else {
           logger.warn(
-            "[chat-session-persistence] Ingest reported the turn as a replay and skipped it"
+            "[chat-session-persistence] Ingest reported the turn as a replay and skipped it",
           );
         }
       }
@@ -921,7 +964,7 @@ type PersistReceiptWriter = { write: (chunk: UIMessageChunk) => void };
  */
 export function buildPersistReceiptData(
   outcome: PersistChatOutcome,
-  context: { chatSessionId: string; turnId?: string }
+  context: { chatSessionId: string; turnId?: string },
 ): PersistReceiptData | null {
   if (outcome.outcome === "not-attempted") {
     return null;
@@ -969,7 +1012,7 @@ export function buildPersistReceiptData(
 export function writePersistReceipt(
   writer: PersistReceiptWriter | undefined,
   outcome: PersistChatOutcome,
-  context: { chatSessionId: string; turnId?: string }
+  context: { chatSessionId: string; turnId?: string },
 ): void {
   if (!writer) return;
   const data = buildPersistReceiptData(outcome, context);

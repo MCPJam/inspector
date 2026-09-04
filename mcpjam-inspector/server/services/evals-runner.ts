@@ -1,5 +1,10 @@
 import { type ModelMessage } from "ai";
 import {
+  extractToolCallsExcludingPolicyBlocks,
+  extractToolCallsFromConversation,
+  mergeToolCalls,
+} from "../../shared/eval-tool-call-projection";
+import {
   evaluateMultiTurnResults,
   type EvaluationResult,
   type MultiTurnEvaluationResult,
@@ -151,6 +156,7 @@ import {
 } from "./evals/tool-policy-gate.js";
 import type { BenchmarkWriteGuard } from "./evals/artifact-ledger.js";
 import { buildStageAuthoredCase } from "./evals/stage-inputs.js";
+import { resolveEvalCaseModelDefinition } from "./evals/harness-admission.js";
 import {
   createRunSetupObserver,
   type RunSetupObserver,
@@ -535,6 +541,26 @@ export type RunEvalSuiteOptions = {
       }>;
     };
   };
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id. Deliberately NOT inside `config.environment`, which is the servers
+   * snapshot, and deliberately not `computerEnvironmentId`, which is a sandbox
+   * IMAGE; the three are unrelated despite the shared word.
+   *
+   * The GRANT BOUNDARY for the run's project secrets, and therefore what a
+   * HARNESS iteration's BROKERED external-account credential check must be
+   * scoped to. Absent for a legacy (non-environment) run, which grants none.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   modelApiKeys?: Record<string, string>;
   orgModelConfig?: ResolvedOrgModelConfig;
   orgModelConfigTarget?: ResolveOrgModelConfigTarget;
@@ -1199,122 +1225,6 @@ function buildPromptTraceSummaries(
   });
 }
 
-function extractToolCallsFromConversation(params: {
-  steps?: ReadonlyArray<any>;
-  messages: ModelMessage[];
-}): ToolCall[] {
-  const toolsCalled: ToolCall[] = [];
-
-  if (params.steps && Array.isArray(params.steps)) {
-    for (const step of params.steps) {
-      const stepToolCalls = (step as any).toolCalls || [];
-      for (const call of stepToolCalls) {
-        if (call?.toolName || call?.name) {
-          toolsCalled.push({
-            toolName: call.toolName ?? call.name,
-            arguments: call.args ?? call.input ?? {},
-            ...(typeof call.toolCallId === "string"
-              ? { toolCallId: call.toolCallId }
-              : {}),
-          });
-        }
-      }
-    }
-  }
-
-  for (const msg of params.messages) {
-    if (msg?.role === "assistant" && Array.isArray((msg as any).content)) {
-      for (const item of (msg as any).content) {
-        if (item?.type === "tool-call") {
-          const name = item.toolName ?? item.name;
-          if (name) {
-            const argumentsValue =
-              item.input ?? item.parameters ?? item.args ?? {};
-            const alreadyAdded = toolsCalled.some(
-              (toolCall) =>
-                toolCall.toolName === name &&
-                JSON.stringify(toolCall.arguments) ===
-                  JSON.stringify(argumentsValue)
-            );
-            if (!alreadyAdded) {
-              toolsCalled.push({
-                toolName: name,
-                arguments: argumentsValue,
-                ...(typeof item.toolCallId === "string"
-                  ? { toolCallId: item.toolCallId }
-                  : {}),
-              });
-            }
-          }
-        }
-      }
-    }
-
-    if (msg?.role === "assistant" && Array.isArray((msg as any).toolCalls)) {
-      for (const call of (msg as any).toolCalls) {
-        if (call?.toolName || call?.name) {
-          const toolName = call.toolName ?? call.name;
-          const argumentsValue = call.args ?? call.input ?? {};
-          const alreadyAdded = toolsCalled.some(
-            (toolCall) =>
-              toolCall.toolName === toolName &&
-              JSON.stringify(toolCall.arguments) ===
-                JSON.stringify(argumentsValue)
-          );
-          if (!alreadyAdded) {
-            toolsCalled.push({
-              toolName,
-              arguments: argumentsValue,
-              ...(typeof call.toolCallId === "string"
-                ? { toolCallId: call.toolCallId }
-                : {}),
-            });
-          }
-        }
-      }
-    }
-  }
-
-  return toolsCalled;
-}
-
-function extractToolCallsExcludingPolicyBlocks(
-  params: {
-    steps?: ReadonlyArray<any>;
-    messages: ModelMessage[];
-  },
-  blockedToolCallIds: ReadonlySet<string>
-): ToolCall[] {
-  return extractToolCallsFromConversation(params).filter(
-    (toolCall) =>
-      toolCall.toolCallId === undefined ||
-      !blockedToolCallIds.has(toolCall.toolCallId)
-  );
-}
-
-function toolCallIdentity(toolCall: ToolCall): string {
-  return `${toolCall.toolName}:${JSON.stringify(toolCall.arguments ?? {})}`;
-}
-
-function mergeToolCalls(
-  existingToolCalls: ToolCall[],
-  incomingToolCalls: ToolCall[]
-): ToolCall[] {
-  const seen = new Set(existingToolCalls.map(toolCallIdentity));
-  const merged = [...existingToolCalls];
-
-  for (const toolCall of incomingToolCalls) {
-    const identity = toolCallIdentity(toolCall);
-    if (seen.has(identity)) {
-      continue;
-    }
-    seen.add(identity);
-    merged.push(toolCall);
-  }
-
-  return merged;
-}
-
 function appendPartialToolCallsToPrompt(params: {
   toolsCalledByPrompt: ToolCall[][];
   promptIndex: number;
@@ -1753,6 +1663,28 @@ type RunIterationBaseParams = {
    * its environment. Absent on quick-run paths that pre-resolve servers.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /**
+   * The PROJECT ENVIRONMENT this run launched from — a `projectEnvironments`
+   * doc id, and NOT to be confused with either neighbour: `environment` above
+   * is the servers snapshot, and `computerEnvironmentId` is a sandbox IMAGE.
+   *
+   * Carried for the HARNESS path only, where it is the grant boundary for the
+   * run's project secrets: an external-account credential delivered by a
+   * BROKERED secret is only composed onto this iteration's box when THIS
+   * environment selects it, so the check has to be scoped to it.
+   *
+   * Absent on a legacy (non-environment) suite run, which grants no secrets.
+   */
+  projectEnvironmentId?: string;
+  /**
+   * Why {@link projectEnvironmentId} is absent on a run that HAS an
+   * environment. Set ONLY by the replay path: a replay run inherits the source
+   * run's `configSnapshot.environmentRef` on the backend, so its boxes really
+   * may carry a brokered transform, but no public read projects that ref back
+   * out. Copy only — the harness refuses either way, and this just keeps the
+   * refusal from blaming an environment selection the reader never made.
+   */
+  projectEnvironmentUnresolvedReason?: string;
   /** Run caller's Convex bearer — used to provision/release the reproducible
    * eval sandbox when the suite pins a computerEnvironment. */
   convexAuthToken: string;
@@ -2141,6 +2073,11 @@ const executeTestCase = async (params: {
    * receives its servers pre-resolved via `selectedServers`.
    */
   environment?: RunEvalSuiteOptions["config"]["environment"];
+  /** The run's PROJECT ENVIRONMENT id (see RunEvalSuiteOptions) — the grant
+   *  boundary a harness iteration's brokered credential check is scoped to. */
+  projectEnvironmentId?: string;
+  /** See {@link RunEvalSuiteOptions.projectEnvironmentUnresolvedReason}. */
+  projectEnvironmentUnresolvedReason?: string;
   /** Pinned skill delivery for this run (see RunEvalSuiteOptions.pinnedSkillSource). */
   pinnedSkillSource?: EvalPinnedSkillSource;
   /** The run's frozen skills in harness shape (see
@@ -2184,6 +2121,8 @@ const executeTestCase = async (params: {
     setupAudit,
     suiteHostConfig,
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -2300,7 +2239,22 @@ const executeTestCase = async (params: {
     return outcomes;
   }
 
-  const modelDefinition = buildModelDefinition(test);
+  // THE HOST'S MODEL WINS on an external-account harness, exactly as it does on
+  // the chat rails. Resolved here rather than at either iteration runner so
+  // everything downstream of this line agrees on one model: the canonical id
+  // below, the MCPJam-vs-BYOK split, the org-BYOK runtime lookup, the engine's
+  // wire payload and what the iteration reports as the model it ran.
+  //
+  // Without it, admission and execution disagreed. Admission reads the host's
+  // id and accepts a case whose own model is an ordinary one; execution then
+  // carried that case model to `runAssistantTurn`, whose eligibility check saw
+  // a non-sentinel on an external-account harness and refused a run it had
+  // already admitted. A per-case model is normal in evals, so that refusal hit
+  // legitimate Cursor suites.
+  const modelDefinition = resolveEvalCaseModelDefinition({
+    hostConfig: suiteHostConfig,
+    caseModel: buildModelDefinition(test),
+  });
   const resolvedModelId = getCanonicalModelId(
     String(modelDefinition.id),
     modelDefinition.provider
@@ -2411,6 +2365,12 @@ const executeTestCase = async (params: {
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2473,6 +2433,12 @@ const executeTestCase = async (params: {
         setupAudit,
         suiteHostConfig,
         environment,
+        // A `projectEnvironments` doc id, not the servers snapshot above and
+        // not a sandbox image — see `RunIterationBaseParams`.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         pinnedSkillSource,
         pinnedHarnessSkills,
         // The run's Tasks seam. Hosted-only: it exists so the HARNESS turn can
@@ -2578,6 +2544,8 @@ export const runEvalSuiteWithAiSdk = async ({
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
+  projectEnvironmentId,
+  projectEnvironmentUnresolvedReason,
   pinnedSkillSource,
   pinnedHarnessSkills,
   toolPolicy,
@@ -2808,6 +2776,12 @@ export const runEvalSuiteWithAiSdk = async ({
         ...(resolvedSetupAudit ? { setupAudit: resolvedSetupAudit } : {}),
         suiteHostConfig,
         environment: config.environment,
+        // The run's PROJECT ENVIRONMENT id — unrelated to `config.environment`
+        // above (a servers snapshot) despite the shared word.
+        ...(projectEnvironmentId ? { projectEnvironmentId } : {}),
+        ...(projectEnvironmentUnresolvedReason
+          ? { projectEnvironmentUnresolvedReason }
+          : {}),
         ...(toolPolicy
           ? {
               toolPolicy,
@@ -4247,6 +4221,8 @@ const runHostedIterationWithBrowser = async (
     // iteration eval-sandbox provisioning + the bash tool (hosted parity with
     // the local runner).
     environment,
+    projectEnvironmentId,
+    projectEnvironmentUnresolvedReason,
     pinnedSkillSource,
     pinnedHarnessSkills,
     tasks,
@@ -4358,6 +4334,14 @@ const runHostedIterationWithBrowser = async (
   const toolChoice = normalizeToolChoice(advancedConfig?.toolChoice);
 
   const messageHistory: ModelMessage[] = [];
+  /**
+   * The TRACE transcript — `messageHistory`'s evidence-enriched twin (see the
+   * acc contract on `DriveHostedEvalTurnParams`). Persisted and gate-read in
+   * place of the model transcript only under the run's frozen evidence
+   * decision; element-identical to `messageHistory` whenever capture is off,
+   * which is what keeps an off run byte-equivalent.
+   */
+  const traceMessageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
   const iterationMetadataBase: Record<string, string | number | boolean> = {};
@@ -4454,6 +4438,10 @@ const runHostedIterationWithBrowser = async (
           authHeader: convexAuthToken,
           projectId: builtInTarget.projectId,
           ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+          // Names THIS iteration, so an unattended browser gets a profile no
+          // other iteration of this suite can reach. The suite's project is
+          // not enough: iterations run concurrently against it.
+          ...(iterationId ? { runKey: iterationId } : {}),
         }
       : null
   );
@@ -4728,6 +4716,23 @@ const runHostedIterationWithBrowser = async (
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
   const steps = resolveSteps(test);
+  /**
+   * What the run FROZE about tool-call evidence, as reported by the first
+   * harness turn's proxy-token mint.
+   *
+   * Read from the mint rather than from a flag: the mint reports the decision
+   * the control plane recorded at RUN CREATION, so a flag flipped mid-run
+   * cannot change what this iteration does. Stays undefined on the emulated
+   * path and on any run that never mints — which reads as capture off, the
+   * same as a run from before evidence existed.
+   */
+  let harnessEvidenceDecision:
+    | {
+        captureEnabled: boolean;
+        gradingSource: "narration" | "evidence";
+        turnId: string;
+      }
+    | undefined;
   const hostedHandlers = buildHostedStepHandlers({
     browser,
     prepared,
@@ -4768,6 +4773,19 @@ const runHostedIterationWithBrowser = async (
     // `runHarnessTurn` throws without one whenever servers are selected, which
     // for an eval suite is always.
     ...(harnessMcpProxy ? { harnessMcpProxy } : {}),
+    // The iteration this run's harness turns record evidence against. Sent
+    // only on the harness path with a real iteration row: a quick run has no
+    // run to attach evidence to, and the emulated engine records firsthand
+    // results already. Whether anything is actually recorded is decided
+    // downstream by the run's FROZEN capture decision, which the mint reports.
+    ...(resolvedExecution.harness && iterationId
+      ? {
+          evalIterationId: String(iterationId),
+          onHarnessEvidenceDecision: (decision) => {
+            harnessEvidenceDecision = decision;
+          },
+        }
+      : {}),
     // The sealed policy + the sink that accounts its refusals. Blocks land on
     // the SAME gate the in-process path records into, so `policyBlocks` and the
     // matcher exclusion below cover both origins with no second code path.
@@ -4826,14 +4844,34 @@ const runHostedIterationWithBrowser = async (
     ...(builtInTarget && "projectId" in builtInTarget
       ? { projectId: builtInTarget.projectId }
       : {}),
+    // The run's PROJECT ENVIRONMENT — the grant boundary the harness path
+    // scopes its BROKERED external-account credential check to. Harness-gated
+    // like the rest of this cluster; the emulated path resolves no such
+    // credential and would only carry an unused field.
+    ...(resolvedExecution.harness && projectEnvironmentId
+      ? { environmentId: projectEnvironmentId }
+      : {}),
+    // Replay only: the run HAS an environment and this process cannot name it.
+    // Keeps the refusal honest instead of blaming a selection.
+    ...(resolvedExecution.harness &&
+    !projectEnvironmentId &&
+    projectEnvironmentUnresolvedReason
+      ? { environmentUnresolvedReason: projectEnvironmentUnresolvedReason }
+      : {}),
     logSuffix: emit ? " (stream)" : "",
     extractToolCalls: (messages) =>
       extractToolCallsExcludingPolicyBlocks(
         { messages },
         toolPolicyGate?.blockedToolCallIds() ?? new Set()
       ),
+    // The evidence reconciler's exclusion set, read fresh per turn — a
+    // policy-refused call never reached a server, so its absence from the
+    // wire record must not degrade the turn to narration grading.
+    policyBlockedToolCallIds: () =>
+      toolPolicyGate?.blockedToolCallIds() ?? new Set(),
     acc: {
       messageHistory,
+      traceMessageHistory,
       capturedSpans,
       accumulatedUsage,
       toolsCalledByPrompt,
@@ -4917,11 +4955,20 @@ const runHostedIterationWithBrowser = async (
   const failOnToolError =
     (advancedConfig as { failOnToolError?: boolean } | undefined)
       ?.failOnToolError !== false;
+  // Which transcript the predicate gate reads. EVIDENCE grading gets the
+  // trace transcript (raw results and reconstructed wire-only calls are what
+  // evidence-aware predicates are for); narration grading keeps the model
+  // transcript even when capture enriched the persisted view, so a
+  // capture-on/narration-graded run's verdict is unchanged by enrichment.
+  const gateMessages =
+    harnessEvidenceDecision?.gradingSource === "evidence"
+      ? traceMessageHistory
+      : messageHistory;
   const traceForGate =
-    capturedSpans.length > 0 || messageHistory.length > 0
+    capturedSpans.length > 0 || gateMessages.length > 0
       ? {
           ...(capturedSpans.length > 0 ? { spans: capturedSpans } : {}),
-          messages: messageHistory as ModelMessage[] as Array<{
+          messages: gateMessages as ModelMessage[] as Array<{
             role: string;
             content: unknown;
           }>,
@@ -4993,7 +5040,15 @@ const runHostedIterationWithBrowser = async (
     passed,
     evaluation,
     usage: accumulatedUsage,
-    messages: messageHistory,
+    // The persisted transcript is the TRACE view whenever this run captured
+    // evidence: matched calls keep their narrated output, wire-only calls
+    // appear as reconstructed tool results, and run detail / the judge's
+    // second pass read what the proxy actually saw. Capture off (or a run
+    // that never minted) persists the model transcript, byte-identical to
+    // pre-evidence behaviour.
+    messages: harnessEvidenceDecision?.captureEnabled
+      ? traceMessageHistory
+      : messageHistory,
     // The RESOLVED id, not `test.model`: `modelId` is what `executeTestCase`
     // canonicalized and what the hosted `/stream` call actually billed, so
     // attribution here agrees with the provider request. (This runner is never
