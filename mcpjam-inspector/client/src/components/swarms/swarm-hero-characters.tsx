@@ -12,6 +12,7 @@
  */
 
 import { PersonaPixelAvatar } from "@/components/swarms/persona-pixel-avatar";
+import { cn } from "@/lib/utils";
 
 /**
  * Fixed looks, in the design's left-to-right order: Basalt, Amethyst, Jade,
@@ -34,10 +35,10 @@ const HERO_CHARACTERS = [
  */
 const JUMP_PERIOD_S = 1.1;
 
-export function SwarmHeroCharacters() {
+export function SwarmHeroCharacters({ className }: { className?: string }) {
   return (
     <div
-      className="flex items-end justify-center gap-1"
+      className={cn("flex items-end justify-center gap-1", className)}
       data-testid="swarm-hero-characters"
       aria-hidden
     >

@@ -10,6 +10,7 @@ import {
 } from "@/hooks/useClients";
 import { HostCard } from "./HostCard";
 import { CreateHostDialog } from "./CreateHostDialog";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 interface HostIndexPageProps {
   projectId: string;
@@ -35,7 +36,7 @@ export function HostIndexPage({
     setDeletingId(host.hostId);
     try {
       await deleteHost({ hostId: host.hostId });
-      toast.success(`Client "${host.name}" deleted`);
+      toast.success(`Client "${clientDisplayName(host)}" deleted`);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Failed to delete client";
       if (msg.includes("consumer")) {

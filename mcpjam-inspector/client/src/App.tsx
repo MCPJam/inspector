@@ -106,6 +106,7 @@ import {
 } from "@mcpjam/design-system/dialog";
 import { useAppState, type ServerWithName } from "./hooks/use-app-state";
 import { useActorKey } from "./hooks/use-actor-key";
+import { useIsMemberActor } from "./hooks/use-is-member-actor";
 import {
   PreferencesStoreProvider,
   usePreferencesStore,
@@ -277,6 +278,7 @@ import {
 } from "@mcpjam/sdk/host-config/templates";
 import { useClaudeCodeHostEnabledState } from "./hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabledState } from "./hooks/useCodexHostEnabled";
+import { useCursorHostEnabledState } from "./hooks/useCursorHostEnabled";
 import { hostFeatureFlagState } from "@/lib/host-compat/feature-visibility";
 import {
   HOST_VERIFY_TAB_PARAM,
@@ -320,6 +322,7 @@ import {
 import { useProjectClientConfigSyncPending } from "./hooks/use-project-client-config-sync-pending";
 import { ingestOAuthTraceLogs } from "./stores/traffic-log-store";
 import { clearGuestSession, getGuestBearerToken } from "./lib/guest-session";
+import { resetTokenCache } from "./lib/apis/web/context";
 import { publishSelectedServerNames } from "./lib/webmcp/ui-context-source";
 import type {
   ConnectServerInspectorCommand,
@@ -652,7 +655,8 @@ function ActiveBillingUpsellGate() {
 }
 
 export function ServersRoute() {
-  const { convexProjectId, isAuthenticated } = useAppRouteContext();
+  const { convexProjectId, isAuthenticated, handleReconnect } =
+    useAppRouteContext();
   const [previewedHostId] = usePreviewedHostId(convexProjectId);
   const navigate = useAppNavigate();
   // `/servers/:serverId` and `/servers/plugins/:pluginId` — the exact
@@ -725,6 +729,7 @@ export function ServersRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={null}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={
         <ServersTabBody
           routeServerId={routeParams.serverId ?? null}
@@ -800,6 +805,7 @@ export function HostsRoute() {
     hostsTabSelectedHostId,
     isAuthenticated,
     setHostsTabSelectedHostId,
+    handleReconnect,
   } = useAppRouteContext();
   const [previewedHostId, setPreviewedHostId] =
     usePreviewedHostId(convexProjectId);
@@ -976,6 +982,7 @@ export function HostsRoute() {
       isAuthenticated={isAuthenticated}
       selectedHostId={openableHostId ?? previewedHostId}
       onSelectHost={handleSelectHost}
+      onReconnect={handleReconnect}
       serversTabElement={<ServersTabBody />}
     />
   );
@@ -1013,6 +1020,7 @@ function useTemplateVerifyDeepLink({
   const { createHost } = useHostMutations();
   const claudeCodeEnabled = useClaudeCodeHostEnabledState();
   const codexEnabled = useCodexHostEnabledState();
+  const cursorCliEnabled = useCursorHostEnabledState();
   const requestedTemplateId = useMemo<HostTemplateId | null>(() => {
     if (typeof window === "undefined") return null;
     const raw = new URLSearchParams(window.location.search).get(
@@ -1082,6 +1090,7 @@ function useTemplateVerifyDeepLink({
     const templateEnabled = hostFeatureFlagState(requestedTemplateId, {
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
     });
     // Gated templates remain visible on caniuse.dev as reference profiles, but
     // they are not available for new-host creation until their rollout flags
@@ -1132,6 +1141,7 @@ function useTemplateVerifyDeepLink({
     requestedFocusTab,
     claudeCodeEnabled,
     codexEnabled,
+    cursorCliEnabled,
     flagWaitExpired,
     themeMode,
     createHost,
@@ -1268,8 +1278,24 @@ export function ComputerRoute() {
 
   // A personal computer is account-scoped. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
-  // is what gates the feature vs. the guest sign-in affordance.
+  // decides whether there are peer tabs to switch to.
+  //
+  // Chrome only, and deliberately the eager form — same split as SkillsRoute:
+  // it guesses member for the commit before `users:getCurrentUser` answers,
+  // which for a member cold-load is the right guess.
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
+
+  // The computer itself gets the ACTOR, tri-state and unflattened.
+  //
+  // `isGuestProjectActor` is `currentUser?.isAnonymous === true`, so it reads
+  // `false` — "not a guest" — for the whole time that query is in flight. That
+  // boolean is the skip argument for `projectComputers:getComputerStatus` two
+  // components down (`ComputerView`'s `effectiveProjectId`), so passing it here
+  // fires a member-only query as a guest and paints the member pane for them.
+  // Flattening to `=== true` at this call site instead would fail closed on the
+  // query and then tell a signed-in member to sign in, so the third state has
+  // to survive the trip.
+  const isMemberActor = useIsMemberActor();
 
   // Only redirect on an explicit `false`. While PostHog hydrates the flag is
   // `undefined`; bouncing then would strand a flagged-in user who cold-loads
@@ -1285,7 +1311,7 @@ export function ComputerRoute() {
   const computerView = (
     <ComputerTabView
       projectId={convexProjectId}
-      isSignedInMember={isSignedInMember}
+      isSignedInMember={isMemberActor}
     />
   );
 
@@ -1965,7 +1991,25 @@ export function SkillsRoute() {
   // it renders the same chrome as its peers. Anonymous guests are provisioned
   // Convex actors (`isAuthenticated === true`), so member-ness — not raw auth —
   // decides whether there are peer tabs to switch to (mirrors ComputerRoute).
+  //
+  // Chrome only, and deliberately the eager form: it guesses member for the
+  // commit before `users:getCurrentUser` answers, which for a member cold-load
+  // is the right guess and avoids flashing the bare view under them. Guessing
+  // wrong costs a guest one frame of peer tabs. The store's gate below cannot
+  // use it — see there.
   const isSignedInMember = isAuthenticated && !isGuestProjectActor;
+
+  // The actor Convex is holding, NOT `isSignedInMember`, for the store.
+  //
+  // `isGuestProjectActor` is `currentUser?.isAnonymous === true`, so while
+  // `users:getCurrentUser` is in flight `undefined?.isAnonymous === true`
+  // collapses to `false` — a guest reads as "not a guest" and
+  // `isSignedInMember` is true. `isAuthenticated` flips true almost at once for
+  // the pre-seeded guest bearer, so that window is real, and it is exactly the
+  // window this gate must fail closed on. `useIsMemberActor` answers
+  // `undefined` there rather than a wrong `true`, so `=== true` holds it shut
+  // until Convex has said who the socket is carrying.
+  const isMemberActor = useIsMemberActor();
 
   // The `skills-enabled` flag gates ONE HALF of this tab, not the tab.
   //
@@ -2004,7 +2048,15 @@ export function SkillsRoute() {
       // renders its protocol half immediately and the Cloud store appears when
       // the flag resolves — content arriving is a better first paint than a
       // blank page for every user who only has the protocol half.
-      cloudSkillsEnabled={skillsEnabled === true}
+      //
+      // AND the Convex actor, because the flag is not a proxy for member-ness:
+      // a PostHog rollout is evaluated per distinct-id and resolves for
+      // anonymous ones too, while the project store is a MEMBERSHIP resource
+      // whose every Convex function is signed-in-only. Guests reach this tab by
+      // design (see the bare-view branch below), so the flag alone offered them
+      // a store they could only be refused from — a listing that fails and an
+      // upload button whose mutation cannot land.
+      cloudSkillsEnabled={skillsEnabled === true && isMemberActor === true}
     />
   );
 
@@ -2779,6 +2831,21 @@ export default function App() {
       cancelled = true;
     };
   }, [isAuthLoading, isAuthenticated, workOsUser, getAccessToken]);
+
+  // Retire any in-memory guest bearer the moment WorkOS auth lands. Without
+  // this, a guest token minted before sign-in (or during a brief apiContext
+  // teardown) can stay in the 30s bearer cache and ride the next /api/web/*
+  // call — Convex then rejects MCPJam-model generation as a guest even though
+  // the sidebar already shows the signed-in user.
+  const previousWorkOsUserIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    const workOsUserId = workOsUser?.id ?? null;
+    if (workOsUserId && previousWorkOsUserIdRef.current !== workOsUserId) {
+      clearGuestSession();
+      resetTokenCache();
+    }
+    previousWorkOsUserIdRef.current = workOsUserId;
+  }, [workOsUser?.id]);
 
   usePostHogIdentify();
   // Stops replay while on `/results/<token>` — the init-time
@@ -3613,6 +3680,17 @@ export default function App() {
       activeMcpProfile?.toolListChanged?.refetches === false
         ? (true as const)
         : undefined;
+    // Forward the degraded leaves; the SDK picks the one matching the era each
+    // connection negotiates, which an unpinned host only learns at connect.
+    const cancellationLeaves = Object.fromEntries(
+      (["legacy", "modern"] as const)
+        .filter((key) => activeMcpProfile?.toolCallCancellation?.[key] === false)
+        .map((key) => [key, false])
+    );
+    const toolCallCancellation =
+      Object.keys(cancellationLeaves).length > 0
+        ? cancellationLeaves
+        : undefined;
 
     return {
       clientInfo,
@@ -3626,6 +3704,7 @@ export default function App() {
       supportsMrtr,
       suppressListenChannel,
       dropToolListChanged,
+      toolCallCancellation,
       xaaPolicy,
     };
   }, [
@@ -3649,6 +3728,9 @@ export default function App() {
     mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
     firstPageOnly: hostedMcpProfilePins.firstPageOnly,
     supportsMrtr: hostedMcpProfilePins.supportsMrtr,
+    suppressListenChannel: hostedMcpProfilePins.suppressListenChannel,
+    dropToolListChanged: hostedMcpProfilePins.dropToolListChanged,
+    toolCallCancellation: hostedMcpProfilePins.toolCallCancellation,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
       isClientConfigSyncPending || isProjectServerConfigLoading,

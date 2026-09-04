@@ -48,6 +48,7 @@ picked up from `c.var.requestLogContext`, which is populated by:
 | `tunnel.creation_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `errorCode` |
 | `tunnel.record_failed` | `routes/mcp/tunnels.ts` | `tunnelKind`, `tunnelDomain?`, `errorCode` |
 | `chat.session.persist.failed` | `utils/chat-ingestion.ts` | `failureKind`, `statusCode?`, `sourceType?` |
+| `chat.secrets.undelivered` | `routes/web/chat-v2.ts` | `secretCount`, `isScenarioSession` |
 | `widget.resource.served` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri`, `cspMode`, `mimeTypeValid?` |
 | `widget.resource.failed` | `routes/apps/mcp-apps/index.ts` | `widgetType`, `resourceUri?`, `errorCode` |
 | `swarm.generation.upstream_failed` | `routes/web/swarm-generate.ts` | `statusCode`, `errorCode` |

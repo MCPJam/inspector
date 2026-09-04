@@ -235,6 +235,9 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  // MCPJamLimitDialog (mounted app-wide) reads the guest credit-wall variant.
+  // These tests don't exercise that wall, so control (undefined) is fine.
+  useFeatureFlagVariantKey: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({

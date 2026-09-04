@@ -285,13 +285,14 @@ When two or more host configurations are attached to a suite, a **By case / By h
 
 ### Run view
 
-- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened.
+- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)
   - **Out of order** — calls that happened in the wrong sequence (when order checking is enabled)
   - **Arg mismatch** — right tool name, wrong arguments (shown side-by-side)
-- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn.
+- **User-value chain** — when you expand a trial, six numbered stage cards show how far value travelled: Session connected → Tools discovered → Tool selected → Tool called → Response returned → Request satisfied. The card for the first stage that failed opens automatically. Click any card to read what happened at that stage and why; click it again to close. This is shown for every trial — passing and failing alike. A trial that delivered end to end reads as the full delivery story; a failing trial opens on the break.
+- **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
 - **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.

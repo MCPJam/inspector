@@ -31,6 +31,7 @@ import {
   type CloudServerReadiness,
 } from "@/lib/cloud-server-readiness";
 import { environmentLabel } from "@/lib/environment-label";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 export function useCloudServerReadiness({
   projectId,
@@ -62,7 +63,9 @@ export function useCloudServerReadiness({
     const groupById = new Map(
       serverAttachments.map((group) => [group._id, group])
     );
-    const catalog = servers ?? [];
+    // Passed through undefined on purpose: an unanswered query is not an
+    // empty project, and the two lead to opposite advice.
+    const catalog = servers;
 
     /** A client's own set, as a target. Absent count stays UNKNOWN. */
     const hostTarget = (
@@ -72,7 +75,7 @@ export function useCloudServerReadiness({
       const host = hostById.get(hostId);
       if (!host) return null;
       return {
-        label: label ?? host.name,
+        label: label ?? clientDisplayName(host),
         serverIds: null,
         serverCount:
           typeof host.serverCount === "number" ? host.serverCount : null,
