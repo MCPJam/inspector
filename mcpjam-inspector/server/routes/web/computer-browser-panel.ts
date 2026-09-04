@@ -7,6 +7,9 @@
  *   GET  /session?ensure=1   → where to watch, and who holds the browser
  *   POST /lease              → take control / keep it / hand it back
  *   POST /keepalive          → "this panel is still open"
+ *   POST /open-desktop       → take the lease, get a one-shot ticket
+ *   GET  /desktop/:ticket    → redirect into the full desktop, password added
+ *                              server-side
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -22,12 +25,28 @@
  * the view behind "take control" would push people into taking control just to
  * look, which is the disruptive action.
  *
+ * THE STREAM PASSWORD NEVER REACHES THE CLIENT. It used to ride in
+ * `GET /session`, and the panel pasted it into an iframe URL — so the secret
+ * that authenticates the whole desktop (keyboard, clipboard, every open
+ * window) sat in a JSON body, in React state, and in a URL, for everyone who
+ * merely wanted to WATCH. It is now handed to the stream by the redirect at
+ * `GET /desktop/:ticket`, and the ticket that unlocks that redirect is minted
+ * only by `POST /open-desktop`, which takes the lease first: the full desktop
+ * drives the page OUTSIDE the daemon, so a person on it is invisible to the
+ * lease unless taking it is what opens the door.
+ *
+ * Residual, stated rather than claimed away: noVNC authenticates from its
+ * query string, so the password does land in the new tab's address bar. What
+ * this removes is every copy of it that a watcher never needed — the API body,
+ * the client's memory, and any log or bug report that captured either.
+ *
  * The panel PERSISTS NOTHING. It is a live view: no frames, no DOM, no
  * recording. In particular it does not write `browserInteractionSteps` — that
  * table is the eval-replay envelope anchored to chat sessions, and a human
  * poking at a browser is not a replayable agent step. If durable panel history
  * is ever wanted it needs its own table, not a borrowed one.
  */
+import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { verifyComputerBrowserToken } from "../../utils/computers/browser-token.js";
@@ -61,6 +80,56 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const LEASE_TTL_MS = 2 * 60_000;
 /** Don't touch computer activity more than once a minute per panel. */
 const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
+/**
+ * How long a full-desktop ticket is worth anything, and how many may be
+ * outstanding at once.
+ *
+ * The ticket IS the credential for the redirect: a top-level navigation cannot
+ * carry a bearer header, so `GET /desktop/:ticket` has nothing else to go on.
+ * It is therefore 32 random bytes, single use, and short-lived — the same
+ * shape, and for the same reason, as the local terminal's connect nonce.
+ */
+const DESKTOP_TICKET_TTL_MS = 60_000;
+const MAX_OUTSTANDING_DESKTOP_TICKETS = 64;
+
+interface DesktopTicket {
+  computerId: string;
+  /** Who took the lease. The redirect refuses if the browser changed hands. */
+  userId: string;
+  expiresAt: number;
+}
+
+const desktopTickets = new Map<string, DesktopTicket>();
+
+function issueDesktopTicket(claim: Omit<DesktopTicket, "expiresAt">): string {
+  const now = Date.now();
+  for (const [token, ticket] of desktopTickets) {
+    if (ticket.expiresAt <= now) desktopTickets.delete(token);
+  }
+  // A bounded map, so a caller minting tickets it never uses cannot grow this
+  // without limit. Oldest first: the newest ticket is the one somebody is
+  // about to click.
+  while (desktopTickets.size >= MAX_OUTSTANDING_DESKTOP_TICKETS) {
+    const oldest = desktopTickets.keys().next();
+    if (oldest.done) break;
+    desktopTickets.delete(oldest.value);
+  }
+  const token = randomBytes(32).toString("base64url");
+  desktopTickets.set(token, { ...claim, expiresAt: now + DESKTOP_TICKET_TTL_MS });
+  return token;
+}
+
+/** Redeem a ticket. Single use: a replayed link is worth nothing. */
+function consumeDesktopTicket(token: string): DesktopTicket | null {
+  const ticket = desktopTickets.get(token);
+  if (!ticket) return null;
+  desktopTickets.delete(token);
+  return ticket.expiresAt > Date.now() ? ticket : null;
+}
+
+export function resetDesktopTicketsForTests(): void {
+  desktopTickets.clear();
+}
 
 type Claims = { userId: string; computerId: string; projectId: string };
 
@@ -172,7 +241,11 @@ export function createComputerBrowserPanelRoutes(
     const lookup = await lookupSession({
       computerId,
       expectedBundleHash: bundleHash(),
-      expectedContextMode: "persistent",
+      // `"any"`: the panel is about THIS COMPUTER'S browser, whatever profile
+      // it happens to be running. Pinning `persistent` here reported "no
+      // browser" for a box that plainly had one, and — worse — paired with an
+      // attach that then relaunched it into the other mode.
+      expectedContextMode: "any",
     });
     return lookup.session;
   }
@@ -223,11 +296,13 @@ export function createComputerBrowserPanelRoutes(
         );
       }
       return c.json({
+        // No `streamPassword`, deliberately: see the module docstring. The URL
+        // stays, because it is how the panel knows a desktop exists to offer —
+        // and on its own it authenticates nobody.
         ok: true,
         computerId,
         bootId: session.bootId,
         streamUrl: session.streamUrl,
-        streamPassword: session.streamPassword,
         contextMode: session.contextMode,
         lease: await readLease(session),
       });
@@ -305,6 +380,125 @@ export function createComputerBrowserPanelRoutes(
         { ok: false, error: "Failed to change the browser lease." },
         502,
       );
+    }
+  });
+
+  /**
+   * "Open full desktop": take the lease, then mint the one-shot ticket that
+   * unlocks the redirect.
+   *
+   * THE LEASE IS TAKEN HERE, not offered as a courtesy. The desktop view drives
+   * the page through the stream, entirely outside the daemon — no command, no
+   * queue, nothing the lease would otherwise see. So a person who opened it
+   * while the browser read as `free` would be typing into a page the agent was
+   * simultaneously screenshotting, which is the exact situation the lease
+   * exists to make impossible. Taking it is what makes their presence visible.
+   */
+  app.post("/open-desktop", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const outcome = await createClient(session).leaseAction({
+        action: "acquire",
+        holder: userId,
+        ttlMs: LEASE_TTL_MS,
+      });
+      if (!outcome.took) {
+        // Somebody else is mid-flow. Handing over the desktop would put two
+        // people on one page.
+        return c.json(
+          { ok: false, error: "lease_held", lease: outcome.lease },
+          409,
+        );
+      }
+      const ticket = issueDesktopTicket({ computerId, userId });
+      logger.info("[computers] browser panel opened the full desktop", {
+        computerId,
+      });
+      return c.json({
+        ok: true,
+        // Relative, and on this origin: the client navigates to it and never
+        // learns where the stream actually is until the redirect happens.
+        url: `/api/web/computers/browser/desktop/${ticket}`,
+        expiresInMs: DESKTOP_TICKET_TTL_MS,
+        lease: outcome.lease,
+      });
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json(
+          { ok: false, error: "The browser did not accept the lease change." },
+          502,
+        );
+      }
+      reportRouteFailure("browser panel open-desktop failed", error, {
+        source: "computer-browser-panel.open-desktop",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json({ ok: false, error: "Failed to open the desktop." }, 502);
+    }
+  });
+
+  /**
+   * Redeem a ticket and redirect into the stream with the password attached.
+   *
+   * Unauthenticated by header ON PURPOSE — this is a top-level navigation, so
+   * there is nowhere to put a bearer. The ticket is the credential, and it is
+   * random, single-use and short-lived for exactly that reason.
+   *
+   * The lease is re-checked at redemption rather than trusted from mint time:
+   * a ticket that sat in a tab while somebody else took control must not hand
+   * out the password. The session is re-read for the same reason — a relaunch
+   * in between rotates the stream password, and the stale one would fail at
+   * the stream with a message nobody can act on.
+   */
+  app.get("/desktop/:ticket", async (c) => {
+    if (!configured()) {
+      return c.text("Computers are not configured on this server.", 503);
+    }
+    const ticket = consumeDesktopTicket(c.req.param("ticket"));
+    // One message for both, so a caller cannot tell a wrong ticket from an
+    // expired one, or learn that a given ticket ever existed.
+    const refused = () =>
+      c.text("This desktop link has expired. Open the desktop again.", 404);
+    if (!ticket) return refused();
+
+    try {
+      const session = await currentSession(ticket.computerId);
+      if (!session) return refused();
+      const lease = await readLease(session);
+      if (
+        (lease.state !== "held" && lease.state !== "parked") ||
+        lease.holder !== ticket.userId
+      ) {
+        // Either nobody holds it (the hold expired into `free`, or was handed
+        // back) or somebody else does. Either way this ticket no longer
+        // describes the browser.
+        return c.text(
+          "Somebody else is using this browser now. Open the desktop again to take control.",
+          409,
+        );
+      }
+      const target = new URL(session.streamUrl);
+      target.searchParams.set("autoconnect", "true");
+      target.searchParams.set("resize", "scale");
+      target.searchParams.set("password", session.streamPassword);
+      c.header("Cache-Control", "no-store");
+      c.header("Referrer-Policy", "no-referrer");
+      return c.redirect(target.toString(), 302);
+    } catch (error) {
+      reportRouteFailure("browser panel desktop redirect failed", error, {
+        source: "computer-browser-panel.desktop",
+        hop: "mcpjam_internal",
+        context: { computerId: ticket.computerId },
+      });
+      return c.text("Failed to open the desktop.", 502);
     }
   });
 

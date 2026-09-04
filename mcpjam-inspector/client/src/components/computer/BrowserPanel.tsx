@@ -5,10 +5,10 @@
  * Two states that matter, and the difference between them is the whole
  * feature:
  *
- *   WATCHING (default) — the noVNC stream is embedded view-only. Anyone with
- *     the panel open can see what the agent is doing. This is deliberately the
- *     default (L10): making people take control just to look would push them
- *     into the disruptive action every time.
+ *   WATCHING (default) — anyone with the panel open can see what the agent is
+ *     doing, without taking anything. This is deliberately the default (L10):
+ *     making people take control just to look would push them into the
+ *     disruptive action every time.
  *
  *   HOLDING — the person clicked "Take control". The daemon now refuses every
  *     model-driven command AND every observation (a 423 before the queue), so
@@ -21,6 +21,18 @@
  * is a deliberate bias toward "stuck" over "surprising"; the panel says so.
  *
  * Nothing here is persisted. The stream is live only.
+ *
+ * THE STREAM PASSWORD IS NOT AVAILABLE HERE, and that is the point. It used to
+ * arrive in `GET /session` and get pasted into an iframe URL, which put the
+ * credential for the entire desktop into every watcher's browser. The full
+ * desktop now opens through `POST /open-desktop` → a one-shot ticket → a
+ * server-side redirect, and opening it TAKES THE LEASE, because the desktop
+ * drives the page outside the daemon where the lease would otherwise never see
+ * the person.
+ *
+ * The embedded live view is therefore absent until the shared viewport lands
+ * (I-7): this component is not mounted anywhere yet, and the rail's browser
+ * body is where a watcher will actually watch.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useMintBrowserToken } from "@/hooks/useProjectComputer";
@@ -38,8 +50,9 @@ type LeaseState =
 
 interface SessionInfo {
   bootId: string;
+  /** Where the desktop lives. Useless on its own — it authenticates nobody —
+   *  and deliberately not enough to open: see `openDesktop`. */
   streamUrl: string;
-  streamPassword: string;
   lease: LeaseState;
 }
 
@@ -155,6 +168,37 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
     [authorized, refresh],
   );
 
+  /**
+   * Take the browser and open the full desktop in a new tab.
+   *
+   * One action, not two, because on the server they are one action: the ticket
+   * is only minted once the lease has been taken. Pretending otherwise in the
+   * UI would let someone press "Open" and be told no.
+   */
+  const openDesktop = useCallback(async () => {
+    setBusy(true);
+    try {
+      const res = await authorized("/open-desktop", { method: "POST" });
+      const body = await res.json();
+      if (!res.ok) {
+        setError(
+          body?.error === "lease_held"
+            ? "Someone else is using this browser right now."
+            : "Could not open the desktop.",
+        );
+        return;
+      }
+      setHolding(true);
+      setError(null);
+      // The ticket is single-use and short-lived, so it is navigated to
+      // immediately and never stored.
+      window.open(String(body.url), "_blank", "noopener,noreferrer");
+      await refresh();
+    } finally {
+      setBusy(false);
+    }
+  }, [authorized, refresh]);
+
   if (error && !session) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
@@ -231,16 +275,24 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         </p>
       )}
 
-      <iframe
-        // `view_only` is the interaction gate; the daemon-side lease is the
-        // real one. Both, deliberately: this stops a stray click, the 423
-        // stops everything else.
-        src={`${session.streamUrl}?autoconnect=true&resize=scale&password=${encodeURIComponent(
-          session.streamPassword,
-        )}${holding ? "" : "&view_only=true"}`}
-        title="Computer browser"
-        className="min-h-0 flex-1 border-0"
-      />
+      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
+        <p>
+          The live view moves into the playground rail; this panel currently
+          opens the desktop itself.
+        </p>
+        <button
+          type="button"
+          disabled={busy || heldByOther}
+          onClick={() => void openDesktop()}
+          className="rounded border px-3 py-1.5"
+        >
+          Open full desktop
+        </button>
+        <p className="max-w-sm text-xs">
+          Opening it takes control: the desktop drives the page outside the
+          agent&apos;s browser, so the agent is stopped while you are there.
+        </p>
+      </div>
     </div>
   );
 }

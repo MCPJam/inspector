@@ -28,6 +28,7 @@ import type { Sandbox } from "e2b";
 import {
   ensureComputerReady,
   getComputerSandboxInfo,
+  touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
 import { bootBrowserd, type BrowserdSandbox } from "./boot-browserd.js";
 import { BrowserdClient } from "./browserd-client.js";
@@ -264,6 +265,7 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
       record: recordBrowserSession,
       touch: touchBrowserSession,
     },
+    touchActivity: (args) => touchComputerActivity(args),
     bundle: loadBrowserdBundle,
     bundleHash: browserdBundleHash,
   };

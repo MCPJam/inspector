@@ -13,7 +13,7 @@
  *   - the stream password is minted exactly once per relaunch and appears in
  *     both the record and the handle.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BrowserdHandle } from "../boot-browserd";
 import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
@@ -23,11 +23,14 @@ import type {
   BrowserSessionRecordResult,
 } from "../browser-sessions-client";
 import {
+  attachBrowserSession,
   BROWSERD_PORT,
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
   ensureBrowserSession,
+  resetBrowserActivityThrottleForTests,
   type BrowserSessionDeps,
+  type SessionClient,
   type SessionSandbox,
 } from "../browser-session";
 
@@ -108,6 +111,8 @@ interface Fakes {
   lookup: ReturnType<typeof vi.fn>;
   record: ReturnType<typeof vi.fn>;
   touch: ReturnType<typeof vi.fn>;
+  touchActivity: ReturnType<typeof vi.fn>;
+  sendCommand: ReturnType<typeof vi.fn>;
   status: ReturnType<typeof vi.fn>;
 }
 
@@ -171,6 +176,12 @@ function makeFakes(over?: {
       over?.recordResult ?? { status: "recorded", sessionId: "session-new" },
   );
   const touch = vi.fn(async () => ({ counted: true }));
+  const touchActivity = vi.fn(async () => ({ ok: true }));
+  const sendCommand = vi.fn<SessionClient["sendCommand"]>(async () => ({
+    status: "ok" as const,
+    result: { ok: true, output: {} },
+    bootId: ROW.bootId,
+  }));
   const connect = vi.fn(async () => sandbox);
   const boot = vi.fn(async () => {
     if (over?.bootError) throw over.bootError;
@@ -184,12 +195,11 @@ function makeFakes(over?: {
     boot,
     createClient: vi.fn(() => ({
       status,
-      sendCommand: vi.fn(async () => {
-        throw new Error("not under test");
-      }),
+      sendCommand,
       ...(over?.leaseAction ? { leaseAction: over.leaseAction } : {}),
     })),
     store: { lookup, record, touch },
+    touchActivity,
     bundle: () => new Uint8Array([1, 2, 3]),
     bundleHash: () => HASH,
   };
@@ -203,11 +213,17 @@ function makeFakes(over?: {
     lookup,
     record,
     touch,
+    touchActivity,
+    sendCommand,
     status,
   };
 }
 
 const ARGS = { bearer: "user-bearer", projectId: "project-1" };
+
+// The computer-activity throttle is module state keyed by computer id, and
+// every case here uses the same one.
+beforeEach(() => resetBrowserActivityThrottleForTests());
 
 describe("ensureBrowserSession — verified reuse", () => {
   it("reuses a healthy daemon with matching bootId and NEVER touches the sandbox", async () => {
@@ -442,6 +458,27 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     );
   });
 
+  it("waits for ANOTHER replica's relaunch instead of killing it mid-boot", async () => {
+    // The debris rule is about a fence nobody is behind any more. A `held`
+    // relaunch hold is the opposite: a replica inside its own thirty seconds,
+    // quite possibly mid-boot. Reading that as debris turns the fence into the
+    // very collision it exists to prevent, with two of us instead of a person
+    // and an agent.
+    const lease = new HandoffLease();
+    lease.acquire("relaunch:99999999-8888-7777-6666-555555555555", 30_000, "script");
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      leaseAction: leaseBackedBy(lease),
+    });
+
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /another replica is restarting/,
+    );
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
   it("asks about ownership across BOTH profile modes, not just its own", async () => {
     // The reuse lookup is mode-scoped, and rightly so: an eval must never
     // inherit a signed-in profile, so the backend answers `null` for a row in
@@ -648,6 +685,168 @@ describe("ensureBrowserSession — contextMode", () => {
     expect(handle.reused).toBe(false);
     expect(f.status).not.toHaveBeenCalled();
     expect(f.boot).toHaveBeenCalled();
+  });
+});
+
+describe("ensureBrowserSession — a driving agent is a busy computer", () => {
+  it("touches the session row on EVERY command, not once per ensure", async () => {
+    // A turn ensures once and then drives for minutes. The session sweep (30
+    // min idle) reads this clock, so a long run of reads and clicks used to
+    // look exactly like an abandoned box — and could be reaped mid-turn.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    const ensureTouches = f.touch.mock.calls.length;
+
+    await handle.client.sendCommand({
+      commandId: "c1",
+      source: "chat",
+      action: { kind: "navigate", url: "https://example.test/" },
+    });
+    await handle.client.sendCommand({
+      commandId: "c2",
+      source: "chat",
+      action: { kind: "observe", mode: "url" },
+    });
+
+    const commandTouches = f.touch.mock.calls
+      .slice(ensureTouches)
+      .filter(([args]) => args.kind === "command");
+    expect(commandTouches).toHaveLength(2);
+    expect(commandTouches[0][0]).toMatchObject({ sessionId: ROW.sessionId });
+  });
+
+  it("touches the COMPUTER at most once a minute, however busy the agent is", async () => {
+    // The row touch is cheap and per-command; this one crosses the control
+    // plane, and an agent clicking twice a second must not turn into a
+    // hundred hibernation pokes.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    for (let i = 0; i < 5; i += 1) {
+      await handle.client.sendCommand({
+        commandId: `c${i}`,
+        source: "chat",
+        action: { kind: "observe", mode: "url" },
+      });
+    }
+    expect(f.touchActivity).toHaveBeenCalledTimes(1);
+    expect(f.touchActivity).toHaveBeenCalledWith({ computerId: COMPUTER });
+  });
+
+  it("swallows a failed touch instead of leaving it unhandled", async () => {
+    // Both touches are bookkeeping, and both are fired unawaited. "The command
+    // still resolved" is NOT the property here — it resolves either way, so a
+    // test asserting only that would pass with the `.catch` deleted. What the
+    // `.catch` buys is that the rejection is HANDLED: an unawaited promise
+    // that rejects takes the process down under Node's default policy, which
+    // would be a control plane having a bad minute killing the server.
+    const f = makeFakes({ lookups: [liveLookup()] });
+    // PLAIN functions, not `vi.fn().mockRejectedValue()`. Vitest's mocks
+    // attach their own handlers to returned promises to record settled
+    // results, which marks every rejection as handled — so a mock here would
+    // hide precisely the defect this test exists to catch.
+    const failing = () => Promise.reject(new Error("convex is down"));
+    (f.deps.store as unknown as { touch: unknown }).touch = failing;
+    (f.deps as unknown as { touchActivity: unknown }).touchActivity = failing;
+
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const handle = await ensureBrowserSession(f.deps, ARGS);
+      await expect(
+        handle.client.sendCommand({
+          commandId: "c1",
+          source: "chat",
+          action: { kind: "observe", mode: "url" },
+        }),
+      ).resolves.toMatchObject({ status: "ok" });
+
+      // Node raises `unhandledRejection` once the microtask queue has drained,
+      // so give it two macrotask turns before deciding nothing was left.
+      await new Promise((resolve) => setImmediate(resolve));
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(unhandled).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
+  });
+
+  it("touches for a freshly booted daemon too, not only a reused one", async () => {
+    // The relaunch path builds its own client from the boot handle; wrapping
+    // only the reuse path would leave every new session untouched until its
+    // second turn.
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    f.touch.mockClear();
+
+    await handle.client.sendCommand({
+      commandId: "c1",
+      source: "chat",
+      action: { kind: "observe", mode: "url" },
+    });
+    expect(f.touch).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: "session-new", kind: "command" }),
+    );
+  });
+
+  it("keeps the lease pair reachable through the wrapper", async () => {
+    // The wrapper rebuilds the client method by method (a `BrowserdClient`'s
+    // methods are on the prototype and would not survive a spread), so the
+    // optional lease pair has to be carried across deliberately.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      leaseAction: leaseBackedBy(lease),
+    });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    const outcome = await handle.client.leaseAction?.({
+      action: "acquire",
+      holder: "panel-1",
+    });
+    expect(outcome?.took).toBe(true);
+  });
+});
+
+describe("attachBrowserSession — adopt what is running, do not replace it", () => {
+  it("reuses an EPHEMERAL daemon instead of relaunching it as persistent", async () => {
+    // The panel's attach names no mode; it wants "the browser on this
+    // machine". Defaulting to persistent made that a mode mismatch, and a
+    // mismatch is a relaunch — so opening a panel to LOOK at what was running
+    // destroyed it and replaced it with a different profile.
+    const f = makeFakes({ lookups: [liveLookup({ contextMode: "ephemeral" })] });
+    const handle = await attachBrowserSession(f.deps, { computerId: COMPUTER });
+
+    expect(handle.reused).toBe(true);
+    expect(handle.contextMode).toBe("ephemeral");
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.lookup).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ expectedContextMode: "any" }),
+    );
+  });
+
+  it("still boots a persistent profile when nothing is running", async () => {
+    // The default this replaced was written for exactly this case, and it is
+    // the right answer for a person.
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await attachBrowserSession(f.deps, { computerId: COMPUTER });
+    expect(f.boot).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ contextMode: "persistent" }),
+    );
+  });
+
+  it("obeys an explicitly named mode over whatever is running", async () => {
+    const f = makeFakes({ lookups: [liveLookup({ contextMode: "ephemeral" })] });
+    await attachBrowserSession(f.deps, {
+      computerId: COMPUTER,
+      contextMode: "persistent",
+    });
+    expect(f.boot).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ contextMode: "persistent" }),
+    );
   });
 });
 

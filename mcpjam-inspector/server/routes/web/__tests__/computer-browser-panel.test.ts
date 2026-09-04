@@ -8,11 +8,15 @@
  *   - the lease holder is the authenticated user, never a client-supplied
  *     string;
  *   - the panel ATTACHES, it never reserves — someone opening a panel cannot
- *     provision a machine.
+ *     provision a machine;
+ *   - the stream password never leaves the server in a body, only in the
+ *     redirect a one-shot ticket unlocks — and the ticket is only minted once
+ *     the lease has actually been taken.
  */
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import {
   createComputerBrowserPanelRoutes,
+  resetDesktopTicketsForTests,
   resetPanelActivityThrottleForTests,
   type BrowserPanelDeps,
 } from "../computer-browser-panel";
@@ -95,6 +99,7 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
 
 beforeEach(() => {
   resetPanelActivityThrottleForTests();
+  resetDesktopTicketsForTests();
 });
 
 describe("browser panel — auth", () => {
@@ -159,9 +164,19 @@ describe("browser panel — GET /session", () => {
       ok: true,
       bootId: "boot-1",
       streamUrl: SESSION.streamUrl,
-      streamPassword: SESSION.streamPassword,
       lease: { state: "free" },
     });
+  });
+
+  it("does not hand the stream password to a watcher", async () => {
+    // It authenticates the whole desktop — keyboard, clipboard, every open
+    // window — and watching needs none of that. It used to ride in this body,
+    // which put it in React state and in an iframe URL for everyone who merely
+    // wanted to look.
+    const { call } = build();
+    const raw = await (await call("/session")).text();
+    expect(raw).not.toContain(SESSION.streamPassword);
+    expect(JSON.parse(raw)).not.toHaveProperty("streamPassword");
   });
 
   it("still returns the stream while someone else HOLDS the lease (L10)", async () => {
@@ -348,5 +363,182 @@ describe("browser panel — POST /keepalive", () => {
       })) as unknown as BrowserPanelDeps["lookupSession"],
     });
     expect((await call("/keepalive", { method: "POST" })).status).toBe(409);
+  });
+});
+
+describe("browser panel — the full desktop, and where the password is not", () => {
+  /** The routes are mounted under this prefix in `index.ts` / `app.ts`; the
+   *  test app is the bare router, so the URL the route hands the client has to
+   *  be re-based to call it here. */
+  const MOUNT = "/api/web/computers/browser";
+  async function openDesktop(f: ReturnType<typeof build>) {
+    const res = await f.call("/open-desktop", { method: "POST" });
+    const raw = await res.text();
+    const body = JSON.parse(raw) as Record<string, unknown>;
+    const ticketPath =
+      typeof body.url === "string" ? body.url.slice(MOUNT.length) : "";
+    return { res, raw, body, ticketPath };
+  }
+
+  it("takes the lease before it will open anything", async () => {
+    // The desktop view drives the page through the STREAM, entirely outside
+    // the daemon — no command, no queue, nothing the lease would see. Someone
+    // opening it while the browser reads `free` would be typing into a page
+    // the agent was simultaneously screenshotting.
+    const f = build();
+    const { res, body } = await openDesktop(f);
+    expect(res.status).toBe(200);
+    expect(f.leaseAction).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "acquire", holder: CLAIMS.userId }),
+    );
+    expect(String(body.url)).toMatch(
+      /^\/api\/web\/computers\/browser\/desktop\/[A-Za-z0-9_-]{20,}$/,
+    );
+  });
+
+  it("refuses when somebody else is already holding the browser", async () => {
+    const f = build({
+      createClient: () =>
+        ({
+          lease: async () => ({
+            state: "held",
+            holder: "users_other",
+            bootId: "boot-1",
+          }),
+          leaseAction: async () => ({
+            took: false,
+            lease: { state: "held", holder: "users_other", bootId: "boot-1" },
+          }),
+        }) as never,
+    });
+    const { res, body } = await openDesktop(f);
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({ ok: false, error: "lease_held" });
+  });
+
+  it("puts the password in the REDIRECT, never in a body", async () => {
+    const f = build({
+      createClient: () =>
+        ({
+          lease: async () => ({
+            state: "held",
+            holder: CLAIMS.userId,
+            bootId: "boot-1",
+          }),
+          leaseAction: async () => ({
+            took: true,
+            lease: { state: "held", holder: CLAIMS.userId, bootId: "boot-1" },
+          }),
+        }) as never,
+    });
+    const { raw, ticketPath } = await openDesktop(f);
+    expect(raw).not.toContain(SESSION.streamPassword);
+
+    const redirect = await f.call(ticketPath, { auth: null });
+    expect(redirect.status).toBe(302);
+    const location = new URL(redirect.headers.get("location") ?? "");
+    expect(location.origin + location.pathname).toBe(SESSION.streamUrl);
+    expect(location.searchParams.get("password")).toBe(SESSION.streamPassword);
+    expect(redirect.headers.get("cache-control")).toBe("no-store");
+    // Nothing in the body of the redirect either.
+    expect(await redirect.text()).not.toContain(SESSION.streamPassword);
+  });
+
+  it("burns the ticket on first use", async () => {
+    // The ticket is the whole credential for that redirect — a top-level
+    // navigation carries no bearer — so a link that keeps working is a
+    // password anyone who saw it once can fetch again.
+    const f = build({
+      createClient: () =>
+        ({
+          lease: async () => ({
+            state: "held",
+            holder: CLAIMS.userId,
+            bootId: "boot-1",
+          }),
+          leaseAction: async () => ({
+            took: true,
+            lease: { state: "held", holder: CLAIMS.userId, bootId: "boot-1" },
+          }),
+        }) as never,
+    });
+    const { ticketPath } = await openDesktop(f);
+    expect((await f.call(ticketPath, { auth: null })).status).toBe(302);
+    const replay = await f.call(ticketPath, { auth: null });
+    expect(replay.status).toBe(404);
+    expect(await replay.text()).not.toContain(SESSION.streamPassword);
+  });
+
+  it("refuses a ticket for a browser that changed hands", async () => {
+    // A ticket left in a tab must not hand out the password once somebody
+    // else has taken control.
+    let holder = CLAIMS.userId;
+    const f = build({
+      createClient: () =>
+        ({
+          lease: async () => ({ state: "held", holder, bootId: "boot-1" }),
+          leaseAction: async () => ({
+            took: true,
+            lease: { state: "held", holder, bootId: "boot-1" },
+          }),
+        }) as never,
+    });
+    const { ticketPath } = await openDesktop(f);
+    holder = "users_other";
+
+    const res = await f.call(ticketPath, { auth: null });
+    expect(res.status).toBe(409);
+    expect(await res.text()).not.toContain(SESSION.streamPassword);
+  });
+
+  it("refuses a ticket that sat around too long", async () => {
+    // A minute, because the link is meant to be clicked immediately — the
+    // window in which a leaked URL is worth anything should be the window in
+    // which the person is still looking at their screen.
+    vi.useFakeTimers();
+    try {
+      const f = build({
+        createClient: () =>
+          ({
+            lease: async () => ({
+              state: "held",
+              holder: CLAIMS.userId,
+              bootId: "boot-1",
+            }),
+            leaseAction: async () => ({
+              took: true,
+              lease: { state: "held", holder: CLAIMS.userId, bootId: "boot-1" },
+            }),
+          }) as never,
+      });
+      const { ticketPath } = await openDesktop(f);
+      vi.advanceTimersByTime(61_000);
+      const res = await f.call(ticketPath, { auth: null });
+      expect(res.status).toBe(404);
+      expect(await res.text()).not.toContain(SESSION.streamPassword);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses a ticket nobody minted", async () => {
+    const f = build();
+    const res = await f.call(
+      "/desktop/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      { auth: null },
+    );
+    expect(res.status).toBe(404);
+  });
+
+  it("409s open-desktop when there is no browser to open", async () => {
+    const f = build({
+      lookupSession: (async () => ({
+        reachable: true,
+        session: null,
+      })) as unknown as BrowserPanelDeps["lookupSession"],
+    });
+    const { res, body } = await openDesktop(f);
+    expect(res.status).toBe(409);
+    expect(body).toMatchObject({ error: "no_browser_session" });
   });
 });
