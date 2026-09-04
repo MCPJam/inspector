@@ -129,6 +129,52 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=6144"
         run: npm run test:ci:rest
 
+  packaging:
+    runs-on: ubuntu-latest
+    name: Packaging
+    # Same pinned Playwright image as the other jobs — see the note above.
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify published package surfaces
+        # Split out of `test:ci:rest`, where these two suites ran after all ten
+        # lanes had finished — 64 s bolted onto the critical path while three
+        # cores idled, for work that depends on nothing the lanes produce.
+        #
+        # Order matters inside the job: the @mcpjam/vitest suite packs sdk/ and
+        # sdk has no prepack hook, so it tars whatever dist/ is on disk. Its
+        # dependency on the SDK build is what the leading `build -w @mcpjam/sdk`
+        # satisfies for both halves.
+        run: npm run test:ci:packaging
+
   inspector:
     runs-on: ubuntu-latest
     name: Inspector Tests ${{ matrix.shard }}/4
