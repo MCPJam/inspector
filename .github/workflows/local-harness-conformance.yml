@@ -1,0 +1,355 @@
+# The evidence behind `lifecycleConformanceVersion`.
+#
+# A platform is not "native" because the code compiles for it. `compatibility.ts`
+# treats an empty conformance version as expired, so a platform stays refused
+# until these scenarios have actually run there — against a real pack, a real
+# supervisor, a real bridge and the real vendor CLI, with a mock upstream
+# standing in only for Anthropic.
+#
+# Two runners, because two of the facts this suite pins are darwin-specific: the
+# `(node)` command an exiting process reports, and the `ps -g` group probe.
+# Everything else is portable, so ubuntu covers the rest and is the job a change
+# to the foundation has to get past.
+name: Local harness conformance
+
+on:
+  workflow_call:
+    inputs:
+      pack_version:
+        description: Pack version to build and run against.
+        required: false
+        type: string
+        default: conformance
+    outputs:
+      conformance_version:
+        description: The identifier to stamp into `lifecycleConformanceVersion`.
+        value: ${{ jobs.summarize.outputs.conformance_version }}
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "mcpjam-inspector/server/utils/harness/local/**"
+      - "mcpjam-inspector/scripts/build-local-harness-pack.mjs"
+      - ".github/workflows/local-harness-conformance.yml"
+
+permissions:
+  contents: read
+
+env:
+  BUNDLED_NODE_VERSION: "24.20.0"
+  # Hold every mock upstream response briefly. An instant in-process upstream
+  # is not a neutral simplification: it hid a gateway defect for four runs by
+  # always answering inside the window where the gateway was tearing its own
+  # upstream request down, so the suite went green locally and 502'd on a
+  # loaded runner. A slow-enough upstream makes that class of race
+  # deterministic instead of dependent on how busy the machine is. The whole
+  # cost is a few seconds across a run.
+  MOCK_LATENCY_MS: "50"
+
+jobs:
+  unit:
+    name: foundation unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+      # From `mcpjam-inspector/`, not the worktree root: the root breaks the
+      # `@/shared` path alias and the suite fails for a reason that has nothing
+      # to do with the code under test.
+      - name: Run the local harness suite
+        working-directory: mcpjam-inspector
+        run: npx vitest run server/utils/harness/local
+
+  scenarios:
+    name: ${{ matrix.label }}
+    needs: unit
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: linux-x64 scenarios
+            runner: ubuntu-latest
+            platform_key: linux-x64
+            node_dist: linux-x64
+          - label: darwin-arm64 scenarios
+            runner: macos-latest
+            platform_key: darwin-arm64
+            node_dist: darwin-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
+      # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
+      # SDK's extract script to run. pnpm 9 reads the same file and fails with
+      # "packages field missing or empty".
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          url="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/node-v${BUNDLED_NODE_VERSION}-${{ matrix.node_dist }}.tar.gz"
+          curl -fsSL "$url" -o "$RUNNER_TEMP/node-runtime.tar.gz"
+
+      # The real thing, not a fixture: these scenarios exist to prove the pack
+      # a user would install actually runs.
+      - name: Build the pack
+        working-directory: mcpjam-inspector
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --platform ${{ matrix.platform_key }} \
+            --pack-version "${{ inputs.pack_version || 'conformance' }}" \
+            --node-tarball "$RUNNER_TEMP/node-runtime.tar.gz" \
+            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --skip-archive
+          mkdir -p "$RUNNER_TEMP/conformance/runtime"
+          cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
+            "$RUNNER_TEMP/conformance/runtime/claude-code"
+
+      - name: Full turn
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          mkdir -p "$HOME" "$CONFORMANCE_ROOT/workspace"
+          npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      # The negative that makes the loopback guarantee enforceable rather than
+      # aspirational: a pack whose launcher does not constrain the listener must
+      # be REFUSED by the exposure probe, not admitted because we shipped a
+      # launcher that usually does.
+      - name: A pack without the loopback launcher is refused
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: npx tsx server/utils/harness/local/conformance/run-native-turn.ts no-launcher
+
+      - name: Abort takes the vendor CLI down with the bridge
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: npx tsx server/utils/harness/local/conformance/run-lifecycle.ts abort
+
+      - name: A crashed Inspector's tree is reclaimed
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          npx tsx server/utils/harness/local/conformance/run-lifecycle.ts orphan-a
+          npx tsx server/utils/harness/local/conformance/run-lifecycle.ts orphan-b
+
+      # Budgets, not benchmarks. The exposure probe used to take 11 s on a
+      # laptop with ten link-local addresses, inside a 1.5 s session-start
+      # budget; these fail if that comes back.
+      - name: Probe and digest budgets
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          npx tsx server/utils/harness/local/conformance/probe-timing.mts
+          npx tsx server/utils/harness/local/conformance/timing-decomp.mts
+
+      - name: The group snapshot settles a tree whose root exited first
+        working-directory: mcpjam-inspector
+        env:
+          HOME: ${{ runner.temp }}/conformance/home
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: npx tsx server/utils/harness/local/conformance/group-settle.mts
+
+      # A conformance run that leaves a process behind has not demonstrated the
+      # thing it exists to demonstrate, whatever its scenarios printed.
+      - name: No supervised process survived the run
+        if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          # Matched on the PACK PATH, not on `launcher.mjs|bridge.mjs`.
+          # `pgrep -f` matches the full command line, so a bare script name
+          # also matches the shell running this very check — a red job with no
+          # survivor, which is the worst kind of failing check because nobody
+          # can reproduce it. Only a real supervised process has the pack root
+          # as its argv[0], and this shell is excluded explicitly on top.
+          survivors=""
+          for pid in $(pgrep -f "$CONFORMANCE_ROOT/runtime/claude-code/" || true); do
+            case "$pid" in "$$" | "$PPID") continue ;; esac
+            cmd="$(ps -o command= -p "$pid" 2>/dev/null || true)"
+            case "$cmd" in "" | *pgrep*) continue ;; esac
+            survivors="$survivors $pid"
+          done
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the conformance run:$survivors" >&2
+            ps -o pid=,command= -p $survivors || true
+            exit 1
+          fi
+
+  # Windows, and the one job here that is allowed to fail.
+  #
+  # `continue-on-error` is not laziness: Windows is REFUSED today
+  # (`nativePlatforms` omits win32, `supportsOwnershipProof('win32')` answers
+  # false without a verified helper), so a red leg here blocks nothing a user
+  # can reach. What it does is make the gap visible on every run instead of in
+  # somebody's memory.
+  #
+  # Removing `continue-on-error` and adding `win32` to `nativePlatforms` are the
+  # SAME change, and this job going green is what earns it.
+  windows:
+    name: windows-latest scenarios (not yet gating)
+    needs: unit
+    runs-on: windows-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # 10, not 9: the adapter's recipe carries a `pnpm-workspace.yaml` whose
+      # only key is `allowBuilds` — pnpm 10 syntax, and what permits the vendor
+      # SDK's extract script to run. pnpm 9 reads the same file and fails with
+      # "packages field missing or empty".
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      # From the REPO ROOT: this is an npm workspace, so dependencies install
+      # and hoist there. Installing inside the package produces a second,
+      # partial tree and the adapter ends up in neither place the build looks.
+      - name: Install workspace dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: npm ci --legacy-peer-deps
+
+      # The Job Object launcher is what whole-tree cleanup rests on here, so a
+      # conformance run without it is not testing Windows support — it is
+      # testing that Windows is refused, which the unit suite already covers.
+      - name: Build the Job Object launcher
+        working-directory: mcpjam-inspector/tools/mcpjam-job-launcher
+        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+
+      - name: Download the bundled Node runtime
+        run: |
+          set -euo pipefail
+          archive="node-v${BUNDLED_NODE_VERSION}-win-x64.zip"
+          curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${archive}" \
+            -o "$RUNNER_TEMP/node-runtime.zip"
+
+      - name: Build the pack
+        working-directory: mcpjam-inspector
+        run: |
+          node scripts/build-local-harness-pack.mjs \
+            --platform win32-x64 \
+            --pack-version conformance \
+            --node-tarball "$RUNNER_TEMP/node-runtime.zip" \
+            --job-launcher "$RUNNER_TEMP/mcpjam-job-launcher.exe" \
+            --out "$RUNNER_TEMP/conformance/runtime-src" \
+            --skip-archive
+          mkdir -p "$RUNNER_TEMP/conformance/runtime"
+          cp -R "$RUNNER_TEMP/conformance/runtime-src/claude-code" \
+            "$RUNNER_TEMP/conformance/runtime/claude-code"
+
+      - name: Full turn
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          mkdir -p "$CONFORMANCE_ROOT/home" "$CONFORMANCE_ROOT/workspace"
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-native-turn.ts full
+
+      # The one that matters on Windows: aborting must take the vendor binary
+      # down with the bridge. That is the whole reason the Job Object exists,
+      # and the reason `taskkill /T` was not enough.
+      - name: Abort takes the vendor CLI down with the bridge
+        working-directory: mcpjam-inspector
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+          MCPJAM_LOCAL_HARNESS_CONFORMANCE_VERSION: ${{ github.sha }}
+        run: |
+          HOME="$CONFORMANCE_ROOT/home" \
+            npx tsx server/utils/harness/local/conformance/run-lifecycle.ts abort
+
+      # Asserted here too, not just printed. The POSIX legs fail on a
+      # survivor; a Windows step that only echoed `tasklist` could report a
+      # clean run over a live agent, which is the outcome this whole suite
+      # exists to make impossible.
+      #
+      # Matched on the pack path rather than `node.exe`: the runner has its own
+      # Node processes, and failing on those would be a red job with no
+      # survivor.
+      - name: No supervised process survived the run
+        if: always()
+        env:
+          CONFORMANCE_ROOT: ${{ runner.temp }}/conformance
+        run: |
+          set -euo pipefail
+          root="$(cygpath -w "$CONFORMANCE_ROOT/runtime/claude-code" 2>/dev/null || echo "$CONFORMANCE_ROOT/runtime/claude-code")"
+          # The QUERY's own failure is a failure. `wmic ... || true` turned a
+          # process table nobody could read into an empty survivor list, so the
+          # step reported a clean run without having looked at a single
+          # process — the exact shape of green-means-nothing this check exists
+          # to prevent.
+          #
+          # PowerShell/CIM rather than `wmic`: wmic is gone from current
+          # windows-latest images, so the query itself failed and this step
+          # correctly reported that it had proved nothing — correct, and
+          # useless. `Get-CimInstance Win32_Process` is the supported way to
+          # read a command line.
+          if ! process_table="$(powershell -NoProfile -NonInteractive -Command 'Get-CimInstance Win32_Process | ForEach-Object { "{0} {1}" -f $_.ProcessId, $_.CommandLine }' 2>/dev/null)"; then
+            echo "could not read the Windows process table, so this check proved nothing" >&2
+            exit 1
+          fi
+          survivors="$(printf '%s\n' "$process_table" | grep -F "$root" || true)"
+          echo "${survivors:-(no supervised process)}"
+          if [ -n "$survivors" ]; then
+            echo "supervised processes survived the conformance run" >&2
+            exit 1
+          fi
+
+  summarize:
+    name: conformance version
+    # Deliberately NOT `needs: windows`. A conformance version records the
+    # evidence that exists; Windows is refused, so its leg is informational and
+    # must not hold up a stamp the supported platforms have earned.
+    needs: scenarios
+    runs-on: ubuntu-latest
+    outputs:
+      conformance_version: ${{ steps.stamp.outputs.version }}
+    steps:
+      # The value the manifest records. It names the RUN that produced the
+      # evidence, so a recorded conformance version can always be traced back to
+      # the scenarios that justified it.
+      - id: stamp
+        run: echo "version=local-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"

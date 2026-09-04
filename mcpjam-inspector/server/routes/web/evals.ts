@@ -16,7 +16,9 @@ import { logger } from "../../utils/logger.js";
 import {
   createAuthorizedManager,
   callerContextFromHono,
+  conformanceKnobWireShape,
   createManualHostedConnection,
+  extractMcpInitializeOptions,
   handleRoute,
   parseWithSchema,
   readJsonBody,
@@ -60,6 +62,12 @@ const hostedBatchSchema = z.object({
     .optional(),
   supportedProtocolVersions: z.array(z.string().min(1)).optional(),
   mcpProtocolVersionsByServerId: mcpProtocolVersionsByServerIdSchema,
+  // The client-conformance knobs, spread from their one declaration rather
+  // than re-listed here. This schema strips what it does not name, and every
+  // hosted eval body is parsed through it BEFORE
+  // `extractMcpInitializeOptions` reads the pins — so an eval run against a
+  // non-conforming host was executing as a fully conforming client.
+  ...conformanceKnobWireShape,
   oauthTokens: z.record(z.string(), z.string()).optional(),
   accessScope: z.enum(["project_member", "chat_v2"]).optional(),
   scenarioId: z.string().min(1).optional(),
@@ -268,6 +276,20 @@ evals.post("/stream-test-case", async (c) => {
     xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
   }
 
+  // This is the ONE eval route that builds its own manager instead of going
+  // through `createManualHostedConnection` / `withEphemeralConnection`, and
+  // those wrappers are what normally extract the host's `mcpProfile` pins from
+  // the body. Without this call the endpoint accepted every pin its schema
+  // declares — clientInfo, supportedProtocolVersions, the per-server version
+  // map, and the conformance knobs — and connected as if none had been sent.
+  //
+  // Read from the PRE-PARSE raw body for the same reason `xaaPolicy` above
+  // does: the extractor is itself the validator (every field is shape-gated,
+  // and unknown protocol versions are dropped), so going through the parsed
+  // body would only add a second place for a field to be silently stripped.
+  const { initializePins, mcpProtocolVersionsByServerId } =
+    extractMcpInitializeOptions(rawBody);
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
@@ -284,6 +306,8 @@ evals.post("/stream-test-case", async (c) => {
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
+      initializePins,
+      mcpProtocolVersionsByServerId,
       xaaPolicy,
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
     },
