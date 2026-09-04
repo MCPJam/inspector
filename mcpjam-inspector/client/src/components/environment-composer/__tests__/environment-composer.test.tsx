@@ -2,7 +2,7 @@
  * Shared lego-strip slots: default swarm strip omits models; callers can
  * opt into a subset (evals create: servers, or clients + models).
  */
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import {
@@ -44,9 +44,27 @@ vi.mock("@/hooks/use-available-models", () => ({
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({ triggerTestId }: { triggerTestId?: string }) => (
-    <div data-testid={triggerTestId ?? "server-group-picker"} />
+vi.mock("@/components/hosts/server-picker", () => ({
+  // Gated the way the real trigger gates it: a clear is offered only when the
+  // caller accepts no selection AND there is one to drop.
+  ServerPicker: ({
+    triggerTestId,
+    value,
+    onClearSelection,
+  }: {
+    triggerTestId?: string;
+    value?: string | null;
+    onClearSelection?: () => void;
+  }) => (
+    <div data-testid={triggerTestId ?? "server-group-picker"}>
+      {onClearSelection && value ? (
+        <button
+          type="button"
+          data-testid="servers-picker-clear"
+          onClick={onClearSelection}
+        />
+      ) : null}
+    </div>
   ),
 }));
 vi.mock("@/components/project-environments/environment-picker", () => ({
@@ -103,6 +121,26 @@ describe("EnvironmentComposer slots", () => {
     expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
     expect(screen.queryByTestId("strip-models-picker")).toBeNull();
     expect(screen.queryByTestId("strip-skills-picker")).toBeNull();
+  });
+
+  it("can put the servers slot back to the client default", () => {
+    // The slot is optional, and the picker only offers a way out when the
+    // caller supplies one. Without this the strip is a one-way door.
+    const seeded = emptyComposerState();
+    render(
+      <Harness
+        slots={["servers"]}
+        initialValue={{
+          ...seeded,
+          stack: { ...seeded.stack, serverAttachmentId: "att_1" },
+        }}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("servers-picker-clear"));
+
+    expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
+    expect(screen.queryByTestId("servers-picker-clear")).toBeNull();
   });
 
   it("renders only the requested slots so evals can split Servers from Where it runs", () => {

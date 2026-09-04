@@ -84,7 +84,7 @@ export function EnvironmentPicker({
    * Render the popover INLINE rather than in a portal, for callers that live
    * inside a Radix Dialog. A portalled popover lands outside the dialog, where
    * the modal overlay's `pointer-events: none` on the body swallows every
-   * click. Same escape hatch, same name, as `ServerGroupPicker`.
+   * click. Same escape hatch, same name, as `ServerPicker`.
    */
   inModal?: boolean;
   /**

@@ -30,7 +30,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "./client-attachments-editor";
-import { ServerAttachmentPicker } from "./server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 
 export type CreateSuitePayload = {
   name: string;
@@ -361,11 +361,10 @@ export function CreateSuiteDialog({
                   </p>
                 </div>
                 <div className="shrink-0">
-                  <ServerAttachmentPicker
+                  <ServerPicker
                     projectId={projectId}
                     value={serverAttachmentId}
                     onChange={setServerAttachmentId}
-                    onClearSelection={() => setServerAttachmentId(null)}
                     inModal
                     disabled={isSaving}
                   />

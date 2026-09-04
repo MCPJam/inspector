@@ -73,8 +73,8 @@ vi.mock("@/hooks/use-available-models", () => ({
     availableModels: [{ id: "gpt-4", name: "GPT-4", provider: "openai" }],
   }),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: ({
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: ({
     triggerTestId,
     value,
     onChange,
