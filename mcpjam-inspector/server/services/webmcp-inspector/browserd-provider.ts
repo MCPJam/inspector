@@ -270,9 +270,15 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
       const sent = this.run(
         {
           kind: "webmcp_invoke",
-          // The V1 key is `origin::name`; the daemon resolves against the live
-          // frame, so it gets the frame-scoped form.
-          toolKey: `${request.frameId}::${request.toolName}`,
+          // The TOOL'S OWN NAME, and the frame beside it — not a composite.
+          // The daemon resolves `toolKey` by name against the live page, so
+          // `frameId::name` looked for a tool literally called that, matched
+          // nothing, and answered `webmcp_tool_gone` for every hosted
+          // invocation. `frameId` is what disambiguates a subframe's tool from
+          // a same-named one in the main frame; the daemon falls back to name
+          // resolution if that frame has since gone.
+          toolKey: request.toolName,
+          frameId: request.frameId,
           input: request.input,
         },
         {

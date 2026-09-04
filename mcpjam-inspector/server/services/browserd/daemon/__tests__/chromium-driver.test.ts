@@ -23,20 +23,27 @@ interface FakePage extends DriverPage {
   };
 }
 
-function fakePage(init: {
-  url?: string;
-  dom?: string;
-  hangNetwork?: boolean;
-  /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
-  onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
-  /** Make a targeted act fail, as a missing element would. */
-  actError?: Error;
-  a11y?: unknown;
-  /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
-  a11yBySelector?: Record<string, unknown>;
-  console?: Array<{ type: string; text: string; at: number }>;
-  webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
-} = {}): FakePage {
+function fakePage(
+  init: {
+    url?: string;
+    dom?: string;
+    hangNetwork?: boolean;
+    /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
+    onScreenshot?: (page: {
+      setDom: (d: string) => void;
+      setUrl: (u: string) => void;
+    }) => void;
+    /** Make a targeted act fail, as a missing element would. */
+    actError?: Error;
+    a11y?: unknown;
+    /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
+    a11yBySelector?: Record<string, unknown>;
+    console?: Array<{ type: string; text: string; at: number }>;
+    webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> }
+      ? B | null
+      : never;
+  } = {},
+): FakePage {
   let url = init.url ?? "about:blank";
   const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
@@ -50,46 +57,85 @@ function fakePage(init: {
     front: 0,
     a11yRoots: [] as (string | undefined)[],
   };
-  const setDom = (d: string) => { dom = d; };
-  const setUrl = (u: string) => { url = u; };
+  const setDom = (d: string) => {
+    dom = d;
+  };
+  const setUrl = (u: string) => {
+    url = u;
+  };
   const act = (entry: string) => {
     calls.acts.push(entry);
     if (init.actError) throw init.actError;
   };
   return {
-    async goto(u) { calls.goto.push(u); url = u; },
-    async reload() { calls.reload++; },
-    async goBack() { calls.goBack++; },
+    async goto(u) {
+      calls.goto.push(u);
+      url = u;
+    },
+    async reload() {
+      calls.reload++;
+    },
+    async goBack() {
+      calls.goBack++;
+    },
     async waitForNetworkIdle(signal) {
       if (!init.hangNetwork) return;
       return new Promise<void>((_r, reject) =>
-        signal.addEventListener("abort", () => reject(new Error("aborted")), { once: true }),
+        signal.addEventListener("abort", () => reject(new Error("aborted")), {
+          once: true,
+        }),
       );
     },
     async requestAnimationFrame() {},
-    async domStructureSignal() { return dom; },
+    async domStructureSignal() {
+      return dom;
+    },
     async screenshotBase64() {
       calls.shots++;
       init.onScreenshot?.({ setDom, setUrl });
       return "BASE64PNG";
     },
     url: () => url,
-    close: async () => { closed = true; },
+    close: async () => {
+      closed = true;
+    },
     isClosed: () => closed,
-    bringToFront: async () => { calls.front++; },
+    bringToFront: async () => {
+      calls.front++;
+    },
 
     async clickAt(point, options) {
-      act(`click:${point.x},${point.y}${options?.button ? `:${options.button}` : ""}`);
+      act(
+        `click:${point.x},${point.y}${options?.button ? `:${options.button}` : ""}`,
+      );
     },
-    async clickSelector(selector) { act(`click:${selector}`); },
-    async hoverAt(point) { act(`hover:${point.x},${point.y}`); },
-    async hoverSelector(selector) { act(`hover:${selector}`); },
-    async typeText(text) { act(`type:${text}`); },
-    async fillSelector(selector, text) { act(`fill:${selector}:${text}`); },
-    async press(key) { act(`press:${key}`); },
-    async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
-    async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
-    async selectOption(selector, value) { act(`select:${selector}:${value}`); },
+    async clickSelector(selector) {
+      act(`click:${selector}`);
+    },
+    async hoverAt(point) {
+      act(`hover:${point.x},${point.y}`);
+    },
+    async hoverSelector(selector) {
+      act(`hover:${selector}`);
+    },
+    async typeText(text) {
+      act(`type:${text}`);
+    },
+    async fillSelector(selector, text) {
+      act(`fill:${selector}:${text}`);
+    },
+    async press(key) {
+      act(`press:${key}`);
+    },
+    async scrollBy({ dx, dy }) {
+      act(`scroll:${dx},${dy}`);
+    },
+    async dragTo(from, to) {
+      act(`drag:${from.x},${from.y}->${to.x},${to.y}`);
+    },
+    async selectOption(selector, value) {
+      act(`select:${selector}:${value}`);
+    },
     async a11ySnapshot(rootSelector?: string) {
       calls.a11yRoots.push(rootSelector);
       // Mirrors the live adapter: an unmatched root selector resolves null,
@@ -105,7 +151,9 @@ function fakePage(init: {
       while (keep > 0 && consoleEntries[keep - 1].at >= since) keep -= 1;
       consoleEntries.length = keep;
     },
-    async webmcp() { return (init.webmcp ?? null) as never; },
+    async webmcp() {
+      return (init.webmcp ?? null) as never;
+    },
 
     setUrl,
     setDom,
@@ -127,9 +175,16 @@ function fakeContext(init: { pages?: FakePage[]; connected?: boolean } = {}) {
       return page;
     },
     isConnected: () => connected,
-    close: async () => { closed = true; },
+    close: async () => {
+      closed = true;
+    },
   };
-  return { context, created, setConnected: (v: boolean) => (connected = v), wasClosed: () => closed };
+  return {
+    context,
+    created,
+    setConnected: (v: boolean) => (connected = v),
+    wasClosed: () => closed,
+  };
 }
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
@@ -141,7 +196,9 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     const page = fakePage();
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
-    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/" }),
+    );
     expect(page.calls.goto).toEqual(["https://x.test/"]);
     expect(res.ok).toBe(true);
     expect(res.output).toEqual({ url: "https://x.test/" });
@@ -178,7 +235,9 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     const page = fakePage({ hangNetwork: true });
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context, { settle: { maxWaitMs: 10 } });
-    const res = await driver.execute(cmd({ kind: "navigate", url: "https://slow.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://slow.test/" }),
+    );
     expect(res.ok).toBe(true);
     expect(res.settled).toBe(false); // frame returned anyway, no wait verb
   });
@@ -191,7 +250,9 @@ describe("ChromiumDriver — observe", () => {
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
 
-    const shot = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    const shot = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
     expect(shot.output).toEqual({ screenshot: "BASE64PNG" });
     expect(shot.stateToken).toBeDefined();
 
@@ -205,7 +266,9 @@ describe("ChromiumDriver — observe", () => {
   it("fails an observe on a tab that was never navigated", async () => {
     const { context } = fakeContext();
     const driver = new ChromiumDriver(context);
-    const res = await driver.execute(cmd({ kind: "observe", mode: "url" }, "ghost"));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "url" }, "ghost"),
+    );
     expect(res).toMatchObject({ ok: false, error: "unknown_tab: ghost" });
   });
 
@@ -242,7 +305,10 @@ describe("ChromiumDriver — observe", () => {
       url: "https://x.test/",
       a11y: { role: "main" },
       a11yBySelector: {
-        "#panel": { role: "region", children: [{ role: "button", name: "Go" }] },
+        "#panel": {
+          role: "region",
+          children: [{ role: "button", name: "Go" }],
+        },
       },
     });
     const { context } = fakeContext({ pages: [page] });
@@ -356,7 +422,9 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
-    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
     expect(res.output).toEqual({ screenshot: "BASE64PNG" });
     expect(res.stateToken!.domHash).toBe(shortHash("0BODY>1MAIN")); // matches the frame
     expect(res.settled).toBeUndefined(); // stable capture, not flagged
@@ -374,9 +442,13 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/a" }));
-    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
     expect(res.settled).toBe(false);
-    expect(res.stateToken!.urlHash).toBe(shortHash(`https://x.test/route-${n}`));
+    expect(res.stateToken!.urlHash).toBe(
+      shortHash(`https://x.test/route-${n}`),
+    );
   });
 
   it("flags settled:false when the DOM keeps shifting mid-capture (no stale image pinned)", async () => {
@@ -388,7 +460,9 @@ describe("ChromiumDriver — screenshot token binds to the captured frame (P1)",
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
-    const res = await driver.execute(cmd({ kind: "observe", mode: "screenshot" }));
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "screenshot" }),
+    );
     expect(res.ok).toBe(true);
     expect(res.settled).toBe(false); // caller must re-observe, not pin an act
     // the token still describes the post-capture DOM, never an earlier one
@@ -400,7 +474,9 @@ describe("ChromiumDriver — only navigate may create or replace a tab (P2)", ()
   it("opens a named new tab, and refuses to replace an existing one", async () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "t1"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "t1"),
+    );
 
     // A named new tab is created alongside the first.
     const opened = await driver.execute(
@@ -436,7 +512,9 @@ describe("ChromiumDriver — only navigate may create or replace a tab (P2)", ()
       ok: false,
       error: "unknown_tab: ghost",
     });
-    expect(await driver.execute(cmd({ kind: "reload" }, "ghost"))).toMatchObject({
+    expect(
+      await driver.execute(cmd({ kind: "reload" }, "ghost")),
+    ).toMatchObject({
       ok: false,
       error: "unknown_tab: ghost",
     });
@@ -460,13 +538,30 @@ describe("ChromiumDriver — act verbs (W3)", () => {
 
   it("dispatches each verb to its primitive, by coordinates or selector", async () => {
     const cases: Array<[Parameters<typeof acted>[0], string]> = [
-      [{ kind: "act", verb: "click", target: { coordinates: [12, 34] } }, "click:12,34"],
-      [{ kind: "act", verb: "click", target: { selector: "#go" } }, "click:#go"],
-      [{ kind: "act", verb: "hover", target: { coordinates: [5, 6] } }, "hover:5,6"],
-      [{ kind: "act", verb: "hover", target: { selector: ".menu" } }, "hover:.menu"],
+      [
+        { kind: "act", verb: "click", target: { coordinates: [12, 34] } },
+        "click:12,34",
+      ],
+      [
+        { kind: "act", verb: "click", target: { selector: "#go" } },
+        "click:#go",
+      ],
+      [
+        { kind: "act", verb: "hover", target: { coordinates: [5, 6] } },
+        "hover:5,6",
+      ],
+      [
+        { kind: "act", verb: "hover", target: { selector: ".menu" } },
+        "hover:.menu",
+      ],
       [{ kind: "act", verb: "type", value: "hello" }, "type:hello"],
       [
-        { kind: "act", verb: "type", target: { selector: "#email" }, value: "a@b.c" },
+        {
+          kind: "act",
+          verb: "type",
+          target: { selector: "#email" },
+          value: "a@b.c",
+        },
         "fill:#email:a@b.c",
       ],
       [{ kind: "act", verb: "press", value: "Enter" }, "press:Enter"],
@@ -475,11 +570,21 @@ describe("ChromiumDriver — act verbs (W3)", () => {
       [{ kind: "act", verb: "scroll", value: "250" }, "scroll:0,250"],
       [{ kind: "act", verb: "scroll", value: "10,20" }, "scroll:10,20"],
       [
-        { kind: "act", verb: "drag", target: { coordinates: [1, 2] }, value: "9,8" },
+        {
+          kind: "act",
+          verb: "drag",
+          target: { coordinates: [1, 2] },
+          value: "9,8",
+        },
         "drag:1,2->9,8",
       ],
       [
-        { kind: "act", verb: "select", target: { selector: "#size" }, value: "L" },
+        {
+          kind: "act",
+          verb: "select",
+          target: { selector: "#size" },
+          value: "L",
+        },
         "select:#size:L",
       ],
     ];
@@ -611,7 +716,9 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     // The tab is really gone: a follow-up act finds no tab rather than a
     // closed page it might try to drive.
     expect(
-      await driver.execute(cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } })),
+      await driver.execute(
+        cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } }),
+      ),
     ).toMatchObject({ ok: false, error: "unknown_tab: @session" });
   });
 
@@ -619,7 +726,10 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);
     const res = await driver.execute(
-      cmd({ kind: "act", verb: "click", target: { coordinates: [1, 1] } }, "ghost"),
+      cmd(
+        { kind: "act", verb: "click", target: { coordinates: [1, 1] } },
+        "ghost",
+      ),
     );
     expect(res).toMatchObject({ ok: false, error: "unknown_tab: ghost" });
     expect(created).toHaveLength(0);
@@ -648,7 +758,11 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
   it("invokes a page tool and returns its output with a fresh token", async () => {
     const driver = await withBridge(bridgeStub());
     const res = await driver.execute(
-      cmd({ kind: "webmcp_invoke", toolKey: "book_flight", input: { seat: "1A" } }),
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "book_flight",
+        input: { seat: "1A" },
+      }),
     );
     expect(res.ok).toBe(true);
     expect(res.output).toMatchObject({
@@ -658,10 +772,59 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
     expect(res.stateToken).toBeDefined();
   });
 
+  it("passes the caller's frame through, so a subframe's tool is not shadowed", async () => {
+    // Two frames can register the same tool name, and name resolution prefers
+    // the main frame. A caller acting on a tool it just listed says which
+    // frame it saw; dropping that on the floor here would silently run the
+    // wrong page's tool.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: { ok: true } };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "book_flight",
+        frameId: "frame-7",
+        input: {},
+      }),
+    );
+    expect(seen[0]).toMatchObject({
+      toolName: "book_flight",
+      frameId: "frame-7",
+    });
+  });
+
+  it("sends no frame at all when the caller named none", async () => {
+    // `frameId: undefined` and an absent key are not the same to a bridge that
+    // checks `args.frameId &&` — but they are to `toMatchObject`, so this
+    // asserts the key is genuinely absent rather than present-and-undefined.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: {} };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "book_flight", input: {} }),
+    );
+    expect("frameId" in seen[0]!).toBe(false);
+  });
+
   it("caps an oversized tool output rather than half-serializing it (L9)", async () => {
     const huge = { rows: Array.from({ length: 20_000 }, (_, i) => i) };
     const driver = await withBridge(
-      bridgeStub({ invoke: async () => ({ invocationId: "inv-1", output: huge }) }),
+      bridgeStub({
+        invoke: async () => ({ invocationId: "inv-1", output: huge }),
+      }),
     );
     const res = await driver.execute(
       cmd({ kind: "webmcp_invoke", toolKey: "dump", input: {} }),
@@ -676,7 +839,10 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
     const driver = await withBridge(
       bridgeStub({
         invoke: async () => {
-          throw new WebMcpBridgeError("webmcp_tool_gone", "The page no longer offers it.");
+          throw new WebMcpBridgeError(
+            "webmcp_tool_gone",
+            "The page no longer offers it.",
+          );
         },
       }),
     );
@@ -709,10 +875,16 @@ describe("ChromiumDriver — tabs, state token, health, close", () => {
   it("reuses a page for the same tabId and opens a new one per distinct tabId", async () => {
     const { context, created } = fakeContext();
     const driver = new ChromiumDriver(context);
-    await driver.execute(cmd({ kind: "navigate", url: "https://a.test/" }, "t1"));
-    await driver.execute(cmd({ kind: "navigate", url: "https://b.test/" }, "t1"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }, "t1"),
+    );
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://b.test/" }, "t1"),
+    );
     expect(created).toHaveLength(1); // same tab reused
-    await driver.execute(cmd({ kind: "navigate", url: "https://c.test/" }, "t2"));
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://c.test/" }, "t2"),
+    );
     expect(created).toHaveLength(2); // distinct tab → new page
   });
 
@@ -756,7 +928,9 @@ describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
     lease.resume("panel-a");
 
     const first = await driver.execute(cmd({ kind: "observe", mode: "url" }));
-    expect(first.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+    expect(first.output).toMatchObject({
+      handoffNote: RESUMED_AFTER_HANDOFF_NOTE,
+    });
     // The note marks the observation that actually crossed the handoff — a
     // note on every later result would be noise the model learns to ignore.
     const second = await driver.execute(cmd({ kind: "observe", mode: "url" }));
@@ -767,7 +941,9 @@ describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
     const page = fakePage({ url: "https://x.test/" });
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context, { lease: new HandoffLease() });
-    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/" }),
+    );
     expect(res.output).not.toHaveProperty("handoffNote");
   });
 
@@ -782,14 +958,18 @@ describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
     const acted = await driver.execute(
       cmd({ kind: "act", verb: "click", target: { coordinates: [4, 5] } }),
     );
-    expect(acted.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+    expect(acted.output).toMatchObject({
+      handoffNote: RESUMED_AFTER_HANDOFF_NOTE,
+    });
   });
 
   it("works without a lease at all (the daemon can run leaseless)", async () => {
     const page = fakePage({ url: "https://x.test/" });
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
-    const res = await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(
+      cmd({ kind: "navigate", url: "https://x.test/" }),
+    );
     expect(res.ok).toBe(true);
     expect(res.output).not.toHaveProperty("handoffNote");
   });
@@ -797,7 +977,10 @@ describe("ChromiumDriver — loud resume after a human handoff (L6/W4)", () => {
 
 describe("ChromiumDriver — a FAILED act still reports the handoff (L6)", () => {
   it("carries the note on the failure result, so the model re-reads the page", async () => {
-    const page = fakePage({ url: "https://x.test/", actError: new Error("no element") });
+    const page = fakePage({
+      url: "https://x.test/",
+      actError: new Error("no element"),
+    });
     const { context } = fakeContext({ pages: [page] });
     const lease = new HandoffLease();
     const driver = new ChromiumDriver(context, { lease });
@@ -808,7 +991,9 @@ describe("ChromiumDriver — a FAILED act still reports the handoff (L6)", () =>
       cmd({ kind: "act", verb: "click", target: { selector: "#gone" } }),
     );
     expect(res.ok).toBe(false);
-    expect(res.output).toMatchObject({ handoffNote: RESUMED_AFTER_HANDOFF_NOTE });
+    expect(res.output).toMatchObject({
+      handoffNote: RESUMED_AFTER_HANDOFF_NOTE,
+    });
   });
 });
 
@@ -833,11 +1018,17 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     lease.acquire("panel-a", 60_000);
     now = 2_000;
     page.pushConsole({ type: "log", text: "auth token: SECRET", at: 2_100 });
-    page.pushConsole({ type: "error", text: "password field: hunter2", at: 2_200 });
+    page.pushConsole({
+      type: "error",
+      text: "password field: hunter2",
+      at: 2_200,
+    });
     now = 3_000;
     lease.resume("panel-a");
 
-    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "console" }),
+    );
     const text = JSON.stringify(observed.output);
     expect(text).not.toContain("SECRET");
     expect(text).not.toContain("hunter2");
@@ -860,7 +1051,9 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
 
     // Anything logged AFTER the handoff is normal traffic and must survive.
     page.pushConsole({ type: "log", text: "after the handoff", at: 4_000 });
-    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "console" }),
+    );
     expect(JSON.stringify(observed.output)).toContain("after the handoff");
   });
 
@@ -885,7 +1078,9 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     lease.resume("panel-a");
 
     const a = await driver.execute(cmd({ kind: "observe", mode: "console" }));
-    const b = await driver.execute(cmd({ kind: "observe", mode: "console" }, "tab-2"));
+    const b = await driver.execute(
+      cmd({ kind: "observe", mode: "console" }, "tab-2"),
+    );
     expect(JSON.stringify(a.output)).not.toContain("LEAK-A");
     expect(JSON.stringify(b.output)).not.toContain("LEAK-B");
   });
@@ -908,7 +1103,11 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     // Hold #1 — the sign-in.
     lease.acquire("panel-a", 60_000);
     now = 2_000;
-    page.pushConsole({ type: "log", text: "auth token: SECRET-ONE", at: 2_100 });
+    page.pushConsole({
+      type: "log",
+      text: "auth token: SECRET-ONE",
+      at: 2_100,
+    });
     now = 3_000;
     lease.resume("panel-a");
 
@@ -916,11 +1115,17 @@ describe("ChromiumDriver — a handoff's console does not outlive it (W4)", () =
     now = 4_000;
     lease.acquire("panel-a", 60_000);
     now = 5_000;
-    page.pushConsole({ type: "log", text: "captcha answer: SECRET-TWO", at: 5_100 });
+    page.pushConsole({
+      type: "log",
+      text: "captcha answer: SECRET-TWO",
+      at: 5_100,
+    });
     now = 6_000;
     lease.resume("panel-a");
 
-    const observed = await driver.execute(cmd({ kind: "observe", mode: "console" }));
+    const observed = await driver.execute(
+      cmd({ kind: "observe", mode: "console" }),
+    );
     const text = JSON.stringify(observed.output);
     expect(text).not.toContain("SECRET-ONE");
     expect(text).not.toContain("SECRET-TWO");

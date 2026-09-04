@@ -383,6 +383,21 @@ own desktop — and both live in one process whenever the local inspector runs a
 hosted browser, so counting them together let two hosted handles fill the local
 limit and refuse to open a window.
 
+## The daemon takes a tool NAME, not the inspector's key
+
+V1 keys a tool as `origin::name`, because two origins on one page can offer the
+same name. The daemon does not: `webmcp_invoke.toolKey` is the tool's own name,
+resolved against the live page, and `frameId` beside it is what disambiguates —
+name resolution prefers the main frame, so a subframe's tool would otherwise be
+shadowed by a same-named one above it.
+
+Sending a composite there fails in the most confusing way available: the bridge
+looks for a tool literally called `frame-main::search`, finds none, and answers
+`webmcp_tool_gone` for a tool the person can see in the list. `frameId` is
+optional on both sides — the daemon falls back to name resolution when it is
+absent or when that frame has since gone — so an older daemon and a newer
+caller still work together in either direction.
+
 ## Invocations are idempotent, and can end in `unknown`
 
 A hosted request can be dropped mid-flight or retried onto another replica, so

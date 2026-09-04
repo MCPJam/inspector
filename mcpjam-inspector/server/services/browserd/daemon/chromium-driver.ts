@@ -380,6 +380,11 @@ export class ChromiumDriver implements BrowserDriver {
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...(action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
       });
       const { output: capped, omitted } = capToolOutput(

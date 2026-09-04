@@ -216,9 +216,14 @@ describe("browserd WebMCP provider", () => {
       signal: controller.signal,
     });
     expect(out.output).toMatchObject({ result: 42 });
+    // The tool's own NAME, with the frame beside it. This assertion used to
+    // pin `f1::search`, which is what let the bug ship: the daemon resolves
+    // `toolKey` by name against the live page, so a composite matched nothing
+    // and every hosted invocation came back `webmcp_tool_gone`.
     expect(commands.at(-1)!.action).toMatchObject({
       kind: "webmcp_invoke",
-      toolKey: "f1::search",
+      toolKey: "search",
+      frameId: "f1",
     });
   });
 
