@@ -1660,6 +1660,42 @@ describe("App hosted OAuth callback handling", () => {
     );
   });
 
+  it("returns a no-project account home without claiming it switched projects", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "none",
+      projects: {},
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") return [];
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "no-fallback" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
   it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();
