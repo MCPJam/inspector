@@ -361,6 +361,7 @@ export function SaveAsTestCaseAction({
                           projectId={projectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          inModal
                           disabled={submitting}
                         />
                       </div>

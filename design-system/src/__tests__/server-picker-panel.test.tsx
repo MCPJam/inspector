@@ -28,9 +28,12 @@ import { ServerPickerPanel } from "../components/server-picker-panel";
 // register its own auto-cleanup. Do it explicitly.
 afterEach(cleanup);
 
-const CONNECTED = { label: "Connected", indicatorColor: "#10b981" };
-const DISCONNECTED = { label: "Disconnected", indicatorColor: "#9ca3af" };
-const FAILED = { label: "Failed", indicatorColor: "#ef4444" };
+const CONNECTED = { label: "Connected", indicatorClassName: "bg-success" };
+const DISCONNECTED = {
+  label: "Disconnected",
+  indicatorClassName: "bg-muted-foreground",
+};
+const FAILED = { label: "Failed", indicatorClassName: "bg-destructive" };
 
 function panelProps(overrides: Record<string, unknown> = {}) {
   return {
@@ -66,10 +69,10 @@ describe("ServerPickerPanel — Servers tab", () => {
     expect(screen.getByText("Broken (App)")).toBeInTheDocument();
   });
 
-  it("paints the dot with the colour it was handed, and does not compute one", () => {
-    // The panel is given `indicatorColor`; mapping a ConnectionStatus onto a
-    // colour is the caller's job, so `failed` can never look like
-    // `disconnected` here by accident.
+  it("paints the dot with the role token it was handed, and computes none", () => {
+    // The panel is given a class, not a colour: an inline colour cannot follow
+    // the theme, and mapping a ConnectionStatus is the caller's job anyway, so
+    // `failed` can never look like `disconnected` here by accident.
     render(
       <ServerPickerPanel
         {...panelProps({
@@ -78,7 +81,8 @@ describe("ServerPickerPanel — Servers tab", () => {
       />,
     );
     const dot = screen.getByTestId("server-status-dot-s");
-    expect(dot).toHaveStyle({ backgroundColor: "#ef4444" });
+    expect(dot).toHaveClass("bg-destructive");
+    expect(dot.getAttribute("style")).toBeNull();
     expect(dot).toHaveAccessibleName("Failed");
   });
 

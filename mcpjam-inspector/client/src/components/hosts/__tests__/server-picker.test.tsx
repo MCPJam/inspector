@@ -7,7 +7,7 @@
  * named after the server when it does not. Getting that wrong either writes a
  * duplicate row per click or silently attaches servers the user never picked.
  */
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -84,6 +84,18 @@ function open(onChange = vi.fn()) {
   render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
   fireEvent.click(screen.getByTestId("server-picker-trigger"));
   return onChange;
+}
+
+/**
+ * The row button for one server. By id, not by accessible name: the trigger
+ * names the selected server too, and the row's name is the status label run
+ * onto the server name with no separator.
+ */
+async function serverRow(serverId: string): Promise<HTMLElement> {
+  const dot = await screen.findByTestId(`server-status-dot-${serverId}`);
+  const row = dot.closest("button");
+  if (!row) throw new Error(`No row button around the dot for ${serverId}`);
+  return row;
 }
 
 describe("ServerPicker — picking a bare server", () => {
@@ -195,6 +207,36 @@ describe("ServerPicker — connection state", () => {
     const connects = await screen.findAllByRole("button", { name: /^Connect$/ });
     fireEvent.click(connects[0]);
     expect(mockState.ensureReady).toHaveBeenCalledWith(["alpha"]);
+  });
+
+  it("paints each dot with a role token, never a fixed colour", async () => {
+    // `getConnectionStatusMeta` still names the state, but its colours are
+    // hex and cannot follow the theme.
+    mockState.runtime = {
+      alpha: { connectionStatus: "connected" },
+      beta: { connectionStatus: "failed" },
+    };
+    open();
+
+    expect(await screen.findByTestId("server-status-dot-srv_1")).toHaveClass(
+      "bg-success",
+    );
+    expect(screen.getByTestId("server-status-dot-srv_2")).toHaveClass(
+      "bg-destructive",
+    );
+    expect(
+      screen.getByTestId("server-status-dot-srv_1").getAttribute("style"),
+    ).toBeNull();
+  });
+
+  it("holds the row's alignment without a colour when the state is unknown", async () => {
+    mockState.runtime = null;
+    open();
+
+    const dot = await screen.findByTestId("server-status-dot-srv_1");
+    // Grey would read as `disconnected`, which is a claim we cannot make here.
+    expect(dot).toHaveClass("bg-transparent");
+    expect(dot).toHaveAccessibleName("Connection state unavailable");
   });
 
   it("offers no Connect at all when there is no runtime to ask", async () => {
@@ -375,14 +417,123 @@ describe("ServerPicker — the window before the query refetches", () => {
       <ServerPicker projectId="p_1" value="att_new" onChange={onChange} />,
     );
     fireEvent.click(screen.getByTestId("server-picker-trigger"));
-    // The trigger now names the server too, so scope the click to the row.
-    fireEvent.click(
-      await screen.findByRole("button", { name: /Connected alpha|^alpha$/ }),
+    fireEvent.click(await serverRow("srv_1"));
+
+    // Reuse reports the bridged row rather than writing a second one, which
+    // would collide on the derived name and be rejected by the backend.
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+    expect(onChange.mock.calls[1][0]).toBe("att_new");
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps naming the selection when the query outlives the bridge timeout", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const onChange = vi.fn();
+      const { rerender } = render(
+        <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+      );
+      fireEvent.click(screen.getByTestId("server-picker-trigger"));
+      fireEvent.click(await screen.findByText("alpha"));
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+      rerender(
+        <ServerPicker projectId="p_1" value="att_new" onChange={onChange} />,
+      );
+
+      // The bridge has a timeout so a parent that moves `value` elsewhere
+      // cannot strand it. Firing it while the row is still the selection
+      // blanks the trigger instead.
+      await act(async () => {
+        vi.advanceTimersByTime(10_000);
+      });
+
+      expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+        "alpha",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("ServerPicker — a write already in flight", () => {
+  it("mints once when a row is clicked twice before the write lands", async () => {
+    // `creating` is state, so it is not readable by the second click in the
+    // same tick. Two rows in a row hits the same window.
+    mockState.createSpy = vi.fn(
+      () => new Promise((resolve) => setTimeout(() => resolve({ _id: "att_new" }), 20)),
+    );
+    open();
+    const row = await serverRow("srv_1");
+
+    fireEvent.click(row);
+    fireEvent.click(row);
+
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores a second server while the first is still being written", async () => {
+    mockState.runtime = {
+      alpha: { connectionStatus: "connected" },
+      beta: { connectionStatus: "connected" },
+    };
+    mockState.createSpy = vi.fn(
+      () => new Promise((resolve) => setTimeout(() => resolve({ _id: "att_new" }), 20)),
+    );
+    open();
+
+    fireEvent.click(await serverRow("srv_1"));
+    fireEvent.click(await serverRow("srv_2"));
+
+    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+    expect(mockState.createSpy.mock.calls[0][0].serverIds).toEqual(["srv_1"]);
+  });
+});
+
+describe("ServerPicker — clearing back to no selection", () => {
+  const SOLO = {
+    _id: "att_solo",
+    name: "alpha",
+    serverIds: ["srv_1"],
+    resolvedServerNames: ["alpha"],
+  };
+
+  it("offers a clear control only where the caller can act on it", () => {
+    // Surfaces that require a server pass no handler; offering them a control
+    // that leads nowhere would promise a state they do not accept.
+    mockState.attachments = [SOLO];
+    render(
+      <ServerPicker projectId="p_1" value="att_solo" onChange={vi.fn()} />,
+    );
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+  });
+
+  it("reports the clear instead of guessing an id for it", () => {
+    mockState.attachments = [SOLO];
+    const onClearSelection = vi.fn();
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_solo"
+        onChange={vi.fn()}
+        onClearSelection={onClearSelection}
+      />,
     );
 
-    await new Promise((r) => setTimeout(r, 40));
-    // A second mint collides on the derived name and the backend rejects it.
-    expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByTestId("server-picker-clear"));
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows nothing to clear when nothing is selected", () => {
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value={null}
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
   });
 });
 

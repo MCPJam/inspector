@@ -612,6 +612,7 @@ export function ConvertSessionDialogCore({
                           projectId={effectiveProjectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
+                          inModal
                           disabled={isSubmitting}
                         />
                       </div>
