@@ -79,10 +79,25 @@ export const HOST_LOGO_OPTIONS = Object.entries(LOGO_BY_HOST_ID).map(
   }),
 );
 
-// Hosts whose mark is essentially black or white (ChatGPT, Codex, Cursor,
-// Copilot, Goose, Cline, Notion) have no usable brand hue to tint with — a
-// neutral gray keeps their circle reading neutral instead of arbitrarily
-// colored, which is what the design's near-neutral swatches show.
+/**
+ * Third-party brand hues, and deliberately NOT design-system role tokens.
+ *
+ * `AGENTS.md` keeps the MCPJam palette in `design-system/src/tokens.css` and
+ * bans literal colors elsewhere — that rule governs *role* colors, the ones
+ * that must track the theme. These are external brand facts, the same
+ * category as the logo files they sit beside in this module and as the host
+ * chrome literals in `scenario-composer-appearance.ts`: Slack's purple is
+ * Slack's whether MCPJam is light, dark, or on a preset, so routing it
+ * through a theme-tracking role token would be wrong, and publishing it into
+ * the generated `DESIGN.md` front matter would claim it as ours.
+ *
+ * Only the tint's *backdrop* is themed, via the `var(--card)` mix below.
+ *
+ * Hosts whose mark is essentially black or white (ChatGPT, Codex, Cursor,
+ * Copilot, Goose, Cline, Notion) have no usable brand hue to tint with — a
+ * neutral gray keeps their circle reading neutral instead of arbitrarily
+ * colored, which is what the design's near-neutral swatches show.
+ */
 const NEUTRAL_HOST_TINT = "#6E6E80";
 
 const TINT_BY_HOST_ID: Record<string, string> = {

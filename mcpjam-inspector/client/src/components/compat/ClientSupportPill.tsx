@@ -3,6 +3,7 @@ import type { ServerWithName } from "@/state/app-types";
 import { useHostCompatReports } from "@/lib/host-compat/use-host-compat";
 import type { HostCompatReport } from "@/lib/host-compat/types";
 import type { HostThemeMode } from "@/lib/client-styles";
+import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getHostTintBackground } from "@/lib/host-ui-metadata";
 import { getCompatDisplayStatus } from "@/components/compat/verdict-meta";
 
@@ -197,11 +198,16 @@ export function ClientSupportPill({
   onOpenDetails?: () => void;
 }) {
   const { reports, analysisStatus } = useHostCompatReports(server);
+  // Hosts with a themed mark (Goose, Cline) ship a light and a dark logo;
+  // without the active theme the view falls back to "light" and renders a
+  // light-on-dark mark in dark mode.
+  const themeMode = usePreferencesStore((s) => s.themeMode);
   return (
     <ClientSupportPillView
       serverName={server.name}
       reports={reports}
       onOpenDetails={onOpenDetails}
+      themeMode={themeMode}
       analysisStatus={analysisStatus}
     />
   );
