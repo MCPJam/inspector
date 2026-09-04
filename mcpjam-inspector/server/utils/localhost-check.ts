@@ -311,6 +311,15 @@ function stripPort(host: string): string {
  * it so both gates agree on the configured allowlist (a host allowlisted for
  * token delivery is also accepted as a request Origin), while origin validation
  * keeps its own exact-origin rule for localhost (specific scheme + port).
+ *
+ * `*.domain` semantics, on purpose and worth knowing: it matches the apex
+ * (`domain` itself) AND any subdomain at ANY depth (`a.b.domain`), because the
+ * match is `=== domain || endsWith(".domain")`. This is broader than the
+ * `ALLOWED_ORIGINS` wildcard (`matchesAllowedOrigin`), whose `*` spans exactly
+ * one label and never the apex. The asymmetry is intentional: this list is the
+ * host allowlist, not an origin pattern. For request Origins the extra breadth
+ * is additionally gated behind `MCPJAM_ALLOW_WILDCARD_ORIGINS` (see
+ * origin-validation.ts).
  */
 export function hostnameMatchesAllowlist(
   hostnameWithoutPort: string,
