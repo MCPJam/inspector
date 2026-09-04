@@ -2,6 +2,7 @@ import { memo, type CSSProperties, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { HostThemeMode } from "@/lib/client-styles";
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -49,7 +50,7 @@ function getClientLogo(
     haystack.includes("claude-desktop") ||
     haystack.includes("claude desktop")
   )
-    return claudeLogo; // TODO: swap for the Claude Desktop asset once it lands
+    return claudeDesktopLogo;
   if (haystack.includes("claude")) return claudeLogo;
   if (haystack.includes("mistral") || haystack.includes("le chat"))
     return mistralLogo;

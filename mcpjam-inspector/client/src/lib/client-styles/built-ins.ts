@@ -1,4 +1,5 @@
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -322,7 +323,7 @@ export const CLAUDE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
     label: "Claude Desktop",
     shortLabel: "Claude Desktop-style host",
     pickerDescription: "Claude desktop app chrome",
-    logoSrc: claudeLogo,
+    logoSrc: claudeDesktopLogo,
     family: "claude",
     resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
     loadingIndicator: ClaudeMarkIndicator,
