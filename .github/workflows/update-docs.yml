@@ -17,13 +17,51 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR_DIFF=$(gh api \
-            -H "Accept: application/vnd.github.v3.diff" \
-            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }})
-
-          FILES_CHANGED=$(gh api \
+          # The diff travels to the next step through the ENVIRONMENT, and a
+          # single environment variable cannot exceed 128 KiB on Linux
+          # (MAX_ARG_STRLEN). A PR touching a checked-in generated bundle — the
+          # browserd daemon ships as one base64 blob, and its diff ran to 400 KB
+          # — died here with "Argument list too long" before the agent ran at
+          # all. It is the diff's SIZE that matters, not the number of files, so
+          # any large PR could hit this.
+          #
+          # Two guards, because either alone leaves the job breakable: skip
+          # generated and vendored files, then hard-cap what is left well under
+          # the limit. Nothing dropped could teach a documentation agent
+          # anything; all of it is enough to break the job.
+          gh api --paginate \
             /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
-            --jq '[.[] | .filename] | join(", ")')
+            > pr-files.json
+
+          # ONE pattern, and ONE capped set, for both outputs. A file list
+          # naming a file whose patch the agent never sees is an invitation to
+          # write about it from imagination — which is just as true when the
+          # patch is missing because the cap dropped it as when a filter did.
+          SKIP='(^|/)dist/|\.generated\.|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$'
+
+          # The budget is applied per FILE, in jq, using `utf8bytelength`.
+          # Slicing the joined string instead would cut a patch in half and
+          # would count CHARACTERS — and the limit being respected here is a
+          # byte limit, so a diff full of em-dashes would sail past a cap that
+          # looked correct.
+          CAPPED=$(jq -c --arg skip "$SKIP" '
+            [ .[]
+              | select((.filename | test($skip)) | not)
+              | { filename: .filename,
+                  entry: "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")" } ]
+            | reduce .[] as $f ({ kept: [], bytes: 0 };
+                (.bytes + ($f.entry | utf8bytelength) + 1) as $next
+                | if $next <= 100000 then { kept: (.kept + [$f]), bytes: $next } else . end)
+            | { diff: (.kept | map(.entry) | join("\n")),
+                files: (.kept | map(.filename) | join(", ")) }
+          ' pr-files.json)
+
+          # Here-strings, not pipes: `head`-style truncation lets the reader
+          # close early, the writer takes SIGPIPE and exits 141, and any step
+          # that later runs under `pipefail` fails on exactly the large diffs
+          # this cap exists to handle.
+          PR_DIFF=$(jq -r '.diff' <<< "$CAPPED")
+          FILES_CHANGED=$(jq -r '.files' <<< "$CAPPED")
 
           echo "pr_diff<<EOF" >> $GITHUB_OUTPUT
           echo "$PR_DIFF" >> $GITHUB_OUTPUT
