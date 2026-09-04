@@ -8,6 +8,7 @@ import { realpathSync, rmSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import {
+  everythingServerConfig,
   startMockHttpServer,
   startMockStreamableHttpServer,
   MOCK_TOOLS,
@@ -197,10 +198,7 @@ describe("MCPClientManager", () => {
 
     beforeAll(async () => {
       manager = new MCPClientManager();
-      await manager.connectToServer("everything", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("everything", everythingServerConfig());
     }, 60000);
 
     afterAll(async () => {
@@ -276,10 +274,7 @@ describe("MCPClientManager", () => {
     it("inherits parent process env for stdio servers", async () => {
       process.env[inheritedEnvKey] = "from-parent";
 
-      await manager.connectToServer("env-inherit", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("env-inherit", everythingServerConfig());
 
       const result = await manager.executeTool("env-inherit", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
@@ -290,13 +285,11 @@ describe("MCPClientManager", () => {
     it("lets explicit stdio env override inherited parent values", async () => {
       process.env[overrideEnvKey] = "from-parent";
 
-      await manager.connectToServer("env-override", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("env-override", everythingServerConfig({
         env: {
           [overrideEnvKey]: "from-config",
         },
-      });
+      }));
 
       const result = await manager.executeTool("env-override", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
@@ -644,16 +637,10 @@ describe("MCPClientManager", () => {
     });
 
     it("should throw when connecting to already connected server", async () => {
-      await manager.connectToServer("duplicate", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("duplicate", everythingServerConfig());
 
       await expect(
-        manager.connectToServer("duplicate", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
-        })
+        manager.connectToServer("duplicate", everythingServerConfig())
       ).rejects.toThrow('MCP server "duplicate" is already connected');
     }, 30000);
 

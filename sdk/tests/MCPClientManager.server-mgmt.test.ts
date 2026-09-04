@@ -1,4 +1,5 @@
 import { MCPClientManager } from "../src/mcp-client-manager";
+import { everythingServerConfig } from "./mock-servers";
 
 describe("MCPClientManager", () => {
   describe("server management", () => {
@@ -13,43 +14,32 @@ describe("MCPClientManager", () => {
     });
 
     it("should list registered servers", async () => {
-      await manager.connectToServer("server1", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("server1", everythingServerConfig());
 
       const servers = manager.listServers();
       expect(servers).toContain("server1");
     }, 30000);
 
     it("should check if server exists", async () => {
-      await manager.connectToServer("myserver", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("myserver", everythingServerConfig());
 
       expect(manager.hasServer("myserver")).toBe(true);
       expect(manager.hasServer("nonexistent")).toBe(false);
     }, 30000);
 
     it("should get server config", async () => {
-      await manager.connectToServer("configured", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("configured", everythingServerConfig({
         timeout: 30000,
-      });
+      }));
 
       const config = manager.getServerConfig("configured");
       expect(config).toBeDefined();
-      expect((config as any).command).toBe("npx");
+      expect((config as any).command).toBe(process.execPath);
       expect((config as any).timeout).toBe(30000);
     }, 30000);
 
     it("should get server summaries", async () => {
-      await manager.connectToServer("summary-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("summary-test", everythingServerConfig());
 
       const summaries = manager.getServerSummaries();
       expect(summaries.length).toBe(1);
@@ -58,10 +48,7 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should get server capabilities", async () => {
-      await manager.connectToServer("caps-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("caps-test", everythingServerConfig());
 
       const capabilities = manager.getServerCapabilities("caps-test");
       expect(capabilities).toBeDefined();
@@ -69,10 +56,7 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should advertise MCP Apps UI extension by default", async () => {
-      await manager.connectToServer("extensions-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("extensions-test", everythingServerConfig());
 
       const info = manager.getInitializationInfo("extensions-test");
       expect(info).toBeDefined();
@@ -87,15 +71,13 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should merge legacy per-server capabilities on top of default UI capabilities", async () => {
-      await manager.connectToServer("legacy-caps-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("legacy-caps-test", everythingServerConfig({
         capabilities: {
           experimental: {
             inspectorProfile: {},
           },
         } as any,
-      });
+      }));
 
       const info = manager.getInitializationInfo("legacy-caps-test");
       expect(info).toBeDefined();
@@ -126,15 +108,13 @@ describe("MCPClientManager", () => {
       );
 
       try {
-        await managerWithDefaults.connectToServer("manager-default-caps-test", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
+        await managerWithDefaults.connectToServer("manager-default-caps-test", everythingServerConfig({
           capabilities: {
             experimental: {
               inspectorProfile: {},
             },
           } as any,
-        });
+        }));
 
         const info = managerWithDefaults.getInitializationInfo(
           "manager-default-caps-test"
@@ -162,9 +142,7 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should let per-server clientCapabilities bypass defaults and legacy merge", async () => {
-      await manager.connectToServer("custom-caps-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("custom-caps-test", everythingServerConfig({
         capabilities: {
           experimental: {
             legacyPath: {},
@@ -175,7 +153,7 @@ describe("MCPClientManager", () => {
             exactPath: {},
           },
         } as any,
-      });
+      }));
 
       const info = manager.getInitializationInfo("custom-caps-test");
       expect(info).toBeDefined();
@@ -204,10 +182,7 @@ describe("MCPClientManager", () => {
     it("should advertise elicitation when a global callback is registered before connect", async () => {
       manager.setElicitationCallback(() => ({ action: "cancel" } as any));
 
-      await manager.connectToServer("elicitation-enabled-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("elicitation-enabled-test", everythingServerConfig());
 
       const info = manager.getInitializationInfo("elicitation-enabled-test");
       expect(info).toBeDefined();
@@ -221,16 +196,14 @@ describe("MCPClientManager", () => {
     it("should advertise an explicit {form,url} elicitation shape verbatim when a callback is registered", async () => {
       manager.setElicitationCallback(() => ({ action: "cancel" } as any));
 
-      await manager.connectToServer("elicitation-url-mode-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("elicitation-url-mode-test", everythingServerConfig({
         clientCapabilities: {
           elicitation: {
             form: {},
             url: {},
           },
         } as any,
-      });
+      }));
 
       const info = manager.getInitializationInfo("elicitation-url-mode-test");
       expect(info).toBeDefined();
@@ -244,16 +217,14 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should strip an explicit {form,url} elicitation shape when no callback is registered", async () => {
-      await manager.connectToServer("elicitation-url-mode-stripped-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("elicitation-url-mode-stripped-test", everythingServerConfig({
         clientCapabilities: {
           elicitation: {
             form: {},
             url: {},
           },
         } as any,
-      });
+      }));
 
       const info = manager.getInitializationInfo(
         "elicitation-url-mode-stripped-test"
@@ -267,15 +238,13 @@ describe("MCPClientManager", () => {
     it("should keep exact clientCapabilities free of elicitation when not explicitly configured", async () => {
       manager.setElicitationCallback(() => ({ action: "cancel" } as any));
 
-      await manager.connectToServer("exact-caps-no-elicitation-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
+      await manager.connectToServer("exact-caps-no-elicitation-test", everythingServerConfig({
         clientCapabilities: {
           experimental: {
             exactPath: {},
           },
         } as any,
-      });
+      }));
 
       const info = manager.getInitializationInfo(
         "exact-caps-no-elicitation-test"
@@ -292,10 +261,7 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should preserve the initialize payload after elicitation is enabled post-connect", async () => {
-      await manager.connectToServer("late-elicitation-test", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("late-elicitation-test", everythingServerConfig());
 
       const before = manager.getInitializationInfo("late-elicitation-test");
       expect(before).toBeDefined();
@@ -313,10 +279,7 @@ describe("MCPClientManager", () => {
     }, 30000);
 
     it("should remove server", async () => {
-      await manager.connectToServer("to-remove", {
-        command: "npx",
-        args: ["-y", "@modelcontextprotocol/server-everything"],
-      });
+      await manager.connectToServer("to-remove", everythingServerConfig());
 
       expect(manager.hasServer("to-remove")).toBe(true);
 
