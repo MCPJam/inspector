@@ -119,7 +119,7 @@ jobs:
       - name: Run SDK → CLI verification
         # Everything except the inspector suite, which the sharded `inspector`
         # job below owns. Running all ten suites in one job meant the inspector
-        # (1189 files / ~14k tests) contended with the other nine for the same
+        # (1745 files / ~14k tests) contended with the other nine for the same
         # four cores and pinned the job at ~18 min.
         #
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
@@ -177,15 +177,21 @@ jobs:
 
   inspector:
     runs-on: ubuntu-latest
-    name: Inspector Tests ${{ matrix.shard }}/4
+    name: Inspector Tests ${{ matrix.shard }}/6
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.62.1-noble
     strategy:
       # Report every shard's result. Cancelling siblings on the first failure
-      # would hide unrelated breakage in the other three quarters of the suite.
+      # would hide unrelated breakage in the other five sixths of the suite.
       fail-fast: false
+      # Six, not four. Once installs are a cache restore (see the `test` job),
+      # this job's own ~4.7-5.7 min of tests is the gate's long pole, and two
+      # more shards are cheap when the expensive part is no longer the install.
+      # All four of the places that carry the denominator — this list, the job
+      # name, the step name and --shard — must move together, or the job
+      # silently runs the wrong fraction of the suite.
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
 
     steps:
       - name: Checkout code
@@ -223,11 +229,11 @@ jobs:
         # in that chain, so it builds the SDK itself.
         run: npm run build -w @mcpjam/sdk
 
-      - name: Run inspector tests (shard ${{ matrix.shard }}/4)
+      - name: Run inspector tests (shard ${{ matrix.shard }}/6)
         # `npm run test -w @mcpjam/inspector` also fires the workspace's
         # `pretest` bundling step, which the suite needs; args after `--` reach
         # vitest. Shards split by test file, so no shard depends on another.
-        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/4
+        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
   e2e:
     runs-on: ubuntu-latest
