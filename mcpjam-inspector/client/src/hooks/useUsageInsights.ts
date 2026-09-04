@@ -117,10 +117,10 @@ export const SIGNALS_VERSION_WITH_THEMES = 3;
 
 export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
 
-export type InsightsSankeyNode = {
+export type InsightsSankeyNode<S extends string = SankeyStage> = {
   /** `${stage}:${key}` — unique across stages, whose keys can collide. */
   id: string;
-  stage: SankeyStage;
+  stage: S;
   key: string;
   label: string;
   count: number;
@@ -131,7 +131,7 @@ export type InsightsSankeyNode = {
   clickable: boolean;
 };
 
-export type InsightsSankeyLink = {
+export type InsightsSankeyLink<S extends string = SankeyStage> = {
   source: string;
   target: string;
   count: number;
@@ -143,16 +143,16 @@ export type InsightsSankeyLink = {
   discordantCount?: number;
 };
 
-export type InsightsSankey = {
-  nodes: InsightsSankeyNode[];
-  links: InsightsSankeyLink[];
+export type InsightsSankey<S extends string = SankeyStage> = {
+  nodes: InsightsSankeyNode<S>[];
+  links: InsightsSankeyLink<S>[];
   foldedGoalCount: number;
   /**
    * Themes collapsed into `__other__` per stage. Absent on responses from a
    * server that only folded the goal column — read `foldedGoalCount` then, or
    * the disclosure disappears while a fold is still in effect.
    */
-  foldedByStage?: Partial<Record<SankeyStage, number>>;
+  foldedByStage?: Partial<Record<S, number>>;
 };
 
 export type OutcomeCounts = Record<SessionOutcome, number>;

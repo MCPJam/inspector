@@ -63,6 +63,18 @@ const routeFacts = vi.hoisted(() => ({
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const routeFactsFlag = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
+const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
+const failureGroups = vi.hoisted(() => ({
+  calls: [] as Array<{ enabled?: boolean; suiteId?: string }>,
+  current: {
+    latest: null as unknown,
+    inFlight: null as unknown,
+    loading: false,
+    requesting: false,
+    error: null as string | null,
+    request: () => Promise.resolve(),
+  },
+}));
 const descriptionExperiment = vi.hoisted(() => ({
   calls: [] as Array<{ enabled?: boolean }>,
   current: {
@@ -92,7 +104,15 @@ vi.mock("posthog-js/react", () => ({
       ? routeFactsFlag.current
       : flag === "description-experiments-enabled"
         ? descriptionExperimentFlag.current
-        : flagEnabled.current,
+        : flag === "evaluate-failure-groups-enabled"
+          ? failureGroupsFlag.current
+          : flagEnabled.current,
+}));
+vi.mock("@/hooks/use-suite-failure-groups", () => ({
+  useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
+    failureGroups.calls.push(args);
+    return failureGroups.current;
+  },
 }));
 vi.mock("../use-eval-description-experiment", () => ({
   useEvalDescriptionExperiment: (args: { enabled?: boolean }) => {
@@ -230,6 +250,16 @@ afterEach(() => {
   flagEnabled.current = false;
   routeFactsFlag.current = false;
   descriptionExperimentFlag.current = false;
+  failureGroupsFlag.current = false;
+  failureGroups.calls = [];
+  failureGroups.current = {
+    latest: null,
+    inFlight: null,
+    loading: false,
+    requesting: false,
+    error: null,
+    request: () => Promise.resolve(),
+  };
   descriptionExperiment.calls = [];
   descriptionExperiment.current = {
     status: "idle",
@@ -550,6 +580,41 @@ describe("EvaluateRunContent", () => {
     if (advisory) {
       expect(
         body.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("does not query or render failure groups when the flag is off", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: { ...RUN, suiteId: "suite_1" } as EvalSuiteRun,
+    });
+    expect(failureGroups.calls).toEqual([]);
+    expect(screen.queryByTestId("failure-groups-card")).toBeNull();
+  });
+
+  it("renders the failure-groups card below the advisory section when the flag is on", () => {
+    failureGroupsFlag.current = true;
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: { ...RUN, suiteId: "suite_1" } as EvalSuiteRun,
+    });
+    const card = screen.getByTestId("failure-groups-card");
+    expect(card).toBeInTheDocument();
+    const advisory = screen.queryByTestId("run-advisory-section");
+    if (advisory) {
+      expect(
+        card.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_PRECEDING,
       ).toBeTruthy();
     }
   });

@@ -28,6 +28,7 @@ import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains
 import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
+import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
 import { useRouteFactsEnabled } from "@/hooks/useRouteFactsEnabled";
 import {
   evalRunDecisionRevision,
@@ -53,6 +54,7 @@ import {
   isEmulatedDescriptionExperimentEngine,
   readRunExecutionEngine,
 } from "./description-experiment-model";
+import { FailureGroupsCard } from "./failure-groups-card";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
@@ -179,6 +181,7 @@ export function EvaluateRunContent({
   const descriptionOverride =
     run.configSnapshot?.toolDescriptionOverride ?? null;
 
+  const failureGroupsEnabled = useFailureGroupsEnabled();
   const routeFactsEnabled = useRouteFactsEnabled();
   const persistedRouteFacts = useEvalRunRouteFacts({
     projectId,
@@ -518,6 +521,10 @@ export function EvaluateRunContent({
         triageRows={triageRows}
         showActionableFindings={Boolean(serverQuality.result)}
       />
+
+      {failureGroupsEnabled && run.suiteId ? (
+        <FailureGroupsCard suiteId={String(run.suiteId)} />
+      ) : null}
 
       {fallbackBody ? (
         <div className="flex min-h-0 flex-1 flex-col border-t border-border/40">

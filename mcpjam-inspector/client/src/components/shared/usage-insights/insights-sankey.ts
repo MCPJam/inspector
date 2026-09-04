@@ -30,15 +30,19 @@ export const STAGE_TITLES: Record<SankeyStage, string> = {
  * for people, so it is passed through untouched. Only the two sentinels get
  * text from here, because neither is a theme.
  */
-export function stageValueLabel(node: InsightsSankeyNode): string {
+export function stageValueLabel<S extends string = SankeyStage>(
+  node: InsightsSankeyNode<S>,
+): string {
   if (node.key === SANKEY_UNLABELED) return "Not analyzed";
   return node.label;
 }
 
-export function parseNodeId(id: string): { stage: SankeyStage; key: string } {
+export function parseNodeId<S extends string = SankeyStage>(
+  id: string,
+): { stage: S; key: string } {
   const separator = id.indexOf(":");
   return {
-    stage: id.slice(0, separator) as SankeyStage,
+    stage: id.slice(0, separator) as S,
     key: id.slice(separator + 1),
   };
 }
@@ -75,7 +79,7 @@ export function isDiscordantLink(link: {
  * neither.
  */
 export function selectionForNode(
-  node: InsightsSankeyNode,
+  node: InsightsSankeyNode<SankeyStage>,
 ): InsightsSelection | null {
   if (!node.clickable) return null;
   if (node.key === SANKEY_UNLABELED || node.key === SANKEY_OTHER) return null;
@@ -90,8 +94,8 @@ export function selectionForNode(
  * half-expressible link would silently widen to the other endpoint alone.
  */
 export function selectionForLink(
-  source: InsightsSankeyNode,
-  target: InsightsSankeyNode,
+  source: InsightsSankeyNode<SankeyStage>,
+  target: InsightsSankeyNode<SankeyStage>,
 ): InsightsSelection | null {
   const from = selectionForNode(source);
   const to = selectionForNode(target);
@@ -99,17 +103,18 @@ export function selectionForLink(
   return { themes: [...from.themes, ...to.themes] };
 }
 
-export type SankeyLayoutNode = InsightsSankeyNode & {
-  x: number;
-  y: number;
-  height: number;
-  /** Share of this node's own stage, whole percent. */
-  share: number;
-};
+export type SankeyLayoutNode<S extends string = SankeyStage> =
+  InsightsSankeyNode<S> & {
+    x: number;
+    y: number;
+    height: number;
+    /** Share of this node's own stage, whole percent. */
+    share: number;
+  };
 
-export type SankeyLayoutLink = {
-  source: SankeyLayoutNode;
-  target: SankeyLayoutNode;
+export type SankeyLayoutLink<S extends string = SankeyStage> = {
+  source: SankeyLayoutNode<S>;
+  target: SankeyLayoutNode<S>;
   count: number;
   discordant: boolean;
   /** Ribbon geometry: endpoints and thickness. */
@@ -117,9 +122,9 @@ export type SankeyLayoutLink = {
   thickness: number;
 };
 
-export type SankeyLayout = {
-  nodes: SankeyLayoutNode[];
-  links: SankeyLayoutLink[];
+export type SankeyLayout<S extends string = SankeyStage> = {
+  nodes: SankeyLayoutNode<S>[];
+  links: SankeyLayoutLink<S>[];
   width: number;
   height: number;
   /** Echoed back so headers can be drawn at the same x as their column. */
@@ -139,13 +144,14 @@ const PAD = 10;
  * fixed columns and stacked ribbons — small enough to own, and owning it is
  * what makes the columns predictable.
  */
-export function layoutSankey(
-  sankey: InsightsSankey,
+export function layoutSankey<S extends string = SankeyStage>(
+  sankey: InsightsSankey<S>,
   width: number,
   height: number,
   columnX: number[],
-): SankeyLayout {
-  const total = STAGE_ORDER.reduce(
+  stages: readonly S[] = STAGE_ORDER as readonly S[],
+): SankeyLayout<S> {
+  const total = stages.reduce(
     (max, stage) =>
       Math.max(
         max,
@@ -157,32 +163,32 @@ export function layoutSankey(
   );
   const maxNodes = Math.max(
     1,
-    ...STAGE_ORDER.map(
+    ...stages.map(
       (stage) => sankey.nodes.filter((n) => n.stage === stage).length,
     ),
   );
   const scale =
     total > 0 ? (height - PAD * 2 - (maxNodes - 1) * NODE_GAP) / total : 0;
 
-  const laid = new Map<string, SankeyLayoutNode>();
+  const laid = new Map<string, SankeyLayoutNode<S>>();
   const outAt = new Map<string, number>();
   const inAt = new Map<string, number>();
 
-  STAGE_ORDER.forEach((stage, stageIndex) => {
+  stages.forEach((stage, stageIndex) => {
     const column = sankey.nodes.filter((n) => n.stage === stage);
-    const stageTotal = column.reduce((sum, n) => sum + n.count, 0);
+    const columnTotal = column.reduce((sum, n) => sum + n.count, 0);
     const used =
       column.reduce((sum, n) => sum + n.count * scale, 0) +
       Math.max(0, column.length - 1) * NODE_GAP;
     let y = PAD + (height - PAD * 2 - used) / 2;
     for (const node of column) {
       const nodeHeight = Math.max(2, node.count * scale);
-      const entry: SankeyLayoutNode = {
+      const entry: SankeyLayoutNode<S> = {
         ...node,
         x: columnX[stageIndex],
         y,
         height: nodeHeight,
-        share: stageTotal > 0 ? Math.round((node.count / stageTotal) * 100) : 0,
+        share: columnTotal > 0 ? Math.round((node.count / columnTotal) * 100) : 0,
       };
       laid.set(node.id, entry);
       outAt.set(node.id, y);
@@ -194,7 +200,7 @@ export function layoutSankey(
   // Ribbons stack in the same order their endpoints do, so bands never cross
   // inside a single node's face.
   const stageIndexOf = (id: string) =>
-    STAGE_ORDER.indexOf(parseNodeId(id).stage);
+    stages.indexOf(parseNodeId<S>(id).stage);
   const orderOf = (id: string) => sankey.nodes.findIndex((n) => n.id === id);
   const ordered = [...sankey.links].sort(
     (a, b) =>
@@ -203,7 +209,7 @@ export function layoutSankey(
       orderOf(a.target) - orderOf(b.target),
   );
 
-  const links: SankeyLayoutLink[] = [];
+  const links: SankeyLayoutLink<S>[] = [];
   for (const link of ordered) {
     const source = laid.get(link.source);
     const target = laid.get(link.target);
@@ -241,7 +247,10 @@ export function layoutSankey(
 export const SANKEY_NODE_WIDTH = NODE_WIDTH;
 
 /** Sessions in a stage. Every stage sums to the same total, so any one will do. */
-export function stageTotal(sankey: InsightsSankey, stage: SankeyStage): number {
+export function stageTotal<S extends string = SankeyStage>(
+  sankey: InsightsSankey<S>,
+  stage: S,
+): number {
   return sankey.nodes
     .filter((node) => node.stage === stage)
     .reduce((sum, node) => sum + node.count, 0);
