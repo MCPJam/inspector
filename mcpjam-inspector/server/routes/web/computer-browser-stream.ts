@@ -403,14 +403,22 @@ export function createComputerBrowserStreamWsHandler(
           // in completion order lets a stale "you hold it" land after a fresh
           // "they took it back" — re-enabling a viewer's keyboard on somebody
           // else's desktop until the following tick. Only the newest read may
-          // speak.
+          // GRANT input; see the catch for why refusals are not ordered.
           const generation = ++leaseGeneration;
           try {
             const holder = await leaseHolder(live);
             if (generation !== leaseGeneration || closed) return;
             filter.setHoldsInput(holder === viewerId);
           } catch {
-            if (generation !== leaseGeneration || closed) return;
+            // NO generation check here, deliberately. The guard above orders
+            // successes; applying it to failures inverts the module's whole
+            // policy. During a control-plane outage every read takes its full
+            // timeout while fresh ones start every two seconds, so each
+            // failure is always "stale" by the time it lands — and suppressing
+            // them all leaves a viewer's input enabled indefinitely on a lease
+            // nobody can read. Not knowing who holds the browser is not a
+            // reason to let somebody type on it, whichever read found out.
+            if (closed) return;
             filter.setHoldsInput(false);
           }
         };

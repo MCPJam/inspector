@@ -418,6 +418,46 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
     },
   );
 
+  it("fails closed during an outage, when every read is stale by the time it fails", async () => {
+    // The ordering guard applies to SUCCESSES only. During a control-plane
+    // outage each read takes its full timeout while fresh ones start every two
+    // seconds, so every failure is "stale" by the time it lands — ordering
+    // them suppresses all of them and leaves a viewer's input enabled
+    // indefinitely on a lease nobody can read.
+    const gates: Array<(error: Error) => void> = [];
+    let outage = false;
+    const harness = await connected({
+      leaseHolder: () =>
+        outage
+          ? new Promise<string | null>((_r, reject) => gates.push(reject))
+          : Promise.resolve(CLAIMS.userId),
+    });
+    await past(harness);
+    const { events, upstream, client } = harness;
+
+    // The viewer HOLDS the lease, so input is flowing. Without establishing
+    // that first, "input is dropped" is just the default and proves nothing.
+    await new Promise((r) => setTimeout(r, 0));
+    const granted = upstream.sent.length;
+    await events().onMessage?.({ data: POINTER }, client.ws);
+    expect(upstream.sent.length).toBe(granted + 1);
+
+    // Now the control plane stops answering. Two reads pile up, so the first
+    // failure is stale by the time it lands.
+    outage = true;
+    const deadline = Date.now() + 8_000;
+    while (gates.length < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    expect(gates.length).toBeGreaterThanOrEqual(2);
+    gates[0]!(new Error("control plane unreachable"));
+    await new Promise((r) => setTimeout(r, 0));
+
+    const before = upstream.sent.length;
+    await events().onMessage?.({ data: POINTER }, client.ws);
+    expect(upstream.sent.length).toBe(before);
+  }, 20_000);
+
   it("always forwards watching messages, lease or not", async () => {
     const harness = await connected();
     await past(harness);
