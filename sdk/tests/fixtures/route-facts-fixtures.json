@@ -1,0 +1,238 @@
+{
+  "__readme": "Shared fixtures for the eval run ROUTE FACTS contract (schemaVersion 1, routeFactsVersion 1). Loaded by sdk/tests/route-facts.test.ts. Copy the golden sibling (route-facts-golden.json) into mcpjam-backend in PR-3; these accept/reject/roundTrip rows pin the validator. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator. Prod shape counts (122/85/93/32/22) live in __why only — never customer tool names. Synthetic tools are tool_a, tool_b, tool_c.",
+  "accept": [
+    {
+      "__label": "single passing trial, one route, no mismatch",
+      "__why": "The all-pass shape the run page summarises as '1 took tool_a→tool_b'.",
+      "schemaVersion": 1,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_accept",
+      "suiteId": "suite_accept",
+      "catalogState": "loaded",
+      "catalogHash": "hash_accept",
+      "sourceIterationCount": 1,
+      "materializationState": "final",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000,
+      "totalTrials": 1,
+      "includedTrials": 1,
+      "exclusions": {},
+      "cases": [
+        {
+          "caseVariantKey": "case_a\u0000",
+          "caseKey": "case_a",
+          "routes": {
+            "population": "trial",
+            "totalTrials": 1,
+            "includedTrials": 1,
+            "exclusions": {},
+            "routes": [
+              {
+                "pathKey": "tool_a→tool_b",
+                "trials": 1,
+                "passed": 1,
+                "failed": 0
+              }
+            ],
+            "tags": {
+              "noToolCalled": {
+                "state": "measured",
+                "value": 0,
+                "numerator": 0,
+                "denominator": 1,
+                "exclusions": {}
+              },
+              "retried": {
+                "state": "measured",
+                "value": 0,
+                "numerator": 0,
+                "denominator": 1,
+                "exclusions": {}
+              },
+              "looping": {
+                "state": "measured",
+                "value": 0,
+                "numerator": 0,
+                "denominator": 1,
+                "exclusions": {}
+              }
+            },
+            "loopedOn": [],
+            "endedWithQuestion": {
+              "state": "notMeasured",
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "exclusions": {}
+            }
+          },
+          "mismatch": {
+            "state": "measured",
+            "expected": [
+              {
+                "tool": "tool_a",
+                "expectedIn": 1,
+                "notCalledIn": 0,
+                "notCalledInFailed": 0
+              },
+              {
+                "tool": "tool_b",
+                "expectedIn": 1,
+                "notCalledIn": 0,
+                "notCalledInFailed": 0
+              }
+            ],
+            "unexpected": [],
+            "substitutions": []
+          }
+        }
+      ]
+    }
+  ],
+  "reject": [
+    {
+      "__label": "unknown field on a closed object",
+      "__why": "Every object is .strict(); a silent passenger would drift the hosted row from the SDK document.",
+      "schemaVersion": 1,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_reject",
+      "suiteId": "suite_reject",
+      "catalogState": "loaded",
+      "sourceIterationCount": 0,
+      "materializationState": "final",
+      "createdAt": 1,
+      "updatedAt": 1,
+      "totalTrials": 0,
+      "includedTrials": 0,
+      "exclusions": {},
+      "cases": [],
+      "invented": true
+    },
+    {
+      "__label": "schemaVersion 2 is not this contract",
+      "__why": "Absence of a predecessor is why version is a literal 1, not a defaulted number.",
+      "schemaVersion": 2,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_reject",
+      "suiteId": "suite_reject",
+      "catalogState": "loaded",
+      "sourceIterationCount": 0,
+      "materializationState": "final",
+      "createdAt": 1,
+      "updatedAt": 1,
+      "totalTrials": 0,
+      "includedTrials": 0,
+      "exclusions": {},
+      "cases": []
+    },
+    {
+      "__label": "measured rate whose value is not the quotient",
+      "__why": "A rounded 0.33 next to 1/3 is the drift that makes a hosted rate and a re-derived one disagree.",
+      "schemaVersion": 1,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_reject",
+      "suiteId": "suite_reject",
+      "catalogState": "loaded",
+      "sourceIterationCount": 1,
+      "materializationState": "final",
+      "createdAt": 1,
+      "updatedAt": 1,
+      "totalTrials": 1,
+      "includedTrials": 1,
+      "exclusions": {},
+      "cases": [
+        {
+          "caseVariantKey": "case_a\u0000",
+          "routes": {
+            "population": "trial",
+            "totalTrials": 1,
+            "includedTrials": 1,
+            "exclusions": {},
+            "routes": [
+              {
+                "pathKey": "no_tools",
+                "trials": 1,
+                "passed": 0,
+                "failed": 1
+              }
+            ],
+            "tags": {
+              "noToolCalled": {
+                "state": "measured",
+                "value": 0.33,
+                "numerator": 1,
+                "denominator": 1,
+                "exclusions": {}
+              },
+              "retried": {
+                "state": "measured",
+                "value": 0,
+                "numerator": 0,
+                "denominator": 1,
+                "exclusions": {}
+              },
+              "looping": {
+                "state": "measured",
+                "value": 0,
+                "numerator": 0,
+                "denominator": 1,
+                "exclusions": {}
+              }
+            },
+            "loopedOn": [],
+            "endedWithQuestion": {
+              "state": "notMeasured",
+              "value": null,
+              "numerator": 0,
+              "denominator": 0,
+              "exclusions": {}
+            }
+          },
+          "mismatch": { "state": "notMeasured" }
+        }
+      ]
+    },
+    {
+      "__label": "included plus exclusions do not equal total",
+      "__why": "A quietly shrunk denominator is indistinguishable from a server that quietly improved.",
+      "schemaVersion": 1,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_reject",
+      "suiteId": "suite_reject",
+      "catalogState": "notLoaded",
+      "sourceIterationCount": 2,
+      "materializationState": "final",
+      "createdAt": 1,
+      "updatedAt": 1,
+      "totalTrials": 2,
+      "includedTrials": 2,
+      "exclusions": { "cancelled": 1 },
+      "cases": []
+    }
+  ],
+  "roundTrip": [
+    {
+      "__label": "zero-trial run omits every optional",
+      "__why": "No .default() may materialise an omitted key. A run cancelled before its first iteration is a valid unmeasured document.",
+      "schemaVersion": 1,
+      "routeFactsVersion": 1,
+      "measurementUnit": "trial",
+      "runId": "run_empty",
+      "suiteId": "suite_empty",
+      "catalogState": "notLoaded",
+      "sourceIterationCount": 0,
+      "materializationState": "provisional",
+      "createdAt": 1700000000000,
+      "updatedAt": 1700000000000,
+      "totalTrials": 0,
+      "includedTrials": 0,
+      "exclusions": {},
+      "cases": []
+    }
+  ]
+}

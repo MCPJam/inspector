@@ -1,0 +1,230 @@
+{
+  "schemaVersion": 1,
+  "routeFactsVersion": 1,
+  "measurementUnit": "trial",
+  "runId": "run_golden",
+  "suiteId": "suite_golden",
+  "runGroupId": "group_golden",
+  "configRevision": "cfg_golden",
+  "runCompletedAt": 1700000100000,
+  "catalogState": "loaded",
+  "catalogHash": "hash_golden",
+  "sourceIterationCount": 11,
+  "sourceMaxUpdatedAt": 1700000090000,
+  "materializationState": "final",
+  "createdAt": 1700000150000,
+  "updatedAt": 1700000200000,
+  "totalTrials": 11,
+  "includedTrials": 8,
+  "exclusions": {
+    "cancelled": 1,
+    "executionFailed": 1,
+    "evaluatorError": 1
+  },
+  "cases": [
+    {
+      "caseVariantKey": "case_a\u0000",
+      "caseKey": "case_a",
+      "routes": {
+        "population": "trial",
+        "totalTrials": 10,
+        "includedTrials": 7,
+        "exclusions": {
+          "cancelled": 1,
+          "executionFailed": 1,
+          "evaluatorError": 1
+        },
+        "routes": [
+          {
+            "pathKey": "no_tools",
+            "trials": 2,
+            "passed": 1,
+            "failed": 1
+          },
+          {
+            "pathKey": "tool_a",
+            "trials": 2,
+            "passed": 0,
+            "failed": 2
+          },
+          {
+            "pathKey": "tool_a→tool_b",
+            "trials": 1,
+            "passed": 1,
+            "failed": 0
+          },
+          {
+            "pathKey": "tool_b",
+            "trials": 1,
+            "passed": 0,
+            "failed": 1
+          },
+          {
+            "pathKey": "tool_z",
+            "trials": 1,
+            "passed": 0,
+            "failed": 1
+          }
+        ],
+        "tags": {
+          "noToolCalled": {
+            "state": "measured",
+            "value": 0.2857142857142857,
+            "numerator": 2,
+            "denominator": 7,
+            "exclusions": {
+              "cancelled": 1,
+              "executionFailed": 1,
+              "evaluatorError": 1
+            }
+          },
+          "retried": {
+            "state": "measured",
+            "value": 0.2857142857142857,
+            "numerator": 2,
+            "denominator": 7,
+            "exclusions": {
+              "cancelled": 1,
+              "executionFailed": 1,
+              "evaluatorError": 1
+            }
+          },
+          "looping": {
+            "state": "measured",
+            "value": 0.14285714285714285,
+            "numerator": 1,
+            "denominator": 7,
+            "exclusions": {
+              "cancelled": 1,
+              "executionFailed": 1,
+              "evaluatorError": 1
+            }
+          }
+        },
+        "loopedOn": [
+          {
+            "tool": "tool_a",
+            "trials": 1
+          }
+        ],
+        "endedWithQuestion": {
+          "state": "measured",
+          "value": 0.5,
+          "numerator": 1,
+          "denominator": 2,
+          "exclusions": {
+            "cancelled": 1,
+            "executionFailed": 1,
+            "evaluatorError": 1
+          }
+        }
+      },
+      "mismatch": {
+        "state": "measured",
+        "expected": [
+          {
+            "tool": "tool_a",
+            "expectedIn": 6,
+            "notCalledIn": 3,
+            "notCalledInFailed": 3
+          },
+          {
+            "tool": "tool_b",
+            "expectedIn": 3,
+            "notCalledIn": 2,
+            "notCalledInFailed": 2
+          }
+        ],
+        "unexpected": [
+          {
+            "tool": "tool_b",
+            "calledIn": 1,
+            "calledInFailed": 1,
+            "catalog": "inCatalog"
+          },
+          {
+            "tool": "tool_z",
+            "calledIn": 1,
+            "calledInFailed": 1,
+            "catalog": "outsideCatalog"
+          }
+        ],
+        "substitutions": [
+          {
+            "expected": "tool_a",
+            "observed": "tool_b",
+            "trials": 1
+          }
+        ]
+      }
+    },
+    {
+      "caseVariantKey": "case_b\u0000",
+      "caseKey": "case_b",
+      "routes": {
+        "population": "trial",
+        "totalTrials": 1,
+        "includedTrials": 1,
+        "exclusions": {},
+        "routes": [
+          {
+            "pathKey": "tool_a→tool_b",
+            "trials": 1,
+            "passed": 1,
+            "failed": 0
+          }
+        ],
+        "tags": {
+          "noToolCalled": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "retried": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 1,
+            "exclusions": {}
+          },
+          "looping": {
+            "state": "measured",
+            "value": 0,
+            "numerator": 0,
+            "denominator": 1,
+            "exclusions": {}
+          }
+        },
+        "loopedOn": [],
+        "endedWithQuestion": {
+          "state": "notMeasured",
+          "value": null,
+          "numerator": 0,
+          "denominator": 0,
+          "exclusions": {}
+        }
+      },
+      "mismatch": {
+        "state": "measured",
+        "expected": [
+          {
+            "tool": "tool_a",
+            "expectedIn": 1,
+            "notCalledIn": 0,
+            "notCalledInFailed": 0
+          },
+          {
+            "tool": "tool_b",
+            "expectedIn": 1,
+            "notCalledIn": 0,
+            "notCalledInFailed": 0
+          }
+        ],
+        "unexpected": [],
+        "substitutions": []
+      }
+    }
+  ]
+}
