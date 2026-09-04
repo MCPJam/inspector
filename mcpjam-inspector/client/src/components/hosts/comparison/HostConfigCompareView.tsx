@@ -664,9 +664,6 @@ export function HostConfigCompareView({
               disableListView={showDescriptions}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
-              supportFilter={supportFilter}
-              onSupportFilterChange={setSupportFilter}
-              supportFiltersDisabled={!hasFieldSearchQuery}
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={handleShowDescriptionsChange}
               descriptionsDisabled={viewMode === "list"}
