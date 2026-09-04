@@ -1,17 +1,7 @@
 import { Hono } from "hono";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import audioTranscriptions, {
-  resetAudioUploadRateLimitForTests,
-} from "../audio-transcriptions.js";
-import { getProductionGuestAuthSession } from "../../../utils/guest-auth.js";
+import audioTranscriptions from "../audio-transcriptions.js";
 import { hashGuestSpendIp } from "../../../utils/guest-spend-ip.js";
-
-vi.mock("../../../utils/guest-auth.js", () => ({
-  getProductionGuestAuthSession: vi.fn().mockResolvedValue({
-    authHeader: "Bearer guest-test-token",
-    guestId: "guest-test-id",
-  }),
-}));
 
 vi.mock("../../../utils/guest-spend-ip.js", () => ({
   hashGuestSpendIp: vi.fn().mockResolvedValue("guest-ip-hash"),
@@ -39,7 +29,6 @@ async function postTranscription(body: Record<string, unknown>) {
 describe("audio transcriptions route", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    resetAudioUploadRateLimitForTests();
     vi.mocked(hashGuestSpendIp).mockResolvedValue("guest-ip-hash");
     vi.stubGlobal(
       "fetch",
@@ -245,12 +234,43 @@ describe("audio transcriptions route", () => {
     });
   });
 
-  it("uses the same guest bearer fallback as free models for local voice transcription", async () => {
+  // MJ-002. This route used to answer a bearer-less request by fetching a
+  // server-side guest session and spending MCPJam's own credential on it. The
+  // handler now refuses, and — the assertion that matters — refuses BEFORE any
+  // upstream request, so nothing is billed. The bearer requirement is also
+  // enforced a layer up by the `/audio/*` mount; this covers the handler on its
+  // own, so a future remount cannot quietly restore the old behaviour.
+  it("refuses an unauthenticated transcription without spending anything", async () => {
+    process.env.CONVEX_HTTP_URL = "https://convex.example";
+
+    const response = await app.request("/api/web/audio/transcriptions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Real-IP": "203.0.113.10",
+      },
+      body: JSON.stringify({
+        input_audio: {
+          data: "UklGRiQA",
+          format: "webm",
+        },
+      }),
+    });
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({
+      code: "UNAUTHORIZED",
+      message: "Bearer token required",
+    });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("forwards the caller's own bearer and never substitutes one", async () => {
     process.env.CONVEX_HTTP_URL = "https://convex.example";
     vi.mocked(fetch).mockImplementation(async (url, init) => {
       expect(String(url)).toBe("https://convex.example/audio/transcriptions");
       expect(new Headers(init?.headers).get("authorization")).toBe(
-        "Bearer guest-test-token"
+        "Bearer caller-guest-token"
       );
       expect(JSON.parse(String(init?.body))).toMatchObject({
         model: "openai/whisper-1",
@@ -269,7 +289,7 @@ describe("audio transcriptions route", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "X-MCP-Session-Auth": "Bearer local-session-token",
+        Authorization: "Bearer caller-guest-token",
         "X-Real-IP": "203.0.113.10",
       },
       body: JSON.stringify({
@@ -286,62 +306,11 @@ describe("audio transcriptions route", () => {
       ok: true,
       text: "Guest audio.",
     });
-    expect(getProductionGuestAuthSession).toHaveBeenCalledTimes(1);
     const [, init] = vi.mocked(fetch).mock.calls[0];
     expect(new Headers(init?.headers).get("x-mcpjam-guest-ip-hash")).toBe(
       "guest-ip-hash"
     );
     expect(fetch).toHaveBeenCalledTimes(1);
-  });
-
-  it("rate limits repeated guest audio uploads with the shared guest limiter", async () => {
-    process.env.CONVEX_HTTP_URL = "https://convex.example";
-    vi.mocked(fetch).mockImplementation(
-      async () =>
-        new Response(JSON.stringify({ ok: true, text: "Guest audio." }), {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        })
-    );
-
-    for (let index = 0; index < 60; index++) {
-      const response = await app.request("/api/web/audio/transcriptions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "X-Real-IP": "203.0.113.20",
-        },
-        body: JSON.stringify({
-          input_audio: {
-            data: `UklGRiQA${index}`,
-            format: "webm",
-          },
-        }),
-      });
-      expect(response.status).toBe(200);
-    }
-
-    const response = await app.request("/api/web/audio/transcriptions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Real-IP": "203.0.113.20",
-      },
-      body: JSON.stringify({
-        input_audio: {
-          data: "UklGRiQArate-limited",
-          format: "webm",
-        },
-      }),
-    });
-
-    expect(response.status).toBe(429);
-    await expect(response.json()).resolves.toEqual({
-      code: "RATE_LIMITED",
-      message:
-        "Guest rate limit exceeded. Try again later or sign in for higher limits.",
-    });
-    expect(fetch).toHaveBeenCalledTimes(60);
   });
 
   it("rejects project-backed transcription on the MCP mount", async () => {
@@ -382,7 +351,10 @@ describe("audio transcriptions route", () => {
 
     const response = await app.request("/api/web/audio/transcriptions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
       body: JSON.stringify({
         input_audio: {
           data: "UklGRiQA",
@@ -414,7 +386,10 @@ describe("audio transcriptions route", () => {
 
     const responsePromise = app.request("/api/web/audio/transcriptions", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: "Bearer user-token",
+      },
       body: JSON.stringify({
         input_audio: {
           data: "UklGRiQA",

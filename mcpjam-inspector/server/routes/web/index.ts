@@ -3,6 +3,7 @@ import { webError, webErrorFromRoute, mapRuntimeError } from "./errors.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { denyGuests } from "../../middleware/deny-guests.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
+import { audioDailyLimitMiddleware } from "../../middleware/audio-daily-limit.js";
 import { conformanceRunRateLimitMiddleware } from "../../middleware/conformance-run-rate-limit.js";
 import servers from "./servers.js";
 import tools from "./tools.js";
@@ -111,6 +112,17 @@ web.use("/server/*", bearerAuthMiddleware, guestRateLimitMiddleware);
 // deliberately open: it returns only a boolean and a public URL, and the
 // client needs it before any authed flow to know where the terminal lives.
 web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
+// Voice transcription is billed per audio-minute against MCPJam's own provider
+// balance, so it is metered on TWO keys. The per-guest limiter above bounds one
+// identity; `audioDailyLimitMiddleware` bounds the IP, because a guest identity
+// is free to mint (10/min per IP) and a per-identity budget alone therefore
+// bounds a polite caller and nothing else.
+web.use(
+  "/audio/*",
+  bearerAuthMiddleware,
+  guestRateLimitMiddleware,
+  audioDailyLimitMiddleware
+);
 // Cloud Skills are a project-MEMBERSHIP resource in Convex
 // (`convex/projectSkills.ts`); every op needs a bearer (forwarded to Convex for
 // authz). Guests are closed out HERE and not left to the backend: every
@@ -141,8 +153,11 @@ web.route("/swarm", swarmGenerate);
 web.route("/evals", evals);
 web.route("/environments", environments);
 web.route("/export", exporter);
-// Voice transcription handles user-bearer forwarding and guest fallback inside
-// the proxy route so local/npx users can spend MCPJam credits without BYOK.
+// Voice transcription forwards the CALLER's bearer and has no credential of its
+// own to fall back on. Every surface supplies one: the client attaches a guest
+// or WorkOS bearer to `/api/web/*` on hosted and local alike (see
+// `HOSTED_AUTH_PATH_PREFIXES` in client/src/lib/session-token.ts), and local
+// runtimes mint their own guest via POST /api/web/guest-session.
 web.route("/audio", audioTranscriptions);
 web.route("/chat-v2", chatV2);
 // Token-only (signed proxy token IS the auth) — NO bearerAuthMiddleware, like

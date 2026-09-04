@@ -1,12 +1,6 @@
 import { Hono } from "hono";
-import type { Context } from "hono";
 import type { ContentfulStatusCode } from "hono/utils/http-status";
-import {
-  guestRateLimitMiddleware,
-  resetGuestRateLimitForTests,
-} from "../../middleware/guest-rate-limit.js";
-import { validateGuestTokenDetailedAsync } from "../../services/guest-token.js";
-import { getProductionGuestAuthSession } from "../../utils/guest-auth.js";
+import { ErrorCode } from "../web/errors.js";
 import { getClientIp } from "../../utils/client-ip.js";
 import { hashGuestSpendIp } from "../../utils/guest-spend-ip.js";
 import { reportRouteFailure, readRequestJson } from "../../utils/route-error-report.js";
@@ -43,10 +37,6 @@ interface TranscriptionRequestBody {
   temperature?: unknown;
   provider?: unknown;
   audioDurationSeconds?: unknown;
-}
-
-export function resetAudioUploadRateLimitForTests(): void {
-  resetGuestRateLimitForTests();
 }
 
 function readErrorMessage(payload: unknown, fallback: string): string {
@@ -246,23 +236,6 @@ function createTranscriptionSignal(inboundSignal?: AbortSignal): {
   };
 }
 
-async function setGuestIdentityFromAuthHeader(
-  c: Context,
-  authHeader: string
-): Promise<void> {
-  if (!authHeader.startsWith("Bearer ")) return;
-  const token = authHeader.slice("Bearer ".length);
-  const result = await validateGuestTokenDetailedAsync(token);
-  if (result.valid && result.guestId) {
-    c.set("guestId", result.guestId);
-  }
-}
-
-async function checkGuestRateLimit(c: Context): Promise<Response | null> {
-  const response = await guestRateLimitMiddleware(c, async () => undefined);
-  return response instanceof Response ? response : null;
-}
-
 audioTranscriptions.post("/transcriptions", async (c) => {
   let body: TranscriptionRequestBody;
   try {
@@ -305,32 +278,19 @@ audioTranscriptions.post("/transcriptions", async (c) => {
     | ReturnType<typeof createTranscriptionSignal>
     | undefined;
   try {
-    let authHeader = c.req.header("authorization");
-    if (authHeader) {
-      await setGuestIdentityFromAuthHeader(c, authHeader);
-    } else {
-      try {
-        const guestSession = await getProductionGuestAuthSession();
-        authHeader = guestSession?.authHeader;
-        if (guestSession?.guestId) {
-          c.set("guestId", guestSession.guestId);
-        }
-      } catch {
-        authHeader = undefined;
-      }
-      if (!authHeader) {
-        return c.json(
-          {
-            error:
-              "Unable to authenticate with MCPJam servers. Please try again or sign in.",
-          },
-          503
-        );
-      }
+    // The CALLER's bearer, and only ever the caller's. This route once fell
+    // back to a server-side guest session when the header was absent, which
+    // spent MCPJam's own credential on an anonymous request (MJ-002). The
+    // `/audio/*` mount now requires a bearer, so reaching here without one is
+    // not possible — and if a future mount changes that, this refuses rather
+    // than paying for it.
+    const authHeader = c.req.header("authorization");
+    if (!authHeader) {
+      return c.json(
+        { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
+        401
+      );
     }
-
-    const rateLimitResponse = await checkGuestRateLimit(c);
-    if (rateLimitResponse) return rateLimitResponse;
 
     transcriptionSignal = createTranscriptionSignal(c.req.raw.signal);
     const transcriptionPayload = {
