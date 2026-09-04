@@ -5862,6 +5862,32 @@ evals.post(
         rewriteRunId: rewrite.runId,
         error: error instanceof Error ? error.message : String(error),
       });
+      // Both arms are already running detached. Without the arm ids the
+      // experiment can never reach a report, so it does not stay `launching`:
+      // the arms are stopped and the experiment marked, each best-effort so
+      // one refusal cannot mask the other.
+      for (const armRunId of [original.runId, rewrite.runId]) {
+        try {
+          await convexClient.mutation("testSuites:cancelTestSuiteRun" as any, {
+            runId: armRunId,
+          });
+        } catch (cancelError) {
+          logger.warn("[v1 evals] failed to cancel an unrecorded arm", {
+            experimentId,
+            runId: armRunId,
+            error:
+              cancelError instanceof Error
+                ? cancelError.message
+                : String(cancelError),
+          });
+        }
+      }
+      await markDescriptionExperimentFailed(
+        token,
+        experimentId,
+        "ARMS_NOT_RECORDED",
+        error instanceof Error ? error.message : String(error),
+      );
       throw translateConvexError(error, {
         resource: "Eval description experiment",
       });

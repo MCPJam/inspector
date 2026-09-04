@@ -454,6 +454,35 @@ describe("eval description experiments", () => {
         }),
       );
     });
+
+    it("stops both arms and marks failed when the arms cannot be recorded", async () => {
+      mockHappyLaunch();
+      mockConvex({
+        "descriptionExperiments:recordArms": () => {
+          throw new Error("arm mismatch");
+        },
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      for (const runId of ["run_original", "run_rewrite"]) {
+        expect(convexMutationMock).toHaveBeenCalledWith(
+          "testSuites:cancelTestSuiteRun",
+          { runId },
+        );
+      }
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "descriptionExperiments:markFailed",
+        expect.objectContaining({
+          experimentId: EXPERIMENT_ID,
+          errorCode: "ARMS_NOT_RECORDED",
+        }),
+      );
+    });
   });
 
   describe("GET …/eval-description-experiments/:e", () => {

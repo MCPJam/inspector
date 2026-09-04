@@ -2715,16 +2715,12 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
-  const toolDescriptionOverride = readToolDescriptionOverrideMarker(
-    toolDescriptionOverrideRaw,
-  );
-  const descriptionOverrides = descriptionOverridesFromMarker(
-    toolDescriptionOverride,
-  );
-  throwIfDescriptionOverrideOnHarness(
-    toolDescriptionOverride,
-    harnessOfHostConfig(suiteHostConfig),
-  );
+  // Resolved inside the setup `try` below: a refused or unreadable override
+  // is a run-setup failure, and the catch there is what marks the precreated
+  // iteration rows failed. Thrown out here, the run would go `failed` while
+  // its rows stayed `pending`.
+  let toolDescriptionOverride: ToolDescriptionOverrideMarker | undefined;
+  let descriptionOverrides: Record<string, string> | undefined;
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
@@ -2798,6 +2794,17 @@ export const runEvalSuiteWithAiSdk = async ({
   let resolvedToolPolicyWarnings: string[] | undefined;
 
   try {
+    toolDescriptionOverride = readToolDescriptionOverrideMarker(
+      toolDescriptionOverrideRaw,
+    );
+    descriptionOverrides = descriptionOverridesFromMarker(
+      toolDescriptionOverride,
+    );
+    throwIfDescriptionOverrideOnHarness(
+      toolDescriptionOverride,
+      harnessOfHostConfig(suiteHostConfig),
+    );
+
     // When a host policy is present we need the full tool set (including
     // app-only) so `applyVisibilityPolicyAndCountSignals` can:
     //   1. Count `toolsTotalBefore` honestly, and
@@ -4183,6 +4190,20 @@ const runLocalIteration = async ({
     }
 
     logger.error("[evals] streaming iteration failed", error);
+
+    // A prep failure fires before the stamp is written; the failed rewrite
+    // trial still has to say which experiment it belonged to, or the report
+    // cannot tell it apart from a trial that was never part of one.
+    if (
+      toolDescriptionOverride &&
+      !iterationMetadataBase.descriptionExperiment
+    ) {
+      stampDescriptionExperiment(
+        iterationMetadataBase,
+        toolDescriptionOverride,
+        false,
+      );
+    }
 
     let errorMessage: string | undefined = undefined;
     let errorDetails: string | undefined = undefined;

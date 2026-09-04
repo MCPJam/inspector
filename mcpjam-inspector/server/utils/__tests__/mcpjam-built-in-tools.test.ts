@@ -588,4 +588,22 @@ describe("live server operations", () => {
     expect(approval("search_registry_directory")).toBe(false);
     expect(approval("list_registry_connections")).toBe(false);
   });
+
+  it("requires approval for both description-experiment spends, like the judge", () => {
+    const { client } = makeClient({});
+    const approval = (id: string) =>
+      (
+        buildMcpjamTool(id, {
+          ...toolOpts,
+          client,
+          requireToolApproval: true,
+        }) as { needsApproval?: boolean }
+      ).needsApproval;
+
+    expect(approval("request_eval_run_judge")).toBe(true);
+    expect(approval("propose_eval_description_rewrite")).toBe(true);
+    expect(approval("start_eval_description_experiment")).toBe(true);
+    // The read closes the loop and spends nothing.
+    expect(approval("get_eval_description_experiment")).toBe(false);
+  });
 });
