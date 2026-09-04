@@ -1959,6 +1959,23 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
 
+### `cloud eval revisions`
+
+List a suite's settings history, newest first: one entry per committed edit,
+with who made it, which stored fields moved, the note they left, and how many
+runs were launched against it. Rows carry no configuration snapshots.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum revisions to return, 1–100 (defaults to 25) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous page |
+
+```bash
+mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
+```
+
 ### `cloud eval checks list`
 
 List the repositories whose pull requests run an eval suite, plus the

@@ -93,8 +93,10 @@ const TYPE_ONLY_DAEMON_MODULES = new Set([
  */
 const REQUIRED_NON_DAEMON_INPUTS = [
   "server/services/browserd/protocol.ts",
+  "server/services/browserd/frame-stream.ts",
   "server/services/webmcp-inspector/launch-args.ts",
   "server/services/webmcp-inspector/frame-throttle.ts",
+  "server/services/webmcp-inspector/frame-pacer.ts",
   "shared/jpeg-dimensions.ts",
 ];
 
@@ -144,16 +146,21 @@ describe("browserd bundle freshness", () => {
       "the daemon bundle now imports the Electron engine; it is uploaded to a " +
         "box with no Electron, so every hosted session would fail to boot",
     ).toEqual([]);
-    // Nothing from `node_modules` either, whatever its name. The filter that
-    // builds this list keys on the path, and a hoisted dependency arrives as
-    // `../node_modules/…`, so a package that got bundled would be recorded
-    // here rather than skipped — this is the assertion that notices.
+    // Nothing from `node_modules` either. This is a real assertion now: the
+    // bundler records the RAW metafile inputs, so a package inlined into the
+    // artifact appears in this list. It was NOT real when the list was built by
+    // removing every `node_modules/` path first — that made the check a
+    // tautology which passed whatever got bundled, and it sat here passing.
+    //
+    // The build still refuses first, where the failure names the import that
+    // pulled the package in. This is the second line: it fails on a committed
+    // artifact even if someone bundles by other means.
     expect(
       MCPJAM_BROWSERD_SOURCE_FILES.filter((file) =>
         file.includes("node_modules/"),
       ),
-      "a dependency was bundled into the daemon; it runs on a box with only " +
-        "what this file ships, so it must be external or vendored deliberately",
+      "a dependency was inlined into the daemon; it runs on a box with only " +
+        "what this artifact ships, so it must be external or vendored",
     ).toEqual([]);
     // Belt and braces on the artifact itself, because the input list above
     // cannot see everything: esbuild keeps an EXTERNAL specifier as a literal

@@ -61,6 +61,15 @@ export interface DriverPage {
    * unmatched selector as an error rather than as an empty page.
    */
   a11ySnapshot(rootSelector?: string): Promise<A11yNode | null>;
+  /**
+   * The page's readable text, markdown-ish and uncapped — the driver applies
+   * the byte budget.
+   *
+   * One shared in-page function (`PAGE_TEXT_FN`) on every engine, for the same
+   * reason the DOM signal is shared: two engines that describe one page
+   * differently make an observation recorded on one meaningless on the other.
+   */
+  pageText(): Promise<string>;
   /** The console ring buffer this page has accumulated, oldest first. */
   consoleEntries(): readonly ConsoleEntry[];
   /**

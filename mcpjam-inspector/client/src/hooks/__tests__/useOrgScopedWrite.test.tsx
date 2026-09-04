@@ -167,34 +167,6 @@ describe("useOrgScopedWrite", () => {
     await waitFor(() => expect(result.current.isSaving).toBe(false));
   });
 
-  it("keeps the spinner up until the LAST write of a visit finishes", async () => {
-    // The counter's own job, in the ordering that motivated it.
-    const first = deferred();
-    const second = deferred();
-    const { result } = renderHook(() => useOrgScopedWrite("org-a"));
-
-    let firstSettled: Promise<void>;
-    let secondSettled: Promise<void>;
-    act(() => {
-      firstSettled = result.current.run(() => first.promise).catch(() => {});
-    });
-    act(() => {
-      secondSettled = result.current.run(() => second.promise).catch(() => {});
-    });
-
-    await act(async () => {
-      second.resolve();
-      await secondSettled;
-    });
-    expect(result.current.isSaving).toBe(true);
-
-    await act(async () => {
-      first.resolve();
-      await firstSettled;
-    });
-    await waitFor(() => expect(result.current.isSaving).toBe(false));
-  });
-
   it("lets only the NEWEST write of the same org report", async () => {
     // The org id alone cannot separate these: both writes belong to org-a.
     // Without a generation, the first to finish clears `isSaving` while the

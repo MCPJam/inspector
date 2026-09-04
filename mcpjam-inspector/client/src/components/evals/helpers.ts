@@ -693,6 +693,7 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "border-l-warning/50";
     case RESULT_STATUS.CANCELLED:
       return "border-l-muted";
@@ -718,6 +719,7 @@ export function evalStatusMiniBarClasses(result: string): string {
       return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/50";
@@ -1053,7 +1055,14 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;

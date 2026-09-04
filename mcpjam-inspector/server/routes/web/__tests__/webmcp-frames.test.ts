@@ -35,7 +35,6 @@ vi.mock("../../../config.js", () => ({
 }));
 
 import {
-  createFramePacer,
   createWebMcpFramesWsHandler,
   isFramePingMessage,
   toCallbackSocket,
@@ -43,6 +42,9 @@ import {
   resetWebMcpFramesForTests,
   shutdownWebMcpFrameSockets,
 } from "../webmcp-frames.js";
+// The pacer moved next to `frame-throttle.ts` so the browserd daemon can share
+// it; this route still owns `toCallbackSocket`, which is WebSocket-specific.
+import { createFramePacer } from "../../../services/webmcp-inspector/frame-pacer.js";
 import { generateSessionToken } from "../../../services/session-token.js";
 import {
   startWebMcpSession,

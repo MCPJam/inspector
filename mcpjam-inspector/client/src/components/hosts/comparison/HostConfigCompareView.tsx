@@ -72,7 +72,10 @@ import {
   toggleHostCompareSelection,
   writeHostCompareSelection,
 } from "./host-compare-selection";
-import { buildPresetCompareEntries } from "./host-compare-presets";
+import {
+  buildPresetCompareEntries,
+  demoteMcpjamHosts,
+} from "./host-compare-presets";
 import {
   clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
@@ -237,30 +240,24 @@ export function HostConfigCompareView({
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
 
   // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
-  // comparison columns even when the user hasn't created them.
+  // read-only comparison columns even when the user cannot create them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
   const cursorCliEnabled = useCursorHostEnabled();
-  // The flags gate the New Host template picker, not this matrix — so they
-  // apply only to the signed-in surface, where a preset column sits next to
-  // hosts you can actually create. In public (caniuse) mode the matrix is
-  // reference data about third-party hosts and shows every catalog row;
-  // gating it there hid Claude Code and Codex from every anonymous visitor,
-  // since the hooks read an unresolved flag as off and the flags are scoped
-  // to @mcpjam.com users.
-  //
-  // DERIVED from the shared FLAG_GATED_HOSTS map, not typed out per host: the
-  // hand-written version gated each id with its own `if`, so a newly gated host
-  // was hidden on the five surfaces that share the map and silently offered
-  // here.
+  // Claude Code and Codex are always useful as read-only reference data here,
+  // like on caniuse.dev. Their creation flags still gate the New Client picker
+  // and every mutation path. Other gated hosts keep their existing rollout.
   const excludedPresetTemplateIds = useMemo(() => {
     if (presetOnly) return new Set<string>();
-    return excludedFlagGatedHostIds({
+    const excluded = excludedFlagGatedHostIds({
       claudeCode: claudeCodeEnabled,
       codex: codexEnabled,
       cursorCli: cursorCliEnabled,
     });
+    excluded.delete("claude-code");
+    excluded.delete("codex");
+    return excluded;
   }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
   // Public caniuse still displays flag-gated hosts as reference data, but must
   // not offer their verify links because those links auto-create a host, and
@@ -281,15 +278,28 @@ export function HostConfigCompareView({
         excludedTemplateIds: excludedPresetTemplateIds,
     });
   }, [compareCatalog, excludedPresetTemplateIds]);
-  // Real created hosts first, then presets — what the selector chips iterate.
-  const hosts = useMemo(() => {
-    if (!presetOnly) return [...liveHosts, ...presets.hosts];
-    return sortCaniusePresetHosts(presets.hosts);
-  }, [liveHosts, presetOnly, presets.hosts]);
-
   const [subjectsByHost, setSubjectsByHost] = useState<
     Record<string, HostComparisonSubject>
   >({});
+
+  // Real created hosts first, then presets — what the selector chips iterate.
+  // Presets carry the caniuse order on BOTH surfaces: the ranking is a
+  // deliberate reading order, and having the same clients appear in a
+  // different sequence on Compare than on caniuse.dev made the two pages hard
+  // to read against each other. Live hosts keep their own order, since that
+  // one belongs to the user.
+  // MCPJam goes last on BOTH surfaces: it is the emulator doing the comparing,
+  // so it should not hold one of the leading chip slots. Still present and
+  // still selectable — this demotes rather than filters. On caniuse its preset
+  // already sorted past the inline limit, but relying on where it happens to
+  // land is what let it back in once live hosts joined the list.
+  const hosts = useMemo(() => {
+    const orderedPresets = sortCaniusePresetHosts(presets.hosts);
+    const ordered = presetOnly
+      ? orderedPresets
+      : [...liveHosts, ...orderedPresets];
+    return demoteMcpjamHosts(ordered, subjectsByHost);
+  }, [liveHosts, presetOnly, presets.hosts, subjectsByHost]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
@@ -670,9 +680,6 @@ export function HostConfigCompareView({
               disableListView={showDescriptions}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
-              supportFilter={supportFilter}
-              onSupportFilterChange={setSupportFilter}
-              supportFiltersDisabled={!hasFieldSearchQuery}
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={handleShowDescriptionsChange}
               descriptionsDisabled={viewMode === "list"}

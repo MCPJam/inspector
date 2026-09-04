@@ -20,7 +20,6 @@ import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
-import type { SupportFilterMode } from "./support-level";
 import { PUBLIC_CAN_I_USE_INLINE_PRESET_IDS } from "./caniuse-capability-catalog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
@@ -39,29 +38,6 @@ const INITIAL_INLINE_CHIP_LIMIT = Math.max(
   PUBLIC_CAN_I_USE_INLINE_PRESET_IDS.length,
 );
 
-const SUPPORT_FILTERS: ReadonlyArray<{
-  value: SupportFilterMode;
-  label: string;
-  title: string;
-}> = [
-  { value: "all", label: "All", title: "Show every field" },
-  {
-    value: "missing",
-    label: "Missing",
-    title: "Capabilities not supported by at least one client",
-  },
-  {
-    value: "partial",
-    label: "Partial",
-    title: "Capabilities that are partial / Auto for at least one client",
-  },
-  {
-    value: "supported",
-    label: "Full",
-    title: "Capabilities supported by every client",
-  },
-];
-
 interface HostCompareSelectorProps {
   hosts: ReadonlyArray<HostListItem>;
   selectedHostIds: ReadonlyArray<string>;
@@ -72,9 +48,6 @@ interface HostCompareSelectorProps {
   disableListView?: boolean;
   divergingOnly: boolean;
   onDivergingOnlyChange: (enabled: boolean) => void;
-  supportFilter: SupportFilterMode;
-  onSupportFilterChange: (mode: SupportFilterMode) => void;
-  supportFiltersDisabled?: boolean;
   showDescriptions: boolean;
   onShowDescriptionsChange: (enabled: boolean) => void;
   descriptionsDisabled?: boolean;
@@ -93,9 +66,6 @@ export function HostCompareSelector({
   disableListView = false,
   divergingOnly,
   onDivergingOnlyChange,
-  supportFilter,
-  onSupportFilterChange,
-  supportFiltersDisabled = false,
   showDescriptions,
   onShowDescriptionsChange,
   descriptionsDisabled = false,
@@ -157,44 +127,6 @@ export function HostCompareSelector({
             disabled={disabled}
           />
         ) : null}
-        {mobileOptimized ? null : (
-          <div
-            role="group"
-            aria-label="Filter by support level"
-            className="flex items-center gap-0.5 rounded-full border border-border p-0.5"
-          >
-            {SUPPORT_FILTERS.map((f) => {
-              const active = supportFilter === f.value;
-              const filterDisabled = disabled || supportFiltersDisabled;
-              return (
-                <button
-                  key={f.value}
-                  type="button"
-                  disabled={filterDisabled}
-                  title={
-                    supportFiltersDisabled
-                      ? "Search for a capability before filtering by support"
-                      : f.title
-                  }
-                  aria-pressed={active}
-                  data-testid={`support-filter-${f.value}`}
-                  onClick={() => onSupportFilterChange(f.value)}
-                  className={cn(
-                    "rounded-full px-2.5 py-0.5 text-[11px] transition-colors",
-                    mobileOptimized && "shrink-0",
-                    "disabled:cursor-not-allowed disabled:opacity-50",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
-                    active
-                      ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  {f.label}
-                </button>
-              );
-            })}
-          </div>
-        )}
         <label
           className={cn(
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",

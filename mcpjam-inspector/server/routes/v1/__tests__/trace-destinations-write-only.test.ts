@@ -176,12 +176,42 @@ describe("the trace-destinations surface is write-only for header values", () =>
 
     for (const body of byId) {
       const path = body.slice(0, body.indexOf('",'));
-      const preflights = body.includes("assertDestinationInOrg(");
-      const scopingRead = /readDestination\([^;]*?\btrue\b/s.test(body);
+
+      // POSITION, not presence. Asserting only that a scope check appears
+      // somewhere in the handler let the very regression this test names pass:
+      // a route that mutated first and checked the organization afterwards
+      // contains both, in the wrong order.
+      //
+      // READS COUNT TOO, which is why this is not just the writes. Fetching a
+      // destination's rows before deciding whether the caller may address it
+      // hands over another organization's data whether or not anything is
+      // written afterwards — `listBackfillJobs` on a foreign id would be
+      // exactly that. So the decision precedes the first call of ANY kind that
+      // reaches Convex. (`readDestination` and `assertDestinationInOrg` issue
+      // their queries inside themselves, not in the handler body, so a
+      // handler that decides properly has nothing before its decision.)
+      const firstConvexCallAt = Math.min(
+        ...["client.action(", "client.mutation(", "client.query("]
+          .map((call) => body.indexOf(call))
+          .filter((at) => at >= 0)
+          .concat(Number.MAX_SAFE_INTEGER),
+      );
+      const preflightAt = body.indexOf("assertDestinationInOrg(");
+      const scopingReadAt = body.search(/readDestination\([^;]*?\btrue\b/s);
+      const decidedAt = Math.min(
+        ...[preflightAt, scopingReadAt]
+          .filter((at) => at >= 0)
+          .concat(Number.MAX_SAFE_INTEGER),
+      );
+
       expect(
-        preflights || scopingRead,
-        `${path} serves a caller-supplied id without deciding scope first`,
-      ).toBe(true);
+        decidedAt,
+        `${path} serves a caller-supplied id without deciding scope at all`,
+      ).toBeLessThan(Number.MAX_SAFE_INTEGER);
+      expect(
+        decidedAt,
+        `${path} reaches Convex before it decides whether the caller may address this id`,
+      ).toBeLessThan(firstConvexCallAt);
     }
 
     // And the preflight itself is a scoping read, or every route above

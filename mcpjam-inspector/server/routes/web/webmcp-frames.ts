@@ -49,6 +49,11 @@ import { WEBMCP_INSPECTOR_ENABLED } from "../../config.js";
 import { isAllowedRequestOrigin } from "../../middleware/origin-validation.js";
 import { validateToken } from "../../services/session-token.js";
 import { webMcpSessions } from "../../services/webmcp-inspector/session-registry.js";
+import {
+  createFramePacer,
+  type CallbackSocket,
+  type FramePacer,
+} from "../../services/webmcp-inspector/frame-pacer.js";
 import { encodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
 import { logger } from "../../utils/logger.js";
 
@@ -139,78 +144,6 @@ export function isFramePingMessage(data: string): boolean {
   }
   if (typeof parsed !== "object" || parsed === null) return false;
   return (parsed as { type?: unknown }).type === "ping";
-}
-
-/** A socket that reports when the OS actually took the bytes. */
-interface CallbackSocket {
-  send(data: Uint8Array, cb: (error?: Error) => void): void;
-}
-
-export interface FramePacer {
-  /** Offer an encoded frame. Sent now, or held as the one pending frame. */
-  push(bytes: Uint8Array): void;
-  /** Stop sending and drop anything held. */
-  close(): void;
-}
-
-/**
- * Pace frames to what the socket actually drains, holding at most one.
- *
- * CALLBACK-ONLY, with no `bufferedAmount` threshold, and that is the design
- * rather than a simplification. A threshold branch can wedge: the send
- * callback fires while `bufferedAmount` is still above the line, nothing is
- * shipped, and no later event ever wakes the held frame — the pane freezes
- * with the stream healthy. Waiting on the callback bounds kernel-side
- * buffering to a single frame (≤256 KiB by `WEBMCP_FRAME_MAX_BYTES`) with no
- * such branch to get wrong.
- *
- * One pending slot, newest wins — the same philosophy as the SSE route's held
- * frame and the hub's coalesced slot. A queue would make a slow consumer
- * watch an ever-older page; one slot converges it on the current paint.
- */
-export function createFramePacer(
-  sink: CallbackSocket,
-  /**
-   * Called when a held frame is REPLACED — the only unambiguous "this socket
-   * could not take a frame" event this transport produces.
-   *
-   * Deliberately not called on the first deferral: holding one frame while a
-   * send is outstanding is the pacer working, not the link failing. It is the
-   * overwrite that means a second frame arrived before the first was taken.
-   */
-  onDrop?: () => void,
-): FramePacer {
-  let inFlight = false;
-  let pending: Uint8Array | undefined;
-  let closed = false;
-
-  const ship = (bytes: Uint8Array) => {
-    inFlight = true;
-    sink.send(bytes, () => {
-      inFlight = false;
-      if (closed) return;
-      const next = pending;
-      pending = undefined;
-      if (next) ship(next);
-    });
-  };
-
-  return {
-    push(bytes) {
-      if (closed) return;
-      if (inFlight) {
-        // Newest wins: an older frame nobody has seen yet is worth nothing.
-        if (pending !== undefined) onDrop?.();
-        pending = bytes;
-        return;
-      }
-      ship(bytes);
-    },
-    close() {
-      closed = true;
-      pending = undefined;
-    },
-  };
 }
 
 /**

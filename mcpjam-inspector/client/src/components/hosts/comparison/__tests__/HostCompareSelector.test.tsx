@@ -29,8 +29,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -56,8 +54,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={onToggleHost}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -90,8 +86,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -116,8 +110,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -150,8 +142,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -176,8 +166,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
       />,
@@ -189,56 +177,6 @@ describe("HostCompareSelector", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("emits the chosen support filter mode", async () => {
-    const user = userEvent.setup();
-    const onSupportFilterChange = vi.fn();
-
-    render(
-      <HostCompareSelector
-        hosts={[makeHost("h_a", "Claude")]}
-        selectedHostIds={["h_a"]}
-        subjectsByHost={{}}
-        onToggleHost={vi.fn()}
-        divergingOnly={false}
-        onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={onSupportFilterChange}
-        showDescriptions={false}
-        onShowDescriptionsChange={vi.fn()}
-      />,
-    );
-
-    await user.click(screen.getByTestId("support-filter-missing"));
-    expect(onSupportFilterChange).toHaveBeenCalledWith("missing");
-  });
-
-  it("does not emit support filter changes while support filters are disabled", async () => {
-    const user = userEvent.setup();
-    const onSupportFilterChange = vi.fn();
-
-    render(
-      <HostCompareSelector
-        hosts={[makeHost("h_a", "Claude")]}
-        selectedHostIds={["h_a"]}
-        subjectsByHost={{}}
-        onToggleHost={vi.fn()}
-        divergingOnly={false}
-        onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={onSupportFilterChange}
-        supportFiltersDisabled
-        showDescriptions={false}
-        onShowDescriptionsChange={vi.fn()}
-      />,
-    );
-
-    const missingFilter = screen.getByTestId("support-filter-missing");
-    expect(missingFilter).toBeDisabled();
-
-    await user.click(missingFilter);
-    expect(onSupportFilterChange).not.toHaveBeenCalled();
-  });
-
   it("disables the diverging toggle when the selector is disabled", () => {
     render(
       <HostCompareSelector
@@ -248,8 +186,6 @@ describe("HostCompareSelector", () => {
         onToggleHost={vi.fn()}
         divergingOnly={false}
         onDivergingOnlyChange={vi.fn()}
-        supportFilter="all"
-        onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
         disabled

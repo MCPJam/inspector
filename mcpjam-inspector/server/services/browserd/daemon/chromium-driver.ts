@@ -29,12 +29,17 @@ import { computeStateToken } from "./state-token";
 import {
   capA11yTree,
   capConsole,
+  capText,
   capToolOutput,
   DEFAULT_A11Y_BUDGET,
   DEFAULT_CONSOLE_BUDGET,
   type A11yBudget,
   type ConsoleBudget,
 } from "./observation-budget";
+import {
+  DEFAULT_PAGE_TEXT_MAX_BYTES,
+  PAGE_TEXT_RETRIEVAL_HINT,
+} from "./page-text";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -91,6 +96,8 @@ export interface ChromiumDriverOptions {
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
+  /** Byte budget for one `observe {mode:"text"}` (L9). */
+  pageTextBytes?: number;
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -140,6 +147,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly pageTextMaxBytes: number;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -184,6 +192,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -608,6 +617,9 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.
@@ -679,6 +691,64 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
     }
+  }
+
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  private async observeText(
+    tabId: string,
+    entry: TabEntry,
+    permit: () => boolean,
+  ): Promise<BrowserCommandResult> {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text = await entry.page.pageText();
+      const after = await this.snapshot(entry.page);
+      const output = this.cappedText(text);
+      // Both must hold: a same-skeleton client-side route change moves the URL
+      // while `domSignal` does not, and would bind a new-route token to
+      // old-route prose (P1).
+      if (before.url === after.url && before.domSignal === after.domSignal) {
+        return this.observation(tabId, entry, output, after, permit);
+      }
+      before = after;
+    }
+    // Would not hold still within budget: hand the prose back but flag it
+    // unsettled, so nothing pins an act to text the page may have moved past.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false,
+    };
+  }
+
+  /** The text observation's payload, cut to budget with the counted marker. */
+  private cappedText(text: string): Record<string, unknown> {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT,
+    );
+    return { text: capped, ...(capped !== text ? { truncated: true } : {}) };
   }
 
   /**
