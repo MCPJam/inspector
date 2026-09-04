@@ -184,7 +184,11 @@ if (isInIframe) {
   const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
   const handoffWorkosOptions = handoffRuntimeApiHostname
     ? { apiHostname: handoffRuntimeApiHostname }
-    : resolveWorkosClientOptions(import.meta.env, window.location);
+    : resolveWorkosClientOptions(
+        import.meta.env,
+        window.location,
+        HOSTED_MODE
+      );
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
@@ -317,7 +321,8 @@ if (isInIframe) {
     ? { apiHostname: runtimeWorkosApiHostname }
     : resolveWorkosClientOptions(
         import.meta.env,
-        typeof window === "undefined" ? undefined : window.location
+        typeof window === "undefined" ? undefined : window.location,
+        HOSTED_MODE
       );
   clearLegacyWorkosRefreshTokenStorage();
 
