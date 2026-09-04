@@ -97,6 +97,26 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   create_secret: { command: "cloud secrets set" },
   update_secret: { command: "cloud secrets update" },
   delete_secret: { command: "cloud secrets rm" },
+
+  // ── Trace destinations ──────────────────────────────────────────────────
+  // The full surface, bound rather than excluded. Availability is decided per
+  // organization and the server answers a de-flagged org with a clean refusal,
+  // which is a better answer than a command that does not exist — the same
+  // reasoning `journeys` states above. A CLI binding is what makes this
+  // scriptable from CI, which is where an observability integration is
+  // configured in the first place.
+  list_trace_destinations: { command: "cloud trace-destinations list" },
+  get_trace_destination: { command: "cloud trace-destinations show" },
+  create_trace_destination: { command: "cloud trace-destinations create" },
+  update_trace_destination: { command: "cloud trace-destinations update" },
+  delete_trace_destination: { command: "cloud trace-destinations rm" },
+  test_trace_destination: { command: "cloud trace-destinations test" },
+  pause_trace_destination: { command: "cloud trace-destinations pause" },
+  resume_trace_destination: { command: "cloud trace-destinations resume" },
+  backfill_trace_destination: { command: "cloud trace-destinations backfill" },
+  list_trace_destination_backfills: {
+    command: "cloud trace-destinations backfills",
+  },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },

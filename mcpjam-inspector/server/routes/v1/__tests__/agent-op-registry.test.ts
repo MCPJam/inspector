@@ -610,8 +610,8 @@ describe("agent op registry", () => {
     expect(
       await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
         { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -640,8 +640,8 @@ describe("agent op registry", () => {
     expect(
       await proposalMetaFor(runEvalSuiteOperation.name).normalizeArgs(
         { suite: "smoke", compose: { host: "Claude Code", server: "Vercel" } },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -673,8 +673,8 @@ describe("agent op registry", () => {
           suite: "smoke",
           compose: { host: "Claude Code", servers: ["Vercel", "Ghost"] },
         },
-        { projectId: "p1", client }
-      )
+        { projectId: "p1", client },
+      ),
     ).toEqual({
       suite: "smoke",
       compose: {
@@ -1771,6 +1771,56 @@ describe("tier derives from operation.risk", () => {
       reason:
         "The same argument as create_secret: a rotation carries the new " +
         "plaintext as an argument, with the same pre-approval exposure.",
+    },
+    create_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but gating cannot help: the vendor " +
+        "credentials are ARGUMENTS, so they reach model context and this " +
+        "turn's transcript before an approval card could render. The same " +
+        "argument as create_secret, and the same answer — available on " +
+        "REST/SDK/CLI, where the caller chooses where the values come from.",
+    },
+    update_trace_destination: {
+      tier: "excluded",
+      reason:
+        "The same argument as create_trace_destination: rotating a " +
+        "credential carries it as an argument, with the same pre-approval " +
+        "exposure.",
+    },
+    resume_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Exposure would derive gated, but resuming restarts an export a " +
+        "human stopped — usually because something about it was wrong. " +
+        "Whether the cause is fixed is a judgement about a third party's " +
+        "system, which an approval card cannot show and a turn cannot " +
+        "establish.",
+    },
+    test_trace_destination: {
+      tier: "excluded",
+      reason:
+        "risk is none — one synthetic span, no customer content — and none " +
+        "derives direct. It is excluded anyway because the whole " +
+        "trace-destination surface is, and a turn that can send to a " +
+        "vendor's intake but cannot see, create or fix the destination it " +
+        "is testing is a capability with nothing behind it.",
+    },
+    pause_trace_destination: {
+      tier: "excluded",
+      reason:
+        "risk is none (nothing spent, nothing removed — the configuration " +
+        "survives) but pausing DROPS the window: nothing is queued while " +
+        "paused, so an unattended pause becomes a permanent gap in a " +
+        "customer's observability that only a backfill can fill.",
+    },
+    backfill_trace_destination: {
+      tier: "excluded",
+      reason:
+        "Spend would derive gated, but the size of this spend is invisible " +
+        "at the approval: it depends on how many sessions the window holds " +
+        "and what the vendor charges to ingest them, neither of which the " +
+        "card can show. An approval that cannot state the cost is not one.",
     },
     render_server_widget: {
       tier: "gated",
