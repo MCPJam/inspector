@@ -15,7 +15,7 @@
  * reason one implementation can serve both.
  */
 /** A socket that reports when the OS actually took the bytes. */
-interface CallbackSocket {
+export interface CallbackSocket {
   send(data: Uint8Array, cb: (error?: Error) => void): void;
 }
 

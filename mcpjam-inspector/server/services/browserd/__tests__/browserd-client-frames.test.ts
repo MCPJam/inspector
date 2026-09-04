@@ -79,7 +79,7 @@ describe("streamFrames", () => {
       signal: new AbortController().signal,
       ...sink,
     });
-    const [url, init] = fetchImpl.mock.calls[0] as [string, RequestInit];
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("https://box.example/v1/frames?tabId=tab-2&holder=users_1");
     expect(new Headers(init.headers).get("authorization")).toBe("Bearer secret");
   });
