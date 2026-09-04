@@ -68,6 +68,8 @@ interface PlaygroundLeftProps {
   builtinTools?: HarnessBuiltinToolInfo[];
   /** Whether any MCP server is connected — drives the tool list's empty state. */
   hasConnectedServer?: boolean;
+  /** Connect a server from the empty state without leaving the surface. */
+  onAddServerRequested?: () => void;
 }
 
 export function PlaygroundLeft({
@@ -92,6 +94,7 @@ export function PlaygroundLeft({
   showLogger = true,
   builtinTools = [],
   hasConnectedServer = true,
+  onAddServerRequested,
 }: PlaygroundLeftProps) {
   const [isListExpanded, setIsListExpanded] = useState(!selectedToolName);
   const [activeTab, setActiveTab] = useState<"tools" | "saved">("tools");
@@ -212,6 +215,7 @@ export function PlaygroundLeft({
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
           hasConnectedServer={hasConnectedServer}
+          onAddServerRequested={onAddServerRequested}
         />
       ) : builtin.selected ? (
         <BuiltinToolDetailView

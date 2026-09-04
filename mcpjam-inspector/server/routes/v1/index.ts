@@ -18,6 +18,7 @@ import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rat
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
 import servers from "./servers.js";
+import serverGroups from "./server-groups.js";
 import serverConnections from "./server-connections.js";
 import tools from "./tools.js";
 import prompts from "./prompts.js";
@@ -32,6 +33,8 @@ import plugins from "./plugins.js";
 import skills from "./skills.js";
 import journeys from "./journeys.js";
 import personas from "./personas.js";
+import secrets from "./secrets.js";
+import traceDestinations from "./trace-destinations.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
@@ -94,7 +97,7 @@ v1.use(
   "*",
   bearerAuthMiddleware,
   passthroughRateLimitMiddleware,
-  guestRateLimitMiddleware
+  guestRateLimitMiddleware,
 );
 
 v1.use("*", async (c, next) => {
@@ -109,6 +112,10 @@ v1.use("*", async (c, next) => {
 
 // Each sub-router declares full resource paths; mount them all at the root.
 v1.route("/", servers);
+// Server groups (immutable standalone server snapshots). Guest-DENIED: the
+// Convex reads are membership-gated and creating one is a member write, so
+// there is no share-link flow that needs them.
+v1.route("/", serverGroups);
 v1.route("/", serverConnections);
 v1.route("/", tools);
 v1.route("/", prompts);
@@ -150,6 +157,17 @@ v1.route("/", journeys);
 // Personas and swarm containers — the authoring half of Swarms. Same beta
 // gate, same guest denial: authoring is a member-only surface end to end.
 v1.route("/", personas);
+// PROJECT SECRETS — the credential a real workflow needs, as a first-class
+// resource. WRITE-ONLY: nothing here returns a value, ever. Guest-DENIED by
+// default (`guest-allowed-paths.ts` is default-deny and there is deliberately
+// NO entry for `/secrets` — adding one would be the single change that breaks
+// the guarantee).
+v1.route("/", secrets);
+// TRACE DESTINATIONS — where an organization's traces are STREAMED. Header
+// values are WRITE-ONLY: nothing here returns one, ever. Guest-DENIED on the
+// same terms as secrets (`guest-allowed-paths.ts` is default-deny and there is
+// deliberately NO entry for `/trace-destinations`).
+v1.route("/", traceDestinations);
 v1.route("/", swarms);
 // The insights layer over runs: scorecards, findings, wave insights. Reads are
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends

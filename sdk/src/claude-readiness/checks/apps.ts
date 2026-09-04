@@ -120,7 +120,10 @@ const HTML_MIME_PROFILE: ClaudeCheckDefinition = {
   title: `Widget resources are served as \`${CLAUDE_APP_HTML_MIME}\``,
   lane: "runtime-compatibility",
   class: "required",
-  source: claudePolicySource("mcp-apps/cross-compatibility", "§Resource mime type"),
+  source: claudePolicySource(
+    "mcp-apps/cross-compatibility",
+    "§Resource mime type"
+  ),
   provenance: "wire",
 };
 
@@ -159,7 +162,10 @@ const CSP_SHAPE: ClaudeCheckDefinition = {
   title: "A declared CSP names only hosts the widget actually needs",
   lane: "experience-insights",
   class: "recommended",
-  source: claudePolicySource("mcp-apps/external-links", "§Content security policy"),
+  source: claudePolicySource(
+    "mcp-apps/external-links",
+    "§Content security policy"
+  ),
   provenance: "static",
   intrusiveness: "passive",
 };
@@ -208,10 +214,12 @@ const INSTANCE_SUPERSESSION: ClaudeCheckDefinition = {
  */
 function declaresMinimumTouchTarget(styleText: string): boolean {
   const declarations = styleText.matchAll(
-    /min-(?:height|block-size)\s*:\s*([\d.]+)px/gi,
+    /min-(?:height|block-size)\s*:\s*([\d.]+)px/gi
   );
   for (const [, value] of declarations) {
-    if (Number.parseFloat(value) >= CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx) {
+    if (
+      Number.parseFloat(value) >= CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx
+    ) {
       return true;
     }
   }
@@ -226,9 +234,19 @@ const DESIGN_LINTS: Array<{
 }> = [
   {
     definition: designLint(
+      "doctype",
+      "Widget HTML declares no `<!DOCTYPE html>`",
+      "§Rendering"
+    ),
+    detect: (scanned) => !scanned.hasDoctype,
+    remediation:
+      "Claude mounts a view by writing its HTML into a blank document, and a written document with no doctype is parsed in QUIRKS mode — the box model and percentage heights differ from what you tested. Start the resource with `<!DOCTYPE html>`. (The same markup can render correctly in a host that mounts via `srcdoc`, which is never quirks mode, so this will not reproduce everywhere.)",
+  },
+  {
+    definition: designLint(
       "responsive-320",
       "Widget appears to have no narrow-viewport handling",
-      "§Responsiveness",
+      "§Responsiveness"
     ),
     detect: (scanned) =>
       !/@media[^{]*\(\s*max-width/i.test(scanned.styleText) &&
@@ -240,7 +258,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "touch-targets",
       `Interactive elements may be below the ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}×${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px touch target`,
-      "§Touch targets",
+      "§Touch targets"
     ),
     // Read the declared minimums and COMPARE them, rather than pattern-matching
     // the digits of one particular number: a regex spelling out `4[4-9]|[5-9]\d`
@@ -256,7 +274,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "safe-area",
       "Widget does not account for the device safe area",
-      "§Safe areas",
+      "§Safe areas"
     ),
     detect: (scanned) => !/safe-area-inset/i.test(scanned.styleText),
     remediation:
@@ -266,7 +284,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "theming",
       "Widget appears not to follow the host's light/dark theme",
-      "§Theming",
+      "§Theming"
     ),
     detect: (scanned) =>
       !/prefers-color-scheme/i.test(scanned.styleText) &&
@@ -279,11 +297,11 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "transparent-background",
       "Widget paints an opaque background over the host surface",
-      "§Backgrounds",
+      "§Backgrounds"
     ),
     detect: (scanned) =>
       /body\s*{[^}]*background(-color)?\s*:\s*(#|rgb|hsl|white|black)/i.test(
-        scanned.styleText,
+        scanned.styleText
       ),
     remediation:
       "The widget paints its own body background; Claude's surface shows through a transparent one.",
@@ -292,7 +310,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "nested-scrolling",
       "Widget introduces its own scroll container",
-      "§Scrolling",
+      "§Scrolling"
     ),
     detect: (scanned) =>
       /overflow(-y)?\s*:\s*(auto|scroll)/i.test(scanned.styleText),
@@ -303,7 +321,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "accessibility",
       "Widget shows few accessibility affordances",
-      "§Accessibility",
+      "§Accessibility"
     ),
     detect: (scanned) =>
       hasInteractiveElement(scanned) && !hasAccessibilityAffordance(scanned),
@@ -313,7 +331,7 @@ const DESIGN_LINTS: Array<{
     definition: designLint(
       "display-mode",
       "Widget does not react to the host's display mode",
-      "§Display modes",
+      "§Display modes"
     ),
     detect: (scanned) =>
       !/displayMode/i.test(scanned.scriptText) &&
@@ -327,7 +345,7 @@ const DESIGN_LINTS: Array<{
 function designLint(
   slug: string,
   title: string,
-  section: string,
+  section: string
 ): ClaudeCheckDefinition {
   return {
     id: `claude.apps.design.${slug}`,
@@ -355,7 +373,7 @@ function designLint(
 export function claudeAppContentDomain(enteredUrl: string): string {
   const digest = sha256Hex(enteredUrl).slice(
     0,
-    CLAUDE_APP_CONTENT_DOMAIN_HASH_LENGTH,
+    CLAUDE_APP_CONTENT_DOMAIN_HASH_LENGTH
   );
   return `${digest}${CLAUDE_APP_CONTENT_DOMAIN_SUFFIX}`;
 }
@@ -364,7 +382,7 @@ export function claudeAppContentDomain(enteredUrl: string): string {
 
 export function runClaudeAppsChecks(
   evidence: ClaudeAppsEvidence,
-  stamp: ClaudeCheckStamp,
+  stamp: ClaudeCheckStamp
 ): ClaudeReadinessFinding[] {
   const findings: ClaudeReadinessFinding[] = [];
   const tools = evidence.tools ?? [];
@@ -401,9 +419,11 @@ export function runClaudeAppsChecks(
     const reason =
       "no MCP Apps conformance result was available, so nothing app-specific was evaluated";
     for (const definition of everyDefinition) {
-      findings.push(notEvaluated(definition, stamp, reason, {
-        missingInput: CLAUDE_APPS_RESULT_INPUT,
-      }));
+      findings.push(
+        notEvaluated(definition, stamp, reason, {
+          missingInput: CLAUDE_APPS_RESULT_INPUT,
+        })
+      );
     }
     return findings;
   }
@@ -421,40 +441,41 @@ export function runClaudeAppsChecks(
   // the deprecated field and nothing else is a problem — an earlier reading
   // that warned whenever the legacy field was absent had it exactly backwards.
   const legacyOnly = tools.filter(
-    (tool) => tool.hasLegacyField && !tool.hasNestedField,
+    (tool) => tool.hasLegacyField && !tool.hasNestedField
   );
   findings.push(
     derivedFrom(
       legacyOnly.length === 0
         ? satisfied(RESOURCE_URI_MODERNITY, stamp, {
             tools: tools.length,
-            modernOnly: tools.filter((t) => t.hasNestedField && !t.hasLegacyField)
-              .length,
+            modernOnly: tools.filter(
+              (t) => t.hasNestedField && !t.hasLegacyField
+            ).length,
           })
         : violated(
             RESOURCE_URI_MODERNITY,
             stamp,
             "Declare `_meta.ui.resourceUri`. These tools use only the deprecated `ui/resourceUri` field, which Claude does not read.",
-            { tools: legacyOnly.map((tool) => tool.name) },
+            { tools: legacyOnly.map((tool) => tool.name) }
           ),
-      "apps-conformance:ui-tool-metadata-valid",
-    ),
+      "apps-conformance:ui-tool-metadata-valid"
+    )
   );
 
   // ── MIME profile ─────────────────────────────────────────────────────
   const wrongMime = resources.filter(
     (resource) =>
-      resource.mimeType !== undefined && !isClaudeAppMime(resource.mimeType),
+      resource.mimeType !== undefined && !isClaudeAppMime(resource.mimeType)
   );
   const unknownMime = resources.filter(
-    (resource) => resource.mimeType === undefined,
+    (resource) => resource.mimeType === undefined
   );
   findings.push(
     resources.length === 0
       ? notEvaluated(
           HTML_MIME_PROFILE,
           stamp,
-          "no widget resources were read, so their mime types are unknown",
+          "no widget resources were read, so their mime types are unknown"
         )
       : wrongMime.length === 0 && unknownMime.length === 0
         ? satisfied(HTML_MIME_PROFILE, stamp, { resources: resources.length })
@@ -463,10 +484,13 @@ export function runClaudeAppsChecks(
             stamp,
             `Serve widget resources as \`${CLAUDE_APP_HTML_MIME}\`. Plain \`text/html\` does not tell the host the payload is an app.`,
             {
-              wrong: wrongMime.map((r) => ({ uri: r.uri, mimeType: r.mimeType })),
+              wrong: wrongMime.map((r) => ({
+                uri: r.uri,
+                mimeType: r.mimeType,
+              })),
               missing: unknownMime.map((r) => r.uri),
-            },
-          ),
+            }
+          )
   );
 
   // ── OpenAI-only widgets ──────────────────────────────────────────────
@@ -474,7 +498,8 @@ export function runClaudeAppsChecks(
   // textual fallback still works in Claude — degraded, not broken — and
   // failing it would tell a submitter their working connector is unusable.
   const openAiTools = tools.filter(
-    (tool) => tool.hasOpenAiWidget && !tool.hasNestedField && !tool.hasLegacyField,
+    (tool) =>
+      tool.hasOpenAiWidget && !tool.hasNestedField && !tool.hasLegacyField
   );
   const blocking = openAiTools.filter((tool) => isAppOnly(tool));
   const degraded = openAiTools.filter((tool) => !isAppOnly(tool));
@@ -489,7 +514,7 @@ export function runClaudeAppsChecks(
             {
               blocking: blocking.map((tool) => tool.name),
               degraded: degraded.map((tool) => tool.name),
-            },
+            }
           )
         : satisfied(OPENAI_ONLY_WIDGET, stamp, {
             // Named rather than silent: the connector works, and the reviewer
@@ -498,21 +523,23 @@ export function runClaudeAppsChecks(
               name: tool.name,
               hasTextualFallback: tool.hasTextualFallback ?? false,
             })),
-          }),
+          })
   );
 
   // ── ui.domain ────────────────────────────────────────────────────────
   const expectedDomain = claudeAppContentDomain(evidence.enteredUrl);
-  const withDomain = resources.filter((resource) => resource.domain !== undefined);
+  const withDomain = resources.filter(
+    (resource) => resource.domain !== undefined
+  );
   const mismatched = withDomain.filter(
-    (resource) => resource.domain !== expectedDomain,
+    (resource) => resource.domain !== expectedDomain
   );
   findings.push(
     withDomain.length === 0
       ? notApplicable(
           UI_DOMAIN_DERIVATION,
           stamp,
-          "`ui.domain` is optional and no resource set one",
+          "`ui.domain` is optional and no resource set one"
         )
       : mismatched.length === 0
         ? satisfied(UI_DOMAIN_DERIVATION, stamp, { domain: expectedDomain })
@@ -524,8 +551,8 @@ export function runClaudeAppsChecks(
               expected: expectedDomain,
               found: mismatched.map((r) => ({ uri: r.uri, domain: r.domain })),
               hashedInput: evidence.enteredUrl,
-            },
-          ),
+            }
+          )
   );
 
   findings.push(
@@ -533,16 +560,16 @@ export function runClaudeAppsChecks(
       ? notApplicable(
           UI_DOMAIN_ADVISED,
           stamp,
-          "the widget already declares a content domain",
+          "the widget already declares a content domain"
         )
       : evidence.appOwnedOAuth
         ? violated(
             UI_DOMAIN_ADVISED,
             stamp,
             "This widget owns its own OAuth but declares no `ui.domain`, so its origin changes with the connector URL and stored credentials will not survive.",
-            { suggested: expectedDomain },
+            { suggested: expectedDomain }
           )
-        : satisfied(UI_DOMAIN_ADVISED, stamp),
+        : satisfied(UI_DOMAIN_ADVISED, stamp)
   );
 
   // ── CSP ──────────────────────────────────────────────────────────────
@@ -552,21 +579,25 @@ export function runClaudeAppsChecks(
       // wildcard hidden in that form is the same wildcard.
       const entries = Array.isArray(value) ? value : [value];
       return entries.some(
-        (entry) => typeof entry === "string" && entry.includes("*"),
+        (entry) => typeof entry === "string" && entry.includes("*")
       );
-    }),
+    })
   );
   findings.push(
     resources.every((resource) => resource.csp === undefined)
-      ? notApplicable(CSP_SHAPE, stamp, "no widget declares a content security policy")
+      ? notApplicable(
+          CSP_SHAPE,
+          stamp,
+          "no widget declares a content security policy"
+        )
       : wildcardCsp.length === 0
         ? satisfied(CSP_SHAPE, stamp)
         : violated(
             CSP_SHAPE,
             stamp,
             "A wildcard in `_meta.ui.csp` grants the widget more reach than it needs; name the hosts it actually calls.",
-            { resources: wildcardCsp.map((r) => r.uri) },
-          ),
+            { resources: wildcardCsp.map((r) => r.uri) }
+          )
   );
 
   // ── Call-specific and browser-only observations ──────────────────────
@@ -574,26 +605,26 @@ export function runClaudeAppsChecks(
     notEvaluated(
       RESULT_SIZE,
       stamp,
-      "the result-size budget is per CALL, so it depends on the arguments a caller passes and has no static verdict; it is observed by a functional run",
-    ),
+      "the result-size budget is per CALL, so it depends on the arguments a caller passes and has no static verdict; it is observed by a functional run"
+    )
   );
 
   const singleInstance = resources.filter(
-    (resource) => resource.claimsSingleActiveInstance,
+    (resource) => resource.claimsSingleActiveInstance
   );
   findings.push(
     singleInstance.length === 0
       ? notApplicable(
           INSTANCE_SUPERSESSION,
           stamp,
-          "no widget claims a single active instance, so there is no supersession contract to test",
+          "no widget claims a single active instance, so there is no supersession contract to test"
         )
       : notEvaluated(
           INSTANCE_SUPERSESSION,
           stamp,
           "verifying supersession requires rendering two instances in a browser harness",
-          { resources: singleInstance.map((r) => r.uri) },
-        ),
+          { resources: singleInstance.map((r) => r.uri) }
+        )
   );
 
   // ── Design guideline lints ───────────────────────────────────────────
@@ -605,11 +636,11 @@ export function runClaudeAppsChecks(
 function runDesignLints(
   evidence: ClaudeAppsEvidence,
   resources: ClaudeAppResourceEvidence[],
-  stamp: ClaudeCheckStamp,
+  stamp: ClaudeCheckStamp
 ): ClaudeReadinessFinding[] {
   const withHtml = resources.filter(
     (resource): resource is ClaudeAppResourceEvidence & { html: string } =>
-      typeof resource.html === "string" && resource.html.length > 0,
+      typeof resource.html === "string" && resource.html.length > 0
   );
 
   if (withHtml.length === 0) {
@@ -617,8 +648,8 @@ function runDesignLints(
       notEvaluated(
         lint.definition,
         stamp,
-        "no widget HTML was captured, so the static design lints could not run",
-      ),
+        "no widget HTML was captured, so the static design lints could not run"
+      )
     );
   }
 
@@ -718,7 +749,9 @@ export function claudeAppToolEvidenceFrom(tool: {
   _meta?: unknown;
 }): ClaudeAppToolEvidence | undefined {
   const meta =
-    typeof tool._meta === "object" && tool._meta !== null && !Array.isArray(tool._meta)
+    typeof tool._meta === "object" &&
+    tool._meta !== null &&
+    !Array.isArray(tool._meta)
       ? (tool._meta as Record<string, unknown>)
       : undefined;
   const ui =
@@ -726,7 +759,8 @@ export function claudeAppToolEvidenceFrom(tool: {
       ? (meta.ui as Record<string, unknown>)
       : undefined;
 
-  const nested = typeof ui?.resourceUri === "string" ? ui.resourceUri : undefined;
+  const nested =
+    typeof ui?.resourceUri === "string" ? ui.resourceUri : undefined;
   const legacy =
     typeof meta?.["ui/resourceUri"] === "string"
       ? (meta["ui/resourceUri"] as string)
