@@ -246,23 +246,14 @@ export function HostConfigCompareView({
   // like on caniuse.dev. Their creation flags still gate the New Client picker
   // and every mutation path. Other gated hosts keep their existing rollout.
   const excludedPresetTemplateIds = useMemo(() => {
-    // MCPJam's own persona is the emulator doing the comparing, not a
-    // third-party client to compare against. The caniuse chip limit hid it by
-    // accident — it ranks below the nine listed ids — but a SELECTED host
-    // renders regardless of that limit, so a stored selection brought it back.
-    // Excluding it is the actual rule.
-    const excluded = presetOnly
-      ? new Set<string>()
-      : excludedFlagGatedHostIds({
-          claudeCode: claudeCodeEnabled,
-          codex: codexEnabled,
-          cursorCli: cursorCliEnabled,
-        });
-    if (!presetOnly) {
-      excluded.delete("claude-code");
-      excluded.delete("codex");
-    }
-    excluded.add("mcpjam");
+    if (presetOnly) return new Set<string>();
+    const excluded = excludedFlagGatedHostIds({
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
+    });
+    excluded.delete("claude-code");
+    excluded.delete("codex");
     return excluded;
   }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
   // Public caniuse still displays flag-gated hosts as reference data, but must

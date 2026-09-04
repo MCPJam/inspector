@@ -125,30 +125,3 @@ describe("host-compare-presets", () => {
     },
   );
 });
-
-describe("the MCPJam persona is not a comparison subject", () => {
-  // MCPJam's own row is the emulator doing the comparing. `HostConfigCompareView`
-  // excludes it on both surfaces; this pins the two facts that make that
-  // exclusion necessary rather than cosmetic.
-  it("is in the catalog, so it has to be excluded explicitly", () => {
-    const ids = getCatalogHosts(bundledHostCompatCatalog()).map((h) => h.id);
-    expect(ids).toContain("mcpjam");
-  });
-
-  it("disappears from the entries once excluded", () => {
-    const catalog = bundledHostCompatCatalog();
-    const included = buildPresetCompareEntries(catalog, {});
-    expect(included.hosts.map((h) => h.hostId)).toContain(
-      `${PRESET_HOST_ID_PREFIX}mcpjam`,
-    );
-
-    const excluded = buildPresetCompareEntries(catalog, {
-      excludedTemplateIds: new Set(["mcpjam"]),
-    });
-    expect(excluded.hosts.map((h) => h.hostId)).not.toContain(
-      `${PRESET_HOST_ID_PREFIX}mcpjam`,
-    );
-    expect(excluded.subjects[`${PRESET_HOST_ID_PREFIX}mcpjam`]).toBeUndefined();
-    expect(excluded.hosts).toHaveLength(included.hosts.length - 1);
-  });
-});
