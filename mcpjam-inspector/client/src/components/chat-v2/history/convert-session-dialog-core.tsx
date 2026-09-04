@@ -43,6 +43,7 @@ import type { HostAttachmentDraft } from "@/components/evals/client-attachments-
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
@@ -167,7 +168,7 @@ function DestinationCard({
  * (`ConvertChatSessionDialog` for direct history, `ConvertPromotableSessionDialog`
  * for swarm runs) own fetching the summary/detail inputs.
  */
-export function ConvertSessionDialogCore({
+function ConvertSessionDialogCoreInner({
   open,
   summary,
   detail,
@@ -200,11 +201,13 @@ export function ConvertSessionDialogCore({
     isAuthenticated,
     projectId: effectiveProjectId,
   });
-  const { serverAttachments: projectServerAttachments } =
-    useProjectServerAttachments({
-      isAuthenticated: attachmentPickersEnabled,
-      projectId: attachmentPickersEnabled ? effectiveProjectId : null,
-    });
+  const {
+    serverAttachments: projectServerAttachments,
+    isLoading: projectServerAttachmentsLoading,
+  } = useProjectServerAttachments({
+    isAuthenticated: attachmentPickersEnabled,
+    projectId: attachmentPickersEnabled ? effectiveProjectId : null,
+  });
   const { hosts: projectHosts, isLoading: projectHostsLoading } = useHostList({
     isAuthenticated: attachmentPickersEnabled,
     projectId: attachmentPickersEnabled ? effectiveProjectId : null,
@@ -401,7 +404,12 @@ export function ConvertSessionDialogCore({
       .map((group) => group.join(", "));
 
     return groups.length > 0 ? groups.join(" · ") : null;
-  }, [pinnedGroupServers, selectedSuiteEntry, selectedSuiteServerDisplay]);
+  }, [
+    hasPinnedGroup,
+    pinnedGroupServers,
+    selectedSuiteEntry,
+    selectedSuiteServerDisplay,
+  ]);
 
   /**
    * Session servers the promoted case will not actually reach. Separate from
@@ -532,8 +540,9 @@ export function ConvertSessionDialogCore({
   // Seed picker defaults when the dialog opens against a project that has
   // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
   // standalone serverAttachment; hosts prefer `defaultHostId` when it names
-  // a live project host. User can swap either via the picker (Create new is
-  // supported inline by both editors).
+  // a live project host. Either can be swapped from its own picker, but only
+  // `ServerGroupPicker` can CREATE from there — `HostPicker` has none, which
+  // is what the empty-state button on the Client column below stands in for.
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
     if (serverAttachmentId === null && projectServerAttachments.length > 0) {
@@ -622,7 +631,13 @@ export function ConvertSessionDialogCore({
     !isSubmitting &&
     (effectiveDestinationMode === "new"
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
-      : Boolean(selectedSuiteId) &&
+      : // The resolved ENTRY, not the id. A Convex push can drop the
+        // selected suite out from under an open dialog — deleted elsewhere, or
+        // `source` flipped so the `availableSuites` filter stops returning it
+        // — and every other consumer keys off the entry. Gating on the id left
+        // Promote enabled over a picker reading "Choose a suite", for an id
+        // `authorizeForSuite` then rejects.
+        Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const requiresContentTransferAck =
@@ -907,13 +922,32 @@ export function ConvertSessionDialogCore({
               onClearSelection={() => setServerAttachmentId(null)}
               disabled={isSubmitting}
               variant="field"
-              emptyTriggerLabel="Select a server group"
               triggerId="promote-new-suite-server"
               triggerTestId="promote-new-suite-server-trigger"
               // The dialog's scroll-lock blocks the wheel on portaled
               // content, so the group list has to render in place.
               inModal
             />
+            {/* Same dead end as the Client column: `newSuiteRequirementsMet`
+                needs a `serverAttachmentId`, so a project with no groups shows
+                a normal-looking field above a Promote that never enables, and
+                explains itself only once the popover is open. Gated on the
+                query rather than the array alone, so a mid-flight empty list
+                does not accuse a project that has groups. No button — unlike
+                `HostPicker` this picker creates inline — but that create needs
+                a server to put in the group, so the two cases read
+                differently. */}
+            {!projectServerAttachmentsLoading &&
+            projectServerAttachments.length === 0 ? (
+              <p
+                className="text-xs leading-relaxed text-muted-foreground"
+                data-testid="promote-no-server-groups"
+              >
+                {knownServerNames.length === 0
+                  ? "This project has no servers yet, so there is no group for a new suite to run against."
+                  : "This project has no server groups yet. Create one from the picker above."}
+              </p>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -925,7 +959,7 @@ export function ConvertSessionDialogCore({
           isOpen={createHostOpen}
           onClose={() => setCreateHostOpen(false)}
           projectId={effectiveProjectId}
-          onCreated={(hostId) => handleClientChange(hostId)}
+          onCreated={handleClientChange}
         />
       ) : null}
     </>
@@ -973,8 +1007,14 @@ export function ConvertSessionDialogCore({
                   <p className="text-sm font-medium text-foreground">Add to</p>
                   <RadioGroup
                     value={effectiveDestinationMode}
+                    // Radix types this `(value: string) => void`. A cast
+                    // here would narrow an arbitrary string into the
+                    // discriminant that both `canSubmit` and the submit
+                    // payload read.
                     onValueChange={(next) =>
-                      setDestinationMode(next as DestinationMode)
+                      setDestinationMode(
+                        next === "existing" ? "existing" : "new"
+                      )
                     }
                     aria-label="Add to"
                     className="gap-2"
@@ -1004,6 +1044,22 @@ export function ConvertSessionDialogCore({
                 // answer.
                 <div className="space-y-3">{newSuiteFields}</div>
               )}
+
+            {/* `serverComparisonPending` blocks submit on purpose, and the
+                comparisons stay quiet rather than accusing a suite over
+                unresolved refs. Both are right, and both are invisible:
+                `projectServersLoading` is its own subscription and can trail
+                the two waits the spinner above covers, leaving a fully
+                populated form over a dead button with nothing saying why. */}
+            {serverComparisonPending ? (
+              <div
+                className="flex items-center gap-2 text-xs text-muted-foreground"
+                data-testid="promote-server-check-pending"
+              >
+                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                Checking this project&apos;s servers…
+              </div>
+            ) : null}
 
             {requiresContentTransferAck ? (
               <div>
@@ -1070,5 +1126,61 @@ export function ConvertSessionDialogCore({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * `convex/react`'s `useQuery` re-throws a REJECTED query during render, so a
+ * suites subscription the backend refuses took the whole tree down with it —
+ * past the "Import unavailable" alert this dialog already builds for exactly
+ * that outcome. The boundary keeps the failure inside the dialog: same shell,
+ * same message, and the surface behind it survives.
+ *
+ * Keyed on open + session so the latch clears. `ErrorBoundary` holds
+ * `hasError` until it unmounts, and without the key one failure would outlive
+ * the close that fixed it and greet the next session too.
+ */
+export function ConvertSessionDialogCore(props: ConvertSessionDialogCoreProps) {
+  return (
+    <ErrorBoundary
+      key={`${props.open ? "open" : "closed"}:${props.summary?.sessionId ?? "none"}`}
+      name="promote-session-dialog"
+      fallback={
+        <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+          <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+            <div className="px-6 pt-6">
+              <DialogHeader className="space-y-1.5 pr-10">
+                <DialogTitle>Promote to test case</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  Turn this session into a reusable case.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <div className="px-6 py-5">
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Import unavailable</AlertTitle>
+                <AlertDescription>
+                  This session&apos;s destinations could not be loaded, so there
+                  is nothing to promote into. Close this and try again.
+                </AlertDescription>
+              </Alert>
+            </div>
+            <DialogFooter className="border-t border-border/50 px-6 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => props.onOpenChange(false)}
+                data-testid="promote-error-close"
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      }
+    >
+      <ConvertSessionDialogCoreInner {...props} />
+    </ErrorBoundary>
   );
 }

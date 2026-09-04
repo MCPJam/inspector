@@ -53,7 +53,11 @@ type ServerGroupPickerProps = {
     attachment: EvalServerAttachment,
   ) => void;
   disabled?: boolean;
-  /** Trigger label when no attachment is selected. */
+  /**
+   * Trigger label when no attachment is selected. Defaults off
+   * `variant`: the chip copy reads as an instruction next to other
+   * chips and as a broken placeholder inside a labelled form column.
+   */
   emptyTriggerLabel?: string;
   /** Info-tooltip copy explaining what an attachment is in this context. */
   infoText?: string;
@@ -100,7 +104,7 @@ export function ServerGroupPicker({
   value,
   onChange,
   disabled = false,
-  emptyTriggerLabel = "No server group · pick one",
+  emptyTriggerLabel,
   infoText = "A server group is a named set of MCP servers that every client in the suite runs against.",
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
@@ -300,7 +304,10 @@ export function ServerGroupPicker({
 
   const triggerLabel = selectedAttachment
     ? selectedAttachment.name
-    : emptyTriggerLabel;
+    : (emptyTriggerLabel ??
+      (variant === "field"
+        ? "Select a server group"
+        : "No server group · pick one"));
   const triggerCount = selectedAttachment
     ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
     : null;
@@ -349,9 +356,12 @@ export function ServerGroupPicker({
           />
           <span
             className={cn(
-              "min-w-0 flex-1 truncate text-left",
+              "min-w-0 flex-1 truncate",
               variant === "field"
-                ? cn("text-sm", !value && !justCreated && "text-muted-foreground")
+                ? cn(
+                    "text-left text-sm",
+                    !value && !justCreated && "text-muted-foreground"
+                  )
                 : "text-xs font-medium"
             )}
           >

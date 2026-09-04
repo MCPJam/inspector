@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   }>,
   hostsLoading: false,
   serversLoading: false,
+  serverAttachments: [{ _id: "attachment-1" }] as Array<{ _id: string }>,
+  serverAttachmentsLoading: false,
   // The real `useQuery` returns `undefined` BOTH while loading and while
   // skipped. A mock that always hands back an array makes
   // `suitesOverview === undefined` unreachable, which is exactly why the two
@@ -46,7 +48,8 @@ vi.mock("@/hooks/useViews", () => ({
     isLoading: mocks.serversLoading,
   }),
   useProjectServerAttachments: () => ({
-    serverAttachments: [{ _id: "attachment-1" }],
+    serverAttachments: mocks.serverAttachments,
+    isLoading: mocks.serverAttachmentsLoading,
   }),
 }));
 
@@ -116,6 +119,12 @@ vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
 }));
 
+// The boundary reports every catch; the reporting itself is not this file's
+// subject, and Sentry is not wired in tests.
+vi.mock("@/lib/error-reporting", () => ({
+  reportBoundaryError: vi.fn(),
+}));
+
 import userEvent from "@testing-library/user-event";
 import {
   ConvertSessionDialogCore,
@@ -163,6 +172,8 @@ beforeEach(() => {
   mocks.hosts = [{ hostId: "host-first" }, { hostId: "host-swarm" }];
   mocks.hostsLoading = false;
   mocks.serversLoading = false;
+  mocks.serverAttachments = [{ _id: "attachment-1" }];
+  mocks.serverAttachmentsLoading = false;
   mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
     args === "skip" ? undefined : []
   );
@@ -403,6 +414,39 @@ describe("ConvertSessionDialogCore", () => {
     expect(screen.queryByTestId("promote-create-client")).toBeNull();
   });
 
+  it("says so when the project has no server groups for a new suite", () => {
+    // `newSuiteRequirementsMet` needs a `serverAttachmentId`, so without this
+    // the column is a normal-looking field over a Promote that never enables.
+    mocks.serverAttachments = [];
+    renderCore();
+
+    expect(screen.getByTestId("promote-no-server-groups").textContent).toMatch(
+      /no server groups yet/i
+    );
+  });
+
+  it("points at the missing servers when the project has none either", () => {
+    // "Create one from the picker above" is a dead end here: the picker's
+    // create needs a project server to put in the group.
+    mocks.serverAttachments = [];
+    mocks.serversLoading = true;
+    renderCore();
+
+    expect(screen.getByTestId("promote-no-server-groups").textContent).toMatch(
+      /no servers yet/i
+    );
+  });
+
+  it("does not claim a project has no server groups while they load", () => {
+    // Same rule as the Client column: an empty array mid-flight is not an
+    // answer about the project.
+    mocks.serverAttachments = [];
+    mocks.serverAttachmentsLoading = true;
+    renderCore();
+
+    expect(screen.queryByTestId("promote-no-server-groups")).toBeNull();
+  });
+
   it("blocks submit while the project's server names are still loading", async () => {
     // Suppressing the missing-servers comparison during that window is right;
     // leaving submit enabled through it is not — a session server would slip
@@ -429,6 +473,9 @@ describe("ConvertSessionDialogCore", () => {
     ).toBe(true);
     // ...and it does not accuse the suite in the meantime.
     expect(screen.queryByText(/missing these servers/i)).toBeNull();
+    // Suppressing the false accusation is right; saying nothing at all left a
+    // populated form over a dead button with no reason on screen.
+    expect(screen.getByTestId("promote-server-check-pending")).toBeTruthy();
   });
 
   it("does not accuse a pinned group while the server names are loading", async () => {
@@ -577,8 +624,8 @@ describe("ConvertSessionDialogCore — Add to", () => {
   });
 
   it("says a pinned group cannot be fixed from here, instead of promising it", async () => {
-    // `startTestSuiteRun` returns the standalone group's selection and stops
-    // (`testSuites.ts:4921`), so the opt-in — which patches
+    // `startTestSuiteRun` takes the standalone group's selection and skips
+    // the per-host fallback, so the opt-in — which patches
     // `environment.servers` — cannot change what this suite runs against.
     // Claiming otherwise collected a confirmation that changed nothing and
     // then ran the case without the server.
@@ -600,6 +647,34 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(screen.getByText(/run without that server/i)).toBeTruthy();
     // The gate-satisfying opt-in stays — the import still needs it — but it
     // no longer claims to add anything to the suite.
+    expect(
+      screen.getByText(/record these servers on the suite/i)
+    ).toBeTruthy();
+    expect(
+      screen.queryByText(/add the missing servers to this suite/i)
+    ).toBeNull();
+  });
+
+  it("treats an EMPTY pinned group as an override, not as no group", async () => {
+    // The case `hasPinnedGroup` is `Boolean(serverAttachment)` rather than
+    // `pinnedGroupServers.length > 0` for. `resolveStandaloneSelection` keeps
+    // a live-but-empty selection as `[]`, and `startTestSuiteRun` skips the
+    // per-host fallback whenever the override is non-null — so an empty group
+    // really does mean "no servers at run time", not "no group pinned".
+    // Reverting the length check keeps every other test in this file green.
+    mocks.useQuery.mockReturnValue([
+      suiteEntry({
+        _id: "suite-empty-group",
+        name: "Billing evals",
+        environment: { servers: [] },
+        serverAttachment: serverGroup(),
+        hostAttachments: [hostAttachment("Claude")],
+      }),
+    ]);
+    renderCore();
+
+    expect(screen.getByText(/server group is missing servers/i)).toBeTruthy();
+    // ...and the opt-in stops promising the group will be updated.
     expect(
       screen.getByText(/record these servers on the suite/i)
     ).toBeTruthy();
@@ -798,6 +873,72 @@ describe("ConvertSessionDialogCore — Add to", () => {
     ).toBe("true");
   });
 
+  it("blocks submit when the selected suite disappears from under the dialog", async () => {
+    // A Convex push can drop the pre-selected suite — deleted elsewhere, or
+    // `source` flipped past the `availableSuites` filter. Gating on the id
+    // left Promote enabled over a picker reading "Choose a suite".
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES
+    );
+    const props = {
+      open: true,
+      summary: SUMMARY,
+      detail: READY_DETAIL,
+      isAuthenticated: true,
+      onOpenChange: vi.fn(),
+      onImported: vi.fn(),
+    };
+    const { rerender } = render(<ConvertSessionDialogCore {...props} />);
+
+    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES.slice(1)
+    );
+    rerender(<ConvertSessionDialogCore {...props} />);
+
+    // The read-only client · server line is the visible tell: it renders off
+    // `selectedSuiteEntry`, so its absence is the dialog admitting the id
+    // resolves to nothing.
+    expect(screen.queryByTestId("promote-existing-suite-summary")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled")
+    ).toBe(true);
+  });
+
+  it("sends the environment opt-in the user actually ticked", async () => {
+    // `updateSuiteEnvironment` is the one payload field a person decided, and
+    // `toMatchObject` does not pin it: dropping it from the spread left all
+    // 47 tests green while the consented patch never reached the backend.
+    importAction.mockResolvedValue({ suiteId: "suite-thin", testCaseId: "c" });
+    mocks.useQuery.mockReturnValue([
+      suiteEntry({
+        _id: "suite-thin",
+        name: "Billing evals",
+        environment: { servers: [] },
+        hostAttachments: [hostAttachment("Claude")],
+      }),
+    ]);
+    renderCore();
+
+    fireEvent.click(screen.getByRole("checkbox"));
+    const submit = screen.getByRole("button", { name: "Promote to test case" });
+    await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(submit);
+
+    await waitFor(() => expect(importAction).toHaveBeenCalledTimes(1));
+    expect(importAction).toHaveBeenCalledWith({
+      sessionId: "chat-session-id-1",
+      projectId: "proj-1",
+      destinationSuiteId: "suite-thin",
+      updateSuiteEnvironment: true,
+      testCaseTitle: "draw a dog",
+    });
+  });
+
   it("submits into the pre-selected suite without re-asking for a destination", async () => {
     importAction.mockResolvedValue({ suiteId: "suite-billing", testCaseId: "c" });
     renderWithSuites();
@@ -947,5 +1088,29 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     expect(importAction.mock.calls[0][0]).not.toHaveProperty(
       "contentTransferAcknowledged"
     );
+  });
+});
+
+/**
+ * `convex/react`'s `useQuery` re-throws a rejected query DURING RENDER, which
+ * is a crash, not a state: without a boundary it unmounts the tree the dialog
+ * was opened from, past the "Import unavailable" alert built for exactly this.
+ */
+describe("ConvertSessionDialogCore — a suites query that rejects", () => {
+  it("keeps the failure inside the dialog", () => {
+    // React logs the caught error itself; the assertion is what renders.
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    mocks.useQuery.mockImplementation(() => {
+      throw new Error("[CONVEX Q(testSuites:getTestSuitesOverview)] rejected");
+    });
+
+    expect(() => renderCore()).not.toThrow();
+    expect(screen.getByText("Import unavailable")).toBeTruthy();
+    // The shell survives, so the dialog is still closable rather than gone.
+    expect(screen.getByTestId("promote-error-close")).toBeTruthy();
+
+    consoleError.mockRestore();
   });
 });
