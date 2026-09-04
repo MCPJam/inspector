@@ -18,6 +18,7 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
+import { PAGE_TEXT_FN } from "./page-text";
 import { parseAriaSnapshot } from "./aria-snapshot";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
@@ -272,6 +273,18 @@ export function wrapPage(page: AnyPage): DriverPage {
         // busy to answer. `null` is the honest result; the driver turns an
         // unmatched ROOT selector into an error rather than an empty tree.
         return null;
+      }
+    },
+    async pageText() {
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
+      try {
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
       }
     },
     consoleEntries: () => consoleRing,

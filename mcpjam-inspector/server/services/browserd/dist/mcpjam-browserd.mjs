@@ -440,6 +440,7 @@ function handoffNoteFor(kind) {
 }
 
 // server/services/browserd/daemon/request-handler.ts
+var MAX_INPUT_EVENTS = 64;
 var BrowserdRequestHandler = class {
   queue;
   driver;
@@ -453,6 +454,26 @@ var BrowserdRequestHandler = class {
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
   }
+  /**
+   * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
+   * the refusal to write back.
+   *
+   * Extracted so the STREAMING route can share it. That route cannot go through
+   * `handle` — its response is a chunked body, not a `DaemonResponse` — and a
+   * second copy of an auth check is how one of them quietly stops matching the
+   * other. Order matters and is preserved: an unauthenticated request carrying
+   * an Origin gets 401, not 403, so a caller learns nothing about the second
+   * check from failing the first.
+   */
+  authorize(req) {
+    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
+      return { status: 401 };
+    }
+    if (req.origin !== void 0) {
+      return { status: 403, body: { error: "cross_origin_forbidden" } };
+    }
+    return void 0;
+  }
   async handle(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
@@ -461,12 +482,8 @@ var BrowserdRequestHandler = class {
       const health = await this.driver.health();
       return health.ok ? { status: 200, body: { ok: true } } : { status: 503, body: { ok: false, detail: health.detail } };
     }
-    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
-      return { status: 401 };
-    }
-    if (req.origin !== void 0) {
-      return { status: 403, body: { error: "cross_origin_forbidden" } };
-    }
+    const refusal = this.authorize(req);
+    if (refusal) return refusal;
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -489,7 +506,53 @@ var BrowserdRequestHandler = class {
       }
       return this.handleLease(req);
     }
+    if (req.path === "/v1/input") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleInput(req);
+    }
     return { status: 404 };
+  }
+  async handleInput(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+    }
+    const { holder, tabId, events } = parsed;
+    if (typeof holder !== "string" || holder.length === 0) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    if (!Array.isArray(events)) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId }
+      };
+    }
+    if (events.length > MAX_INPUT_EVENTS) {
+      return {
+        status: 413,
+        body: { error: "too_many_events", bootId: this.bootId }
+      };
+    }
+    const outcome = await this.dispatchInput({
+      ...typeof tabId === "string" ? { tabId } : {},
+      holder,
+      events
+    });
+    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    return {
+      status: outcome.error === "unknown_tab" ? 404 : 423,
+      body: { error: outcome.error, bootId: this.bootId }
+    };
   }
   async handleCommand(req) {
     let parsed;
@@ -582,6 +645,26 @@ var BrowserdRequestHandler = class {
         if (!live) return;
         const lost = this.watcherRefusal(args.holder);
         if (lost) revoke(lost);
+      },
+      // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
+      // tab that was closed and reopened, so "something is there" would answer
+      // true while this subscription pointed at a dead object.
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return await this.driver.viewport?.(args.tabId) === viewport;
+        } catch {
+          return false;
+        }
       }
     };
   }
@@ -722,6 +805,301 @@ function isValidCommand(value) {
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
+// server/services/browserd/frame-stream.ts
+var FRAME_STREAM_VERSION = 1;
+var FRAME_STREAM_HEADER_BYTES = 24;
+var FRAME_STREAM_KIND = {
+  /** A painted JPEG. */
+  frame: 1,
+  /**
+   * Proof of life on a page that is not painting.
+   *
+   * Load-bearing in both directions: it is what lets a reader tell "connected
+   * and subscribed" from "connected", and on the daemon side the same tick
+   * drives the lease re-check that a one-way stream would otherwise never run.
+   */
+  heartbeat: 2,
+  /** The last record. Payload is a UTF-8 reason. */
+  end: 3
+};
+var FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
+function encodeFrameStreamRecord(record) {
+  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : new Uint8Array(0);
+  const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, FRAME_STREAM_VERSION);
+  view.setUint8(1, record.kind);
+  if (record.kind === FRAME_STREAM_KIND.frame) {
+    view.setUint16(2, clampU16(record.deviceWidth), true);
+    view.setUint16(4, clampU16(record.deviceHeight), true);
+    view.setUint16(6, clampU16(Math.round(record.scale * 1e3)), true);
+    view.setFloat64(8, record.ts, true);
+    view.setUint32(16, record.seq >>> 0, true);
+  }
+  view.setUint32(20, payload.byteLength, true);
+  bytes.set(payload, FRAME_STREAM_HEADER_BYTES);
+  return bytes;
+}
+function clampU16(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(65535, Math.round(value));
+}
+
+// server/services/webmcp-inspector/frame-pacer.ts
+function createFramePacer(sink, onDrop) {
+  let inFlight = false;
+  let pending;
+  let closed = false;
+  const ship = (bytes) => {
+    inFlight = true;
+    sink.send(bytes, () => {
+      inFlight = false;
+      if (closed) return;
+      const next = pending;
+      pending = void 0;
+      if (next) ship(next);
+    });
+  };
+  return {
+    push(bytes) {
+      if (closed) return;
+      if (inFlight) {
+        if (pending !== void 0) onDrop?.();
+        pending = bytes;
+        return;
+      }
+      ship(bytes);
+    },
+    close() {
+      closed = true;
+      pending = void 0;
+    }
+  };
+}
+
+// server/services/browserd/daemon/frame-stream-route.ts
+var HEARTBEAT_MS = 1e4;
+var WRITE_STALL_MS = 15e3;
+var MAX_CONCURRENT_STREAMS = 4;
+var PROBE_BEATS = 3;
+var PROBE_INTERVAL_MS = 1e3;
+function createFrameStreamHost(handler, options = {}) {
+  const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
+  const stallMs = options.stallMs ?? WRITE_STALL_MS;
+  const maxStreams = options.maxStreams ?? MAX_CONCURRENT_STREAMS;
+  const timers = options.timers ?? {
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h)
+  };
+  const open = /* @__PURE__ */ new Set();
+  function handle(args) {
+    const { req, res, daemonRequest } = args;
+    const refusal = handler.authorize(daemonRequest);
+    if (refusal) {
+      writeJson(res, refusal.status, refusal.body);
+      return true;
+    }
+    if (daemonRequest.method !== "GET") {
+      res.writeHead(405, { allow: "GET" });
+      res.end();
+      return true;
+    }
+    if (open.size >= maxStreams) {
+      writeJson(res, 503, { error: "too_many_watchers" });
+      return true;
+    }
+    req.resume();
+    const query = daemonRequest.query;
+    const tabId = query?.get("tabId") ?? void 0;
+    const holder = query?.get("holder") ?? void 0;
+    const probe = query?.get("probe") === "1";
+    beginStream(res);
+    if (probe) {
+      runProbe(res);
+      return true;
+    }
+    void startSubscription({ res, tabId, holder }).catch(() => {
+      writeEndAndClose(res, "tab_gone");
+    });
+    return true;
+  }
+  function writeEndAndClose(res, reason) {
+    try {
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.end();
+    } catch {
+    }
+  }
+  function beginStream(res) {
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      // No content-length: this body has no length. `no-transform` matters as
+      // much as `no-store` — an intermediary that "helpfully" buffers or
+      // re-encodes turns a live stream into a download that arrives at the end.
+      "cache-control": "no-store, no-transform",
+      // nginx and friends buffer proxied responses by default.
+      "x-accel-buffering": "no"
+    });
+    res.flushHeaders();
+    res.socket?.setNoDelay(true);
+    res.setTimeout(0);
+    res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+  }
+  function runProbe(res) {
+    let sent = 0;
+    const entry = { end: (reason) => finish(reason) };
+    open.add(entry);
+    let timer;
+    const finish = (reason) => {
+      timers.clearTimer(timer);
+      if (!open.delete(entry)) return;
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+      );
+      res.end();
+    };
+    const beat = () => {
+      if (sent >= PROBE_BEATS) {
+        finish("probe_complete");
+        return;
+      }
+      sent += 1;
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+    };
+    res.on("close", () => {
+      timers.clearTimer(timer);
+      open.delete(entry);
+    });
+    timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+  }
+  async function startSubscription(args) {
+    const { res, tabId, holder } = args;
+    let ended = false;
+    let stallTimer;
+    let beatTimer;
+    let unsubscribe;
+    const entry = {
+      end: (reason) => end(reason)
+    };
+    const end = (reason) => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+        );
+        res.end();
+      } catch {
+      }
+    };
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? void 0);
+        });
+      }
+    });
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+    });
+    const subscription = await handler.subscribeFrames({
+      ...tabId ? { tabId } : {},
+      ...holder ? { holder } : {},
+      listener: (frame) => {
+        pacer.push(
+          encodeFrameStreamRecord({
+            kind: FRAME_STREAM_KIND.frame,
+            deviceWidth: frame.deviceWidth,
+            deviceHeight: frame.deviceHeight,
+            scale: frame.scale,
+            ts: frame.ts,
+            seq: frame.seq,
+            // The viewport hands out base64; the wire carries the bytes.
+            jpeg: new Uint8Array(Buffer.from(frame.data, "base64"))
+          })
+        );
+      },
+      onRevoked: (reason) => {
+        end(reason === "lease_parked" ? "lease_parked" : "lease_held");
+      }
+    });
+    if (!subscription.ok) {
+      end(subscription.error === "unknown_tab" ? "unknown_tab" : "lease_held");
+      return;
+    }
+    if (ended) {
+      subscription.unsubscribe();
+      return;
+    }
+    unsubscribe = subscription.unsubscribe;
+    const beat = () => {
+      if (ended) return;
+      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      subscription.revalidate();
+      if (ended) return;
+      void subscription.stillCurrent().then(
+        (current) => {
+          if (!current && !ended) end("tab_gone");
+          else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
+        },
+        // A REJECTION IS NOT A NON-ANSWER YOU CAN IGNORE. `stillCurrent` asks
+        // the driver for the tab's viewport, and that throws on ordinary
+        // paths — a context that is closing answers "this browser is shutting
+        // down" rather than a value. Left unhandled it did two things, and
+        // the quieter one is worse: the tick never rescheduled, so the lease
+        // stopped being re-asked for the life of the stream, which is exactly
+        // the privacy hole the heartbeat exists to close on a page that does
+        // not paint. And an unhandled rejection ends a Node process, so the
+        // one that died was the daemon, taking every hosted session on the
+        // box with it. Unable to prove the tab is still ours, we say so and
+        // stop.
+        () => {
+          if (!ended) end("tab_gone");
+        }
+      );
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
+  }
+  function writeJson(res, status, body) {
+    const payload = body === void 0 ? void 0 : JSON.stringify(body);
+    res.writeHead(status, {
+      "content-type": "application/json",
+      "content-length": payload === void 0 ? 0 : Buffer.byteLength(payload)
+    });
+    res.end(payload);
+  }
+  return {
+    handle,
+    closeAll(reason) {
+      for (const entry of [...open]) entry.end(reason);
+    },
+    count: () => open.size
+  };
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
@@ -807,15 +1185,34 @@ function writeResponse(res, response) {
 }
 function createDaemonServer(handler, options = {}) {
   const bodyLimit = options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES;
-  return createServer((req, res) => {
+  const frames = createFrameStreamHost(handler, options.frames ?? {});
+  const server = createServer((req, res) => {
+    let path;
+    let query;
+    try {
+      const url = new URL(req.url ?? "/", "http://browserd.invalid");
+      path = url.pathname;
+      query = url.searchParams;
+    } catch {
+      writeResponse(res, { status: 404 });
+      return;
+    }
+    if (path === "/v1/frames") {
+      frames.handle({
+        req,
+        res,
+        daemonRequest: {
+          method: req.method ?? "GET",
+          path,
+          origin: headerValue(req.headers.origin),
+          authorization: headerValue(req.headers.authorization),
+          body: "",
+          query
+        }
+      });
+      return;
+    }
     void (async () => {
-      let path;
-      try {
-        path = new URL(req.url ?? "/", "http://browserd.invalid").pathname;
-      } catch {
-        writeResponse(res, { status: 404 });
-        return;
-      }
       let body = "";
       if (req.method === "POST" || req.method === "PUT") {
         try {
@@ -832,7 +1229,8 @@ function createDaemonServer(handler, options = {}) {
         path,
         origin: headerValue(req.headers.origin),
         authorization: headerValue(req.headers.authorization),
-        body
+        body,
+        query
       });
       writeResponse(res, response);
     })().catch(() => {
@@ -840,6 +1238,7 @@ function createDaemonServer(handler, options = {}) {
       else res.end();
     });
   });
+  return { server, frames };
 }
 function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -858,10 +1257,18 @@ function buildBrowserdStack(driver, config) {
     token: config.token,
     lease
   });
-  const server = createDaemonServer(handler, {
-    bodyLimitBytes: config.bodyLimitBytes
+  const { server, frames } = createDaemonServer(handler, {
+    bodyLimitBytes: config.bodyLimitBytes,
+    ...config.frames ? { frames: config.frames } : {}
   });
-  return { server, handler, queue, bootId, lease };
+  return {
+    server,
+    handler,
+    queue,
+    bootId,
+    lease,
+    closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
+  };
 }
 
 // server/services/browserd/daemon/state-token.ts
@@ -928,16 +1335,22 @@ function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
   };
   return { tree: visit(root, 0), omittedSubtrees, totalNodes };
 }
-var TRUNCATION_SUFFIX = "\n\u2026[truncated]";
-function capText(text, maxBytes) {
+function truncationMarker(shownBytes, totalBytes, retrieval) {
+  return `
+\u2026[truncated: showing ${shownBytes} of ${totalBytes} bytes` + (retrieval ? `; ${retrieval}` : "") + "]";
+}
+function capText(text, maxBytes, retrieval) {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(text);
   if (bytes.byteLength <= maxBytes) return text;
-  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
-  if (maxBytes < suffixBytes) {
+  const reserve = encoder.encode(
+    truncationMarker(maxBytes, bytes.byteLength, retrieval)
+  ).byteLength;
+  if (maxBytes < reserve) {
     return decodeUpTo(bytes, maxBytes);
   }
-  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+  const head = decodeUpTo(bytes, maxBytes - reserve);
+  return head + truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval);
 }
 function decodeUpTo(bytes, limit) {
   let end = Math.max(0, Math.min(limit, bytes.byteLength));
@@ -980,6 +1393,143 @@ function capToolOutput(output, maxBytes) {
     omitted: true
   };
 }
+
+// server/services/browserd/daemon/page-text.ts
+var PAGE_TEXT_FN = `() => {
+  const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
+  // INPUT/SELECT/TEXTAREA hold no text of the page's own \u2014 a control's value is
+  // the user's, and the a11y tree already reports it next to the control it
+  // belongs to. BUTTON is NOT here: its label ("Continue", "Delete everything")
+  // is often the most important sentence on a confirmation page.
+  const DROP = new Set(["IMG","PICTURE","VIDEO","AUDIO","SOURCE","TRACK","INPUT","SELECT","TEXTAREA"]);
+  const BLOCK = new Set(["P","DIV","SECTION","ARTICLE","MAIN","HEADER","FOOTER","NAV","BLOCKQUOTE","TABLE","TR","UL","OL","DL","DT","DD","FORM","FIELDSET","FIGURE","FIGCAPTION","ASIDE","HR","ADDRESS","DETAILS","SUMMARY"]);
+  // Far above the observation's byte budget, so it never changes what a caller
+  // sees \u2014 it only stops a pathological page from building a huge string in
+  // the renderer before anything gets the chance to trim it.
+  const MAX_CHARS = 400000;
+  const chunks = [];
+  let total = 0;
+  let pre = 0;
+  const push = (t, isPre) => {
+    if (!t || total >= MAX_CHARS) return;
+    total += t.length;
+    chunks.push({ t: t, pre: !!isPre });
+  };
+  const hidden = (el) => {
+    if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+    if (el.hidden) return true;
+    if (typeof el.checkVisibility === "function") {
+      // opacityProperty included: text at opacity 0 is invisible to the person
+      // whose page this is, and reading it back is how a page says something to
+      // the model that it never said to anyone else.
+      return !el.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true, opacityProperty: true });
+    }
+    const style = window.getComputedStyle(el);
+    return style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
+  };
+  const absolute = (href) => {
+    try { return new URL(href, document.baseURI).href; } catch (e) { return href; }
+  };
+  // An EXPLICIT stack, not recursion. DOM depth is unbounded, and a page nested
+  // deeply enough to overflow the in-page call stack would fail the whole
+  // observation rather than returning a long page \u2014 the same reason the node
+  // counter in the observation budget is iterative.
+  const stack = [{ k: "node", n: document.body }];
+  while (stack.length > 0) {
+    const job = stack.pop();
+    if (job.k === "text") { push(job.t, false); continue; }
+    if (job.k === "preEnd") { pre -= 1; push("\\n" + job.fence + "\\n\\n", false); continue; }
+    if (job.k === "linkEnd") {
+      // The label may be several nodes deep, so it is collected and re-emitted
+      // as one unit once its children are done.
+      const parts = chunks.splice(job.start);
+      let label = "";
+      for (let i = 0; i < parts.length; i++) label += parts[i].t;
+      label = label.trim();
+      if (label) push(job.href ? "[" + label + "](" + absolute(job.href) + ")" : label, false);
+      continue;
+    }
+    const node = job.n;
+    if (!node) continue;
+    if (node.nodeType === 3) {
+      const raw = node.nodeValue || "";
+      push(pre > 0 ? raw : raw.replace(/\\s+/g, " "), pre > 0);
+      continue;
+    }
+    if (node.nodeType !== 1) continue;
+    const tag = node.tagName;
+    if (SKIP.has(tag) || DROP.has(tag)) continue;
+    if (hidden(node)) continue;
+    if (tag === "BR") { push("\\n", false); continue; }
+    const kids = node.childNodes;
+    // Pushed in reverse so the first child is the next thing popped, and any
+    // closing job pushed before them pops last.
+    const descend = () => { for (let i = kids.length - 1; i >= 0; i--) stack.push({ k: "node", n: kids[i] }); };
+    if (tag === "A") {
+      stack.push({ k: "linkEnd", start: chunks.length, href: node.getAttribute("href") });
+      descend();
+      continue;
+    }
+    if (/^H[1-6]$/.test(tag)) {
+      push("\\n\\n" + "#".repeat(Number(tag[1])) + " ", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
+    }
+    if (tag === "LI") {
+      push("\\n- ", false);
+      stack.push({ k: "text", t: "\\n" });
+      descend();
+      continue;
+    }
+    if (tag === "PRE") {
+      // A fence long enough that the content cannot close it. Page text
+      // containing three backticks would otherwise end the block early and the
+      // prose after it would read as code.
+      const body = node.textContent || "";
+      let fence = "\\u0060\\u0060\\u0060";
+      while (body.indexOf(fence) !== -1) fence += "\\u0060";
+      push("\\n\\n" + fence + "\\n", false);
+      pre += 1;
+      stack.push({ k: "preEnd", fence: fence });
+      descend();
+      continue;
+    }
+    if (tag === "TD" || tag === "TH") {
+      stack.push({ k: "text", t: " | " });
+      descend();
+      continue;
+    }
+    if (BLOCK.has(tag)) {
+      push("\\n\\n", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
+    }
+    descend();
+  }
+  // Collapse whitespace only OUTSIDE fenced runs, where it is markup rather
+  // than content. Tracked as the walk goes rather than recovered afterwards by
+  // splitting on the fence: page content can contain a fence, and a split
+  // would then mistake ordinary prose for code.
+  let out = "";
+  let buffer = "";
+  let bufferPre = false;
+  const flush = () => {
+    out += bufferPre
+      ? buffer
+      : buffer.replace(/[ \\t]+/g, " ").replace(/ ?\\n ?/g, "\\n").replace(/\\n{3,}/g, "\\n\\n");
+    buffer = "";
+  };
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks[i].pre !== bufferPre) { flush(); bufferPre = chunks[i].pre; }
+    buffer += chunks[i].t;
+  }
+  flush();
+  return out.trim();
+}`;
+var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
+var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
 
 // server/services/browserd/daemon/webmcp-bridge.ts
 var WebMcpBridgeError = class extends Error {
@@ -1715,6 +2265,7 @@ var ChromiumDriver = class {
   a11yBudget;
   consoleBudget;
   webmcpOutputBudgetBytes;
+  pageTextMaxBytes;
   lease;
   tabs = /* @__PURE__ */ new Map();
   /**
@@ -1749,6 +2300,7 @@ var ChromiumDriver = class {
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
   async execute(command) {
@@ -2068,6 +2620,9 @@ var ChromiumDriver = class {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
       case "a11y": {
         const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
         if (action.rootSelector && snapshot === null) {
@@ -2127,6 +2682,53 @@ var ChromiumDriver = class {
         );
       }
     }
+  }
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  async observeText(tabId, entry, permit) {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text2 = await entry.page.pageText();
+      const after2 = await this.snapshot(entry.page);
+      const output = this.cappedText(text2);
+      if (before.url === after2.url && before.domSignal === after2.domSignal) {
+        return this.observation(tabId, entry, output, after2, permit);
+      }
+      before = after2;
+    }
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed"
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false
+    };
+  }
+  /** The text observation's payload, cut to budget with the counted marker. */
+  cappedText(text) {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT
+    );
+    return { text: capped, ...capped !== text ? { truncated: true } : {} };
   }
   /**
    * Capture a screenshot whose state token provably describes the SAME frame the
@@ -2817,6 +3419,14 @@ function wrapPage(page) {
         return null;
       }
     },
+    async pageText() {
+      try {
+        const text = await page.evaluate(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
+      }
+    },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since) => {
       let keep = consoleRing.length;
@@ -2984,6 +3594,7 @@ async function main() {
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stack.closeStreams();
     stack.server.close();
     await driver.close().catch(() => {
     });
