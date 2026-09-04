@@ -2,7 +2,7 @@
  * Production-scoring config for one User Testing scenario: grade a sample of
  * REAL tester sessions against a rubric of deterministic checks, the same
  * `Predicate` vocabulary swarm rubrics and eval checks use. Verdicts land on
- * the session's Checks panel and the Insights scorecard — same surfaces the
+ * the session's Checks panel and the Insights findings — same surfaces the
  * synthetic twins already report to.
  *
  * Editing model mirrors `JourneyGradingEditor` (swarms/journey-list.tsx):

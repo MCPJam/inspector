@@ -1,3 +1,12 @@
+/**
+ * The statuses at which a run has a verdict, or has stopped without one.
+ *
+ * `grading` is DELIBERATELY absent. A run held for its gating judge has run
+ * every trial but has not been decided — its `result` is `pending` — so a
+ * watcher that stopped there would post a verdict the platform has not
+ * reached, on the strength of counts the judge may still overturn. The watcher
+ * keeps polling and earns extra time for it; see `gradingMaxMs` below.
+ */
 export const TERMINAL_STATUSES = new Set([
 	"completed",
 	"failed",
@@ -153,11 +162,22 @@ async function runTerminalHook(args, run) {
  * `onTerminal` runs CONCURRENTLY with that enrichment rather than after it, so
  * the two never queue behind one another; their relative order is not defined.
  *
- * @param {{apiClient:any,delivery:any,ref?:any,statusHandle:any,ctx:any,runId:string,url:string,actorId:string,pollIntervalMs?:number,maxMs?:number,logger?:any,formatOutcome:(run:any,url:string,actorId:string,decisionSummary?:any)=>any,onTerminal?:(run:any)=>Promise<void>}} args
+ * `gradingMaxMs` is the ONE-TIME extension a run held for its gating judge
+ * earns, on first observing `grading`. Defaults to 31 minutes — the backend's
+ * 30-minute hold plus a minute for its sweep — because the watch window bounds
+ * how long the trials may take and nobody who chose it had a judge in mind.
+ *
+ * @param {{apiClient:any,delivery:any,ref?:any,statusHandle:any,ctx:any,runId:string,url:string,actorId:string,pollIntervalMs?:number,maxMs?:number,gradingMaxMs?:number,logger?:any,formatOutcome:(run:any,url:string,actorId:string,decisionSummary?:any)=>any,onTerminal?:(run:any)=>Promise<void>}} args
  */
 export async function watchRunUntilDone(args) {
 	const interval = args.pollIntervalMs ?? 10_000;
-	const deadline = Date.now() + (args.maxMs ?? 15 * 60_000);
+	let deadline = Date.now() + (args.maxMs ?? 15 * 60_000);
+	// Granted ONCE, on first seeing the hold. The watch window bounds how long
+	// the TRIALS may take, and nobody who picked it had a judge in mind; letting
+	// it expire during the hold would leave somebody's message stuck on
+	// "running…" for a run whose verdict is minutes away.
+	const gradingMaxMs = args.gradingMaxMs ?? 31 * 60_000;
+	let gradingExtended = false;
 	const formatOutcome = args.formatOutcome;
 	while (Date.now() < deadline) {
 		await new Promise((resolve) => {
@@ -166,6 +186,10 @@ export async function watchRunUntilDone(args) {
 		});
 		try {
 			const run = await args.apiClient.getEvalRun(args.runId, args.ctx);
+			if (run.status === "grading" && !gradingExtended && gradingMaxMs > 0) {
+				gradingExtended = true;
+				deadline = Math.max(deadline, Date.now() + gradingMaxMs);
+			}
 			if (TERMINAL_STATUSES.has(run.status)) {
 				// THE VERDICT GOES OUT FIRST, unenriched.
 				//

@@ -20,6 +20,7 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { markSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
@@ -64,6 +65,10 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const initials = getInitials(displayName);
 
   const finishSignOut = () => {
+    // Before `signOut()`, never after: authkit's refresh timer can fire on the
+    // next tick, and an unlatched failure would redirect this tab to the login
+    // page on top of the logout navigation below. See `sign-out-latch`.
+    markSignOutInProgress();
     const returnTo = window.location.origin;
     if (window.isElectron) {
       void Promise.resolve(signOut({ returnTo, navigate: false })).finally(

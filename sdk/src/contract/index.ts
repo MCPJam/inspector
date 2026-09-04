@@ -174,6 +174,23 @@ export {
   stageResultRowSchema,
 } from "./stage-derivation.js";
 
+// ── grader → stage map (B7) ──────────────────────────────────────────────────
+/**
+ * Which stage of the chain each grader measures.
+ *
+ * Exported so a settings surface can group graders by what they MEASURE
+ * instead of by how they happen to be implemented, and so it does that from
+ * the same table the analyzer routes with rather than a second copy of it.
+ */
+export {
+  GRADER_PRESENTATION_GROUP,
+  GRADER_STAGE,
+  PREDICATE_KINDS,
+  PREDICATE_STAGE,
+  isSelectionStagePredicateKind,
+  type PredicateKind,
+} from "./grader-stage.js";
+
 // ── stage analytics (D5) ─────────────────────────────────────────────────────
 /**
  * Contract and runtime wiring for the D5/B5 eval analytics fields.
@@ -422,6 +439,7 @@ export { evalSuiteFileJsonSchema } from "./eval-suite.schema.generated.js";
 // ── the run verdict policy (v2) ──────────────────────────────────────────────
 export type {
   EvalCaseVerdictAggregation,
+  EvalExecutionVariant,
   EvalRateMeasurement,
   EvalRateMeasurementState,
   EvalRunVerdict,
@@ -437,6 +455,7 @@ export type {
   ResolvedEvalValidityPolicy,
 } from "./verdict-policy.js";
 export {
+  EVAL_CASE_AGGREGATION_KEY_SEPARATOR,
   EVAL_RATE_MEASUREMENT_STATES,
   EVAL_RUN_VERDICTS,
   EVAL_TASK_DECISION_REASONS,
@@ -445,8 +464,10 @@ export {
   EVAL_VERDICT_DECISION_REASONS,
   EVAL_VERDICT_POLICY_SCHEMA_ID,
   EVAL_VERDICT_POLICY_VERSION,
+  evalCaseAggregationKey,
   evalCaseVerdictAggregationSchema,
   evalCaseVerdictAggregationStructuralSchema,
+  evalExecutionVariantSchema,
   evalFractionSchema,
   evalRateMeasurementSchema,
   evalRateMeasurementStateSchema,
@@ -486,7 +507,9 @@ export {
   EXCLUDED_TRIAL_DETAIL_LABELS,
   FAILURE_CATEGORY_LABELS,
   NEXT_ACTION_BY_FAILURE_CATEGORY,
+  STAGE_REASONS_WITHOUT_REMEDY,
   STAGE_REASON_LABELS,
+  STAGE_REASON_REMEDIES,
   STAGE_STATE_LABELS,
   USER_VALUE_STAGE_LABELS,
   USER_VALUE_STAGE_OUTCOMES,

@@ -54,6 +54,9 @@ export const MODEL_PROVIDER_FIXTURES: ProviderFixture[] = [
   // and came back as `ollama`.
   { id: "mistralai/mistral-small-3.2-24b-instruct", provider: "mistral" },
   { id: "x-ai/grok-4", provider: "xai" },
+  // Same vendor under the catalog's newer prefix. Absent from
+  // MODEL_ID_PREFIX_ALIASES this fell through to the Ollama catch-all.
+  { id: "spacexai/grok-4.5", provider: "xai" },
 
   // ── Custom providers ──────────────────────────────────────────────────────
   {

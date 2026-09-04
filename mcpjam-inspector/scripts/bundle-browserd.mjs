@@ -10,15 +10,13 @@
 // the dynamic `import("playwright")` in chromium-launch.ts.
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
-import { dirname, join, relative, resolve } from "path";
-import { readFileSync, readdirSync, writeFileSync } from "fs";
+import { dirname, resolve } from "path";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, "..");
 const entry = resolve(root, "server/services/browserd/daemon/main.ts");
-const daemonDir = resolve(root, "server/services/browserd/daemon");
-const protocolFile = resolve(root, "server/services/browserd/protocol.ts");
 const distDir = resolve(root, "server/services/browserd/dist");
 const outfile = resolve(distDir, "mcpjam-browserd.mjs");
 const embedFile = resolve(distDir, "mcpjam-browserd-bundle.generated.ts");
@@ -30,68 +28,128 @@ const embedFile = resolve(distDir, "mcpjam-browserd-bundle.generated.ts");
  * or the Dockerfile regenerates the bundle since #4486 — this hash is the only
  * automated guard against shipping a silently stale daemon.
  *
- * Inputs: every `.ts` under `daemon/` (tests excluded — they don't ship) plus
- * `protocol.ts` (bundled via imports), sorted by repo-relative path, each as
- * `path\0bytes\0`. The test re-derives the same digest from the live tree;
- * keep the two implementations in lockstep
+ * The inputs are ESBUILD'S OWN, read back from the metafile: every local file
+ * that actually ended up in the artifact. It used to be a directory walk of
+ * `daemon/` plus `protocol.ts`, which was a guess about the import graph — and
+ * the guess was already wrong: `daemon/launch-args.ts` imports
+ * `webmcp-inspector/launch-args.ts`, so the Chromium feature flags shipped
+ * inside every bundle while an edit to them changed no hash and tripped no
+ * test. Asking the bundler what it bundled cannot drift from what it bundled.
+ *
+ * Each input contributes `path\0bytes\0`, sorted by repo-relative path. The
+ * test re-derives the digest from the recorded list; keep the two in lockstep
  * (server/services/browserd/__tests__/bundle-freshness.test.ts).
  */
-function computeDaemonSourceHash() {
-  const files = [];
-  const walk = (dir) => {
-    for (const entryName of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entryName.name);
-      if (entryName.isDirectory()) {
-        if (entryName.name === "__tests__") continue;
-        walk(full);
-        continue;
-      }
-      if (entryName.name.endsWith(".ts")) files.push(full);
-    }
-  };
-  walk(daemonDir);
-  files.push(protocolFile);
-  files.sort((a, b) =>
-    relative(root, a) < relative(root, b) ? -1 : 1,
-  );
+function computeSourceHash(files) {
+  const sorted = [...files].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
   const hash = createHash("sha256");
-  for (const file of files) {
-    hash.update(relative(root, file).replaceAll("\\", "/"));
+  for (const file of sorted) {
+    hash.update(file);
     hash.update("\0");
-    hash.update(readFileSync(file));
+    hash.update(readFileSync(resolve(root, file)));
     hash.update("\0");
   }
   return hash.digest("hex");
 }
 
-await build({
+const result = await build({
   entryPoints: [entry],
   outfile,
   bundle: true,
+  // NOTHING IS WRITTEN UNTIL THE GUARD BELOW HAS PASSED. esbuild writes its
+  // output before this script gets to look at the metafile, so a build that
+  // the dependency check then REFUSES used to leave the rejected bundle in
+  // `dist/mcpjam-browserd.mjs` while `.generated.ts` kept the old base64 and
+  // hash. The two dist files then disagree, the freshness test fails for a
+  // reason unrelated to the actual mistake, and `git checkout` is the only way
+  // back. Holding the bytes in memory makes the refusal a genuine no-op.
+  write: false,
   platform: "node",
   format: "esm",
   target: "node20",
-  external: ["playwright", "playwright-core"],
+  // `electron` is external for a DIFFERENT reason than the Playwright pair,
+  // and the difference is the whole point. Playwright is external because the
+  // sandbox resolves it at runtime. Electron is external because it must never
+  // resolve AT ALL: this bundle is uploaded to a box that has no Electron, and
+  // left non-external esbuild does not fail on an accidental import — it walks
+  // into `node_modules/electron` and INLINES the npm shim, which runs
+  // `getElectronPath()` at import and `spawnSync`s the package's `install.js`.
+  // The artifact then carries no bare `"electron"` specifier for a guard to
+  // find, so the check in `bundle-freshness.test.ts` passes on a bundle that
+  // would try to download Electron inside E2B. Listing it here is what makes
+  // that guard's premise true: an external import survives as a literal.
+  external: ["playwright", "playwright-core", "electron"],
   legalComments: "none",
+  metafile: true,
   banner: {
     js: "#!/usr/bin/env node\n// AUTO-GENERATED by scripts/bundle-browserd.mjs — do not edit by hand.",
   },
 });
+
+const metafileInputs = Object.keys(result.metafile.inputs)
+  .map((input) => input.replaceAll("\\", "/"))
+  .sort();
+
+// REFUSED HERE, where the cause is on screen. The bundle is uploaded to an E2B
+// box that has nothing but these bytes, so a package quietly inlined here is a
+// runtime failure one upload away from the commit that caused it — and the
+// build is the last place that still knows WHICH import pulled it in.
+//
+// The source list below is the raw metafile, so `bundle-freshness.test.ts` can
+// assert the same property honestly as a second line of defence. That was not
+// always true: the list used to be built by REMOVING exactly these paths, which
+// made "no node_modules in the source list" a tautology that passed whatever
+// got bundled. It is a real assertion now, and it is still not a substitute for
+// refusing to emit the artifact in the first place.
+//
+// `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
+// the workspace root, so a bundled package arrives as `../node_modules/<name>/…`
+// and a prefix test walks straight past it.
+const bundledDependencies = metafileInputs.filter((input) =>
+  input.includes("node_modules/"),
+);
+if (bundledDependencies.length > 0) {
+  console.error(
+    "browserd bundle: a dependency was inlined into the daemon.\n" +
+      "It runs on a box with only what this artifact ships, so it must be\n" +
+      "declared external in this script or vendored deliberately.\n\n" +
+      bundledDependencies.map((file) => `  ${file}`).join("\n"),
+  );
+  process.exit(1);
+}
+
+// Local inputs only, which after the refusal above is all of them: a bare
+// specifier would be an external (`playwright`, `electron`), resolved inside
+// the sandbox at runtime with no bytes to hash.
+const sourceFiles = metafileInputs;
+
+// The guard passed, so the artifact may land. esbuild wrote nothing (`write:
+// false`), and a single entry point yields a single output file.
+mkdirSync(distDir, { recursive: true });
+const [output] = result.outputFiles ?? [];
+if (!output) {
+  console.error("browserd bundle: esbuild produced no output file.");
+  process.exit(1);
+}
+writeFileSync(outfile, output.contents);
 
 // Also emit the bundle base64-encoded as a TS const. The inspector server reads
 // this at runtime to UPLOAD the daemon into a sandbox; embedding it in the
 // server build (rather than reading a sibling .mjs by path) is what keeps it
 // present in the production Docker image, whose final stage copies only `dist/`.
 const base64 = readFileSync(outfile).toString("base64");
-const sourceHash = computeDaemonSourceHash();
+const sourceHash = computeSourceHash(sourceFiles);
 writeFileSync(
   embedFile,
   "// AUTO-GENERATED by scripts/bundle-browserd.mjs — do not edit by hand.\n" +
     "// The daemon bundle, base64-encoded so it ships INSIDE the server build.\n" +
     `export const MCPJAM_BROWSERD_BUNDLE_BASE64 =\n  "${base64}";\n` +
-    "// sha256 over the daemon sources this bundle was generated from — the\n" +
-    "// freshness guard's anchor (see bundle-freshness.test.ts).\n" +
-    `export const MCPJAM_BROWSERD_SOURCE_HASH = "${sourceHash}";\n`,
+    "// sha256 over the sources this bundle was generated from — the freshness\n" +
+    "// guard's anchor (see bundle-freshness.test.ts).\n" +
+    `export const MCPJAM_BROWSERD_SOURCE_HASH = "${sourceHash}";\n` +
+    "// Exactly which files esbuild put in the artifact, so the guard hashes\n" +
+    "// what shipped rather than re-guessing the import graph.\n" +
+    `export const MCPJAM_BROWSERD_SOURCE_FILES: readonly string[] = ${JSON.stringify(sourceFiles, null, 2)};\n`,
 );
 
 console.log(`bundled browserd → ${outfile}`);

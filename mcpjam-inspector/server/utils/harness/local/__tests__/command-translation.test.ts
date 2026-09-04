@@ -202,10 +202,109 @@ describe("the pinned command grammar", () => {
     });
   });
 
+  it("answers the framework's $HOME probe from the synthetic home", async () => {
+    // `resolveSandboxHomeDir` issues this before every bridge start. It is
+    // answered from the home we handed the child rather than by starting a
+    // shell to read back a value we chose ourselves.
+    const result = await translateAdapterCommand(
+      { command: 'printf "%s" "$HOME"' },
+      ctx(),
+    );
+    expect(result).toEqual({ kind: "reply", stdout: HOME });
+  });
+
+  describe("the skills writer, which runs on every prompt turn", () => {
+    const SKILLS = `${HOME}/.claude/skills`;
+
+    it("renames a staged manifest into place", async () => {
+      const result = await translateAdapterCommand(
+        { command: `mv -f '${SKILLS}/manifest.tmp' '${SKILLS}/manifest'` },
+        ctx(),
+      );
+      expect(result).toEqual({
+        kind: "rename",
+        from: `${SKILLS}/manifest.tmp`,
+        to: `${SKILLS}/manifest`,
+      });
+    });
+
+    it("probes a skill directory for absence", async () => {
+      const result = await translateAdapterCommand(
+        { command: `test ! -e '${SKILLS}/writing'` },
+        ctx(),
+      );
+      expect(result).toEqual({ kind: "probe-absent", path: `${SKILLS}/writing` });
+    });
+
+    it("removes skill directories", async () => {
+      const result = await translateAdapterCommand(
+        { command: `rm -rf -- '${SKILLS}/a' '${SKILLS}/b'` },
+        ctx(),
+      );
+      expect(result).toEqual({
+        kind: "remove",
+        paths: [`${SKILLS}/a`, `${SKILLS}/b`],
+      });
+    });
+
+    // The narrow rule, and the reason it is narrower than `confine`: these
+    // shapes are only ever emitted against the synthetic home, so an operand
+    // naming the workspace is an adapter change to review, not a path to
+    // quietly accept because it happens to be inside a granted root.
+    it.each([
+      ["mv -f source", `mv -f '${SESSION}/a' '${HOME}/b'`],
+      ["mv -f destination", `mv -f '${HOME}/a' '${SESSION}/b'`],
+      ["test ! -e", `test ! -e '${SESSION}/skills'`],
+      ["rm -rf --", `rm -rf -- '${SESSION}/skills'`],
+      ["the synthetic home itself", `rm -rf -- '${HOME}'`],
+    ])("refuses %s outside the synthetic home", async (_label, command) => {
+      await expect(translateAdapterCommand({ command }, ctx())).rejects.toThrow(
+        CommandTranslationError,
+      );
+    });
+
+    it.each([
+      ["mv -f with one operand", `mv -f '${HOME}/a'`],
+      ["mv -f with three operands", `mv -f '${HOME}/a' '${HOME}/b' '${HOME}/c'`],
+      ["test ! -e with two operands", `test ! -e '${HOME}/a' '${HOME}/b'`],
+      ["rm -rf -- with no operands", "rm -rf -- "],
+      ["a relative skills operand", "rm -rf -- 'skills/a'"],
+      ["a glob in a skills operand", `rm -rf -- '${HOME}/*'`],
+    ])("refuses %s", async (_label, command) => {
+      await expect(translateAdapterCommand({ command }, ctx())).rejects.toThrow(
+        CommandTranslationError,
+      );
+    });
+  });
+
+  it("launches the pack's loopback launcher when the manifest names one", async () => {
+    // The bridge stays byte-identical to the adapter's recipe copy (the
+    // provider compares it), so the loopback constraint is applied by running
+    // a wrapper in front of it instead of by editing it.
+    const result = await translateAdapterCommand(
+      {
+        command:
+          `node '${BOOT}/bridge.mjs' --workdir '${SESSION}/w' ` +
+          `--bridge-state-dir '${SESSION}/b'`,
+      },
+      ctx({ bridgeLauncherPath: `${BUNDLE}/launcher.mjs` }),
+    );
+    // `toEqual`, and asserting the executable: the thing this test exists to
+    // lock down is that the launcher runs THROUGH the pack's verified node.
+    // Matching only `args` would have passed a regression that spawned
+    // `launcher.mjs` directly, which is the case it is named for.
+    expect(result).toEqual({
+      kind: "exec",
+      executable: "/usr/local/bin/node",
+      workingDirectory: SESSION,
+      args: [`${BUNDLE}/launcher.mjs`, "--workdir", `${SESSION}/w`, "--bridge-state-dir", `${SESSION}/b`],
+    });
+  });
+
   it("documents every shape the pinned framework and adapters emit", () => {
     // Documentation that has to stay in step with the code below it: a shape
     // added upstream without a translator arm shows up here first.
-    expect(ADAPTER_COMMAND_SHAPES.framework).toHaveLength(3);
+    expect(ADAPTER_COMMAND_SHAPES.framework).toHaveLength(7);
     expect(ADAPTER_COMMAND_SHAPES["claude-code"]).toHaveLength(4);
     expect(ADAPTER_COMMAND_SHAPES.codex).toHaveLength(3);
   });
@@ -243,7 +342,6 @@ describe("everything outside the grammar fails closed", () => {
       "the old canary pnpm shape",
       "pnpm --dir /tmp/harness/claude-code install --frozen-lockfile",
     ],
-    ["the retired $HOME probe", 'printf "%s" "$HOME"'],
     ["leading whitespace", ` mkdir -p '${SESSION}/a'`],
     ["an unterminated quote", `mkdir -p '${HOME}`],
     ["an empty command", ""],

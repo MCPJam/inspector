@@ -137,6 +137,9 @@ const AGENT_SNAPSHOT_MAX_PERSONAS = 30;
 /** Above this, the library is long enough that scanning it needs a filter. */
 const SEARCHABLE_PERSONA_COUNT = 5;
 const AGENT_SNAPSHOT_MAX_JOURNEYS = 30;
+const PERSONA_SIDEBAR_DEFAULT_WIDTH = 288;
+const PERSONA_SIDEBAR_MIN_WIDTH = 224;
+const PERSONA_SIDEBAR_MAX_WIDTH = 480;
 
 const SWARM_VIEW_OPTIONS = [
   { value: "overview" as const, label: "Overview" },
@@ -288,6 +291,12 @@ export function SwarmsTab({
   const environmentsEnabled = useProjectEnvironmentsEnabled();
   const environments = useProjectEnvironmentsList(effectiveProjectId);
   const [runningPersonaIds, setRunningPersonaIds] = useState<string[]>([]);
+  const [personaSidebarWidth, setPersonaSidebarWidth] = useState(
+    PERSONA_SIDEBAR_DEFAULT_WIDTH
+  );
+  const [isResizingPersonaSidebar, setIsResizingPersonaSidebar] =
+    useState(false);
+  const personaSidebarRef = useRef<HTMLElement>(null);
   const runningSet = useMemo(
     () => new Set(runningPersonaIds),
     [runningPersonaIds],
@@ -579,7 +588,8 @@ export function SwarmsTab({
        */
       opts?: { swarmRunGroupId?: string; environmentIds?: string[] },
     ): Promise<
-      { status: "launched"; runId?: string } | { status: "already_launching" }
+      | { status: "launched"; runId?: string; swarmRunGroupId?: string }
+      | { status: "already_launching" }
     > => {
       if (!projectId) {
         throw new LaunchJourneyRunError(0, "No project is selected.");
@@ -612,7 +622,15 @@ export function SwarmsTab({
             : {}),
         });
         launchKeysRef.current.delete(journeyId); // confirmed 2xx
-        return { status: "launched", runId: result.runId };
+        // The wave this run ACTUALLY landed under, which is not always the one
+        // the caller asked for: a retry after a failed launch reuses the cached
+        // `pending` and its id. Reported so a caller offering a link into the
+        // new wave can tell whether the wave it minted exists.
+        return {
+          status: "launched",
+          runId: result.runId,
+          swarmRunGroupId: pending.swarmRunGroupId,
+        };
       } finally {
         // Retain the key (and its wave) on failure (handled by the thrown error
         // reaching the caller); only clear the in-flight marker.
@@ -626,10 +644,14 @@ export function SwarmsTab({
     async (journeyRefIds: string[]) => {
       const swarmRunGroupId = crypto.randomUUID();
       const errors: string[] = [];
+      let landedUnderNewWave = false;
       for (const journeyId of journeyRefIds) {
         try {
           const result = await launchJourney(journeyId, { swarmRunGroupId });
           if (result.status === "already_launching") continue;
+          if (result.swarmRunGroupId === swarmRunGroupId) {
+            landedUnderNewWave = true;
+          }
         } catch (err) {
           errors.push(
             err instanceof LaunchJourneyRunError
@@ -643,21 +665,23 @@ export function SwarmsTab({
       if (errors.length > 0) {
         throw new Error(errors[0]!);
       }
+      // The group id minted above IS the new wave's route id
+      // (`swarmWaveRouteId`), so the detail page can offer a way into the run
+      // it just started instead of leaving the viewer on the one they
+      // relaunched from.
+      //
+      // Only when a run actually landed under it, though. Two paths mint it and
+      // don't use it: a retry after a failed launch reuses the cached wave from
+      // `launchKeysRef`, and an `already_launching` goal is skipped without an
+      // error. Returning the id regardless offered "View run" into a wave no
+      // run carries — a link to "Swarm run not found." A confirmation with no
+      // link is the honest answer, and the caller already treats the field as
+      // optional.
+      if (!landedUnderNewWave) return {};
+      return { swarmRunGroupId };
     },
     [launchJourney],
   );
-  const handleOpenPersonaFromDetail = useCallback(
-    (personaName: string) => {
-      const match = (personas ?? []).find(
-        (p) => p.name.toLowerCase() === personaName.toLowerCase(),
-      );
-      if (match) setSelectedPersonaId(match._id);
-      setViewMode("journeys");
-      navigate(routePaths.swarms);
-    },
-    [navigate, personas],
-  );
-
   // Exact (case-insensitive) resolution against the loaded lists — unknown or
   // ambiguous → invalid_request, never a fuzzy guess.
   const resolvePersona = (raw: unknown): Persona => {
@@ -953,32 +977,44 @@ export function SwarmsTab({
           }}
           launchJourney={launchJourney}
           onCancel={() => navigate(routePaths.swarms)}
-          onDone={(runLabels) => {
-            // Labels are component state and `/swarms/new` → `/swarms` swaps
-            // sibling routes without remounting this component, so they
-            // survive. `?view=sessions` carries the landing view in the URL
-            // regardless, so a remount (or a reload) still lands correctly —
-            // it just falls back to run-id labels.
+          onDone={(runLabels, swarmRunGroupId) => {
+            // Labels are component state and `/swarms/new` → `/swarms/:id`
+            // swaps sibling routes without remounting this component, so
+            // they survive. Findings is the swarm page's default tab — the
+            // run keeps going after this leave.
             setSwarmRunLabels(runLabels);
+            if (swarmRunGroupId) {
+              navigate(buildSwarmPath(swarmRunGroupId));
+              return;
+            }
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
-          onOpenSession={({ sessionId, swarmRunGroupId, runLabels }) => {
+          onOpenSession={({
+            sessionId,
+            swarmRunGroupId,
+            runLabels,
+            criterionId,
+          }) => {
             setSwarmRunLabels(runLabels);
             if (swarmRunGroupId) {
-              // The wave's own page, on the session that produced the finding.
-              // It is a real URL, so this leave is reversible — and the run
-              // keeps streaming into that page while the user reads.
+              // Live-pane "open this completed session" — the wave's own
+              // page, on the session that produced the finding, showing the
+              // transcript rather than Findings (Findings is `onDone` / Open
+              // findings). It is a real URL, so this leave is reversible — and
+              // the run keeps streaming into that page while the user reads.
+              // The criterion rides along so the page can name the finding
+              // rather than dropping the viewer into an unexplained
+              // transcript.
               navigate(
                 buildSwarmPath(swarmRunGroupId, {
                   tab: "sessions",
                   session: sessionId,
+                  finding: criterionId,
                 }),
               );
               return;
             }
-            // No wave id means nothing launched under one, so there is no run
-            // page to open — fall back to the handoff `onDone` already makes.
             setViewMode("sessions");
             navigate(`${routePaths.swarms}?view=sessions`);
           }}
@@ -1007,12 +1043,18 @@ export function SwarmsTab({
           />
         </ErrorBoundary>
         <SwarmRunDetail
+          // Remount per wave. Every piece of state in here is about the wave
+          // being looked at — the persona filter, the stop confirmation, and
+          // `stoppedHere` above all. Without a key, "Run again" → "View run"
+          // swaps `swarmId` on the SAME instance, and the new wave inherits
+          // the old one's "you stopped this", so a wave that later completes
+          // reads Stopped.
+          key={swarmId}
           swarmId={swarmId}
           projectId={effectiveProjectId}
           personas={personas ?? []}
           hosts={hosts ?? []}
           onRunAgain={handleRunAgainFromDetail}
-          onOpenPersona={handleOpenPersonaFromDetail}
         />
       </div>
     );
@@ -1050,7 +1092,9 @@ export function SwarmsTab({
           <>
             {/* Personas sidebar — Personas tab only */}
             <aside
-              className="flex w-80 shrink-0 flex-col border-r"
+              ref={personaSidebarRef}
+              className="flex shrink-0 flex-col border-r"
+              style={{ width: personaSidebarWidth }}
               data-testid="swarm-persona-sidebar"
             >
               <div className="flex items-center justify-between border-b px-4 py-3">
@@ -1207,6 +1251,56 @@ export function SwarmsTab({
                 )}
               </div>
             </aside>
+            <div
+              role="separator"
+              aria-label="Resize personas sidebar"
+              aria-orientation="vertical"
+              aria-valuemin={PERSONA_SIDEBAR_MIN_WIDTH}
+              aria-valuemax={PERSONA_SIDEBAR_MAX_WIDTH}
+              aria-valuenow={personaSidebarWidth}
+              tabIndex={0}
+              className={cn(
+                "relative z-10 -ml-px w-1 shrink-0 cursor-col-resize touch-none select-none border-r border-transparent transition-colors hover:border-primary/40",
+                isResizingPersonaSidebar && "border-primary/60"
+              )}
+              onPointerDown={(event) => {
+                event.currentTarget.setPointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(true);
+              }}
+              onPointerMove={(event) => {
+                if (!isResizingPersonaSidebar) return;
+                const left =
+                  personaSidebarRef.current?.getBoundingClientRect().left ?? 0;
+                setPersonaSidebarWidth(
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(
+                      PERSONA_SIDEBAR_MIN_WIDTH,
+                      event.clientX - left
+                    )
+                  )
+                );
+              }}
+              onPointerUp={(event) => {
+                event.currentTarget.releasePointerCapture(event.pointerId);
+                setIsResizingPersonaSidebar(false);
+              }}
+              onPointerCancel={() => setIsResizingPersonaSidebar(false)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+                  return;
+                }
+                event.preventDefault();
+                const delta = event.key === "ArrowLeft" ? -16 : 16;
+                setPersonaSidebarWidth((width) =>
+                  Math.min(
+                    PERSONA_SIDEBAR_MAX_WIDTH,
+                    Math.max(PERSONA_SIDEBAR_MIN_WIDTH, width + delta)
+                  )
+                );
+              }}
+              data-testid="persona-sidebar-resizer"
+            />
 
             {/* Persona detail + journey blocks; run detail opens on the right */}
             <main className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

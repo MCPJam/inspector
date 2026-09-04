@@ -53,6 +53,7 @@ import { startHostedModelCatalogRefresh } from "./services/hosted-model-catalog"
 import { inAppBrowserMiddleware } from "./middleware/in-app-browser";
 import { startGuestAuthProvisioningInBackground } from "./utils/convex-guest-auth-sync";
 import { startLocalBrowserRenderingSetupInBackground } from "./utils/browser-rendering-setup";
+import { reportLocalHarnessRuntimeStatusInBackground } from "./utils/harness/local/runtime-install.js";
 
 import { getSystemLogger } from "./utils/request-logger";
 import { requestLogContextMiddleware } from "./middleware/request-log-context";
@@ -62,6 +63,11 @@ import {
   createLocalComputerTerminalWsHandler,
   shutdownLocalComputerTerminals,
 } from "./routes/web/local-computer-terminal";
+import {
+  createLocalBrowserFramesWsHandler,
+  shutdownLocalBrowserFrameSockets,
+} from "./routes/web/local-browser-frames";
+import { shutdownLocalBrowserSessions } from "./services/browserd/local/local-browser-session";
 import {
   createWebMcpFramesWsHandler,
   shutdownWebMcpFrameSockets,
@@ -161,6 +167,11 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
+import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
+import {
+  createComputerBrowserFramesWsHandler,
+  shutdownBrowserFrameSockets,
+} from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
@@ -325,6 +336,11 @@ startHostedModelCatalogRefresh();
 
 startGuestAuthProvisioningInBackground();
 startLocalBrowserRenderingSetupInBackground();
+// Reports whether a local-harness runtime pack is present. Deliberately
+// only REPORTS: a 515 MB agent runtime for a feature behind a flag, a
+// kill switch and a consent grant is installed when the user asks, never
+// at startup and never during a session start.
+reportLocalHarnessRuntimeStatusInBackground();
 // Mirror of the call in server/app.ts::createHonoApp — both production
 // entries must wire this up. Memoized, so it's harmless if a process ever
 // ran both. Kicked off here so it overlaps route setup; AWAITED before
@@ -518,7 +534,10 @@ app.route("/api/internal/chat-stage", internalChatStageDerivations);
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
 if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
-  app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
+  app.route(
+    "/api/internal/computer-browser-debug",
+    internalComputerBrowserDebug,
+  );
 }
 app.route("/api/web", webRoutes);
 // Browser Panel data plane (W4): watch the browser an agent is driving, and
@@ -536,6 +555,22 @@ app.get(
   "/api/web/computers/terminal",
   createComputerTerminalWsHandler(upgradeWebSocket),
 );
+// Browser panel stream (W4b). Proxies RFB so the desktop's VNC password stays
+// on this replica instead of riding in an iframe URL, and so the handoff lease
+// can actually gate a human viewer's keyboard — the daemon never sees these
+// packets. Mounted in BOTH modes: a local inspector driving "On my computer"
+// has exactly the same credential to protect.
+app.get(
+  "/api/web/computers/browser/stream",
+  createComputerBrowserStreamWsHandler(upgradeWebSocket),
+);
+// The PAGE, from the daemon's own screencast — the rail's pane. The
+// stream above is the whole DESKTOP over RFB, and both stay: one is for
+// watching alongside the local engine, the other for taking the machine.
+app.get(
+  "/api/web/computers/browser/frames",
+  createComputerBrowserFramesWsHandler(upgradeWebSocket),
+);
 // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
 // a hosted server must have no path at all to a local PTY. Auth is the
 // single-use nonce from POST /api/mcp/computers/local-terminal-token.
@@ -543,6 +578,12 @@ if (!HOSTED_MODE) {
   app.get(
     "/api/web/computers/local-terminal",
     createLocalComputerTerminalWsHandler(upgradeWebSocket),
+  );
+  // The agent browser's viewport, on the same condition and for the same
+  // reason: a hosted replica runs no local browser to watch.
+  app.get(
+    "/api/web/computers/local-browser/frames",
+    createLocalBrowserFramesWsHandler(upgradeWebSocket),
   );
 }
 // WebMCP Inspector frame stream WebSocket. Local only, for the same reason the
@@ -1022,10 +1063,18 @@ async function shutdown() {
     // Same reason, same moment: a frame socket is an established connection
     // that `server.close()` would leave attached to an exiting process.
     shutdownWebMcpFrameSockets();
+    // Same again for the agent browser's own viewport sockets.
+    shutdownLocalBrowserFrameSockets();
+    // Hosted panes too: an established WS survives `server.close()`.
+    shutdownBrowserFrameSockets();
     // Also before server.close(), and awaited: a WebMCP session owns a real
     // Chromium — a visible window when it is headed — and a fire-and-forget
     // teardown loses the race against the process.exit(0) below.
     await shutdownWebMcpSessions();
+    // The agent's own browser, for the same reason and with one more: closing
+    // the context is what makes Chromium release its profile's singleton lock,
+    // so a skipped teardown here is a browser the NEXT run cannot launch.
+    await shutdownLocalBrowserSessions();
     server.close();
     // Flush queued server-side analytics (bounded internally; forceExitTimer
     // is the backstop). Billing/funnel events must not die in the queue.

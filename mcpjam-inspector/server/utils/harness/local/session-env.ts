@@ -123,6 +123,10 @@ const SCOPED_NAME_DENYLIST = new Set([
   "TMPDIR",
   "TMP",
   "TEMP",
+  // Same reason as TMPDIR, and the reason it is set at all: the vendor CLI
+  // extracts its native binary here, so a scoped override would put that
+  // extraction back outside the session's disposable state.
+  "CLAUDE_CODE_TMPDIR",
   "XDG_CONFIG_HOME",
   "XDG_CACHE_HOME",
   "XDG_DATA_HOME",
@@ -165,6 +169,12 @@ export function buildLocalHarnessEnv(
   // at the session's own disposable state so nothing lands in the user's real
   // config and everything is removed with the session.
   env.TMPDIR = path.join(opts.syntheticHome, "tmp");
+  // Claude Code's own temp knob, which it honours ahead of `TMPDIR`. It has to
+  // be set on the BRIDGE too, not only on the CLI the bridge starts: the SDK
+  // extracts its native binary at import time and hardcodes `/tmp` on darwin
+  // unless this is present. Without it a session's extraction lands outside
+  // the session's disposable state and survives it.
+  env.CLAUDE_CODE_TMPDIR = env.TMPDIR;
   env.XDG_CONFIG_HOME = path.join(opts.syntheticHome, ".config");
   env.XDG_CACHE_HOME = path.join(opts.syntheticHome, ".cache");
   env.XDG_DATA_HOME = path.join(opts.syntheticHome, ".local", "share");
