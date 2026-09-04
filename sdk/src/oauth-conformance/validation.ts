@@ -116,6 +116,7 @@ export function normalizeOAuthConformanceConfig(
     customHeaders: config.customHeaders,
     redirectUrl: config.redirectUrl,
     fetchFn: config.fetchFn ?? fetch,
+    allowPrivateNetwork: config.allowPrivateNetwork ?? false,
     stepTimeout: config.stepTimeout ?? 30_000,
     verification: {
       listTools: config.verification?.listTools ?? !!config.verification?.callTool,

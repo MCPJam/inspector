@@ -65,6 +65,23 @@ const CONFIG_ROW = {
   updatedAt: 2,
 };
 
+/**
+ * One entry as `checkRepoConfigsNode:listInstallationRepos` returns it.
+ *
+ * `installationRef` is the opaque Convex row id of the binding the repository
+ * was enumerated through — never GitHub's installation id — and `repositoryId`
+ * is GitHub's numeric identity, which is what a connect is re-verified
+ * against. Both are SELECTORS the connect sends back; neither is a fact the
+ * backend takes on trust.
+ */
+const LISTED_REPO = {
+  fullName: "acme/widgets",
+  repositoryId: 4242,
+  installationRef: "inst_1",
+  accountLogin: "acme",
+  private: true,
+};
+
 function answer(
   queries: Record<string, unknown>,
   actions: Record<string, unknown> = {}
@@ -202,7 +219,13 @@ describe("POST eval-check-repos", () => {
   }
 
   it("connects through the VERIFIED action, never the deprecated mutation", async () => {
-    answer({}, { connectVerifiedRepo: { configId: "cfg_9" } });
+    answer(
+      {},
+      {
+        listInstallationRepos: [LISTED_REPO],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
     const res = await connect({
       projectId: "proj_1",
       suiteId: "suite_1",
@@ -217,6 +240,41 @@ describe("POST eval-check-repos", () => {
       repo: "acme/widgets",
       outagePolicy: "fail_closed",
     });
+    // The unverified path cannot stamp an installation id, so a row created
+    // through it is permanently unverifiable. Nothing here may reach it.
+    const called = actionMock.mock.calls.map((call) => String(call[0]));
+    expect(called.some((name) => name.endsWith(":connectRepo"))).toBe(false);
+  });
+
+  it("forwards the installationRef AND repositoryId from the listing", async () => {
+    // THE BUG THIS FILE'S POST HALF EXISTS FOR.
+    //
+    // `connectVerifiedRepo` reads an ABSENT `installationRef` as "use the
+    // pinned compatibility branch", which resolves the retired
+    // `GITHUB_CHECKS_INSTALLATION_ID` env var. That var is unset in
+    // production, so a reference-less connect refused every time — while the
+    // GET beside this listed the very same repository as `connectable`. The
+    // web picker never hit it because it sends the reference it read out of
+    // the listing; every agent surface did, because it has no picker.
+    //
+    // So the assertion is on BOTH selectors, not just the ref: the ref picks
+    // the binding, and the numeric id is what GitHub's own answer is checked
+    // against, which is the guard that catches a rename-and-reuse race between
+    // the listing and this connect.
+    answer(
+      {},
+      {
+        listInstallationRepos: [LISTED_REPO],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+    expect(res.status).toBe(201);
     expect(actionMock).toHaveBeenCalledWith(
       "github/checkRepoConfigsNode:connectVerifiedRepo",
       {
@@ -225,12 +283,178 @@ describe("POST eval-check-repos", () => {
         suiteId: "suite_1",
         repoFullName: "acme/widgets",
         outagePolicy: "fail_closed",
-      }
+        installationRef: "inst_1",
+        repositoryId: 4242,
+      },
     );
-    // The unverified path cannot stamp an installation id, so a row created
-    // through it is permanently unverifiable. Nothing here may reach it.
+  });
+
+  it("matches the repository the way the backend keys it: case-insensitively", async () => {
+    // The stored key is `canonicalizeRepoFullName` — trim + lowercase — so
+    // `Acme/Widgets` and `acme/widgets` are one repository under one row. A
+    // case-sensitive match here would refuse a name a human typed correctly.
+    answer(
+      {},
+      {
+        listInstallationRepos: [LISTED_REPO],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "  Acme/Widgets  ",
+      outagePolicy: "fail_open",
+    });
+    expect(res.status).toBe(201);
+    expect(actionMock).toHaveBeenCalledWith(
+      "github/checkRepoConfigsNode:connectVerifiedRepo",
+      expect.objectContaining({
+        installationRef: "inst_1",
+        repositoryId: 4242,
+      }),
+    );
+  });
+
+  it("sends NEITHER selector for a listing entry that carries no reference", async () => {
+    // The pinned compatibility branch lists repositories without an
+    // `installationRef`. That branch only produces entries at all when the pin
+    // IS set, so sending nothing is correct AND functional there — and the
+    // backend documents "no reference" as a byte-identical path, which a
+    // stray `repositoryId` would quietly stop being.
+    answer(
+      {},
+      {
+        listInstallationRepos: [
+          { fullName: "acme/widgets", repositoryId: 4242 },
+        ],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+    expect(res.status).toBe(201);
+    expect(actionMock).toHaveBeenCalledWith(
+      "github/checkRepoConfigsNode:connectVerifiedRepo",
+      {
+        organizationId: ORG,
+        projectId: "proj_1",
+        suiteId: "suite_1",
+        repoFullName: "acme/widgets",
+        outagePolicy: "fail_closed",
+      },
+    );
+  });
+
+  it("refuses a repository the listing does not hold, without disclosing what it does", async () => {
+    answer(
+      {},
+      {
+        listInstallationRepos: [
+          { ...LISTED_REPO, fullName: "acme/secret-thing" },
+        ],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+    expect(res.status).toBe(404);
+    const raw = await res.text();
+    // ONE flat sentence for "does not exist", "is somebody else's" and "the
+    // App cannot see it". Telling them apart would answer "does this private
+    // repository exist" for anyone who can reach the route.
+    expect(raw).toContain(
+      "Repository, project or suite not found, or the MCPJam GitHub App cannot reach it.",
+    );
+    // And the candidates are not the caller's business either — an error that
+    // helpfully listed them would be the same oracle by another route.
+    expect(raw).not.toContain("secret-thing");
+    // Nothing was attempted: no GitHub verification round trip, no row.
     const called = actionMock.mock.calls.map((call) => String(call[0]));
-    expect(called.some((name) => name.endsWith(":connectRepo"))).toBe(false);
+    expect(called).not.toContain(
+      "github/checkRepoConfigsNode:connectVerifiedRepo",
+    );
+  });
+
+  it("refuses an AMBIGUOUS match rather than picking one", async () => {
+    // The backend deduplicates its fan-out across bindings by NUMERIC
+    // repository id, NOT by name, so two entries can legitimately carry one
+    // full name — a renamed repository whose freed name was taken in another
+    // account the App is also installed on. Picking either would stamp the row
+    // with an installation that may not be the one the caller meant, and the
+    // row's key is the name, so the mistake would only ever surface as checks
+    // that silently never run.
+    answer(
+      {},
+      {
+        listInstallationRepos: [
+          { ...LISTED_REPO, installationRef: "inst_1", repositoryId: 4242 },
+          { ...LISTED_REPO, installationRef: "inst_2", repositoryId: 9999 },
+        ],
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+    expect(res.status).toBe(404);
+    expect(await res.text()).toContain(
+      "Repository, project or suite not found, or the MCPJam GitHub App cannot reach it.",
+    );
+    const called = actionMock.mock.calls.map((call) => String(call[0]));
+    expect(called).not.toContain(
+      "github/checkRepoConfigsNode:connectVerifiedRepo",
+    );
+  });
+
+  it("does NOT fall through to the broken no-reference path when the listing fails", async () => {
+    // The GET fails SOFT on this same call, because the connected list costs
+    // no GitHub round trip and must survive an outage. The POST cannot: there
+    // is nothing left to preserve, and continuing without a reference would
+    // take the retired compatibility branch and answer "not accessible" —
+    // turning a GitHub blip into the exact misleading refusal that sends an
+    // admin off to re-install an App which is installed fine.
+    //
+    // The backend's own refusal keeps its wording, so the caller is told to
+    // retry rather than to go and fix something that is not broken.
+    const refusal = Object.assign(
+      new Error("Could not list repositories from GitHub."),
+      { data: "Could not list repositories from GitHub." },
+    );
+    answer(
+      {},
+      {
+        listInstallationRepos: refusal,
+        connectVerifiedRepo: { configId: "cfg_9" },
+      },
+    );
+    const res = await connect({
+      projectId: "proj_1",
+      suiteId: "suite_1",
+      repo: "acme/widgets",
+      outagePolicy: "fail_closed",
+    });
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const raw = await res.text();
+    expect(raw).toContain("Could not list repositories from GitHub.");
+    // The refusal that must NOT be produced for an outage.
+    expect(raw).not.toContain("cannot reach it");
+    // Nothing was written, and nothing tried the reference-less branch.
+    const called = actionMock.mock.calls.map((call) => String(call[0]));
+    expect(called).not.toContain(
+      "github/checkRepoConfigsNode:connectVerifiedRepo",
+    );
   });
 
   it("requires an explicit outage policy", async () => {
