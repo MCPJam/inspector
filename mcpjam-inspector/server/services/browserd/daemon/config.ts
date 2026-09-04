@@ -13,6 +13,16 @@ export interface BrowserdConfig {
   headless: boolean;
   /** `--window-size=W,H` matched to the X screen geometry, if the recipe set it. */
   windowSize?: string;
+  /**
+   * `ephemeral` launches a throwaway browser with NO persistent profile
+   * (evals/swarms: fresh state per iteration, so one iteration's cookies can
+   * never decide the next one's verdict). `persistent` keeps the profile dir,
+   * which is what makes a playground login survive between turns.
+   *
+   * The singleton lock (L8) is a property of the persistent profile DIRECTORY,
+   * so it simply does not apply in ephemeral mode — nothing is shared to lock.
+   */
+  contextMode: "persistent" | "ephemeral";
 }
 
 export const DEFAULT_BROWSERD_PORT = 8791;
@@ -50,6 +60,11 @@ export function readBrowserdConfig(
       env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
     headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
     windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || undefined,
+    // Only the exact string opts in. An unset or misspelled value keeps the
+    // persistent profile — the mode a human's logins depend on — rather than
+    // silently wiping state because a typo read as "ephemeral".
+    contextMode:
+      env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
   };
 }
 
