@@ -276,9 +276,15 @@ export function HostConfigCompareView({
     });
   }, [compareCatalog, excludedPresetTemplateIds]);
   // Real created hosts first, then presets — what the selector chips iterate.
+  // Presets carry the caniuse order on BOTH surfaces: the ranking is a
+  // deliberate reading order, and having the same clients appear in a
+  // different sequence on Compare than on caniuse.dev made the two pages hard
+  // to read against each other. Live hosts keep their own order, since that
+  // one belongs to the user.
   const hosts = useMemo(() => {
-    if (!presetOnly) return [...liveHosts, ...presets.hosts];
-    return sortCaniusePresetHosts(presets.hosts);
+    const orderedPresets = sortCaniusePresetHosts(presets.hosts);
+    if (!presetOnly) return [...liveHosts, ...orderedPresets];
+    return orderedPresets;
   }, [liveHosts, presetOnly, presets.hosts]);
 
   const [subjectsByHost, setSubjectsByHost] = useState<
