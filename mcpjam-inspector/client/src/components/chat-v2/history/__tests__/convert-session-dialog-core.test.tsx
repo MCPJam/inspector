@@ -997,6 +997,52 @@ describe("ConvertSessionDialogCore — Add to", () => {
     ).toBe("true");
   });
 
+  it("falls back to the new-suite branch when every suite disappears", async () => {
+    // `effectiveDestinationMode`'s reason for existing, and it had no test.
+    // The sibling below covers ONE suite vanishing with others left, where
+    // the existing branch is still reachable and submit must stay dead. Here
+    // the whole list empties for a session already stamped by the seeding
+    // effect, so `destinationMode` keeps saying "existing" for a branch that
+    // is no longer on screen — dropping the guard leaves Promote validating
+    // against a suite entry that cannot exist.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES,
+    );
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
+
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : [],
+    );
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(screen.queryByRole("radiogroup")).toBeNull());
+    expect(screen.getByLabelText("Suite name")).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
+  });
+
   it("blocks submit when the selected suite disappears from under the dialog", async () => {
     // A Convex push can drop the pre-selected suite — deleted elsewhere, or
     // `source` flipped past the `availableSuites` filter. Gating on the id

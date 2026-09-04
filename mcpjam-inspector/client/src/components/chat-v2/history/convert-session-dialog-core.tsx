@@ -961,7 +961,6 @@ function ConvertSessionDialogCoreInner({
               disabled={isSubmitting}
               variant="field"
               triggerId="promote-new-suite-server"
-              triggerTestId="promote-new-suite-server-trigger"
               // The dialog's scroll-lock blocks the wheel on portaled
               // content, so the group list has to render in place.
               inModal
