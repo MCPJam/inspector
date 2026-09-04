@@ -30,9 +30,11 @@ const CLOUD_COMMAND_FILES = [
   "projects.ts",
   "registry.ts",
   "scenarios.ts",
+  "secrets.ts",
   "sessions.ts",
   "skills.ts",
   "swarms.ts",
+  "trace-destinations.ts",
   "tunnel.ts",
   "user-testing.ts",
 ] as const;

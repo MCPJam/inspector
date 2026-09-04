@@ -46,3 +46,29 @@ describe("PassCriteriaBadge", () => {
     expect(screen.queryByText("Failed")).not.toBeInTheDocument();
   });
 });
+
+describe("PassCriteriaBadge — a run held for its judge", () => {
+  // `grading` is past execution and before the verdict. Its `result` is the
+  // truthy "pending", which used to fall through `passed === false` into a
+  // red "Suite Failed" for a run the judge may pass minutes later.
+  it.each(["compact", "detailed"] as const)(
+    "renders Grading, never Failed, in the %s variant",
+    (variant) => {
+      render(
+        <PassCriteriaBadge
+          run={makeRun({
+            status: "grading",
+            result: "pending",
+            summary: { total: 4, passed: 2, failed: 2, passRate: 0.5 },
+          })}
+          variant={variant}
+        />,
+      );
+      expect(screen.getByLabelText("Suite is being graded")).toHaveTextContent(
+        "Grading",
+      );
+      expect(screen.queryByText(/Failed/)).not.toBeInTheDocument();
+      expect(screen.queryByText(/Passed/)).not.toBeInTheDocument();
+    },
+  );
+});
