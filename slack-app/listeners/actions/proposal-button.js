@@ -47,10 +47,11 @@ export function announcementFor(outcome, userId) {
     (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
 
   switch (outcome.kind) {
     case 'cancel':
+      // KIND WINS over any resource URL. A cancel that also returns a resource
+      // should still say "Cancelled", not "Approved — follow it here".
       return `:white_check_mark: Cancelled by <@${userId}>.`;
     case 'generate':
       return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
@@ -61,10 +62,14 @@ export function announcementFor(outcome, userId) {
     case 'external':
       return `:white_check_mark: Approved by <@${userId}> — the tool ran.`;
     case 'start':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}>, and it's away.`;
     default:
       break;
   }
+
+  // URL fallback for kinds this build does not recognise (newer server).
+  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
 
   // A kind we do not recognise means a NEWER server, and the operation-name
   // table below is older than the kind vocabulary — consulting it would let a
