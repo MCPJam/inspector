@@ -39,6 +39,33 @@ export type HarnessBrokerStartResult =
     }
   | { ok: false; status: number; error: string };
 
+/**
+ * The LOCAL delivery's result. Structurally the cloud one plus a `lease`.
+ *
+ * A separate type rather than an optional field on the one above, because the
+ * lease's presence is the whole difference between the two deliveries and a
+ * `lease?: string` would let a cloud caller write code that reads it. There is
+ * exactly one consumer of this — the loopback gateway — and it is typed to say
+ * so.
+ */
+export type HarnessLoopbackStartResult =
+  | {
+      ok: true;
+      runId: string;
+      expiresAt: number;
+      protocol: "anthropic" | "openai";
+      proxyBaseUrl: string;
+      delivery: "inspector-loopback-gateway";
+      /**
+       * The signed lease. Held in the inspector SERVER process only: it is
+       * never persisted, never logged, never returned to a renderer, and never
+       * reaches the agent child, which gets a per-session gateway capability
+       * instead.
+       */
+      lease: string;
+    }
+  | { ok: false; status: number; error: string };
+
 function getConvexHttpUrl(): string {
   const convexHttpUrl = process.env.CONVEX_HTTP_URL;
   if (!convexHttpUrl) {
@@ -192,6 +219,194 @@ export async function startHarnessModelBroker(args: {
     protocol: payload.protocol,
     proxyBaseUrl: payload.proxyBaseUrl,
     delivery: "e2b-network-transform",
+  };
+}
+
+/**
+ * Register this installation's Ed25519 public key with the backend.
+ *
+ * Called once per machine at consent, from the SERVER process. The returned
+ * `keyId` is what a loopback lease names and what the model proxy resolves a
+ * public key from, so a lease can only ever be spent by an installation that
+ * holds the matching private half.
+ *
+ * Re-registering the same key is idempotent server-side; registering a
+ * different one rotates and revokes the old, which is what "Forget &
+ * re-authorize" does.
+ */
+export async function registerLocalInstance(args: {
+  machineId: string;
+  publicKey: string;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<
+  { ok: true; keyId: string } | { ok: false; status: number; error: string }
+> {
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/local-instance/register",
+      getConvexHttpUrl(),
+    ).toString();
+  } catch (err) {
+    logger.error("[harness-model-broker] missing register endpoint config", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Harness local-instance endpoint is not configured",
+    };
+  }
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({
+        machineId: args.machineId,
+        publicKey: args.publicKey,
+      }),
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+  } catch (err) {
+    logger.error("[harness-model-broker] register network error", err);
+    return {
+      ok: false,
+      status: 502,
+      error: "Failed to reach the harness local-instance endpoint",
+    };
+  }
+  const payload: any = await response.json().catch(() => null);
+  if (!response.ok || payload?.ok !== true || typeof payload?.keyId !== "string") {
+    return {
+      ok: false,
+      status: response.ok ? 502 : response.status,
+      error:
+        typeof payload?.error === "string"
+          ? payload.error
+          : `Local instance registration failed (${response.status})`,
+    };
+  }
+  return { ok: true, keyId: payload.keyId };
+}
+
+/**
+ * Start a LOCAL harness lease — the one call that receives a lease back.
+ *
+ * Deliberately its own function rather than a mode of `startHarnessModelBroker`.
+ * That one's whole contract is "we never hold a lease", stated in its own
+ * documentation and relied on by every reader; folding a branch into it that
+ * sometimes returns one would quietly falsify that for both callers. Two
+ * functions, two contracts, and the type system says which is which.
+ */
+export async function startLoopbackModelBroker(args: {
+  projectId: string;
+  harnessId: HarnessId;
+  modelId: string;
+  machineId: string;
+  keyId: string;
+  runId?: string;
+  maxOutputTokens?: number;
+  bearer: string;
+  signal?: AbortSignal;
+}): Promise<HarnessLoopbackStartResult> {
+  let url: string;
+  try {
+    url = new URL(
+      "/web/harness/model-broker/start",
+      getConvexHttpUrl(),
+    ).toString();
+  } catch (err) {
+    logger.error("[harness-model-broker] missing endpoint config", err);
+    return {
+      ok: false,
+      status: 500,
+      error: "Harness model-broker endpoint is not configured",
+    };
+  }
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: bearerHeader(args.bearer),
+      },
+      body: JSON.stringify({
+        // Declared, not inferred: the backend forks on this, and a caller that
+        // means "local" says so rather than being detected by an absent
+        // computerId. No box fields travel — the backend refuses a local
+        // request that carries one.
+        delivery: "inspector-loopback-gateway",
+        projectId: args.projectId,
+        harnessId: args.harnessId,
+        modelId: args.modelId,
+        machineId: args.machineId,
+        keyId: args.keyId,
+        ...(args.runId ? { runId: args.runId } : {}),
+        ...(args.maxOutputTokens !== undefined
+          ? { maxOutputTokens: args.maxOutputTokens }
+          : {}),
+      }),
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+  } catch (err) {
+    logger.error("[harness-model-broker] network error", err);
+    return {
+      ok: false,
+      status: 502,
+      error: "Failed to reach harness model-broker endpoint",
+    };
+  }
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.ok ? 502 : response.status,
+      error: `Harness model-broker returned ${response.status} with non-JSON body`,
+    };
+  }
+
+  const validShape =
+    response.ok &&
+    payload?.ok === true &&
+    typeof payload?.runId === "string" &&
+    payload.runId.length > 0 &&
+    typeof payload?.proxyBaseUrl === "string" &&
+    payload.proxyBaseUrl.length > 0 &&
+    typeof payload?.expiresAt === "number" &&
+    Number.isFinite(payload.expiresAt) &&
+    (payload?.protocol === "anthropic" || payload?.protocol === "openai") &&
+    payload?.delivery === "inspector-loopback-gateway" &&
+    // The lease is the point of this delivery. A response without one is not a
+    // usable local start, whatever else it says.
+    typeof payload?.lease === "string" &&
+    payload.lease.length > 0;
+  if (!validShape) {
+    return {
+      ok: false,
+      status: response.ok ? 502 : response.status,
+      error:
+        typeof payload?.error === "string"
+          ? payload.error
+          : `Harness model-broker failed (${response.status})`,
+    };
+  }
+
+  return {
+    ok: true,
+    runId: payload.runId,
+    expiresAt: payload.expiresAt,
+    protocol: payload.protocol,
+    proxyBaseUrl: payload.proxyBaseUrl,
+    delivery: "inspector-loopback-gateway",
+    lease: payload.lease,
   };
 }
 

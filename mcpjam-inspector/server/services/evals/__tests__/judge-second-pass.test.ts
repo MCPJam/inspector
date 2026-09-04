@@ -1146,6 +1146,91 @@ describe("the second pass keeps its contract with the run and the first pass", (
   });
 });
 
+/**
+ * B10e — the judge's ROLE reaches the score definition this pass projects.
+ *
+ * The pass forwards `metadata.judgeVerdict` whole, so the role rides along
+ * without a second mapping to keep true. What is worth pinning is the
+ * consequence: on a gating run the projected definition gates, and on every
+ * other run — including one whose verdict carries the field explicitly as
+ * advisory — the rows are byte-identical to what this pass has always written.
+ *
+ * It still touches no verdict. This pass posts rows; `finalizeAfterJudge`
+ * applies them, stricter-only, and decides the run once.
+ */
+describe("the projected judge definition carries the run's role", () => {
+  function withRole(role?: string) {
+    return vi.fn(async () => {
+      const row = runRow();
+      return {
+        ...row,
+        iterations: row.iterations.map((iteration) => ({
+          ...iteration,
+          metadata: {
+            judgeVerdict: {
+              ...(iteration.metadata as { judgeVerdict: object }).judgeVerdict,
+              ...(role !== undefined ? { role } : {}),
+            },
+          },
+        })),
+      };
+    });
+  }
+
+  function judgeDefinition(body: JudgeStageDerivationBody) {
+    const config = body.evaluationConfig as
+      { definitions?: Array<Record<string, unknown>> } | undefined;
+    return config?.definitions?.find(
+      (definition) => definition.scorerId === "judge:goalCompletion",
+    );
+  }
+
+  function judgeRow(body: JudgeStageDerivationBody) {
+    return (body.scores as Array<Record<string, unknown>> | undefined)?.find(
+      (row) => row.scorerId === "judge:goalCompletion",
+    );
+  }
+
+  test("a gating verdict projects a gating definition and a failing row", async () => {
+    const { value, applied } = ports({ fetchRun: withRole("gating") });
+    await runJudgeSecondPass("run1", value);
+
+    const body = applied[0]!.body;
+    expect(judgeDefinition(body)?.role).toBe("gating");
+    // The judge scored 0.2 against a 0.8 threshold, so the row fails — and on
+    // a gating definition that row now counts.
+    expect(judgeRow(body)?.passed).toBe(false);
+    // ...while this pass still touches no lifecycle field. The backend refuses
+    // them on this route outright, and the finalizer is what applies the row.
+    expect(body).not.toHaveProperty("status");
+    expect(body).not.toHaveProperty("result");
+    expect(body).not.toHaveProperty("passed");
+  });
+
+  test("an advisory verdict is byte-identical with or without the field", async () => {
+    const absent = ports({ fetchRun: withRole(undefined) });
+    await runJudgeSecondPass("run1", absent.value);
+    const explicit = ports({ fetchRun: withRole("advisory") });
+    await runJudgeSecondPass("run1", explicit.value);
+
+    // `judgeStageDerivedAt` is `Date.now()` at the moment each pass ran, so
+    // the two differ whenever the second pass lands in a later millisecond —
+    // which under a loaded suite it sometimes does. It is asserted as a number
+    // and then set aside, the same way the shape test above treats it; what
+    // this test is about is everything else being identical.
+    const withoutClock = (body: JudgeStageDerivationBody) => {
+      const { judgeStageDerivedAt, ...rest } = body as Record<string, unknown>;
+      expect(typeof judgeStageDerivedAt).toBe("number");
+      return rest;
+    };
+
+    expect(withoutClock(explicit.applied[0]!.body)).toEqual(
+      withoutClock(absent.applied[0]!.body),
+    );
+    expect(judgeDefinition(absent.applied[0]!.body)?.role).toBe("advisory");
+  });
+});
+
 describe("the marker carries what the chain cannot", () => {
   // The case the chain-scan recovery could never see, and the reason the
   // classification is now persisted rather than inferred.

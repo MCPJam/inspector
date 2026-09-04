@@ -150,10 +150,15 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
-    expect(screen.getByTestId("suite-detail-run-aggregates")).toHaveTextContent(
-      "runs",
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "1 failing",
     );
-    expect(screen.getByText("card declined")).toBeTruthy();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "0/1 passed",
+    );
+    expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
+    expect(screen.queryByText("card declined")).toBeNull();
+    expect(screen.queryByText("Top failure signature")).toBeNull();
     expect(screen.getByText("GitHub #4188")).toBeTruthy();
     expect(screen.getByText("Hold")).toBeTruthy();
 
@@ -213,7 +218,9 @@ describe("SuiteDetailOverview", () => {
     );
     expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
-    expect(screen.queryByText("No runs yet. Run this suite to see history.")).toBeNull();
+    // A suite with no cases cannot have run, so it gets the hero alone — not
+    // an empty run history stacked on top of an empty case list.
+    expect(screen.queryByTestId("suite-run-history-empty")).toBeNull();
     expect(screen.queryByText("No test cases yet.")).toBeNull();
 
     await user.click(screen.getByTestId("suite-empty-action-describe"));
@@ -320,7 +327,10 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-row-run-0")).toBeTruthy();
   });
 
-  it("hides run history when the suite has cases but no runs", () => {
+  it("says a runnable suite has no runs yet instead of hiding run history", () => {
+    // A suite that has cases can be run, so the card is its run surface even
+    // before the first run: "never run" and "runs failed to load" must not
+    // both render as an absent card.
     renderWithProviders(
       <SuiteDetailOverview
         suite={makeSuite()}
@@ -338,7 +348,17 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByTestId("suite-run-history-empty")).toHaveTextContent(
+      "No runs yet.",
+    );
+    // The filtered-to-nothing copy would be a lie here — nothing is filtered.
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+    // Nothing to summarize and nothing to filter, so neither chrome appears.
+    expect(screen.queryByTestId("suite-run-history-snapshot")).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: "Filter by verdict" }),
+    ).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Cases" })).toBeTruthy();
   });
 
@@ -455,10 +475,14 @@ describe("SuiteDetailOverview", () => {
     // `isSuiteRunsLoading` is its own query and resolves AFTER the detail
     // spinner clears, so a suite with runs would otherwise show nothing here
     // and then pop the whole section in.
+    //
+    // Cased on a suite with NO cases so `runsLoading` is the only term keeping
+    // the frame up: with cases the card renders either way, and this assertion
+    // would pass without testing anything.
     renderWithProviders(
       <SuiteDetailOverview
         suite={makeSuite()}
-        cases={[makeCase({ _id: "case-1" })]}
+        cases={[]}
         runs={[]}
         runsLoading
         allIterations={[]}

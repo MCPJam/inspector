@@ -8,15 +8,32 @@
  *
  * Three scorers, and the roles are the load-bearing part:
  *
- *   | scorerId                  | deterministic | role     | threshold |
- *   |---------------------------|---------------|----------|-----------|
- *   | `predicate:<criterionId>` | true          | gating   | 1         |
- *   | `toolCalls:match`         | true          | gating   | 1         |
- *   | `judge:goalCompletion`    | false         | ADVISORY | resolved  |
+ *   | scorerId                  | deterministic | role         | threshold |
+ *   |---------------------------|---------------|--------------|-----------|
+ *   | `predicate:<criterionId>` | true          | gating       | 1         |
+ *   | `toolCalls:match`         | true          | gating       | 1         |
+ *   | `judge:goalCompletion`    | false         | from the run | resolved  |
  *
- * `role: "advisory"` on the judge is what makes it structurally incapable of
- * gating: `sdk/src/gates.ts` only ever considers gating scorers, so an advisory
- * row cannot decide a customer's CI no matter what it scores.
+ * THE JUDGE'S ROLE COMES FROM THE RUN, NOT FROM THIS FILE. It used to be
+ * hard-coded advisory, which made a gating judge structurally powerless: a
+ * suite could earn the gate, the backend could hold the run for it, and the
+ * projection would still emit a row `sdk/src/gates.ts` never considers.
+ *
+ * It is read off `metadata.judgeVerdict.role`, which the backend stamps from
+ * the run's FROZEN config — so a run that started advisory cannot be
+ * retroactively gated by a later suite edit, and a run override that lowered
+ * the judge is honoured here exactly as it was at grading time. The decision is
+ * a closed one: the literal `"gating"` gates; absent, `"advisory"`, and
+ * anything else are advisory, because a role this build does not recognise must
+ * never be read as licence to fail a run.
+ *
+ * A gating judge's row then enters `allGatingScorersPassed` and
+ * `noGatingScoreErrors` exactly like a predicate's. Two invariants still hold
+ * STRUCTURALLY rather than by this file's choice: a judge row never carries
+ * `passed` unless it actually scored, so an errored judge cannot fail a trial
+ * on its own (the backend quarantines it instead); and the backend's finalizer
+ * applies a gating judge STRICTER-ONLY, so it can take a green away and never
+ * hand one out.
  */
 
 import {
@@ -152,11 +169,24 @@ export function hostedJudgeScoreDefinition(args: {
   judgeTemplateHash?: string;
   objectiveScoreCap?: number;
   model?: string;
+  /**
+   * What the RUN's frozen config said this judge was allowed to do, read off
+   * the verdict the backend stamped. Absent, or anything but the literal
+   * `"gating"`, is advisory — the default has to fail closed, because a role
+   * this build does not recognise must never be read as licence to fail a run.
+   */
+  role?: "advisory" | "gating";
 }): ScoreDefinition {
+  const role = args.role ?? "advisory";
   return {
     scorerId: HOSTED_JUDGE_SCORER_ID,
     idSource: "platform",
     scorerVersion: HOSTED_JUDGE_PROJECTION_VERSION,
+    // `role` is DELIBERATELY not an input here. It is already an input to
+    // `definitionHash` in the contract, so a gating judge gets a distinct
+    // digest without re-fingerprinting the implementation — and an advisory
+    // judge's implementation hash stays byte-identical to every hosted run
+    // that has ever been recorded.
     implementationHash: canonicalDigest({
       judgeTemplateVersion: args.judgeTemplateVersion ?? null,
       judgeTemplateHash: args.judgeTemplateHash ?? null,
@@ -164,11 +194,14 @@ export function hostedJudgeScoreDefinition(args: {
       objectiveScoreCap:
         args.objectiveScoreCap ?? HOSTED_JUDGE_OBJECTIVE_SCORE_CAP,
     }),
-    label: "goal completion (advisory)",
+    label: `goal completion (${role})`,
     deterministic: false,
     passThreshold: args.threshold,
-    // ADVISORY, always. See the module docblock.
-    role: "advisory",
+    role,
+    // `onError` / `onSkipped` are deliberately NOT set. `resolveScoreDefinition`
+    // defaults them to `ignore` for an advisory definition and `fail` for a
+    // gating one, which is exactly what the backend finalizer reads — stating
+    // them here would be a second copy of that rule, free to drift from it.
     ...(args.model ? { model: args.model } : {}),
   };
 }
@@ -189,6 +222,8 @@ export type HostedScoreDefinitionInputs = {
     judgeTemplateHash?: string;
     objectiveScoreCap?: number;
     model?: string;
+    /** From the run's frozen config, via the stamped verdict. Fails closed. */
+    role?: "advisory" | "gating";
   };
 };
 
