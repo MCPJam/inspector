@@ -176,12 +176,34 @@ describe("the trace-destinations surface is write-only for header values", () =>
 
     for (const body of byId) {
       const path = body.slice(0, body.indexOf('",'));
-      const preflights = body.includes("assertDestinationInOrg(");
-      const scopingRead = /readDestination\([^;]*?\btrue\b/s.test(body);
+
+      // POSITION, not presence. Asserting only that a scope check appears
+      // somewhere in the handler let the very regression this test names pass:
+      // a route that mutated first and checked the organization afterwards
+      // contains both, in the wrong order. So the decision has to come before
+      // the first call that reaches Convex.
+      const firstWriteAt = Math.min(
+        ...["client.action(", "client.mutation("]
+          .map((call) => body.indexOf(call))
+          .filter((at) => at >= 0)
+          .concat(Number.MAX_SAFE_INTEGER),
+      );
+      const preflightAt = body.indexOf("assertDestinationInOrg(");
+      const scopingReadAt = body.search(/readDestination\([^;]*?\btrue\b/s);
+      const decidedAt = Math.min(
+        ...[preflightAt, scopingReadAt]
+          .filter((at) => at >= 0)
+          .concat(Number.MAX_SAFE_INTEGER),
+      );
+
       expect(
-        preflights || scopingRead,
-        `${path} serves a caller-supplied id without deciding scope first`,
-      ).toBe(true);
+        decidedAt,
+        `${path} serves a caller-supplied id without deciding scope at all`,
+      ).toBeLessThan(Number.MAX_SAFE_INTEGER);
+      expect(
+        decidedAt,
+        `${path} reaches Convex before it decides whether the caller may address this id`,
+      ).toBeLessThan(firstWriteAt);
     }
 
     // And the preflight itself is a scoping read, or every route above
