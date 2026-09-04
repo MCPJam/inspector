@@ -41,7 +41,7 @@ describe("HostCompareSelector", () => {
     ).toHaveAttribute("src", "/openai_logo.png");
     expect(
       screen.getByTestId("host-compare-chip-h_custom").querySelector("img"),
-    ).not.toBeInTheDocument();
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("renders a chip per host and toggles selection on click", async () => {
@@ -76,10 +76,34 @@ describe("HostCompareSelector", () => {
     expect(onToggleHost).toHaveBeenCalledWith("h_b");
   });
 
+  it("shows a saved client's derived display name", () => {
+    const savedCursor = {
+      ...makeHost("h_cursor", "Cursor"),
+      displayName: "Cursor #2",
+    };
+
+    render(
+      <HostCompareSelector
+        hosts={[savedCursor]}
+        selectedHostIds={[savedCursor.hostId]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("Cursor #2")).toBeInTheDocument();
+  });
+
   it("shows a More menu once there are more hosts than fit inline", () => {
-    // One past INITIAL_INLINE_CHIP_LIMIT (9, sized to the ranked caniuse list).
-    // Deliberately not a bare `7`: this asserts the overflow rule, not a
-    // particular limit, and the count has to move with the constant.
+    // One past INITIAL_INLINE_CHIP_LIMIT, which is derived from the ranked
+    // caniuse list. Deliberately not a bare number: this asserts the overflow
+    // rule, not a particular limit, so the count moves with the constant.
     const hosts = Array.from({ length: 10 }, (_, index) =>
       makeHost(`h_${index}`, `Host ${index}`),
     );
@@ -107,6 +131,36 @@ describe("HostCompareSelector", () => {
     expect(
       screen.queryByTestId("host-compare-chip-h_9"),
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a fallback badge instead of an empty dot in the More menu", async () => {
+    const user = userEvent.setup();
+    // One past INITIAL_INLINE_CHIP_LIMIT, which is derived from the ranked
+    // caniuse list rather than fixed, so the last host is the one that
+    // overflows into the More menu.
+    const hosts = Array.from({ length: 10 }, (_, index) =>
+      makeHost(`h_${index}`, index === 9 ? "Custom tenth" : `Host ${index}`),
+    );
+
+    render(
+      <HostCompareSelector
+        hosts={hosts}
+        selectedHostIds={[]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId("host-compare-overflow-trigger"));
+    expect(
+      screen.getByTestId("host-compare-overflow-h_9").querySelector("img"),
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {

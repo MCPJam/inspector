@@ -151,6 +151,14 @@ interface OAuthProxyCommandOptions {
   method?: string;
   header?: string[];
   body?: string;
+  /**
+   * Opt IN to the hosted policy: HTTPS-only, no private destinations. The CLI
+   * runs on the user's own machine, so the default is the local one — these
+   * commands exist to debug a server you are developing, which is routinely on
+   * loopback or a LAN address. `--https-only` is for reproducing what the
+   * hosted app would do with the same URL.
+   */
+  httpsOnly?: boolean;
 }
 
 export function registerOAuthCommands(program: Command): void {
@@ -535,15 +543,22 @@ export function registerOAuthCommands(program: Command): void {
     .command("metadata")
     .description("Fetch OAuth metadata from a URL")
     .requiredOption("--url <url>", "OAuth metadata URL")
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
+    )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
-      const result = await runOAuthMetadata(options.url as string);
+      const result = await runOAuthMetadata(
+        options.url as string,
+        options.httpsOnly === true,
+      );
       writeResult(result, format);
     });
 
   oauth
     .command("proxy")
-    .description("Proxy an OAuth request with hosted-mode safety checks")
+    .description("Proxy an OAuth request through the SSRF-hardened transport")
     .requiredOption("--url <url>", "OAuth request URL")
     .option("--method <method>", "HTTP method", "GET")
     .option(
@@ -555,6 +570,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--body <value>",
       "Request body as JSON, raw string, @path, or - for stdin",
+    )
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
@@ -564,7 +583,9 @@ export function registerOAuthCommands(program: Command): void {
 
   oauth
     .command("debug-proxy")
-    .description("Proxy an OAuth debug request with hosted-mode safety checks")
+    .description(
+      "Proxy an OAuth debug request through the SSRF-hardened transport",
+    )
     .requiredOption("--url <url>", "OAuth request URL")
     .option("--method <method>", "HTTP method", "GET")
     .option(
@@ -576,6 +597,10 @@ export function registerOAuthCommands(program: Command): void {
     .option(
       "--body <value>",
       "Request body as JSON, raw string, @path, or - for stdin",
+    )
+    .option(
+      "--https-only",
+      "Apply the hosted policy: reject non-HTTPS and private targets",
     )
     .action(async (options, command) => {
       const format = getOAuthFormat(command);
@@ -690,6 +715,9 @@ export function buildOAuthConformanceConfig(
     serverUrl,
     protocolVersion,
     registrationStrategy,
+    // The CLI runs on the user's machine, where the server under test is
+    // routinely on loopback or a LAN address.
+    allowPrivateNetwork: true,
     auth,
     client,
     scopes: options.scopes?.trim() || undefined,
@@ -822,6 +850,8 @@ export function buildOAuthLoginConfig(
     ...(registrationStrategy ? { registrationStrategy } : {}),
     protocolMode: protocolVersion ?? "auto",
     registrationMode: registrationStrategy ?? "auto",
+    // See buildOAuthConformanceConfig: a local server under test is the norm.
+    allowPrivateNetwork: true,
     auth,
     client,
     scopes: options.scopes?.trim() || undefined,
@@ -1017,9 +1047,12 @@ function parseAuthMode(
   );
 }
 
-export async function runOAuthMetadata(url: string) {
+export async function runOAuthMetadata(url: string, httpsOnly = false) {
   try {
-    const result = await fetchOAuthMetadata(url, true);
+    const result = await fetchOAuthMetadata(url, {
+      httpsOnly,
+      allowPrivateNetwork: !httpsOnly,
+    });
     if ("status" in result && result.status !== undefined) {
       throw cliError(
         statusToErrorCode(result.status),
@@ -1040,7 +1073,8 @@ export async function runOAuthProxy(options: OAuthProxyCommandOptions) {
       method: options.method,
       headers: parseHeadersOption(options.header),
       body: parseProxyBody(options.body),
-      httpsOnly: true,
+      httpsOnly: options.httpsOnly === true,
+      allowPrivateNetwork: options.httpsOnly !== true,
     });
   } catch (error) {
     throw mapOAuthProxyError(error);
@@ -1054,7 +1088,8 @@ export async function runOAuthDebugProxy(options: OAuthProxyCommandOptions) {
       method: options.method,
       headers: parseHeadersOption(options.header),
       body: parseProxyBody(options.body),
-      httpsOnly: true,
+      httpsOnly: options.httpsOnly === true,
+      allowPrivateNetwork: options.httpsOnly !== true,
     });
   } catch (error) {
     throw mapOAuthProxyError(error);

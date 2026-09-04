@@ -167,6 +167,7 @@ import internalEvalJudgeCompletions from "./routes/internal/eval-judge-completio
 import internalChatStageDerivations from "./routes/internal/chat-stage-derivations.js";
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
+import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index";
 import slackLinkRoutes from "./routes/slack-link/index";
@@ -529,7 +530,10 @@ app.route("/api/internal/chat-stage", internalChatStageDerivations);
 // provisions a desktop and boots browserd end to end), service-token gated.
 // Mirror of the mount in server/app.ts.
 if (process.env.COMPUTER_BROWSER_DEBUG_ENABLED === "1") {
-  app.route("/api/internal/computer-browser-debug", internalComputerBrowserDebug);
+  app.route(
+    "/api/internal/computer-browser-debug",
+    internalComputerBrowserDebug,
+  );
 }
 app.route("/api/web", webRoutes);
 // Browser Panel data plane (W4): watch the browser an agent is driving, and
@@ -546,6 +550,15 @@ app.route("/api/web/computers/browser", computerBrowserPanel);
 app.get(
   "/api/web/computers/terminal",
   createComputerTerminalWsHandler(upgradeWebSocket),
+);
+// Browser panel stream (W4b). Proxies RFB so the desktop's VNC password stays
+// on this replica instead of riding in an iframe URL, and so the handoff lease
+// can actually gate a human viewer's keyboard — the daemon never sees these
+// packets. Mounted in BOTH modes: a local inspector driving "On my computer"
+// has exactly the same credential to protect.
+app.get(
+  "/api/web/computers/browser/stream",
+  createComputerBrowserStreamWsHandler(upgradeWebSocket),
 );
 // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted —
 // a hosted server must have no path at all to a local PTY. Auth is the

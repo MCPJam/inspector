@@ -521,6 +521,38 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "The plaintext value is an argument, so it would transit model context and be written into chat transcripts before any approval could run — an approval that fires after the credential is already logged is not one. Available on REST, the SDK and the CLI, where the caller controls where the value comes from. The metadata reads (list_secrets, get_secret) are in the catalog.",
   update_secret:
     "Same as create_secret: a rotation carries the new plaintext as an argument, so it would reach model context and the transcript before any approval could run. Available on REST, the SDK and the CLI. The metadata reads (list_secrets, get_secret) are in the catalog.",
+  // TRACE DESTINATIONS. The two credential writes are excluded on exactly the
+  // `create_secret` argument above: the vendor headers are arguments, so they
+  // would transit model context and be written into chat transcripts before
+  // any approval card could render.
+  //
+  // The other eight — including the three metadata READS, which is where this
+  // departs from the secrets precedent — are excluded because the whole
+  // surface is organization administration whose effects land in a third
+  // party's system. A catalog that could read an organization's vendor
+  // bindings but not act on them would be an admin console with the buttons
+  // removed; the Observability section in organization settings is the view,
+  // and REST/SDK/CLI are the programmatic route.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would transit model context and be written into chat transcripts before any approval could run. Available on REST, the SDK and the CLI, where the caller controls where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same pre-approval exposure. Available on REST, the SDK and the CLI.",
+  delete_trace_destination:
+    "Discards a live export and its stored credentials, and cannot retract what has already been delivered to the vendor. An organization-admin decision, available on REST, the SDK and the CLI.",
+  pause_trace_destination:
+    "Nothing is queued while a destination is paused, so an unattended pause becomes a permanent gap in a customer's observability. Available on REST, the SDK and the CLI.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something about it was wrong. Whether the cause is fixed is a judgement about a third party's system. Available on REST, the SDK and the CLI.",
+  test_trace_destination:
+    "An outbound call to a third party's intake on the organization's credentials. Available on REST, the SDK and the CLI.",
+  backfill_trace_destination:
+    "Can queue a month of an organization's history at a vendor that bills on ingest. Available on REST, the SDK and the CLI.",
+  list_trace_destinations:
+    "Organization observability configuration — an admin surface, not a catalog one. Available on REST, the SDK and the CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
+  list_trace_destination_backfills:
+    "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
 };
 
 const catalogOperationNames = new Set(

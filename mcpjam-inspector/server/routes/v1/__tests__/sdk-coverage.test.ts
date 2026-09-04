@@ -49,6 +49,27 @@ function appInventory(): Set<string> {
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
+  // Trace destinations — where an organization's traces are streamed.
+  "get /organizations/{organizationId}/trace-destinations":
+    "listTraceDestinations",
+  "post /organizations/{organizationId}/trace-destinations":
+    "createTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "getTraceDestination",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "updateTraceDestination",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "deleteTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test":
+    "testTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause":
+    "pauseTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume":
+    "resumeTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "backfillTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "listTraceDestinationBackfills",
   "get /me": "getMe",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",

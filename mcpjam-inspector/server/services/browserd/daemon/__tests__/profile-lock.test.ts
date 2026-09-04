@@ -191,3 +191,59 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
     ).toEqual({ live: true, pid: 4242 });
   });
 });
+
+describe("probeSingletonOwner — what counts as having ASKED", () => {
+  it("does not read empty output as a confirmed non-browser", async () => {
+    // `""` is a reading we failed to take, not one that came back negative.
+    // Treated as the latter it cleared the lock of a live process, which is
+    // the exact confusion the rest of this probe is built to avoid.
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const answer of ["", "   ", "\n"]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => answer,
+        ),
+      ).toEqual({ live: true, pid: 4242 });
+    }
+  });
+
+  it("keeps the lock for Chromium browsers that are not called Chrome", async () => {
+    // Saying "not a browser" about a real one deletes a running browser's
+    // singleton files. Brave, Edge and the desktop app itself are all
+    // Chromium, and none of them carries `chrom` in the name `ps` reports.
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const command of [
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/MCPJam.app/Contents/MacOS/Electron",
+      "firefox",
+    ]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => command,
+        ),
+      ).toEqual({ live: true, pid: 4242 });
+    }
+  });
+
+  it("still clears a lock a genuinely unrelated process holds", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    expect(
+      await probeSingletonOwner(
+        dir,
+        () => true,
+        () => "postgres",
+      ),
+    ).toEqual({ live: false, pid: 4242 });
+  });
+});

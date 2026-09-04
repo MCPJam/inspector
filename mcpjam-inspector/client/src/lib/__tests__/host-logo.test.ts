@@ -20,6 +20,8 @@ describe("resolveHostLogoByName", () => {
   it("still places a decorated name via the hint table", () => {
     // The exact-match resolver alone returns null here.
     expect(resolveHostLogoByName("Cursor (staging)")).toContain("cursor");
+    expect(resolveHostLogoByName("MCPJam #2")).toContain("mcp");
+    expect(resolveHostLogoByName("Copilot two")).toContain("copilot");
   });
 
   it("places a style id the hint table does not list", () => {
@@ -36,8 +38,8 @@ describe("resolveHostLogoByName", () => {
     // The hint table is ordered, and `/claude/i` would swallow this name and
     // hand back the web app's mark — the same trap claude-code and cursor-cli
     // are ordered around. Asserted against `getHostLogoSrc("claude-desktop")`
-    // rather than a filename so it keeps holding when Desktop's own asset
-    // replaces the placeholder it currently shares with `claude`.
+    // rather than a filename, so it survives the asset being renamed or
+    // repointed without turning into a spelling test.
     expect(resolveHostLogoByName("Claude Desktop")).toBe(
       getHostLogoSrc("claude-desktop"),
     );

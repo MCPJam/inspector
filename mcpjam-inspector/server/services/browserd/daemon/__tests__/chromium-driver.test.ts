@@ -541,6 +541,53 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
     expect(res.stateToken).toBeDefined();
   });
 
+  it("passes the caller's frame through, so a subframe's tool is not shadowed", async () => {
+    // Two frames can register the same tool name, and name resolution prefers
+    // the main frame. A caller acting on a tool it just listed says which
+    // frame it saw; dropping that on the floor here would silently run the
+    // wrong page's tool.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: { ok: true } };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "book_flight",
+        frameId: "frame-7",
+        input: {},
+      }),
+    );
+    expect(seen[0]).toMatchObject({
+      toolName: "book_flight",
+      frameId: "frame-7",
+    });
+  });
+
+  it("sends no frame at all when the caller named none", async () => {
+    // `frameId: undefined` and an absent key are not the same to a bridge that
+    // checks `args.frameId &&` — but they are to `toMatchObject`, so this
+    // asserts the key is genuinely absent rather than present-and-undefined.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: {} };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "book_flight", input: {} }),
+    );
+    expect("frameId" in seen[0]!).toBe(false);
+  });
+
   it("caps an oversized tool output rather than half-serializing it (L9)", async () => {
     const huge = { rows: Array.from({ length: 20_000 }, (_, i) => i) };
     const driver = await withBridge(

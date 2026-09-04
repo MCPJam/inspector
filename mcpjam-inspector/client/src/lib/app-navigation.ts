@@ -52,6 +52,7 @@ export const ORGANIZATION_ROUTE_SECTIONS = [
   "models",
   "slack",
   "discord",
+  "observability",
 ] as const;
 
 export type OrganizationRouteSection =
@@ -63,12 +64,13 @@ export type OrganizationRouteSection =
  * section fail quietly rather than 404, and why the coverage test exists.
  */
 export function parseOrganizationSection(
-  segment: string | undefined
+  segment: string | undefined,
 ): OrganizationRouteSection {
   if (segment === "billing") return "billing";
   if (segment === "models") return "models";
   if (segment === "slack") return "slack";
   if (segment === "discord") return "discord";
+  if (segment === "observability") return "observability";
   return "overview";
 }
 
@@ -165,7 +167,7 @@ export function buildProjectPluginPath(pluginId?: string | null): string {
 
 /** Build the exact path for one project environment's detail. */
 export function buildProjectEnvironmentPath(
-  environmentId?: string | null
+  environmentId?: string | null,
 ): string {
   if (!environmentId) return routePaths.environments;
   return `${routePaths.environments}/${encodeURIComponent(environmentId)}`;
@@ -179,7 +181,7 @@ export function buildHostsPath(hostId?: string | null): string {
 
 /** Build a path that deep-links into Compare with a pre-selected set of hosts. */
 export function buildHostComparePath(
-  hostIds?: ReadonlyArray<string> | null
+  hostIds?: ReadonlyArray<string> | null,
 ): string {
   if (!hostIds || hostIds.length === 0) return routePaths.hostCompare;
   const param = hostIds.map((id) => id.trim()).filter((id) => id.length > 0);
@@ -221,7 +223,7 @@ export function buildUserTestingScenarioPath(
     sel?: string;
     /** Typed like `tab`, so an unknown view cannot be minted into a link. */
     view?: InsightsView;
-  } = {}
+  } = {},
 ): string {
   const base = `${routePaths.userTesting}/${encodeURIComponent(scenarioId)}`;
   const search = new URLSearchParams();
@@ -255,7 +257,7 @@ export function isLegacyUserTestingEditTab(search: string): boolean {
  * {@link isLegacyUserTestingEditTab} and redirect to `/edit`.
  */
 export function parseUserTestingDetailTab(
-  search: string
+  search: string,
 ): UserTestingDetailTab {
   const params = new URLSearchParams(search);
   const tab = params.get("tab");
@@ -291,7 +293,7 @@ export function buildSwarmPath(
      * resolved from the wave's own findings, so it cannot go stale in a URL.
      */
     finding?: string;
-  } = {}
+  } = {},
 ): string {
   const base = `${routePaths.swarms}/${encodeURIComponent(swarmId)}`;
   const search = new URLSearchParams();
@@ -384,7 +386,7 @@ export function parseSwarmSessionParams(search: string): {
  * consumed-and-stripped query parameter could not survive.
  */
 export function buildSessionsPath(
-  opts: { session?: string; project?: string } = {}
+  opts: { session?: string; project?: string } = {},
 ): string {
   const search = new URLSearchParams();
   if (opts.session) search.set("session", opts.session);
@@ -398,7 +400,7 @@ export function buildSessionsPath(
 /** Build a path for a specific organization route. */
 export function buildOrganizationPath(
   orgId: string,
-  section?: OrganizationRouteSection
+  section?: OrganizationRouteSection,
 ): string {
   if (section === "billing") return `/organizations/${orgId}/billing`;
   if (section === "models") return `/organizations/${orgId}/models`;
@@ -410,6 +412,10 @@ export function buildOrganizationPath(
   // Discord has no sub-tabs at all (see DiscordAgentSettingsSection), so it
   // needs even less than Slack does — one segment, no `?tab=`.
   if (section === "discord") return `/organizations/${orgId}/discord`;
+  // Trace destinations. One segment like Discord: the create/edit form is a
+  // dialog rather than a view, so there is nothing for a `?tab=` to select.
+  if (section === "observability")
+    return `/organizations/${orgId}/observability`;
   return `/organizations/${orgId}`;
 }
 
@@ -452,11 +458,11 @@ export function buildEvaluatePath(route: EvalRoute): string {
 export function legacyCiEvalsPathToRunsPath(
   pathname: string,
   search = "",
-  hash = ""
+  hash = "",
 ): string {
   return `${pathname.replace(
     /^\/ci-evals/,
-    routePaths.evalsRuns
+    routePaths.evalsRuns,
   )}${search}${hash}`;
 }
 
@@ -483,7 +489,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.compareToRunId) params.set("compareTo", route.compareToRunId);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/runs/${encodeURIComponent(route.runId)}${query ? `?${query}` : ""}`;
     }
     case "test-detail": {
@@ -491,7 +497,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}${query ? `?${query}` : ""}`;
     }
     case "test-edit": {
@@ -500,7 +506,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       if (route.iteration) params.set("iteration", route.iteration);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
-        route.suiteId
+        route.suiteId,
       )}/test/${encodeURIComponent(route.testId)}/edit${
         query ? `?${query}` : ""
       }`;
@@ -561,7 +567,7 @@ function currentAppPathname(): string {
  */
 export function scopeNavigationTarget(
   to: string,
-  fromPathname?: string
+  fromPathname?: string,
 ): string {
   if (typeof to !== "string" || !to) return to;
   if (to.startsWith("?") || to.startsWith("#")) return to;
@@ -624,7 +630,7 @@ export function useAppNavigate() {
       }
       navigateApp(target, options);
     },
-    [navigator, pathname]
+    [navigator, pathname],
   );
 }
 
@@ -638,7 +644,7 @@ export function useAppNavigate() {
 export function useActiveTab(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname
+    getWindowFallbackPathname,
   );
 
   useLayoutEffect(() => {
@@ -670,7 +676,7 @@ export function useActiveTab(): string {
 export function useCurrentPathname(): string {
   const locationContext = useContext(UNSAFE_LocationContext);
   const [fallbackPathname, setFallbackPathname] = useState(
-    getWindowFallbackPathname
+    getWindowFallbackPathname,
   );
 
   useLayoutEffect(() => {
@@ -786,7 +792,7 @@ export function isDebugOAuthCallbackPath(pathname: string): boolean {
  */
 export function buildConformanceRunPath(
   runId: string,
-  projectId?: string | null
+  projectId?: string | null,
 ): string {
   const base = `${routePaths.conformanceRuns}/${encodeURIComponent(runId)}`;
   return projectId ? buildProjectPath(projectId, base) : base;
@@ -884,7 +890,7 @@ function decodePathSegment(segment: string): string {
 
 export function navigationTargetToPath(
   rawTarget: string,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
   // A scoped target normalizes on its LOGICAL half and is re-scoped to the
   // same project. Without this, `/p/A/evals/suite/X` would reduce to the
@@ -952,7 +958,7 @@ export function normalizeInitialLegacyHashBookmark(): void {
  */
 export function normalizeReturnTargetPath(
   target?: string | null,
-  fallback: string = routePaths.servers
+  fallback: string = routePaths.servers,
 ): string {
   const trimmed = target?.trim() ?? "";
   if (!trimmed) return fallback;

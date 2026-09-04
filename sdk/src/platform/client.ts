@@ -53,6 +53,11 @@ import type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformTraceDestination,
+  PlatformTraceDestinationBackfillJob,
+  PlatformTraceDestinationDeleted,
+  PlatformTraceDestinationResumed,
+  PlatformTraceDestinationTestScheduled,
   PlatformRunCompare,
   PlatformRunScorecard,
   PlatformGuestExecution,
@@ -269,7 +274,7 @@ export class PlatformApiClient {
           Object.entries(options.extraHeaders).map(([name, value]) => [
             name.toLowerCase(),
             value,
-          ]),
+          ])
         )
       : undefined;
   }
@@ -360,8 +365,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-              ? "true"
-              : "false",
+                ? "true"
+                : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -571,13 +576,13 @@ export class PlatformApiClient {
 
   listServerGroups(
     params: { projectId: string },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformPage<PlatformServerGroup>> {
     return this.request(
       "GET",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       {},
-      options,
+      options
     );
   }
 
@@ -586,13 +591,13 @@ export class PlatformApiClient {
       projectId: string;
       body: { name: string; description?: string; serverIds: string[] };
     },
-    options?: RequestOptions,
+    options?: RequestOptions
   ): Promise<PlatformServerGroup> {
     return this.request(
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/server-groups`,
       { body: params.body },
-      options,
+      options
     );
   }
 
@@ -3317,6 +3322,238 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * List an organization's trace destinations — METADATA ONLY.
+   *
+   * Header NAMES appear; their values never do, on this or any other call.
+   */
+  listTraceDestinations(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformTraceDestination>> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations`,
+      {},
+      options
+    );
+  }
+
+  /** One destination's configuration and delivery health. Never its header values. */
+  getTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Create a trace destination.
+   *
+   * THE HEADER VALUES BECOME VISIBLE TO WHATEVER CARRIES THIS CALL. They are in
+   * the request body, so they pass through whatever process, log, shell history
+   * or transcript the call is made from. Prefer reading them from a file, an
+   * environment variable, or stdin rather than pasting them into an argument.
+   *
+   * `includeContent` defaults to false, and leaving it there is the safe
+   * reading: prompts, outputs, tool arguments and screenshots are redacted
+   * unless a human decides this vendor should hold them.
+   *
+   * Omitting `projectIds` means every project in the organization, present and
+   * future — which is usually what an org-wide destination wants.
+   */
+  createTraceDestination(
+    params: {
+      organizationId: string;
+      name: string;
+      endpointUrl: string;
+      headers?: Record<string, string>;
+      resourceAttributes?: Record<string, string>;
+      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      includeContent?: boolean;
+      projectIds?: string[];
+      compression?: "gzip" | "none";
+      preset?: string;
+      enabled?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(organizationId)}/trace-destinations`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Edit a trace destination.
+   *
+   * `headers` REPLACES the whole set; omitting it leaves the stored one alone.
+   * There is no way to edit one header in place, because a partial update would
+   * have to read the stored values to merge them and nothing may read them but
+   * the sender. A rotated credential takes effect within about a minute — the
+   * drain re-reads the destination before every POST.
+   *
+   * `allProjects: true` is the explicit way back to "every project".
+   * `projectIds: []` cannot mean it: an empty allowlist is a destination that
+   * matches nothing, and the two must not be spelled the same.
+   */
+  updateTraceDestination(
+    params: {
+      organizationId: string;
+      destinationId: string;
+      name?: string;
+      endpointUrl?: string;
+      headers?: Record<string, string>;
+      resourceAttributes?: Record<string, string>;
+      sourceTypes?: Array<"eval" | "scenario" | "swarm" | "direct">;
+      includeContent?: boolean;
+      projectIds?: string[];
+      allProjects?: boolean;
+      compression?: "gzip" | "none";
+      preset?: string;
+      enabled?: boolean;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    const { organizationId, destinationId, ...body } = params;
+    return this.request(
+      "PATCH",
+      `/organizations/${encodeURIComponent(
+        organizationId
+      )}/trace-destinations/${encodeURIComponent(destinationId)}`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Delete a trace destination. Streaming stops and anything queued is
+   * discarded; traces already delivered stay in the vendor's system.
+   */
+  deleteTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationDeleted> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Send one synthetic span, to prove the endpoint and credentials work.
+   *
+   * Returns as soon as the send is SCHEDULED — the send itself is a round trip
+   * to a third party. Read the outcome from the destination's `lastTest`.
+   */
+  testTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationTestScheduled> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/test`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Pause a destination. NOTHING IS QUEUED while it is paused — the window is
+   * a gap, not a backlog, and only a backfill can fill it afterwards.
+   */
+  pauseTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestination> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/pause`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Resume a destination, whether it was paused by hand or by a failure.
+   *
+   * The response carries `pausedSince` so a caller can size the gap and decide
+   * whether to backfill it.
+   */
+  resumeTraceDestination(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationResumed> {
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(params.destinationId)}/resume`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Replay a window of history into a destination.
+   *
+   * Refused while the destination is paused or disabled: enqueue skips both, so
+   * a backfill against one would scan the whole window and queue nothing.
+   * `days` outside 1-30 is REFUSED, not clamped — the operation's schema
+   * rejects it before the request is sent, so 40 is an error rather than 30.
+   */
+  backfillTraceDestination(
+    params: { organizationId: string; destinationId: string; days: number },
+    options?: RequestOptions
+  ): Promise<PlatformTraceDestinationBackfillJob> {
+    const { organizationId, destinationId, ...body } = params;
+    return this.request(
+      "POST",
+      `/organizations/${encodeURIComponent(
+        organizationId
+      )}/trace-destinations/${encodeURIComponent(destinationId)}/backfills`,
+      { body },
+      options
+    );
+  }
+
+  /** The 20 most recent backfills for a destination, newest first. */
+  listTraceDestinationBackfills(
+    params: { organizationId: string; destinationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformTraceDestinationBackfillJob>> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/trace-destinations/${encodeURIComponent(
+        params.destinationId
+      )}/backfills`,
       {},
       options
     );

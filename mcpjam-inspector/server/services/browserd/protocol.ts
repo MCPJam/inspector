@@ -121,13 +121,7 @@ export type BrowserAction =
     }
   | {
       kind: "observe";
-      mode:
-        | "screenshot"
-        | "dom"
-        | "a11y"
-        | "console"
-        | "url"
-        | "webmcp_tools";
+      mode: "screenshot" | "dom" | "a11y" | "console" | "url" | "webmcp_tools";
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
@@ -141,7 +135,30 @@ export type BrowserAction =
        */
       rootSelector?: string;
     }
-  | { kind: "webmcp_invoke"; toolKey: string; input: unknown }
+  | {
+      kind: "webmcp_invoke";
+      /**
+       * The tool's own name, as `observe {mode:"webmcp_tools"}` reported it.
+       *
+       * A NAME, not a composite key. The daemon resolves it against the live
+       * page, and the V1 layer's own `origin::name` key means nothing here —
+       * sending a composite looks for a tool literally called that, finds
+       * nothing, and answers `webmcp_tool_gone` for a tool sitting right
+       * there. Use `frameId` to disambiguate instead.
+       */
+      toolKey: string;
+      /**
+       * Invoke in THIS frame, when it still offers the tool.
+       *
+       * Name resolution prefers the main frame, so a subframe's tool would
+       * otherwise be shadowed by a same-named main-frame one. Optional, and
+       * safely ignored by an older daemon: resolution by name is the fallback
+       * on both sides, so a new caller works against an old daemon and an old
+       * caller against a new one.
+       */
+      frameId?: string;
+      input: unknown;
+    }
   | { kind: "webmcp_cancel"; invocationId: string };
 
 /**
