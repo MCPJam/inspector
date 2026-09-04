@@ -15,7 +15,10 @@ const packageVersion = JSON.parse(
 ).version as string;
 
 export default defineConfig({
-  entry: ["server/index.ts"],
+  // Two entries: the server, and the `harness install` subcommand's installer.
+  // The subcommand cannot import the server entry — that module starts a
+  // listening server as a side effect of being imported.
+  entry: ["server/index.ts", "server/harness-install-cli.ts"],
   define: {
     "process.env.MCPJAM_INSPECTOR_VERSION": JSON.stringify(packageVersion),
   },
@@ -79,6 +82,16 @@ export default defineConfig({
     // fails on the optional `chromium-bidi` dependency.
     "playwright",
     "playwright-core",
+    // Reached from `webmcp-inspector/electron-webview-provider.ts` and from
+    // `browserd/electron/**` (the desktop app's browser engine), and in both
+    // cases only through a runtime `await import("electron")` guarded by
+    // `process.versions.electron`.
+    // Inside the desktop app the server runs in the Electron main process, so
+    // the import resolves; this bundle is the STANDALONE server, where it never
+    // runs — but esbuild would still try to follow the specifier and fail the
+    // build outright. External keeps the specifier intact for the one runtime
+    // that can satisfy it.
+    "electron",
   ],
   noExternal: [
     // Force bundling of problematic packages
