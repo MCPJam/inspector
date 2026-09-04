@@ -962,7 +962,14 @@ function splitPageDerived(rest: Record<string, unknown>): {
   const nested = ours.page;
   if (typeof nested === "object" && nested !== null) {
     const split = splitPageDerived(nested as Record<string, unknown>);
-    ours.page = split.ours;
+    // An envelope with nothing of OURS left in it is dropped rather than kept
+    // as `{"page":{}}`, for the same reason the top-level empty object is: a
+    // bare pair of braces reads like a field the model failed to get.
+    if (Object.keys(split.ours).length > 0) {
+      ours.page = split.ours;
+    } else {
+      delete ours.page;
+    }
     if (split.page) page.page = split.page;
   }
   return {

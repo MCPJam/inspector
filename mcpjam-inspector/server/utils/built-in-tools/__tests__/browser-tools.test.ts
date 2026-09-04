@@ -681,6 +681,27 @@ describe("the screenshot reaches the model as an IMAGE, not as text", () => {
     expect(fence.split("\n")[0]).toContain("origin=unknown ");
   });
 
+  it("drops an envelope with nothing of ours left in it", async () => {
+    // A `stale_observation` whose fresh page is entirely page-written would
+    // otherwise emit `{"error":"…","page":{}}` — braces that read like a field
+    // the model failed to get.
+    const { result } = build({}, async () => ({
+      status: "stale_observation",
+      result: {
+        ok: false,
+        output: { url: "https://moved.test", text: "the new page" },
+      },
+    }));
+    const tools = result!.tools as any;
+    const output = await run(tools, "browser_act", { verb: "click", x: 1, y: 1 });
+    const mapped = tools.browser_act.toModelOutput({ output });
+    const ours = mapped.value.find(
+      (p: any) => !p.text?.startsWith("--- MCPJAM_PAGE_CONTENT"),
+    );
+    expect(ours.text).toContain("stale_observation");
+    expect(ours.text).not.toContain('"page":{}');
+  });
+
   it("emits no fence when a result carries nothing the page wrote", async () => {
     // A refusal that never reached the page: everything in it is ours.
     const { result } = build({}, async () => ({
