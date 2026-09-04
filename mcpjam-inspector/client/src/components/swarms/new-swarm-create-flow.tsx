@@ -1082,6 +1082,16 @@ export function NewSwarmCreateFlow({
         return;
       }
 
+      // Claim the in-flight latch BEFORE the first await. `resolveTargets` can
+      // create environment rows, and until it settles the exits (Cancel and the
+      // ← Swarms link) stay live — leaving there would fire the discard toast
+      // while this launch keeps running. `disabled={launching}` only closes that
+      // window if the flag is set for the whole of it, preflight included. Each
+      // early return below releases the latch; the launch path's finally does
+      // the rest.
+      inFlightRef.current = true;
+      setLaunching(true);
+
       let envPayload: { environmentIds: string[]; hostIds: string[] } | null =
         null;
       if (
@@ -1107,6 +1117,8 @@ export function NewSwarmCreateFlow({
                   "Could not resolve environments for launch.",
                 ),
           );
+          inFlightRef.current = false;
+          setLaunching(false);
           return;
         }
       }
@@ -1114,11 +1126,11 @@ export function NewSwarmCreateFlow({
         setErrorMessage(
           "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
         );
+        inFlightRef.current = false;
+        setLaunching(false);
         return;
       }
 
-      inFlightRef.current = true;
-      setLaunching(true);
       setErrorMessage(null);
 
       let firstError: string | null = null;

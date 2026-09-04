@@ -965,10 +965,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
     );
-    // BB-64: a launched run leaves via onDone, and the header (the only
-    // onCancel path) isn't rendered on Running at all. This guards that the
-    // discard toast lives in leaveFlow, not in clearNewSwarmFlowDraft or an
-    // unmount effect — either of which would fire it on this successful exit.
+    // BB-64: a launched run leaves via onDone, and neither leaveFlow exit (the
+    // Cancel button or the ← Swarms link) is rendered on Running. This guards
+    // that the discard toast lives in leaveFlow, not in clearNewSwarmFlowDraft
+    // or an unmount effect — either of which would fire it on this successful
+    // exit.
     expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
