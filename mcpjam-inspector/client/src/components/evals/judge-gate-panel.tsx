@@ -53,9 +53,18 @@ export function describeAgreement(
   const base = `Agrees with reviewers ${agreement.agreements}/${agreement.reviews} · ${Math.round(
     agreement.rate * 100,
   )}%`;
-  return agreement.lowerBound === null
-    ? base
-    : `${base} (at least ${Math.round(agreement.lowerBound * 100)}% likely)`;
+  const withBound =
+    agreement.lowerBound === null
+      ? base
+      : `${base} (at least ${Math.round(agreement.lowerBound * 100)}% likely)`;
+  // Chance-corrected agreement, when the backend reports it. Raw agreement is
+  // inflated on a corpus the judge mostly passes; kappa says how much of the
+  // rate is better than guessing the majority class. Rendered from the server
+  // number, never derived here, and absent on a backend that predates it.
+  const kappa = agreement.kappa;
+  return typeof kappa === "number"
+    ? `${withBound} · chance-corrected ${kappa.toFixed(2)}`
+    : withBound;
 }
 
 /**
@@ -182,7 +191,10 @@ export function JudgeGatePanel({
         </div>
         <Switch
           checked={isGating}
-          disabled={disabledReason !== undefined}
+          // Only turning the gate ON needs the evidence. A draft that already
+          // gates while calibration has lapsed (or the deployment turned the
+          // gate off) must still be able to come back down to advisory.
+          disabled={disabledReason !== undefined && !isGating}
           aria-label="Let the judge decide pass or fail"
           onCheckedChange={(checked) =>
             onJudgeConfigChange({

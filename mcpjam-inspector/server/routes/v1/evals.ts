@@ -573,7 +573,10 @@ const syncFileOwnedSuiteSchema = z
         passThreshold: z.number().min(0).max(1),
         validity: z
           .object({
-            minEligibleTrials: z.number().int().min(0).optional(),
+            // `min(1)`, like the SDK contract and the backend validator: a floor
+            // of zero eligible trials is not a validity rule, and the backend
+            // refuses it after the file has already been accepted here.
+            minEligibleTrials: z.number().int().min(1).optional(),
             minCompletionRate: z.number().min(0).max(1).optional(),
             maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
           })

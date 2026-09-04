@@ -1,6 +1,7 @@
 ---
 "@mcpjam/inspector": patch
 "@mcpjam/sdk": minor
+"@mcpjam/cli": patch
 ---
 
 Agents can read a suite's settings history

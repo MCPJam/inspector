@@ -240,7 +240,10 @@ export function IterationDetails({
    * Opt-in for the same reason `trialChainSlot` is a slot: this component has
    * five hosts, and the label's read and write have no business firing for the
    * four that never asked. The host that shows a trial from a real suite run
-   * turns it on; the quick-run and playground hosts do not.
+   * turns it on; the quick-run and playground hosts do not. Even when on, a
+   * trial with no `suiteRunId` (a quick run) gets the read-only verdict: the
+   * backend refuses every label for it (`JUDGE_REVIEW_NO_RUN`), so offering
+   * the control would only offer the refusal.
    */
   enableJudgeReview?: boolean;
   /**
@@ -1057,8 +1060,11 @@ export function IterationDetails({
           every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
       {layoutMode === "full" && judgeCase ? (
         <div className="shrink-0 px-3">
-          {enableJudgeReview ? (
+          {enableJudgeReview && iteration.suiteRunId ? (
+            // Keyed by trial: a switch remounts the panel, so no read or label
+            // state from the previous trial can survive into this one.
             <TrialJudgeReviewPanel
+              key={iteration._id}
               iterationId={iteration._id}
               judgeCase={judgeCase}
             />

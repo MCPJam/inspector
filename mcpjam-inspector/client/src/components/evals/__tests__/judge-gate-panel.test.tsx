@@ -223,6 +223,39 @@ describe("JudgeGatePanel", () => {
     });
   });
 
+  it("lets a gate that has gone stale be lowered, never raised", async () => {
+    // The draft already gates and the deployment (or calibration) no longer
+    // allows it. Disabling the switch outright would trap the suite in a state
+    // the page itself says is not allowed; only turning it ON needs evidence.
+    const user = userEvent.setup();
+    const stale = judge({
+      gating: { enabled: false, reason: "not_enabled_on_deployment" },
+    });
+    const { onJudgeConfigChange, unmount } = renderPanel({
+      judge: stale,
+      role: "gating",
+    });
+    const gate = screen.getByRole("switch", {
+      name: "Let the judge decide pass or fail",
+    });
+    expect(gate).toBeEnabled();
+    // The reason is still said, so the reader knows why it cannot go back up.
+    expect(screen.getByTestId("judge-gate-disabled-reason").textContent).toBe(
+      "Not available on this deployment",
+    );
+    await user.click(gate);
+    expect(onJudgeConfigChange).toHaveBeenCalledWith({
+      goalCompletion: { role: "advisory" },
+    });
+    unmount();
+
+    // Same judge, advisory draft: raising the gate is still refused.
+    renderPanel({ judge: stale, role: "advisory" });
+    expect(
+      screen.getByRole("switch", { name: "Let the judge decide pass or fail" }),
+    ).toBeDisabled();
+  });
+
   it("says when a gate rests on an acknowledgement rather than evidence", () => {
     renderPanel({
       judge: judge({
@@ -251,5 +284,20 @@ describe("gateSwitchDisabledReason — when the capabilities read failed", () =>
         "Could not check availability right now",
       ),
     ).toBe("Could not check availability right now");
+  });
+});
+
+describe("describeAgreement — chance-corrected agreement", () => {
+  it("shows kappa beside the rate when the backend reports it, and nothing when it does not", () => {
+    expect(describeAgreement({ ...judge().agreement, kappa: 0.7143 })).toBe(
+      "Agrees with reviewers 18/20 · 90% (at least 72% likely) · chance-corrected 0.71",
+    );
+    // `null` is "undefined for this corpus" (both raters constant), not 0.
+    expect(describeAgreement({ ...judge().agreement, kappa: null })).toBe(
+      "Agrees with reviewers 18/20 · 90% (at least 72% likely)",
+    );
+    expect(describeAgreement(judge().agreement)).not.toContain(
+      "chance-corrected",
+    );
   });
 });
