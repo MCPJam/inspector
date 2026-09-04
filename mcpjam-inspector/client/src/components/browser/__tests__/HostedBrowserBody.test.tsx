@@ -238,6 +238,31 @@ describe("the hosted pane — the socket", () => {
     vi.useRealTimers();
   });
 
+  it("WAITS OUT the backoff after a refusal instead of reconnecting at once", async () => {
+    // The socket effect keys off the session object, and its cleanup cancels
+    // the pending backoff. So a re-read that builds a fresh object for an
+    // unchanged row reconnects immediately AND throws the delay away — and the
+    // re-read after a 4409 is exactly the one that finds the lease still held.
+    // Refused, re-read, reconnect, with no delay, for as long as somebody else
+    // is typing: a hot loop against the daemon.
+    vi.useFakeTimers();
+    renderBody();
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+
+    act(() => socket().onclose?.({ code: 4409 }));
+    // Let the lease re-read this triggers settle, WITHOUT reaching the backoff.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500);
+    });
+    expect(api.sockets.length).toBe(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3_000);
+    });
+    expect(api.sockets.length).toBe(2);
+    vi.useRealTimers();
+  });
+
   it("mints a fresh token when the old one expires mid-view", async () => {
     // A token lasts about a minute, so a 4401 is the NORMAL way a long watch
     // ends. Reconnecting is what keeps the pane from going dark once a minute.

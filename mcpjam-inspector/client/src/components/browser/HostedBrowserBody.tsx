@@ -148,7 +148,22 @@ export function HostedBrowserBody({
       try {
         const next = await fetchHostedBrowserSession(tokens, options);
         if (generation.current !== mine) return;
-        setSession({ bootId: next.bootId, contextMode: next.contextMode });
+        // BY IDENTITY, because the socket effect keys off this object.
+        //
+        // A fresh one for an unchanged row RECONNECTS, and it does so out of
+        // band: the effect's cleanup cancels the backoff timer on its way
+        // past. So the re-read after a 4409 — which is the read that finds
+        // the lease still held — would come straight back to a server that
+        // refuses it again, re-read again, and reconnect again, with the 3s
+        // delay cancelled every single time. A held lease would become a hot
+        // loop against the daemon for as long as somebody else is typing.
+        setSession((prev) =>
+          prev &&
+          prev.bootId === next.bootId &&
+          prev.contextMode === next.contextMode
+            ? prev
+            : { bootId: next.bootId, contextMode: next.contextMode },
+        );
         setLease(next.lease);
         // The SERVER says whether the lease is this viewer's. Tracking "I
         // acquired it" here instead would forget across a reload and then lock

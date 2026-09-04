@@ -445,6 +445,28 @@ describe("browser panel — forwarding a person's input", () => {
     expect((await post(f, { events: EVENTS, tabId: "gone" })).status).toBe(404);
   });
 
+  it("does not dress a MALFORMED batch up as a lease refusal", async () => {
+    // 423 means somebody else has this browser. Answering it to a batch the
+    // daemon simply could not read sends a pane looking for a holder who does
+    // not exist — and, worse, tells it to wait for a hand-back that will never
+    // come.
+    for (const status of [400, 413] as const) {
+      const f = build({
+        createClient: () =>
+          ({
+            lease: vi.fn(),
+            leaseAction: vi.fn(),
+            sendInput: vi.fn(async () => ({
+              ok: false as const,
+              status,
+              error: "nope",
+            })),
+          }) as never,
+      });
+      expect((await post(f, { events: EVENTS })).status).toBe(status);
+    }
+  });
+
   it("slices an oversized batch instead of failing the whole thing", async () => {
     const f = build();
     await post(f, {

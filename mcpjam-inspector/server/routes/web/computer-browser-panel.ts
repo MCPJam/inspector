@@ -410,10 +410,19 @@ export function createComputerBrowserPanelRoutes(
         // The daemon's own codes, unchanged. A 423 is the ORDINARY answer
         // while the agent is driving, not a failure: a pane that showed it as
         // an error would be reporting a browser working exactly as designed.
-        return c.json(
-          { ok: false, error: outcome.error },
-          outcome.status === 404 ? 404 : outcome.status === 400 ? 400 : 423,
-        );
+        //
+        // Passed through by name rather than collapsed into 423, because 423
+        // means "somebody else has this browser" and answering it to a batch
+        // that was merely malformed or oversized would send a pane looking for
+        // a lease holder who does not exist. Anything the daemon can answer
+        // that is not one of these IS a lease refusal.
+        const status =
+          outcome.status === 400 ||
+          outcome.status === 404 ||
+          outcome.status === 413
+            ? outcome.status
+            : 423;
+        return c.json({ ok: false, error: outcome.error }, status);
       }
       // A person typing is REAL USE, and `kind: "command"` says so. The panel
       // keepalive stops counting once the last real command is old enough —
