@@ -18,8 +18,11 @@
  * `0%`, because that is a real finding. Only a zero DENOMINATOR renders words.
  */
 import {
+  FAILURE_CATEGORY_LABELS,
+  STAGE_REASON_LABELS,
   UNLABELED_INTENT_LABEL,
   USER_VALUE_STAGE_LABELS,
+  describeExcludedTrialDetail,
   latencyMeanMs,
   measuredPassRate,
   measurementCoverageRate,
@@ -30,64 +33,11 @@ import {
   type EvalStageExclusions,
   type EvalStageRate,
   type EvalStageTally,
+  type FailureCategory,
+  type StageReason,
 } from "@mcpjam/sdk/contract";
-import type { StageAnalyticsFailureKind } from "@/lib/apis/eval-stage-analytics-api";
 
 // ── panel state ──────────────────────────────────────────────────────────────
-/**
- * What the panel is showing, as five mutually exclusive facts.
- *
- * `unsupported` and `unmeasuredLegacy` are deliberately NOT `empty`. "The
- * backend could not answer", "these runs finished before we measured this" and
- * "this suite has no runs" are three different things to know, and the one
- * thing none of them may look like is a funnel of zeros.
- */
-export type StageAnalyticsPanelState =
-  /** The read did not complete, or this deployment does not serve the route. */
-  | { kind: "unsupported"; message: string }
-  /** The route answered badly, or answered about something else. */
-  | { kind: "error"; message: string }
-  /** No runs at all yet — there is nothing to have measured. */
-  | { kind: "empty" }
-  /** The suite HAS runs, and none of them carries a document. Not a zero. */
-  | { kind: "unmeasuredLegacy"; runCount: number }
-  | { kind: "loading" }
-  | { kind: "ready"; rows: EvalStageAnalyticsV1[] };
-
-export function deriveStageAnalyticsPanelState(input: {
-  status: "idle" | "loading" | "ready" | "error";
-  rows: EvalStageAnalyticsV1[];
-  error: { message: string; kind: StageAnalyticsFailureKind } | null;
-  /** Whether the suite has runs at all — the legacy/empty distinction. */
-  runCount: number;
-  runsLoading: boolean;
-}): StageAnalyticsPanelState {
-  if (input.status === "error" && input.error) {
-    // A service failure and a contract failure are both visible states, and
-    // neither is an empty chart. They are split because only one of them is
-    // actionable by the reader: "try again later" versus "this is a bug".
-    if (
-      input.error.kind === "routeUnavailable" ||
-      input.error.kind === "requestFailed"
-    ) {
-      return { kind: "unsupported", message: input.error.message };
-    }
-    return { kind: "error", message: input.error.message };
-  }
-  if (input.status === "idle" || input.status === "loading") {
-    return { kind: "loading" };
-  }
-  if (input.rows.length > 0) return { kind: "ready", rows: input.rows };
-  // Zero rows is ambiguous on its own, and the run list is what disambiguates
-  // it. Hold the loading frame rather than guessing while runs are still
-  // arriving — guessing here would flash "no runs yet" at a suite that has
-  // hundreds.
-  if (input.runsLoading) return { kind: "loading" };
-  if (input.runCount > 0) {
-    return { kind: "unmeasuredLegacy", runCount: input.runCount };
-  }
-  return { kind: "empty" };
-}
 
 // ── rate formatting ──────────────────────────────────────────────────────────
 /** The words a zero denominator renders as. Never a percentage. */
@@ -167,7 +117,16 @@ export interface StageRowView {
   reachUnknown: number;
   /** `123 ms · evidence span union`, or `null` when there are no samples. */
   latency: string | null;
-  reasons: { reason: string; count: number }[];
+  /**
+   * Why trials landed where they did, in words AND in the wire spelling.
+   *
+   * Both, deliberately. `label` is the only thing a human should ever read —
+   * `noEvidenceCaptured (3)` on screen was the bug this pair fixes — but the
+   * `reason` enum is what a `data-` attribute and a test pin on, and what a
+   * later join against the same vocabulary matches by. Dropping it would make
+   * every downstream match a string comparison against prose.
+   */
+  reasons: { reason: StageReason; label: string; count: number }[];
 }
 
 export function toStageRowView(tally: EvalStageTally): StageRowView {
@@ -186,7 +145,16 @@ export function toStageRowView(tally: EvalStageTally): StageRowView {
     notApplicable: tally.notApplicable,
     reachUnknown: tally.reachUnknown,
     latency: formatLatency(tally.latency),
-    reasons: tally.reasons.map((entry) => ({ ...entry })),
+    // The label is looked up with NO `?? entry.reason` fallback, for the
+    // reason `decision-labels.ts` gives in its own header: a lookup that
+    // prints an unknown enum raw is the failure nobody notices, and the map is
+    // `satisfies Record<StageReason, string>` precisely so there is nothing to
+    // fall back from.
+    reasons: tally.reasons.map((entry) => ({
+      reason: entry.reason,
+      label: STAGE_REASON_LABELS[entry.reason],
+      count: entry.count,
+    })),
   };
 }
 
@@ -217,7 +185,12 @@ export interface SliceView {
   subtitle: string | null;
   includedTrials: number;
   exclusions: string[];
-  failureCategories: { category: string; count: number }[];
+  /** Same wire-plus-words pair, and for the same reasons, as `reasons` above. */
+  failureCategories: {
+    category: FailureCategory;
+    label: string;
+    count: number;
+  }[];
   stages: StageRowView[];
 }
 
@@ -262,7 +235,11 @@ export function toSliceView(
     subtitle: sliceSubtitle(row.slice),
     includedTrials: row.includedTrials,
     exclusions: describeExclusions(row.excludedTrials),
-    failureCategories: row.failureCategories.map((entry) => ({ ...entry })),
+    failureCategories: row.failureCategories.map((entry) => ({
+      category: entry.category,
+      label: FAILURE_CATEGORY_LABELS[entry.category],
+      count: entry.count,
+    })),
     // Position is meaning — the six tallies are a funnel and are never sorted.
     stages: row.stages.map(toStageRowView),
   };
@@ -329,6 +306,21 @@ export interface RunHeaderView {
   populationLabel: string;
   completedAt: number | null;
   disclosures: string[];
+  /**
+   * The FINE-GRAINED exclusion reasons, for the disclosure the panel collapses.
+   *
+   * Kept apart from `disclosures` rather than folded into it. The coarse
+   * "Excluded: 1 never produced a comparable observation" line is already in
+   * there, and these fourteen say the same trials over again in more detail —
+   * two lines that look like two findings and are one. So this is the SAME
+   * fact at a finer grain, and the panel puts it behind a disclosure that says
+   * so.
+   *
+   * Empty when nothing was excluded, and empty is why the disclosure does not
+   * render at all: a "why were trials excluded" control that opens onto
+   * nothing is a worse answer than no control.
+   */
+  excludedDetail: { key: string; label: string; count: number }[];
 }
 
 export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
@@ -374,5 +366,19 @@ export function toRunHeaderView(row: EvalStageAnalyticsV1): RunHeaderView {
     populationLabel: `${row.includedTrials} of ${row.totalTrials} trials in this run`,
     completedAt: row.runCompletedAt ?? null,
     disclosures,
+    excludedDetail: describeExcludedTrialDetail(row.excludedTrialDetail),
   };
+}
+
+/**
+ * The one-line summary above the fine-grained exclusion disclosure.
+ *
+ * Names the population before any of the reasons, the same rule the rest of
+ * this file follows: "3 of 7 trials were excluded" first, then why. A list of
+ * reasons with no denominator lets a reader take three excluded trials out of
+ * seven for three out of three hundred.
+ */
+export function excludedDetailSummary(header: RunHeaderView): string {
+  const excluded = header.totalTrials - header.includedTrials;
+  return `${excluded} of ${header.totalTrials} trials excluded — why`;
 }

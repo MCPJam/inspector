@@ -1,4 +1,5 @@
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -257,6 +258,9 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Slackbot omits `hostContext.safeAreaInsets` entirely — the
+  // 2026-09-03 captures carry no such key in either theme.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 };
 
@@ -300,6 +304,35 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
 // Capabilities reuse Claude's preset here, but the catalog host definition
 // overrides host app capabilities since the CLI renders no MCP Apps — the style
 // preset is just the fallback if a host ever clears that override.
+// Claude Desktop is the Electron app; CLAUDE_HOST_STYLE above is claude.ai in
+// a browser. They render the same surface — the style variables in
+// claude-desktop-client-context.ts were captured from Desktop in the first
+// place — so this borrows all of it and differs only in identity. The
+// behavioural differences (no fullscreen, no toolInfo) live in the catalog
+// row, not here.
+export const CLAUDE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-desktop",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    // Must match the catalog label byte-for-byte: `?template=claude-desktop`
+    // opens an existing host by `name === template.label`, and any drift mints
+    // a duplicate on every visit.
+    label: "Claude Desktop",
+    shortLabel: "Claude Desktop-style host",
+    pickerDescription: "Claude desktop app chrome",
+    logoSrc: claudeDesktopLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeMarkIndicator,
+  },
+};
+
 export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   id: "claude-code",
   mcp: {
@@ -485,6 +518,44 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     // — closer to ChatGPT than to Claude's warm bubbles. Routes
     // family-keyed branches (bubble shape, send hint, etc.) to the
     // chatgpt visual until Cursor earns its own family.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
+ * Cursor CLI host style.
+ *
+ * `cursor-agent` is a terminal agent with no chat chrome of its own, so it
+ * borrows Cursor's surface wholesale (platform, fonts, style variables,
+ * background) and differs only in identity: its own label and picker copy.
+ * Exactly the recipe CLAUDE_CODE_HOST_STYLE uses over Claude's, and
+ * CODEX_HOST_STYLE over ChatGPT's.
+ *
+ * What it does NOT borrow is the app-capability claim. `mcpAppsCapabilities`
+ * drops to the no-claims preset: the Cursor row above was captured from the IDE
+ * chat panel, which renders MCP Apps in a webview, and a CLI cannot. Reusing
+ * that matrix would advertise a widget surface that does not exist. (The
+ * template also sets `hostCapabilitiesOverride: {}`, so this preset is only the
+ * fallback if a host ever clears that override — which is exactly when getting
+ * it right matters.)
+ */
+export const CURSOR_CLI_HOST_STYLE: HostStyleDefinition = {
+  id: "cursor-cli",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CURSOR_PLATFORM,
+    fontCss: CURSOR_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getCursorStyleVariables,
+  },
+  chatUi: {
+    label: "Cursor CLI",
+    shortLabel: "Cursor CLI-style host",
+    pickerDescription: "Cursor coding CLI chrome",
+    logoSrc: cursorLogo,
+    // Same flat, dark, IDE-adjacent visual bucket as the Cursor panel.
     family: "chatgpt",
     resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
     loadingIndicator: CursorShineIndicator,
@@ -842,9 +913,11 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   GOOSE_HOST_STYLE,
   SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
+  CURSOR_CLI_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,

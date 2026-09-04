@@ -21,6 +21,7 @@
  * slot in keep today's one-axis compose.
  */
 import type {
+  ProjectEnvironmentSecretSelection,
   ProjectEnvironmentSkillSelection,
   ProjectEnvironmentView,
 } from "@/hooks/useProjectEnvironments";
@@ -444,6 +445,28 @@ export function composerTargetCount(state: EnvironmentComposerState): number {
     );
   }
   return state.environmentIds.length;
+}
+
+/**
+ * Two secret selections are the same grant.
+ *
+ * ORDER-SENSITIVE, matching `sameSkillSelection` and the backend's own
+ * order-preserving normalization: the stored array is what the fingerprint
+ * hashes, so two orderings are two rows and a comparison that called them equal
+ * would mark a real edit clean.
+ *
+ * Absent and null are the same thing (no grant); there is no empty-array case
+ * to reconcile, because a picker that clears its last row emits `null`.
+ */
+export function sameSecretSelection(
+  a: ProjectEnvironmentSecretSelection | null | undefined,
+  b: ProjectEnvironmentSecretSelection | null | undefined,
+): boolean {
+  const left = a ?? null;
+  const right = b ?? null;
+  if (left === null || right === null) return left === right;
+  if (left.secretIds.length !== right.secretIds.length) return false;
+  return left.secretIds.every((id, index) => id === right.secretIds[index]);
 }
 
 export function sameSkillSelection(
