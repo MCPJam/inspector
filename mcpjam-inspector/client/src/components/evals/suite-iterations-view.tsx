@@ -95,6 +95,7 @@ import {
 import { useSuiteSettingsCommit } from "./use-suite-settings-draft";
 import { SuiteSettingsCommitBar } from "./suite-settings-commit-bar";
 import { ReviewAndSaveDialog } from "./review-and-save-dialog";
+import { SuiteRevisionHistory } from "./suite-revision-history";
 import { useUnsavedChangesGuard } from "@/hooks/use-unsaved-changes-guard";
 import { useSharedAppState } from "@/state/app-state-context";
 import { Button } from "@mcpjam/design-system/button";
@@ -540,6 +541,7 @@ export function SuiteIterationsView({
       }),
   );
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [revisionHistoryOpen, setRevisionHistoryOpen] = useState(false);
   const { commit, isCommitting } = useSuiteSettingsCommit();
   const draftDefaultPredicates = draft.current.defaultPredicates;
   const setDraftDefaultPredicates = useCallback(
@@ -945,6 +947,14 @@ export function SuiteIterationsView({
     });
   };
 
+  // The suite's newest run, for the history panel's "Compare with run". Absent
+  // on a suite that has never run, in which case the footer action is not
+  // offered rather than being offered and doing nothing.
+  const latestRunForCompare = useMemo(
+    () => [...runs].sort(compareRunsBySequence)[0] ?? null,
+    [runs],
+  );
+
   const handleCompareRuns = useCallback(
     (baseRunId: string, compareRunId: string) => {
       navigation.toRunDetail(suite._id, compareRunId, undefined, {
@@ -1324,6 +1334,7 @@ export function SuiteIterationsView({
             onReplayRun={onReplayRun}
             onCancelRun={onCancelRun}
             onViewModeChange={handleBackToOverview}
+            onOpenRevisionHistory={() => setRevisionHistoryOpen(true)}
             connectedServerNames={connectedServerNames}
             rerunningSuiteId={rerunningSuiteId}
             replayingRunId={replayingRunId}
@@ -2213,6 +2224,27 @@ export function SuiteIterationsView({
           </div>
         </div>
       )}
+      {/* Always mounted, like the review dialog: the pill that opens it lives
+          in the header, which is a sibling rather than a child of the settings
+          branch. */}
+      <SuiteRevisionHistory
+        suiteId={suite._id}
+        open={revisionHistoryOpen}
+        onOpenChange={setRevisionHistoryOpen}
+        onCompareLatestRun={
+          latestRunForCompare
+            ? () => {
+                setRevisionHistoryOpen(false);
+                navigation.toRunDetail(
+                  suite._id,
+                  latestRunForCompare._id,
+                  undefined,
+                  {},
+                );
+              }
+            : undefined
+        }
+      />
       <ReviewAndSaveDialog
         open={reviewOpen}
         onOpenChange={setReviewOpen}
