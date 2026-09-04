@@ -14,6 +14,7 @@
     "build": "tsup",
     "bundle:skills": "node scripts/generate-skills-bundle.mjs",
     "test": "npm run build -w @mcpjam/sdk && npm run test:fast",
+    "pretest:fast": "npm run build",
     "test:fast": "node scripts/run-tests.mjs",
     "typecheck": "tsc --noEmit",
     "prepublishOnly": "npm run build"
