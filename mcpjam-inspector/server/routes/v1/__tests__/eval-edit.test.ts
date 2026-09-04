@@ -840,6 +840,13 @@ describe("v1 eval-edit routes", () => {
       // Project-environment schedule pin (read-only DTO field); this suite
       // has none.
       environmentId: null,
+      // B9b — the schedule's own state, owner and next firing. A schedule that
+      // paused itself keeps `enabled: true`, so these are the fields that tell
+      // a caller whether it is actually running.
+      state: null,
+      createdBy: null,
+      nextDueAt: null,
+      consecutiveFailures: 0,
     });
   });
 
@@ -973,6 +980,9 @@ describe("v1 eval-edit routes", () => {
       expect(args).toEqual({
         suiteId: "suite_1",
         environmentIds: ["env_1", "env_2"],
+        // B9b — every write in one PATCH shares one revision group, so the
+        // suite's history records one edit rather than several.
+        revision: { source: "api", groupId: expect.any(String) },
       });
     });
 
@@ -3115,6 +3125,335 @@ describe("v1 eval-edit routes", () => {
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * B9b — the v2 verdict policy, the revision precondition, and the group id.
+   *
+   * The settings sheet's policy rows write `verdictPolicyDefaults`, which the
+   * PATCH did not accept: an agent could see a row it had no way to drive. The
+   * three rules pinned here are the ones a caller gets wrong:
+   *
+   *   - an UPGRADE is explicit (both halves, or neither), because a v2 policy
+   *     with a repetition count and no threshold is not a partial answer;
+   *   - a MERGE preserves what the caller did not mention, including inside
+   *     `validity`, because PATCH is merge semantics everywhere else here;
+   *   - the two thresholds are ALTERNATIVES, never layers, and nothing on this
+   *     path converts a percent into a fraction.
+   */
+  describe("verdict policy v2 on PATCH", () => {
+    const V2_SUITE = {
+      ...SUITE_DOC,
+      verdictPolicyVersion: 2,
+      verdictPolicyDefaults: {
+        repetitions: 5,
+        passThreshold: 0.6,
+        validity: { minCompletionRate: 0.7, maxEvaluatorErrorRate: 0.2 },
+      },
+      // A v2 suite carries no legacy percent; leaving one here would let a
+      // handler that reads the wrong field keep passing.
+      defaultPassCriteria: undefined,
+    };
+
+    function withSuite(doc: Record<string, unknown>) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve(doc)
+          : defaultQueryImpl(name)
+      );
+    }
+
+    function suiteUpdateArgs(): any {
+      return convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )?.[1];
+    }
+
+    it("refuses a half upgrade on a legacy suite, writing nothing", async () => {
+      for (const settings of [{ repetitions: 3 }, { passThreshold: 0.8 }]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "PATCH",
+          "/api/v1/projects/p1/eval-suites/suite_1",
+          { settings }
+        );
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as { code?: string; message?: string };
+        expect(json.code).toBe("VALIDATION_ERROR");
+        expect(json.message).toContain("repetitions");
+        expect(json.message).toContain("passThreshold");
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it("upgrades a legacy suite when both halves are supplied", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          settings: {
+            repetitions: 3,
+            passThreshold: 0.8,
+            validity: { minCompletionRate: 0.9 },
+          },
+        }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      expect(args.verdictPolicyVersion).toBe(2);
+      expect(args.verdictPolicyDefaults).toEqual({
+        repetitions: 3,
+        // The FRACTION as sent. A handler that divided the legacy percent by
+        // 100 anywhere on this path would land 0.008 here.
+        passThreshold: 0.8,
+        validity: { minCompletionRate: 0.9 },
+      });
+    });
+
+    it("merges a partial edit over a v2 suite's stored defaults", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { passThreshold: 0.95 } }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      // `repetitions` and BOTH validity ceilings survive an edit that
+      // mentioned neither — the object is written wholesale, so a handler that
+      // sent only the changed field would silently clear the rest.
+      expect(args.verdictPolicyDefaults).toEqual({
+        repetitions: 5,
+        passThreshold: 0.95,
+        validity: { minCompletionRate: 0.7, maxEvaluatorErrorRate: 0.2 },
+      });
+      expect(args.verdictPolicyVersion).toBeUndefined();
+    });
+
+    it("merges validity field-by-field rather than replacing it", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { validity: { minCompletionRate: 0.99 } } }
+      );
+      expect(res.status).toBe(200);
+      expect(suiteUpdateArgs().verdictPolicyDefaults.validity).toEqual({
+        minCompletionRate: 0.99,
+        maxEvaluatorErrorRate: 0.2,
+      });
+    });
+
+    it("refuses minimumAccuracy beside a v2 field (400, no mutation)", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumAccuracy: 80, passThreshold: 0.8 } }
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { code?: string; message?: string };
+      expect(json.code).toBe("VALIDATION_ERROR");
+      expect(json.message).toContain("minimumAccuracy");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the policy on the detail, without synthesizing a fraction", async () => {
+      const legacy = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const legacySettings = ((await legacy.json()) as any).settings;
+      expect(legacySettings.policy).toBe("legacy");
+      expect(legacySettings.minimumAccuracy).toBe(80);
+      // A legacy percent is NOT a v2 fraction wearing a different name; a DTO
+      // that reported 0.8 here would hand a caller a threshold the suite is
+      // not graded against.
+      expect(legacySettings.passThreshold).toBeUndefined();
+      expect(legacySettings.verdictPolicyVersion).toBeUndefined();
+      expect(legacySettings.verdictPolicyDefaults).toBeUndefined();
+
+      withSuite(V2_SUITE);
+      const v2 = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const v2Settings = ((await v2.json()) as any).settings;
+      expect(v2Settings.policy).toBe("v2");
+      expect(v2Settings.verdictPolicyVersion).toBe(2);
+      expect(v2Settings.verdictPolicyDefaults.passThreshold).toBe(0.6);
+      expect(v2Settings.minimumAccuracy).toBeNull();
+    });
+
+    it("refuses minimumAccuracy on a v2 suite, pointing at passThreshold", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumAccuracy: 80 } }
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { code?: string; message?: string };
+      expect(json.code).toBe("VALIDATION_ERROR");
+      expect(json.message).toContain("passThreshold");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * B9b — the revision precondition and the one revision group per request.
+   */
+  describe("suite revisions on PATCH", () => {
+    it("forwards expectedRevisionNumber on the first write only", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+          expectedRevisionNumber: 7,
+          hosts: [],
+        }
+      );
+      expect(res.status).toBe(200);
+      const writes = convexMutationMock.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      );
+      expect(writes.length).toBeGreaterThanOrEqual(2);
+      expect(writes[0][1].expectedRevisionNumber).toBe(7);
+      // Re-sending it would compare against a number THIS request has already
+      // advanced, refusing the caller's own edit halfway through.
+      for (const later of writes.slice(1)) {
+        expect(later[1].expectedRevisionNumber).toBeUndefined();
+      }
+    });
+
+    it("stamps one revision group across every write in the request", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+          hosts: [],
+          environmentIds: ["env_1"],
+        }
+      );
+      expect(res.status).toBe(200);
+      const revisions = convexMutationMock.mock.calls
+        .filter(
+          (c) =>
+            c[0] === "testSuites:updateTestSuite" ||
+            c[0] === "testSuites:setSuiteEnvironments"
+        )
+        .map((c) => c[1].revision);
+      expect(revisions.length).toBeGreaterThanOrEqual(3);
+      for (const revision of revisions) {
+        expect(revision.source).toBe("api");
+        expect(typeof revision.groupId).toBe("string");
+      }
+      expect(new Set(revisions.map((r: any) => r.groupId)).size).toBe(1);
+    });
+
+    it("maps a stale precondition to 409 CONFLICT with the current number", async () => {
+      convexMutationMock.mockImplementation((name: string, args?: any) => {
+        if (name === "testSuites:updateTestSuite") {
+          const error: Error & { data?: unknown } = new Error(
+            "This suite changed since you loaded it."
+          );
+          error.data = {
+            code: "EVAL_SUITE_REVISION_CONFLICT",
+            message: "This suite changed since you loaded it.",
+            current: 9,
+            expected: 7,
+          };
+          return Promise.reject(error);
+        }
+        return defaultMutationImpl(name, args);
+      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "Renamed", expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as {
+        code?: string;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
+      expect(json.code).toBe("CONFLICT");
+      // The number is the actionable half: "reload and retry" is only advice
+      // if the caller learns what to retry against.
+      expect(json.message).toContain("9");
+      expect(json.details?.currentRevisionNumber).toBe(9);
+    });
+
+    it("reports revisionNumber on the suite detail, null when unrecorded", async () => {
+      const unset = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await unset.json()) as any).revisionNumber).toBeNull();
+
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 4 })
+          : defaultQueryImpl(name)
+      );
+      const set = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await set.json()) as any).revisionNumber).toBe(4);
+    });
+  });
+
+  /**
+   * B9b — the schedule reports a STATE, not just a boolean.
+   */
+  describe("schedule state on the suite detail", () => {
+    it("reports state, owner, next due and failure count", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                state: "paused_auth",
+                createdByUserId: "user_9",
+                consecutiveFailures: 3,
+              },
+              scheduleNextDueAt: 1750,
+            })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const schedule = ((await res.json()) as any).schedule;
+      // `enabled` stays TRUE on a self-paused schedule, which is exactly why
+      // reading it alone reports a healthy automation that has not run.
+      expect(schedule.enabled).toBe(true);
+      expect(schedule.state).toBe("paused_auth");
+      expect(schedule.createdBy).toBe("user_9");
+      expect(schedule.nextDueAt).toBe(1750);
+      expect(schedule.consecutiveFailures).toBe(3);
+    });
+
+    it("reports a null state and a zero failure count when unset", async () => {
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const schedule = ((await res.json()) as any).schedule;
+      expect(schedule.state).toBeNull();
+      expect(schedule.createdBy).toBeNull();
+      expect(schedule.nextDueAt).toBeNull();
+      expect(schedule.consecutiveFailures).toBe(0);
     });
   });
 

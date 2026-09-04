@@ -13484,11 +13484,20 @@
                     }
                   }
                 }
+              },
+              "policy": {
+                "type": "string",
+                "enum": ["legacy", "v2"],
+                "description": "Which policy decides this suite's runs, said in one word. `legacy` grades by `minimumAccuracy` (a percent) over `max(case.iterations, minimumIterations)`; `v2` grades each case by `passThreshold` (a fraction) over its own `repetitions` and decides validity first. It is also what says which threshold a PATCH may send — the two are refused together."
               }
             }
           },
           "schedule": {
             "$ref": "#/components/schemas/EvalSuiteSchedule"
+          },
+          "revisionNumber": {
+            "type": ["integer", "null"],
+            "description": "How many committed edits this suite has had, or `null` on a deployment that does not record revisions. Send it back as `expectedRevisionNumber` on a PATCH to make that edit a compare-and-set."
           },
           "createdAt": {
             "type": ["number", "null"],
@@ -16497,6 +16506,29 @@
           "environmentId": {
             "type": ["string", "null"],
             "description": "The single attached environment scheduled runs use. Null on a legacy (non-environment) suite."
+          },
+          "state": {
+            "type": ["string", "null"],
+            "enum": [
+              "active",
+              "paused_quota",
+              "paused_auth",
+              "paused_failures",
+              null
+            ],
+            "description": "What the schedule is DOING, which `enabled` cannot say. A schedule pauses itself on exhausted quota, on the owner losing access to the suite, and after repeated consecutive failures — all three keep `enabled: true`, so a caller reading only `enabled` reports a healthy automation that has not run in a week."
+          },
+          "createdBy": {
+            "type": ["string", "null"],
+            "description": "The user id the schedule runs AS. Scheduled runs use this person's access, and the schedule pauses (`paused_auth`) if they lose it."
+          },
+          "nextDueAt": {
+            "type": ["integer", "null"],
+            "description": "Epoch ms of the next due firing, or `null` when nothing is due."
+          },
+          "consecutiveFailures": {
+            "type": "integer",
+            "description": "Consecutive failed firings; resets on the first success."
           }
         }
       },
@@ -16603,7 +16635,8 @@
               "minimumAccuracy": {
                 "type": "number",
                 "minimum": 0,
-                "maximum": 100
+                "maximum": 100,
+                "description": "Minimum pass rate as a PERCENT, 0-100. Legacy suites only; v2 suites use `passThreshold` (a fraction) and refuse this field."
               },
               "minimumIterations": {
                 "type": ["integer", "null"],
@@ -16640,8 +16673,46 @@
                     "maximum": 1
                   }
                 }
+              },
+              "repetitions": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with `passThreshold` UPGRADES the suite to policy v2; neither alone is accepted there."
+              },
+              "passThreshold": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "description": "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0-1 (0.8 is eighty percent). The v2 replacement for `minimumAccuracy`, which is a percent; sending both is refused."
+              },
+              "validity": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Omitted members keep the contract defaults (`minCompletionRate` 0.8, `maxEvaluatorErrorRate` 0.1); supplied members merge over the suite's stored validity rather than replacing it.",
+                "properties": {
+                  "minEligibleTrials": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "minCompletionRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "maxEvaluatorErrorRate": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  }
+                }
               }
             }
+          },
+          "expectedRevisionNumber": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "The suite's `revisionNumber` as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
           }
         }
       },
