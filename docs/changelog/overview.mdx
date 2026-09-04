@@ -9,6 +9,22 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-04
+
+#### Added
+
+- **`safeAreaInsets` row on caniuse and host Compare** — the host capability matrix now includes a `safeAreaInsets` row (`appsCap.safeAreaInsets`). It tracks whether a host sends `hostContext.safeAreaInsets` at all — SEP-1865 makes the key optional, and hosts split cleanly: Claude reports a uniform 12 px inset on every edge, while Slackbot, Cursor, VS Code, Codex, and Le Chat omit the key entirely, so a widget reading `insets.top` gets `undefined` rather than a zero.
+
+#### Fixed
+
+- **Playground safe-area insets now default to the selected host's values** — previously the playground always seeded safe-area insets from the "none" preset (all zeros), so every emulated host appeared to report no insets. The playground now reads the host template's declared values: Claude defaults to 12 px on every edge; Slackbot, Cursor, VS Code, Codex, and Le Chat default to 0. Picking a device preset (notch, Dynamic Island, gesture bar) still overrides the host's values.
+
+#### Changed
+
+- **Host Compare preset order matches caniuse.dev** — preset chips on the Compare surface now appear in the same deliberate order as on caniuse.dev, making it easier to read the two pages against each other. Live hosts keep their own order and appear first.
+- **MCPJam demoted to the back of host chips** — on both Compare and caniuse, MCPJam (the emulator doing the comparing) is moved to the last chip position rather than holding a leading slot. It remains present and selectable.
+- **Removed support-level filter pills from Compare** — the All / Missing / Partial / Full filter pills have been removed from the host Compare selector toolbar.
+
 ### 2026-09-02
 
 #### Added
