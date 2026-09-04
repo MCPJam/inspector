@@ -92,6 +92,13 @@ func run(exe string, args []string) int {
 	// bounds the streams on its side; relaying them here would add a buffer
 	// that can fill and a copy loop that can deadlock, for nothing.
 	attr := &syscall.ProcAttr{
+		// Explicit, because this is the low-level `syscall.StartProcess`, not
+		// `os.StartProcess`: here a nil Env is an EMPTY environment block, not
+		// an inherited one. The child then starts with no SYSTEMROOT, and a
+		// Node binary dies inside OpenSSL's random-number init before it runs
+		// a line of JavaScript ("Assertion failed: ncrypto::CSPRNG"). The
+		// supervisor built this environment for the child; pass it through.
+		Env: os.Environ(),
 		Files: []uintptr{
 			os.Stdin.Fd(),
 			os.Stdout.Fd(),
