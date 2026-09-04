@@ -1913,6 +1913,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {

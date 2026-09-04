@@ -666,7 +666,16 @@ export interface PlatformEvalRun {
   id: string;
   suiteId: string;
   runNumber: number | null;
-  /** Poll until terminal: "completed" | "failed" | "cancelled". */
+  /**
+   * Poll until TERMINAL. The four terminal statuses are `"completed"`,
+   * `"failed"`, `"cancelled"` and `"timed_out"`.
+   *
+   * `"grading"` is NOT terminal. Every trial has finished and the run is being
+   * held for its gating judge — up to 30 minutes — with `result` still
+   * `"pending"`. A poller that stops there reports a run with no verdict as
+   * though it had one; keep polling until the status is one of the four above.
+   * Absent on API deployments that predate the hold.
+   */
   status: string;
   /**
    * Verdict once terminal: `"passed" | "failed" | "inconclusive" | null`.
@@ -1096,7 +1105,8 @@ export interface PlatformEvalRunCreated {
   suiteId: string;
   /**
    * The run's status. `running` on a fresh launch; on a replay (see
-   * `deduped`), the existing run's own status — which may already be terminal.
+   * `deduped`), the existing run's own status — which may already be terminal,
+   * or `"grading"` if that run is being held for its gating judge.
    */
   status: string;
   /**
@@ -1296,6 +1306,25 @@ export interface PlatformEvalSuiteSettings {
      * Absent on older API deployments.
      */
     threshold?: number;
+    /**
+     * The suite's own grading criteria, handed to the judge alongside each
+     * case's expected output.
+     *
+     * The judge cites `id` in its reasons, which is what makes a verdict
+     * auditable rather than a number — so ids are stable, unique, and
+     * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
+     * agreement measured against criteria the suite no longer uses is
+     * agreement with a question nobody is asking. Absent on older API
+     * deployments and on suites with no criteria.
+     */
+    rubric?: {
+      criteria: Array<{
+        id: string;
+        label: string;
+        description?: string;
+        required?: boolean;
+      }>;
+    } | null;
   };
   /**
    * The verdict policy this suite's runs are decided under.
@@ -1316,6 +1345,19 @@ export interface PlatformEvalSuiteSettings {
    * `passThreshold` cannot answer what a case is graded against.
    */
   verdictPolicyDefaults?: PlatformEvalVerdictPolicyDefaults;
+  /**
+   * Which policy decides this suite's runs, said in one word.
+   *
+   * The same fact `verdictPolicyVersion`'s presence carries, without the
+   * inference — and without the ambiguity, since a v2 suite whose stored
+   * defaults fail validation projects no version either. It is also the field
+   * that tells a writer which threshold to send: `minimumAccuracy` (a percent)
+   * on `legacy`, `passThreshold` (a fraction) on `v2`. Sending both is refused.
+   *
+   * Absent on older API deployments; read absence as `legacy` only after
+   * checking `verdictPolicyVersion`.
+   */
+  policy?: "legacy" | "v2";
 }
 
 /** Suite-level defaults under verdict policy 2. Fractions, never percents. */
@@ -1364,6 +1406,27 @@ export interface PlatformEvalSuiteSchedule {
    * absent on older API deployments.
    */
   environmentId?: string | null;
+  /**
+   * What the schedule is DOING, which `enabled` cannot say.
+   *
+   * A schedule pauses itself: `paused_quota` when the organization ran out of
+   * scheduled-run budget, `paused_auth` when the person it runs as lost their
+   * access to the suite, `paused_failures` after repeated consecutive failures.
+   * All three keep `enabled: true` — the schedule is still configured, it is
+   * just not firing — so a caller that reads only `enabled` reports a healthy
+   * automation that has not run in a week. Absent on older API deployments.
+   */
+  state?: "active" | "paused_quota" | "paused_auth" | "paused_failures" | null;
+  /**
+   * The user id the schedule runs AS. Scheduled runs use this person's
+   * access, and the schedule pauses (`paused_auth`) if they lose it. Absent on
+   * older API deployments.
+   */
+  createdBy?: string | null;
+  /** Epoch ms of the next due firing, or `null` when nothing is due. */
+  nextDueAt?: number | null;
+  /** Consecutive failed firings; resets on the first success. */
+  consecutiveFailures?: number;
 }
 
 /**
@@ -1410,8 +1473,59 @@ export interface PlatformEvalSuiteDetail {
   hosts: PlatformEvalSuiteHost[];
   settings: PlatformEvalSuiteSettings;
   schedule: PlatformEvalSuiteSchedule;
+  /**
+   * How many committed edits this suite has had, or `null` on a deployment
+   * that does not record revisions.
+   *
+   * Send it back as `expectedRevisionNumber` on a PATCH to make that edit a
+   * compare-and-set: an edit composed against a suite someone else has since
+   * changed is refused with 409 having written nothing, instead of applying
+   * half an intent over a document it no longer describes. Absent on older API
+   * deployments.
+   */
+  revisionNumber?: number | null;
   createdAt: number | null;
   updatedAt: number | null;
+}
+
+/**
+ * One committed edit to a suite's settings.
+ *
+ * The suite's history is the answer to "who changed this, and when" — a
+ * question that was already recorded and had no reader. Rows carry NO
+ * SNAPSHOTS: a page of whole suite configurations is a large payload for a list
+ * nobody reads that way, and the before/after of one revision is a different
+ * question with a different cost.
+ */
+export interface PlatformEvalSuiteRevision {
+  id: string;
+  /** Monotonic per suite. `revisionNumber` on the suite is the newest. */
+  revisionNumber: number;
+  /** Where the edit came from. `unattributed` is a write nothing claimed. */
+  source:
+    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+  /** The user id, or `null` for a write with no human actor. */
+  createdBy: string | null;
+  /** A display name when one is resolvable; `null` otherwise. */
+  createdByName: string | null;
+  createdAt: number;
+  /** The reason the author gave, when they gave one. */
+  note: string | null;
+  /** STORAGE field names, not public API paths. */
+  changedFields: string[];
+  /**
+   * Shared by every revision one request produced, so a PATCH that edited the
+   * settings and re-attached the environments reads as one change.
+   */
+  revisionGroupId: string | null;
+  /**
+   * Runs launched against this revision, CAPPED. The question is "did runs use
+   * this", and the difference between 100 and 400 does not change the answer,
+   * while counting them all would make the list cost grow with the history.
+   */
+  pinnedRunCount: number;
+  /** True when `pinnedRunCount` hit the cap and is a floor, not a count. */
+  pinnedRunCountCapped: boolean;
 }
 
 /**

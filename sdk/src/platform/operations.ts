@@ -90,6 +90,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
@@ -5301,10 +5302,72 @@ const updateEvalSuiteInput = z.strictObject({
             .describe(
               "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
+          rubric: z
+            .union([
+              z.object({
+                criteria: z
+                  .array(
+                    z.object({
+                      id: z
+                        .string()
+                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                        .describe(
+                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    })
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional()
+            .describe(
+              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+            ),
         })
         .optional(),
+      repetitions: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+        ),
+      passThreshold: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+        ),
+      validity: z
+        .object({
+          minEligibleTrials: z.number().int().min(1).optional(),
+          minCompletionRate: z.number().min(0).max(1).optional(),
+          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+        })
+        .strict()
+        .optional()
+        .describe(
+          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+        ),
     })
     .optional(),
+  expectedRevisionNumber: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+    ),
 });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
@@ -5315,7 +5378,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -6125,6 +6188,11 @@ export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
  * for a terminal run: while a run is still going its verdict does not exist
  * yet, so the extra request would buy a `notEstablished` a poller already knows
  * from `status`.
+ *
+ * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has run
+ * every trial but has not been decided — its `result` is `pending` — so
+ * fetching a summary for it would return exactly the `notEstablished` this set
+ * exists to avoid asking for.
  */
 const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -6337,6 +6405,82 @@ export const listEvalRunIterationsOperation: PlatformOperation<
     return {
       project: toSelectedProjectInfo(project),
       runId: input.runId,
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const evalSuiteRevisionsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque pagination cursor from a previous response."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum number of revisions to return per page (newest first)."),
+});
+
+export type ListEvalSuiteRevisionsInput = z.infer<
+  typeof evalSuiteRevisionsInput
+>;
+
+export type ListEvalSuiteRevisionsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  items: PlatformEvalSuiteRevision[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteRevisionsOperation: PlatformOperation<
+  ListEvalSuiteRevisionsInput,
+  ListEvalSuiteRevisionsResult
+> = {
+  name: "list_eval_suite_revisions",
+  title: "List MCPJam eval suite revisions",
+  description:
+    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Pass a revisionNumber back as expectedRevisionNumber on update_eval_suite to make an edit a compare-and-set.",
+  readOnly: true,
+  // The suite, not the revision: a revision has no page of its own, and the
+  // settings sheet's history panel is reached from the suite.
+  permalink: derivePermalinks((result) => [
+    {
+      type: "eval_suite" as const,
+      id: result.suite.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: evalSuiteRevisionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const page = await client.listEvalSuiteRevisions(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        cursor: input.cursor,
+        limit: input.limit,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
@@ -14852,6 +14996,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalSuiteOperation,
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,

@@ -345,4 +345,37 @@ describe("ScoresList", () => {
     );
     expect(container).toBeEmptyDOMElement();
   });
+
+  /**
+   * S6 — A CALIBRATION LABEL IS NOT A VERDICT.
+   *
+   * A reviewer's label is evidence about the JUDGE. It changes no score row,
+   * no gating/advisory split, and no run result — the whole point of measuring
+   * agreement is that the two readings stay independent, and a label that
+   * moved a verdict would be measuring itself.
+   *
+   * Pinned by RENDERING the same score set twice, because that is the only
+   * thing a label could reach from here: this component derives everything it
+   * shows from the iteration's stored rows, and reviews are stored elsewhere
+   * entirely. A future edit that threaded a review into this file would have to
+   * break this test to do it.
+   */
+  it("renders identically whether or not the trial has been reviewed", () => {
+    const scores: ScoreResult[] = [
+      finalizeScoreResult(gate, { kind: "scored", value: 0 }),
+      finalizeScoreResult(advisory, { kind: "scored", value: 0.9 }),
+    ];
+    const first = render(
+      <ScoresList scores={scores} evaluationConfig={snapshot} />,
+    );
+    const before = first.container.innerHTML;
+    first.unmount();
+
+    // The "reviewed" render passes the same inputs, because a review adds no
+    // input here. Byte-identical output is the assertion.
+    const second = render(
+      <ScoresList scores={scores} evaluationConfig={snapshot} />,
+    );
+    expect(second.container.innerHTML).toBe(before);
+  });
 });

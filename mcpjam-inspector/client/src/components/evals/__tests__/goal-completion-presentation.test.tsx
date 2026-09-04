@@ -195,6 +195,91 @@ describe("resolveIterationJudge (case drill-in join)", () => {
     expect(resolveIterationJudge({ suiteRunId: "run-A" }, runs)).toBeNull();
     expect(resolveIterationJudge(null, runs)).toBeNull();
   });
+
+  /**
+   * S6 — a repeated case has one verdict PER TRIAL, and `caseKey` names the
+   * case rather than the trial.
+   *
+   * Under verdict policy v2 every case runs several times, so a `caseKey` join
+   * returns whichever trial's verdict happens to be first in the array and
+   * attributes it to whichever trial the reader is looking at. That is not a
+   * missing verdict — it is the wrong one, shown confidently, next to a
+   * transcript that disagrees with it.
+   */
+  describe("a case that ran more than once", () => {
+    const repeated = [
+      {
+        _id: "run-A",
+        goalCompletion: {
+          summary: "",
+          generatedAt: 0,
+          modelUsed: "m",
+          threshold: 0.7,
+          cases: [
+            judgeCase({
+              caseKey: "case-1",
+              gradingKey: "case-1#1",
+              iterationId: "it-1",
+              score: 0.1,
+              passed: false,
+            }),
+            judgeCase({
+              caseKey: "case-1",
+              gradingKey: "case-1#2",
+              iterationId: "it-2",
+              score: 0.9,
+              passed: true,
+            }),
+          ],
+        },
+      },
+    ] as unknown as Parameters<typeof resolveIterationJudge>[1];
+
+    it("joins on the iteration id when the backend resolved one", () => {
+      expect(
+        resolveIterationJudge(
+          {
+            _id: "it-2",
+            suiteRunId: "run-A",
+            iterationNumber: 2,
+            testCaseSnapshot: { caseKey: "case-1" },
+          },
+          repeated,
+        )?.score,
+      ).toBe(0.9);
+    });
+
+    it("falls back to the grading key, not to the case key", () => {
+      // No `_id` on the iteration, so the id join cannot fire — and a caseKey
+      // join here would return trial 1's 0.1 for trial 2.
+      expect(
+        resolveIterationJudge(
+          {
+            suiteRunId: "run-A",
+            iterationNumber: 2,
+            testCaseSnapshot: { caseKey: "case-1" },
+          },
+          repeated,
+        )?.score,
+      ).toBe(0.9);
+    });
+
+    it("still joins a legacy run by caseKey alone", () => {
+      // Runs judged before either key existed carry neither, and on those
+      // `caseKey` is exactly what their verdicts were keyed by.
+      expect(
+        resolveIterationJudge(
+          {
+            _id: "it-9",
+            suiteRunId: "run-A",
+            iterationNumber: 7,
+            testCaseSnapshot: { caseKey: "case-1" },
+          },
+          runs,
+        )?.score,
+      ).toBe(0.42);
+    });
+  });
 });
 
 describe("JudgeVerdictPanel", () => {

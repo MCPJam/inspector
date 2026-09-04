@@ -1053,7 +1053,14 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
