@@ -42,6 +42,7 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -269,10 +270,25 @@ export function createComputerBrowserFramesWsHandler(
          */
         const touch = () => {
           watched = false;
-          void touchSession({ sessionId: live.sessionId, kind: "panel" }).catch(
-            () => {},
-          );
-          void touchActivity({ computerId: live.computerId }).catch(() => {});
+          // THE BACKEND HAS THE LAST WORD, exactly as `/keepalive` lets it.
+          // `touchSession` answers `counted: false` once the browser has gone
+          // long enough without a real command, which is the ceiling that
+          // stops a pane left open over a weekend holding a metered box awake
+          // forever. Firing `touchActivity` regardless discarded that answer
+          // and bumped `lastActiveAt` anyway, so the idle sweep never came —
+          // the same class of bug as the connected-but-unwatched socket this
+          // route just fixed, one layer further in. Watching is evidence
+          // somebody is there; it is not evidence the machine is still doing
+          // anything worth paying for.
+          void touchSession({ sessionId: live.sessionId, kind: "panel" })
+            .then(({ counted }) => {
+              if (!counted) return;
+              if (!shouldTouchActivity(live.computerId)) return;
+              void touchActivity({ computerId: live.computerId }).catch(
+                () => {},
+              );
+            })
+            .catch(() => {});
         };
         // Opening one counts: somebody just asked for it.
         touch();
