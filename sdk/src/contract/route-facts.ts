@@ -236,6 +236,8 @@ export type DerivedTrialRoute = {
   retryCount: number;
   distinctToolCount: number;
   tags: EvalRouteTag[];
+  /** Present when the trial made more calls than `MAX_ROUTE_TOOL_CALLS`. */
+  truncated?: true;
 };
 
 /**
@@ -249,11 +251,15 @@ export function deriveTrialRoute(
   actualToolCalls: readonly unknown[]
 ): DerivedTrialRoute {
   const toolCallSequence: string[] = [];
+  let truncated = false;
   for (const call of actualToolCalls) {
     const name = readToolName(call);
     if (!name) continue;
+    if (toolCallSequence.length >= MAX_ROUTE_TOOL_CALLS) {
+      truncated = true;
+      break;
+    }
     toolCallSequence.push(name);
-    if (toolCallSequence.length >= MAX_ROUTE_TOOL_CALLS) break;
   }
 
   let retryCount = 0;
@@ -284,6 +290,7 @@ export function deriveTrialRoute(
     retryCount,
     distinctToolCount: nameCounts.size,
     tags,
+    ...(truncated ? { truncated: true as const } : {}),
   };
 }
 
@@ -350,7 +357,10 @@ export function classifyRouteTrial(
     case "failed":
       return "executionFailed";
     default:
-      return "executionFailed";
+      // A status this contract does not know is an unfinished trial until
+      // proven otherwise — the sibling experiment contract files it the same
+      // way, so two documents over one run never disagree about it.
+      return "notTerminal";
   }
 }
 
@@ -439,6 +449,12 @@ const caseRoutesSchema = z
     tags: routeTagsSchema,
     loopedOn: z.array(loopedOnRowSchema),
     endedWithQuestion: evalRateMeasurementStructuralSchema,
+    /**
+     * Trials whose call sequence was cut at `MAX_ROUTE_TOOL_CALLS`: their
+     * route, retry count and looping tag describe the prefix only. Present
+     * only when non-zero, like every other ceiling this contract marks.
+     */
+    truncatedTrials: countSchema.optional(),
   })
   .strict();
 export type EvalCaseRoutes = z.infer<typeof caseRoutesSchema>;
@@ -710,6 +726,7 @@ function rollupClassifiedRoutes(
   let looping = 0;
   let endedWithQuestionTrue = 0;
   let endedWithQuestionKnown = 0;
+  let truncatedTrials = 0;
 
   for (const row of included) {
     const existing = routeCounts.get(row.route.pathKey) ?? {
@@ -722,6 +739,7 @@ function rollupClassifiedRoutes(
     else existing.failed += 1;
     routeCounts.set(row.route.pathKey, existing);
 
+    if (row.route.truncated) truncatedTrials += 1;
     if (row.route.tags.includes("noToolCalled")) noToolCalled += 1;
     if (row.route.tags.includes("retried")) retried += 1;
     if (row.route.tags.includes("looping")) looping += 1;
@@ -783,6 +801,7 @@ function rollupClassifiedRoutes(
       endedWithQuestionKnown,
       exclusions
     ),
+    ...(truncatedTrials > 0 ? { truncatedTrials } : {}),
   };
 }
 

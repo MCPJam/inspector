@@ -22,6 +22,7 @@ import {
   EVAL_RUN_ROUTE_FACTS_SCHEMA_VERSION,
   EVAL_TOOL_CATALOG_MEMBERSHIPS,
   MAX_ROUTES_PER_CASE,
+  MAX_ROUTE_TOOL_CALLS,
   NO_TOOL_PATH_KEY,
   ROUTE_FACTS_VERSION,
   PATH_SEPARATOR,
@@ -219,7 +220,7 @@ describe("evalTrialRate — 0/0 is never a number", () => {
 });
 
 describe("classifyRouteTrial", () => {
-  test("maps lifecycle statuses and treats failed as executionFailed", () => {
+  test("maps lifecycle statuses, treats failed as executionFailed, and an unknown status as unfinished", () => {
     expect(classifyRouteTrial({ status: "completed" })).toBeUndefined();
     expect(classifyRouteTrial({ status: "pending" })).toBe("notTerminal");
     expect(classifyRouteTrial({ status: "running" })).toBe("notTerminal");
@@ -228,7 +229,7 @@ describe("classifyRouteTrial", () => {
     expect(classifyRouteTrial({ status: "setup_failed" })).toBe("setupFailed");
     expect(classifyRouteTrial({ status: "timed_out" })).toBe("timedOut");
     expect(classifyRouteTrial({ status: "failed" })).toBe("executionFailed");
-    expect(classifyRouteTrial({ status: "grading" })).toBe("executionFailed");
+    expect(classifyRouteTrial({ status: "grading" })).toBe("notTerminal");
   });
 
   test("evaluator error wins over a completed status", () => {
@@ -402,7 +403,11 @@ describe("buildEvalRunRouteFacts", () => {
 
   test("exclusions by status and evaluator error leave the denominator", () => {
     const doc = build([
-      trial({ trialKey: "ok", result: "passed", actualToolCalls: [call("tool_a")] }),
+      trial({
+        trialKey: "ok",
+        result: "passed",
+        actualToolCalls: [call("tool_a")],
+      }),
       trial({ trialKey: "pending", status: "pending" }),
       trial({ trialKey: "cancelled", status: "cancelled" }),
       trial({ trialKey: "failed-status", status: "failed" }),
@@ -525,7 +530,9 @@ describe("buildEvalRunRouteFacts", () => {
         expectedToolCalls: [call("tool_b")],
       }),
     ]);
-    expect(caseOf(doc).routes.loopedOn).toEqual([{ tool: "tool_a", trials: 1 }]);
+    expect(caseOf(doc).routes.loopedOn).toEqual([
+      { tool: "tool_a", trials: 1 },
+    ]);
     expect(caseOf(doc).routes.tags.looping).toMatchObject({
       numerator: 1,
       denominator: 1,
@@ -571,5 +578,37 @@ describe("fixture cohorts", () => {
       const parsed = evalRunRouteFactsSchema.parse(payload);
       expect(parsed).toEqual(payload);
     }
+  });
+});
+
+describe("route truncation", () => {
+  test("a trial past MAX_ROUTE_TOOL_CALLS is marked, and the case counts it", () => {
+    const calls = Array.from({ length: MAX_ROUTE_TOOL_CALLS + 1 }, (_, i) =>
+      call(i % 2 === 0 ? "tool_a" : "tool_b")
+    );
+    const route = deriveTrialRoute(calls);
+    expect(route.truncated).toBe(true);
+    expect(route.toolCallSequence).toHaveLength(MAX_ROUTE_TOOL_CALLS);
+    expect(deriveTrialRoute([call("tool_a")]).truncated).toBeUndefined();
+
+    const doc = buildEvalRunRouteFacts({
+      run: run(),
+      catalog: catalogLoaded(["tool_a", "tool_b"]),
+      trials: [
+        trial({
+          trialKey: "long",
+          result: "passed",
+          actualToolCalls: calls,
+          expectedToolCalls: [call("tool_a")],
+        }),
+        trial({
+          trialKey: "short",
+          result: "passed",
+          actualToolCalls: [call("tool_a")],
+          expectedToolCalls: [call("tool_a")],
+        }),
+      ],
+    });
+    expect(doc.cases[0]!.routes.truncatedTrials).toBe(1);
   });
 });

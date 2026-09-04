@@ -166,7 +166,7 @@
                 "state": "measured",
                 "value": 0.33,
                 "numerator": 1,
-                "denominator": 1,
+                "denominator": 3,
                 "exclusions": {}
               },
               "retried": {

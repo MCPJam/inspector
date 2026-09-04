@@ -390,16 +390,78 @@ describe("buildDescriptionExperimentReport", () => {
   });
 
   test("a difference below the effect floor is no_difference even when significant", () => {
-    // 400 vs 400 with a 0.5-point gap: the interval can exclude zero while
-    // the point estimate stays under DEFAULT_MIN_EFFECT_SIZE.
-    const report = build({
-      original: {
-        trials: nTrials(398, "passed", "o").concat(nTrials(2, "failed", "of")),
-      },
-      rewrite: { trials: nTrials(400, "passed", "r") },
-    });
+    // 100k trials per arm at 89.5% vs 90.0%: the Newcombe interval excludes
+    // zero (lower ≈ +0.2 points) while the point estimate sits under
+    // DEFAULT_MIN_EFFECT_SIZE — the exact case the floor exists for.
+    const original = {
+      trials: nTrials(89_500, "passed", "o").concat(
+        nTrials(10_500, "failed", "of")
+      ),
+    };
+    const rewrite = {
+      trials: nTrials(90_000, "passed", "r").concat(
+        nTrials(10_000, "failed", "rf")
+      ),
+    };
+    const report = build({ original, rewrite });
+    expect(report.primary.pooled.interval!.lowerPoints).toBeGreaterThan(0);
     expect(report.primary.pooled.verdict).toBe("no_difference");
     expect(report.primary.pooled.minEffectSize).toBe(0.01);
+    expect(
+      build({ original, rewrite, minEffectSize: 0 }).primary.pooled.verdict
+    ).toBe("improved");
+  });
+
+  test("only a graded failure on an untouched case is a regression", () => {
+    const report = build({
+      original: { trials: nTrials(6, "passed", "o") },
+      rewrite: { trials: nTrials(6, "passed", "r") },
+      otherCaseFlips: [
+        {
+          aggregationKey: "case_b\u0000",
+          originalStatus: "passed",
+          rewriteStatus: "cancelled",
+        },
+        {
+          aggregationKey: "case_c\u0000",
+          originalStatus: "passed",
+          rewriteStatus: "failed",
+        },
+      ],
+    });
+    expect(report.regression.regressed).toEqual(["case_c\u0000"]);
+  });
+
+  test("the schema refuses a controlled label the facts do not support, and a per-case interval below the minimum", () => {
+    const base = build({
+      original: { trials: nTrials(6, "passed", "o") },
+      rewrite: { trials: nTrials(6, "passed", "r") },
+    });
+    expect(base.evidenceLabel).toBe("reproducible");
+    const forged = { ...base, evidenceLabel: "controlled" as const };
+    expect(descriptionExperimentReportSchema.safeParse(forged).success).toBe(
+      false
+    );
+
+    const perCaseForged = {
+      ...base,
+      primary: {
+        ...base.primary,
+        perCase: [
+          {
+            ...base.primary.pooled,
+            aggregationKey: "case_a\u0000",
+            original: { eligible: 2, passed: 2, failed: 0, exclusions: {} },
+            rewrite: { eligible: 2, passed: 2, failed: 0, exclusions: {} },
+            interval: { deltaPoints: 0, lowerPoints: -1, upperPoints: 1 },
+            verdict: "no_difference" as const,
+          },
+        ],
+      },
+    };
+    expect(
+      descriptionExperimentReportSchema.safeParse(perCaseForged).success
+    ).toBe(false);
   });
 
   test("reportOnly is the literal true and the document parses", () => {

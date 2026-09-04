@@ -74,8 +74,7 @@ interface HostRunnerBaseConfig {
   maxSteps?: number;
   /** Custom providers registry for non-standard LLM providers */
   customProviders?:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>;
+    Map<string, CustomProvider> | Record<string, CustomProvider>;
   /** Optional MCP client manager for capturing MCP App replay snapshots */
   mcpClientManager?: MCPClientManager;
   /**
@@ -210,6 +209,25 @@ type StartedToolCall = {
  * console.log(result.text); // "The result of adding 2 and 3 is 5."
  * ```
  */
+/**
+ * The `AiSdkTool` record form already went through `getToolsForAiSdk`, which
+ * applies its own overrides when the caller passed them there. A caller that
+ * hands the record straight to `HostRunner` with overrides still expects the
+ * rewrite to land, so the record is copied with the descriptions replaced —
+ * only `description`, never name, schema or execute.
+ */
+function applyToolDescriptionOverridesToRecord<
+  T extends Record<string, { description?: string }>,
+>(tools: T, overrides: Readonly<Record<string, string>> | undefined): T {
+  if (!overrides || Object.keys(overrides).length === 0) return tools;
+  const next: Record<string, { description?: string }> = { ...tools };
+  for (const [name, description] of Object.entries(overrides)) {
+    const tool = next[name];
+    if (tool) next[name] = { ...tool, description };
+  }
+  return next as T;
+}
+
 export class HostRunner implements HostExecutor {
   private readonly tools: ToolSet;
   /**
@@ -228,8 +246,7 @@ export class HostRunner implements HostExecutor {
   private temperature: number | undefined;
   private readonly maxSteps: number;
   private readonly customProviders?:
-    | Map<string, CustomProvider>
-    | Record<string, CustomProvider>;
+    Map<string, CustomProvider> | Record<string, CustomProvider>;
   private readonly mcpClientManager?: MCPClientManager;
   private readonly injectOpenAiCompat: boolean;
   /**
@@ -240,8 +257,7 @@ export class HostRunner implements HostExecutor {
    * byte-identical to before this was wired up.
    */
   private readonly openAiCompatCapabilities:
-    | Record<string, unknown>
-    | undefined;
+    Record<string, unknown> | undefined;
 
   /**
    * Immutable host snapshot driving this runner, if constructed with a
@@ -262,8 +278,7 @@ export class HostRunner implements HostExecutor {
    * `withOptions` re-runs them against the raw `Tool[]` under a new host.
    */
   private readonly toolDescriptionOverrides:
-    | Readonly<Record<string, string>>
-    | undefined;
+    Readonly<Record<string, string>> | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -318,12 +333,13 @@ export class HostRunner implements HostExecutor {
     this.toolDescriptionOverrides = config.toolDescriptionOverrides;
     const preparedTools = isToolArray(config.tools)
       ? applyToolDescriptionOverrides(
-          respectVisibility
-            ? dropAppOnlyTools(config.tools)
-            : config.tools,
+          respectVisibility ? dropAppOnlyTools(config.tools) : config.tools,
           config.toolDescriptionOverrides
         ).tools
-      : config.tools;
+      : applyToolDescriptionOverridesToRecord(
+          config.tools,
+          config.toolDescriptionOverrides
+        );
 
     this.tools = isToolArray(preparedTools)
       ? convertToToolSet(preparedTools, {
@@ -388,8 +404,8 @@ export class HostRunner implements HostExecutor {
       error instanceof Error
         ? `: ${error.message}`
         : error
-        ? `: ${String(error)}`
-        : "";
+          ? `: ${String(error)}`
+          : "";
     console.warn(
       `[mcpjam/sdk] skipped widget snapshot for "${toolName}"${
         suffix || `: ${message}`
@@ -868,10 +884,10 @@ export class HostRunner implements HostExecutor {
         abortReason instanceof Error
           ? abortReason.message
           : abortReason != null
-          ? String(abortReason)
-          : error instanceof Error
-          ? error.message
-          : String(error);
+            ? String(abortReason)
+            : error instanceof Error
+              ? error.message
+              : String(error);
       spanIntegration.finalizeFailure(errorMessage);
       const partialMessages: ModelMessage[] = [
         { role: "user", content: message },

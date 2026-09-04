@@ -226,7 +226,8 @@ const comparisonBlockSchema = z
     minSampleSize: z.number().int().min(1),
     /**
      * The smallest difference the verdict will call a difference, in the
-     * same fraction-of-trials unit as the interval. A statistically
+     * fraction-of-trials unit (0..1), NOT the interval's points (×100): the
+     * verdict compares the raw delta against it before scaling. A statistically
      * significant half-point is still `no_difference`: the gate helper in
      * `compare-stats.ts` applies the same floor, and a report that could
      * call "improved" what the gate would not call "regressed" would give
@@ -420,22 +421,51 @@ export const descriptionExperimentReportSchema =
         perCase.rewrite
       );
     }
-    const belowMinimum =
-      row.primary.pooled.original.eligible < row.primary.pooled.minSampleSize ||
-      row.primary.pooled.rewrite.eligible < row.primary.pooled.minSampleSize;
-    if (belowMinimum && row.primary.pooled.interval !== null) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["primary", "pooled", "interval"],
-        message: "interval must be null when either arm is below minSampleSize",
-      });
+    const blocks: Array<[PropertyKey[], DescriptionExperimentPooled]> = [
+      [["primary", "pooled"], row.primary.pooled],
+      ...row.primary.perCase.map(
+        (perCase, index): [PropertyKey[], DescriptionExperimentPooled] => [
+          ["primary", "perCase", index],
+          perCase,
+        ]
+      ),
+    ];
+    for (const [path, block] of blocks) {
+      const belowMinimum =
+        block.original.eligible < block.minSampleSize ||
+        block.rewrite.eligible < block.minSampleSize;
+      if (belowMinimum && block.interval !== null) {
+        ctx.addIssue({
+          code: "custom",
+          path: [...path, "interval"],
+          message:
+            "interval must be null when either arm is below minSampleSize",
+        });
+      }
+      if (belowMinimum && block.verdict !== "insufficient_data") {
+        ctx.addIssue({
+          code: "custom",
+          path: [...path, "verdict"],
+          message:
+            "verdict must be insufficient_data when either arm is below minSampleSize",
+        });
+      }
     }
-    if (belowMinimum && row.primary.pooled.verdict !== "insufficient_data") {
+    // The label is derived, so a parsed document may not claim more than its
+    // own frozen and assignment facts support.
+    if (
+      row.evidenceLabel === "controlled" &&
+      !(
+        row.frozen.environmentReset === "per_trial_sandbox" &&
+        row.assignment.overlapVerified &&
+        row.frozen.equal
+      )
+    ) {
       ctx.addIssue({
         code: "custom",
-        path: ["primary", "pooled", "verdict"],
+        path: ["evidenceLabel"],
         message:
-          "verdict must be insufficient_data when either arm is below minSampleSize",
+          "controlled requires per-trial sandbox reset, verified overlap, and equal frozen variables",
       });
     }
   });
@@ -835,7 +865,7 @@ function regressionFromFlips(
   const regressed = [...others]
     .filter(
       (flip) =>
-        flip.originalStatus === "passed" && flip.rewriteStatus !== "passed"
+        flip.originalStatus === "passed" && flip.rewriteStatus === "failed"
     )
     .map((flip) => flip.aggregationKey)
     .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0));
@@ -991,6 +1021,9 @@ function wordsOf(value: string): string[] {
  * Small LCS word diff. No extra dependency — the experiment card only
  * needs added/removed words, not a patch format.
  */
+/** Above this many LCS cells the diff degrades to whole-replace. */
+const MAX_DIFF_CELLS = 250_000;
+
 export function diffDescriptionWords(
   original: string,
   rewrite: string
@@ -999,6 +1032,24 @@ export function diffDescriptionWords(
   const right = wordsOf(rewrite);
   const n = left.length;
   const m = right.length;
+  // Descriptions are capped at 3072 bytes upstream, so the table is small in
+  // practice; the guard keeps an uncapped caller from allocating n×m cells.
+  if (n * m > MAX_DIFF_CELLS) {
+    return {
+      added: right,
+      removed: left,
+      tokens: [
+        ...left.map((text): DescriptionWordDiffToken => ({
+          type: "del",
+          text,
+        })),
+        ...right.map((text): DescriptionWordDiffToken => ({
+          type: "add",
+          text,
+        })),
+      ],
+    };
+  }
   const table: number[][] = Array.from({ length: n + 1 }, () =>
     Array.from({ length: m + 1 }, () => 0)
   );
