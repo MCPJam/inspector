@@ -22,10 +22,10 @@
  * degraded to a no-op, cases 1 and 2 would both still pass and nothing else in
  * the repo would notice.
  *
- * Wired into root `test:ci:rest` — the script CI actually invokes — and into
- * `test:ordered`. `test:ordered` alone would have been dead weight: no workflow
- * references it, so a gate wired only there runs at authoring time and never
- * again.
+ * Wired into root `test:ci:packaging` — the script the `Packaging` job in
+ * test.yml actually invokes — and into `test:ordered`. `test:ordered` alone
+ * would have been dead weight: no workflow references it, so a gate wired only
+ * there runs at authoring time and never again.
  *
  * `prepack` builds before packing. `npm pack` does NOT run `prepublishOnly`
  * (only `publish` does), so on a clean checkout the tarball would otherwise

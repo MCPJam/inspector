@@ -16,7 +16,7 @@
  * every existing validation applies and the results land as real, editable
  * rows. Running them stays a separate explicit click.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -27,13 +27,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
-import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
-import { EnvironmentPicker } from "@/components/project-environments/environment-picker";
-import {
-  buildEnvJourneyPayload,
-  MAX_ENVIRONMENTS_PER_JOURNEY,
-} from "@/components/swarms/journey-environments";
+import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
+import { navigateApp, routePaths } from "@/lib/app-navigation";
+import { joinLabels } from "@/lib/cloud-server-readiness";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import {
   generateSwarmJourneys,
@@ -44,8 +42,6 @@ import {
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
 
-export const MIN_GENERATED_JOURNEYS = 1;
-export const MAX_GENERATED_JOURNEYS = 5;
 const DEFAULT_JOURNEY_COUNT = 3;
 
 /** Mirrors `personas:createPersona`'s avatar bounds — the mutation THROWS on
@@ -75,6 +71,8 @@ export interface GenerateSwarmDialogProps {
   environments?: ProjectEnvironmentView[];
   /** Live persona count; gates the 200-per-project cap in `persona` mode. */
   personaCount?: number;
+  /** Project clients, for the default target. */
+  hosts: ReadonlyArray<{ hostId: string }>;
   /** Required in `journeys` mode: the persona the journeys are generated for. */
   persona?: { _id: string; name: string; role: string; notes?: string };
   /** Creates the persona row; resolves to the new persona's id. */
@@ -97,7 +95,7 @@ export interface GenerateSwarmDialogProps {
       hostIds: string[];
       environmentIds: string[];
       config: { sessionsPerTarget: number; maxTurns: number };
-    }
+    },
   ) => Promise<void>;
   /** Selects the freshly created persona in the sidebar. */
   onPersonaCreated?: (personaRefId: string) => void;
@@ -110,14 +108,20 @@ export function GenerateSwarmDialog({
   projectId,
   environments,
   personaCount,
+  hosts,
   persona,
   onCreatePersona,
   onCreateJourney,
   onPersonaCreated,
 }: GenerateSwarmDialogProps) {
-  const [environmentIds, setEnvironmentIds] = useState<string[]>([]);
-  const envList = useMemo(() => environments ?? [], [environments]);
-  const [journeyCount, setJourneyCount] = useState(DEFAULT_JOURNEY_COUNT);
+  const journeyCount = DEFAULT_JOURNEY_COUNT;
+  const target = useSwarmDefaultTarget({
+    projectId,
+    active: open,
+    environments,
+    hosts,
+  });
+  const { state: targetState, setState: setTargetState, noServers } = target;
   const [pending, setPending] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // Latched once the persona row is written. Re-running generation after that
@@ -133,8 +137,6 @@ export function GenerateSwarmDialog({
 
   useEffect(() => {
     if (!open) {
-      setEnvironmentIds([]);
-      setJourneyCount(DEFAULT_JOURNEY_COUNT);
       setPending(false);
       setErrorMessage(null);
       setPersonaCommitted(false);
@@ -142,32 +144,15 @@ export function GenerateSwarmDialog({
     }
   }, [open]);
 
-  // Journey payload: `environmentIds` + compat `hostIds`. Null when the
-  // selection is unusable (empty, or an id that no longer resolves because
-  // another member archived it mid-dialog) — so a stale id can never be
-  // persisted or spend generation quota.
-  const envPayload = useMemo(
-    () => buildEnvJourneyPayload(environmentIds, envList),
-    [environmentIds, envList]
-  );
-
-  const countValid =
-    Number.isInteger(journeyCount) &&
-    journeyCount >= MIN_GENERATED_JOURNEYS &&
-    journeyCount <= MAX_GENERATED_JOURNEYS;
   // The cap precheck below is only meaningful once the persona count has
   // loaded. Treating `undefined` as "under the cap" would let a full project
   // spend generation quota before `createPersona` rejects the row, so persona
   // mode stays disabled until the count is known.
   const personaCountKnown =
     mode !== "persona" || typeof personaCount === "number";
-  const targetsValid = envPayload !== null;
+  const targetsValid = target.ready;
   const canSubmit =
-    !pending &&
-    !personaCommitted &&
-    personaCountKnown &&
-    targetsValid &&
-    countValid;
+    !pending && !personaCommitted && personaCountKnown && targetsValid;
 
   const createJourneyRows = async (
     personaRefId: string,
@@ -176,7 +161,7 @@ export function GenerateSwarmDialog({
     target: {
       hostIds: string[];
       environmentIds: string[];
-    }
+    },
   ): Promise<{ created: number; firstError: Error | null }> => {
     let created = 0;
     let firstError: Error | null = null;
@@ -204,13 +189,7 @@ export function GenerateSwarmDialog({
   };
 
   const handleGenerate = async () => {
-    if (!targetsValid || !countValid || !envPayload) return;
-    // Grounding id, resolved BEFORE the latch: `targetsValid` already proves
-    // latch-free side (see the comment below). Grounds on the FIRST selected
-    // environment — the backend resolves its server group, or the host's own
-    // picks when it has none.
-    const groundingEnvironmentId = environmentIds[0];
-    if (!groundingEnvironmentId) return;
+    if (!targetsValid) return;
     // Every rejection that returns WITHOUT entering the try/finally below must
     // come before the latch is taken — otherwise the latch is never released
     // and the button is silently dead until the dialog is reopened.
@@ -220,7 +199,7 @@ export function GenerateSwarmDialog({
       personaCount >= MAX_PERSONAS_PER_PROJECT
     ) {
       setErrorMessage(
-        `This project already has ${MAX_PERSONAS_PER_PROJECT} personas. Delete one before generating another.`
+        `This project already has ${MAX_PERSONAS_PER_PROJECT} personas. Delete one before generating another.`,
       );
       return;
     }
@@ -231,23 +210,26 @@ export function GenerateSwarmDialog({
     generateInFlightRef.current = true;
     setPending(true);
     setErrorMessage(null);
-    // Snapshot targets at submit. Generation is a slow round-trip and the
-    // pickers stay mounted, so reading live state after the await would let a
-    // mid-flight change retarget the created rows — or clear the selection and
-    // fail every mutation — after the quota was already spent.
-    const target = {
-      hostIds: [...envPayload.hostIds],
-      environmentIds: [...envPayload.environmentIds],
-    };
-
     try {
+      // Before generating, so a failure here costs no generation.
+      const environmentIds = await target.resolve();
+      const groundingEnvironmentId = environmentIds[0]!;
+      // Snapshot targets at submit. Generation is a slow round-trip and the
+      // pickers stay mounted, so reading live state after the await would let a
+      // mid-flight change retarget the created rows — or clear the selection and
+      // fail every mutation — after the quota was already spent.
+      const journeyTarget = {
+        hostIds: [] as string[],
+        environmentIds: [...environmentIds],
+      };
+
       if (mode === "persona") {
         track("swarm_generate_persona_started", {
           location: "swarms",
           journeyCount,
-          hostCount: target.hostIds.length,
+          hostCount: journeyTarget.hostIds.length,
           targetMode: "environments",
-          environmentCount: target.environmentIds.length,
+          environmentCount: journeyTarget.environmentIds.length,
         });
         const result = await generateSwarmPersona({
           projectId,
@@ -271,7 +253,7 @@ export function GenerateSwarmDialog({
         const { created, firstError } = await createJourneyRows(
           personaRefId,
           result.journeys,
-          target
+          journeyTarget,
         );
         // The persona landed either way — select it so the new row is visible
         // even when every journey write failed.
@@ -287,16 +269,14 @@ export function GenerateSwarmDialog({
           setErrorMessage(
             `Created the persona, but no goals could be saved. ${
               firstError?.message ?? "The goal writes were rejected."
-            } Close this dialog and use Generate goals on the new persona to retry.`
+            } Close this dialog and use Generate goals on the new persona to retry.`,
           );
           return;
         }
         toast.success(
           created === result.journeys.length
-            ? `Created persona + ${created} ${
-                created === 1 ? "goal" : "goals"
-              }`
-            : `Created persona + ${created} of ${result.journeys.length} goals`
+            ? `Created persona + ${created} ${created === 1 ? "goal" : "goals"}`
+            : `Created persona + ${created} of ${result.journeys.length} goals`,
         );
         onOpenChange(false);
         return;
@@ -306,9 +286,9 @@ export function GenerateSwarmDialog({
       track("swarm_generate_journeys_started", {
         location: "swarms",
         journeyCount,
-        hostCount: target.hostIds.length,
+        hostCount: journeyTarget.hostIds.length,
         targetMode: "environments",
-        environmentCount: target.environmentIds.length,
+        environmentCount: journeyTarget.environmentIds.length,
       });
       const result = await generateSwarmJourneys({
         projectId,
@@ -326,15 +306,14 @@ export function GenerateSwarmDialog({
       const { created, firstError } = await createJourneyRows(
         persona._id,
         result.journeys,
-        target
+        journeyTarget,
       );
       // Every write failed (archived environment, rejected goals, …): surface
       // the mutation error instead of closing on a "0 of N" success toast —
       // the generation quota was already spent, so the user needs the reason.
       if (created === 0 && result.journeys.length > 0) {
         throw (
-          firstError ??
-          new Error("No goals could be saved for this persona.")
+          firstError ?? new Error("No goals could be saved for this persona.")
         );
       }
       track("swarm_generate_journeys_completed", {
@@ -345,7 +324,7 @@ export function GenerateSwarmDialog({
       toast.success(
         created === result.journeys.length
           ? `Created ${created} ${created === 1 ? "goal" : "goals"}`
-          : `Created ${created} of ${result.journeys.length} goals`
+          : `Created ${created} of ${result.journeys.length} goals`,
       );
       onOpenChange(false);
     } catch (error) {
@@ -354,7 +333,7 @@ export function GenerateSwarmDialog({
       setErrorMessage(
         error instanceof SwarmGenerateError || error instanceof Error
           ? error.message
-          : "Generation failed"
+          : "Generation failed",
       );
     } finally {
       generateInFlightRef.current = false;
@@ -365,10 +344,8 @@ export function GenerateSwarmDialog({
   const title = mode === "persona" ? "Generate persona" : "Generate goals";
   const description =
     mode === "persona"
-      ? "Generates one persona and its goals, grounded in your environment's tools. Everything lands as editable rows — nothing runs until you say so."
-      : `Generates goals for ${
-          persona?.name ?? "this persona"
-        }, grounded in your environment's tools. Nothing runs until you say so.`;
+      ? "Generates a user persona and its goals, grounded in your server's tools. Confirm the server you'd like to use first."
+      : "Generates goals for your user persona, grounded in your server's tools. Confirm the server you'd like to use first.";
 
   return (
     <Dialog
@@ -390,53 +367,58 @@ export function GenerateSwarmDialog({
         </DialogHeader>
         <div className="flex flex-col gap-3 py-1">
           <div className="flex flex-col gap-1.5">
-            <Label>Environments</Label>
+            <Label>Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <EnvironmentPicker
+              <ServerGroupPicker
                 projectId={projectId}
-                value={environmentIds}
-                onChange={setEnvironmentIds}
-                multi
-                max={MAX_ENVIRONMENTS_PER_JOURNEY}
-                emptyLabel="No environments · pick one"
-                triggerTestId="generate-environments-picker"
-                triggerAriaLabel="Attached environments"
+                value={targetState.stack.serverAttachmentId}
+                onChange={(serverAttachmentId) =>
+                  setTargetState((prev) => ({
+                    ...prev,
+                    stack: { ...prev.stack, serverAttachmentId },
+                    customized: true,
+                  }))
+                }
+                onClearSelection={() =>
+                  setTargetState((prev) => ({
+                    ...prev,
+                    stack: { ...prev.stack, serverAttachmentId: null },
+                    customized: true,
+                  }))
+                }
+                emptyTriggerLabel="Server group · client default"
+                infoText="Generation reads these servers' tools to write the goals."
+                triggerTestId="generate-server-group-picker"
                 inModal
               />
             </div>
-            {environments === undefined ? (
+            {hosts.length === 0 ? (
               <p className="text-[11px] leading-snug text-muted-foreground">
-                Loading environments…
+                Connect a client before generating.
               </p>
-            ) : envList.length === 0 ? (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                This project has no environments yet. Create one to generate.
-              </p>
-            ) : (
-              <p className="text-[11px] leading-snug text-muted-foreground">
-                Generation is grounded in the first environment's tools; every
-                created goal fans out across all of them.
-              </p>
-            )}
+            ) : null}
           </div>
 
-          <div className="flex items-center gap-2">
-            <Label
-              htmlFor="swarm-generate-count"
-              className="shrink-0 text-[11px] text-muted-foreground"
+          {noServers ? (
+            <p
+              role="alert"
+              className="rounded-md bg-destructive/10 px-2.5 py-2 text-xs leading-snug text-destructive"
             >
-              Goals
-            </Label>
-            <Input
-              id="swarm-generate-count"
-              type="number"
-              min={MIN_GENERATED_JOURNEYS}
-              max={MAX_GENERATED_JOURNEYS}
-              className="h-8 w-16"
-              value={journeyCount}
-              onChange={(e) => setJourneyCount(Number(e.target.value))}
-            />
-          </div>
+              {joinLabels(noServers.labels)} has no servers assigned. Turn on
+              Auto-connect on the{" "}
+              <button
+                type="button"
+                className="underline underline-offset-2 hover:text-foreground"
+                onClick={() => {
+                  onOpenChange(false);
+                  navigateApp(routePaths.servers);
+                }}
+              >
+                Servers tab
+              </button>
+              , or pick a server group above.
+            </p>
+          ) : null}
 
           {errorMessage ? (
             <p
