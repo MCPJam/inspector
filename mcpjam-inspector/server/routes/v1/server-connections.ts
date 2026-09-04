@@ -76,7 +76,12 @@ const CODE_MAP: Record<string, { status: number; code: ErrorCode }> = {
 
 function translateConnectionError(error: unknown): WebRouteError {
   const data = (error as { data?: unknown } | null)?.data as
-    | { code?: unknown; message?: unknown; candidates?: unknown }
+    | {
+        code?: unknown;
+        message?: unknown;
+        candidates?: unknown;
+        activeRequests?: unknown;
+      }
     | undefined;
 
   const code = typeof data?.code === "string" ? data.code : null;
@@ -90,9 +95,19 @@ function translateConnectionError(error: unknown): WebRouteError {
     // Candidates ride along on the details so an AMBIGUOUS_SERVER refusal is
     // actionable rather than a dead end — the caller is told to re-send with a
     // serverId, and this is how they learn which ones exist.
-    const details = Array.isArray(data?.candidates)
-      ? { code, candidates: data.candidates }
-      : { code };
+    //
+    // `activeRequests` is the same idea for ACTIVE_REQUEST_LIMIT: the refusal
+    // says to finish or cancel one, and these are the ids that makes possible.
+    // They are the caller's own open requests.
+    const details = {
+      code,
+      ...(Array.isArray(data?.candidates)
+        ? { candidates: data.candidates }
+        : {}),
+      ...(Array.isArray(data?.activeRequests)
+        ? { activeRequests: data.activeRequests }
+        : {}),
+    };
     return new WebRouteError(mapped.status, mapped.code, message, details);
   }
 

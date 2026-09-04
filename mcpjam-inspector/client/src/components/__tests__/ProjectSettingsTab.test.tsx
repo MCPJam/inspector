@@ -26,6 +26,14 @@ vi.mock("convex/react", () => ({
   }),
 }));
 
+// The Secrets section is a sibling, not what these tests are about. Stubbed at
+// the component boundary rather than by widening the `convex/react` mock: it
+// reads a live query and drives three actions, and teaching this file about all
+// four would make it a test of the secrets surface by accident.
+vi.mock("@/components/project/ProjectSecretsSection", () => ({
+  ProjectSecretsSection: () => <div />,
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: { email: "admin@example.com" } }),
 }));
@@ -105,9 +113,7 @@ describe("ProjectSettingsTab — XAA test identity defaults", () => {
     const user = userEvent.setup();
     const { onUpdateProject } = renderTab();
 
-    expect(
-      screen.getByText("XAA test identity defaults"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("XAA test identity defaults")).toBeInTheDocument();
     // Fixed issuer — the MCPJam test IdP, never enterprise SSO.
     expect(
       screen.getByText(/Identity provider: MCPJam test IdP/),

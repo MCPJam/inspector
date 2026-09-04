@@ -3,6 +3,10 @@
  *
  * Captured from Slackbot's `ui/initialize.hostContext.styles` on 2026-06-24.
  * Light and dark maps are both real Slackbot captures from the same probe app.
+ *
+ * Both themes re-probed 2026-09-03: `--font-mono` gained "Slack-Roboto-Mono"
+ * at the front in each, so it stays shared. Every other key is byte-identical
+ * to the 2026-06-24 capture.
  */
 
 const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
@@ -10,7 +14,8 @@ const SLACK_SHARED_STYLE_VARIABLES: Record<string, string> = {
   "--color-text-ghost": "transparent",
   "--color-border-ghost": "transparent",
   "--font-sans": '"Slack-Lato", "Slack-Fractions", "appleLogo", sans-serif',
-  "--font-mono": '"Monaco", "Menlo", "Consolas", "Courier New", monospace',
+  "--font-mono":
+    '"Slack-Roboto-Mono", "Monaco", "Menlo", "Consolas", "Courier New", monospace',
   "--font-weight-normal": "400",
   "--font-weight-medium": "500",
   "--font-weight-semibold": "600",
