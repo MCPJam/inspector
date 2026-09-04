@@ -99,6 +99,11 @@ export const MCP_APPS_DIMENSIONS: McpAppsDimensionMeta[] = [
     key: "resourcePrefersBorder",
     description: "Honor _meta.ui.prefersBorder when rendering app chrome",
   },
+  {
+    key: "safeAreaInsets",
+    description:
+      "Send hostContext.safeAreaInsets so an app can keep content clear of host chrome",
+  },
 ];
 
 /** `window.openai.*` shim methods. Order matches Copilot's published table. */
