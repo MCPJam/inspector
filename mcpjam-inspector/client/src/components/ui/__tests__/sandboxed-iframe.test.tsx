@@ -629,3 +629,86 @@ describe("SandboxedIframe — non-JSON-RPC message allow-list", () => {
     expect(onMessage).not.toHaveBeenCalled();
   });
 });
+
+describe("SandboxedIframe — view mount reporting", () => {
+  function dispatchFromIframe(iframe: HTMLIFrameElement, data: unknown): void {
+    const proxyOrigin = new URL(iframe.src).origin;
+    window.dispatchEvent(
+      new MessageEvent("message", {
+        data,
+        source: iframe.contentWindow!,
+        origin: proxyOrigin,
+      }),
+    );
+  }
+
+  it("forwards mcpjam:view-mode to the host", () => {
+    // The proxy reports where it mounted the view; the renderer turns this
+    // into the Sandbox Stack origin chip. It is not JSON-RPC, so it only
+    // reaches the host if the allow-list names it.
+    const onMessage = vi.fn();
+    const { container } = render(
+      <SandboxedIframe html={null} onMessage={onMessage} />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const payload = {
+      type: "mcpjam:view-mode",
+      mode: "url",
+      url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+    };
+    act(() => dispatchFromIframe(iframe, payload));
+
+    expect(onMessage).toHaveBeenCalledTimes(1);
+    expect(onMessage.mock.calls[0][0].data).toEqual(payload);
+  });
+
+  it("forwards mountMode in the payload and resends when it changes", async () => {
+    // mountMode decides how the proxy mounts the HTML, so it belongs to the
+    // render recipe: changing it must re-send rather than leave the previous
+    // mount on screen.
+    const { container, rerender } = render(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="write"
+      />,
+    );
+    const iframe = container.querySelector("iframe")!;
+    const postMessage = vi.spyOn(iframe.contentWindow!, "postMessage");
+    act(() => {
+      dispatchFromIframe(iframe, {
+        jsonrpc: "2.0",
+        method: "ui/notifications/sandbox-proxy-ready",
+        params: {},
+      });
+    });
+
+    await vi.waitFor(() => {
+      expect(postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          params: expect.objectContaining({ mountMode: "write" }),
+        }),
+        expect.any(String),
+      );
+    });
+    const afterFirst = postMessage.mock.calls.length;
+
+    rerender(
+      <SandboxedIframe
+        html="<html><body>a</body></html>"
+        onMessage={() => {}}
+        mountMode="srcdoc"
+      />,
+    );
+
+    await vi.waitFor(() => {
+      expect(postMessage.mock.calls.length).toBeGreaterThan(afterFirst);
+    });
+    expect(postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        params: expect.objectContaining({ mountMode: "srcdoc" }),
+      }),
+      expect.any(String),
+    );
+  });
+});
