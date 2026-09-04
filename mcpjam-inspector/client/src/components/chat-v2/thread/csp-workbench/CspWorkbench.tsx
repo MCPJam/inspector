@@ -24,6 +24,7 @@ import type {
   WidgetSandboxInfo,
 } from "@/stores/widget-debug-store";
 import { classifyDiagnoses } from "./classify";
+import { effectiveFromCspHeader, parseCspHeader } from "./csp-header";
 import type { ClassifierInput } from "./types";
 import { FindingsTab } from "./FindingsTab";
 import { PolicyDiffTab } from "./PolicyDiffTab";
@@ -48,19 +49,42 @@ export function CspWorkbench({ sandboxInfo, protocol }: CspWorkbenchProps) {
   const [activeTab, setActiveTab] = useState<TabKey>("findings");
   const [jumpToHost, setJumpToHost] = useState<string | null>(null);
 
+  // The policy the proxy reported injecting, parsed once. `undefined` on every
+  // path that never round-trips through the proxy — an offline replay from
+  // `cachedWidgetHtmlUrl`, a persisted eval trace — and during the window
+  // between mount and the arrival of `mcpjam:csp-applied`.
+  const appliedDirectives = useMemo(() => {
+    const header = sandboxInfo?.headerString;
+    if (!header) return undefined;
+    return parseCspHeader(header);
+  }, [sandboxInfo?.headerString]);
+
   const input = useMemo<ClassifierInput>(
     () => ({
-      effective: {
-        connectDomains: sandboxInfo?.connectDomains ?? [],
-        resourceDomains: sandboxInfo?.resourceDomains ?? [],
-        frameDomains: sandboxInfo?.frameDomains,
-        baseUriDomains: sandboxInfo?.baseUriDomains,
-      },
+      // With the applied header in hand, the effective allowlists come from
+      // what the browser is actually enforcing. Without it, fall back to the
+      // pre-existing behaviour — echoing the declared allowlists — and label
+      // them as unconfirmed rather than leaving the column blank. A wrong
+      // answer is bad; no answer on the replay and eval-trace paths would be
+      // worse.
+      effective: appliedDirectives
+        ? {
+            ...effectiveFromCspHeader(appliedDirectives),
+            directives: appliedDirectives,
+            source: "applied",
+          }
+        : {
+            connectDomains: sandboxInfo?.connectDomains ?? [],
+            resourceDomains: sandboxInfo?.resourceDomains ?? [],
+            frameDomains: sandboxInfo?.frameDomains,
+            baseUriDomains: sandboxInfo?.baseUriDomains,
+            source: "declared",
+          },
       widgetDeclared: sandboxInfo?.widgetDeclared ?? null,
       subtypePolicy: sandboxInfo?.applied?.cspSubtypePolicy,
       violations: sandboxInfo?.violations ?? [],
     }),
-    [sandboxInfo]
+    [sandboxInfo, appliedDirectives]
   );
 
   const diagnoses = useMemo(() => classifyDiagnoses(input), [input]);
