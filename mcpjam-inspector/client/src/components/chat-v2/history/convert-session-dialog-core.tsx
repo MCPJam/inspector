@@ -143,13 +143,13 @@ function DestinationCard({
       data-selected={selected ? "true" : "false"}
       className={cn(
         "rounded-lg border bg-background p-3.5 transition-colors",
-        selected ? "border-primary" : "border-border"
+        selected ? "border-primary" : "border-border",
       )}
     >
       <label
         className={cn(
           "flex items-center gap-3",
-          disabled ? "cursor-not-allowed" : "cursor-pointer"
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
         )}
       >
         <RadioGroupItem value={value} disabled={disabled} />
@@ -214,12 +214,12 @@ function ConvertSessionDialogCoreInner({
   });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
-    [servers]
+    [servers],
   );
   const suitesQueryActive = Boolean(open && isUserReady && effectiveProjectId);
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    suitesQueryActive ? ({ projectId: effectiveProjectId } as any) : "skip"
+    suitesQueryActive ? ({ projectId: effectiveProjectId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   /**
    * "We do not yet know what suites this project has" — which is NOT the same
@@ -237,7 +237,7 @@ function ConvertSessionDialogCoreInner({
     (suitesQueryActive && suitesOverview === undefined) ||
     attachmentPickersPending;
   const importChatSession = useAction(
-    "testSuites:importChatSessionToTestCase" as any
+    "testSuites:importChatSessionToTestCase" as any,
   );
 
   const [caseTitle, setCaseTitle] = useState("");
@@ -266,10 +266,10 @@ function ConvertSessionDialogCoreInner({
   // first project host), mirroring CreateSuiteDialog.
   const [createHostOpen, setCreateHostOpen] = useState(false);
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null
+    null,
   );
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
-    []
+    [],
   );
 
   const sessionServerDisplay = useMemo(
@@ -285,24 +285,24 @@ function ConvertSessionDialogCoreInner({
       detail.usedServerIds,
       knownServerNames,
       serversById,
-    ]
+    ],
   );
   const sessionServerLabels = useMemo(
     () => sessionServerDisplay.items.map((item) => item.label),
-    [sessionServerDisplay.items]
+    [sessionServerDisplay.items],
   );
 
   const availableSuites = useMemo(
     () =>
       (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
-    [suitesOverview]
+    [suitesOverview],
   );
 
   const selectedSuiteEntry = useMemo(
     () =>
       availableSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
       null,
-    [availableSuites, selectedSuiteId]
+    [availableSuites, selectedSuiteId],
   );
   const selectedSuiteServerDisplay = useMemo(() => {
     if (!selectedSuiteEntry) {
@@ -311,7 +311,7 @@ function ConvertSessionDialogCoreInner({
 
     return deriveSessionServerDisplay({
       usedServerRefs: normalizeServerNames(
-        selectedSuiteEntry.suite.environment?.servers
+        selectedSuiteEntry.suite.environment?.servers,
       ),
       selectedServers: [],
       serversById,
@@ -331,6 +331,18 @@ function ConvertSessionDialogCoreInner({
    * through that cannot run.
    */
   const serverComparisonPending = projectServersLoading;
+  /**
+   * Display-only union of every project subscription that can hold Promote
+   * dead. Deliberately NOT folded into `serverComparisonPending`: that one
+   * also suppresses the missing-servers comparison and gates submit, and the
+   * host/attachment reads have no bearing on whether a suite's servers can be
+   * compared. This exists so the window is explained on screen, not to change
+   * what is allowed.
+   */
+  const promoteChecksPending =
+    serverComparisonPending ||
+    projectServerAttachmentsLoading ||
+    projectHostsLoading;
 
   const missingServers = useMemo(() => {
     if (!selectedSuiteEntry || serverComparisonPending) {
@@ -339,8 +351,8 @@ function ConvertSessionDialogCoreInner({
 
     const suiteServerLabels = new Set(
       (selectedSuiteServerDisplay?.items ?? []).map((item) =>
-        item.label.toLowerCase()
-      )
+        item.label.toLowerCase(),
+      ),
     );
 
     return sessionServerDisplay.items
@@ -359,7 +371,7 @@ function ConvertSessionDialogCoreInner({
    */
   const pinnedGroupServers = useMemo(
     () => selectedSuiteEntry?.suite.serverAttachment?.resolvedServerNames ?? [],
-    [selectedSuiteEntry]
+    [selectedSuiteEntry],
   );
   /**
    * Whether the suite pins a group AT ALL, which is a different question from
@@ -426,7 +438,7 @@ function ConvertSessionDialogCoreInner({
       return [];
     }
     const reachable = new Set(
-      pinnedGroupServers.map((name) => name.trim().toLowerCase())
+      pinnedGroupServers.map((name) => name.trim().toLowerCase()),
     );
     return sessionServerDisplay.items
       .filter((item) => !reachable.has(item.label.toLowerCase()))
@@ -462,8 +474,8 @@ function ConvertSessionDialogCoreInner({
    * pre-selected suite fell back to the placeholder with submit dead, and a
    * suite the user had picked by hand was silently reverted.
    *
-   * Harmless before this PR, because nothing pre-selected a suite; the
-   * seeding is what made the clear destructive.
+   * The clear is only destructive because a suite is pre-selected; back when
+   * the picker opened empty there was nothing for it to throw away.
    */
   const sessionId = summary?.sessionId ?? null;
   useEffect(() => {
@@ -481,19 +493,43 @@ function ConvertSessionDialogCoreInner({
   /**
    * Title seeding is separate, and also per-session: re-running it on every
    * `summary` push clobbered a title the user was part-way through typing.
+   *
+   * Two things have to be true before the latch stamps, and the first round of
+   * this fix had only the latch:
+   *
+   * - `hostDefaultResolved` — on the async adapter `summary.title` starts as
+   *   `buildTitle(null, seedTitle)`, whose own doc calls it a fallback "while
+   *   the detail read is in flight". Latching on that made the placeholder
+   *   permanent: a promoted User Testing session took the visitor's name, or
+   *   "Imported chat", and the real title never landed. The flag defaults
+   *   `true`, so the direct adapter (no async title) is unaffected.
+   * - `caseTitleDirtyForSessionId` — this input renders ABOVE the detail
+   *   spinner and is editable throughout, so the gate alone only narrows the
+   *   window in which a late title overwrites what someone is typing. Held
+   *   per session rather than as a bare boolean so switching sessions inside
+   *   an open dialog still seeds the new one's title.
    */
   const titleSeededForSessionId = useRef<string | null>(null);
+  const caseTitleDirtyForSessionId = useRef<string | null>(null);
   useEffect(() => {
     if (!open) {
       titleSeededForSessionId.current = null;
+      caseTitleDirtyForSessionId.current = null;
+      return;
+    }
+    if (!hostDefaultResolved) {
       return;
     }
     if (!summary || titleSeededForSessionId.current === summary.sessionId) {
       return;
     }
-    setCaseTitle(summary.title);
+    // Stamp either way: a typed title is the answer for this session, and
+    // re-checking it on every later push would re-clobber it.
+    if (caseTitleDirtyForSessionId.current !== summary.sessionId) {
+      setCaseTitle(summary.title);
+    }
     titleSeededForSessionId.current = summary.sessionId;
-  }, [open, summary]);
+  }, [open, summary, hostDefaultResolved]);
 
   /**
    * BB-163: "Existing suite (default if any exist)". The default cannot be a
@@ -597,7 +633,7 @@ function ConvertSessionDialogCoreInner({
     }
 
     setNewSuiteName(
-      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`)
+      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`),
     );
     suiteDefaultsAppliedForSessionId.current = summary.sessionId;
   }, [open, summary, detail.loading, sessionServerLabels]);
@@ -693,8 +729,8 @@ function ConvertSessionDialogCoreInner({
       ) {
         toast.success(
           `Session promoted to a test case. Added ${added.join(
-            ", "
-          )} to the suite.`
+            ", ",
+          )} to the suite.`,
         );
       } else {
         toast.success("Session promoted to a test case");
@@ -717,7 +753,7 @@ function ConvertSessionDialogCoreInner({
    */
   const handleClientChange = (hostId: string | null) => {
     setHostAttachments(
-      hostId ? [{ namedHostId: hostId, enabledOptionalServerIds: [] }] : []
+      hostId ? [{ namedHostId: hostId, enabledOptionalServerIds: [] }] : [],
     );
   };
 
@@ -792,13 +828,15 @@ function ConvertSessionDialogCoreInner({
       {selectedSuiteEntry && unreachableServers.length > 0 ? (
         <Alert>
           <AlertTriangle className="h-4 w-4" />
-          <AlertTitle>The suite&apos;s server group is missing servers</AlertTitle>
+          <AlertTitle>
+            The suite&apos;s server group is missing servers
+          </AlertTitle>
           <AlertDescription>
-            This suite runs against a fixed server group, which does not
-            include {unreachableServers.join(", ")}. The case will still be
-            created, but it will run without{" "}
-            {unreachableServers.length === 1 ? "that server" : "those servers"}
-            {" "}until the group is updated in suite settings.
+            This suite runs against a fixed server group, which does not include{" "}
+            {unreachableServers.join(", ")}. The case will still be created, but
+            it will run without{" "}
+            {unreachableServers.length === 1 ? "that server" : "those servers"}{" "}
+            until the group is updated in suite settings.
           </AlertDescription>
         </Alert>
       ) : null}
@@ -992,7 +1030,13 @@ function ConvertSessionDialogCoreInner({
                 <Input
                   id="promote-test-case-name"
                   value={caseTitle}
-                  onChange={(event) => setCaseTitle(event.target.value)}
+                  onChange={(event) => {
+                    // See the title-seeding effect: this marks the field as
+                    // the user's, so a title arriving from the adapter after
+                    // they started typing does not overwrite it.
+                    caseTitleDirtyForSessionId.current = sessionId;
+                    setCaseTitle(event.target.value);
+                  }}
                   placeholder={sessionTitle}
                   disabled={isSubmitting}
                 />
@@ -1020,7 +1064,7 @@ function ConvertSessionDialogCoreInner({
                     // payload read.
                     onValueChange={(next) =>
                       setDestinationMode(
-                        next === "existing" ? "existing" : "new"
+                        next === "existing" ? "existing" : "new",
                       )
                     }
                     aria-label="Add to"
@@ -1052,61 +1096,69 @@ function ConvertSessionDialogCoreInner({
                 <div className="space-y-3">{newSuiteFields}</div>
               )}
 
-            {/* `serverComparisonPending` blocks submit on purpose, and the
+              {/* `serverComparisonPending` blocks submit on purpose, and the
                 comparisons stay quiet rather than accusing a suite over
                 unresolved refs. Both are right, and both are invisible:
                 `projectServersLoading` is its own subscription and can trail
                 the two waits the spinner above covers, leaving a fully
-                populated form over a dead button with nothing saying why. */}
-            {serverComparisonPending ? (
-              <div
-                className="flex items-center gap-2 text-xs text-muted-foreground"
-                data-testid="promote-server-check-pending"
-              >
-                <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
-                Checking this project&apos;s servers…
-              </div>
-            ) : null}
+                populated form over a dead button with nothing saying why.
 
-            {requiresContentTransferAck ? (
-              <div>
-                <Alert>
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertTitle>Someone else wrote this transcript</AlertTitle>
-                  <AlertDescription className="space-y-3">
-                    <p id="content-transfer-consequence">
-                      This is a real User Testing session. Promoting it copies a
-                      tester&apos;s own words into a test case your project keeps
-                      — outside the User Testing surface they were written on.
-                    </p>
-                    {/* A real `<label htmlFor>` bound to the checkbox's own
+                All THREE project subscriptions get the line, not just that
+                one. The other two hide the Client and Server columns' own
+                "this project has none" notes (see both gates above) while
+                nothing has seeded `serverAttachmentId` or a host — so
+                `newSuiteRequirementsMet` holds Promote dead through a window
+                that used to have no explanation on screen at all. */}
+              {promoteChecksPending ? (
+                <div
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  data-testid="promote-server-check-pending"
+                >
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  Checking this project&apos;s clients and servers…
+                </div>
+              ) : null}
+
+              {requiresContentTransferAck ? (
+                <div>
+                  <Alert>
+                    <AlertTriangle className="h-4 w-4" />
+                    <AlertTitle>Someone else wrote this transcript</AlertTitle>
+                    <AlertDescription className="space-y-3">
+                      <p id="content-transfer-consequence">
+                        This is a real User Testing session. Promoting it copies
+                        a tester&apos;s own words into a test case your project
+                        keeps — outside the User Testing surface they were
+                        written on.
+                      </p>
+                      {/* A real `<label htmlFor>` bound to the checkbox's own
                         id, so the whole sentence is the hit target and the
                         control is reachable by keyboard alone.
                         `aria-describedby` points at the consequence, which is
                         the part worth hearing before the box is ticked. */}
-                    <label
-                      className="flex items-start gap-3"
-                      htmlFor="content-transfer-ack"
-                    >
-                      <Checkbox
-                        id="content-transfer-ack"
-                        checked={contentTransferAcknowledged}
-                        onCheckedChange={(checked) =>
-                          setContentTransferAcknowledged(checked === true)
-                        }
-                        aria-describedby="content-transfer-consequence"
-                        disabled={isSubmitting}
-                        className="mt-0.5"
-                      />
-                      <span className="text-sm">
-                        I understand this copies a tester&apos;s content into a
-                        durable test case.
-                      </span>
-                    </label>
-                  </AlertDescription>
-                </Alert>
-              </div>
-            ) : null}
+                      <label
+                        className="flex items-start gap-3"
+                        htmlFor="content-transfer-ack"
+                      >
+                        <Checkbox
+                          id="content-transfer-ack"
+                          checked={contentTransferAcknowledged}
+                          onCheckedChange={(checked) =>
+                            setContentTransferAcknowledged(checked === true)
+                          }
+                          aria-describedby="content-transfer-consequence"
+                          disabled={isSubmitting}
+                          className="mt-0.5"
+                        />
+                        <span className="text-sm">
+                          I understand this copies a tester&apos;s content into
+                          a durable test case.
+                        </span>
+                      </label>
+                    </AlertDescription>
+                  </Alert>
+                </div>
+              ) : null}
             </>
           )}
         </div>

@@ -26,7 +26,7 @@ const mocks = vi.hoisted(() => ({
   // `suitesOverview === undefined` unreachable, which is exactly why the two
   // seeding bugs in this file's subject went unnoticed.
   useQuery: vi.fn((_ref: unknown, args: unknown) =>
-    args === "skip" ? undefined : ([] as unknown[])
+    args === "skip" ? undefined : ([] as unknown[]),
   ),
 }));
 
@@ -152,7 +152,7 @@ function renderCore(
     detail: PromoteSessionDetailState;
     defaultHostId: string | null;
     hostDefaultResolved: boolean;
-  }> = {}
+  }> = {},
 ) {
   return render(
     <ConvertSessionDialogCore
@@ -164,7 +164,7 @@ function renderCore(
       hostDefaultResolved={overrides.hostDefaultResolved}
       onOpenChange={vi.fn()}
       onImported={vi.fn()}
-    />
+    />,
   );
 }
 
@@ -178,7 +178,7 @@ beforeEach(() => {
   mocks.serverAttachments = [{ _id: "attachment-1" }];
   mocks.serverAttachmentsLoading = false;
   mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-    args === "skip" ? undefined : []
+    args === "skip" ? undefined : [],
   );
 });
 
@@ -268,7 +268,7 @@ describe("ConvertSessionDialogCore", () => {
   it("seeds the suite name from the adapter-provided usedServerIds, without a chip row", () => {
     renderCore();
     expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value
+      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
     ).toContain("Excalidraw");
     expect(screen.queryByText("Session servers")).toBeNull();
   });
@@ -299,16 +299,16 @@ describe("ConvertSessionDialogCore", () => {
 
   it("pre-seeds the client attachment from defaultHostId when it names a project host", () => {
     renderCore({ defaultHostId: "host-swarm" });
-    expect(
-      screen.getByTestId("client-picker").getAttribute("data-host")
-    ).toBe("host-swarm");
+    expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+      "host-swarm",
+    );
   });
 
   it("falls back to the first project host when defaultHostId is unknown", () => {
     renderCore({ defaultHostId: "host-deleted" });
-    expect(
-      screen.getByTestId("client-picker").getAttribute("data-host")
-    ).toBe("host-first");
+    expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+      "host-first",
+    );
   });
 
   it("does not seed hosts while detail is loading, so a late defaultHostId still wins", () => {
@@ -330,7 +330,7 @@ describe("ConvertSessionDialogCore", () => {
         defaultHostId={null}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
     // BB-163: while the detail is in flight the destination area is a
     // spinner, so there is no client field to have seeded yet.
@@ -346,11 +346,11 @@ describe("ConvertSessionDialogCore", () => {
         defaultHostId="host-swarm"
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
-    expect(
-      screen.getByTestId("client-picker").getAttribute("data-host")
-    ).toBe("host-swarm");
+    expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+      "host-swarm",
+    );
   });
 
   it("does not seed a cached project host before the adapter resolves its host default", () => {
@@ -364,11 +364,11 @@ describe("ConvertSessionDialogCore", () => {
         hostDefaultResolved={false}
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
-    expect(
-      screen.getByTestId("client-picker").getAttribute("data-host")
-    ).toBe("");
+    expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+      "",
+    );
 
     rerender(
       <ConvertSessionDialogCore
@@ -380,11 +380,11 @@ describe("ConvertSessionDialogCore", () => {
         hostDefaultResolved
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
-    expect(
-      screen.getByTestId("client-picker").getAttribute("data-host")
-    ).toBe("host-swarm");
+    expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
+      "host-swarm",
+    );
   });
 
   it("offers an inline create when the project has no clients", async () => {
@@ -395,15 +395,24 @@ describe("ConvertSessionDialogCore", () => {
     renderCore();
 
     expect(screen.getByTestId("promote-create-client")).toBeTruthy();
+    // The half of `newSuiteRequirementsMet` this state exists for: without
+    // it the created suite lands with no client attached, so Promote has to
+    // be dead until one is picked. Dropping the term leaves every other
+    // assertion in this file green.
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
     fireEvent.click(screen.getByTestId("promote-create-client"));
     // The mock dialog reports a created host; it must land in the field
     // rather than dropping the user back at the empty dropdown.
     fireEvent.click(screen.getByTestId("create-host-dialog"));
 
     await waitFor(() =>
-      expect(screen.getByTestId("client-picker").getAttribute("data-host")).toBe(
-        "host-created"
-      )
+      expect(
+        screen.getByTestId("client-picker").getAttribute("data-host"),
+      ).toBe("host-created"),
     );
   });
 
@@ -415,6 +424,10 @@ describe("ConvertSessionDialogCore", () => {
     renderCore();
 
     expect(screen.queryByTestId("promote-create-client")).toBeNull();
+    // Same as the server-group sibling: the Client column's own note is
+    // suppressed here, so the pending line is the only thing accounting for
+    // a Promote that nothing has seeded a host for.
+    expect(screen.getByTestId("promote-server-check-pending")).toBeTruthy();
   });
 
   it("says so when the project has no server groups for a new suite", () => {
@@ -424,8 +437,17 @@ describe("ConvertSessionDialogCore", () => {
     renderCore();
 
     expect(screen.getByTestId("promote-no-server-groups").textContent).toMatch(
-      /no server groups yet/i
+      /no server groups yet/i,
     );
+    // The server half of `newSuiteRequirementsMet`, for the same reason as
+    // the client half above: no group means nothing to attach, so Promote
+    // stays dead rather than creating a suite in the broken state the
+    // pickers were added to prevent.
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
   });
 
   it("points at the missing servers when the project has none either", () => {
@@ -438,8 +460,28 @@ describe("ConvertSessionDialogCore", () => {
     renderCore();
 
     expect(screen.getByTestId("promote-no-server-groups").textContent).toMatch(
-      /no servers yet/i
+      /no servers yet/i,
     );
+    // A RESOLVED empty list is an answer, not a wait. Keying the pending line
+    // on `knownServerNames.length === 0` instead of the loading flag survived
+    // every other test in this file — the mock couples the two — and would
+    // leave a project with no servers spinning here forever.
+    expect(screen.queryByTestId("promote-server-check-pending")).toBeNull();
+  });
+
+  it("does not treat a project with zero servers as still loading", () => {
+    // The other half of that mutant, with the pickers satisfied so the
+    // button's own state is readable: no servers is a fact about the project,
+    // and it must not hold Promote or the spinner.
+    mocks.servers = [];
+    renderCore();
+
+    expect(screen.queryByTestId("promote-server-check-pending")).toBeNull();
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled"),
+    ).toBe(false);
   });
 
   it("does not claim a project has no servers while the server list loads", () => {
@@ -461,6 +503,11 @@ describe("ConvertSessionDialogCore", () => {
     renderCore();
 
     expect(screen.queryByTestId("promote-no-server-groups")).toBeNull();
+    // Hiding the note is only half an answer: nothing has seeded
+    // `serverAttachmentId`, so Promote is dead through this window and the
+    // pending line is what says why. Asserting only the silence pinned a
+    // populated form over a dead button with no reason on screen.
+    expect(screen.getByTestId("promote-server-check-pending")).toBeTruthy();
   });
 
   it("blocks submit while the project's server names are still loading", async () => {
@@ -477,7 +524,7 @@ describe("ConvertSessionDialogCore", () => {
       }),
     ];
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : entries
+      args === "skip" ? undefined : entries,
     );
     renderCore();
 
@@ -485,7 +532,7 @@ describe("ConvertSessionDialogCore", () => {
     expect(
       screen
         .getByRole("button", { name: "Promote to test case" })
-        .hasAttribute("disabled")
+        .hasAttribute("disabled"),
     ).toBe(true);
     // ...and it does not accuse the suite in the meantime.
     expect(screen.queryByText(/missing these servers/i)).toBeNull();
@@ -510,7 +557,7 @@ describe("ConvertSessionDialogCore", () => {
       }),
     ];
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : entries
+      args === "skip" ? undefined : entries,
     );
     renderCore();
 
@@ -535,7 +582,7 @@ describe("ConvertSessionDialogCore", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      "skip"
+      "skip",
     );
   });
 });
@@ -574,15 +621,78 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(
       screen
         .getByTestId("promote-destination-existing")
-        .getAttribute("data-selected")
+        .getAttribute("data-selected"),
     ).toBe("true");
+    // Paired with the opposite card: every `data-selected` assertion in this
+    // file checked "true", so a hardcoded `data-selected="true"` on
+    // `DestinationCard` passed all of them.
+    expect(
+      screen
+        .getByTestId("promote-destination-new")
+        .getAttribute("data-selected"),
+    ).toBe("false");
     expect(screen.getByText("Billing evals")).toBeTruthy();
+  });
+
+  it("moves the selected marker to New suite when it is picked", () => {
+    renderWithSuites();
+    fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
+
+    expect(
+      screen
+        .getByTestId("promote-destination-new")
+        .getAttribute("data-selected"),
+    ).toBe("true");
+    expect(
+      screen
+        .getByTestId("promote-destination-existing")
+        .getAttribute("data-selected"),
+    ).toBe("false");
+  });
+
+  it("blocks submit until the suite list lands, rather than defaulting to New", async () => {
+    // BB-163's own bug. During the pending window `destinationMode` still
+    // holds its `useState("new")` initial value and the new-suite fields are
+    // all seeded — they do not wait on suites — so Promote went live and
+    // created a duplicate suite in a project that already had them.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : undefined,
+    );
+    const { rerender } = renderCore();
+
+    expect(
+      screen
+        .getByRole("button", { name: "Promote to test case" })
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : SUITE_ENTRIES,
+    );
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(
+        screen
+          .getByRole("button", { name: "Promote to test case" })
+          .hasAttribute("disabled"),
+      ).toBe(false),
+    );
   });
 
   it("reports the selected suite's client and server read-only", () => {
     renderWithSuites();
     expect(
-      screen.getByTestId("promote-existing-suite-summary").textContent
+      screen.getByTestId("promote-existing-suite-summary").textContent,
     ).toBe("Claude · Excalidraw");
   });
 
@@ -612,10 +722,10 @@ describe("ConvertSessionDialogCore — Add to", () => {
     fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
 
     expect(screen.getByLabelText("Client")).toBe(
-      screen.getByTestId("client-picker")
+      screen.getByTestId("client-picker"),
     );
     expect(screen.getByLabelText("Server")).toBe(
-      screen.getByTestId("server-attachment-picker")
+      screen.getByTestId("server-attachment-picker"),
     );
   });
 
@@ -625,17 +735,17 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // only the environment showed the client alone for every modern suite.
     mocks.useQuery.mockReturnValue([
       suiteEntry({
-          _id: "suite-grouped",
-          name: "Billing evals",
-          environment: { servers: [] },
-          serverAttachment: serverGroup("Stripe", "GitHub"),
-          hostAttachments: [hostAttachment("Claude")],
-        }),
+        _id: "suite-grouped",
+        name: "Billing evals",
+        environment: { servers: [] },
+        serverAttachment: serverGroup("Stripe", "GitHub"),
+        hostAttachments: [hostAttachment("Claude")],
+      }),
     ]);
     renderCore();
 
     expect(
-      screen.getByTestId("promote-existing-suite-summary").textContent
+      screen.getByTestId("promote-existing-suite-summary").textContent,
     ).toBe("Claude · Stripe, GitHub");
   });
 
@@ -647,27 +757,23 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // then ran the case without the server.
     mocks.useQuery.mockReturnValue([
       suiteEntry({
-          _id: "suite-grouped",
-          name: "Billing evals",
-          environment: { servers: [] },
-          // The group does NOT carry the session's Excalidraw server.
-          serverAttachment: serverGroup("Stripe"),
-          hostAttachments: [hostAttachment("Claude")],
-        }),
+        _id: "suite-grouped",
+        name: "Billing evals",
+        environment: { servers: [] },
+        // The group does NOT carry the session's Excalidraw server.
+        serverAttachment: serverGroup("Stripe"),
+        hostAttachments: [hostAttachment("Claude")],
+      }),
     ]);
     renderCore();
 
-    expect(
-      screen.getByText(/server group is missing servers/i)
-    ).toBeTruthy();
+    expect(screen.getByText(/server group is missing servers/i)).toBeTruthy();
     expect(screen.getByText(/run without that server/i)).toBeTruthy();
     // The gate-satisfying opt-in stays — the import still needs it — but it
     // no longer claims to add anything to the suite.
+    expect(screen.getByText(/record these servers on the suite/i)).toBeTruthy();
     expect(
-      screen.getByText(/record these servers on the suite/i)
-    ).toBeTruthy();
-    expect(
-      screen.queryByText(/add the missing servers to this suite/i)
+      screen.queryByText(/add the missing servers to this suite/i),
     ).toBeNull();
   });
 
@@ -691,11 +797,9 @@ describe("ConvertSessionDialogCore — Add to", () => {
 
     expect(screen.getByText(/server group is missing servers/i)).toBeTruthy();
     // ...and the opt-in stops promising the group will be updated.
+    expect(screen.getByText(/record these servers on the suite/i)).toBeTruthy();
     expect(
-      screen.getByText(/record these servers on the suite/i)
-    ).toBeTruthy();
-    expect(
-      screen.queryByText(/add the missing servers to this suite/i)
+      screen.queryByText(/add the missing servers to this suite/i),
     ).toBeNull();
   });
 
@@ -703,18 +807,16 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // The common case, and the one the false positive was loudest in.
     mocks.useQuery.mockReturnValue([
       suiteEntry({
-          _id: "suite-grouped",
-          name: "Billing evals",
-          environment: { servers: [] },
-          serverAttachment: serverGroup("Excalidraw"),
-          hostAttachments: [hostAttachment("Claude")],
-        }),
+        _id: "suite-grouped",
+        name: "Billing evals",
+        environment: { servers: [] },
+        serverAttachment: serverGroup("Excalidraw"),
+        hostAttachments: [hostAttachment("Claude")],
+      }),
     ]);
     renderCore();
 
-    expect(
-      screen.queryByText(/server group is missing servers/i)
-    ).toBeNull();
+    expect(screen.queryByText(/server group is missing servers/i)).toBeNull();
   });
 
   it("drops a missing-servers opt-in when the suite it was ticked for changes", async () => {
@@ -723,17 +825,17 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // confirmation nobody gave for it.
     mocks.useQuery.mockReturnValue([
       suiteEntry({
-          _id: "suite-a",
-          name: "Suite A",
-          environment: { servers: [] },
-          hostAttachments: [hostAttachment("Claude")],
-        }),
+        _id: "suite-a",
+        name: "Suite A",
+        environment: { servers: [] },
+        hostAttachments: [hostAttachment("Claude")],
+      }),
       suiteEntry({
-          _id: "suite-b",
-          name: "Suite B",
-          environment: { servers: [] },
-          hostAttachments: [hostAttachment("Claude")],
-        }),
+        _id: "suite-b",
+        name: "Suite B",
+        environment: { servers: [] },
+        hostAttachments: [hostAttachment("Claude")],
+      }),
     ]);
     renderCore();
 
@@ -749,12 +851,12 @@ describe("ConvertSessionDialogCore — Add to", () => {
     fireEvent.click(await screen.findByRole("option", { name: "Suite B" }));
 
     expect(screen.getByRole("checkbox").getAttribute("data-state")).toBe(
-      "unchecked"
+      "unchecked",
     );
     expect(
       screen
         .getByRole("button", { name: "Promote to test case" })
-        .hasAttribute("disabled")
+        .hasAttribute("disabled"),
     ).toBe(true);
   });
 
@@ -765,7 +867,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // default ref, and the ref then blocked re-seeding once the list arrived.
     mocks.isUserReady = false;
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : SUITE_ENTRIES
+      args === "skip" ? undefined : SUITE_ENTRIES,
     );
     const { rerender } = render(
       <ConvertSessionDialogCore
@@ -775,7 +877,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
     // Nothing decided yet — a SPINNER, not a branch and not a blank area,
     // which "no radiogroup" alone would have accepted.
@@ -791,15 +893,15 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
 
     await waitFor(() =>
       expect(
         screen
           .getByTestId("promote-destination-existing")
-          .getAttribute("data-selected")
-      ).toBe("true")
+          .getAttribute("data-selected"),
+      ).toBe("true"),
     );
   });
 
@@ -809,7 +911,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // `selectedSuiteId` on that identity wiped the selection, and the seeding
     // effect refused to restore it because its ref was already stamped.
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : SUITE_ENTRIES
+      args === "skip" ? undefined : SUITE_ENTRIES,
     );
     const { rerender } = render(
       <ConvertSessionDialogCore
@@ -819,13 +921,15 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
 
     // A user picks the second suite by hand.
     fireEvent.click(screen.getByRole("combobox"));
-    fireEvent.click(await screen.findByRole("option", { name: "Checkout evals" }));
+    fireEvent.click(
+      await screen.findByRole("option", { name: "Checkout evals" }),
+    );
     expect(screen.getByText("Checkout evals")).toBeTruthy();
 
     // Same session, brand-new object — what every Convex push produces.
@@ -837,14 +941,14 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByText("Checkout evals")).toBeTruthy();
     expect(
       screen
         .getByRole("button", { name: "Promote to test case" })
-        .hasAttribute("disabled")
+        .hasAttribute("disabled"),
     ).toBe(false);
   });
 
@@ -854,7 +958,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // the effect never re-ran after mount. Convex allocates a new array on
     // every update.
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : SUITE_ENTRIES.map((e) => ({ ...e }))
+      args === "skip" ? undefined : SUITE_ENTRIES.map((e) => ({ ...e })),
     );
     const { rerender } = render(
       <ConvertSessionDialogCore
@@ -864,13 +968,15 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
     await waitFor(() => expect(screen.getByText("Billing evals")).toBeTruthy());
 
     fireEvent.click(screen.getByRole("radio", { name: "New suite" }));
     expect(
-      screen.getByTestId("promote-destination-new").getAttribute("data-selected")
+      screen
+        .getByTestId("promote-destination-new")
+        .getAttribute("data-selected"),
     ).toBe("true");
 
     rerender(
@@ -881,11 +987,13 @@ describe("ConvertSessionDialogCore — Add to", () => {
         isAuthenticated
         onOpenChange={vi.fn()}
         onImported={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByTestId("promote-destination-new").getAttribute("data-selected")
+      screen
+        .getByTestId("promote-destination-new")
+        .getAttribute("data-selected"),
     ).toBe("true");
   });
 
@@ -894,7 +1002,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // `source` flipped past the `availableSuites` filter. Gating on the id
     // left Promote enabled over a picker reading "Choose a suite".
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : SUITE_ENTRIES
+      args === "skip" ? undefined : SUITE_ENTRIES,
     );
     const props = {
       open: true,
@@ -910,7 +1018,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     await waitFor(() => expect(submit.hasAttribute("disabled")).toBe(false));
 
     mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
-      args === "skip" ? undefined : SUITE_ENTRIES.slice(1)
+      args === "skip" ? undefined : SUITE_ENTRIES.slice(1),
     );
     rerender(<ConvertSessionDialogCore {...props} />);
 
@@ -921,7 +1029,7 @@ describe("ConvertSessionDialogCore — Add to", () => {
     expect(
       screen
         .getByRole("button", { name: "Promote to test case" })
-        .hasAttribute("disabled")
+        .hasAttribute("disabled"),
     ).toBe(true);
   });
 
@@ -956,7 +1064,10 @@ describe("ConvertSessionDialogCore — Add to", () => {
   });
 
   it("submits into the pre-selected suite without re-asking for a destination", async () => {
-    importAction.mockResolvedValue({ suiteId: "suite-billing", testCaseId: "c" });
+    importAction.mockResolvedValue({
+      suiteId: "suite-billing",
+      testCaseId: "c",
+    });
     renderWithSuites();
 
     const submit = screen.getByRole("button", { name: "Promote to test case" });
@@ -971,8 +1082,88 @@ describe("ConvertSessionDialogCore — Add to", () => {
     // Suite-owned inputs are never sent from this branch.
     expect(importAction.mock.calls[0][0]).not.toHaveProperty("newSuiteName");
     expect(importAction.mock.calls[0][0]).not.toHaveProperty(
-      "newSuiteHostAttachments"
+      "newSuiteHostAttachments",
     );
+  });
+});
+
+/**
+ * The test-case name, and the two ways its seeding can go wrong.
+ *
+ * The async adapter builds `summary.title` from a SEED fallback until the
+ * detail read lands, so a latch that stamps on the first title it sees pins
+ * the placeholder — a promoted User Testing session gets named after the
+ * visitor. Dropping the latch instead re-clobbers a title being typed, which
+ * is what the latch was added for. Both halves need a test.
+ */
+describe("ConvertSessionDialogCore — test case name seeding", () => {
+  const SEEDED = { ...SUMMARY, title: "Ana García" };
+  const RESOLVED = { ...SUMMARY, title: "Refund flow with Stripe" };
+
+  function renderWith(summary: typeof SUMMARY, hostDefaultResolved: boolean) {
+    return render(
+      <ConvertSessionDialogCore
+        open
+        summary={summary}
+        detail={READY_DETAIL}
+        isAuthenticated
+        hostDefaultResolved={hostDefaultResolved}
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+  }
+
+  const nameInput = () =>
+    screen.getByLabelText("Test case name") as HTMLInputElement;
+
+  it("takes the resolved title, not the seed the adapter opened with", async () => {
+    const { rerender } = renderWith(SEEDED, false);
+    // Same sessionId throughout — this is one session whose title arrives
+    // late, which is exactly what the latch used to make permanent.
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={RESOLVED}
+        detail={READY_DETAIL}
+        isAuthenticated
+        hostDefaultResolved
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    await waitFor(() =>
+      expect(nameInput().value).toBe("Refund flow with Stripe"),
+    );
+  });
+
+  it("keeps a title the user typed when the real one lands after them", async () => {
+    // The field renders above the detail spinner and is editable throughout,
+    // so gating on `hostDefaultResolved` alone would only narrow this window.
+    const { rerender } = renderWith(SEEDED, false);
+    fireEvent.change(nameInput(), { target: { value: "my own name" } });
+
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={RESOLVED}
+        detail={READY_DETAIL}
+        isAuthenticated
+        hostDefaultResolved
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => expect(nameInput().value).toBe("my own name"));
+  });
+
+  it("seeds immediately for an adapter with no async title", () => {
+    // `hostDefaultResolved` defaults true, so the direct-history adapter is
+    // untouched by the gate above.
+    renderWith(RESOLVED, true);
+    expect(nameInput().value).toBe("Refund flow with Stripe");
   });
 });
 
@@ -998,17 +1189,17 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
   it("does not ask when the server did not say to", () => {
     renderCore();
     expect(
-      screen.queryByText(/Someone else wrote this transcript/i)
+      screen.queryByText(/Someone else wrote this transcript/i),
     ).toBeNull();
   });
 
   it("asks when the server says this is someone else's transcript", () => {
     renderCore({ detail: ACK_DETAIL });
     expect(
-      screen.getByText(/Someone else wrote this transcript/i)
+      screen.getByText(/Someone else wrote this transcript/i),
     ).toBeTruthy();
     expect(
-      screen.getByText(/copies a tester's own words into a test case/i)
+      screen.getByText(/copies a tester's own words into a test case/i),
     ).toBeTruthy();
   });
 
@@ -1037,7 +1228,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     expect(checkbox.tagName).toBe("BUTTON");
     expect(checkbox.getAttribute("id")).toBe("content-transfer-ack");
     expect(checkbox.getAttribute("aria-describedby")).toBe(
-      "content-transfer-consequence"
+      "content-transfer-consequence",
     );
     expect(checkbox.hasAttribute("disabled")).toBe(false);
   });
@@ -1076,7 +1267,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     // htmlFor>` bound to the checkbox's own id buys — a bigger target and an
     // accessible name a screen reader reads out with the control.
     fireEvent.click(
-      screen.getByText(/copies a tester's content into a durable test case/i)
+      screen.getByText(/copies a tester's content into a durable test case/i),
     );
     expect(checkbox.getAttribute("data-state")).toBe("checked");
   });
@@ -1086,7 +1277,7 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     renderCore({ detail: ACK_DETAIL });
     fireEvent.click(ackCheckbox());
     fireEvent.click(
-      screen.getByRole("button", { name: "Promote to test case" })
+      screen.getByRole("button", { name: "Promote to test case" }),
     );
     await waitFor(() => expect(importAction).toHaveBeenCalled());
     expect(importAction.mock.calls[0][0]).toMatchObject({
@@ -1098,11 +1289,11 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
     importAction.mockResolvedValue({ suiteId: "s", testCaseId: "c" });
     renderCore();
     fireEvent.click(
-      screen.getByRole("button", { name: "Promote to test case" })
+      screen.getByRole("button", { name: "Promote to test case" }),
     );
     await waitFor(() => expect(importAction).toHaveBeenCalled());
     expect(importAction.mock.calls[0][0]).not.toHaveProperty(
-      "contentTransferAcknowledged"
+      "contentTransferAcknowledged",
     );
   });
 });
@@ -1135,5 +1326,112 @@ describe("ConvertSessionDialogCore — a suites query that rejects", () => {
     expect(screen.getByText("Import unavailable")).toBeTruthy();
     // The shell survives, so the dialog is still closable rather than gone.
     expect(screen.getByTestId("promote-error-close")).toBeTruthy();
+  });
+
+  it("closes from the fallback, rather than only looking closable", () => {
+    // The claim above was asserted by existence alone: deleting the
+    // fallback's own onClick left this suite green.
+    mocks.useQuery.mockImplementation(() => {
+      throw new Error("[CONVEX Q(testSuites:getTestSuitesOverview)] rejected");
+    });
+    const onOpenChange = vi.fn();
+    render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={onOpenChange}
+        onImported={vi.fn()}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("promote-error-close"));
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+  });
+
+  it("does not carry one session's failure into the next", () => {
+    // `ErrorBoundary` holds `hasError` until it unmounts, so the boundary is
+    // keyed on open + session. Replacing that key with a constant left every
+    // other assertion in this file green while a single rejection greeted
+    // every later session with "Import unavailable".
+    mocks.useQuery.mockImplementation(() => {
+      throw new Error("[CONVEX Q(testSuites:getTestSuitesOverview)] rejected");
+    });
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Import unavailable")).toBeTruthy();
+
+    // The next session's query answers normally.
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : [],
+    );
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={{ ...SUMMARY, sessionId: "chat-session-id-2" }}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Import unavailable")).toBeNull();
+    expect(screen.getByLabelText("Test case name")).toBeTruthy();
+  });
+
+  it("clears the failure on close, so reopening is not pre-broken", () => {
+    // The other half of the same key, and the reason this file needed its
+    // first `open={false}` render.
+    mocks.useQuery.mockImplementation(() => {
+      throw new Error("[CONVEX Q(testSuites:getTestSuitesOverview)] rejected");
+    });
+    const { rerender } = render(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    expect(screen.getByText("Import unavailable")).toBeTruthy();
+
+    rerender(
+      <ConvertSessionDialogCore
+        open={false}
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+    mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
+      args === "skip" ? undefined : [],
+    );
+    rerender(
+      <ConvertSessionDialogCore
+        open
+        summary={SUMMARY}
+        detail={READY_DETAIL}
+        isAuthenticated
+        onOpenChange={vi.fn()}
+        onImported={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByText("Import unavailable")).toBeNull();
+    expect(screen.getByLabelText("Test case name")).toBeTruthy();
   });
 });
