@@ -52,6 +52,7 @@ import { webMcpSessions } from "../../services/webmcp-inspector/session-registry
 import {
   createFramePacer,
   type CallbackSocket,
+  type FramePacer,
 } from "../../services/webmcp-inspector/frame-pacer.js";
 import { encodeWebMcpBinaryFrame } from "@/shared/webmcp-inspector-protocol";
 import { logger } from "../../utils/logger.js";

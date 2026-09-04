@@ -21,6 +21,11 @@ import internalChatStageDerivations from "./routes/internal/chat-stage-derivatio
 import internalComputerBrowserDebug from "./routes/internal/computer-browser-debug.js";
 import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
+import {
+  createComputerBrowserFramesWsHandler,
+  killBrowserFrameSockets,
+  shutdownBrowserFrameSockets,
+} from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";
 import v1Routes from "./routes/v1/index.js";
 import cliAuthRoutes from "./routes/cli-auth/index.js";
@@ -365,6 +370,13 @@ export async function createHonoApp() {
     "/api/web/computers/browser/stream",
     createComputerBrowserStreamWsHandler(upgradeWebSocket),
   );
+  // The PAGE, from the daemon's own screencast — the rail's pane. The
+  // stream above is the whole DESKTOP over RFB, and both stay: one is for
+  // watching alongside the local engine, the other for taking the machine.
+  app.get(
+    "/api/web/computers/browser/frames",
+    createComputerBrowserFramesWsHandler(upgradeWebSocket),
+  );
   // LOCAL computer terminal WebSocket ("This machine"). Never mounted hosted.
   // Mirror of the mount in server/index.ts.
   if (!HOSTED_MODE) {
@@ -702,5 +714,7 @@ export async function createHonoApp() {
     // followed by a RESTART, so its variant must not latch.
     shutdownWebMcpFrameSockets,
     killWebMcpFrameSockets,
+    shutdownBrowserFrameSockets,
+    killBrowserFrameSockets,
   };
 }
