@@ -45,7 +45,15 @@ import {
   stat,
   symlink,
 } from "node:fs/promises";
-import { basename, dirname, join, posix, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  resolve,
+  sep,
+} from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -351,6 +359,39 @@ async function writeBytesAtomically(
   }
 }
 
+/**
+ * Windows: the Git Bash the vendor CLI's shell tool runs through.
+ *
+ * The child's PATH is System32 only, on purpose, so the CLI cannot find a
+ * shell by searching it. This names one explicitly — the parent's own
+ * `CLAUDE_CODE_GIT_BASH_PATH` if set, else the default Git for Windows
+ * install — and only when that file actually exists. Nothing is guessed into
+ * the child: absent, the CLI reports the missing shell itself.
+ */
+async function resolveGitBashPath(
+  platform: NodeJS.Platform,
+): Promise<string | undefined> {
+  if (platform !== "win32") return undefined;
+  const configured = process.env.CLAUDE_CODE_GIT_BASH_PATH;
+  const candidates = [
+    ...(configured && isAbsolute(configured) ? [configured] : []),
+    join(
+      process.env.ProgramFiles ?? "C:\\Program Files",
+      "Git",
+      "bin",
+      "bash.exe",
+    ),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {
+      /* not there; next */
+    }
+  }
+  return undefined;
+}
+
 /** Text view of a byte stream — for process output, never for file content. */
 async function collectStream(
   stream: ReadableStream<Uint8Array>,
@@ -501,11 +542,14 @@ export function createSupervisedLocalHarnessProvider(
     const confine = (path: string) =>
       confinePath(fromAdapterPath(path, platform), { roots });
 
+    const gitBashPath = await resolveGitBashPath(platform);
     const env = {
       ...buildLocalHarnessEnv({
         syntheticHome,
         sessionRoot: opts.workspacePath,
+        platform,
         ...(opts.scopedEnv ? { scoped: opts.scopedEnv } : {}),
+        ...(gitBashPath !== undefined ? { gitBashPath } : {}),
       }),
       ...opts.launcher.requiredEnv,
     };

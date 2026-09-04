@@ -429,10 +429,16 @@ export class LocalHarnessSupervisor {
       jobLauncher !== undefined
         ? [jobLauncher, [request.executable, ...request.args]]
         : [request.executable, [...request.args]];
+    // The launcher's stdin is a LIFELINE, not an input: it exits — closing
+    // its job, which kills the tree — the moment stdin reaches EOF. That is
+    // the property that makes an Inspector crash leave no orphans on Windows.
+    // So it gets a pipe this process holds open and never writes to; `ignore`
+    // would hand it the NUL device, which is EOF at once, and the tree would
+    // die before it could be identified (exit 143, nothing on stderr).
     const child = spawn(spawnExecutable, spawnArgs, {
       cwd: request.workingDirectory,
       env: request.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [jobLauncher !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
       // POSIX: become a process-group leader so the whole tree can be signalled.
       detached: this.platform !== "win32",
       // Belt and braces — the default is already false, but this is the single

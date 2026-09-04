@@ -688,7 +688,20 @@ async function main() {
   // the workspace path coming back is `pwd`'s own output making the whole round
   // trip — request, approval, execution, result, model.
   if ((turn2.parts["tool-result"] ?? 0) < 1) failures.push(`turn2 produced no tool-result, so the approved Bash never ran (parts=${JSON.stringify(turn2.parts)})`);
-  if (!turn2.text.includes(plan.workspacePath)) failures.push("turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model)");
+  // Where `pwd` ran, in every spelling it can legitimately come back in. On
+  // POSIX the CLI's cwd resolves through the `project` symlink to the
+  // canonical workspace and that is what `pwd` prints. Windows resolves no
+  // junction in a cwd, and Git Bash prints `/d/a/…` — so there the answer is
+  // the workspace or the session's `work\project` junction, in native or
+  // MSYS form. All four name the granted directory and nothing else.
+  const pwdSpellings = [plan.workspacePath];
+  if (WIN) {
+    const { toAdapterPath } = await import("../adapter-path.js");
+    const link = join(sessionStateDir, "work", "project");
+    pwdSpellings.push(toAdapterPath(plan.workspacePath, "win32"), link, toAdapterPath(link, "win32"));
+  }
+  const pwdText = WIN ? turn2.text.toLowerCase() : turn2.text;
+  if (!pwdSpellings.some((p) => pwdText.includes(WIN ? p.toLowerCase() : p))) failures.push(`turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model; accepted ${JSON.stringify(pwdSpellings)})`);
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));
