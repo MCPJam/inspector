@@ -42,13 +42,16 @@ interface AxValue {
   value?: unknown;
 }
 
-/** AX properties CDP reports as tristate strings rather than booleans. */
-const TRISTATE_PROPERTIES = new Set([
-  "checked",
-  "pressed",
-  "selected",
-  "expanded",
-]);
+/**
+ * AX properties whose value arrives as `"true"` / `"false"` / `"mixed"`.
+ *
+ * Only these two are `tristate` in the CDP Accessibility domain — `selected`
+ * and `expanded` are plain booleans and were in this set on a wrong reading of
+ * the spec. Including them was harmless (the string comparison never fires on
+ * a real boolean) and misleading, which is the worse half: a maintainer would
+ * have taken the grouping as evidence about the protocol.
+ */
+const TRISTATE_PROPERTIES = new Set(["checked", "pressed"]);
 
 interface AxProperty {
   name?: string;
