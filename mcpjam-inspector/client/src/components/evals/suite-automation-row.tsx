@@ -192,7 +192,11 @@ export function SuiteAutomationRow({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {enabled ? (
+          {/* ACTIVE, not merely enabled. A schedule that paused itself keeps
+              `enabled: true` — that is the whole reason the state comes from
+              the server rather than the switch — so keying on `enabled` alone
+              offered Pause on an already-paused schedule and no way back. */}
+          {enabled && schedule?.state === "active" ? (
             <Button
               type="button"
               size="sm"

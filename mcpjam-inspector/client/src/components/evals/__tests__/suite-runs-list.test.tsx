@@ -62,6 +62,37 @@ function makeIteration(
 }
 
 describe("SuiteRunsList run-group rendering", () => {
+  it("never reads a group of held runs as a pass", () => {
+    // Every child is parked for its gating judge, so the group has no verdict
+    // — and `grading` matched none of the precedence branches, dropping it
+    // through to the `"passed"` default. A header claiming Passed over
+    // children that each read Grading is the one thing the gate exists to
+    // stop: a green nobody has earned yet.
+    const runs: EvalSuiteRun[] = [
+      makeRun({
+        _id: "gb1xxxxx",
+        runGroupId: "group-b",
+        namedHostId: "host-mcpjam",
+        status: "grading",
+        result: "pending",
+      }),
+      makeRun({
+        _id: "gb2xxxxx",
+        runGroupId: "group-b",
+        namedHostId: "host-claude",
+        status: "grading",
+        result: "pending",
+      }),
+    ];
+
+    renderWithProviders(
+      <SuiteRunsList runs={runs} allIterations={[]} onRunClick={vi.fn()} />,
+    );
+
+    expect(screen.getByText("Grading")).toBeInTheDocument();
+    expect(screen.queryByText("Passed")).not.toBeInTheDocument();
+  });
+
   it("renders one parent row per multi-run group and standalone rows for ungrouped runs", () => {
     const runs: EvalSuiteRun[] = [
       makeRun({

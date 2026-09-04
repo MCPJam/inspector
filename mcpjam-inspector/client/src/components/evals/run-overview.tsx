@@ -739,6 +739,12 @@ export function RunOverview({
                       : "—";
 
                   const runResult =
+                    // FIRST, exactly as `computeEffectiveRunResult` does it. A
+                    // run held for its gating judge carries the TRUTHY
+                    // `result: "pending"`, so `run.result ||` short-circuits
+                    // to it and the badge below renders nothing at all — the
+                    // `grading` case was unreachable in this component.
+                    (run.status === "grading" ? "grading" : undefined) ||
                     run.result ||
                     (run.status === "completed" && passRate !== null
                       ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)

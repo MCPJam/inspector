@@ -204,10 +204,18 @@ export function groupGradersByStage(input: {
 
   input.predicates.forEach((predicate, index) => {
     const kind = predicate.type as keyof typeof PREDICATE_STAGE;
-    const label =
-      kind in PREDICATE_KIND_LABELS
-        ? formatCriterion({ predicate })
-        : String(predicate.type);
+    // OWN properties only. `in` walks the prototype chain, so a predicate
+    // whose `type` is `__proto__` or `toString` passes the guard, and
+    // `PREDICATE_STAGE[kind]` then returns an inherited value that is truthy
+    // but not a stage — making `byStage[...]` undefined and the push throw.
+    // An unrecognised kind has to degrade, not take the settings page down.
+    const known = Object.prototype.hasOwnProperty.call(
+      PREDICATE_KIND_LABELS,
+      kind,
+    );
+    const label = known
+      ? formatCriterion({ predicate })
+      : String(predicate.type);
     const row: GraderRow = {
       id: `predicate:${index}`,
       kind: "predicate",
@@ -224,18 +232,27 @@ export function groupGradersByStage(input: {
     // An unknown kind files at `userValue` rather than throwing: the last link
     // is where "we could not place this" does the least damage, since it is
     // already the catch-all the contract routes its own unsplit evidence to.
-    byStage[PREDICATE_STAGE[kind] ?? "userValue"].push(row);
+    const stage = Object.prototype.hasOwnProperty.call(PREDICATE_STAGE, kind)
+      ? PREDICATE_STAGE[kind]
+      : undefined;
+    byStage[stage ?? "userValue"].push(row);
   });
 
-  byStage[GRADER_STAGE["judge:goalCompletion"]].push({
-    id: "judge:goalCompletion",
-    kind: "judge",
-    label: "Goal completion judge",
-    role:
-      input.judgeConfig?.goalCompletion?.role === "gating"
-        ? "gating"
-        : "advisory",
-  });
+  // Only when the judge is actually on. A suite that turned it off measures
+  // `userValue` with nothing, and saying otherwise is precisely the
+  // misdescription this grouping exists to end. `undefined` still counts as
+  // on: the field is optional and its absence has always meant the default.
+  if (input.judgeConfig?.goalCompletion?.enabled !== false) {
+    byStage[GRADER_STAGE["judge:goalCompletion"]].push({
+      id: "judge:goalCompletion",
+      kind: "judge",
+      label: "Goal completion judge",
+      role:
+        input.judgeConfig?.goalCompletion?.role === "gating"
+          ? "gating"
+          : "advisory",
+    });
+  }
 
   return { byStage, budgets };
 }

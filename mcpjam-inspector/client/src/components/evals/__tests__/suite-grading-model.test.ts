@@ -64,6 +64,37 @@ describe("groupGradersByStage", () => {
     ).toEqual([]);
   });
 
+  it("omits the judge row when the judge is switched off", () => {
+    const off = groupGradersByStage({
+      predicates: [],
+      judgeConfig: { goalCompletion: { enabled: false } },
+    } as unknown as Parameters<typeof groupGradersByStage>[0]);
+    expect(off.byStage.userValue.filter((row) => row.kind === "judge")).toEqual(
+      [],
+    );
+
+    // Absent is NOT off: the field is optional and has always defaulted on.
+    const unset = groupGradersByStage({ predicates: [] });
+    expect(
+      unset.byStage.userValue.filter((row) => row.kind === "judge"),
+    ).toHaveLength(1);
+  });
+
+  it("survives a predicate whose type is an inherited object key", () => {
+    // `in` walks the prototype chain, so `__proto__` and `toString` pass a
+    // bare membership guard and then resolve to inherited values that are
+    // truthy but are not stages — enough to make the grouping throw and take
+    // the whole settings page with it.
+    for (const type of ["__proto__", "toString", "constructor"]) {
+      const model = groupGradersByStage({
+        predicates: [{ type } as never],
+      });
+      expect(model.byStage.userValue.some((row) => row.label === type)).toBe(
+        true,
+      );
+    }
+  });
+
   it("gives every stage a list, even an empty one", () => {
     const model = groupGradersByStage({ predicates: [] });
     for (const stage of USER_VALUE_STAGES) {

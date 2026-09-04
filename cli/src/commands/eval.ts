@@ -1571,7 +1571,11 @@ async function runEvalGate(
             ? { baselineProvenance: baselineResult.provenance }
             : {}),
         };
-      }
+      },
+      // The widened budget above is the WHOLE-COMMAND abort. Each poll
+      // request keeps the caller's own timeout, so one hung request cannot
+      // sit through the grading extension and starve the wait deadline.
+      { requestTimeoutMs: globalOptions.timeout }
     );
   } catch (error) {
     // A USAGE error (bad project selector, malformed flag) is the author's
@@ -3560,6 +3564,10 @@ export function registerEvalCommands(program: Command): void {
         {
           projectScope: resolved.projectScope,
           quiet: true,
+          // The widened budget above is the WHOLE-COMMAND abort. Each poll
+          // request keeps the caller's own timeout, so one hung request cannot
+          // sit through the grading extension and starve the wait deadline.
+          requestTimeoutMs: globalOptions.timeout,
         },
       );
 

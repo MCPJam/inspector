@@ -143,6 +143,29 @@ describe("SuiteAutomationRow", () => {
     });
   });
 
+  it("offers Resume on a schedule that paused ITSELF", async () => {
+    const user = userEvent.setup();
+    mocks.setSuiteSchedule.mockResolvedValue(undefined);
+    // The state the row exists to make legible: a self-pause keeps
+    // `enabled: true`, so keying the action on `enabled` alone rendered Pause
+    // on an already-paused schedule and left no way to start it again.
+    renderRow({
+      schedule: {
+        intervalMinutes: 30,
+        enabled: true,
+        state: "paused_auth",
+        createdByUserId: "user-1",
+      },
+    });
+    expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Resume" }));
+    expect(mocks.setSuiteSchedule).toHaveBeenCalledWith({
+      suiteId: "suite-1",
+      enabled: true,
+      intervalMinutes: 30,
+    });
+  });
+
   it("offers Take over only for a lost-authorization pause", async () => {
     const user = userEvent.setup();
     mocks.reassignScheduleOwner.mockResolvedValue(undefined);

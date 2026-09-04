@@ -592,9 +592,13 @@ export function describeChange(
     case "verdictPolicyDefaults":
       return {
         key,
-        label: "Validity",
-        before: describeValidity(before.verdictPolicyDefaults),
-        after: describeValidity(after.verdictPolicyDefaults),
+        // NOT "Validity". This one field holds the whole v2 policy —
+        // repetitions and passThreshold as well as the validity ceilings — so
+        // labelling it for its last member let a change to how every case is
+        // graded appear in the review dialog as a line about validity.
+        label: "Grading policy",
+        before: describeVerdictPolicyDefaults(before.verdictPolicyDefaults),
+        after: describeVerdictPolicyDefaults(after.verdictPolicyDefaults),
       };
   }
 }
@@ -619,6 +623,28 @@ function describePolicyVersion(values: SuiteSettingsValues): string {
 }
 
 /** The three validity ceilings, as percents where they are fractions. */
+/**
+ * The whole v2 policy in one sentence: how many trials, how many must pass,
+ * and when the run is measurable enough to decide at all.
+ *
+ * Every member is optional on the draft, so each is named only when it is set
+ * — a row that always printed all three would report defaults as if the editor
+ * had chosen them.
+ */
+function describeVerdictPolicyDefaults(
+  defaults: SuiteVerdictPolicyDefaults | undefined,
+): string {
+  if (!defaults) return "Contract defaults";
+  const parts: string[] = [];
+  if (defaults.repetitions !== undefined)
+    parts.push(`${defaults.repetitions} trials per case`);
+  if (defaults.passThreshold !== undefined)
+    parts.push(`${formatFraction(defaults.passThreshold)} must pass`);
+  const validity = describeValidity(defaults);
+  if (validity !== "Contract defaults") parts.push(`valid when ${validity}`);
+  return parts.length > 0 ? parts.join(", ") : "Contract defaults";
+}
+
 function describeValidity(
   defaults: SuiteVerdictPolicyDefaults | undefined,
 ): string {

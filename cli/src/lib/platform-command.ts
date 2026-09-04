@@ -88,6 +88,19 @@ export type RunPlatformOperationExtras = {
    * audience scope when `cloudScope` is omitted.
    */
   projectScope?: ProjectCloudScope;
+  /**
+   * The per-REQUEST HTTP timeout, when it should differ from the whole-command
+   * budget.
+   *
+   * `timeoutMs` normally serves both: it aborts the command and it is what
+   * each fetch gives up after. That is right until a command legitimately runs
+   * far longer than any single request should — a `--wait` poll loop that
+   * earns the judge's 31-minute grading extension, say. Widening the command
+   * budget there would otherwise widen every individual poll's timeout with
+   * it, so a single hung request could sit for the whole extension and stop
+   * the inner wait deadline from ever firing.
+   */
+  requestTimeoutMs?: number;
 };
 
 /**
@@ -210,7 +223,10 @@ export async function runPlatformOperation<TOutput>(
     externalSignal?.addEventListener("abort", onExternalAbort, { once: true });
 
   try {
-    const context = buildCloudClientContext(options, timeoutMs);
+    const context = buildCloudClientContext(
+      options,
+      extras.requestTimeoutMs ?? timeoutMs
+    );
     const quiet = extras.quiet ?? process.argv.includes("--quiet");
     if (extras.announce !== false && quiet !== true) {
       announceCloudContext({

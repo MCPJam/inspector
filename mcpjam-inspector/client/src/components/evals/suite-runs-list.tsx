@@ -592,6 +592,11 @@ function GroupRunRows({
     computeEffectiveRunResult(c.run, c.stats.passRate),
   );
   const anyRunning = effectiveResults.some((r) => r === "running");
+  // Beside `running`, and ahead of everything that claims a verdict. A group
+  // whose children are all held for their judge has no verdict yet, and
+  // without this it fell past every branch to the `"passed"` default — a
+  // header reading Passed over children that each read Grading.
+  const anyGrading = effectiveResults.some((r) => r === "grading");
   const anyFailed = effectiveResults.some(
     (r) => r === "failed" || r === "timed_out",
   );
@@ -599,6 +604,7 @@ function GroupRunRows({
   const anyPending = effectiveResults.some((r) => r === "pending");
   const groupResult:
     | "running"
+    | "grading"
     | "failed"
     | "cancelled"
     | "passed"
@@ -606,13 +612,15 @@ function GroupRunRows({
     | "timed_out" =
     anyRunning
       ? "running"
-      : anyFailed
-        ? "failed"
-        : anyCancelled
-          ? "cancelled"
-          : anyPending
-            ? "pending"
-            : "passed";
+      : anyGrading
+        ? "grading"
+        : anyFailed
+          ? "failed"
+          : anyCancelled
+            ? "cancelled"
+            : anyPending
+              ? "pending"
+              : "passed";
 
   const timestampLabel = formatTime(group.latestTimestamp);
   const shortGroupId = group.runGroupId.slice(0, 8);

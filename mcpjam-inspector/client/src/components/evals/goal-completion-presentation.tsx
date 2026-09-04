@@ -312,7 +312,11 @@ export function JudgeVerdictPanel({
           }
         />
       ) : null}
-      {revealed || !canLabel ? (
+      {/* A LABEL ALREADY EXISTS means blindness is spent — hiding the judge
+          from a reviewer who has already committed serves nothing, and the
+          reveal state is initialised once, so an existing label loaded after
+          mount would otherwise keep the card hidden forever. */}
+      {revealed || !canLabel || !!review ? (
         // Thin adapter: the card itself is product-neutral (shared with the
         // Swarms session viewer); this keeps the historical eval-shaped
         // signature.
