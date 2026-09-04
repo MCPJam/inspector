@@ -42,6 +42,7 @@ import {
   isComputersDataPlaneConfigured,
   touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import {
   lookupBrowserSession,
   touchBrowserSession,
@@ -64,7 +65,12 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
 const CLOSE_LEASE_HELD = 4409;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
 
-/** How often a watching pane keeps the session row and the box awake. */
+/**
+ * How often a WATCHED pane keeps the session row and the box awake.
+ *
+ * Watched, not merely connected: the touch on each tick needs a ping since the
+ * last one. See the timer below.
+ */
 const ACTIVITY_TOUCH_MS = 60_000;
 
 export interface BrowserFramesDeps {
@@ -219,6 +225,13 @@ export function createComputerBrowserFramesWsHandler(
     const abort = new AbortController();
     let registered: { close(): void } | undefined;
     let activityTimer: ReturnType<typeof setInterval> | undefined;
+    /**
+     * Has the pane said it is being looked at since the last activity touch?
+     *
+     * Reset by each touch and set by each ping, so a pane that goes quiet stops
+     * deferring the idle sweep within one interval.
+     */
+    let watched = false;
     let closed = false;
     const detach = () => {
       if (closed) return;
@@ -256,13 +269,45 @@ export function createComputerBrowserFramesWsHandler(
          * somebody is looking at.
          */
         const touch = () => {
-          void touchSession({ sessionId: live.sessionId, kind: "panel" }).catch(
-            () => {},
-          );
-          void touchActivity({ computerId: live.computerId }).catch(() => {});
+          watched = false;
+          // THE BACKEND HAS THE LAST WORD, exactly as `/keepalive` lets it.
+          // `touchSession` answers `counted: false` once the browser has gone
+          // long enough without a real command, which is the ceiling that
+          // stops a pane left open over a weekend holding a metered box awake
+          // forever. Firing `touchActivity` regardless discarded that answer
+          // and bumped `lastActiveAt` anyway, so the idle sweep never came —
+          // the same class of bug as the connected-but-unwatched socket this
+          // route just fixed, one layer further in. Watching is evidence
+          // somebody is there; it is not evidence the machine is still doing
+          // anything worth paying for.
+          void touchSession({ sessionId: live.sessionId, kind: "panel" })
+            .then(({ counted }) => {
+              // `closed` FIRST: this continuation can land after the pane hung
+              // up, and touching then keeps a computer awake for a socket that
+              // is gone.
+              if (closed || !counted) return;
+              if (!shouldTouchActivity(live.computerId)) return;
+              void touchActivity({ computerId: live.computerId }).catch(
+                () => {},
+              );
+            })
+            .catch(() => {});
         };
+        // Opening one counts: somebody just asked for it.
         touch();
-        activityTimer = setInterval(touch, ACTIVITY_TOUCH_MS);
+        activityTimer = setInterval(() => {
+          // AN OPEN SOCKET IS NOT SOMEBODY WATCHING. The pane stays connected
+          // behind the rail's other tabs — dropping it would stop the
+          // screencast and make the browser go dark on every glance — and it
+          // stays connected in a background browser tab too. It stops PINGING
+          // in both cases, which is the only evidence anybody is looking.
+          //
+          // Without this a pane left open behind the Logs tab holds a metered
+          // cloud box awake indefinitely, which the local socket never does
+          // and which the person pays for.
+          if (!watched) return;
+          touch();
+        }, ACTIVITY_TOUCH_MS);
 
         const started = await openUpstream({
           session: live,
@@ -320,6 +365,8 @@ export function createComputerBrowserFramesWsHandler(
         try {
           const parsed = JSON.parse(String(event.data)) as { type?: unknown };
           if (parsed?.type !== "ping" || closed) return;
+          // The evidence the activity timer waits for.
+          watched = true;
           ws.send(JSON.stringify({ type: "pong" }));
         } catch {
           // Not our protocol; ignore rather than close.

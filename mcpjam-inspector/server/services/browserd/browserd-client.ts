@@ -36,6 +36,7 @@ import {
   FRAME_STREAM_KIND,
   type FrameStreamFrame,
 } from "./frame-stream.js";
+import type { ViewportInputEvent } from "./daemon/viewport.js";
 
 export {
   BrowserdClientError,
@@ -92,6 +93,18 @@ export class BrowserdClient {
   constructor(config: BrowserdClientConfig) {
     // Normalise so `${baseUrl}/path` never doubles a slash.
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    // HTTPS OR NOTHING. Every request below attaches the per-boot bearer, and
+    // that bearer is full control of somebody's browser — commands, input, and
+    // a live stream of whatever is on the page. The origin comes from a
+    // control-plane row that is validated as a non-empty string and nothing
+    // more, so the one place that can insist on the scheme is here, before a
+    // single request goes out. Refused loudly rather than downgraded: a client
+    // that quietly spoke cleartext would leak the credential on every call.
+    if (!/^https:\/\//i.test(this.baseUrl)) {
+      throw new Error(
+        `browserd origin must be https (got ${new URL(this.baseUrl).protocol})`,
+      );
+    }
     this.bearer = config.bearer;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -137,7 +150,10 @@ export class BrowserdClient {
       },
       true,
     );
-    return decodeLeaseAction({ status: res.status, body: await this.json(res) });
+    return decodeLeaseAction({
+      status: res.status,
+      body: await this.json(res),
+    });
   }
 
   /** Send a command and interpret the daemon's reply. */
@@ -171,6 +187,46 @@ export class BrowserdClient {
       status: res.status,
       body: await this.json(res),
     });
+  }
+
+  /**
+   * Forward a person's pointer and keys to `POST /v1/input`.
+   *
+   * A REFUSAL IS A NORMAL ANSWER, not an error, which is why this returns a
+   * result instead of throwing. `423` means the lease is not this holder's —
+   * the ordinary state of affairs while the agent is driving — and a pane that
+   * surfaced it as a failure would be reporting a browser that is working
+   * exactly as designed. Only the transport itself throws.
+   *
+   * Batched, and NOT routed through `sendCommand`: a drag emits input twenty
+   * times a second, and every command spends an idempotency slot from a ledger
+   * that stops issuing ids once exhausted.
+   */
+  async sendInput(args: {
+    holder: string;
+    events: readonly ViewportInputEvent[];
+    tabId?: string;
+  }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await this.request(
+      "/v1/input",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          holder: args.holder,
+          events: args.events,
+          ...(args.tabId ? { tabId: args.tabId } : {}),
+        }),
+      },
+      true,
+    );
+    if (res.ok) return { ok: true };
+    const body = await this.json(res);
+    return {
+      ok: false,
+      status: res.status,
+      error: typeof body.error === "string" ? body.error : `http_${res.status}`,
+    };
   }
 
   /**
@@ -213,6 +269,15 @@ export class BrowserdClient {
     if (args.tabId) query.set("tabId", args.tabId);
     if (args.holder) query.set("holder", args.holder);
     const suffix = query.toString() ? `?${query}` : "";
+
+    // Checked BEFORE anything is opened. `addEventListener("abort")` does not
+    // replay an abort that already happened, so a caller who cancelled before
+    // this call — a pane closed while the token was still being minted — would
+    // otherwise have a connection opened on its behalf and frames delivered
+    // into a reader that has gone.
+    if (args.signal.aborted) {
+      return { ok: false, status: 0, error: "aborted" };
+    }
 
     const connect = new AbortController();
     const onCallerAbort = () => connect.abort();
@@ -300,7 +365,8 @@ export class BrowserdClient {
         }
         for (const record of decoded.records) {
           if (record.kind === FRAME_STREAM_KIND.frame) args.onFrame(record);
-          else if (record.kind === FRAME_STREAM_KIND.end) reason = record.reason;
+          else if (record.kind === FRAME_STREAM_KIND.end)
+            reason = record.reason;
         }
         if (reason !== undefined) break;
       }

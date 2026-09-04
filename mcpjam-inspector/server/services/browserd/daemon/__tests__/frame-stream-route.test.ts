@@ -10,6 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
+import { connect } from "node:net";
 import { buildBrowserdStack, type BrowserdStack } from "../server";
 import type { BrowserDriver } from "../browser-driver";
 import type { BrowserCommandResult } from "../../protocol";
@@ -93,10 +94,27 @@ function openCursor(res: Response) {
   async function next(timeoutMs = 4_000): Promise<FrameStreamRecord> {
     const deadline = Date.now() + timeoutMs;
     while (ready.length === 0) {
-      if (Date.now() > deadline) throw new Error("timed out waiting for a record");
-      const { done, value } = await reader.read();
-      if (done) throw new Error("stream ended before a record arrived");
-      const result = decoder.push(value);
+      const left = deadline - Date.now();
+      if (left <= 0) throw new Error("timed out waiting for a record");
+      // RACED, not merely checked between reads. A deadline tested only in the
+      // loop condition bounds nothing when the read itself never resolves —
+      // which is exactly the regression these tests exist to catch, a daemon
+      // that stops heartbeating. The suite would hang until vitest killed it
+      // and report a generic timeout instead of naming the stream.
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const chunk = await Promise.race([
+        reader.read(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error("timed out waiting for a record")),
+            left,
+          );
+        }),
+      ]).finally(() => {
+        if (timer) clearTimeout(timer);
+      });
+      if (chunk.done) throw new Error("stream ended before a record arrived");
+      const result = decoder.push(chunk.value);
       if (!result.ok) throw new Error(`decode failed: ${result.error}`);
       ready.push(...result.records);
     }
@@ -125,9 +143,14 @@ describe("GET /v1/frames", () => {
   beforeEach(async () => {
     vp = fakeViewport();
     lease = new HandoffLease();
-    stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN, lease });
+    stack = buildBrowserdStack(stubDriver(vp.viewport), {
+      token: TOKEN,
+      lease,
+    });
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
@@ -165,6 +188,51 @@ describe("GET /v1/frames", () => {
     });
     expect(res.status).toBe(405);
     expect(res.headers.get("allow")).toBe("GET");
+  });
+
+  it("does not let an unread body wedge the connection it arrived on", async () => {
+    // A review flagged this branch as a slow-body hazard: it is taken on PATH,
+    // so it bypasses the adapter's body reader and answers 405 without reading
+    // the request — supposedly leaving the parser stuck and the connection
+    // held by an unauthenticated caller.
+    //
+    // IT DOES NOT REPRODUCE, and this is the test that says so: it passes
+    // identically with and without an added drain, because Node dumps an
+    // unread request body itself once the RESPONSE finishes. Two pipelined
+    // requests on one socket; the second is served, so the first was
+    // completed. Kept as the pin on that property rather than deleted — the
+    // day something here pauses the socket instead, this is what notices.
+    //
+    // The `req.resume()` further down is a different case and still load-
+    // bearing: a streaming response never finishes, so Node's dump never
+    // fires for it.
+    const socket = connect(Number(new URL(base).port), "127.0.0.1");
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const seen = new Promise<string>((resolve, reject) => {
+      let buffer = "";
+      socket.on("data", (chunk) => {
+        buffer += chunk.toString("utf8");
+        if ((buffer.match(/HTTP\/1\.1 /g) ?? []).length >= 2) resolve(buffer);
+      });
+      socket.on("error", reject);
+      timer = setTimeout(() => reject(new Error(`only got: ${buffer}`)), 4_000);
+    });
+    await new Promise<void>((resolve) => socket.once("connect", resolve));
+    socket.write(
+      `POST /v1/frames HTTP/1.1\r\nHost: x\r\n` +
+        `Authorization: Bearer ${TOKEN}\r\nContent-Length: 4\r\n\r\nbody` +
+        `GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
+    );
+
+    // Cleared and closed on EVERY path: a pending 4s timer holds the event
+    // loop after the success case, and a socket left open on the failure case
+    // is one `afterEach`'s `server.close()` then waits on.
+    const replies = await seen.finally(() => {
+      if (timer) clearTimeout(timer);
+      socket.destroy();
+    });
+    expect(replies).toMatch(/HTTP\/1\.1 405/);
+    expect(replies).toMatch(/HTTP\/1\.1 200/);
   });
 
   it("sends a heartbeat before anything has painted", async () => {
@@ -234,7 +302,9 @@ describe("GET /v1/frames", () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     stack = buildBrowserdStack(stubDriver(null), { token: TOKEN });
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
     const cursor = openCursor(await open());
@@ -282,7 +352,9 @@ describe("GET /v1/frames", () => {
     });
     await new Promise<void>((resolve) => server.close(() => resolve()));
     // Re-listen so the shared afterEach has something to close.
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
   });
 
   it("evicts a watcher when the lease moves over a page that is NOT painting", async () => {
@@ -300,7 +372,9 @@ describe("GET /v1/frames", () => {
       frames: { heartbeatMs: 25 },
     });
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
     const cursor = openCursor(await open());
@@ -330,7 +404,9 @@ describe("GET /v1/frames", () => {
       { token: TOKEN, frames: { heartbeatMs: 25 } },
     );
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
     const cursor = openCursor(await open());
@@ -371,7 +447,9 @@ describe("GET /v1/frames", () => {
       { token: TOKEN, frames: { heartbeatMs: 25 } },
     );
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 
     const cursor = openCursor(await open());
@@ -390,7 +468,6 @@ describe("GET /v1/frames", () => {
     // will never run again.
     await vi.waitFor(() => expect(vp.subscriberCount()).toBe(0));
   });
-
 });
 
 /**
@@ -412,9 +489,14 @@ describe("POST /v1/input", () => {
   beforeEach(async () => {
     vp = fakeViewport();
     lease = new HandoffLease();
-    stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN, lease });
+    stack = buildBrowserdStack(stubDriver(vp.viewport), {
+      token: TOKEN,
+      lease,
+    });
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
@@ -514,7 +596,9 @@ describe("GET /v1/frames — the rest", () => {
     vp = fakeViewport();
     stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN });
     server = stack.server;
-    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    await new Promise<void>((resolve) =>
+      server.listen(0, "127.0.0.1", resolve),
+    );
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   });
 
@@ -557,7 +641,9 @@ describe("GET /v1/frames — the rest", () => {
     const cursor = openCursor(await open("?probe=1"));
     // One heartbeat on open, then the probe's own three, then the end.
     const records = await cursor.take(5, 8_000);
-    expect(records.slice(0, 4).every((r) => r.kind === FRAME_STREAM_KIND.heartbeat)).toBe(true);
+    expect(
+      records.slice(0, 4).every((r) => r.kind === FRAME_STREAM_KIND.heartbeat),
+    ).toBe(true);
     expect(records[4]).toMatchObject({ kind: FRAME_STREAM_KIND.end });
     // Probe mode never touches the browser: no lease, no tab, no subscription.
     expect(vp.subscriberCount()).toBe(0);

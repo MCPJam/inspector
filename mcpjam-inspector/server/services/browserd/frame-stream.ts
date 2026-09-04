@@ -132,9 +132,7 @@ export interface FrameStreamEnd {
 }
 
 export type FrameStreamRecord =
-  | FrameStreamFrame
-  | FrameStreamHeartbeat
-  | FrameStreamEnd;
+  FrameStreamFrame | FrameStreamHeartbeat | FrameStreamEnd;
 
 /**
  * Pack one record.
@@ -174,8 +172,7 @@ function clampU16(value: number): number {
 }
 
 export type FrameStreamDecodeResult =
-  | { ok: true; records: FrameStreamRecord[] }
-  | { ok: false; error: string };
+  { ok: true; records: FrameStreamRecord[] } | { ok: false; error: string };
 
 /**
  * A reader that survives chunk boundaries.
@@ -231,6 +228,15 @@ export function createFrameStreamDecoder(): {
         const payloadLength = view.getUint32(20, true);
         if (payloadLength > FRAME_STREAM_MAX_PAYLOAD_BYTES) {
           return { ok: false, error: `record too large (${payloadLength})` };
+        }
+        // A frame with no JPEG in it is corruption, not a frame. The encoder
+        // cannot produce one, and a reader that forwards it hands the pane an
+        // empty `data:image/jpeg;base64,` — which REPLACES the picture with a
+        // blank one. Fatal, like every other way this stream can stop making
+        // sense: a byte stream that has lost its place cannot be recovered by
+        // guessing.
+        if (kind === FRAME_STREAM_KIND.frame && payloadLength === 0) {
+          return { ok: false, error: "frame record carries no image" };
         }
         const total = FRAME_STREAM_HEADER_BYTES + payloadLength;
         if (buffered.byteLength < total) break; // not all here yet
