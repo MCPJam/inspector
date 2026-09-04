@@ -62,6 +62,18 @@ const routeFacts = vi.hoisted(() => ({
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const routeFactsFlag = vi.hoisted(() => ({ current: false }));
+const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
+const descriptionExperiment = vi.hoisted(() => ({
+  calls: [] as Array<{ enabled?: boolean }>,
+  current: {
+    status: "idle" as string,
+    experiment: null as unknown,
+    error: null,
+    propose: () => Promise.resolve(),
+    start: () => Promise.resolve(),
+    refetch: () => {},
+  },
+}));
 const compareState = vi.hoisted(() => ({
   current: {
     status: "disabled" as string,
@@ -78,7 +90,15 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
     flag === "evaluate-route-facts-enabled"
       ? routeFactsFlag.current
-      : flagEnabled.current,
+      : flag === "description-experiments-enabled"
+        ? descriptionExperimentFlag.current
+        : flagEnabled.current,
+}));
+vi.mock("../use-eval-description-experiment", () => ({
+  useEvalDescriptionExperiment: (args: { enabled?: boolean }) => {
+    descriptionExperiment.calls.push(args);
+    return descriptionExperiment.current;
+  },
 }));
 vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
   useEvalRunStageAnalytics: () => ({
@@ -209,6 +229,16 @@ afterEach(() => {
   };
   flagEnabled.current = false;
   routeFactsFlag.current = false;
+  descriptionExperimentFlag.current = false;
+  descriptionExperiment.calls = [];
+  descriptionExperiment.current = {
+    status: "idle",
+    experiment: null,
+    error: null,
+    propose: () => Promise.resolve(),
+    start: () => Promise.resolve(),
+    refetch: () => {},
+  };
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -465,6 +495,91 @@ describe("EvaluateRunContent", () => {
     renderContent({ onOpenIteration: vi.fn() });
 
     expect(screen.queryByTestId("run-verdict-open-trace")).toBeNull();
+  });
+
+  it("does not query or render a description experiment when the flag is off", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: {
+        ...RUN,
+        toolSnapshot: {
+          servers: [{ tools: [{ name: "export_to_excalidraw" }] }],
+        },
+      } as EvalSuiteRun,
+    });
+    expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(false);
+    expect(screen.queryByTestId("description-experiment-card")).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
+    ).toBeNull();
+  });
+
+  it("renders the description-experiment card above the advisory section when the flag is on", () => {
+    descriptionExperimentFlag.current = true;
+    descriptionExperiment.current = {
+      status: "ready",
+      experiment: {
+        id: "exp_1",
+        suiteId: "suite_1",
+        sourceRunId: "run_1",
+        toolName: "get_user",
+        status: "proposed",
+      },
+      error: null,
+      propose: () => Promise.resolve(),
+      start: () => Promise.resolve(),
+      refetch: () => {},
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+    expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(true);
+    const card = screen.getByTestId("description-experiment-card");
+    expect(card).toBeInTheDocument();
+    const body = screen.getByTestId("evaluate-run-content");
+    const advisory = screen.queryByTestId("run-advisory-section");
+    if (advisory) {
+      expect(
+        body.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+    }
+  });
+
+  it("discloses a rewritten description on the rewrite-arm run", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: {
+        ...RUN,
+        configSnapshot: {
+          tests: [],
+          environment: { servers: [] },
+          toolDescriptionOverride: {
+            toolName: "get_user",
+            description: "rewritten",
+            proposalHash: "p1",
+            experimentId: "exp_1",
+            originalDescriptionHash: "o1",
+          },
+        },
+      } as EvalSuiteRun,
+    });
+    expect(
+      screen.getByText(/this run deliberately rewrote the description of/),
+    ).toBeInTheDocument();
   });
 
   it("does not compute or render route facts when the flag is off", () => {

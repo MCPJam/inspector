@@ -278,6 +278,74 @@ describe("RunCaseRowBody", () => {
     expect(screen.getByText("Routes")).toBeInTheDocument();
   });
 
+  it("offers a propose button for a missing catalog tool when the engine is emulated", () => {
+    render(
+      <RunCaseRowBody
+        row={row()}
+        iterations={ITERATIONS}
+        descriptionExperiment={{
+          catalogToolNames: new Set(["export_to_excalidraw", "create_view"]),
+          engineSupported: true,
+          onPropose: vi.fn(),
+        }}
+      />,
+    );
+    expect(
+      screen.getByRole("button", {
+        name: "Propose a description rewrite for `export_to_excalidraw`",
+      }),
+    ).toBeEnabled();
+  });
+
+  it("disables the propose button on a harness engine", () => {
+    render(
+      <RunCaseRowBody
+        row={row()}
+        iterations={ITERATIONS}
+        descriptionExperiment={{
+          catalogToolNames: new Set(["export_to_excalidraw"]),
+          engineSupported: false,
+          onPropose: vi.fn(),
+        }}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Propose a description rewrite for `export_to_excalidraw`",
+    });
+    expect(button).toBeDisabled();
+    expect(button).toHaveAttribute(
+      "title",
+      "Not available for harness runs yet",
+    );
+    expect(
+      screen.getByText("Not available for harness runs yet"),
+    ).toBeInTheDocument();
+  });
+
+  it("does not offer a propose button when the missing tool is not in the snapshot", () => {
+    render(
+      <RunCaseRowBody
+        row={row()}
+        iterations={ITERATIONS}
+        descriptionExperiment={{
+          catalogToolNames: new Set(["create_view"]),
+          engineSupported: true,
+          onPropose: vi.fn(),
+        }}
+      />,
+    );
+    expect(
+      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
+    ).toBeNull();
+  });
+
+  it("does not offer a propose button when the flag did not pass the prop", () => {
+    render(<RunCaseRowBody row={row()} iterations={ITERATIONS} />);
+    expect(
+      screen.queryByRole("button", { name: /Propose a description rewrite/ }),
+    ).toBeNull();
+  });
+
   it("explains a case that passed only on its threshold", () => {
     render(
       <RunCaseRowBody

@@ -50,14 +50,23 @@ async function copyPrompt(text: string) {
   }
 }
 
+export type DescriptionExperimentProposeProps = {
+  catalogToolNames: ReadonlySet<string>;
+  engineSupported: boolean;
+  onPropose: (toolName: string) => void;
+  busyToolName?: string | null;
+};
+
 function FailureGroup({
   row,
   group,
   iterations,
+  descriptionExperiment,
 }: {
   row: EvaluateCaseRow;
   group: CaseFailureGroup;
   iterations: readonly EvalIteration[];
+  descriptionExperiment?: DescriptionExperimentProposeProps;
 }) {
   const diagnostic: EvalRunDecisionDiagnostic | null = group.representative;
   const iteration = iterations.find(
@@ -84,6 +93,11 @@ function FailureGroup({
     else remaining.splice(at, 1);
   }
   const missingSet = new Set(missing);
+  const proposeTools = descriptionExperiment
+    ? [...new Set(missing)].filter((name) =>
+        descriptionExperiment.catalogToolNames.has(name),
+      )
+    : [];
 
   // The contract's own sentence, or nothing. A reason it deliberately leaves
   // without a remedy gets no block here rather than a manufactured one.
@@ -174,6 +188,41 @@ function FailureGroup({
           </Button>
         </div>
       ) : null}
+
+      {proposeTools.length > 0 ? (
+        <div className="flex flex-col gap-2 border-t border-border/40 px-3.5 py-3">
+          {proposeTools.map((toolName) => {
+            const disabled = !descriptionExperiment!.engineSupported;
+            const busy =
+              descriptionExperiment!.busyToolName === toolName;
+            return (
+              <div key={toolName} className="flex flex-col items-start gap-1">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-8"
+                  disabled={disabled || busy}
+                  title={
+                    disabled
+                      ? "Not available for harness runs yet"
+                      : undefined
+                  }
+                  data-testid={`description-experiment-propose-${toolName}`}
+                  onClick={() => descriptionExperiment!.onPropose(toolName)}
+                >
+                  Propose a description rewrite for `{toolName}`
+                </Button>
+                {disabled ? (
+                  <span className="text-[12px] text-muted-foreground">
+                    Not available for harness runs yet
+                  </span>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
     </section>
   );
 }
@@ -184,6 +233,7 @@ export function RunCaseRowBody({
   routeFacts,
   catalogState,
   computedHere,
+  descriptionExperiment,
   onOpenIteration,
   onEditCase,
 }: {
@@ -192,6 +242,7 @@ export function RunCaseRowBody({
   routeFacts?: EvalRunRouteFactsCase | null;
   catalogState?: EvalRunRouteFacts["catalogState"];
   computedHere?: boolean;
+  descriptionExperiment?: DescriptionExperimentProposeProps;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -233,6 +284,7 @@ export function RunCaseRowBody({
             row={row}
             group={group}
             iterations={iterations}
+            {...(descriptionExperiment ? { descriptionExperiment } : {})}
           />
           ))
         )}

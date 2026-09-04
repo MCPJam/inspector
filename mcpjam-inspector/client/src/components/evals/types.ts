@@ -784,7 +784,30 @@ export type EvalSuiteRun = {
      * silently re-render in-flight scoring with new values.
      */
     judgeConfig?: EvalJudgeConfig;
+    /**
+     * Which engine executed the run: `"emulated"` or `"harness:<id>"`.
+     * Absent on pre-attribution rows — treat as unknown, not as emulated.
+     */
+    executionEngine?: string;
+    /**
+     * This run is the REWRITE arm of a description experiment. The catalog
+     * snapshot stays the original; this marker is the only record of the
+     * rewrite the model actually saw.
+     */
+    toolDescriptionOverride?: {
+      toolName: string;
+      serverId?: string;
+      description: string;
+      proposalHash: string;
+      experimentId: string;
+      originalDescriptionHash: string;
+    };
   };
+  /**
+   * Which engine executed the run. Sibling of `configSnapshot.executionEngine`
+   * for API-projected rows that lift the field to the top level.
+   */
+  executionEngine?: string;
   status:
     | "pending"
     | "running"

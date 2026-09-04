@@ -27,6 +27,7 @@ import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary"
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
+import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
 import { useRouteFactsEnabled } from "@/hooks/useRouteFactsEnabled";
 import {
   evalRunDecisionRevision,
@@ -47,9 +48,17 @@ import {
   summarizeRunChanges,
 } from "./evaluate-run-diff-model";
 import { useEvalRunCompare } from "./use-eval-run-compare";
+import {
+  catalogToolNamesFromRun,
+  isEmulatedDescriptionExperimentEngine,
+  readRunExecutionEngine,
+} from "./description-experiment-model";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
+import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
+import { RunDescriptionOverrideDisclosure } from "./run-description-override-disclosure";
+import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
 import {
   buildRunRouteFacts,
   routeFactsForRow,
@@ -149,6 +158,26 @@ export function EvaluateRunContent({
   ]);
 
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
+
+  const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
+  const descriptionExperiment = useEvalDescriptionExperiment({
+    projectId,
+    sourceRunId: run._id,
+    revision: evalRunDecisionRevision(run),
+    enabled: descriptionExperimentEnabled && active,
+  });
+  const catalogToolNames = useMemo(
+    () =>
+      descriptionExperimentEnabled
+        ? catalogToolNamesFromRun(run)
+        : new Set<string>(),
+    [descriptionExperimentEnabled, run],
+  );
+  const engineSupported = isEmulatedDescriptionExperimentEngine(
+    readRunExecutionEngine(run),
+  );
+  const descriptionOverride =
+    run.configSnapshot?.toolDescriptionOverride ?? null;
 
   const routeFactsEnabled = useRouteFactsEnabled();
   const persistedRouteFacts = useEvalRunRouteFacts({
@@ -393,6 +422,14 @@ export function EvaluateRunContent({
         </p>
       ) : null}
 
+      {descriptionOverride ? (
+        <div className="px-5">
+          <RunDescriptionOverrideDisclosure
+            toolName={descriptionOverride.toolName}
+          />
+        </div>
+      ) : null}
+
       <div className="flex flex-col gap-3 px-5 pb-4">
         {view.sentence.kind === "brokeAt" ? (
           <RunGradingPeek
@@ -440,10 +477,41 @@ export function EvaluateRunContent({
                 : {})}
               {...(onOpenIteration ? { onOpenIteration } : {})}
               {...(onEditCase ? { onEditCase } : {})}
+              {...(descriptionExperimentEnabled
+                ? {
+                    descriptionExperiment: {
+                      catalogToolNames,
+                      engineSupported,
+                      onPropose: (toolName: string) => {
+                        void descriptionExperiment.propose({ toolName });
+                      },
+                      ...(descriptionExperiment.status === "loading"
+                        ? {
+                            busyToolName:
+                              descriptionExperiment.experiment?.toolName ??
+                              null,
+                          }
+                        : {}),
+                    },
+                  }
+                : {})}
             />
           )}
         />
       </div>
+
+      {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
+        <RunDescriptionExperimentCard
+          experiment={descriptionExperiment.experiment}
+          onStart={() => {
+            void descriptionExperiment.start();
+          }}
+          starting={
+            descriptionExperiment.status === "loading" &&
+            descriptionExperiment.experiment.status === "proposed"
+          }
+        />
+      ) : null}
 
       <RunAdvisorySection
         suiteRunId={String(run._id)}
