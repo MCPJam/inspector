@@ -10,6 +10,8 @@
   --font-score-display: "Montserrat", sans-serif;
   --font-score-sans: "Instrument Sans", sans-serif;
   --font-score-mono: "JetBrains Mono", monospace;
+  --score-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --score-ease-sharp: cubic-bezier(0.16, 1, 0.3, 1);
 
   color: var(--score-fg);
   background: var(--score-bg);
@@ -25,14 +27,24 @@
   left: max(859px, calc((100% - 1440px) / 2 + 859px));
 }
 
+.score-site-orb {
+  will-change: transform;
+  animation: score-orb-drift 16s var(--score-ease-out) infinite alternate;
+}
+
+.score-site-orb--ember {
+  animation-duration: 20s;
+  animation-delay: -6s;
+}
+
 @media (min-width: 1360px) and (min-height: 700px) {
-  .score-site-layout {
+  .score-site-layout:not(.score-site-layout--page) {
     position: static;
     display: block;
     padding: 0;
   }
 
-  .score-site-content {
+  .score-site-layout:not(.score-site-layout--page) .score-site-content {
     position: absolute;
     left: max(54px, calc((100% - 1440px) / 2 + 54px));
     top: calc(50% - 9px);
@@ -40,7 +52,7 @@
     transform: translateY(-50%);
   }
 
-  .score-preview-card {
+  .score-site-layout:not(.score-site-layout--page) .score-preview-card {
     position: absolute;
     left: max(874px, calc((100% - 1440px) / 2 + 874px));
     top: calc(50% - 8.5px);
@@ -48,7 +60,133 @@
   }
 }
 
+.score-site-layout--page {
+  align-items: center;
+}
+
+.score-site-layout--page .score-site-content {
+  width: 100%;
+  max-width: 720px;
+}
+
+.score-card--enter .score-card-number {
+  animation: score-pop 480ms var(--score-ease-out) both;
+}
+
+.score-card--enter .score-card-row {
+  animation: score-row-in 360ms var(--score-ease-out) both;
+}
+
+.score-card--enter .score-card-bar {
+  transform-origin: left center;
+  animation: score-bar-fill 640ms var(--score-ease-out) 160ms both;
+}
+
+.score-preview-card-fold {
+  animation: score-card-fold 280ms var(--score-ease-sharp) forwards;
+  transform-origin: 70% 40%;
+}
+
+.score-preview-plane--parked {
+  animation: score-plane-settle 520ms var(--score-ease-out) both;
+}
+
+.score-preview-plane--launch {
+  animation: score-plane-launch 440ms var(--score-ease-sharp) 240ms both;
+}
+
 .score-site :focus-visible {
   outline: 2px solid var(--score-primary);
   outline-offset: 2px;
+}
+
+@keyframes score-orb-drift {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+
+  to {
+    transform: translate3d(18px, -10px, 0);
+  }
+}
+
+@keyframes score-pop {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 10px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes score-row-in {
+  from {
+    opacity: 0;
+    transform: translate3d(-8px, 0, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+@keyframes score-bar-fill {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+@keyframes score-card-fold {
+  to {
+    opacity: 0;
+    transform: scale(0.28) rotate(-12deg);
+  }
+}
+
+@keyframes score-plane-settle {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translate3d(0, 12px, 0);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes score-plane-launch {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.35) rotate(-18deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: translate(42vw, -38vh) scale(1) rotate(12deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .score-site-orb,
+  .score-card--enter .score-card-number,
+  .score-card--enter .score-card-row,
+  .score-card--enter .score-card-bar,
+  .score-preview-card-fold,
+  .score-preview-plane--parked,
+  .score-preview-plane--launch {
+    animation: none;
+  }
+
+  .score-preview-card-fold {
+    opacity: 0;
+  }
 }

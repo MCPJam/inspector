@@ -255,7 +255,8 @@ export function ScoreRunnerView({
 
   return (
     <ScoreSiteShell
-      compactPreview={phase === "authorizing" || phase === "done"}
+      compactPreview={phase === "authorizing"}
+      previewStage={phase === "done" ? "plane" : "card"}
       atmosphere={phase === "email" ? "email" : "landing"}
     >
       <div className="flex w-full flex-col items-start gap-6">

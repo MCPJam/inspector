@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "react-router";
-import { Button } from "@mcpjam/design-system/button";
-import { Loader2, CheckCircle2, XCircle, MinusCircle } from "lucide-react";
+import { CheckCircle2, Loader2, MinusCircle, XCircle } from "lucide-react";
 import { routePaths } from "@/lib/app-navigation";
 import {
   fetchScoreRun,
@@ -9,6 +8,8 @@ import {
   type ScoreSummary,
   type StoredScoreRun,
 } from "@/lib/apis/score-api";
+import { ScoreCard, type ScoreCardRow } from "./score-card";
+import { ScoreSiteShell } from "./ScoreSiteShell";
 
 const APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -59,12 +60,78 @@ function describeStoredScore(summary: ScoreSummary, pending = 0): string {
 
 function CheckIcon({ status }: { status: string }) {
   if (status === "passed") {
-    return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-green-500" />;
+    return <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-[#3D8A5A]" />;
   }
   if (status === "failed") {
-    return <XCircle className="h-3.5 w-3.5 shrink-0 text-red-500" />;
+    return <XCircle className="h-3.5 w-3.5 shrink-0 text-[#C45A3A]" />;
   }
-  return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />;
+  return <MinusCircle className="h-3.5 w-3.5 shrink-0 text-[var(--score-muted)]" />;
+}
+
+function displayHost(serverUrl: string): string {
+  try {
+    return new URL(serverUrl).hostname.replace(/^www\./, "");
+  } catch {
+    return serverUrl;
+  }
+}
+
+function formatRunDate(createdAt: number): string {
+  return new Date(createdAt).toISOString().slice(0, 10);
+}
+
+function suiteStatus(summary: ScoreSummary | undefined): {
+  status: string;
+  emphasize: boolean;
+} {
+  if (!summary || summary.score === null) {
+    return { status: "INCOMPLETE", emphasize: true };
+  }
+  if (summary.outcome === "failed") {
+    return { status: "MIXED", emphasize: true };
+  }
+  if (summary.outcome === "incomplete") {
+    return { status: "INCOMPLETE", emphasize: true };
+  }
+  if (summary.advisoryCount > 0) {
+    return { status: "REVIEW", emphasize: true };
+  }
+  return { status: "PASSED", emphasize: false };
+}
+
+function scoreCardRows(
+  suites: Array<{
+    suiteId: string;
+    summary: ScoreSummary | undefined;
+  }>,
+): ScoreCardRow[] {
+  return suites.map(({ suiteId, summary }) => {
+    const { status, emphasize } = suiteStatus(summary);
+    return {
+      label: SUITE_TITLES[suiteId] ?? suiteId,
+      score:
+        summary?.score === null || summary?.score === undefined
+          ? "—"
+          : String(summary.score),
+      status,
+      emphasize,
+    };
+  });
+}
+
+function ledgerSegments(summary: ScoreSummary, pending: number) {
+  return [
+    { colorClass: "bg-[#3D8A5A]", share: summary.passed },
+    { colorClass: "bg-[#C45A3A]", share: summary.failed },
+    { colorClass: "bg-[#C49A4A]", share: summary.couldNotRun },
+    { colorClass: "bg-[var(--score-border)]", share: summary.notApplicable },
+    { colorClass: "bg-[#1A1918]", share: pending },
+  ].filter((segment) => segment.share > 0);
+}
+
+function ledgerFooter(summary: ScoreSummary): string {
+  const checks = summary.applicable + summary.notApplicable;
+  return `${checks} checks. ${summary.passed} passed, ${summary.failed} failed.`;
 }
 
 interface ReportCheck {
@@ -178,148 +245,138 @@ export function ScoreResultsPage() {
 
   if (!run) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-      </div>
+      <ScoreSiteShell preview="none">
+        <div className="flex min-h-[40vh] items-center justify-center">
+          <Loader2 className="h-5 w-5 animate-spin text-[var(--score-muted)]" />
+        </div>
+      </ScoreSiteShell>
     );
   }
 
-  const toneClass =
-    run.outcome === "failed"
-      ? "text-red-400"
-      : run.outcome === "incomplete"
-      ? "text-amber-500"
-      : "text-green-500";
-
   return (
-    <div className="mx-auto flex h-full w-full max-w-3xl flex-col gap-6 overflow-y-auto px-6 py-10">
-      <header className="space-y-1">
-        <h1 className="text-2xl font-semibold">Conformance score</h1>
-        <p className="truncate text-sm text-muted-foreground">
-          {run.serverUrl}
-        </p>
-        <p className="text-xs text-muted-foreground">
-          Scanned {new Date(run.createdAt).toLocaleString()}
-        </p>
-      </header>
+    <ScoreSiteShell preview="none">
+      <div className="flex w-full flex-col gap-10">
+        <ScoreCard
+          kicker={`Overall · run ${formatRunDate(run.createdAt)}`}
+          server={displayHost(run.serverUrl)}
+          score={run.score === null ? "—" : String(run.score)}
+          rows={scoreCardRows(suites)}
+          segments={ledgerSegments(run, pendingTotal)}
+          footer={ledgerFooter(run)}
+        />
 
-      {run.score !== null && (
-        <div className="flex items-center gap-4 rounded-md border border-border/50 bg-muted/30 px-6 py-5">
-          <div className="text-6xl font-semibold leading-none tabular-nums">
-            {run.score}
-            <span className="ml-0.5 text-lg font-normal text-muted-foreground">
-              /100
-            </span>
-          </div>
-          <div className="min-w-0 space-y-0.5">
-            <div className={`text-sm font-medium ${toneClass}`}>
-              {run.outcome === "failed"
-                ? "Not conformant"
-                : run.outcome === "incomplete"
-                ? "Incomplete run"
-                : run.advisoryCount > 0
-                ? "Conformant, with advice"
-                : "Fully conformant"}
-            </div>
-            <div className="text-xs text-muted-foreground">
-              {describeStoredScore(run, pendingTotal)}
-              {run.notApplicable > 0
-                ? ` · ${run.notApplicable} not applicable`
-                : ""}
-            </div>
-          </div>
-        </div>
-      )}
+        <p className="text-[13px] leading-[18px] text-[var(--score-muted)]">
+          {describeStoredScore(run, pendingTotal)}
+          {run.notApplicable > 0
+            ? ` · ${run.notApplicable} not applicable`
+            : ""}
+        </p>
 
-      <div className="space-y-4">
-        {suites.map(({ suiteId, summary, checks, pending }) => (
-          <section
-            key={suiteId}
-            className="overflow-hidden rounded-md border border-border/50"
-          >
-            <div className="flex items-center justify-between gap-3 border-b border-border/40 bg-muted/20 px-4 py-2">
-              <div className="min-w-0">
-                <div className="text-sm font-medium">
-                  {SUITE_TITLES[suiteId]}
-                </div>
-                {summary && (
-                  <div className="truncate text-[11px] text-muted-foreground">
-                    {describeStoredScore(summary, pending)}
+        <div className="flex flex-col gap-6">
+          {suites.map(({ suiteId, summary, checks, pending }) => (
+            <section
+              key={suiteId}
+              className="overflow-hidden rounded-md border border-[var(--score-border)] bg-[var(--score-card)]"
+            >
+              <div className="flex items-center justify-between gap-3 border-b border-[var(--score-border)] px-4 py-3">
+                <div className="min-w-0">
+                  <div className="text-sm font-medium text-[var(--score-fg)]">
+                    {SUITE_TITLES[suiteId]}
                   </div>
+                  {summary && (
+                    <div className="truncate text-[11px] text-[var(--score-muted)]">
+                      {describeStoredScore(summary, pending)}
+                    </div>
+                  )}
+                </div>
+                {summary?.score !== null && summary?.score !== undefined && (
+                  <span className="shrink-0 font-[family-name:var(--font-score-mono)] text-sm font-semibold tabular-nums text-[var(--score-fg)]">
+                    {summary.score}
+                    <span className="text-[10px] font-normal text-[var(--score-muted)]">
+                      /100
+                    </span>
+                  </span>
                 )}
               </div>
-              {summary?.score !== null && summary?.score !== undefined && (
-                <span className="shrink-0 text-sm font-semibold tabular-nums">
-                  {summary.score}
-                  <span className="text-[10px] font-normal text-muted-foreground">
-                    /100
-                  </span>
-                </span>
-              )}
-            </div>
-            {checks.length > 0 ? (
-              <ul>
-                {checks.map((check, index) => (
-                  <li
-                    key={check.id ?? index}
-                    className="flex items-start gap-2 border-b border-border/30 px-4 py-2 last:border-b-0"
-                  >
-                    <CheckIcon status={check.status ?? "skipped"} />
-                    {check.pending ? (
-                      <span
-                        title="unscored by this run's profile"
-                        className="mt-0.5 shrink-0 rounded-sm border border-border/60 px-1 py-px text-[10px] leading-none text-muted-foreground"
-                      >
-                        unscored
-                      </span>
-                    ) : null}
-                    <div className="min-w-0">
-                      <div className="text-xs">
-                        {check.title ?? check.id ?? "check"}
+              {checks.length > 0 ? (
+                <ul>
+                  {checks.map((check, index) => (
+                    <li
+                      key={check.id ?? index}
+                      className="flex items-start gap-2 border-b border-[var(--score-border)] px-4 py-2 last:border-b-0"
+                    >
+                      <CheckIcon status={check.status ?? "skipped"} />
+                      {check.pending ? (
+                        <span
+                          title="unscored by this run's profile"
+                          className="mt-0.5 shrink-0 rounded-sm border border-[var(--score-border)] px-1 py-px text-[10px] leading-none text-[var(--score-muted)]"
+                        >
+                          unscored
+                        </span>
+                      ) : null}
+                      <div className="min-w-0">
+                        <div className="text-xs text-[var(--score-fg)]">
+                          {check.title ?? check.id ?? "check"}
+                        </div>
+                        {check.error?.message && (
+                          <div className="text-[11px] text-[#E8B4A8]">
+                            {check.error.message}
+                          </div>
+                        )}
+                        {!check.error?.message && check.skipReason && (
+                          <div className="text-[11px] text-[var(--score-muted)]">
+                            {check.skipReason}
+                          </div>
+                        )}
                       </div>
-                      {check.error?.message && (
-                        <div className="text-[11px] text-red-400">
-                          {check.error.message}
-                        </div>
-                      )}
-                      {!check.error?.message && check.skipReason && (
-                        <div className="text-[11px] text-muted-foreground">
-                          {check.skipReason}
-                        </div>
-                      )}
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <div className="px-4 py-3 text-[11px] text-muted-foreground">
-                This suite reported no individual checks.
-              </div>
-            )}
-          </section>
-        ))}
-      </div>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <div className="px-4 py-3 text-[11px] text-[var(--score-muted)]">
+                  This suite reported no individual checks.
+                </div>
+              )}
+            </section>
+          ))}
+        </div>
 
-      <div className="flex flex-wrap items-center gap-2">
-        <Button asChild size="sm">
-          <a href={`${APP_ORIGIN}/servers`}>Debug these failures in MCPJam</a>
-        </Button>
-        <Button asChild size="sm" variant="outline">
-          <a href={routePaths.embedScore}>Run your own scan</a>
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <a
+            href={`${APP_ORIGIN}/servers`}
+            className="inline-flex h-12 items-center rounded-sm bg-[var(--score-primary)] px-5 text-[15px] font-semibold text-[var(--score-primary-fg)]"
+          >
+            Debug these failures in MCPJam
+          </a>
+          <a
+            href={routePaths.embedScore}
+            className="inline-flex h-12 items-center rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-5 text-[15px] font-semibold text-[var(--score-primary)]"
+          >
+            Run your own scan
+          </a>
+        </div>
       </div>
-    </div>
+    </ScoreSiteShell>
   );
 }
 
 function CenteredNotice({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mx-auto flex h-full max-w-md flex-col items-center justify-center gap-3 px-6 text-center">
-      <h1 className="text-lg font-semibold">{title}</h1>
-      <p className="text-sm text-muted-foreground">{body}</p>
-      <Button asChild size="sm" variant="outline">
-        <a href={routePaths.embedScore}>Run your own scan</a>
-      </Button>
-    </div>
+    <ScoreSiteShell preview="none">
+      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-center">
+        <h1 className="font-[family-name:var(--font-score-display)] text-2xl font-extrabold tracking-[-0.04em] text-[var(--score-fg)]">
+          {title}
+        </h1>
+        <p className="max-w-md text-sm leading-6 text-[var(--score-muted)]">
+          {body}
+        </p>
+        <a
+          href={routePaths.embedScore}
+          className="inline-flex h-12 items-center rounded-sm border border-[var(--score-border)] bg-[var(--score-surface)] px-5 text-[15px] font-semibold text-[var(--score-primary)]"
+        >
+          Run your own scan
+        </a>
+      </div>
+    </ScoreSiteShell>
   );
 }

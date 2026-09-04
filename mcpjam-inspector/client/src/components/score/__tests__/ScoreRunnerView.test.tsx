@@ -181,7 +181,8 @@ describe("ScoreRunnerView", () => {
     expect(
       screen.getByRole("link", { name: "Debug these failures in MCPJam" }),
     ).toHaveAttribute("href", "https://app.mcpjam.com/servers");
-    expect(screen.getByText("84")).toBeInTheDocument();
+    expect(screen.queryByText("84")).not.toBeInTheDocument();
+    expect(screen.getByTestId("score-preview-plane")).toBeInTheDocument();
     expect(screen.queryByText("Reliability")).not.toBeInTheDocument();
   });
 

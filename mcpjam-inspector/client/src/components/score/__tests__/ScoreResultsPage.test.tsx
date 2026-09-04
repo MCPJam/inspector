@@ -137,6 +137,8 @@ describe("ScoreResultsPage pending profile stamp", () => {
 
     const scoredRow = screen.getByText("Initialize handshake").closest("li");
     expect(scoredRow).not.toHaveTextContent("unscored");
+    expect(screen.getByText("mcp.example.com")).toBeInTheDocument();
+    expect(screen.getByText("Overall · run 2023-11-14")).toBeInTheDocument();
   });
 
   it("renders a stamp-less legacy run unchanged — no pending clause, no unscored badge", async () => {
