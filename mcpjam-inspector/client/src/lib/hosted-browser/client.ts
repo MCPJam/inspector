@@ -14,6 +14,19 @@
  */
 
 export const HOSTED_BROWSER_BASE = "/api/web/computers/browser";
+
+/** Loopback is fine unencrypted; nothing leaves the machine. */
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+
+/** May a bearer capability be sent from this page's origin? */
+export function isSecureBrowserOrigin(location: {
+  protocol: string;
+  hostname: string;
+}): boolean {
+  return (
+    location.protocol === "https:" || LOOPBACK_HOSTS.has(location.hostname)
+  );
+}
 export const HOSTED_BROWSER_FRAMES_PATH = `${HOSTED_BROWSER_BASE}/frames`;
 
 /** Mints a fresh ~60s browser token. */
@@ -105,6 +118,17 @@ export function createBrowserTokenCache(mint: MintBrowserToken) {
     invalidate(): void {
       cached = null;
     },
+    /**
+     * Forget it only if it is still the one that was refused.
+     *
+     * What this stops: a burst of concurrent calls all receiving 401s for the
+     * SAME expired token, and each of them then evicting the replacement a
+     * sibling already minted — one mint per in-flight request instead of one
+     * per window, which is the whole point of the cache.
+     */
+    invalidateIf(token: string): void {
+      if (cached?.token === token) cached = null;
+    },
   };
 }
 
@@ -124,16 +148,21 @@ async function authorized(
   path: string,
   init: RequestInit = {},
 ): Promise<Response> {
-  const send = async () => {
+  const send = async (token: string) => {
     const headers = new Headers(init.headers);
-    headers.set("authorization", `Bearer ${await tokens.get()}`);
+    headers.set("authorization", `Bearer ${token}`);
     if (init.body) headers.set("content-type", "application/json");
     return fetch(`${HOSTED_BROWSER_BASE}${path}`, { ...init, headers });
   };
-  const first = await send();
+  const presented = await tokens.get();
+  const first = await send(presented);
   if (first.status !== 401) return first;
-  tokens.invalidate();
-  return send();
+  // Only if the token this call PRESENTED is still the cached one. Under a
+  // burst — input is twenty requests a second — several in-flight calls get
+  // their 401s at once, and an unconditional invalidate has each of them evict
+  // the fresh token a sibling just minted, mint another, and start again.
+  tokens.invalidateIf(presented);
+  return send(await tokens.get());
 }
 
 async function decode<T>(res: Response): Promise<T> {
@@ -183,12 +212,23 @@ export async function actOnHostedBrowserLease(
     body: JSON.stringify(args),
     ...(options.keepalive ? { keepalive: true } : {}),
   });
-  // 409 is "somebody else has it", which the route reports with the lease that
-  // explains why. Anything else is a real failure.
+  // 409 is USUALLY "somebody else has it", which the route reports with the
+  // lease that explains why — but the same status also means the browser
+  // stopped between the session read and this call, and that arrives with no
+  // lease at all. Reporting the second as the first tells the pane to wait for
+  // a hand-back from a browser that is gone.
   if (res.status === 409) {
     const body = (await res.json().catch(() => null)) as {
       lease?: HostedBrowserLease;
+      error?: string;
     } | null;
+    if (body?.error === "no_browser_session") {
+      throw new HostedBrowserError(
+        "The browser stopped.",
+        409,
+        "no_browser_session",
+      );
+    }
     return {
       took: false,
       lease: body?.lease ?? { state: "unknown" },
@@ -240,6 +280,15 @@ export function openHostedBrowserFrameStream(args: {
   tabId?: string;
 }): { socket: WebSocket; close(): void } {
   const url = new URL(HOSTED_BROWSER_FRAMES_PATH, window.location.origin);
+  // The token rides the subprotocol and the body is a live picture of a
+  // signed-in browser; neither crosses an unencrypted non-loopback hop. The
+  // local pane's opener refuses the same way, and hosted deployments are https
+  // — this is for the self-hosted case that is not.
+  if (!isSecureBrowserOrigin(window.location)) {
+    throw new Error(
+      "The hosted browser view needs https (or a loopback address).",
+    );
+  }
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (args.tabId) url.searchParams.set("tabId", args.tabId);
   const socket = new WebSocket(url.toString(), [args.token]);

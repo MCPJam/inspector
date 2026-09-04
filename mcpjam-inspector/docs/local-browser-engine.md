@@ -28,16 +28,16 @@ model ──► browser_* tools ──► SessionClient ──► browserd stack
 
 ### Pieces
 
-| Concern                                | Where                                                      |
-| -------------------------------------- | ---------------------------------------------------------- |
-| Session lifecycle, profiles, idle reap | `server/services/browserd/local/local-browser-session.ts`  |
-| The daemon without a socket            | `server/services/browserd/in-process-client.ts`            |
-| One decoder for both transports        | `server/services/browserd/browserd-codec.ts`               |
-| Screencast + input over CDP            | `server/services/browserd/daemon/viewport.ts`              |
-| Engine resolution                      | `server/utils/built-in-tools/registry.ts` (browser branch) |
-| Routes                                 | `server/routes/mcp/computers.ts` (`/local-browser/*`)      |
-| Frame socket                           | `server/routes/web/local-browser-frames.ts`                |
-| Rail pane                              | `client/src/components/browser/LocalBrowserBody.tsx`       |
+| Concern                                | Where                                                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Session lifecycle, profiles, idle reap | `server/services/browserd/local/local-browser-session.ts`                                                     |
+| The daemon without a socket            | `server/services/browserd/in-process-client.ts`                                                               |
+| One decoder for both transports        | `server/services/browserd/browserd-codec.ts`                                                                  |
+| Screencast + input over CDP            | `server/services/browserd/daemon/viewport.ts`                                                                 |
+| Engine resolution                      | `server/utils/built-in-tools/registry.ts` (browser branch)                                                    |
+| Routes                                 | `server/routes/mcp/computers.ts` (`/local-browser/*`)                                                         |
+| Frame socket                           | `server/routes/web/local-browser-frames.ts`                                                                   |
+| Rail pane                              | `client/src/components/browser/BrowserPaneSurface.tsx`, with `LocalBrowserBody.tsx` / `HostedBrowserBody.tsx` |
 
 ## Trust model
 

@@ -282,7 +282,10 @@ export function createComputerBrowserFramesWsHandler(
           // anything worth paying for.
           void touchSession({ sessionId: live.sessionId, kind: "panel" })
             .then(({ counted }) => {
-              if (!counted) return;
+              // `closed` FIRST: this continuation can land after the pane hung
+              // up, and touching then keeps a computer awake for a socket that
+              // is gone.
+              if (closed || !counted) return;
               if (!shouldTouchActivity(live.computerId)) return;
               void touchActivity({ computerId: live.computerId }).catch(
                 () => {},

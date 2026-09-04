@@ -72,6 +72,56 @@ const LEASE_TTL_MS = 2 * 60_000;
  */
 const INPUT_BATCH_LIMIT = 64;
 
+/**
+ * Is this actually an input event?
+ *
+ * The cast alone let anything through: the daemon's dispatcher ignores a type
+ * it does not recognise, so a batch of nonsense came back 200 having done
+ * nothing — and was then counted as REAL USE, which is what defers the idle
+ * sweep on a metered machine. A caller with a valid token could hold a box
+ * awake indefinitely without touching the browser at all.
+ *
+ * Deliberately shape-only. What the coordinates MEAN is the daemon's business;
+ * this just refuses to call something an event when it has no type, or a type
+ * with none of the fields that type needs.
+ */
+function isInputEvent(value: unknown): value is ViewportInputEvent {
+  if (typeof value !== "object" || value === null) return false;
+  const event = value as Record<string, unknown>;
+  const xy =
+    typeof event.x === "number" &&
+    Number.isFinite(event.x) &&
+    typeof event.y === "number" &&
+    Number.isFinite(event.y);
+  switch (event.type) {
+    case "mouse_move":
+      return xy;
+    case "mouse_down":
+    case "mouse_up":
+      return (
+        xy &&
+        (event.button === "left" ||
+          event.button === "middle" ||
+          event.button === "right")
+      );
+    case "wheel":
+      return (
+        xy &&
+        typeof event.deltaX === "number" &&
+        Number.isFinite(event.deltaX) &&
+        typeof event.deltaY === "number" &&
+        Number.isFinite(event.deltaY)
+      );
+    case "key_down":
+    case "key_up":
+      return typeof event.key === "string" && event.key.length > 0;
+    case "text":
+      return typeof event.text === "string";
+    default:
+      return false;
+  }
+}
+
 type Claims = { userId: string; computerId: string; projectId: string };
 
 type AuthFailure = { status: 401 | 503; error: string };
@@ -372,25 +422,38 @@ export function createComputerBrowserPanelRoutes(
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
     const { computerId, userId } = auth.claims;
 
-    let body: { events?: unknown; tabId?: unknown };
-    try {
-      body = (await c.req.json()) as typeof body;
-    } catch {
-      return c.json({ ok: false, error: "Expected a JSON body." }, 400);
+    // `null` is VALID JSON, so `c.req.json()` resolves rather than throwing —
+    // and `body.events` on it then threw a TypeError that escaped every try
+    // below and surfaced as a 500 for what is plainly a bad request.
+    const parsed: unknown = await c.req.json().catch(() => undefined);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return c.json({ ok: false, error: "Expected a JSON object." }, 400);
     }
+    const body = parsed as { events?: unknown; tabId?: unknown };
     // Sliced rather than refused, matching the local route: the daemon caps at
     // the same number and is the enforcement point, since it is reachable on
     // its own public host and a cap that lives only here is one an attacker
     // skips.
-    const events = Array.isArray(body.events)
-      ? (body.events as ViewportInputEvent[]).slice(0, INPUT_BATCH_LIMIT)
+    const batch = Array.isArray(body.events)
+      ? body.events.slice(0, INPUT_BATCH_LIMIT)
       : [];
-    if (events.length === 0) {
+    if (batch.length === 0) {
       return c.json(
         { ok: false, error: "At least one event is required." },
         400,
       );
     }
+    // Refused whole rather than filtered: dropping the bad ones would deliver
+    // a batch that is missing, say, the `mouse_up` of a drag, and the page
+    // would be left holding a button down with nothing to say why.
+    if (!batch.every(isInputEvent)) {
+      return c.json({ ok: false, error: "invalid_input" }, 400);
+    }
+    const events = batch as ViewportInputEvent[];
 
     try {
       const session = await currentSession(computerId);
@@ -414,14 +477,20 @@ export function createComputerBrowserPanelRoutes(
         // Passed through by name rather than collapsed into 423, because 423
         // means "somebody else has this browser" and answering it to a batch
         // that was merely malformed or oversized would send a pane looking for
-        // a lease holder who does not exist. Anything the daemon can answer
-        // that is not one of these IS a lease refusal.
+        // a lease holder who does not exist.
+        //
+        // And ONLY the daemon's own 423 becomes a 423. Everything else it can
+        // answer — a 401 because the stored bearer no longer matches the boot,
+        // a 500, an origin refusal — is an upstream failure, and dressing one
+        // up as a lease refusal tells the pane to wait for a hand-back from a
+        // holder who does not exist, forever.
         const status =
           outcome.status === 400 ||
           outcome.status === 404 ||
-          outcome.status === 413
+          outcome.status === 413 ||
+          outcome.status === 423
             ? outcome.status
-            : 423;
+            : 502;
         return c.json({ ok: false, error: outcome.error }, status);
       }
       // A person typing is REAL USE, and `kind: "command"` says so. The panel

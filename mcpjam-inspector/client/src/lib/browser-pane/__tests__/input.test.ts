@@ -258,3 +258,50 @@ describe("input the browser must not receive", () => {
     expect(batches.flat()).toHaveLength(101);
   });
 });
+
+describe("a scroll that outlived the gesture", () => {
+  it("SUMS adjacent wheels instead of replaying them one at a time", async () => {
+    // Each wheel is a DELTA, so it cannot be dropped like a superseded move —
+    // but queueing them individually means the page goes on scrolling long
+    // after the person stopped, by however long the queue was. Summed, the
+    // distance is exact and arrives as one movement.
+    const batches: unknown[][] = [];
+    let release: (() => void) | null = null;
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push(events);
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    });
+
+    forwarder.push([{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 }]);
+    // The first is in flight; the rest of the gesture piles up behind it.
+    for (let i = 0; i < 5; i += 1) {
+      forwarder.push([{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 }]);
+    }
+    release?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toEqual([
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 50 },
+    ]);
+  });
+
+  it("keeps a zoom apart from a scroll, and a move in between", () => {
+    // Ctrl+wheel is a zoom. Merging it into a scroll would zoom by the
+    // scroll's distance, and merging across a press would move the page under
+    // a click that had already landed.
+    const batches: unknown[][] = [];
+    const forwarder = createInputForwarder(async (events) => {
+      batches.push(events);
+    });
+    forwarder.push([
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 },
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10, modifiers: 2 },
+      { type: "mouse_down", x: 5, y: 5, button: "left" },
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 },
+    ]);
+    expect(batches[0]).toHaveLength(4);
+  });
+});

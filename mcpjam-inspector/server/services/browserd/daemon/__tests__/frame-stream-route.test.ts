@@ -207,6 +207,7 @@ describe("GET /v1/frames", () => {
     // bearing: a streaming response never finishes, so Node's dump never
     // fires for it.
     const socket = connect(Number(new URL(base).port), "127.0.0.1");
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const seen = new Promise<string>((resolve, reject) => {
       let buffer = "";
       socket.on("data", (chunk) => {
@@ -214,7 +215,7 @@ describe("GET /v1/frames", () => {
         if ((buffer.match(/HTTP\/1\.1 /g) ?? []).length >= 2) resolve(buffer);
       });
       socket.on("error", reject);
-      setTimeout(() => reject(new Error(`only got: ${buffer}`)), 4_000);
+      timer = setTimeout(() => reject(new Error(`only got: ${buffer}`)), 4_000);
     });
     await new Promise<void>((resolve) => socket.once("connect", resolve));
     socket.write(
@@ -223,8 +224,13 @@ describe("GET /v1/frames", () => {
         `GET /healthz HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`,
     );
 
-    const replies = await seen;
-    socket.destroy();
+    // Cleared and closed on EVERY path: a pending 4s timer holds the event
+    // loop after the success case, and a socket left open on the failure case
+    // is one `afterEach`'s `server.close()` then waits on.
+    const replies = await seen.finally(() => {
+      if (timer) clearTimeout(timer);
+      socket.destroy();
+    });
     expect(replies).toMatch(/HTTP\/1\.1 405/);
     expect(replies).toMatch(/HTTP\/1\.1 200/);
   });

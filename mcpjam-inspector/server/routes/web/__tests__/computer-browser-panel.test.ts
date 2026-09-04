@@ -482,6 +482,57 @@ describe("browser panel — forwarding a person's input", () => {
     expect(f.sendInput).not.toHaveBeenCalled();
   });
 
+  it("refuses a batch that is not input, rather than counting it as use", async () => {
+    // The daemon's dispatcher ignores a type it does not know, so nonsense
+    // came back 200 having done nothing — and was counted as REAL USE, which
+    // is what defers the idle sweep. A caller with a valid token could hold a
+    // metered box awake forever without touching the browser.
+    for (const bad of [
+      [{ type: "nonsense" }],
+      [{ type: "mouse_move", x: "10", y: 4 }],
+      [{ type: "mouse_down", x: 1, y: 1, button: "elbow" }],
+      [{ type: "key_down", key: "" }],
+      [null],
+      // One good event does not launder the batch it arrived in.
+      [{ type: "text", text: "a" }, { type: "nope" }],
+    ]) {
+      const f = build();
+      const res = await post(f, { events: bad });
+      expect(res.status).toBe(400);
+      expect(f.sendInput).not.toHaveBeenCalled();
+      expect(f.touchActivity).not.toHaveBeenCalled();
+    }
+  });
+
+  it("400s a null body instead of falling over on it", async () => {
+    // `null` is valid JSON, so the parse resolved and the read of `.events`
+    // threw a TypeError past every try below — a 500 for what is plainly a bad
+    // request.
+    const f = build();
+    const res = await f.call("/input", { method: "POST", body: "null" });
+    expect(res.status).toBe(400);
+    expect(f.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("does not dress an UPSTREAM failure up as a lease refusal", async () => {
+    // 423 tells a pane to wait for a hand-back. Answering it to a daemon that
+    // rejected our stored bearer sets the pane waiting on a holder who does
+    // not exist, forever.
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(async () => ({
+            ok: false as const,
+            status: 401,
+            error: "unauthorized",
+          })),
+        }) as never,
+    });
+    expect((await post(f, { events: EVENTS })).status).toBe(502);
+  });
+
   it("409s when no browser is running on that computer", async () => {
     const f = build({
       lookupSession: (async () => ({

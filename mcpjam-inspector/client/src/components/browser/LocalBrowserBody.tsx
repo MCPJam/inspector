@@ -184,6 +184,16 @@ export function LocalBrowserBody({
    * the only thing that tells them apart.
    */
   const railGeneration = useRef(0);
+  // CONSENT REVOKED IS A PRIVACY BOUNDARY, and the surface cannot enforce it:
+  // it renders the picture whenever there is one, so a placeholder alone left
+  // the last captured frame of somebody's signed-in browser on screen after
+  // the grant was withdrawn. The socket does close on its own — its nonce
+  // carries a consent fingerprint — but not before the next frame, and never
+  // for the one already in state.
+  useEffect(() => {
+    if (!consentGranted) setFrame(null);
+  }, [consentGranted]);
+
   useEffect(() => {
     if (projectRef.current === projectId) return;
     projectRef.current = projectId;
@@ -463,7 +473,9 @@ export function LocalBrowserBody({
 
   return (
     <BrowserPaneSurface
-      frame={frame}
+      // Gated as well as cleared: a frame that lands in the same tick as the
+      // revocation must not be the one that gets painted.
+      frame={consentGranted ? frame : null}
       holding={holding}
       control={control}
       // Offered only when there is a browser to take and nobody has it. A

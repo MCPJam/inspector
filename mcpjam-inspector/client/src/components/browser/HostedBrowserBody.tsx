@@ -119,6 +119,15 @@ export function HostedBrowserBody({
 
   const activeRef = useRef(active);
   activeRef.current = active;
+  /**
+   * The hold, readable from a cleanup that must not re-run when it changes.
+   *
+   * The teardown below has to know whether this pane still holds the browser,
+   * but must fire only when the pane GOES AWAY — depending on `holding`
+   * directly would send a second hand-back after every ordinary one.
+   */
+  const holdingRef = useRef(holding);
+  holdingRef.current = holding;
 
   /**
    * One token cache per project.
@@ -142,6 +151,10 @@ export function HostedBrowserBody({
    */
   const generation = useRef(0);
   useEffect(() => {
+    // Captured, not read from a ref: by the time this cleanup runs, a ref
+    // assigned during render already holds the NEXT project's cache, and
+    // releasing with that would name a different computer.
+    const mine = tokens;
     generation.current += 1;
     setSession(null);
     setLease({ state: "unknown" });
@@ -151,16 +164,58 @@ export function HostedBrowserBody({
     setNotice(null);
     setUnavailable(null);
     tokenRetriesRef.current = 0;
-  }, [projectId]);
+    return () => {
+      // HAND THE BROWSER BACK ON THE WAY OUT. `pagehide` covers the tab
+      // closing; it does not cover this component being unmounted — which the
+      // rail does on every engine switch — or the project changing under it.
+      // Either left the lease held, and a held lease that stops being
+      // heartbeaten PARKS rather than frees, on purpose. So the agent stayed
+      // blocked on a browser nobody was watching, with no pane left that was
+      // allowed to hand it back: only the holder may, and the holder was gone.
+      if (!holdingRef.current || !mine) return;
+      void actOnHostedBrowserLease(
+        mine,
+        { action: "resume" },
+        { keepalive: true },
+      ).catch(() => {});
+    };
+    // `tokens` changes only when `projectId` does, so this still runs once per
+    // project — it is in the list because the cleanup closes over it.
+  }, [projectId, tokens]);
+
+  /**
+   * Which read of THIS browser is the latest.
+   *
+   * `generation` tells one browser from another; it cannot tell two reads of
+   * the same one apart. Two are easy to have in flight at once — the mount
+   * read, the one a 4409 triggers, the one a tab switch triggers — and the
+   * slower of them lands last, overwriting a newer lease with an older one.
+   * The window is small and the answer it leaves is "somebody else has
+   * control" over a browser that is free.
+   */
+  const readSerial = useRef(0);
+  /**
+   * Does this pane's idea of the lease predate something it could not see?
+   *
+   * A 4409 tells us somebody took the browser; NOTHING tells us they handed it
+   * back. The pane reconnects every few seconds and eventually succeeds, but
+   * `lease.state` is still whatever it was when they took it — so "Take
+   * control" never comes back and the header goes on naming a holder who left,
+   * until the tab is reloaded. A frame arriving after a refusal is the proof
+   * the refusal is over, and the moment to ask again.
+   */
+  const leaseIsStale = useRef(false);
 
   /** Read the row without starting anything. */
   const refresh = useCallback(
     async (options: { ensure?: boolean } = {}) => {
       if (!tokens) return;
       const mine = generation.current;
+      const serial = (readSerial.current += 1);
       try {
         const next = await fetchHostedBrowserSession(tokens, options);
-        if (generation.current !== mine) return;
+        if (generation.current !== mine || readSerial.current !== serial)
+          return;
         // BY IDENTITY, because the socket effect keys off this object.
         //
         // A fresh one for an unchanged row RECONNECTS, and it does so out of
@@ -186,7 +241,8 @@ export function HostedBrowserBody({
         setUnavailable(null);
         setError(null);
       } catch (cause) {
-        if (generation.current !== mine) return;
+        if (generation.current !== mine || readSerial.current !== serial)
+          return;
         if (cause instanceof HostedBrowserError && cause.status === 409) {
           // No browser on this computer yet — an offer, not a failure.
           setSession(null);
@@ -206,6 +262,9 @@ export function HostedBrowserBody({
 
   const open = useCallback(async () => {
     setBusy(true);
+    // A new browser has no history for the last one's notice to describe.
+    setNotice(null);
+    leaseIsStale.current = false;
     try {
       // `ensure` ATTACHES to a browser this computer can already run; it never
       // reserves, so opening a pane cannot provision a machine.
@@ -251,6 +310,12 @@ export function HostedBrowserBody({
             // picture is back and the message is no longer true.
             tokenRetriesRef.current = 0;
             setNotice(null);
+            if (leaseIsStale.current) {
+              // Frames are flowing again, so whoever was holding the browser
+              // is not holding it any more. Nothing else says so.
+              leaseIsStale.current = false;
+              void refresh();
+            }
           }
         } catch {
           // Not our protocol.
@@ -281,6 +346,8 @@ export function HostedBrowserBody({
           setNotice(
             "Somebody else has taken control of this browser. The view will resume when they hand it back.",
           );
+          // Their hand-back arrives as nothing at all — see `leaseIsStale`.
+          leaseIsStale.current = true;
           void refresh();
           retry = setTimeout(() => {
             if (!closed) setStreamAttempt((n) => n + 1);
@@ -306,9 +373,13 @@ export function HostedBrowserBody({
         }
         if (event.code === CLOSE_NOT_FOUND) {
           // The browser stopped. Offer to open one rather than retrying at a
-          // machine that has nothing to show.
+          // machine that has nothing to show — and drop whatever the last
+          // close said, since "somebody else has control" over an offer to
+          // start a browser is a sentence about a session that is gone.
           setSession(null);
           setHolding(false);
+          setNotice(null);
+          leaseIsStale.current = false;
           return;
         }
         // A drop. Reconnect.
@@ -368,9 +439,19 @@ export function HostedBrowserBody({
   useEffect(() => {
     if (!holding || !tokens) return;
     const timer = setInterval(() => {
-      void actOnHostedBrowserLease(tokens, { action: "heartbeat" }).catch(
-        () => {},
-      );
+      const mine = generation.current;
+      // THE ANSWER MATTERS. A heartbeat can be refused — the lease expired
+      // into `parked` and somebody else took it, or the browser relaunched —
+      // and throwing that away left the pane offering input and a Hand back
+      // against a lease the server no longer recognises. Every keystroke then
+      // goes nowhere and the person cannot tell why.
+      void actOnHostedBrowserLease(tokens, { action: "heartbeat" })
+        .then((outcome) => {
+          if (generation.current !== mine) return;
+          setLease(outcome.lease);
+          setHolding(outcome.yours);
+        })
+        .catch(() => {});
     }, LEASE_HEARTBEAT_MS);
     return () => clearInterval(timer);
   }, [holding, tokens]);

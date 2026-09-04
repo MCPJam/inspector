@@ -106,7 +106,14 @@ function RightRailTabbed({
   // one would be showing something nothing can use. The engine decides which
   // BODY goes in it, not whether the tab exists — both engines have a browser,
   // and the tab vanishing on an engine switch was a rail that looked broken.
-  const hasBrowser = Boolean(hostConfig?.builtInToolIds?.includes("browser"));
+  // The hosted body additionally needs a signed-in user: every one of its
+  // calls carries a minted browser token, so before authentication is ready it
+  // can only fail — and it would fail into an "unreachable" state with nothing
+  // to retry it once auth arrives. The Shell's cloud body gates the same way.
+  const hasBrowser = Boolean(
+    hostConfig?.builtInToolIds?.includes("browser") &&
+    (engine.selectedEngine === "local" || isAuthenticated),
+  );
   // Which body. Follows `selectedEngine` like the Shell above, so someone who
   // picked "This machine" but has not authorized it yet sees the local body's
   // pointer rather than a cloud browser they did not ask for.

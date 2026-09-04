@@ -99,6 +99,56 @@ describe("the pane surface — before the first frame", () => {
   });
 });
 
+describe("the pane surface — text that has no keystrokes", () => {
+  /** The keyboard wrapper, which is what carries these handlers. */
+  const pane = () => image().parentElement as HTMLElement;
+
+  it("carries a PASTE as text, since the sandbox shares no clipboard", () => {
+    // `Ctrl+V` forwarded as a key pair asks the PAGE to paste from a clipboard
+    // it cannot see, so nothing arrived at all.
+    const { onInput } = renderSurface();
+    fireEvent.paste(pane(), {
+      clipboardData: { getData: () => "hunter2" },
+    });
+    expect(onInput).toHaveBeenCalledWith([{ type: "text", text: "hunter2" }]);
+  });
+
+  it("carries a composed character, and not the keys that built it", () => {
+    // Between compositionstart and compositionend the keydowns are building a
+    // character rather than typing one. Forwarding them puts the raw Latin
+    // keystrokes of a Japanese entry into the page and the composed text on
+    // top of them.
+    const { onInput } = renderSurface();
+    fireEvent.compositionStart(pane());
+    fireEvent.keyDown(pane(), { key: "n" });
+    fireEvent.keyDown(pane(), { key: "i" });
+    expect(onInput).not.toHaveBeenCalled();
+
+    fireEvent.compositionEnd(pane(), { data: "に" });
+    expect(onInput).toHaveBeenCalledWith([{ type: "text", text: "に" }]);
+    expect(onInput).toHaveBeenCalledTimes(1);
+  });
+
+  it("pastes nothing into a browser it does not hold", () => {
+    const { onInput } = renderSurface({ holding: false, control: "other" });
+    fireEvent.paste(pane(), { clipboardData: { getData: () => "secret" } });
+    fireEvent.compositionEnd(pane(), { data: "に" });
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
+  it("leaves a keyboard user a way back to Hand back", () => {
+    // Taking control moves focus into the pane and every key then goes to the
+    // page — Tab included, which the page legitimately wants. Without an
+    // escape a keyboard user could not reach the button that hands it back.
+    renderSurface({ onHandBack: () => {} });
+    const el = pane();
+    el.focus();
+    expect(document.activeElement).toBe(el);
+    fireEvent.keyDown(el, { key: "Escape", shiftKey: true });
+    expect(document.activeElement).not.toBe(el);
+  });
+});
+
 describe("the pane surface — a hold that ends", () => {
   it("FORGETS a drag when the lease goes, so the next press is not its tail", () => {
     // A revoked hold cannot send the release — the server would refuse it —
@@ -131,6 +181,37 @@ describe("the pane surface — a hold that ends", () => {
     // Off the page entirely. Mid-drag this would be clamped and delivered;
     // with the drag forgotten it is dropped, which is what a click nobody
     // aimed deserves.
+    fireEvent.mouseMove(image(), { clientX: 5_000, clientY: 5_000 });
+    expect(onInput).not.toHaveBeenCalled();
+  });
+
+  it("does not SEED a drag from a press it refused to send", () => {
+    // A press while the agent is driving sends nothing either way. Recording
+    // the button anyway left this pane believing a drag was in progress, so
+    // the first move after taking control was clamped onto the page as the
+    // continuation of a drag whose press the page never saw — a click landing
+    // somewhere nobody aimed.
+    const onInput = vi.fn();
+    const view = render(
+      <BrowserPaneSurface
+        frame={FRAME}
+        holding={false}
+        control="agent"
+        onInput={onInput}
+      />,
+    );
+    fireEvent.mouseDown(image(), { clientX: 10, clientY: 10, button: 0 });
+
+    view.rerender(
+      <BrowserPaneSurface
+        frame={FRAME}
+        holding
+        control="you"
+        onInput={onInput}
+      />,
+    );
+    onInput.mockClear();
+    // Off the picture entirely: dropped unless a drag is in flight.
     fireEvent.mouseMove(image(), { clientX: 5_000, clientY: 5_000 });
     expect(onInput).not.toHaveBeenCalled();
   });

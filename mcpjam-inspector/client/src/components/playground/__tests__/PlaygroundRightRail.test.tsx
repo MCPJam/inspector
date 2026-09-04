@@ -417,6 +417,24 @@ describe("PlaygroundRightRail — the Browser tab", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("offers no hosted browser before there is a signed-in user to mint for", () => {
+    // Every hosted call carries a minted browser token. Mounted before auth is
+    // ready the pane can only fail — into an "unreachable" state with nothing
+    // to retry it once auth arrives.
+    engineState.engine = "cloud";
+    engineState.selectedEngine = "cloud";
+    render(
+      <PlaygroundRightRail
+        onClose={() => {}}
+        hostConfig={browserHost}
+        hostId="host-1"
+        projectId="proj-1"
+        isAuthenticated={false}
+      />,
+    );
+    expect(screen.queryByTestId("browser-pane")).not.toBeInTheDocument();
+  });
+
   it("keeps a hidden hosted pane from claiming somebody is watching", () => {
     // On the hosted engine that claim keeps a METERED box awake, and the
     // person pays for a picture nobody has on screen.

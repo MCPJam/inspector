@@ -161,7 +161,37 @@ export function createInputForwarder(
   return {
     push(events: BrowserInputEvent[]) {
       if (cancelled || events.length === 0) return;
-      queue.push(...events);
+      for (const event of events) {
+        // WHEELS ADD UP; they do not queue.
+        //
+        // A move that another move replaces is dropped (see `coalesceInput`),
+        // because only the position matters. A wheel is the opposite: each one
+        // is a DELTA, so dropping any of them loses distance and replaying
+        // them one at a time makes the page go on scrolling long after the
+        // person stopped — a spin that outlives the gesture by however long
+        // the queue was. Summing adjacent deltas keeps the distance exact and
+        // delivers it as one movement.
+        //
+        // Only adjacent ones, and only with the same modifiers: Ctrl+wheel is
+        // a zoom, not a scroll, and merging across a click would move the page
+        // under a press that had already landed.
+        const previous = queue[queue.length - 1];
+        if (
+          event.type === "wheel" &&
+          previous?.type === "wheel" &&
+          event.modifiers === previous.modifiers &&
+          event.x === previous.x &&
+          event.y === previous.y
+        ) {
+          queue[queue.length - 1] = {
+            ...event,
+            deltaX: previous.deltaX + event.deltaX,
+            deltaY: previous.deltaY + event.deltaY,
+          };
+          continue;
+        }
+        queue.push(event);
+      }
       flush();
     },
     /** Drop what is queued and refuse more. Not reusable afterwards. */

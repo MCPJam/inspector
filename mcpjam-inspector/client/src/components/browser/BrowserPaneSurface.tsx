@@ -115,6 +115,15 @@ export function BrowserPaneSurface({
    * while a left-release it never saw goes somewhere else.
    */
   const draggingRef = useRef<"left" | "middle" | "right" | null>(null);
+  /**
+   * Is an IME composing right now?
+   *
+   * Between `compositionstart` and `compositionend` the browser fires keydowns
+   * for keys that are building a character rather than typing one — forwarding
+   * them puts the raw Latin keystrokes of a Japanese or Chinese entry into the
+   * page and then the composed text on top.
+   */
+  const composingRef = useRef(false);
 
   // Taking control moves the KEYBOARD, not just the lease: the click that
   // acquired it left focus on the button, so everything typed afterwards went
@@ -185,6 +194,13 @@ export function BrowserPaneSurface({
             ]);
         }}
         onMouseDown={(event) => {
+          // BEFORE the drag state is seeded, not just before the send. A press
+          // while the agent is driving sends nothing either way — `send` drops
+          // it — but recording the button anyway leaves this pane believing a
+          // drag is in progress. Take control afterwards and the next move or
+          // release off the picture is CLAMPED onto the page as the
+          // continuation of a drag whose press the page never saw.
+          if (!holding) return;
           // A press that starts on a bar is still dropped: the page has
           // nothing there, and inventing a target clicks where nobody aimed.
           const point = pointAt(event);
@@ -281,8 +297,39 @@ export function BrowserPaneSurface({
         className="min-h-0 flex-1 px-3 pb-3 outline-none"
         // Keys go to the page only while this pane holds the browser.
         tabIndex={holding ? 0 : -1}
+        onPaste={(event) => {
+          // Paste has no keystrokes to replay. `Ctrl+V` forwarded as a key
+          // pair asks the PAGE to paste from a clipboard the sandbox does not
+          // share, so nothing arrived at all; the text has to travel itself.
+          if (!holding) return;
+          event.preventDefault();
+          const text = event.clipboardData?.getData("text");
+          if (text) send([{ type: "text", text }]);
+        }}
+        onCompositionStart={() => {
+          composingRef.current = true;
+        }}
+        onCompositionEnd={(event) => {
+          // The composed text, once — not the Latin keystrokes that built it.
+          composingRef.current = false;
+          if (!holding) return;
+          if (event.data) send([{ type: "text", text: event.data }]);
+        }}
         onKeyDown={(event) => {
           if (!holding) return;
+          // ESCAPE HATCH, and it has to be a key: taking control moves focus
+          // into this pane and every other key goes to the page, so a person
+          // navigating by keyboard had no way back to "Hand back" — including
+          // Tab, which the page legitimately wants. Shift+Escape leaves; a
+          // bare Escape still belongs to the page, which uses it for dialogs.
+          if (event.key === "Escape" && event.shiftKey) {
+            event.preventDefault();
+            paneRef.current?.blur();
+            return;
+          }
+          // While an IME is composing, the keydowns are building a character
+          // rather than typing one. `compositionend` delivers the result.
+          if (composingRef.current || event.key === "Process") return;
           event.preventDefault();
           // A printable character is inserted as TEXT: paste and IME
           // composition have no keystrokes to replay, and a key table that

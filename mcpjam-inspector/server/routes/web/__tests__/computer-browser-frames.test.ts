@@ -331,6 +331,29 @@ describe("browser frames socket — keeping the box awake", () => {
     vi.useRealTimers();
   });
 
+  it("does not touch a computer for a pane that hung up mid-touch", async () => {
+    // The session touch is a round trip, and the socket can close while it is
+    // in flight. Its continuation then reached a computer for a pane that is
+    // gone — one more minute of a metered box kept awake per disconnect.
+    let settle: (value: { counted: boolean }) => void = () => {};
+    const touchSession = vi.fn(
+      () =>
+        new Promise<{ counted: boolean }>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const f = build({
+      touchSession:
+        touchSession as unknown as BrowserFramesDeps["touchSession"],
+    });
+    const { events } = await f.connect();
+    (events.onClose as unknown as () => void)();
+    settle({ counted: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(f.touchActivity).not.toHaveBeenCalled();
+  });
+
   it("hangs up the daemon stream when the pane closes", async () => {
     // Otherwise the screencast and its encoder keep running on a box the agent
     // is still using, for a pane nobody has open.

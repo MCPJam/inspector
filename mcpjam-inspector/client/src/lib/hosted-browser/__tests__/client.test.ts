@@ -13,6 +13,7 @@ import {
   createBrowserTokenCache,
   fetchHostedBrowserSession,
   HostedBrowserError,
+  isSecureBrowserOrigin,
   sendHostedBrowserInput,
 } from "../client";
 
@@ -37,7 +38,14 @@ function stubFetch(...responses: Response[]) {
   const impl = vi.fn(
     async (url: string | URL | Request, init?: RequestInit) => {
       calls.push({ url: String(url), init: init ?? {} });
-      return responses[Math.min(next++, responses.length - 1)]!.clone();
+      // FAILS on an unexpected extra call rather than repeating the last
+      // answer. Repeating hid exactly the thing worth catching here: a client
+      // that retries when it should not.
+      const response = responses[next++];
+      if (!response) {
+        throw new Error(`unexpected request ${calls.length} to ${String(url)}`);
+      }
+      return response.clone();
     },
   );
   vi.stubGlobal("fetch", impl);
@@ -145,7 +153,12 @@ describe("an authorized call", () => {
     // A token rejected for some OTHER reason answers 401 every time; retrying
     // it in a loop would mint tokens against the same answer forever.
     const m = minter();
-    const { calls } = stubFetch(json(401, { error: "nope" }));
+    // TWO refusals queued, because the retry is the point: the stub now fails
+    // on an unexpected extra call, so this also pins that there is no third.
+    const { calls } = stubFetch(
+      json(401, { error: "nope" }),
+      json(401, { error: "nope" }),
+    );
     const cache = createBrowserTokenCache(m.mint);
     await expect(fetchHostedBrowserSession(cache)).rejects.toBeInstanceOf(
       HostedBrowserError,
@@ -159,6 +172,22 @@ describe("an authorized call", () => {
     await expect(
       sendHostedBrowserInput(cache, { events: [] }),
     ).rejects.toMatchObject({ status: 423, code: "lease_held" });
+  });
+});
+
+describe("what the origin has to be", () => {
+  it("refuses to send the token over a plaintext hop to another machine", () => {
+    // The token is a bearer capability and the socket carries a live picture
+    // of a signed-in browser. The local pane's opener refuses the same way.
+    expect(
+      isSecureBrowserOrigin({ protocol: "https:", hostname: "app.example" }),
+    ).toBe(true);
+    expect(
+      isSecureBrowserOrigin({ protocol: "http:", hostname: "localhost" }),
+    ).toBe(true);
+    expect(
+      isSecureBrowserOrigin({ protocol: "http:", hostname: "192.168.1.20" }),
+    ).toBe(false);
   });
 });
 
@@ -181,6 +210,16 @@ describe("changing who holds the browser", () => {
         yours: false,
       },
     );
+  });
+
+  it("tells a browser that STOPPED from a browser somebody else has", async () => {
+    // The same 409 carries both. Reported as a holder refusal, the second sets
+    // the pane waiting for a hand-back from a browser that is gone.
+    stubFetch(json(409, { ok: false, error: "no_browser_session" }));
+    const cache = createBrowserTokenCache(minter().mint);
+    await expect(
+      actOnHostedBrowserLease(cache, { action: "acquire" }),
+    ).rejects.toMatchObject({ code: "no_browser_session" });
   });
 
   it("carries the server's verdict on whether the lease is theirs", async () => {

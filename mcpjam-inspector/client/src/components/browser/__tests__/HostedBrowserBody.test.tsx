@@ -8,7 +8,7 @@
  * expires mid-view, and a metered box that must not be held awake for a
  * picture nobody is looking at.
  */
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -97,6 +97,15 @@ beforeEach(() => {
   api.mints = 0;
   api.invalidations = 0;
   api.sockets = [];
+});
+
+// Restored HERE rather than at the end of each test body: an assertion that
+// fails mid-test never reaches its own cleanup, and fake timers or a stubbed
+// visibility leaking into the next test turn one failure into a cascade that
+// hides which one was real.
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 const mintToken = async () => ({ token: "t", expiresAt: Date.now() + 60_000 });
@@ -306,17 +315,20 @@ describe("the hosted pane — the socket", () => {
     // token expiries, and each one is a refusal followed by a working
     // reconnect — so evidence the stream works has to clear the count, or a
     // long, healthy session eventually locks itself out.
+    //
+    // THREE, a frame, THREE, because the cap is five: without the reset that
+    // is six in a row and the pane gives up, so the assertion below can
+    // actually fail. Four refusals each followed by a frame — which is what
+    // this test used to do — never reaches five either way, and proved
+    // nothing.
     vi.useFakeTimers();
-    renderBody();
-    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
-
-    for (let i = 0; i < 4; i += 1) {
-      act(() => socket().onopen?.());
+    const refuse = async () => {
       act(() => socket().onclose?.({ code: 4401 }));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5_000);
       });
-      // The reconnect works: a frame is the only proof of that.
+    };
+    const frame = () =>
       act(() =>
         socket().onmessage?.({
           data: JSON.stringify({
@@ -327,15 +339,20 @@ describe("the hosted pane — the socket", () => {
               deviceHeight: 768,
               scale: 1,
               ts: 1,
-              seq: i,
+              seq: 1,
             },
           }),
         }),
       );
-    }
+
+    renderBody();
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+
+    for (let i = 0; i < 3; i += 1) await refuse();
+    frame();
+    for (let i = 0; i < 3; i += 1) await refuse();
 
     expect(screen.queryByText(/no longer authorized/)).toBeNull();
-    vi.useRealTimers();
   });
 
   it("does not wipe the take-control message with a background re-read", async () => {
@@ -356,6 +373,122 @@ describe("the hosted pane — the socket", () => {
       await Promise.resolve();
     });
     expect(screen.getByText(/Somebody else has taken control/)).toBeTruthy();
+  });
+});
+
+describe("the hosted pane — a lease that changes underneath it", () => {
+  it("asks again when the picture comes back after somebody else had it", async () => {
+    // A 4409 says they took it; NOTHING says they handed it back. Without
+    // this, the pane reconnects and shows frames again while still reporting
+    // "Someone else has control" with no way to take it — until a reload.
+    vi.useFakeTimers();
+    try {
+      api.session = {
+        ...RUNNING,
+        lease: { state: "held", holderKind: "human" },
+        yours: false,
+      };
+      renderBody();
+      await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+      act(() => socket().onclose?.({ code: 4409 }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+
+      // They hand it back, and the reconnected socket starts delivering.
+      api.session = { ...RUNNING, lease: { state: "free" }, yours: false };
+      act(() => {
+        socket().onmessage?.({
+          data: JSON.stringify({
+            type: "frame",
+            frame: {
+              data: "Zm9v",
+              deviceWidth: 1024,
+              deviceHeight: 768,
+              scale: 1,
+              ts: 2,
+              seq: 2,
+            },
+          }),
+        });
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(screen.getByText("The agent is driving")).toBeTruthy();
+      expect(screen.getByText("Take control")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops claiming a hold the server stopped renewing", async () => {
+    // A heartbeat can be refused — the hold parked and somebody else took it,
+    // or the browser relaunched. Ignoring the answer left the pane offering
+    // input and a Hand back against a lease the server no longer recognises,
+    // so every keystroke went nowhere with nothing to explain it.
+    vi.useFakeTimers();
+    try {
+      api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+      renderBody();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(screen.getByText("You have control")).toBeTruthy();
+
+      api.lease = {
+        took: false,
+        lease: { state: "held", holderKind: "human" },
+        yours: false,
+      };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(31_000);
+      });
+      expect(api.leaseCalls).toContain("heartbeat");
+      expect(screen.getByText("Someone else has control")).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a control notice the browser it described has outlived", async () => {
+    // "Somebody else has taken control" rendered over an offer to START a
+    // browser is a sentence about a session that no longer exists — and it
+    // reads as the reason the button is there.
+    vi.useFakeTimers();
+    try {
+      renderBody();
+      await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+      act(() => socket().onclose?.({ code: 4409 }));
+      expect(screen.getByText(/Somebody else has taken control/)).toBeTruthy();
+
+      api.sessionError = { status: 409 };
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4_000);
+      });
+      act(() => socket().onclose?.({ code: 4404 }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
+      expect(screen.getByTestId("hosted-browser-idle")).toBeTruthy();
+      expect(screen.queryByText(/Somebody else has taken control/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("HANDS THE BROWSER BACK when the pane goes away", async () => {
+    // `pagehide` covers the tab closing, not this component unmounting — which
+    // the rail does on every engine switch. A hold that stops being
+    // heartbeaten PARKS rather than frees, on purpose, so the agent stayed
+    // blocked on a browser nobody was watching, and only the holder may hand
+    // one back.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    const view = renderBody();
+    expect(await screen.findByText("You have control")).toBeTruthy();
+    api.leaseCalls = [];
+    view.unmount();
+    await waitFor(() => expect(api.leaseCalls).toEqual(["resume"]));
   });
 });
 
