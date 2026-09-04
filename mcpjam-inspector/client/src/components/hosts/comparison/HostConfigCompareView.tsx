@@ -77,6 +77,7 @@ import {
   demoteMcpjamHosts,
   dropPresetsShadowedByLiveHosts,
   isPresetHostId,
+  remapShadowedSelection,
 } from "./host-compare-presets";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
 import {
@@ -409,12 +410,19 @@ export function HostConfigCompareView({
       : parseHostsParam(searchParams.get(HOSTS_QUERY_PARAM));
     urlConsumedRef.current = true;
     setSelectedHostIds((previous) => {
+      // Point any selected preset at the live host that shadowed it BEFORE
+      // reconciling. A dropped preset is no longer selectable, so the default
+      // ChatGPT + Claude pair — or a selection stored before the user created
+      // the client — would otherwise reconcile the column away entirely.
+      // Owning the real client should upgrade that column, not delete it.
       const next = resolveInitialHostCompareSelection({
         projectId: selectionScopeId,
         liveHostIds: defaultHostIds,
         knownHostIds,
         previousSelection: previous,
         urlSelection,
+        remapSelection: (ids) =>
+          remapShadowedSelection(ids, liveHosts, subjectsByHost),
       });
       return sameStringArray(previous, next) ? previous : next;
     });
@@ -422,10 +430,12 @@ export function HostConfigCompareView({
     defaultHostIds,
     knownHostIds,
     listLoading,
+    liveHosts,
     presetOnly,
     projectId,
     searchParams,
     selectionScopeId,
+    subjectsByHost,
   ]);
 
   useEffect(() => {

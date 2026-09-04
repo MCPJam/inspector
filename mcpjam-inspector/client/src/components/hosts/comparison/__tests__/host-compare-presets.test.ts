@@ -10,6 +10,7 @@ import {
   demoteMcpjamHosts,
   dropPresetsShadowedByLiveHosts,
   isPresetHostId,
+  remapShadowedSelection,
   resolveCompareHostStyle,
 } from "../host-compare-presets";
 
@@ -289,5 +290,62 @@ describe("dropPresetsShadowedByLiveHosts", () => {
     const live = [{ hostId: "h_a", name: "Untitled thing" }];
     const presets = [{ hostId: `${PRESET_HOST_ID_PREFIX}claude`, name: "C" }];
     expect(dropPresetsShadowedByLiveHosts(live, presets)).toHaveLength(1);
+  });
+});
+
+describe("resolveCompareHostStyle signal order", () => {
+  it("prefers the list query's own hostStyle over subject and name", () => {
+    // The stored style is available for EVERY host, selected or not, which is
+    // what makes shadowing independent of selection.
+    expect(
+      resolveCompareHostStyle(
+        { hostId: "h_a", name: "Claude", hostStyle: "agentcore" },
+        { h_a: { hostStyle: "cursor" } },
+      ),
+    ).toBe("agentcore");
+  });
+
+  it("resolves an exact style name the hint table never lists", () => {
+    // `codex`, `agentcore` and `n8n` are absent from LOGO_NAME_HINTS; only the
+    // exact-name pass places them, and the logo resolver has always run both.
+    expect(resolveCompareHostStyle({ hostId: "h_a", name: "Codex" })).toBe(
+      "codex",
+    );
+    expect(resolveCompareHostStyle({ hostId: "h_b", name: "AgentCore" })).toBe(
+      "agentcore",
+    );
+  });
+});
+
+describe("remapShadowedSelection", () => {
+  const live = [{ hostId: "h_mine", name: "Claude", hostStyle: "claude" }];
+
+  it("points a selected preset at the live host that shadowed it", () => {
+    expect(
+      remapShadowedSelection(
+        [`${PRESET_HOST_ID_PREFIX}chatgpt`, `${PRESET_HOST_ID_PREFIX}claude`],
+        live,
+      ),
+    ).toEqual([`${PRESET_HOST_ID_PREFIX}chatgpt`, "h_mine"]);
+  });
+
+  it("leaves presets with no live counterpart alone", () => {
+    expect(
+      remapShadowedSelection([`${PRESET_HOST_ID_PREFIX}cursor`], live),
+    ).toEqual([`${PRESET_HOST_ID_PREFIX}cursor`]);
+  });
+
+  it("does not duplicate a live host already in the selection", () => {
+    expect(
+      remapShadowedSelection(
+        ["h_mine", `${PRESET_HOST_ID_PREFIX}claude`],
+        live,
+      ),
+    ).toEqual(["h_mine"]);
+  });
+
+  it("is a no-op when the user owns nothing", () => {
+    const selection = [`${PRESET_HOST_ID_PREFIX}claude`];
+    expect(remapShadowedSelection(selection, [])).toEqual(selection);
   });
 });

@@ -151,14 +151,26 @@ export function demoteMcpjamHosts<
  * uses, so what a row looks like and what it is treated as cannot disagree.
  */
 export function resolveCompareHostStyle(
-  host: Pick<HostListItem, "hostId"> & { name?: string },
+  host: Pick<HostListItem, "hostId"> & {
+    name?: string;
+    hostStyle?: string | null;
+  },
   subjectsByHost: Readonly<Record<string, { hostStyle?: string }>> = {},
 ): string | null {
   if (isPresetHostId(host.hostId)) {
     return host.hostId.slice(PRESET_HOST_ID_PREFIX.length);
   }
+  // The list query's own value, present for every host whether or not it is
+  // selected. This is what keeps the answer stable: reading the style from a
+  // loaded subject alone made it depend on selection, so a host named "Claude"
+  // but styled `agentcore` shadowed the Claude preset until you selected it,
+  // and stopped shadowing once you did.
+  if (host.hostStyle) return host.hostStyle;
   const style = subjectsByHost[host.hostId]?.hostStyle;
   if (style) return style;
+  // Last resort, for a backend too old to send `hostStyle`. Wrong for a host
+  // whose name does not match its style, which is precisely why it ranks below
+  // both real signals rather than above them.
   return host.name ? resolveHostStyleByName(host.name) : null;
 }
 
@@ -191,4 +203,48 @@ export function dropPresetsShadowedByLiveHosts<
   return presets.filter(
     (preset) => !covered.has(resolveCompareHostStyle(preset, subjectsByHost)!),
   );
+}
+
+/**
+ * Rewrite selected preset ids onto the live hosts that shadowed them.
+ *
+ * Dropping a preset the user already owns removes it from the selectable set,
+ * so any selection naming it — the ChatGPT + Claude default, or a stored one
+ * from before they created the client — reconciles it away and the column just
+ * disappears. The user asked to compare that client; owning a real one should
+ * upgrade the column, not delete it.
+ *
+ * Ids with no live counterpart pass through untouched, and a live host already
+ * in the selection does not get added twice.
+ */
+export function remapShadowedSelection<
+  T extends Pick<HostListItem, "hostId"> & {
+    name?: string;
+    hostStyle?: string | null;
+  },
+>(
+  selection: ReadonlyArray<string>,
+  liveHosts: ReadonlyArray<T>,
+  subjectsByHost: Readonly<Record<string, { hostStyle?: string }>> = {},
+): string[] {
+  const liveByStyle = new Map<string, string>();
+  for (const host of liveHosts) {
+    const style = resolveCompareHostStyle(host, subjectsByHost);
+    // First live host of a style wins, matching the order the chips render in.
+    if (style && !liveByStyle.has(style)) liveByStyle.set(style, host.hostId);
+  }
+  if (liveByStyle.size === 0) return [...selection];
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const hostId of selection) {
+    const style = isPresetHostId(hostId)
+      ? hostId.slice(PRESET_HOST_ID_PREFIX.length)
+      : null;
+    const mapped = (style && liveByStyle.get(style)) || hostId;
+    if (seen.has(mapped)) continue;
+    seen.add(mapped);
+    out.push(mapped);
+  }
+  return out;
 }

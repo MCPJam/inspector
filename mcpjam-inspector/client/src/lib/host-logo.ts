@@ -1,5 +1,8 @@
 import type { HostThemeMode } from "@/lib/client-styles";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import {
+  resolveHostLogoByDisplayName,
+  resolveHostStyleByDisplayName,
+} from "@/lib/scenario-client-style";
 import { getHostLogoSrc, UNKNOWN_HOST_LOGO } from "@/lib/host-ui-metadata";
 
 export { UNKNOWN_HOST_LOGO };
@@ -59,7 +62,10 @@ export function resolveHostStyleByName(name: string): string | null {
   for (const [pattern, hostId] of LOGO_NAME_HINTS) {
     if (pattern.test(name)) return hostId;
   }
-  return null;
+  // BOTH passes, in the same order the logo resolver runs them. The hint table
+  // alone misses every id it never listed — `codex`, `agentcore`, `n8n` — so a
+  // host named exactly "Codex" resolved to null and matched nothing.
+  return resolveHostStyleByDisplayName(name);
 }
 
 export function resolveHostLogoByName(

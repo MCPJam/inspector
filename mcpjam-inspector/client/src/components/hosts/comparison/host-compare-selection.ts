@@ -99,22 +99,37 @@ export function resolveInitialHostCompareSelection(args: {
    * when omitted (no presets in play).
    */
   knownHostIds?: ReadonlyArray<string>;
+  /**
+   * Rewrite ids before they are reconciled. Compare uses it to point a
+   * selected preset at the live host that shadowed it: owning the real client
+   * drops the preset from the selectable set, and without this every source
+   * below — url, storage, the previous selection, and the default pair —
+   * would silently lose that column instead of upgrading it.
+   *
+   * Applied to each source rather than to the result, because reconciling
+   * happens first and would already have discarded the id.
+   */
+  remapSelection?: (ids: ReadonlyArray<string>) => string[];
 }): string[] {
   const known = new Set(args.knownHostIds ?? args.liveHostIds);
+  const remap = args.remapSelection ?? ((ids) => [...ids]);
 
   if (args.urlSelection && args.urlSelection.length > 0) {
-    const fromUrl = reconcileHostCompareSelection(args.urlSelection, known);
+    const fromUrl = reconcileHostCompareSelection(
+      remap(args.urlSelection),
+      known,
+    );
     if (fromUrl.length > 0) return fromUrl;
   }
 
   const stored = readHostCompareSelection(args.projectId);
   if (stored) {
-    const fromStorage = reconcileHostCompareSelection(stored, known);
+    const fromStorage = reconcileHostCompareSelection(remap(stored), known);
     if (fromStorage.length > 0) return fromStorage;
   }
 
   const fromPrevious = reconcileHostCompareSelection(
-    args.previousSelection,
+    remap(args.previousSelection),
     known,
   );
   if (fromPrevious.length > 0) return fromPrevious;
@@ -123,7 +138,7 @@ export function resolveInitialHostCompareSelection(args: {
   // "all live hosts" — falls through to live hosts only if the catalog ever
   // stops offering those two preset ids.
   const fromDefaultPresets = reconcileHostCompareSelection(
-    DEFAULT_COMPARE_HOST_IDS,
+    remap(DEFAULT_COMPARE_HOST_IDS),
     known,
   );
   if (fromDefaultPresets.length > 0) return fromDefaultPresets;
