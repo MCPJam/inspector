@@ -12381,7 +12381,7 @@
           },
           "kind": {
             "type": ["string", "null"],
-            "enum": ["capability", "regression"],
+            "enum": ["capability", "regression", null],
             "description": "Authored case kind. Omitted leaves the stored value unchanged; null clears it."
           },
           "models": {
