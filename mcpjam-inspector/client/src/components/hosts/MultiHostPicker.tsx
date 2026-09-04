@@ -22,6 +22,7 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import { cn } from "@/lib/utils";
 import type { HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * MultiHostPicker — playground "Compare" affordance that lets the user
@@ -172,7 +173,7 @@ export function MultiHostPicker({
 
   const leadHostId = effectiveSelectedHostIds[0] ?? currentHostId ?? null;
   const leadHost = leadHostId ? (hostsById.get(leadHostId) ?? null) : null;
-  const leadHostName = leadHost?.name ?? "Select host";
+  const leadHostName = leadHost ? clientDisplayName(leadHost) : "Select host";
 
   // When NOT actively comparing (single-host, or multi-host enabled but
   // only the lead is selected), the navbar `HostOverlayBar` already
@@ -289,7 +290,10 @@ export function MultiHostPicker({
           {isActiveCompareMode ? (
             <p className="text-xs font-light text-muted-foreground">
               {effectiveSelectedHostIds
-                .map((id) => hostsById.get(id)?.name ?? id)
+                .map((id) => {
+                  const host = hostsById.get(id);
+                  return host ? clientDisplayName(host) : id;
+                })
                 .join(", ")}
             </p>
           ) : (
@@ -313,7 +317,7 @@ export function MultiHostPicker({
               {effectiveSelectedHostIds.map((hostId, index) => {
                 const host = hostsById.get(hostId);
                 const isLead = index === 0;
-                const name = host?.name ?? hostId;
+                const name = host ? clientDisplayName(host) : hostId;
                 return (
                   <button
                     key={hostId}
@@ -375,14 +379,16 @@ export function MultiHostPicker({
               const row = (
                 <CommandItem
                   key={host.hostId}
-                  value={`${host.name} ${host.hostId}`}
+                  value={`${clientDisplayName(host)} ${host.name} ${
+                    host.hostId
+                  }`}
                   onSelect={() => handleHostRowToggle(host.hostId)}
                   disabled={isDisabled}
                   className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
                   data-testid={`multi-host-row-${host.hostId}`}
                 >
                   <span className="min-w-0 flex-1 truncate text-sm">
-                    {compactHostLabel(host.name)}
+                    {compactHostLabel(clientDisplayName(host))}
                   </span>
                   <div
                     className={cn(

@@ -29,6 +29,22 @@ export type ProjectEnvironmentSkillVersionPin = {
   versionId: string;
 };
 
+/**
+ * Which PROJECT SECRETS a run launched from this environment receives.
+ *
+ * Ids only — the view carries no name and certainly no value. The environment
+ * is the GRANT BOUNDARY: absent means no secrets, and there is no "all of them"
+ * mode.
+ *
+ * No version pins, unlike `skillSelection`: a secret has exactly one current
+ * value, and pinning "the previous value" is the opposite of what rotation is
+ * for. `[]` is rejected by the backend — clearing means `null`.
+ */
+export type ProjectEnvironmentSecretSelection = {
+  mode: "explicit";
+  secretIds: string[];
+};
+
 export type ProjectEnvironmentSkillSelection = {
   mode: "explicit";
   skillIds: string[];
@@ -97,6 +113,13 @@ export interface ProjectEnvironmentView {
   modelId?: string;
   /** Additive standalone skill channel; absent ⇒ no env-channel skills. */
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   /**
    * Pinned plugin VERSION ids. Read-only from the client today — the editor
    * has no plugin-version picker yet, so edits must leave this field ABSENT
@@ -214,6 +237,13 @@ export function useCreateProjectEnvironment(): (args: {
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
   /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
+  /**
    * Pinned plugin versions. No editor control ships this yet; the argument
    * exists so the client mirror matches the backend contract. An empty array
    * is REJECTED by the backend — omit the field to mean "no pins".
@@ -250,6 +280,13 @@ export function useEnsureAdhocEnvironment(): (args: {
   hostId: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   computerEnvironmentId?: string;
   /** Explicit model override. Omit to inherit the client's model. */
   modelId?: string;
@@ -277,6 +314,13 @@ export function useEnsureAdhocEnvironments(): (args: {
     hostId: string;
     serverAttachmentId?: string | null;
     skillSelection?: ProjectEnvironmentSkillSelection | null;
+    /**
+     * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+     * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+     * to replace it. A form that does not render the picker must omit it —
+     * sending `null` would silently revoke a grant set through the API or CLI.
+     */
+    secretSelection?: ProjectEnvironmentSecretSelection | null;
     computerEnvironmentId?: string;
     /** Explicit model override. Omit to inherit the client's model. */
     modelId?: string;
@@ -344,6 +388,13 @@ export function useUpdateProjectEnvironment(): (args: {
   hostId?: string;
   serverAttachmentId?: string | null;
   skillSelection?: ProjectEnvironmentSkillSelection | null;
+  /**
+   * The environment's CREDENTIAL GRANT. Tri-state on writes like every other
+   * clearable field: OMIT to leave it untouched, `null` to REVOKE it, a value
+   * to replace it. A form that does not render the picker must omit it —
+   * sending `null` would silently revoke a grant set through the API or CLI.
+   */
+  secretSelection?: ProjectEnvironmentSecretSelection | null;
   /**
    * Tri-state, like the other clearable fields: OMIT to leave the pins
    * untouched, `null` to clear them. Since no editor can author pins yet,

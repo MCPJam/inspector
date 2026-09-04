@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { RunContextChip } from "../run-context-chip";
-import { envRun } from "./run-context-fixtures";
+import { envRun, hostRun } from "./run-context-fixtures";
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => true,
@@ -65,5 +65,18 @@ describe("RunContextChip model attribution", () => {
     renderChip({ modelLabel: "Gemini 2.5 Flash" });
     const label = screen.getByText("Gemini 2.5 Flash");
     expect(label).toHaveAttribute("title", "Gemini 2.5 Flash");
+  });
+
+  it("names the model next to a host chip, not only an environment chip", () => {
+    render(
+      <RunContextChip
+        run={hostRun("r-host", "host-1", {
+          effectiveModelId: "anthropic/claude-haiku-4.5",
+        })}
+        hostNamesById={new Map([["host-1", "Claude"]])}
+      />,
+    );
+    expect(screen.getByText("Claude")).toBeInTheDocument();
+    expect(screen.getByText("claude-haiku-4.5")).toBeInTheDocument();
   });
 });

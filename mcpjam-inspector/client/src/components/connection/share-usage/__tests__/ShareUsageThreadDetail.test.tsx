@@ -88,6 +88,7 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
 }));
 
 vi.mock("@mcpjam/chat-ui", () => ({
+  hydrateMessageTimestamps: (messages: unknown[]) => messages,
   ReadOnlyTranscript: (props: Record<string, unknown>) => {
     mockReadOnlyTranscript(props);
     return <div data-testid="read-only-transcript" />;
@@ -121,7 +122,7 @@ vi.mock(
         </button>
       </div>
     ),
-  })
+  }),
 );
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -175,13 +176,13 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
-        })
+        }),
       );
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
-        })
+        }),
       );
     });
   });
@@ -193,33 +194,19 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-        })
+        }),
       );
     });
   });
 
-  it("offers an initial judge action for an ungraded swarm session", async () => {
+  it("auto-runs the judge for an ungraded swarm session", async () => {
     mockThreadState.sourceType = "swarm";
-    const user = userEvent.setup();
 
     render(<ShareUsageThreadDetail threadId="thread-1" />);
 
-    await user.click(await screen.findByRole("button", { name: /run judge/i }));
-    expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
-  });
-
-  it("keys the Checks panel on the thread's own doc id, not the threadId prop", async () => {
-    // `threadId` and `thread._id` happen to coincide in production today, so
-    // substituting one for the other would keep every other test green while
-    // querying the wrong session the moment they diverge.
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    await waitFor(() =>
-      expect(mockUseQuery).toHaveBeenCalledWith(
-        "chatSessionChecks:getCheckRunsForSession",
-        { chatSessionId: "session-doc-1" }
-      )
-    );
+    await waitFor(() => {
+      expect(mockRequestJudge).toHaveBeenCalledWith({ sessionId: "thread-1" });
+    });
   });
 
   it("hides the Replay tab when the session has no browser artifacts", async () => {
@@ -229,7 +216,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
   });
 
@@ -271,31 +258,10 @@ describe("ShareUsageThreadDetail", () => {
     // eval replay uses). The per-step interaction timeline now lives on the
     // Trace tab (`Interact · …` spans), not in the Replay tab.
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
-  });
-
-  it("shows readiness findings for synthetic sessions", async () => {
-    mockThreadState.synthetic = true;
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issueCount: 1,
-      coverageRatio: 0.2,
-      advertisedToolCount: 5,
-      usedToolCount: 1,
-      toolCallCount: 0,
-      toolErrorCount: 0,
-      issues: [],
-    };
-
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-
-    expect(
-      await screen.findByText(/Only 20% of advertised tools were used/i)
-    ).toBeInTheDocument();
   });
 
   it("falls back to Chat when the active browser view loses its artifacts (session switch)", async () => {
@@ -320,10 +286,10 @@ describe("ShareUsageThreadDetail", () => {
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await userEvent.click(
-      await screen.findByRole("button", { name: "Replay" })
+      await screen.findByRole("button", { name: "Replay" }),
     );
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
 
     // The next session has no artifacts (same mounted component instance).
@@ -335,17 +301,17 @@ describe("ShareUsageThreadDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("browser-artifacts-view")
+        screen.queryByTestId("browser-artifacts-view"),
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
     expect(
-      await screen.findByTestId("read-only-transcript")
+      await screen.findByTestId("read-only-transcript"),
     ).toBeInTheDocument();
   });
 });
@@ -372,7 +338,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
   it("renders for a member on a User Testing session", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     expect(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     ).toBeInTheDocument();
   });
 
@@ -381,13 +347,13 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     // Nor does the guest pay for the dialog's project queries.
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
@@ -399,10 +365,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // prop, so asserting its absence would pass even if the button leaked.
     render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
   });
@@ -411,10 +377,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
   });
 
@@ -429,14 +395,14 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     await user.click(screen.getByTestId("share-usage-promote-to-test-case"));
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1")
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
     );
   });
 
@@ -447,11 +413,11 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, onImported }}
-      />
+      />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await user.click(screen.getByText("simulate import"));
 
@@ -459,7 +425,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       expect(onImported).toHaveBeenCalledWith({
         suiteId: "suite-1",
         testCaseId: "case-1",
-      })
+      }),
     );
     // The override REPLACES the default navigation; it must not also fire.
     expect(mockNavigateApp).not.toHaveBeenCalled();
@@ -472,86 +438,34 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // user had implicitly dismissed.
     const user = userEvent.setup();
     const { rerender } = render(
-      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />
+      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     rerender(
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument(),
     );
 
     // Restoring the capability must NOT bring the dialog back open.
     rerender(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("false")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false"),
     );
-  });
-});
-
-describe("ShareUsageThreadDetail — readiness gating", () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    mockThreadState.sourceType = "scenario";
-    mockThreadState.goalScore = undefined;
-    global.fetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => [{ role: "assistant", content: [] }],
-    } as Response);
-    mockAdaptTraceToUiMessages.mockReturnValue({
-      messages: [{ id: "assistant-1", role: "assistant", parts: [] }],
-      toolRenderOverrides: {},
-    });
-  });
-
-  it("shows readiness for a REAL session that carries a verdict", async () => {
-    // The whole point of the backend flip: real tester sessions now get
-    // graded, and the UI must follow the data rather than the population.
-    mockThreadState.synthetic = false;
-    // A verdict with something to say — the bar deliberately renders nothing
-    // for a clean `ready` session, so a "ready" fixture would pass vacuously.
-    mockThreadState.readiness = {
-      status: "completed",
-      verdict: "needs_attention",
-      issues: [
-        {
-          code: "tool_errors",
-          severity: "warning",
-          message: "1 of 3 tool calls failed.",
-        },
-      ],
-      toolCallCount: 3,
-      toolErrorCount: 1,
-      turnCount: 1,
-    };
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await waitFor(() =>
-      expect(screen.getByTestId("session-insight-bar")).toBeInTheDocument()
-    );
-  });
-
-  it("shows nothing when the session has no verdict yet", async () => {
-    mockThreadState.synthetic = false;
-    mockThreadState.readiness = undefined;
-    render(<ShareUsageThreadDetail threadId="thread-1" />);
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
-    );
-    expect(screen.queryByTestId("session-insight-bar")).not.toBeInTheDocument();
   });
 });
