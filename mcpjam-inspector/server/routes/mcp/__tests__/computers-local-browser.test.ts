@@ -38,9 +38,10 @@ vi.mock("../../../middleware/require-verified-auth.js", () => ({
 
 const configState = vi.hoisted(() => ({ browserEnabled: true }));
 vi.mock("../../../config.js", async () => {
-  const actual = await vi.importActual<typeof import("../../../config.js")>(
-    "../../../config.js",
-  );
+  const actual =
+    await vi.importActual<typeof import("../../../config.js")>(
+      "../../../config.js",
+    );
   return {
     ...actual,
     get LOCAL_BROWSER_ENABLED() {
@@ -69,6 +70,10 @@ vi.mock("../../../utils/browser-rendering-setup.js", () => ({
  */
 const browserState = vi.hoisted(() => ({
   sessions: new Map<string, any>(),
+  /** Everything the pane's input actually reached CDP as. */
+  cdpSent: [] as Array<{ method: string }>,
+  /** Which Chromium this machine has: a downloaded one, or Electron's own. */
+  runtime: "playwright" as "playwright" | "electron",
 }));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   listLocalBrowserSessions: () =>
@@ -81,27 +86,29 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
   touchLocalBrowserSession: () => {},
+  resolveLocalBrowserRuntime: () => browserState.runtime,
   ensureLocalBrowserSession: async () => {
-    const { buildBrowserdStack } = await import(
-      "../../../services/browserd/daemon/server.js"
-    );
-    const { ChromiumDriver } = await import(
-      "../../../services/browserd/daemon/chromium-driver.js"
-    );
-    const { HandoffLease } = await import(
-      "../../../services/browserd/daemon/lease.js"
-    );
-    const { createInProcessBrowserdClient } = await import(
-      "../../../services/browserd/in-process-client.js"
-    );
-    const { fakeContext } = await import(
-      "../../../services/browserd/daemon/__tests__/fake-page.js"
-    );
+    const { buildBrowserdStack } =
+      await import("../../../services/browserd/daemon/server.js");
+    const { ChromiumDriver } =
+      await import("../../../services/browserd/daemon/chromium-driver.js");
+    const { HandoffLease } =
+      await import("../../../services/browserd/daemon/lease.js");
+    const { createInProcessBrowserdClient } =
+      await import("../../../services/browserd/in-process-client.js");
+    const { fakeContext, fakePage, fakeCdpSession } =
+      await import("../../../services/browserd/daemon/__tests__/fake-page.js");
     const existing = [...browserState.sessions.values()][0];
     if (existing) return existing.handle;
 
     const lease = new HandoffLease();
-    const { context } = fakeContext();
+    // A page whose CDP session RECORDS, so a test can count what the pane's
+    // input actually reached the browser as.
+    const page = fakePage();
+    const recording = fakeCdpSession();
+    page.cdpSession = recording;
+    browserState.cdpSent = recording.sent;
+    const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context, { lease });
     const stack = buildBrowserdStack(driver, { token: "tok", lease });
     const client = createInProcessBrowserdClient(stack, "tok");
@@ -159,6 +166,7 @@ beforeEach(() => {
   configState.browserEnabled = true;
   chromiumState.installed = false;
   chromiumState.installs = 0;
+  browserState.runtime = "playwright";
 });
 
 describe("GET /local-browser/status", () => {
@@ -177,6 +185,22 @@ describe("GET /local-browser/status", () => {
 
   it("answers without consent, so the consent screen can describe itself", async () => {
     expect((await status()).status).toBe(200);
+  });
+
+  it("has nothing to install in the desktop app", async () => {
+    // Electron IS a Chromium. Probing for a DOWNLOADED one reports
+    // `installed: false` on a machine with a browser already open, and the
+    // consent screen then offers a hundreds-of-megabyte download for nothing.
+    browserState.runtime = "electron";
+    chromiumState.installed = false;
+
+    const body = await (await status()).json();
+
+    expect(body).toMatchObject({
+      runtime: "electron",
+      installed: true,
+      install: { status: "ready" },
+    });
   });
 
   it("404s when the operator turned the local browser off", async () => {
@@ -274,6 +298,32 @@ describe("driving the browser from the pane", () => {
     expect(await other.json()).toMatchObject({ error: "lease_held_by_other" });
   });
 
+  it("accepts at most 64 events per request, and says so by dropping the rest", async () => {
+    // The client chunks at the same number (`INPUT_BATCH_LIMIT` in
+    // `client/src/lib/local-browser/client.ts`). This is the server half of
+    // that pair: if the two ever drift, an oversized batch loses its tail
+    // silently, which for keys means a page holding one nobody pressed.
+    const token = await grantConsent();
+    const { bootId } = await ensured(token);
+    await post("lease", token, { bootId, action: "acquire", holder: "pane-1" });
+
+    const before = browserState.cdpSent.filter(
+      (c) => c.method === "Input.insertText",
+    ).length;
+    const events = Array.from({ length: 100 }, (_, i) => ({
+      type: "text" as const,
+      text: `k${i}`,
+    }));
+    expect(
+      (await post("input", token, { bootId, holder: "pane-1", events })).status,
+    ).toBe(200);
+
+    const after = browserState.cdpSent.filter(
+      (c) => c.method === "Input.insertText",
+    ).length;
+    expect(after - before).toBe(64);
+  });
+
   it("tells a second pane it did not get control", async () => {
     const token = await grantConsent();
     const { bootId } = await ensured(token);
@@ -324,9 +374,8 @@ describe("driving the browser from the pane", () => {
   });
 
   it("mints a frames nonce that is single-use and kind-bound", async () => {
-    const { consumeLocalNonce } = await import(
-      "../../../utils/computers/local-terminal-auth.js"
-    );
+    const { consumeLocalNonce } =
+      await import("../../../utils/computers/local-terminal-auth.js");
     const token = await grantConsent();
     const res = await post("token", token, { projectId: "proj-1" });
     const { nonce } = (await res.json()) as { nonce: string };
@@ -360,6 +409,21 @@ describe("POST /local-browser/install", () => {
       install: { status: "installing" },
     });
     expect(chromiumState.installs).toBe(1);
+  });
+
+  it("does not try to download a browser the desktop app already has", async () => {
+    // The packaged app has no `node_modules` for the Playwright CLI to live
+    // in, so starting an install here does not merely waste a download — it
+    // fails. The status route already answers `ready`; this must not
+    // contradict it.
+    browserState.runtime = "electron";
+    const token = await grantConsent();
+
+    const res = await install({ [LOCAL_CONSENT_HEADER]: token });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ install: { status: "ready" } });
+    expect(chromiumState.installs).toBe(0);
   });
 
   it("refuses a consent token that is not this machine's", async () => {

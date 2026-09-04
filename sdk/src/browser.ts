@@ -511,6 +511,7 @@ export {
   isPrivateHost,
   isDisallowedIpAddress,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
   OAuthOutboundUrlBlockedError,
 } from "./oauth/ssrf-guard.js";
 // RFC 9207 authorization-response `iss` validation. The comparison itself is

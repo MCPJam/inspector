@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ChromiumDriver } from "../chromium-driver";
 import { shortHash } from "../state-token";
 import type { BrowserCommand } from "../../protocol";
+import type { DriverContext } from "../browser-page";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
-import { fakeContext, fakePage } from "./fake-page";
+import { fakeContext, fakePage, type FakePage } from "./fake-page";
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
@@ -54,6 +55,97 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
     const res = await driver.execute(cmd({ kind: "navigate", url: "https://slow.test/" }));
     expect(res.ok).toBe(true);
     expect(res.settled).toBe(false); // frame returned anyway, no wait verb
+  });
+});
+
+describe("ChromiumDriver — observe {mode:\"text\"}", () => {
+  it("returns the page's readable text with a state token", async () => {
+    const page = fakePage({ url: "https://x.test/", text: "# Title\n\nHello" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.ok).toBe(true);
+    expect(res.output).toEqual({ text: "# Title\n\nHello", url: "https://x.test/" });
+    expect(res.stateToken).toMatchObject({ tabId: "@session" });
+  });
+
+  it("CUTS over-budget prose and says how much it kept", async () => {
+    // Prose has no subtree boundary to omit at, so it is cut — and the marker
+    // is what stops a model reading a third of a page as the whole of it.
+    const page = fakePage({ url: "https://x.test/", text: "z".repeat(5_000) });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { pageTextBytes: 500 });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    const output = res.output as { text: string; truncated?: boolean };
+    expect(output.truncated).toBe(true);
+    expect(output.text).toContain("showing");
+    expect(output.text).toContain("of 5000 bytes");
+    expect(new TextEncoder().encode(output.text).byteLength).toBeLessThanOrEqual(500);
+  });
+
+  it("does not flag text that fit", async () => {
+    const page = fakePage({ text: "short" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.output).not.toHaveProperty("truncated");
+  });
+
+  it("flags settled:false when the page moves under the read", async () => {
+    // The prose is from before the change and the token from after it. Left
+    // unflagged, `guardStaleness` would admit an act chosen from text the page
+    // no longer shows — the same P1 the screenshot loop exists for.
+    const page = fakePage({ url: "https://x.test/", text: "first" });
+    let reads = 0;
+    const shifting = {
+      ...page,
+      async pageText() {
+        reads += 1;
+        // The page navigates while each read is in flight.
+        page.setUrl(`https://x.test/step-${reads}`);
+        return `text-${reads}`;
+      },
+    } as typeof page;
+    const { context } = fakeContext({ pages: [shifting] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+
+    expect(res.ok).toBe(true);
+    expect(res.settled).toBe(false);
+    expect(reads).toBeGreaterThan(1); // it retried before giving up
+  });
+
+  it("keeps settled true when the page holds still", async () => {
+    const page = fakePage({ url: "https://x.test/", text: "steady" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.settled).not.toBe(false);
+  });
+
+  it("refuses to hand over text captured while a person holds the browser", async () => {
+    // Same rule as every other capture: a read in flight when someone takes
+    // control must not return what they are looking at.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      text: "secret",
+      onText: () => {
+        lease.acquire("person-1", 60_000);
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.ok).toBe(false);
+    expect(res.leaseBlocked).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("secret");
   });
 });
 
@@ -538,6 +630,53 @@ describe("ChromiumDriver — webmcp actions (W3)", () => {
       result: { ok: true },
     });
     expect(res.stateToken).toBeDefined();
+  });
+
+  it("passes the caller's frame through, so a subframe's tool is not shadowed", async () => {
+    // Two frames can register the same tool name, and name resolution prefers
+    // the main frame. A caller acting on a tool it just listed says which
+    // frame it saw; dropping that on the floor here would silently run the
+    // wrong page's tool.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: { ok: true } };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({
+        kind: "webmcp_invoke",
+        toolKey: "book_flight",
+        frameId: "frame-7",
+        input: {},
+      }),
+    );
+    expect(seen[0]).toMatchObject({
+      toolName: "book_flight",
+      frameId: "frame-7",
+    });
+  });
+
+  it("sends no frame at all when the caller named none", async () => {
+    // `frameId: undefined` and an absent key are not the same to a bridge that
+    // checks `args.frameId &&` — but they are to `toMatchObject`, so this
+    // asserts the key is genuinely absent rather than present-and-undefined.
+    const seen: Array<Record<string, unknown>> = [];
+    const driver = await withBridge(
+      bridgeStub({
+        invoke: async (args: Record<string, unknown>) => {
+          seen.push(args);
+          return { invocationId: "inv-1", output: {} };
+        },
+      }),
+    );
+    await driver.execute(
+      cmd({ kind: "webmcp_invoke", toolKey: "book_flight", input: {} }),
+    );
+    expect("frameId" in seen[0]!).toBe(false);
   });
 
   it("caps an oversized tool output rather than half-serializing it (L9)", async () => {
@@ -1108,5 +1247,96 @@ describe("ChromiumDriver — the viewport follows its page, not its name", () =>
     ]);
 
     expect(created).toHaveLength(1);
+  });
+});
+
+describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", () => {
+  /** A context whose `newPage()` resolves only when the test says so. */
+  function stallingContext() {
+    const { context: base, created } = fakeContext();
+    let release: ((page: FakePage) => void) | undefined;
+    const context: DriverContext = {
+      ...base,
+      newPage: () =>
+        new Promise<FakePage>((resolve) => {
+          release = resolve;
+        }),
+    };
+    return {
+      context,
+      created,
+      /** Let the in-flight creation finish, returning the page it produced. */
+      async land() {
+        const page = fakePage({ url: "https://late.test/" });
+        release?.(page);
+        await Promise.resolve();
+        await Promise.resolve();
+        return page;
+      },
+    };
+  }
+
+  it("gives up on a tab creation that never lands rather than hanging shutdown", async () => {
+    // A `newPage()` against a browser that has stopped answering never
+    // settles. Waiting on it forever is not caution: `close()` runs on the
+    // server's shutdown path, so the process never exits and the Chromium it
+    // was trying to close is orphaned — the exact outcome the wait was added
+    // to prevent.
+    vi.useFakeTimers();
+    try {
+      const { context } = stallingContext();
+      const driver = new ChromiumDriver(context);
+      void driver.viewport().catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+
+      let settled = false;
+      const closing = driver.close().then(() => {
+        settled = true;
+      });
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1_500);
+      await closing;
+      expect(settled).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("closes a page that lands after teardown instead of adopting it", async () => {
+    vi.useFakeTimers();
+    try {
+      const { context, land } = stallingContext();
+      const driver = new ChromiumDriver(context);
+      void driver.viewport().catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+
+      const closing = driver.close();
+      await vi.advanceTimersByTimeAsync(2_000);
+      await closing;
+
+      const late = await land();
+      // Registering it would leave a renderer nobody will ever close, which is
+      // the leak `pendingTabs` exists to prevent — moved one tick later.
+      expect(late.isClosed()).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("refuses to open a tab once teardown has begun", async () => {
+    const { context, created } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    await driver.close();
+
+    const result = await driver.execute(
+      cmd({ kind: "navigate", url: "https://a.test/" }),
+    );
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/^driver_closed:/);
+    expect(created).toHaveLength(0);
   });
 });

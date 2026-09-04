@@ -1,8 +1,35 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, symlink, readlink, writeFile, readdir, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  symlink,
+  readlink,
+  writeFile,
+  readdir,
+  mkdir,
+} from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearStaleSingletonLock, probeSingletonOwner } from "../profile-lock";
+
+/**
+ * A throwaway profile directory that is actually thrown away.
+ *
+ * Every block below needs one, and each `mkdtemp` left one behind — nine per
+ * run, forever. One recorder and one file-scope `afterEach` beats remembering
+ * to clean up in each new test.
+ */
+const scratchDirs: string[] = [];
+async function lockDir(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+  scratchDirs.push(dir);
+  return dir;
+}
+afterEach(async () => {
+  await Promise.all(
+    scratchDirs.splice(0).map((d) => rm(d, { recursive: true, force: true })),
+  );
+});
 
 describe("clearStaleSingletonLock (L8)", () => {
   let dir: string;
@@ -45,17 +72,29 @@ describe("clearStaleSingletonLock (L8)", () => {
 });
 
 describe("probeSingletonOwner — is anyone actually using this profile?", () => {
-  it("reports a live owner when the lock names this host and a running pid", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+  it("reports a live owner when the lock names this host and a running browser", async () => {
+    // BOTH FAKES, ALWAYS. Omitting `describeProcess` lets the probe shell out
+    // to the real `ps`, and the answer then depends on what pid 4242 happens
+    // to be on the machine running the test: absent on a laptop (unreadable ⇒
+    // "cannot tell" ⇒ live, so it passed), but a real, non-browser process
+    // inside CI's container ⇒ not live, so it failed. A unit test must not ask
+    // the host what is running.
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
-    expect(await probeSingletonOwner(dir, () => true)).toEqual({
+    expect(
+      await probeSingletonOwner(
+        dir,
+        () => true,
+        () => "chromium",
+      ),
+    ).toEqual({
       live: true,
       pid: 4242,
     });
   });
 
   it("reports a dead pid as clearable debris", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
     expect(await probeSingletonOwner(dir, () => false)).toEqual({
       live: false,
@@ -69,7 +108,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
     // about a local process that happens to share the number — so the honest
     // answer is "held", and clearing it would launch a second browser into a
     // profile already open elsewhere.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink("some-other-box-4242", join(dir, "SingletonLock"));
     // The local liveness probe is not even consulted.
     expect(await probeSingletonOwner(dir, () => false)).toEqual({
@@ -80,7 +119,7 @@ describe("probeSingletonOwner — is anyone actually using this profile?", () =>
   });
 
   it("treats a missing or unreadable lock as free", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     expect(await probeSingletonOwner(dir, () => true)).toEqual({ live: false });
   });
 });
@@ -90,7 +129,7 @@ describe("clearing a lock is not a licence to take a live profile", () => {
     // The window this closes: the session layer checked a moment ago and
     // decided to launch. A browser that took the profile in between would have
     // had its lock files removed out from under it.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     const cleared = await clearStaleSingletonLock(dir, async () => ({
@@ -105,7 +144,7 @@ describe("clearing a lock is not a licence to take a live profile", () => {
   });
 
   it("clears debris when the probe says nobody is there", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     const cleared = await clearStaleSingletonLock(dir, async () => ({
@@ -124,7 +163,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
     // after a reboot its pid routinely belongs to an unrelated process. Taken
     // as the owner, the profile refused every launch forever, and the only
     // recovery was deleting the symlink by hand.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     expect(
@@ -137,7 +176,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
   });
 
   it("keeps the lock when a browser really is holding it", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     for (const command of [
@@ -160,7 +199,7 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
     // No `ps`, Windows, or the process vanishing mid-probe. Learning nothing
     // must not become permission to delete somebody's profile, so the pid
     // check stands alone — the behaviour that existed before.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     expect(
@@ -170,5 +209,84 @@ describe("probeSingletonOwner — a live pid is not yet an owner", () => {
         () => undefined,
       ),
     ).toEqual({ live: true, pid: 4242 });
+  });
+});
+
+describe("probeSingletonOwner — what counts as having ASKED", () => {
+  it("does not read empty output as a confirmed non-browser", async () => {
+    // `""` is a reading we failed to take, not one that came back negative.
+    // Treated as the latter it cleared the lock of a live process, which is
+    // the exact confusion the rest of this probe is built to avoid.
+    const dir = await lockDir();
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const answer of ["", "   ", "\n"]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => answer,
+        ),
+      ).toEqual({ live: true, pid: 4242 });
+    }
+  });
+
+  it("keeps the lock for Chromium browsers that are not called Chrome", async () => {
+    // Saying "not a browser" about a real one deletes a running browser's
+    // singleton files. Brave, Edge and the desktop app itself are all
+    // Chromium, and none of them carries `chrom` in the name `ps` reports.
+    const dir = await lockDir();
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const command of [
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+      "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+      "/Applications/MCPJam.app/Contents/MacOS/Electron",
+    ]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => command,
+        ),
+      ).toEqual({ live: true, pid: 4242 });
+    }
+  });
+
+  it("does not let a browser that cannot own this lock strand the profile", async () => {
+    // A `SingletonLock` is CHROMIUM'S file, so Firefox can never be the
+    // process that wrote the one we are asking about. Matching it cannot
+    // prevent a corrupted profile — there is none of ours for it to hold —
+    // and it CAN strand a project forever, because a recycled pid belonging
+    // to the user's Firefox would refuse every relaunch with `profile_in_use`
+    // and no way out.
+    const dir = await lockDir();
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const command of [
+      "firefox",
+      "/Applications/Safari.app/Contents/MacOS/Safari",
+    ]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => command,
+        ),
+      ).toEqual({ live: false, pid: 4242 });
+    }
+  });
+
+  it("still clears a lock a genuinely unrelated process holds", async () => {
+    const dir = await lockDir();
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    expect(
+      await probeSingletonOwner(
+        dir,
+        () => true,
+        () => "postgres",
+      ),
+    ).toEqual({ live: false, pid: 4242 });
   });
 });

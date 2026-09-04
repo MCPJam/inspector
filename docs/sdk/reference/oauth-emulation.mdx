@@ -80,6 +80,7 @@ console.log(result.comparison);    // "not_compared" — always, until step 6
 | `completeAuthorization` | `(input: { authorizationUrl: string; callbackUrl: string }) => Promise<{ code: string }>` | No | | Headless consent handler. Absent means the run stops at the redirect and reports `stopped_at_redirect`. |
 | `requestExecutor` | `OAuthRequestExecutor` | No | Hardened default | Override the outbound executor (tests, alternate transports). The default uses DNS pinning, total-deadline timeouts, body caps, redirect caps, and cross-origin credential stripping. |
 | `allowLoopbackMetadataFetch` | `boolean` | No | `false` | Allow fetching OAuth metadata from loopback addresses. |
+| `allowPrivateMetadataFetch` | `boolean` | No | `false` | Allow fetching OAuth metadata from any private address (loopback, RFC 1918, CGNAT, unique-local) and from hostnames that resolve to one. Set by local surfaces; supersedes `allowLoopbackMetadataFetch`. Link-local and cloud-metadata addresses stay refused. |
 | `resourceIndicatorEnforcement` | `"warn" \| "reject" \| "reject-rfc9728"` | No | `"warn"` | How to handle unexpected resource indicators. Defaults to `"warn"` so the run exposes server behavior rather than hiding it. |
 
 ### `EmulatedOAuthPreflightOutcome`

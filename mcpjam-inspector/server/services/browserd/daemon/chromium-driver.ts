@@ -3,11 +3,10 @@
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
  * into operations on a persistent, multi-tab browser context.
  *
- * W1 scope is deliberately the navigation + observation subset the wave's exit
- * criteria need ("browserd navigates + screenshots"): navigate / back / reload /
- * observe. The `act` verbs and the `webmcp_*` invocations arrive in W3 with the
- * six `browser_*` model tools; until then they return an explicit
- * `unimplemented` result rather than silently doing nothing.
+ * Every verb in the protocol is implemented here: navigate / back / reload /
+ * observe, the `act` verbs, and the `webmcp_*` invocations. (This header used
+ * to say the last two returned `unimplemented` "until W3" — they have been real
+ * since W3 landed, and the word survived only in this comment.)
  *
  * It is written entirely against the `DriverContext` / `DriverPage` boundary, so
  * every path here is unit-testable with fakes; the live Playwright context is
@@ -30,12 +29,17 @@ import { computeStateToken } from "./state-token";
 import {
   capA11yTree,
   capConsole,
+  capText,
   capToolOutput,
   DEFAULT_A11Y_BUDGET,
   DEFAULT_CONSOLE_BUDGET,
   type A11yBudget,
   type ConsoleBudget,
 } from "./observation-budget";
+import {
+  DEFAULT_PAGE_TEXT_MAX_BYTES,
+  PAGE_TEXT_RETRIEVAL_HINT,
+} from "./page-text";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -92,6 +96,8 @@ export interface ChromiumDriverOptions {
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
+  /** Byte budget for one `observe {mode:"text"}` (L9). */
+  pageTextBytes?: number;
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -106,6 +112,16 @@ function parsePoint(value: string | undefined): ActPoint | null {
 
 /** One viewport-ish step down — the overwhelmingly common scroll intent. */
 const DEFAULT_SCROLL_STEP = 600;
+
+/**
+ * How long teardown waits for tab creations that were already in flight.
+ *
+ * Long enough for a healthy `newPage()` (tens of milliseconds), short enough
+ * that a browser which has stopped answering cannot hold the server's shutdown
+ * open. Nothing is lost by giving up: `closing` keeps whatever lands late from
+ * registering, and the browser process is killed either way.
+ */
+const CLOSE_PENDING_TAB_GRACE_MS = 2_000;
 
 /**
  * A scroll's `value`: `"down"`/`"up"`, a pixel count, or `"dx,dy"`. Anything
@@ -131,6 +147,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly pageTextMaxBytes: number;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -157,7 +174,16 @@ export class ChromiumDriver implements BrowserDriver {
    * and subscribers split across two pages, one of which nothing will ever
    * drive again.
    */
-  private readonly pendingTabs = new Map<string, Promise<TabEntry>>();
+  private readonly pendingTabs = new Map<string, Promise<TabEntry | null>>();
+  /**
+   * Teardown has begun; no new page is opened on this browser.
+   *
+   * `close()` can only settle the creations it can SEE. Without a latch, a
+   * caller arriving one tick later opens a page after the sweep has run and
+   * leaves a renderer nobody will ever close — the exact leak `pendingTabs`
+   * was added to prevent, moved one step later.
+   */
+  private closing = false;
 
   constructor(context: DriverContext, options: ChromiumDriverOptions = {}) {
     this.context = context;
@@ -166,6 +192,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -211,9 +238,19 @@ export class ChromiumDriver implements BrowserDriver {
             };
           }
         }
+        const entry = await this.getOrCreateTab(tabId);
+        if (!entry) {
+          return {
+            ok: false,
+            error: formatBrowserdError(
+              "driver_closed",
+              "this browser is shutting down; no new tab was opened",
+            ),
+          };
+        }
         return this.navigateVerb(
           tabId,
-          await this.getOrCreateTab(tabId),
+          entry,
           (page) => page.goto(action.url),
           permit,
         );
@@ -342,9 +379,10 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
   ): Promise<void> {
     const target = action.target;
-    const point = target && "coordinates" in target
-      ? { x: target.coordinates[0], y: target.coordinates[1] }
-      : null;
+    const point =
+      target && "coordinates" in target
+        ? { x: target.coordinates[0], y: target.coordinates[1] }
+        : null;
     if (point && !isPointInViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
@@ -454,6 +492,11 @@ export class ChromiumDriver implements BrowserDriver {
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...(action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
       });
       const { output: capped, omitted } = capToolOutput(
@@ -574,6 +617,9 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.
@@ -645,6 +691,64 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
     }
+  }
+
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  private async observeText(
+    tabId: string,
+    entry: TabEntry,
+    permit: () => boolean,
+  ): Promise<BrowserCommandResult> {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text = await entry.page.pageText();
+      const after = await this.snapshot(entry.page);
+      const output = this.cappedText(text);
+      // Both must hold: a same-skeleton client-side route change moves the URL
+      // while `domSignal` does not, and would bind a new-route token to
+      // old-route prose (P1).
+      if (before.url === after.url && before.domSignal === after.domSignal) {
+        return this.observation(tabId, entry, output, after, permit);
+      }
+      before = after;
+    }
+    // Would not hold still within budget: hand the prose back but flag it
+    // unsettled, so nothing pins an act to text the page may have moved past.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false,
+    };
+  }
+
+  /** The text observation's payload, cut to budget with the counted marker. */
+  private cappedText(text: string): Record<string, unknown> {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT,
+    );
+    return { text: capped, ...(capped !== text ? { truncated: true } : {}) };
   }
 
   /**
@@ -765,6 +869,24 @@ export class ChromiumDriver implements BrowserDriver {
   }
 
   async close(): Promise<void> {
+    // Refuse new pages from here on, so nothing can register behind the sweep.
+    this.closing = true;
+    // A tab creation already awaiting `newPage()` would otherwise register its
+    // page after this ran, leaving a renderer nobody closes for the life of
+    // the browser. Settle them first, then let the sweep below take whatever
+    // they added — but BOUNDED: `newPage()` against a browser that has stopped
+    // answering never settles, and teardown is on the server's shutdown path,
+    // where waiting forever means the process never exits and Chromium is
+    // orphaned. Whatever has not landed by the deadline is dropped instead;
+    // the latch above is what makes dropping it safe.
+    await Promise.race([
+      Promise.allSettled([...this.pendingTabs.values()]),
+      new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, CLOSE_PENDING_TAB_GRACE_MS);
+        // Never the reason the process stays alive.
+        (timer as { unref?: () => void }).unref?.();
+      }),
+    ]);
     for (const viewport of this.viewports.values()) {
       await viewport.then((v) => v?.dispose()).catch(() => {});
     }
@@ -909,16 +1031,25 @@ export class ChromiumDriver implements BrowserDriver {
     return settled;
   }
 
-  private async getOrCreateTab(tabId: string): Promise<TabEntry> {
+  /** `null` means teardown has begun and no new page will be opened. */
+  private async getOrCreateTab(tabId: string): Promise<TabEntry | null> {
     const existing = this.tabs.get(tabId);
     if (existing && !existing.page.isClosed()) return existing;
     const inFlight = this.pendingTabs.get(tabId);
     if (inFlight) return inFlight;
+    if (this.closing) return null;
     const creating = (async () => {
       // Replacing a closed tab retires everything attached to the old page —
       // its viewport is bound to a CDP session that will never speak again.
       await this.dropTab(tabId);
       const page = await this.context.newPage();
+      // `newPage()` is an await, so the close may have started — and finished
+      // its sweep — inside it. Registering now is exactly the orphaned
+      // renderer this guards against, so close the page instead of keeping it.
+      if (this.closing) {
+        await page.close().catch(() => {});
+        return null;
+      }
       const entry: TabEntry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
       return entry;

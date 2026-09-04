@@ -43,6 +43,7 @@ import {
 } from "../daemon/chromium-launch.js";
 import type { DriverContext } from "../daemon/browser-page.js";
 import { probeSingletonOwner } from "../daemon/profile-lock.js";
+import { launchElectronContext } from "../electron/electron-context.js";
 import { createInProcessBrowserdClient } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
@@ -73,9 +74,45 @@ export function getLocalBrowserProfileDir(projectId: string): string {
   return dir;
 }
 
+/**
+ * Which Chromium this machine's browser actually is.
+ *
+ * `playwright` downloads and launches one; `electron` drives the one the
+ * desktop app already IS. They are the same engine to everything above —
+ * `ComputerEngine` stays `"local"` and the tools, the lease, the pane and the
+ * approval rules are untouched — because the only real difference is which
+ * factory builds the `DriverContext`.
+ */
+export type LocalBrowserRuntime = "playwright" | "electron";
+
+/**
+ * Which runtime this process can drive.
+ *
+ * `process.versions.electron` rather than the `ELECTRON_APP` env var: the var
+ * says how the app was STARTED, and a dev server started with it set is still
+ * a plain Node process with no `BrowserWindow` to open. This asks the only
+ * question that matters, and it cannot be wrong.
+ */
+export function resolveLocalBrowserRuntime(): LocalBrowserRuntime {
+  return process.versions.electron ? "electron" : "playwright";
+}
+
 /** Everything this module needs from the outside, injectable for tests. */
 export interface LocalBrowserDeps {
   launch(options: LaunchBrowserdContextOptions): Promise<DriverContext>;
+  /**
+   * Hidden `BrowserWindow`s, for the packaged desktop app.
+   *
+   * The packaged app ships no `node_modules`, so `launch` above cannot work
+   * there at all — `import("playwright")` rejects. This is the same engine
+   * reaching a Chromium that is already on the machine.
+   */
+  launchElectron(options: {
+    contextMode: BrowserContextMode;
+    partitionKey?: string;
+  }): Promise<DriverContext>;
+  /** Which of the two this process can actually use. */
+  runtime(): LocalBrowserRuntime;
   chromiumInstalled(): Promise<boolean>;
   probeProfileOwner(
     dir: string,
@@ -94,6 +131,8 @@ export interface LocalBrowserDeps {
 
 const liveDeps = (): LocalBrowserDeps => ({
   launch: launchBrowserdContext,
+  launchElectron: launchElectronContext,
+  runtime: resolveLocalBrowserRuntime,
   chromiumInstalled: isChromiumInstalled,
   probeProfileOwner: probeSingletonOwner,
   profileDirFor: getLocalBrowserProfileDir,
@@ -147,6 +186,16 @@ const SWEEP_INTERVAL_MS = 30_000;
 const sessions = new Map<string, LocalSession>();
 let sweepTimer: NodeJS.Timeout | undefined;
 let shuttingDown = false;
+/**
+ * Bumped by every sweep, latching or not.
+ *
+ * `shuttingDown` cannot answer "was this launch overtaken?" for the
+ * NON-latching kill — Electron's `window-all-closed`, which must not latch or
+ * every browser opened after reopening the window would be refused. A launch
+ * that began before that sweep would otherwise register its Chromium
+ * afterwards, holding the profile lock the next window needs.
+ */
+let killGeneration = 0;
 
 function sessionKey(args: EnsureLocalBrowserArgs): string {
   const project = validateLocalProjectKey(args.projectId);
@@ -177,7 +226,8 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
  */
 function wantsHeadedWindow(env: NodeJS.ProcessEnv): boolean {
   if (env.MCPJAM_BROWSER_HEADED !== "1") return false;
-  if (process.platform === "win32" || process.platform === "darwin") return true;
+  if (process.platform === "win32" || process.platform === "darwin")
+    return true;
   return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
 }
 
@@ -245,7 +295,17 @@ async function startSession(
   args: EnsureLocalBrowserArgs,
   deps: LocalBrowserDeps,
 ): Promise<LocalBrowserSessionHandle> {
-  if (!(await deps.chromiumInstalled())) {
+  // Which sweep generation this launch belongs to, read before the first await
+  // in this function so a kill that lands during any of them is detectable
+  // afterwards. The install probe below is an await too: read this first or a
+  // kill during that probe is invisible and the launch survives the sweep.
+  const bornAt = killGeneration;
+  const runtime = deps.runtime();
+
+  // Electron BRINGS its Chromium: there is nothing to install, and asking
+  // would show the consent screen a download prompt for a browser the user
+  // already has open.
+  if (runtime === "playwright" && !(await deps.chromiumInstalled())) {
     // Never install from inside a chat turn: the download is hundreds of
     // megabytes and the model would sit in a tool call for minutes with no way
     // to say why. The consent screen installs it, with progress.
@@ -257,12 +317,17 @@ async function startSession(
       ),
     );
   }
-
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
-  const profileDir = persistent
-    ? deps.profileDirFor(args.projectId)
-    : undefined;
+  // Electron's profile is a session PARTITION, not a directory we create and
+  // lock: `persist:mcpjam-browser-<key>` is the whole of it, managed by
+  // Electron inside the app's own userData. So no directory, and no singleton
+  // probe — the app's `requestSingleInstanceLock` already guarantees that one
+  // process owns it, which is the thing the probe exists to establish.
+  const profileDir =
+    persistent && runtime === "playwright"
+      ? deps.profileDirFor(args.projectId)
+      : undefined;
 
   if (profileDir) {
     await mkdir(profileDir, { recursive: true, mode: 0o700 });
@@ -286,22 +351,30 @@ async function startSession(
     }
   }
 
-  const context = await deps.launch({
-    userDataDir: profileDir ?? "",
-    headless: !wantsHeadedWindow(deps.env),
-    // The FULL Chromium build, not the headless shell: `headless: true` alone
-    // selects `chromium-headless-shell`, which is the old headless — a
-    // different binary with a different compositor path and a fingerprint that
-    // public sites recognise and block.
-    channel: "chromium",
-    contextMode,
-  });
+  const context =
+    runtime === "electron"
+      ? await deps.launchElectron({
+          contextMode,
+          ...(persistent
+            ? { partitionKey: validateLocalProjectKey(args.projectId) }
+            : {}),
+        })
+      : await deps.launch({
+          userDataDir: profileDir ?? "",
+          headless: !wantsHeadedWindow(deps.env),
+          // The FULL Chromium build, not the headless shell: `headless: true`
+          // alone selects `chromium-headless-shell`, which is the old headless
+          // — a different binary with a different compositor path and a
+          // fingerprint that public sites recognise and block.
+          channel: "chromium",
+          contextMode,
+        });
 
-  // The launch is the long await in this function, and shutdown can begin
+  // The launch is the long await in this function, and a sweep can begin
   // inside it. A Chromium registered after the drain has already run is one
   // nothing is left to reap: it outlives the inspector holding the profile
   // lock, and the next run cannot open that profile at all.
-  if (shuttingDown) {
+  if (shuttingDown || killGeneration !== bornAt) {
     await context.close().catch(() => {});
     throw new LocalBrowserUnavailableError(
       "disabled",
@@ -321,6 +394,7 @@ async function startSession(
 
   const handle: LocalBrowserSessionHandle = {
     engine: "local",
+    runtime,
     bootId: stack.bootId,
     client,
     contextMode,
@@ -414,16 +488,32 @@ function startSweep(deps: LocalBrowserDeps): void {
   sweepTimer.unref?.();
 }
 
+/**
+ * Is this session still one the reaper may take?
+ *
+ * Shared by the scan and the re-check inside the lock so the two can never
+ * disagree about what "expired" means.
+ */
+function stillReapable(session: LocalSession, now: number): boolean {
+  // A Chromium that has gone away cannot be handed back, whatever its clock or
+  // its lease say.
+  if (!session.context.isConnected()) return true;
+  const idle = now - session.lastUsedAt;
+  const age = now - session.startedAt;
+  const expired =
+    idle >= LOCAL_BROWSER_IDLE_MS || age >= LOCAL_BROWSER_MAX_LIFETIME_MS;
+  if (!expired) return false;
+  // Only a HELD lease is a person at the keyboard. A PARKED one is an expired
+  // hold — the pane stopped its heartbeat — and deferring for that would make
+  // every abandoned hold immortal. See the long note at the call site.
+  return session.lease.state().state !== "held";
+}
+
 export async function sweepLocalBrowserSessions(
   now: number = Date.now(),
 ): Promise<void> {
   for (const session of [...sessions.values()]) {
     if (session.disposing) continue;
-    const idle = now - session.lastUsedAt;
-    const age = now - session.startedAt;
-    const expired =
-      idle >= LOCAL_BROWSER_IDLE_MS || age >= LOCAL_BROWSER_MAX_LIFETIME_MS;
-    if (!expired && session.context.isConnected()) continue;
     // A person HOLDING the browser is using it, even though no command has
     // come through for ten minutes — that is what taking control means. Reaping
     // here would close the window they are typing a password into.
@@ -440,12 +530,18 @@ export async function sweepLocalBrowserSessions(
     // profile pinned open past the hard lifetime with nobody on either end,
     // because `isBlocking()` is true for both states. Parking still blocks the
     // AGENT, which is all it is for.
-    if (
-      expired &&
-      session.context.isConnected() &&
-      session.lease.state().state === "held"
-    ) {
-      session.lastUsedAt = now;
+    if (!stillReapable(session, now)) {
+      // Refresh the clock only for a browser somebody is HOLDING, so a long
+      // login is not reaped out from under them. Not for every session that
+      // merely has not expired yet: the sweep runs every 30 s, so refreshing
+      // there would push `lastUsedAt` forward forever and the idle reap could
+      // never fire at all.
+      if (
+        session.context.isConnected() &&
+        session.lease.state().state === "held"
+      ) {
+        session.lastUsedAt = now;
+      }
       continue;
     }
     logger.info("[local-browser] reaping an idle browser", {
@@ -454,9 +550,18 @@ export async function sweepLocalBrowserSessions(
     // Under the SAME per-key lock `ensureLocalBrowserSession` takes, so a turn
     // arriving mid-teardown waits for the profile lock to be released instead
     // of racing the dying Chromium for it and getting `profile_in_use`.
-    await withKeyedLock(`local-browser:${session.key}`, () =>
-      disposeSession(session),
-    ).catch(() => {});
+    //
+    // And the decision is re-made INSIDE it. Everything above was read before
+    // queueing for the lock, and a turn that arrived meanwhile has already
+    // reused this session — closing it now would take the browser away from
+    // somebody who is using it, on the strength of a reading that is no longer
+    // true.
+    await withKeyedLock(`local-browser:${session.key}`, async () => {
+      const current = sessions.get(session.key);
+      if (current !== session || current.disposing) return;
+      if (!stillReapable(current, now)) return;
+      await disposeSession(current);
+    }).catch(() => {});
   }
   if (sessions.size === 0 && sweepTimer) {
     clearInterval(sweepTimer);
@@ -494,6 +599,7 @@ function disposeSession(session: LocalSession): Promise<void> {
 
 /** Close every local browser. Non-latching: the app may start another. */
 export async function killLocalBrowserSessions(): Promise<void> {
+  killGeneration += 1;
   await Promise.all(
     [...sessions.values()].map((s) =>
       withKeyedLock(`local-browser:${s.key}`, () => disposeSession(s)).catch(
@@ -516,5 +622,6 @@ export async function shutdownLocalBrowserSessions(): Promise<void> {
 /** Test seam: the module holds process-wide state by design. */
 export async function resetLocalBrowserSessionsForTests(): Promise<void> {
   shuttingDown = false;
+  killGeneration = 0;
   await killLocalBrowserSessions();
 }

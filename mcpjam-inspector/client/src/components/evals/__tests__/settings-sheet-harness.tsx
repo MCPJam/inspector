@@ -39,6 +39,21 @@ export const baseSuite: EvalSuite = {
   source: "ui",
 };
 
+/**
+ * The same suite on verdict policy v2.
+ *
+ * A SECOND suite rather than a flag, because the two policies are alternatives
+ * and the sheet renders one set of rows or the other. A settings test that only
+ * ever renders the legacy shape would let the v2 rows rot unnoticed — and the
+ * manifest ratchet, which insists every declared row still exists, would fail
+ * on rows that are perfectly fine but simply never rendered.
+ */
+export const v2Suite: EvalSuite = {
+  ...baseSuite,
+  verdictPolicyVersion: 2,
+  verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+};
+
 export type SettingsSheetOverrides = Partial<
   React.ComponentProps<typeof SuiteIterationsView>
 >;

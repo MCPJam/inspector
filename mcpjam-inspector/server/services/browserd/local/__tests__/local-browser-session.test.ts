@@ -1,4 +1,12 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   ensureLocalBrowserSession,
   getLocalBrowserProfileDir,
@@ -37,8 +45,10 @@ afterAll(async () => {
 
 function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
   const launched: Array<Record<string, unknown>> = [];
-  const contexts: Array<{ ctx: DriverContext; setConnected(v: boolean): void }> =
-    [];
+  const contexts: Array<{
+    ctx: DriverContext;
+    setConnected(v: boolean): void;
+  }> = [];
   let now = 1_000_000;
   const deps: LocalBrowserDeps = {
     async launch(options) {
@@ -47,9 +57,17 @@ function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
       contexts.push({ ctx: context, setConnected });
       return context;
     },
+    async launchElectron() {
+      launched.push({ electron: true });
+      const { context, setConnected } = fakeContext();
+      contexts.push({ ctx: context, setConnected });
+      return context;
+    },
+    runtime: () => "playwright",
     chromiumInstalled: async () => true,
     probeProfileOwner: async () => ({ live: false }),
-    profileDirFor: (projectId: string) => join(profileRoot, projectId, "profile"),
+    profileDirFor: (projectId: string) =>
+      join(profileRoot, projectId, "profile"),
     now: () => now,
     env: {},
     ...over,
@@ -72,8 +90,14 @@ afterEach(async () => {
 describe("local browser session", () => {
   it("keeps ONE browser per project across turns", async () => {
     const { deps, launched } = makeDeps();
-    const first = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
-    const second = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
 
     expect(launched).toHaveLength(1);
     expect(second.bootId).toBe(first.bootId);
@@ -118,7 +142,9 @@ describe("local browser session", () => {
   });
 
   it("opens a real window only when asked, and only where one can exist", async () => {
-    const headed = makeDeps({ env: { MCPJAM_BROWSER_HEADED: "1", DISPLAY: ":0" } });
+    const headed = makeDeps({
+      env: { MCPJAM_BROWSER_HEADED: "1", DISPLAY: ":0" },
+    });
     await ensureLocalBrowserSession({ projectId: "proj-a" }, headed.deps);
     expect(headed.launched[0]).toMatchObject({ headless: false });
 
@@ -127,9 +153,10 @@ describe("local browser session", () => {
     const noDisplay = makeDeps({ env: { MCPJAM_BROWSER_HEADED: "1" } });
     await ensureLocalBrowserSession({ projectId: "proj-a" }, noDisplay.deps);
     expect(noDisplay.launched[0]).toMatchObject({
-      headless: process.platform === "win32" || process.platform === "darwin"
-        ? false
-        : true,
+      headless:
+        process.platform === "win32" || process.platform === "darwin"
+          ? false
+          : true,
     });
   });
 
@@ -192,11 +219,35 @@ describe("local browser session", () => {
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 
+  it("reaps one nobody used even though the sweep keeps looking at it", async () => {
+    // The sweep runs every 30 s and the idle window is ten minutes, so it sees
+    // a session ~20 times before that session is old enough to take. Touching
+    // `lastUsedAt` on any of those passes pushes the deadline forward by the
+    // sweep interval every time and the idle reap can never fire at all — a
+    // Chromium per project pinned open for the life of the server. Only a HELD
+    // lease earns that refresh; merely being looked at does not.
+    const { deps, advance, at } = makeDeps();
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+
+    const step = Math.floor(LOCAL_BROWSER_IDLE_MS / 4);
+    for (let i = 0; i < 4; i += 1) {
+      advance(step);
+      await sweepLocalBrowserSessions(at());
+    }
+    advance(LOCAL_BROWSER_IDLE_MS - step * 4 + 1);
+    await sweepLocalBrowserSessions(at());
+
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
   it("does NOT reap a browser a person is holding", async () => {
     // Taking control IS using it. Reaping here closes the window someone is
     // typing a password into.
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     await handle.client.leaseAction!({ action: "acquire", holder: "rail-1" });
 
     advance(LOCAL_BROWSER_IDLE_MS + 1);
@@ -241,7 +292,10 @@ describe("local browser session", () => {
 
   it("reaps once the person hands it back", async () => {
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     await handle.client.leaseAction!({ action: "acquire", holder: "rail-1" });
     advance(LOCAL_BROWSER_IDLE_MS + 1);
     await sweepLocalBrowserSessions(at());
@@ -254,7 +308,10 @@ describe("local browser session", () => {
 
   it("watching the pane defers the reap", async () => {
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     advance(LOCAL_BROWSER_IDLE_MS - 1);
     touchLocalBrowserSession(handle, at());
     advance(LOCAL_BROWSER_IDLE_MS - 1);
@@ -264,10 +321,16 @@ describe("local browser session", () => {
 
   it("replaces a browser that died instead of handing back a dead handle", async () => {
     const { deps, contexts, launched } = makeDeps();
-    const first = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     // The user closed the window, or Chromium crashed.
     contexts[0].setConnected(false);
-    const second = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     expect(launched).toHaveLength(2);
     expect(second.bootId).not.toBe(first.bootId);
   });
@@ -278,6 +341,73 @@ describe("local browser session", () => {
     await ensureLocalBrowserSession({ projectId: "proj-b" }, deps);
     await killLocalBrowserSessions();
     expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("brings its own Chromium in the desktop app, with nothing to install", async () => {
+    // The packaged app ships no `node_modules`, so the Playwright launcher
+    // cannot work there at all. Asking `chromiumInstalled()` would also show
+    // the consent screen a download prompt for a browser the user has open.
+    const installed = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const { deps, launched } = makeDeps({
+      runtime: () => "electron",
+      chromiumInstalled: installed,
+      launch: async () => {
+        throw new Error("the Playwright launcher must not run under Electron");
+      },
+    });
+
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+
+    expect(handle.runtime).toBe("electron");
+    // Still the LOCAL engine: the tools, the lease, the pane and the approval
+    // rules are identical, and only the context factory differs.
+    expect(handle.engine).toBe("local");
+    expect(installed).not.toHaveBeenCalled();
+    expect(launched).toEqual([{ electron: true }]);
+  });
+
+  it("does not probe a singleton lock it does not own", async () => {
+    // Electron's profile is a session PARTITION, not a directory we create and
+    // lock. The app's own `requestSingleInstanceLock` is what guarantees one
+    // owner, which is the thing the probe exists to establish.
+    const probe = vi.fn(async () => ({ live: false }));
+    const { deps } = makeDeps({
+      runtime: () => "electron",
+      probeProfileOwner: probe,
+    });
+
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(handle.profileDir).toBeUndefined();
+  });
+
+  it("gives each project its own Electron partition", async () => {
+    const partitions: Array<string | undefined> = [];
+    const { deps } = makeDeps({
+      runtime: () => "electron",
+      async launchElectron(options) {
+        partitions.push(options.partitionKey);
+        return fakeContext().context;
+      },
+    });
+
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    await ensureLocalBrowserSession({ projectId: "proj-b" }, deps);
+    await ensureLocalBrowserSession(
+      { projectId: "proj-a", contextMode: "ephemeral", ownerKey: "run-1" },
+      deps,
+    );
+
+    // An ephemeral run gets no partition key at all: naming one would make
+    // Electron persist it, which is the opposite of what ephemeral means.
+    expect(partitions).toEqual(["proj-a", "proj-b", undefined]);
   });
 
   it("rejects a project key that would escape the profile root", async () => {
@@ -329,7 +459,10 @@ describe("local browser session — shutdown does not leave a browser behind", (
     // to hold. A dead session whose lease was never released used to refresh
     // its own timestamp on every sweep and never be collected.
     const { deps, contexts, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     const session = listLocalBrowserSessions().find(
       (s) => s.handle.bootId === handle.bootId,
     );
@@ -344,6 +477,93 @@ describe("local browser session — shutdown does not leave a browser behind", (
     advance(LOCAL_BROWSER_IDLE_MS + 1);
     await sweepLocalBrowserSessions(at());
 
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+});
+
+describe("local browser session — the reaper decides on current facts", () => {
+  it("does not close a session that was used while the sweep queued for the lock", async () => {
+    // Everything the scan reads is read BEFORE queueing for the per-key lock.
+    // A turn that lands in that window has already been handed this browser,
+    // and closing it now acts on a reading that is no longer true.
+    const { deps, advance, at } = makeDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+    advance(LOCAL_BROWSER_IDLE_MS + 1);
+
+    // The sweep decides synchronously, then awaits the lock. The use lands in
+    // between — which is exactly the ordering the re-check exists for.
+    const sweeping = sweepLocalBrowserSessions(at());
+    touchLocalBrowserSession(handle, at());
+    await sweeping;
+
+    expect(listLocalBrowserSessions()).toHaveLength(1);
+    expect(listLocalBrowserSessions()[0]?.handle.bootId).toBe(handle.bootId);
+  });
+
+  it("still reaps one nobody came back for", async () => {
+    const { deps, advance, at } = makeDeps();
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    advance(LOCAL_BROWSER_IDLE_MS + 1);
+    await sweepLocalBrowserSessions(at());
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("closes a browser whose launch outlived a kill during the INSTALL probe", async () => {
+    // The generation has to be read before the FIRST await in the launch path,
+    // not just before `launch()`. `chromiumInstalled()` is an await too — it
+    // shells out to Playwright — and a kill landing during it bumped the
+    // generation before this launch had read one, so the launch adopted the
+    // post-kill generation and registered a browser the sweep had already run
+    // past.
+    const closed: boolean[] = [];
+    const { deps } = makeDeps({
+      async chromiumInstalled() {
+        await killLocalBrowserSessions();
+        return true;
+      },
+      async launch() {
+        const { context } = fakeContext();
+        const original = context.close.bind(context);
+        context.close = async () => {
+          closed.push(true);
+          await original();
+        };
+        return context;
+      },
+    });
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(closed).toEqual([true]);
+    expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("closes a browser whose launch outlived a NON-latching kill", async () => {
+    // Electron's window-all-closed sweep must not latch, or every browser
+    // opened after reopening the window would be refused. So it cannot use
+    // `shuttingDown` to stop a launch already in flight — the generation can.
+    const closed: boolean[] = [];
+    const { deps } = makeDeps({
+      async launch() {
+        await killLocalBrowserSessions();
+        const { context } = fakeContext();
+        const original = context.close.bind(context);
+        context.close = async () => {
+          closed.push(true);
+          await original();
+        };
+        return context;
+      },
+    });
+
+    await expect(
+      ensureLocalBrowserSession({ projectId: "proj-a" }, deps),
+    ).rejects.toMatchObject({ code: "disabled" });
+    expect(closed).toEqual([true]);
     expect(listLocalBrowserSessions()).toHaveLength(0);
   });
 });

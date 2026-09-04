@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  /** Holds the next lease answer open, so a test can move the pane under it. */
+  leaseGate: null as Promise<void> | null,
   /** The last socket handed to the pane, so a test can deliver a frame. */
   socket: null as {
     readyState: number;
@@ -48,6 +50,7 @@ vi.mock("@/lib/local-browser/client", async () => {
       expiresAtMs: Date.now() + 60_000,
     }),
     actOnLocalBrowserLease: async ({ action, holder }: any) => {
+      if (api.leaseGate) await api.leaseGate;
       api.lease =
         action === "resume"
           ? { state: "free", holder: undefined }
@@ -83,6 +86,7 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.leaseGate = null;
   api.socket = null;
   window.sessionStorage.clear();
 });
@@ -131,7 +135,9 @@ describe("the agent browser pane", () => {
       leaseHeld: false,
     };
     renderBody();
-    expect(await screen.findByTestId("rail-browser-needs-chromium")).toBeTruthy();
+    expect(
+      await screen.findByTestId("rail-browser-needs-chromium"),
+    ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /install/i }));
     await waitFor(() => expect(api.installs).toBe(1));
   });
@@ -154,7 +160,9 @@ describe("the agent browser pane", () => {
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
 
-    await userEvent.click(screen.getByRole("button", { name: /take control/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /take control/i }),
+    );
     expect(await screen.findByText(/you have control/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /hand back/i })).toBeTruthy();
   });
@@ -230,6 +238,25 @@ describe("the agent browser pane — driving it", () => {
     expect(buttons.every((b: string) => b === "right")).toBe(true);
   });
 
+  it("releases the button the drag actually started with", async () => {
+    // A middle- or right-button drag that leaves the picture was released as
+    // LEFT, so the page kept holding the button it was really given.
+    await takeControl();
+    const image = await deliverFrame();
+    image.getBoundingClientRect = () =>
+      ({ left: 0, top: 0, width: 1024, height: 768 }) as DOMRect;
+
+    fireEvent.mouseDown(image, { clientX: 10, clientY: 10, button: 1 });
+    fireEvent.mouseLeave(image, { clientX: 10, clientY: 10 });
+
+    await waitFor(() => expect(api.inputs.length).toBeGreaterThan(0));
+    const released = api.inputs
+      .flatMap((call: any) => call.events as any[])
+      .filter((e) => e.type === "mouse_up");
+    expect(released).toHaveLength(1);
+    expect(released[0].button).toBe("middle");
+  });
+
   it("drops the previous project's browser when the project changes", async () => {
     // Session, lease and frame all belong to ONE project's browser. Carrying
     // them across a switch shows one project's page in another's rail, and
@@ -242,17 +269,77 @@ describe("the agent browser pane — driving it", () => {
     await deliverFrame();
 
     view.rerender(
-      <LocalBrowserBody
-        projectId="proj-2"
-        consentGranted
-        consentToken="tok"
-      />,
+      <LocalBrowserBody projectId="proj-2" consentGranted consentToken="tok" />,
     );
 
     await waitFor(() =>
       expect(screen.queryByTestId("rail-browser-frame")).toBeNull(),
     );
     expect(api.ensures).toEqual(["proj-1"]);
+  });
+
+  it("ignores a lease answer from a browser the pane has left", async () => {
+    // Away and back again. The project id reads "proj-1" both times, so a
+    // guard that compares ids alone sees no change and applies the answer —
+    // and the pane says "You have control" of a browser that was torn down,
+    // wiring its keyboard and mouse to nothing. Two visits are two browsers.
+    const view = renderBody();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await screen.findByText(/agent is driving/i);
+
+    let release!: () => void;
+    api.leaseGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await userEvent.click(
+      await screen.findByRole("button", { name: /take control/i }),
+    );
+
+    for (const projectId of ["proj-2", "proj-1"]) {
+      view.rerender(
+        <LocalBrowserBody
+          projectId={projectId}
+          consentGranted
+          consentToken="tok"
+        />,
+      );
+    }
+
+    release();
+    api.leaseGate = null;
+    await waitFor(() => expect(api.ensures).toEqual(["proj-1"]));
+
+    expect(screen.getByText(/agent is driving/i)).toBeTruthy();
+    expect(screen.queryByText(/you have control/i)).toBeNull();
+  });
+});
+
+describe("the agent browser pane — when the grant goes away", () => {
+  it("STOPS SHOWING the browser the moment consent is revoked", async () => {
+    // The picture is of somebody's signed-in browser. The pane's own
+    // placeholder cannot enforce this — the surface renders a frame whenever
+    // there is one — so before this the last captured frame stayed on screen
+    // after the grant was withdrawn. The socket does close on its own, its
+    // nonce carrying a consent fingerprint, but not before the next frame and
+    // never for the one already in state.
+    const view = renderBody();
+    // The socket only opens once a browser is running.
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await deliverFrame();
+
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted={false}
+        consentToken={null}
+      />,
+    );
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+    expect(screen.getByTestId("rail-browser-unconsented")).toBeTruthy();
   });
 });
 
