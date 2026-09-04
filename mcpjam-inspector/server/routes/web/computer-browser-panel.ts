@@ -171,7 +171,11 @@ export function createComputerBrowserPanelRoutes(
     const lookup = await lookupSession({
       computerId,
       expectedBundleHash: bundleHash(),
-      expectedContextMode: "persistent",
+      // `"any"`: the panel is about THIS COMPUTER'S browser, whatever profile
+      // it happens to be running. Pinning `persistent` here reported "no
+      // browser" for a box that plainly had one, and — worse — paired with an
+      // attach that then relaunched it into the other mode.
+      expectedContextMode: "any",
     });
     return lookup.session;
   }

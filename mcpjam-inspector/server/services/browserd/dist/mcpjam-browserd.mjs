@@ -2542,7 +2542,7 @@ async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, descri
   return { live: true, pid };
 }
 function looksLikeBrowser(command) {
-  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron|firefox|safari/i.test(
+  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron/i.test(
     command
   );
 }
