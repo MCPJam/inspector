@@ -1,4 +1,4 @@
-import { buildPathKey } from "../../../../../../sdk/src/tool-path";
+import { buildPathKey } from "@mcpjam/sdk/contract";
 import type { TestStep } from "@/shared/steps";
 import { groupCaseIterations } from "../runs/group-case-iterations";
 import type { EvalIteration } from "../types";
@@ -26,8 +26,10 @@ export function toolsFromIteration(
   const calls = iteration.actualToolCalls ?? [];
   if (kind === "capability") {
     const seen = new Set<string>();
-    const tools: Array<{ toolName: string; arguments: Record<string, unknown> }> =
-      [];
+    const tools: Array<{
+      toolName: string;
+      arguments: Record<string, unknown>;
+    }> = [];
     for (const call of calls) {
       if (seen.has(call.toolName)) continue;
       seen.add(call.toolName);

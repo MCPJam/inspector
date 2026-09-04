@@ -1307,22 +1307,32 @@ export function TestTemplateEditor({
           <TrialChainPanel chain={assembled} resetKey={iteration._id} />
         ) : null;
       } else {
+        // The record handed in may be the SSE `complete` snapshot. A judge
+        // landing after that rewrites the chain's last link, and the Convex
+        // subscription carries the newer doc — so prefer it when present.
+        const live =
+          recentIterations.find((it) => it._id === iteration._id) ??
+          iteration;
         chain = (
           <TrialChainPanel
-            chain={chainForQuickRunIteration(iteration)}
+            chain={chainForQuickRunIteration(live)}
             resetKey={iteration._id}
           />
         );
       }
     }
 
-    const rollup = summarizeRoutes(recentIterations);
-    const showRollup = simpleCaseEditorEnabled && rollup.total > 1;
+    // The rollup's adopt action rewrites `steps` through the simple-case
+    // model, which assumes one prompt plus tool asserts. On a multi-turn or
+    // app case that rewrite would reorder turns, so neither is offered there.
+    const simpleShape = !!editForm && isSimpleCaseShape(editForm.steps);
+    const rollup =
+      simpleCaseEditorEnabled && simpleShape
+        ? summarizeRoutes(recentIterations)
+        : null;
+    const showRollup = !!rollup && rollup.total > 1;
     const showRecordAdopt =
-      simpleCaseEditorEnabled &&
-      draftKind === "record" &&
-      !!iteration &&
-      rollup.total >= 1;
+      !!rollup && draftKind === "record" && !!iteration && rollup.total >= 1;
     if (!chain && !showRollup && !showRecordAdopt) return null;
 
     const resolvedMatch = resolveMatchOptions(
@@ -1338,7 +1348,7 @@ export function TestTemplateEditor({
     return (
       <div className="space-y-2">
         {chain}
-        {showRollup || showRecordAdopt ? (
+        {rollup && (showRollup || showRecordAdopt) ? (
           <RouteRollupCard
             rollup={rollup}
             expectedPathKey={expectedPathKey}
@@ -3320,6 +3330,7 @@ export function TestTemplateEditor({
                       </TooltipContent>
                     </Tooltip>
                   )}
+                  {useSimpleForm ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <label className="inline-flex cursor-pointer items-center">
@@ -3347,6 +3358,7 @@ export function TestTemplateEditor({
                       Iterations for the next run
                     </TooltipContent>
                   </Tooltip>
+                  )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -3515,7 +3527,12 @@ export function TestTemplateEditor({
 
                   <div className="space-y-4 pt-1">
                     {editForm && useSimpleForm ? (
+                      // Keyed by case: the form holds the tools tri-state and
+                      // the stashed tools in local state, and carrying either
+                      // across a case switch would let a fresh prompt-only
+                      // draft inherit "tools" and save as a negative test.
                       <SimpleCaseForm
+                        key={`simple-case:${currentTestCase?._id ?? "none"}`}
                         steps={editForm.steps}
                         onStepsChange={setSteps}
                         matchOptions={editForm.matchOptions}

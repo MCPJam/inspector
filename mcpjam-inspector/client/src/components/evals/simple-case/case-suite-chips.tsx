@@ -58,11 +58,7 @@ export function CaseSuiteChips({
       className="flex flex-wrap items-center gap-1.5"
       data-testid="case-suite-chips"
     >
-      <Chip
-        label="Model"
-        value={modelValue}
-        onOpen={onOpenSuiteSettings}
-      />
+      <Chip label="Model" value={modelValue} onOpen={onOpenSuiteSettings} />
       <Chip
         label="Trials"
         value={String(trials)}

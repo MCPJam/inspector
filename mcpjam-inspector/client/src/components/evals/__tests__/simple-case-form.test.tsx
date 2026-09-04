@@ -180,7 +180,10 @@ describe("SimpleCaseForm", () => {
     );
     expect(
       adopted.flatMap((step) => {
-        if (step.kind !== "assert" || step.assertion.type !== "toolCalledWith") {
+        if (
+          step.kind !== "assert" ||
+          step.assertion.type !== "toolCalledWith"
+        ) {
           return [];
         }
         return [
@@ -211,7 +214,9 @@ describe("SimpleCaseForm", () => {
     );
     expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Adopt route" }));
-    expect(screen.queryByTestId("simple-case-tools-unset")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
     const rows = screen.getAllByTestId("simple-case-tool-row");
     expect(rows).toHaveLength(2);
     expect(rows[0]).toHaveTextContent("search");
@@ -233,11 +238,7 @@ function AdoptHarness({
         type="button"
         onClick={() =>
           setSteps(
-            adoptRouteFromIteration(
-              steps,
-              iteration as EvalIteration,
-              kind,
-            ),
+            adoptRouteFromIteration(steps, iteration as EvalIteration, kind),
           )
         }
       >

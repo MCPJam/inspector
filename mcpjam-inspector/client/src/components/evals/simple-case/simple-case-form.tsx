@@ -27,6 +27,7 @@ import {
   displayCaseKind,
   initialToolsChoice,
   matchOptionsForKind,
+  MORE_CHECK_GROUPS,
   readSimpleCase,
   UNSET_TOOLS_BLOCK_REASON,
   writeSimpleCase,
@@ -34,49 +35,6 @@ import {
   type SimpleCaseTool,
   type ToolsChoice,
 } from "./simple-case-model";
-
-const MORE_CHECK_GROUPS: Array<{
-  id: "response" | "selection" | "call" | "appView";
-  label: string;
-  kinds: ReadonlyArray<Predicate["type"]>;
-}> = [
-  {
-    id: "response",
-    label: "Response",
-    kinds: [
-      "responseContains",
-      "responseMatches",
-      "finalAssistantMessageNonEmpty",
-      "noToolErrors",
-      "tokenBudgetUnder",
-      "turnCountUnder",
-    ],
-  },
-  {
-    id: "selection",
-    label: "Selection",
-    kinds: [
-      "toolCalledWith",
-      "toolCalledAtLeastOnce",
-      "toolNeverCalled",
-      "firstToolWas",
-    ],
-  },
-  {
-    id: "call",
-    label: "Call",
-    kinds: [],
-  },
-  {
-    id: "appView",
-    label: "App view",
-    kinds: [
-      "widgetRendered",
-      "widgetRenderLatencyUnder",
-      "widgetNoConsoleErrors",
-    ],
-  },
-];
 
 export type SimpleCaseFormProps = {
   steps: TestStep[];
@@ -157,7 +115,7 @@ export function SimpleCaseForm({
 
   const setKind = (next: CaseKind) => {
     onKindChange?.(next);
-    onMatchOptionsChange(matchOptionsForKind(next));
+    onMatchOptionsChange(matchOptionsForKind(next, resolvedMatch));
   };
 
   const setPrompt = (prompt: string) => {
@@ -211,13 +169,19 @@ export function SimpleCaseForm({
     setToolsChoice("tools");
     setTools([
       ...view.tools,
-      { id: `assert-${Date.now()}-${view.tools.length + 1}`, toolName: name, arguments: {} },
+      {
+        id: `assert-${Date.now()}-${view.tools.length + 1}`,
+        toolName: name,
+        arguments: {},
+      },
     ]);
   };
 
   const caseList = predicates?.list ?? [];
   const setCaseList = (list: Predicate[]) => {
-    onPredicatesChange(list.length === 0 ? undefined : { mode: "extend", list });
+    onPredicatesChange(
+      list.length === 0 ? undefined : { mode: "extend", list },
+    );
   };
 
   const predicatesByGroup = (kinds: ReadonlyArray<Predicate["type"]>) =>
@@ -396,10 +360,7 @@ export function SimpleCaseForm({
                 )}
               </div>
             ))}
-            <AddToolRow
-              availableTools={availableTools}
-              onAdd={addTool}
-            />
+            <AddToolRow availableTools={availableTools} onAdd={addTool} />
           </div>
         ) : null}
       </section>
@@ -448,26 +409,19 @@ export function SimpleCaseForm({
                 <h4 className="text-[11px] font-medium text-foreground">
                   {group.label}
                 </h4>
-                {group.kinds.length === 0 ? (
-                  <p className="text-[11px] text-muted-foreground">
-                    Argument matching stays partial for both kinds. Nothing else
-                    is authorable at call today.
-                  </p>
-                ) : (
-                  <ChecksSection
-                    value={rows}
-                    onChange={(next) => {
-                      const kept = caseList.filter(
-                        (predicate) => !group.kinds.includes(predicate.type),
-                      );
-                      setCaseList([...kept, ...next]);
-                    }}
-                    availableTools={availableTools}
-                    title=""
-                    hideEmptyState
-                    allowedKinds={group.kinds}
-                  />
-                )}
+                <ChecksSection
+                  value={rows}
+                  onChange={(next) => {
+                    const kept = caseList.filter(
+                      (predicate) => !group.kinds.includes(predicate.type),
+                    );
+                    setCaseList([...kept, ...next]);
+                  }}
+                  availableTools={availableTools}
+                  title=""
+                  hideEmptyState
+                  allowedKinds={group.kinds}
+                />
                 {inherited.length > 0 ? (
                   <p className="text-[11px] text-muted-foreground">
                     {inherited.length} inherited from the suite

@@ -16,9 +16,64 @@ import {
 import {
   MATCH_OPTIONS_DEFAULTS,
   type EvalMatchOptions,
+  type Predicate,
 } from "@/shared/eval-matching";
 
 export const SIMPLE_CASE_EDITOR_FLAG = "eval-simple-case-editor";
+
+export type MoreCheckGroupId = "response" | "selection" | "appView";
+
+/**
+ * The "More checks" groups, labelled by what a reader is checking rather
+ * than by the analyzer's stage (`PREDICATE_STAGE` files every response
+ * predicate at `userValue`, because no authorable grader measures the
+ * `response` link today).
+ *
+ * Partition rule, test-enforced: every kind in `PREDICATE_KIND_LABELS` is
+ * in exactly one group or in `EXCLUDED_FROM_MORE_CHECKS`. A kind added to
+ * the catalog fails that test until somebody files it — a group list that
+ * merely omits a kind would hide it silently.
+ */
+export const MORE_CHECK_GROUPS: ReadonlyArray<{
+  id: MoreCheckGroupId;
+  label: string;
+  kinds: ReadonlyArray<Predicate["type"]>;
+}> = [
+  {
+    id: "response",
+    label: "Response",
+    kinds: [
+      "responseContains",
+      "responseMatches",
+      "finalAssistantMessageNonEmpty",
+      "noToolErrors",
+      "tokenBudgetUnder",
+      "turnCountUnder",
+    ],
+  },
+  {
+    id: "selection",
+    label: "Selection and call",
+    kinds: ["toolCalledAtLeastOnce", "toolNeverCalled", "firstToolWas"],
+  },
+  {
+    id: "appView",
+    label: "App view",
+    kinds: [
+      "widgetRendered",
+      "widgetRenderLatencyUnder",
+      "widgetNoConsoleErrors",
+    ],
+  },
+];
+
+/**
+ * Owned by the tool question above the disclosure. Offering it again here
+ * would author the route twice, and on a no-tool case would create the
+ * contradiction the corpus guard rejects.
+ */
+export const EXCLUDED_FROM_MORE_CHECKS: ReadonlySet<Predicate["type"]> =
+  new Set<Predicate["type"]>(["toolCalledWith"]);
 
 export const UNSET_TOOLS_BLOCK_REASON =
   "Choose which tool should handle it, or that no tool should be called.";
@@ -102,17 +157,26 @@ export function deriveCaseKind(
     : "capability";
 }
 
-export function matchOptionsForKind(kind: CaseKind): Required<
-  Omit<EvalMatchOptions, "allowExtraToolCalls">
-> {
+/**
+ * The matchOptions a kind writes. `argumentMatching` is carried over from
+ * `current` (the RESOLVED options, suite defaults included) rather than
+ * reset: the toggle decides order and extras, and an authored `exact` must
+ * not silently become `partial` because the author flipped the kind.
+ */
+export function matchOptionsForKind(
+  kind: CaseKind,
+  current?: Pick<EvalMatchOptions, "argumentMatching">,
+): Required<Omit<EvalMatchOptions, "allowExtraToolCalls">> {
+  const argumentMatching =
+    current?.argumentMatching ?? MATCH_OPTIONS_DEFAULTS.argumentMatching;
   if (kind === "regression") {
     return {
       toolCallOrder: "strict",
       maxExtraToolCalls: 0,
-      argumentMatching: "partial",
+      argumentMatching,
     };
   }
-  return { ...MATCH_OPTIONS_DEFAULTS };
+  return { ...MATCH_OPTIONS_DEFAULTS, argumentMatching };
 }
 
 /**

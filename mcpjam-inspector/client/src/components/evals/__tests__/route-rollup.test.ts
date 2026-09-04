@@ -1,16 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { NO_TOOL_PATH_KEY } from "../../../../../../sdk/src/tool-path";
+import { NO_TOOL_PATH_KEY } from "@mcpjam/sdk/contract";
 import type { EvalIteration } from "../types";
 import {
   toolsFromIteration,
   summarizeRoutes,
 } from "../simple-case/route-rollup";
 
-function iteration(
-  id: string,
-  tools: string[],
-  createdAt = 1,
-): EvalIteration {
+function iteration(id: string, tools: string[], createdAt = 1): EvalIteration {
   return {
     _id: id,
     testCaseId: "case-1",

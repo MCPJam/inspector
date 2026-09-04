@@ -3,13 +3,16 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
+import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { type TestStep } from "@/shared/steps";
 import {
   deriveCaseKind,
   displayCaseKind,
+  EXCLUDED_FROM_MORE_CHECKS,
   initialToolsChoice,
   isSimpleCaseShape,
   matchOptionsForKind,
+  MORE_CHECK_GROUPS,
   readSimpleCase,
   writeSimpleCase,
 } from "../simple-case/simple-case-model";
@@ -98,14 +101,14 @@ describe("deriveCaseKind", () => {
   });
 
   it("lets a persisted kind win over derived matchOptions", () => {
+    expect(displayCaseKind("regression", MATCH_OPTIONS_DEFAULTS)).toBe(
+      "regression",
+    );
     expect(
-      displayCaseKind("regression", MATCH_OPTIONS_DEFAULTS),
-    ).toBe("regression");
-    expect(
-      displayCaseKind(
-        "capability",
-        { toolCallOrder: "strict", maxExtraToolCalls: 0 },
-      ),
+      displayCaseKind("capability", {
+        toolCallOrder: "strict",
+        maxExtraToolCalls: 0,
+      }),
     ).toBe("capability");
     expect(displayCaseKind(undefined, MATCH_OPTIONS_DEFAULTS)).toBe(
       "capability",
@@ -151,9 +154,7 @@ describe("matchOptionsForKind", () => {
 
 describe("isSimpleCaseShape", () => {
   it("accepts a prompt-only case", () => {
-    expect(isSimpleCaseShape([prompt("p1", "What is the status?")])).toBe(
-      true,
-    );
+    expect(isSimpleCaseShape([prompt("p1", "What is the status?")])).toBe(true);
   });
 
   it("accepts a prompt plus toolCalledWith asserts", () => {
@@ -300,8 +301,53 @@ describe("readSimpleCase / writeSimpleCase", () => {
       noTool: false,
       tools: [{ toolName: "search", arguments: { q: "new" } }],
     });
-    expect(next[1]).toEqual(
-      toolCalledWith("a1", "search", { q: "new" }),
-    );
+    expect(next[1]).toEqual(toolCalledWith("a1", "search", { q: "new" }));
+  });
+});
+
+describe("matchOptionsForKind carries argument matching over", () => {
+  it("keeps an authored exact when the kind flips", () => {
+    expect(
+      matchOptionsForKind("regression", { argumentMatching: "exact" }),
+    ).toEqual({
+      toolCallOrder: "strict",
+      maxExtraToolCalls: 0,
+      argumentMatching: "exact",
+    });
+    expect(
+      matchOptionsForKind("capability", { argumentMatching: "exact" }),
+    ).toEqual({ ...MATCH_OPTIONS_DEFAULTS, argumentMatching: "exact" });
+  });
+
+  it("falls back to the SDK default without a current value", () => {
+    expect(matchOptionsForKind("capability")).toEqual(MATCH_OPTIONS_DEFAULTS);
+  });
+});
+
+describe("More checks groups partition the predicate catalog", () => {
+  it("files every predicate kind exactly once, or excludes it on purpose", () => {
+    const filed = new Map<string, string[]>();
+    for (const group of MORE_CHECK_GROUPS) {
+      for (const kind of group.kinds) {
+        filed.set(kind, [...(filed.get(kind) ?? []), group.id]);
+      }
+    }
+    for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
+      const groups = filed.get(kind) ?? [];
+      const excluded = EXCLUDED_FROM_MORE_CHECKS.has(
+        kind as Parameters<typeof EXCLUDED_FROM_MORE_CHECKS.has>[0],
+      );
+      expect(
+        { kind, groups, excluded },
+        `predicate kind "${kind}" must be in exactly one More checks group or excluded on purpose`,
+      ).toSatisfy(
+        (entry: { groups: string[]; excluded: boolean }) =>
+          (entry.groups.length === 1 && !entry.excluded) ||
+          (entry.groups.length === 0 && entry.excluded),
+      );
+    }
+    for (const kind of EXCLUDED_FROM_MORE_CHECKS) {
+      expect(kind in PREDICATE_KIND_LABELS).toBe(true);
+    }
   });
 });

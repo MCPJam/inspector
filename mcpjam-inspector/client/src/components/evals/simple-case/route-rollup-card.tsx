@@ -1,8 +1,5 @@
 import { Button } from "@mcpjam/design-system/button";
-import {
-  NO_TOOL_PATH_KEY,
-  PATH_SEPARATOR,
-} from "../../../../../../sdk/src/tool-path";
+import { NO_TOOL_PATH_KEY, PATH_SEPARATOR } from "@mcpjam/sdk/contract";
 import type { RouteRollup } from "./route-rollup";
 
 export type RouteRollupCardProps = {
