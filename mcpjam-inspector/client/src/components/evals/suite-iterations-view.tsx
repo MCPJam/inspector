@@ -1474,6 +1474,9 @@ export function SuiteIterationsView({
                       replace: true,
                     })
                   }
+                  onOpenSuiteSettings={() =>
+                    navigation.toSuiteOverview(suite._id)
+                  }
                 />
               </motion.div>
             ) : viewMode === "test-detail" && selectedTestId ? (

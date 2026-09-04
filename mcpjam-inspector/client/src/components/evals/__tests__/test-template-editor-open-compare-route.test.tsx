@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
+import { SIMPLE_CASE_EDITOR_FLAG } from "../simple-case/simple-case-model";
 
 function renderWithProviders(
   ui: ReactElement,
@@ -35,6 +36,7 @@ const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const runEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const mockTraceViewer = vi.hoisted(() => vi.fn());
+const flagMock = vi.hoisted(() => vi.fn(() => false));
 const getGuestBearerTokenMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue("guest-token"),
 );
@@ -157,6 +159,10 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: flagMock,
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
   detectPlatform: () => "web",
@@ -178,6 +184,7 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => useConvexAuthMock,
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 describe("TestTemplateEditor run view from route", () => {
@@ -299,6 +306,7 @@ describe("TestTemplateEditor run view from route", () => {
   beforeEach(() => {
     activeCaseDoc = caseDoc;
     vi.clearAllMocks();
+    flagMock.mockReturnValue(false);
     mockTraceViewer.mockReset();
     useMutationMock.mockImplementation((name: string) => {
       if (name === "testSuites:updateTestCase") {
@@ -830,6 +838,187 @@ describe("TestTemplateEditor run view from route", () => {
 
     expect(screen.getByText("Steps")).toBeInTheDocument();
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
+  });
+
+  it("renders the simple form for a single-turn case when the flag is on", async () => {
+    flagMock.mockReturnValue(true);
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        onExportDraft={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(flagMock).toHaveBeenCalledWith(SIMPLE_CASE_EDITOR_FLAG);
+    expect(screen.getByText("What does the user ask?")).toBeInTheDocument();
+    expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the flat step-list editor for a multi-turn case even with the flag on", async () => {
+    flagMock.mockReturnValue(true);
+    activeCaseDoc = {
+      ...caseDoc,
+      steps: [
+        { id: "p1", kind: "prompt", prompt: "first" },
+        { id: "p2", kind: "prompt", prompt: "second" },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        onExportDraft={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("User prompt").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
+    expect(screen.getByText("Steps")).toBeInTheDocument();
+  });
+
+  it("saves a no-tool simple case as a negative test", async () => {
+    const user = userEvent.setup();
+    flagMock.mockReturnValue(true);
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
+        {
+          id: "a1",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "list_incidents",
+            args: { args: {} },
+          },
+        },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: "No tool should be called" }),
+    );
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(updateTestCaseMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isNegativeTest: true,
+        expectedToolCalls: [],
+      }),
+    );
+  });
+
+  it("blocks Run while the simple-form tools choice is unset", async () => {
+    flagMock.mockReturnValue(true);
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      query: "Find the latest incidents",
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
+    });
+    expect(
+      screen.getAllByRole("button", { name: /run$/i })[0],
+    ).toBeDisabled();
+  });
+
+  it("mounts the step list from the simple form Steps link", async () => {
+    const user = userEvent.setup();
+    flagMock.mockReturnValue(true);
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Steps" }));
+    await waitFor(() => {
+      expect(screen.getByText("User prompt")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
   });
 
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {

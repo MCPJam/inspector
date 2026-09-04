@@ -6,6 +6,7 @@ import {
 import { type TestStep } from "@/shared/steps";
 import {
   deriveCaseKind,
+  initialToolsChoice,
   isSimpleCaseShape,
   matchOptionsForKind,
   readSimpleCase,
@@ -93,6 +94,28 @@ describe("deriveCaseKind", () => {
         }),
       ),
     ).toBe("regression");
+  });
+});
+
+describe("initialToolsChoice", () => {
+  it("is unset for a prompt-only unfinished case", () => {
+    expect(initialToolsChoice({ tools: [], isNegativeTest: false })).toBe(
+      "unset",
+    );
+  });
+
+  it("is noTool when the saved case is already negative", () => {
+    expect(initialToolsChoice({ tools: [], isNegativeTest: true })).toBe(
+      "noTool",
+    );
+  });
+
+  it("is tools when toolCalledWith asserts exist", () => {
+    expect(
+      initialToolsChoice({
+        tools: [{ id: "a1", toolName: "search", arguments: {} }],
+      }),
+    ).toBe("tools");
   });
 });
 

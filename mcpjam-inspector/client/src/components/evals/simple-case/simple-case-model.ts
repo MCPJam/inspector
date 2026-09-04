@@ -20,7 +20,21 @@ import {
 
 export const SIMPLE_CASE_EDITOR_FLAG = "eval-simple-case-editor";
 
+export const UNSET_TOOLS_BLOCK_REASON =
+  "Choose which tool should handle it, or that no tool should be called.";
+
 export type CaseKind = "capability" | "regression";
+
+export type ToolsChoice = "unset" | "tools" | "noTool";
+
+export function initialToolsChoice(input: {
+  tools: SimpleCaseTool[];
+  isNegativeTest?: boolean;
+}): ToolsChoice {
+  if (input.tools.length > 0) return "tools";
+  if (input.isNegativeTest) return "noTool";
+  return "unset";
+}
 
 export type SimpleCaseTool = {
   id: string;

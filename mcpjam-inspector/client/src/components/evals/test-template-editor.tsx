@@ -213,6 +213,13 @@ import {
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { SimpleCaseForm } from "./simple-case/simple-case-form";
+import { CaseSuiteChips } from "./simple-case/case-suite-chips";
+import {
+  SIMPLE_CASE_EDITOR_FLAG,
+  isSimpleCaseShape,
+} from "./simple-case/simple-case-model";
 
 interface TestTemplate {
   title: string;
@@ -280,6 +287,8 @@ interface TestTemplateEditorProps {
    * one. Only relevant when `selectedTestCaseId` is a draft sentinel.
    */
   onDraftSaved?: (newTestCaseId: string) => void;
+  /** Open suite overview / settings from the simple-case read-only chips. */
+  onOpenSuiteSettings?: () => void;
 }
 
 function recorderDebug(message: string, details?: Record<string, unknown>) {
@@ -859,10 +868,17 @@ export function TestTemplateEditor({
   ensureServersReady,
   projectServers,
   onDraftSaved,
+  onOpenSuiteSettings,
 }: TestTemplateEditorProps) {
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
+  const simpleCaseEditorEnabled =
+    useFeatureFlagEnabled(SIMPLE_CASE_EDITOR_FLAG) === true;
+  const [deepEditor, setDeepEditor] = useState(false);
+  const [toolsChoiceBlockReason, setToolsChoiceBlockReason] = useState<
+    string | null
+  >(null);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Guards the first-Save insert of a prompt draft so a double-click can't
@@ -1175,6 +1191,7 @@ export function TestTemplateEditor({
     // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
     // — the picker only exposes that range.
     setIterationOverride(Math.max(1, Math.min(10, currentTestCase.runs ?? 1)));
+    setDeepEditor(false);
   }, [currentTestCase?._id]);
 
   /**
@@ -1572,11 +1589,20 @@ export function TestTemplateEditor({
     return areAllChecksValid(editForm.predicates.list);
   }, [editForm?.predicates]);
 
+  const useSimpleForm = Boolean(
+    simpleCaseEditorEnabled &&
+      editForm &&
+      isSimpleCaseShape(editForm.steps) &&
+      !deepEditor,
+  );
+  const simpleToolsBlock = useSimpleForm ? toolsChoiceBlockReason : null;
+
   const savePrimaryDisabled =
     !arePromptTurnsValid ||
     !arePredicatesValid ||
     isRunningCompare ||
-    isSavingDraft;
+    isSavingDraft ||
+    Boolean(simpleToolsBlock);
 
   const saveDisabledTooltip = useMemo(() => {
     if (!savePrimaryDisabled) {
@@ -1584,6 +1610,9 @@ export function TestTemplateEditor({
     }
     if (isRunningCompare) {
       return "Wait for the current run to finish before saving.";
+    }
+    if (simpleToolsBlock) {
+      return simpleToolsBlock;
     }
     if (!arePromptTurnsValid && editForm) {
       return getStepsBlockReason(editForm.steps);
@@ -1598,6 +1627,7 @@ export function TestTemplateEditor({
     arePromptTurnsValid,
     arePredicatesValid,
     editForm,
+    simpleToolsBlock,
   ]);
 
   // Pre-run credit estimate for the editor's Run / Run compare button. Priced
@@ -1644,7 +1674,8 @@ export function TestTemplateEditor({
     selectedModelValues.length === 0 ||
     isRunningCompare ||
     !canRun ||
-    !arePromptTurnsValid;
+    !arePromptTurnsValid ||
+    Boolean(simpleToolsBlock);
 
   const runDisabledTooltip = useMemo(() => {
     if (!runPrimaryDisabled) {
@@ -1661,6 +1692,9 @@ export function TestTemplateEditor({
     }
     if (!canRun) {
       return "Configure suite servers before running.";
+    }
+    if (simpleToolsBlock) {
+      return simpleToolsBlock;
     }
     if (!arePromptTurnsValid && editForm) {
       return (
@@ -1691,6 +1725,7 @@ export function TestTemplateEditor({
     editForm,
     ensureServersReady,
     isDraft,
+    simpleToolsBlock,
   ]);
 
   // Bulk replace of all steps — the flat StepListEditor edits the `TestStep[]`
@@ -1896,6 +1931,11 @@ export function TestTemplateEditor({
   const handleCreateFromDraft = async () => {
     if (!editForm || isSavingDraft) return;
 
+    if (simpleToolsBlock) {
+      toast.error(simpleToolsBlock);
+      return;
+    }
+
     if (!validateSteps(editForm.steps)) {
       toast.error(
         getStepsBlockReason(editForm.steps) ??
@@ -1940,6 +1980,11 @@ export function TestTemplateEditor({
       return;
     }
     if (!editForm || !currentTestCase) return;
+
+    if (simpleToolsBlock) {
+      toast.error(simpleToolsBlock);
+      return;
+    }
 
     if (!validateSteps(editForm.steps)) {
       toast.error(
@@ -2254,6 +2299,11 @@ export function TestTemplateEditor({
     );
     if (runModelValues.length === 0) {
       toast.error("Select at least one model to run.");
+      return;
+    }
+
+    if (simpleToolsBlock) {
+      toast.error(simpleToolsBlock);
       return;
     }
 
@@ -3127,7 +3177,16 @@ export function TestTemplateEditor({
                     }}
                   />
                 ) : null}
-                {quickRunHostOptions.length > 0 ? (
+                {useSimpleForm ? (
+                  <CaseSuiteChips
+                    models={selectedModelValues}
+                    trials={editForm?.runs ?? 1}
+                    hostLabel={
+                      selectedQuickRunHostOption?.label ?? suiteHostLabel
+                    }
+                    onOpenSuiteSettings={onOpenSuiteSettings}
+                  />
+                ) : quickRunHostOptions.length > 0 ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <label className="inline-flex cursor-pointer items-center">
@@ -3379,7 +3438,49 @@ export function TestTemplateEditor({
                   ) : null}
 
                   <div className="space-y-4 pt-1">
-                    {editForm ? (
+                    {editForm && useSimpleForm ? (
+                      <SimpleCaseForm
+                        steps={editForm.steps}
+                        onStepsChange={setSteps}
+                        matchOptions={editForm.matchOptions}
+                        onMatchOptionsChange={(next) =>
+                          setEditForm((current) =>
+                            current
+                              ? { ...current, matchOptions: next }
+                              : current,
+                          )
+                        }
+                        suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                        expectedOutput={editForm.expectedOutput}
+                        onExpectedOutputChange={(next) =>
+                          setEditForm((current) =>
+                            current
+                              ? { ...current, expectedOutput: next }
+                              : current,
+                          )
+                        }
+                        predicates={editForm.predicates}
+                        onPredicatesChange={(next) =>
+                          setEditForm((current) =>
+                            current
+                              ? { ...current, predicates: next }
+                              : current,
+                          )
+                        }
+                        suiteDefaultPredicates={
+                          (suite?.defaultPredicates ?? []) as Predicate[]
+                        }
+                        availableTools={assertableTools.map((tool) =>
+                          typeof tool === "string" ? tool : tool.name,
+                        )}
+                        isNegativeTest={currentTestCase.isNegativeTest}
+                        onOpenDeepEditor={() => setDeepEditor(true)}
+                        onToolsChoiceBlockReasonChange={
+                          setToolsChoiceBlockReason
+                        }
+                        evalValidationBorderClass={evalValidationBorderClass}
+                      />
+                    ) : editForm ? (
                       <StepListEditor
                         steps={editForm.steps}
                         onStepsChange={setSteps}
