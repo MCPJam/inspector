@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Tests for the source-agnostic promote-dialog core. The per-source adapters
@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   }>,
   hostsLoading: false,
   serversLoading: false,
+  servers: [{ name: "Excalidraw" }] as Array<{ name: string }>,
   serverAttachments: [{ _id: "attachment-1" }] as Array<{ _id: string }>,
   serverAttachmentsLoading: false,
   // The real `useQuery` returns `undefined` BOTH while loading and while
@@ -41,10 +42,11 @@ vi.mock("@/contexts/db-user-ready-context", () => ({
 
 vi.mock("@/hooks/useViews", () => ({
   useProjectServers: () => ({
-    servers: mocks.serversLoading ? [] : [{ name: "Excalidraw" }],
-    serversById: mocks.serversLoading
-      ? new Map()
-      : new Map([["srv-excalidraw", "Excalidraw"]]),
+    servers: mocks.serversLoading ? [] : mocks.servers,
+    serversById:
+      mocks.serversLoading || mocks.servers.length === 0
+        ? new Map()
+        : new Map([["srv-excalidraw", "Excalidraw"]]),
     isLoading: mocks.serversLoading,
   }),
   useProjectServerAttachments: () => ({
@@ -172,6 +174,7 @@ beforeEach(() => {
   mocks.hosts = [{ hostId: "host-first" }, { hostId: "host-swarm" }];
   mocks.hostsLoading = false;
   mocks.serversLoading = false;
+  mocks.servers = [{ name: "Excalidraw" }];
   mocks.serverAttachments = [{ _id: "attachment-1" }];
   mocks.serverAttachmentsLoading = false;
   mocks.useQuery.mockImplementation((_ref: unknown, args: unknown) =>
@@ -427,14 +430,27 @@ describe("ConvertSessionDialogCore", () => {
 
   it("points at the missing servers when the project has none either", () => {
     // "Create one from the picker above" is a dead end here: the picker's
-    // create needs a project server to put in the group.
+    // create needs a project server to put in the group. Modelled as a
+    // RESOLVED empty list — using the loading flag for this asserted the
+    // false claim below instead of the intended one.
     mocks.serverAttachments = [];
-    mocks.serversLoading = true;
+    mocks.servers = [];
     renderCore();
 
     expect(screen.getByTestId("promote-no-server-groups").textContent).toMatch(
       /no servers yet/i
     );
+  });
+
+  it("does not claim a project has no servers while the server list loads", () => {
+    // `knownServerNames` is `[]` until `useProjectServers` answers, so the
+    // note picked its copy off a list it did not have yet and told a project
+    // with servers that it had none.
+    mocks.serverAttachments = [];
+    mocks.serversLoading = true;
+    renderCore();
+
+    expect(screen.queryByTestId("promote-no-server-groups")).toBeNull();
   });
 
   it("does not claim a project has no server groups while they load", () => {
@@ -1097,11 +1113,20 @@ describe("ConvertSessionDialogCore — content-transfer acknowledgement", () => 
  * was opened from, past the "Import unavailable" alert built for exactly this.
  */
 describe("ConvertSessionDialogCore — a suites query that rejects", () => {
+  // React logs the caught error itself; the assertion is what renders. The
+  // spy is restored in a hook rather than at the end of the test body: a
+  // failing assertion throws past a trailing `mockRestore()`, and `setup.ts`'s
+  // `vi.clearAllMocks()` clears calls without restoring spies — so the leak
+  // would outlive the failure and silence real errors after it.
+  let consoleError: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    consoleError.mockRestore();
+  });
+
   it("keeps the failure inside the dialog", () => {
-    // React logs the caught error itself; the assertion is what renders.
-    const consoleError = vi
-      .spyOn(console, "error")
-      .mockImplementation(() => {});
     mocks.useQuery.mockImplementation(() => {
       throw new Error("[CONVEX Q(testSuites:getTestSuitesOverview)] rejected");
     });
@@ -1110,7 +1135,5 @@ describe("ConvertSessionDialogCore — a suites query that rejects", () => {
     expect(screen.getByText("Import unavailable")).toBeTruthy();
     // The shell survives, so the dialog is still closable rather than gone.
     expect(screen.getByTestId("promote-error-close")).toBeTruthy();
-
-    consoleError.mockRestore();
   });
 });

@@ -931,13 +931,20 @@ function ConvertSessionDialogCoreInner({
             {/* Same dead end as the Client column: `newSuiteRequirementsMet`
                 needs a `serverAttachmentId`, so a project with no groups shows
                 a normal-looking field above a Promote that never enables, and
-                explains itself only once the popover is open. Gated on the
-                query rather than the array alone, so a mid-flight empty list
-                does not accuse a project that has groups. No button — unlike
-                `HostPicker` this picker creates inline — but that create needs
-                a server to put in the group, so the two cases read
-                differently. */}
+                explains itself only once the popover is open. No button —
+                unlike `HostPicker` this picker creates inline — but that
+                create needs a server to put in the group, so which of the two
+                sentences below is true depends on the SERVER list, not the
+                group list.
+
+                Hence both gates. `projectServerAttachmentsLoading` keeps a
+                mid-flight empty list from accusing a project that has groups;
+                `projectServersLoading` keeps `knownServerNames`, which is `[]`
+                until that query lands, from being read as "this project has no
+                servers". The window they hide is not silent — the pending line
+                below the form is showing throughout it. */}
             {!projectServerAttachmentsLoading &&
+            !projectServersLoading &&
             projectServerAttachments.length === 0 ? (
               <p
                 className="text-xs leading-relaxed text-muted-foreground"
