@@ -43,6 +43,9 @@ import type {
   BrowserSessionRecordResult,
 } from "./browser-sessions-client";
 import { withKeyedLock } from "./probe-lock";
+// The same once-a-minute throttle the panel and the page tools use, so one
+// computer is never told it is busy by three callers in the same minute.
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -481,26 +484,6 @@ export class BrowserSessionInUseError extends Error {
     super(formatBrowserdError("lease_held", detail));
     this.name = "BrowserSessionInUseError";
   }
-}
-
-/**
- * How often a computer may be told it is being used. The row touch is per
- * command; this is the expensive one.
- */
-const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
-const lastActivityTouchAt = new Map<string, number>();
-
-function shouldTouchActivity(computerId: string): boolean {
-  const now = Date.now();
-  const previous = lastActivityTouchAt.get(computerId) ?? 0;
-  if (now - previous < ACTIVITY_TOUCH_THROTTLE_MS) return false;
-  lastActivityTouchAt.set(computerId, now);
-  return true;
-}
-
-/** Test seam: the throttle is module state and would leak between cases. */
-export function resetBrowserActivityThrottleForTests(): void {
-  lastActivityTouchAt.clear();
 }
 
 /**

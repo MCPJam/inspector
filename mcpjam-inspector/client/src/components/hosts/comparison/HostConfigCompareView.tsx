@@ -58,6 +58,7 @@ import {
 } from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   HostComparisonSubject,
   HostConfigFieldDef,
@@ -557,7 +558,7 @@ export function HostConfigCompareView({
         orderedSubjects.map((s) => [s.hostId, s.hostName] as const),
       );
       const hostNameById = new Map(
-        hosts.map((h) => [h.hostId, h.name] as const),
+        hosts.map((h) => [h.hostId, clientDisplayName(h)] as const),
       );
       return buildHostCompareSnapshot({
         totalSelectableHosts: knownHostIds.length,
@@ -601,7 +602,7 @@ export function HostConfigCompareView({
           <HostConfigFetcher
             key={host.hostId}
             hostId={host.hostId}
-            hostName={host.name}
+            hostName={clientDisplayName(host)}
             hostConfigId={host.hostConfigId}
             isAuthenticated={isAuthenticated}
             onLoaded={reportSubject}
@@ -1037,7 +1038,7 @@ function HostConfigFetcher({
     if (!host) return;
     onLoaded(hostId, {
       hostId,
-      hostName: host.name ?? hostName,
+      hostName,
       hostStyle: host.config.hostStyle,
       configHashShort: hostConfigId.slice(-6),
       config: host.config,

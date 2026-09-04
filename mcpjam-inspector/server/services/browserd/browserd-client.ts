@@ -122,9 +122,21 @@ export class BrowserdClient {
   }
 
   /** Send a command and interpret the daemon's reply. */
+  /**
+   * Send a command and interpret the daemon's reply.
+   *
+   * `options.timeoutMs` overrides the client-wide deadline for THIS command.
+   * Not every command is the same size: an observation is a round trip, while
+   * `webmcp_invoke` is synchronous in the daemon and does not answer until the
+   * page tool has settled — up to the 60s the daemon allows it. Under the
+   * client's flat 30s that call was aborted at the transport while the tool
+   * was still running perfectly well, and the caller was told "the browser
+   * rejected the command".
+   */
   async sendCommand(
     command: BrowserCommand,
     expectedBootId?: string,
+    options?: { timeoutMs?: number },
   ): Promise<BrowserdCommandResponse> {
     const res = await this.request(
       "/v1/commands",
@@ -134,6 +146,7 @@ export class BrowserdClient {
         body: JSON.stringify({ command, expectedBootId }),
       },
       true,
+      options?.timeoutMs,
     );
     return decodeCommandResponse({
       status: res.status,
@@ -145,13 +158,14 @@ export class BrowserdClient {
     path: string,
     init: RequestInit,
     authenticated: boolean,
+    timeoutMs?: number,
   ): Promise<Response> {
     const headers = new Headers(init.headers);
     if (authenticated) headers.set("authorization", `Bearer ${this.bearer}`);
     return this.fetchImpl(`${this.baseUrl}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(this.timeoutMs),
+      signal: AbortSignal.timeout(timeoutMs ?? this.timeoutMs),
     });
   }
 

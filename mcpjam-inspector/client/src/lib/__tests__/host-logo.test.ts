@@ -19,6 +19,8 @@ describe("resolveHostLogoByName", () => {
   it("still places a decorated name via the hint table", () => {
     // The exact-match resolver alone returns null here.
     expect(resolveHostLogoByName("Cursor (staging)")).toContain("cursor");
+    expect(resolveHostLogoByName("MCPJam #2")).toContain("mcp");
+    expect(resolveHostLogoByName("Copilot two")).toContain("copilot");
   });
 
   it("places a style id the hint table does not list", () => {
@@ -30,5 +32,4 @@ describe("resolveHostLogoByName", () => {
   it("places a plain known name", () => {
     expect(resolveHostLogoByName("Claude")).toContain("claude");
   });
-
 });

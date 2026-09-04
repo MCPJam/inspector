@@ -5,10 +5,10 @@
  * Two states that matter, and the difference between them is the whole
  * feature:
  *
- *   WATCHING (default) — anyone with the panel open can see what the agent is
- *     doing, without taking anything. This is deliberately the default (L10):
- *     making people take control just to look would push them into the
- *     disruptive action every time.
+ *   WATCHING (default) — the noVNC stream is embedded view-only. Anyone with
+ *     the panel open can see what the agent is doing. This is deliberately the
+ *     default (L10): making people take control just to look would push them
+ *     into the disruptive action every time.
  *
  *   HOLDING — the person clicked "Take control". The daemon now refuses every
  *     model-driven command AND every observation (a 423 before the queue), so
@@ -21,20 +21,9 @@
  * is a deliberate bias toward "stuck" over "surprising"; the panel says so.
  *
  * Nothing here is persisted. The stream is live only.
- *
- * THE STREAM PASSWORD IS NOT AVAILABLE HERE, and that is the point. It used to
- * arrive in `GET /session` and get pasted into an iframe URL, which put the
- * credential for the entire desktop into every watcher's browser. The full
- * desktop now opens through `POST /open-desktop` → a one-shot ticket → a
- * server-side redirect, and opening it TAKES THE LEASE, because the desktop
- * drives the page outside the daemon where the lease would otherwise never see
- * the person.
- *
- * The embedded live view is therefore absent until the shared viewport lands
- * (I-7): this component is not mounted anywhere yet, and the rail's browser
- * body is where a watcher will actually watch.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BrowserStream } from "./BrowserStream";
 import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 
 /** Heartbeat cadence while holding the lease (the daemon TTL is 2 minutes). */
@@ -50,10 +39,9 @@ type LeaseState =
 
 interface SessionInfo {
   bootId: string;
-  /** Where the desktop lives. Useless on its own — it authenticates nobody —
-   *  and deliberately not enough to open: see `openDesktop`. */
-  streamUrl: string;
   lease: LeaseState;
+  // No `streamUrl` or `streamPassword`: the route stopped returning them, and
+  // the stream socket authenticates on the server. See `BrowserStream`.
 }
 
 export interface BrowserPanelProps {
@@ -74,6 +62,12 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
 
   /** Every call mints its own token: they last ~60s, so caching one across a
    *  panel's lifetime would just produce expiry failures. */
+  /** A bare token for the stream socket, which cannot send an auth header. */
+  const mintStreamToken = useCallback(async () => {
+    const { token } = await mintBrowserToken({ projectId });
+    return token;
+  }, [mintBrowserToken, projectId]);
+
   const authorized = useCallback(
     async (path: string, init: RequestInit = {}): Promise<Response> => {
       const { token } = await mintBrowserToken({ projectId });
@@ -168,70 +162,6 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
     [authorized, refresh],
   );
 
-  /**
-   * Take the browser and open the full desktop in a new tab.
-   *
-   * One action, not two, because on the server they are one action: the ticket
-   * is only minted once the lease has been taken. Pretending otherwise in the
-   * UI would let someone press "Open" and be told no.
-   */
-  const openDesktop = useCallback(async () => {
-    setBusy(true);
-    // OPENED SYNCHRONOUSLY, inside the click. A `window.open` that happens
-    // after an await has lost the user gesture, and every popup blocker
-    // refuses it — so the tab is claimed now, parked on `about:blank`, and
-    // pointed at the desktop once the POST answers. `noopener` cannot be used
-    // for that, because it makes `window.open` return null and there would be
-    // no tab to redirect; clearing `opener` by hand is the same guarantee.
-    const tab = window.open("about:blank", "_blank");
-    if (tab) tab.opener = null;
-    try {
-      if (!tab) {
-        // NO SAME-TAB FALLBACK. Navigating this tab away would take the lease
-        // heartbeat with it — the desktop has none of its own — so the hold
-        // would park a couple of minutes into an active session and the agent
-        // would find the browser blocked by somebody who had "left".
-        setError(
-          "Allow pop-ups for this site to open the full desktop in a new tab.",
-        );
-        return;
-      }
-      // One token for both hops: the POST takes the lease, and the navigation
-      // presents the same ~60s token in `?t=` because a top-level navigation
-      // cannot carry a header.
-      const { token } = await mintBrowserToken({ projectId });
-      const res = await fetch("/api/web/computers/browser/open-desktop", {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}` },
-      });
-      const body = await res.json();
-      if (!res.ok) {
-        tab.close();
-        setError(
-          body?.error === "lease_held"
-            ? "Someone else is using this browser right now."
-            : "Could not open the desktop.",
-        );
-        return;
-      }
-      setHolding(true);
-      setError(null);
-      // `replace`, so the blank page does not sit in that tab's history with
-      // the token after it.
-      tab.location.replace(
-        `/api/web/computers/browser/desktop?t=${encodeURIComponent(token)}`,
-      );
-      await refresh();
-    } catch (cause) {
-      // Never rethrow: the caller is `void openDesktop()`, so a throw here is
-      // an unhandled rejection and the primary action appears to do nothing.
-      tab?.close();
-      setError(cause instanceof Error ? cause.message : String(cause));
-    } finally {
-      setBusy(false);
-    }
-  }, [mintBrowserToken, projectId, refresh]);
-
   if (error && !session) {
     return (
       <div className="p-4 text-sm text-muted-foreground">
@@ -308,27 +238,15 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         </p>
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center text-sm text-muted-foreground">
-        <p>
-          The live view moves into the playground rail; this panel currently
-          opens the desktop itself.
-        </p>
-        <button
-          type="button"
-          // `parked` too, not just `held`: a hold that ran out is still
-          // somebody's, and the server refuses the acquire behind this button.
-          // "Take control" stays the explicit way to ask for it.
-          disabled={busy || heldByOther || parked}
-          onClick={() => void openDesktop()}
-          className="rounded border px-3 py-1.5"
-        >
-          Open full desktop
-        </button>
-        <p className="max-w-sm text-xs">
-          Opening it takes control: the desktop drives the page outside the
-          agent&apos;s browser, so the agent is stopped while you are there.
-        </p>
-      </div>
+      {/* The stream comes through our own RFB proxy, not from an iframe
+          carrying the desktop's password in its URL. `viewOnly` here stops a
+          stray click from being sent at all; the gate that actually holds is
+          server-side, where a client cannot opt out of it. */}
+      <BrowserStream
+        mintToken={mintStreamToken}
+        viewOnly={!holding}
+        bootId={session.bootId}
+      />
     </div>
   );
 }

@@ -28,11 +28,11 @@ import {
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
   ensureBrowserSession,
-  resetBrowserActivityThrottleForTests,
   type BrowserSessionDeps,
   type SessionClient,
   type SessionSandbox,
 } from "../browser-session";
+import { resetActivityThrottleForTests } from "../../../utils/computers/activity-touch.js";
 
 const COMPUTER = "computer-1";
 const HASH = "bundle-hash-1";
@@ -223,7 +223,7 @@ const ARGS = { bearer: "user-bearer", projectId: "project-1" };
 
 // The computer-activity throttle is module state keyed by computer id, and
 // every case here uses the same one.
-beforeEach(() => resetBrowserActivityThrottleForTests());
+beforeEach(() => resetActivityThrottleForTests());
 
 describe("ensureBrowserSession — verified reuse", () => {
   it("reuses a healthy daemon with matching bootId and NEVER touches the sandbox", async () => {
@@ -301,7 +301,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
         probes += 1;
         // Asleep for the first probe; awake once `connect` has resumed it.
         return probes === 1
-          ? { kind: "unreachable", detail: "box is paused" }
+          ? { kind: "unhealthy", detail: "box is paused" }
           : { kind: "ok", bootId: ROW.bootId };
       },
     });
@@ -327,7 +327,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     lease.acquire("panel-1");
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -353,7 +353,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
 
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -370,14 +370,14 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     await expectRelaunch(
       makeFakes({
         lookups: [liveLookup()],
-        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        status: async () => ({ kind: "unhealthy", detail: "no answer" }),
         leaseAction: leaseBackedBy(new HandoffLease()),
       }),
     );
     await expectRelaunch(
       makeFakes({
         lookups: [liveLookup()],
-        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        status: async () => ({ kind: "unhealthy", detail: "no answer" }),
         leaseAction: async () => {
           throw new Error("this daemon predates the endpoint");
         },
@@ -387,7 +387,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     await expectRelaunch(
       makeFakes({
         lookups: [liveLookup()],
-        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       }),
     );
   });
@@ -401,7 +401,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const lease = new HandoffLease();
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       leaseAction: leaseBackedBy(lease),
     });
     // The moment the relaunch reaches the kill, a person presses the button.
@@ -426,7 +426,7 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     const lease = new HandoffLease();
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       leaseAction: leaseBackedBy(lease),
     });
     f.sandbox.killBrowserd.mockRejectedValue(new Error("sandbox exec failed"));
@@ -445,14 +445,18 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     // this prefix, so such a hold can only be an interrupted relaunch.
     let clock = 1_000;
     const lease = new HandoffLease({ now: () => clock });
-    lease.acquire("relaunch:11111111-2222-3333-4444-555555555555", 1_000, "script");
+    lease.acquire(
+      "relaunch:11111111-2222-3333-4444-555555555555",
+      1_000,
+      "script",
+    );
     clock += 60_000;
     expect(lease.state().state).toBe("parked");
 
     await expectRelaunch(
       makeFakes({
         lookups: [liveLookup()],
-        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        status: async () => ({ kind: "unhealthy", detail: "no answer" }),
         leaseAction: leaseBackedBy(lease),
       }),
     );
@@ -465,10 +469,14 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     // very collision it exists to prevent, with two of us instead of a person
     // and an agent.
     const lease = new HandoffLease();
-    lease.acquire("relaunch:99999999-8888-7777-6666-555555555555", 30_000, "script");
+    lease.acquire(
+      "relaunch:99999999-8888-7777-6666-555555555555",
+      30_000,
+      "script",
+    );
     const f = makeFakes({
       lookups: [liveLookup()],
-      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      status: async () => ({ kind: "unhealthy", detail: "no answer" }),
       leaseAction: leaseBackedBy(lease),
     });
 
@@ -813,7 +821,9 @@ describe("attachBrowserSession — adopt what is running, do not replace it", ()
     // machine". Defaulting to persistent made that a mode mismatch, and a
     // mismatch is a relaunch — so opening a panel to LOOK at what was running
     // destroyed it and replaced it with a different profile.
-    const f = makeFakes({ lookups: [liveLookup({ contextMode: "ephemeral" })] });
+    const f = makeFakes({
+      lookups: [liveLookup({ contextMode: "ephemeral" })],
+    });
     const handle = await attachBrowserSession(f.deps, { computerId: COMPUTER });
 
     expect(handle.reused).toBe(true);
@@ -838,7 +848,9 @@ describe("attachBrowserSession — adopt what is running, do not replace it", ()
   });
 
   it("obeys an explicitly named mode over whatever is running", async () => {
-    const f = makeFakes({ lookups: [liveLookup({ contextMode: "ephemeral" })] });
+    const f = makeFakes({
+      lookups: [liveLookup({ contextMode: "ephemeral" })],
+    });
     await attachBrowserSession(f.deps, {
       computerId: COMPUTER,
       contextMode: "persistent",

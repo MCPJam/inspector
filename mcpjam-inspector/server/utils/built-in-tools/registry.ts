@@ -47,7 +47,10 @@ import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
 import { LOCAL_BROWSER_ENABLED, hostedBrowserEnabled } from "../../config.js";
-import { isHostedBrowserExposable } from "../computers/runtime-config.js";
+import {
+  isHostedBrowserExposable,
+  isHostedBrowserRefused,
+} from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
@@ -533,19 +536,31 @@ export function resolveHostTools(
       // The backend's own gate (catalog entry + desktop template + desktop
       // credit rate). An explicit `false` is honored even with the env flag
       // on: the likeliest reason is an unset desktop rate, which would meter
-      // every hosted browser hour at the terminal rate. Silence (an older
-      // backend, or bootstrap not yet run) is not a refusal — the env flag
-      // above is already dark by default and is what staging drives with.
-      if (!isLocalBrowser && isHostedBrowserExposable() === false) {
+      // every hosted browser hour at the terminal rate. On a HOSTED replica
+      // silence is a refusal too — see `isHostedBrowserRefused` — because the
+      // gate the inspector route reads treats it the same way, and two callers
+      // disagreeing about the same silence is how a browser gets exposed that
+      // the other half believes is closed.
+      if (!isLocalBrowser && isHostedBrowserRefused()) {
+        // Said separately, because they are different facts and only one of
+        // them is the backend's answer. A `null` verdict means we never got an
+        // answer — an older backend, or bootstrap not yet run — and reporting
+        // that as "the backend reports it is not exposable" sends whoever
+        // reads this log looking at a setting nobody has set.
+        const answered = isHostedBrowserExposable() === false;
         logger.warn(
-          "[built-in-tools] browser suppressed: the backend reports it is not exposable",
+          answered
+            ? "[built-in-tools] browser suppressed: the backend reports it is not exposable"
+            : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
           { projectId: ctx.projectId },
         );
         ctx.onToolSuppressed?.({
           id,
-          reason:
-            "browser is not available on this deployment yet: the backend reports " +
-            "the hosted browser runtime is not fully configured.",
+          reason: answered
+            ? "browser is not available on this deployment yet: the backend reports " +
+              "the hosted browser runtime is not fully configured."
+            : "browser is not available on this deployment yet: this server has no " +
+              "exposure verdict from the backend.",
         });
         continue;
       }

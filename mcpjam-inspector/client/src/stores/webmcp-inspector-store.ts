@@ -13,7 +13,12 @@ import {
   getAuthHeaders,
   hasSessionToken,
 } from "@/lib/session-token";
-import { WEBMCP_INPUT_BATCH_LIMIT } from "@/shared/webmcp-inspector-protocol";
+import {
+  WEBMCP_INPUT_BATCH_LIMIT,
+  type WebMcpInvocationOutcome,
+} from "@/shared/webmcp-inspector-protocol";
+import { isHostedMode } from "@/lib/apis/mode-client";
+import { authFetch } from "@/lib/session-token";
 import type {
   WebMcpActivityEntry,
   WebMcpBinaryFrame,
@@ -38,7 +43,15 @@ import {
   resetFrameStats,
 } from "@/lib/webmcp-inspector/frame-stats";
 
-const BASE = "/api/mcp/webmcp";
+/**
+ * WHERE the inspector API lives, which differs by deployment.
+ *
+ * Locally it hangs off `/api/mcp`, whose whole family is 410'd on a hosted
+ * replica; hosted, the same router is mounted under `/api/web` alongside every
+ * other route a browser can reach there. Read once at module load, because the
+ * mode is a build constant and cannot change under a running tab.
+ */
+const BASE = isHostedMode() ? "/api/web/webmcp" : "/api/mcp/webmcp";
 /** Timeline entries kept in memory. Older ones scroll out of usefulness. */
 const MAX_ACTIVITY = 500;
 
@@ -55,15 +68,29 @@ export interface PendingInvocation {
 }
 
 /** The settled outcome of one invocation, as a caller awaiting it sees it. */
-export interface PageToolInvocationResult {
-  state: "succeeded" | "failed" | "cancelled" | "timeout";
-  output?: unknown;
-  outputTruncated?: boolean;
-  errorMessage?: string;
+export interface PageToolInvocationResult extends WebMcpInvocationOutcome {
+  /**
+   * Present when the outcome is `unknown` and the caller may ask again: the
+   * same id re-queries the same invocation rather than starting a new one.
+   */
+  invokeId?: string;
 }
 
 /** How long to wait for a settle event before giving up on the stream. */
 const INVOCATION_WAIT_TIMEOUT_MS = 90_000;
+
+/**
+ * A client-minted id for one invocation, so a retry is recognisable as one.
+ *
+ * `crypto.randomUUID` needs a secure context, which every real deployment is;
+ * the fallback keeps this working in a plain-HTTP dev origin rather than
+ * throwing on the first tool call.
+ */
+function newInvokeId(): string {
+  return typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `inv-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /**
  * The frame currently on screen, normalized across BOTH transports.
@@ -336,6 +363,15 @@ interface WebMcpInspectorState {
  * multiply both the connections and the replayed history.
  */
 let source: EventSource | undefined;
+/**
+ * The hosted event stream's abort handle, and a generation counter so a
+ * reconnect loop belonging to a stream that has since been replaced cannot
+ * resurrect itself.
+ */
+let hostedStream: AbortController | undefined;
+let hostedStreamGeneration = 0;
+/** Backoff for the hosted stream's own reconnects (EventSource does its own). */
+const HOSTED_STREAM_RETRY_MS = [500, 1_000, 2_000, 5_000];
 let sourceSessionId: string | undefined;
 /** Whether the CURRENT EventSource asked for frames to be suppressed. */
 let sourceFrames: "on" | "off" = "on";
@@ -405,7 +441,11 @@ async function request<T>(
   init?: RequestInit,
 ): Promise<{ ok: true; data: T } | { ok: false; error: WebMcpRequestError }> {
   try {
-    const response = await fetch(`${BASE}${path}`, {
+    // `authFetch` rather than a bare `fetch`: hosted requests need the signed-in
+    // member's bearer, which `getAuthHeaders` deliberately does not supply (it
+    // carries the LOCAL session token, and is a no-op hosted). It keeps adding
+    // that local token for local mode, so this one call covers both.
+    const response = await authFetch(`${BASE}${path}`, {
       ...init,
       headers: {
         ...(init?.body ? { "content-type": "application/json" } : {}),
@@ -595,6 +635,15 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      */
     function applyEvent(event: WebMcpEvent) {
       if (event.type === "session") {
+        if (event.session.status === "detached") {
+          // The REMOTE browser is still running; this replica just let go of
+          // its handle. Recoverable, and recovered by asking for the session
+          // again — any replica can re-derive it. Treating this like `closed`
+          // would tell someone their live browser had ended, and drop a
+          // timeline they can still add to.
+          void reattach(event.session.sessionId);
+          return;
+        }
         set({ session: event.session });
         return;
       }
@@ -651,6 +700,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           state: entry.state,
           output: entry.output,
           outputTruncated: entry.outputTruncated,
+          outputBytes: entry.outputBytes,
           errorMessage: entry.errorMessage,
         };
         const waiter = invocationWaiters.get(entry.invokeId);
@@ -696,25 +746,24 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      */
     function openEventSource(sessionId: string, frames: "on" | "off") {
       source?.close();
+      // The hosted reader has to go the same way the `EventSource` does.
+      // `ensureSseFrames` reopens this stream to turn frames on or off, and a
+      // reader left running keeps pulling its old response body and delivering
+      // the very frames the reopen asked to stop — two streams feeding one
+      // session, the older one contradicting the newer.
+      hostedStream?.abort();
+      hostedStream = undefined;
       sourceSessionId = sessionId;
       sourceFrames = frames;
       // `frames=on` is never sent — the parameter is OMITTED — so a server
       // that has never heard of it receives exactly today's URL.
       const query = frames === "off" ? "?replay=200&frames=off" : "?replay=200";
-      // The token rides in the query string because EventSource cannot send
-      // headers, which is the same accommodation the traffic-log stream makes.
-      source = new EventSource(
-        addTokenToUrl(`${BASE}/sessions/${sessionId}/events${query}`),
-      );
-      // Frames on this stream means the ladder is running on SSE — either
-      // because the socket was never opened, or because it fell back here.
-      if (frames === "on") {
-        ladderRung = "sse-frames";
-        publishFrameTransport();
-      }
-      source.onmessage = (message) => {
+      const path = `${BASE}/sessions/${sessionId}/events${query}`;
+
+      /** One SSE payload, whichever transport carried it. */
+      const handlePayload = (raw: string) => {
         try {
-          const parsed = JSON.parse(message.data);
+          const parsed = JSON.parse(raw);
           if (parsed?.type === "session_gone") {
             // The server restarted, or the session was reaped. Say so rather
             // than leaving a dead tab that looks live.
@@ -746,10 +795,148 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           /* a malformed frame is not worth tearing the stream down over */
         }
       };
+
+      // Frames on this stream means the ladder is running on SSE — either
+      // because the socket was never opened, or because it fell back here.
+      if (frames === "on") {
+        ladderRung = "sse-frames";
+        publishFrameTransport();
+      }
+
+      if (isHostedMode()) {
+        // `EventSource` cannot set headers, and hosted auth is a bearer — the
+        // query-string accommodation below is a LOCAL session token, which
+        // means nothing here. Same pattern the eval run stream uses: authFetch
+        // plus a reader over the same `data:` framing.
+        openHostedEventStream(path, handlePayload);
+        return;
+      }
+
+      // The token rides in the query string because EventSource cannot send
+      // headers, which is the same accommodation the traffic-log stream makes.
+      source = new EventSource(addTokenToUrl(path));
+      source.onmessage = (message) => handlePayload(message.data);
       source.onerror = () => {
         // EventSource reconnects on its own, and replay plus full tool
         // snapshots make that safe; nothing to do but let it.
       };
+    }
+
+    /**
+     * The hosted event stream: `authFetch` plus a reader, reconnecting itself.
+     *
+     * `EventSource` gives reconnection for free and cannot carry a bearer;
+     * this gives up the former to get the latter. Reconnection is therefore
+     * explicit — and safe for the same reason it is safe for `EventSource`:
+     * every reconnect replays the recent ring and re-sends the complete tool
+     * snapshot, so a gap cannot leave stale state behind.
+     */
+    function openHostedEventStream(
+      path: string,
+      onPayload: (raw: string) => void,
+    ) {
+      const controller = new AbortController();
+      hostedStream = controller;
+      const generation = ++hostedStreamGeneration;
+
+      void (async () => {
+        let attempt = 0;
+        while (
+          !controller.signal.aborted &&
+          generation === hostedStreamGeneration
+        ) {
+          try {
+            const response = await authFetch(path, {
+              headers: { accept: "text/event-stream" },
+              signal: controller.signal,
+            });
+            if (!response.ok || !response.body) {
+              // A 5xx is the replica, not the session: a deploy rolling under
+              // an open tab answers a few requests badly and then answers them
+              // fine. Treated as terminal it killed the stream for good — in
+              // exactly the scenario the retry loop below exists for. Retried
+              // on the same backoff as a thrown network error.
+              //
+              // On the STATUS alone. Also requiring a body excluded precisely
+              // the shapes a broken hop produces — a bodyless 502 from a proxy
+              // with no upstream, a 503 from a replica shutting down — and
+              // those were then read as terminal and killed the stream.
+              if (response.status >= 500) {
+                throw new Error(`hosted event stream: ${response.status}`);
+              }
+              // A 409 here is the interesting one: the computer is asleep, and
+              // the session is recoverable rather than gone. Surfaced through
+              // the same error channel a failed request would use, so the tab
+              // can offer to start it again.
+              const body = await response.json().catch(() => ({}));
+              set({
+                error: {
+                  message:
+                    typeof body?.error === "string"
+                      ? body.error
+                      : "The browser session stream is unavailable.",
+                  code: typeof body?.code === "string" ? body.code : undefined,
+                },
+              });
+              // Cleared on the way out, because `connect()` reads this handle
+              // to decide whether a stream is already open for this session.
+              // Left set, a stream that gave up on a 409 looks live forever
+              // and every later `reconnect()` declines to replace it — so a
+              // computer that has since woken is never picked back up.
+              if (generation === hostedStreamGeneration) {
+                hostedStream = undefined;
+              }
+              return;
+            }
+            attempt = 0;
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffered = "";
+            for (;;) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              // Checked per CHUNK, not only per reconnect: abort is what ends
+              // the read, and a chunk already in flight when it happens would
+              // otherwise be applied to whatever session took this one's
+              // place.
+              if (
+                controller.signal.aborted ||
+                generation !== hostedStreamGeneration
+              ) {
+                await reader.cancel().catch(() => {});
+                return;
+              }
+              buffered += decoder.decode(value, { stream: true });
+              // SSE frames end at a blank line; a chunk can hold several, or
+              // half of one.
+              let split = buffered.indexOf("\n\n");
+              while (split !== -1) {
+                const frame = buffered.slice(0, split);
+                buffered = buffered.slice(split + 2);
+                for (const line of frame.split("\n")) {
+                  if (line.startsWith("data: ")) onPayload(line.slice(6));
+                }
+                split = buffered.indexOf("\n\n");
+              }
+            }
+          } catch {
+            if (controller.signal.aborted) return;
+          }
+          if (
+            controller.signal.aborted ||
+            generation !== hostedStreamGeneration
+          ) {
+            return;
+          }
+          // Backs off, but never gives up: a hosted session outlives a deploy,
+          // and the replica that dropped this stream is not the one that will
+          // answer the reconnect.
+          attempt = Math.min(attempt + 1, HOSTED_STREAM_RETRY_MS.length - 1);
+          await new Promise((resolve) =>
+            setTimeout(resolve, HOSTED_STREAM_RETRY_MS[attempt]),
+          );
+        }
+      })();
     }
 
     /** Reset #1's other half: flip the SSE frame appetite, nothing more. */
@@ -858,7 +1045,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
     }
 
     function connect(sessionId: string) {
-      if (source && sourceSessionId === sessionId) return;
+      // "Already streaming this session" has two shapes, and checking only for
+      // the `EventSource` misses the hosted one entirely — hosted never sets
+      // `source`, so this guard never tripped and every `reconnect()` (one per
+      // surface mount) tore the stream down and rebuilt it, replaying the last
+      // 200 events each time.
+      const streaming = isHostedMode() ? hostedStream : source;
+      if (streaming && sourceSessionId === sessionId) return;
       disconnectStream();
       // Only a `frame-stream` session has pixels to carry. A native-window
       // session drives its own real browser and a hosted one paints in a
@@ -900,6 +1093,35 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * `set`, because the blob URLs behind it are revoked below and an `<img>`
      * left pointing at a revoked URL is a broken image.
      */
+    /**
+     * Pick a detached hosted session back up.
+     *
+     * A plain re-`GET`: whichever replica answers either has the session or
+     * re-derives it, and the response carries the current tools. The timeline
+     * is the client's own and is deliberately kept — this is the same session
+     * continuing, not a new one.
+     */
+    async function reattach(sessionId: string) {
+      const generation = sessionGeneration;
+      const result = await request<{
+        session: WebMcpSessionPublic;
+        tools: WebMcpToolDescriptor[];
+      }>(`/sessions/${sessionId}`);
+      // The round trip is not instant, and the person can close this session
+      // or open another one inside it. Applying either arm then resurrects a
+      // session they have moved on from, or attaches its tools to a page it
+      // has nothing to do with.
+      if (generation !== sessionGeneration) return;
+      if (result.ok) {
+        set({ session: result.data.session, tools: result.data.tools });
+        return;
+      }
+      // Could not get it back — the computer is asleep, or it really is gone.
+      // Reported with the server's own code so the tab can offer the remedy
+      // (`hosted-desktop-asleep` is "start it again", not "it is over").
+      set({ error: result.error });
+    }
+
     function disconnectStream() {
       connectionGeneration += 1;
       if (frameRetryTimer !== undefined) {
@@ -921,6 +1143,9 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       lastAppliedFrameSeq = 0;
       source?.close();
       source = undefined;
+      hostedStreamGeneration += 1;
+      hostedStream?.abort();
+      hostedStream = undefined;
       sourceSessionId = undefined;
       sourceFrames = "on";
       set({ liveFrame: undefined });
@@ -966,10 +1191,19 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async startSession(url, options) {
+        // A REPLACEMENT is as much a session change as a closure, so it goes
+        // through the same door. This ran as a bare `sessionGeneration += 1`,
+        // which was two things short of that: waiters parked on the OLD
+        // session were left pending for the full 90-second timeout even though
+        // the page they were waiting on had just been replaced, and before the
+        // bump a reattach or an inline outcome belonging to that session still
+        // passed its generation guard and overwrote the new one.
+        failOutstandingWaiters(
+          "The browser session was replaced before this tool finished.",
+        );
         // A new session starts a new timeline, so the dedup set starts over
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
-        settledResults.clear();
         // Full teardown BEFORE the request, not after it: a start that fails
         // would otherwise leave the previous session's socket, retry ladder
         // and stream running with nothing left in the UI that refers to them.
@@ -1080,32 +1314,79 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async invokeTool(toolKey, input) {
-        // The outcome arrives on the activity stream, not in this response:
-        // the server answers as soon as the call is queued.
-        await get().sendCommand({
+        const invokeId = newInvokeId();
+        const response = (await get().sendCommand({
           type: "invoke_tool",
           toolKey,
           input,
           source: "manual",
-        });
+          invokeId,
+        })) as { outcome?: PageToolInvocationResult } | undefined;
+        // Locally the outcome arrives on the activity stream and this response
+        // is just an ack. Hosted, the response may be the ONLY settlement this
+        // tab ever sees — the stream it is subscribed to can be attached to a
+        // different replica than the one that ran the tool — so it is recorded
+        // here rather than waited for.
+        if (response?.outcome) {
+          rememberSettled(invokeId, response.outcome);
+        }
       },
 
       async invokeToolForResult(toolKey, input) {
         const generation = sessionGeneration;
+        // MINTED HERE, so this call has one identity for its whole life. A
+        // hosted request can be dropped in flight or retried onto another
+        // replica, and "did that go through?" must be answerable by asking
+        // again rather than by running a side-effecting page tool a second
+        // time — which is exactly what a server-issued id cannot do, because
+        // a retry would get a new one.
+        const invokeId = newInvokeId();
         const response = (await get().sendCommand({
           type: "invoke_tool",
           toolKey,
           input,
           source: "chat",
-        })) as { invokeId?: string } | undefined;
+          invokeId,
+        })) as
+          { invokeId?: string; outcome?: PageToolInvocationResult } | undefined;
+
+        // HOSTED answers inline, because the event stream carrying the settle
+        // may be attached to a different replica than the one that ran the
+        // tool. Taken as authoritative when present — but only for the session
+        // that asked. This return is BEFORE the generation check further down,
+        // so without one here a session closed mid-flight would hand its
+        // caller an outcome belonging to a page that is gone.
+        if (response?.outcome) {
+          settledResults.delete(invokeId);
+          if (generation !== sessionGeneration) {
+            return {
+              state: "unknown",
+              invokeId,
+              errorMessage:
+                "The browser session went away while this tool was running.",
+            };
+          }
+          // `unknown` means "it ran, and what it did is not establishable" —
+          // which is only actionable with the id to ask again. The server
+          // returns that id BESIDE the outcome, not inside it, so passing the
+          // outcome through untouched drops it and leaves the caller with no
+          // way to find out except running a side-effecting tool twice.
+          return response.outcome.state === "unknown"
+            ? { invokeId, ...response.outcome }
+            : response.outcome;
+        }
 
         if (!response?.invokeId) {
           const message =
             get().error?.message ?? "The page tool could not be invoked.";
-          return { state: "failed", errorMessage: message };
+          // `unknown`, not `failed`, and the id is KEPT. The request may have
+          // reached the server and run the tool before its response was lost,
+          // and the difference matters for anything that charges a card. The
+          // id is what lets a retry be recognised as the same invocation
+          // instead of running it a second time.
+          return { state: "unknown", invokeId, errorMessage: message };
         }
 
-        const invokeId = response.invokeId;
         if (generation !== sessionGeneration) {
           // The session went away while this call was being queued; nothing
           // will ever settle it.
@@ -1183,9 +1464,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         if (!options?.silent) {
           const result = (await get().sendCommand({
             type: "capture_screenshot",
-          })) as
-            | { screenshotBase64?: string; capturedAt?: number }
-            | undefined;
+          })) as { screenshotBase64?: string; capturedAt?: number } | undefined;
           if (applies(result?.screenshotBase64)) {
             set({
               lastScreenshot: result?.screenshotBase64,
@@ -1207,13 +1486,10 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         const result = await request<{
           screenshotBase64?: string;
           capturedAt?: number;
-        }>(
-          `/sessions/${sessionId}/command`,
-          {
-            method: "POST",
-            body: JSON.stringify({ type: "capture_screenshot" }),
-          },
-        );
+        }>(`/sessions/${sessionId}/command`, {
+          method: "POST",
+          body: JSON.stringify({ type: "capture_screenshot" }),
+        });
         // The poll runs every second and the request outlives a close: landing
         // this write after the session changed would hang the OLD page's paint
         // in the new session's pane, where nothing would ever correct it.

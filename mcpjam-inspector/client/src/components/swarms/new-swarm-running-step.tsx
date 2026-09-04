@@ -50,6 +50,8 @@ import {
 } from "@/lib/swarm-api";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import { cn } from "@/lib/utils";
+import type { HostListItem } from "@/hooks/useClients";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 export type SwarmLaunchedRun = {
   runId: string;
@@ -66,6 +68,7 @@ export type SwarmLaunchedRun = {
 
 export type SwarmRunningColumn = {
   key: string;
+  hostId?: string;
   label: string;
 };
 
@@ -214,6 +217,7 @@ function columnsFromRun(
       });
       return {
         key,
+        hostId: host.hostId,
         label:
           hostName(host.hostId) ??
           host.environmentRef?.name ??
@@ -226,7 +230,11 @@ function columnsFromRun(
     hostSummaries: run.hostSummaries ?? [],
     snapshotHosts: run.snapshot?.hosts,
     hostName,
-  }).map((target) => ({ key: target.key, label: target.label }));
+  }).map((target) => ({
+    key: target.key,
+    hostId: target.hostId,
+    label: target.label,
+  }));
 }
 
 function attributeSessions(
@@ -274,6 +282,7 @@ function attributeSessions(
     return {
       columns: fallbackTargets.map((target) => ({
         key: target.key,
+        hostId: target.hostId,
         label: target.label,
       })),
       targets: fallbackTargets,
@@ -659,10 +668,10 @@ function FirstFindingPing({
 }
 
 export function NewSwarmRunningStep({
-  projectId,
   runs,
   fallbackColumns,
   environments = [],
+  hosts = [],
   onLeave,
   onOpenSession,
 }: {
@@ -672,6 +681,7 @@ export function NewSwarmRunningStep({
   fallbackColumns: SwarmRunningColumn[];
   /** Used to label columns by client (host) instead of env nickname. */
   environments?: ProjectEnvironmentView[];
+  hosts?: HostListItem[];
   /**
    * Leave the watch surface for the swarm's Findings page. Does not cancel
    * the run — "Stop" used to imply that and was a lie.
@@ -683,19 +693,16 @@ export function NewSwarmRunningStep({
    */
   onOpenSession: (sessionId: string, criterionId?: string) => void;
 }) {
-  const hosts = useQuery(
-    SWARM_QUERIES.listHosts as any,
-    {
-      projectId,
-    } as any
-  ) as { hostId: string; name: string }[] | undefined;
-
-  const hostName = useMemo(() => {
-    const map = new Map(
-      (hosts ?? []).map((host) => [host.hostId, host.name] as const)
-    );
-    return (hostId: string) => map.get(hostId);
+  const hostById = useMemo(() => {
+    return new Map(hosts.map((host) => [host.hostId, host] as const));
   }, [hosts]);
+  const hostName = useMemo(
+    () => (hostId: string) => {
+      const host = hostById.get(hostId);
+      return host ? clientDisplayName(host) : undefined;
+    },
+    [hostById]
+  );
 
   const clientLabel = useMemo(() => {
     const envById = new Map(
@@ -705,12 +712,13 @@ export function NewSwarmRunningStep({
       if (key.startsWith("environment:")) {
         const env = envById.get(key.slice("environment:".length));
         if (env) {
-          return hostName(env.hostId) ?? env.name ?? fallback;
+          const host = hostById.get(env.hostId);
+          return (host ? clientDisplayName(host) : null) ?? env.name ?? fallback;
         }
       }
       return hostName(key) ?? fallback;
     };
-  }, [environments, hostName]);
+  }, [environments, hostById, hostName]);
 
   const [snapshots, setSnapshots] = useState<Record<string, RunLiveSnapshot>>(
     {}
@@ -740,6 +748,7 @@ export function NewSwarmRunningStep({
           prev.columns.every(
             (column, index) =>
               column.key === snapshot.columns[index]?.key &&
+              column.hostId === snapshot.columns[index]?.hostId &&
               column.label === snapshot.columns[index]?.label
           ) &&
           prev.targets.length === snapshot.targets.length &&
@@ -770,20 +779,26 @@ export function NewSwarmRunningStep({
   // placeholder — keeping them after load made Cursor look "queued" when the
   // journeys were still single-client.
   const columns = useMemo((): SwarmRunningColumn[] => {
-    const seen = new Map<string, string>();
+    const seen = new Map<string, SwarmRunningColumn>();
+    const addColumn = (column: SwarmRunningColumn) => {
+      seen.set(column.key, {
+        ...column,
+        label: clientLabel(column.key, column.label),
+      });
+    };
     const snapList = Object.values(snapshots);
     if (snapList.length === 0) {
       for (const column of fallbackColumns) {
-        seen.set(column.key, clientLabel(column.key, column.label));
+        addColumn(column);
       }
     } else {
       for (const snap of snapList) {
         for (const column of snap.columns) {
-          seen.set(column.key, clientLabel(column.key, column.label));
+          addColumn(column);
         }
       }
     }
-    return Array.from(seen.entries()).map(([key, label]) => ({ key, label }));
+    return Array.from(seen.values());
   }, [clientLabel, fallbackColumns, snapshots]);
 
   const missingPlannedClients = useMemo(() => {
@@ -1044,7 +1059,13 @@ export function NewSwarmRunningStep({
                       className="min-w-[7.5rem] px-2 py-2.5 text-center text-xs font-medium text-muted-foreground"
                     >
                       <span className="inline-flex items-center justify-center gap-1.5">
-                        <JourneyHostLogoMark label={column.label} />
+                        <JourneyHostLogoMark
+                          label={
+                            (column.hostId
+                              ? hostById.get(column.hostId)?.name
+                              : undefined) ?? column.label
+                          }
+                        />
                         <span className="truncate">{column.label}</span>
                       </span>
                     </th>

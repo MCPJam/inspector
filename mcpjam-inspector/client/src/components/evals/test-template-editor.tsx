@@ -209,9 +209,10 @@ import {
   getScenarioHostLogo,
   getScenarioShellStyle,
   normalizeScenarioHostStyleId,
-  resolveHostLogoByDisplayName,
 } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 interface TestTemplate {
   title: string;
@@ -1313,7 +1314,7 @@ export function TestTemplateEditor({
     ) ?? quickRunHostOptions[0];
   const selectedQuickRunHostLogoSrc =
     selectedQuickRunHostOption?.namedHostId != null
-      ? resolveHostLogoByDisplayName(selectedQuickRunHostOption.label)
+      ? resolveHostLogoByName(selectedQuickRunHostOption.label)
       : null;
   // Effective host for an attachment-less suite — its own configured host
   // style, defaulting to MCPJam. Mirrors the server's `loadSuiteHostConfig`
@@ -3125,13 +3126,11 @@ export function TestTemplateEditor({
                         <label className="inline-flex cursor-pointer items-center">
                           <span className="sr-only">Client</span>
                           <span className="inline-flex h-8 max-w-[7.5rem] items-center gap-1 rounded-md border border-input/80 bg-background px-1.5">
-                            {selectedQuickRunHostLogoSrc ? (
-                              <img
-                                src={selectedQuickRunHostLogoSrc}
-                                alt=""
-                                className="size-3.5 shrink-0 object-contain"
-                              />
-                            ) : null}
+                            <HostChipLogo
+                              logoSrc={selectedQuickRunHostLogoSrc}
+                              name={selectedQuickRunHostOption?.label ?? "Client"}
+                              size="sm"
+                            />
                             <select
                               className="min-w-0 max-w-[5.5rem] truncate bg-transparent text-xs text-foreground outline-none"
                               value={quickRunHostSelection ?? ""}
