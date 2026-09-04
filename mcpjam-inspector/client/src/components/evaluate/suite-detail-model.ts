@@ -3,7 +3,6 @@ import {
   formatDurationMs,
   formatCompactNumber,
 } from "../evals/metric-strip-data";
-import { computeIterationResult } from "../evals/pass-criteria";
 import {
   getEffectiveSuiteServers,
   iterationLatencyP50,
@@ -93,7 +92,6 @@ export type SuiteRunHistoryRow = {
   verdict: RunHistoryVerdict;
   verdictLabel: string;
   passRate: number | null;
-  topFailureSignature: string | null;
   platform: string;
   source: NonNullable<EvalSuiteRun["source"]>;
   client: string | null;
@@ -161,6 +159,12 @@ export function resolveRunHistoryVerdict(
   if (run.status === "pending") {
     return { verdict: "pending", label: "Pending" };
   }
+  // Held for its judge: execution is over, the verdict is not. The pass rate
+  // below is pre-judge, so reading Ship or Hold off it would publish a
+  // decision the judge may still reverse.
+  if (run.status === "grading") {
+    return { verdict: "running", label: "Grading" };
+  }
   if (run.status === "cancelled" || run.result === "cancelled") {
     return { verdict: "cancelled", label: "Cancelled" };
   }
@@ -188,40 +192,6 @@ export function runPlatformLabel(run: EvalSuiteRun): string {
   const sourceLabel = SOURCE_LABEL[source] ?? SOURCE_LABEL.ui;
   const ciId = run.ciMetadata?.pipelineId ?? run.ciMetadata?.jobId;
   return ciId ? `${sourceLabel} #${ciId}` : sourceLabel;
-}
-
-function mostCommon(values: string[]): string | null {
-  if (values.length === 0) return null;
-  const counts = new Map<string, number>();
-  for (const value of values) {
-    counts.set(value, (counts.get(value) ?? 0) + 1);
-  }
-  let best = values[0];
-  let bestCount = 0;
-  for (const [value, count] of counts) {
-    if (count > bestCount) {
-      best = value;
-      bestCount = count;
-    }
-  }
-  return best;
-}
-
-export function topFailureSignature(
-  iterations: readonly EvalIteration[],
-): string | null {
-  const failed = iterations.filter(
-    (iteration) => computeIterationResult(iteration) === "failed",
-  );
-  if (failed.length === 0) return null;
-  const errors = failed
-    .map((iteration) => iteration.error?.trim())
-    .filter((error): error is string => Boolean(error));
-  if (errors.length > 0) return mostCommon(errors);
-  const titles = failed
-    .map((iteration) => iteration.testCaseSnapshot?.title?.trim())
-    .filter((title): title is string => Boolean(title));
-  return mostCommon(titles);
 }
 
 function runClientLabel(
@@ -296,7 +266,6 @@ export function buildSuiteRunHistoryRows(
         verdict,
         verdictLabel: label,
         passRate: stats.passRate,
-        topFailureSignature: topFailureSignature(iterations),
         platform: runPlatformLabel(run),
         source: run.source ?? "ui",
         client: runClientLabel(run, hostNamesById, projectEnvironmentsEnabled),

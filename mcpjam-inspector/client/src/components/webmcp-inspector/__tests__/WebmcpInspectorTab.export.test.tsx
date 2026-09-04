@@ -39,6 +39,14 @@ const ACTIVITY: WebMcpActivityEntry[] = [
   { id: "a0", ts: 1_000, kind: "session_started", url: "https://shop.test/" },
 ];
 
+const clipboard = vi.hoisted(() => ({ copy: vi.fn(async () => true) }));
+vi.mock("@/lib/clipboard", () => ({
+  copyToClipboard: (text: string) => clipboard.copy(text),
+}));
+vi.mock("@/lib/toast", () => ({
+  toast: { success: vi.fn(), error: vi.fn() },
+}));
+
 describe("WebmcpInspectorTab — export", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -53,6 +61,31 @@ describe("WebmcpInspectorTab — export", () => {
       lastScreenshot: undefined,
       chatEnabled: false,
     });
+  });
+
+  it("copies the viewport's own diagnostics, and only with a session", async () => {
+    clipboard.copy.mockClear();
+    const view = render(<WebmcpInspectorTab />);
+    fireEvent.click(screen.getByRole("button", { name: "Copy diagnostics" }));
+    await Promise.resolve();
+
+    const copied = JSON.parse(String(clipboard.copy.mock.calls[0]![0]));
+    // The fields nobody can see on screen and everybody needs in a bug report:
+    // which transport is carrying the pane, and how the picture is being
+    // encoded.
+    expect(copied).toMatchObject({
+      sessionId: SESSION.sessionId,
+      frameTransport: { rung: expect.any(String) },
+    });
+    expect(copied.frameStats).toBeDefined();
+
+    // Nothing to describe without a session, so no button to press.
+    view.unmount();
+    useWebmcpInspectorStore.setState({ session: undefined });
+    render(<WebmcpInspectorTab />);
+    expect(
+      screen.queryByRole("button", { name: "Copy diagnostics" }),
+    ).toBeNull();
   });
 
   it("does not revoke the blob URL in the same task as the click", () => {

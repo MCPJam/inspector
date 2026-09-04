@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 const {
   mockAvailability,
   mockRepos,
+  mockBindings,
   mockConnectRepo,
   mockConnectVerifiedRepo,
   mockListInstallationRepos,
@@ -15,6 +16,9 @@ const {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
   },
   mockRepos: { value: undefined as any[] | undefined },
+  // The org's installations, on a live query. What the listing below is a
+  // function of, and the only thing that changes when an account is connected.
+  mockBindings: { value: undefined as any[] | undefined },
   // The unverified connect the backend still exposes for the two-deploy
   // window. Handed to the component so that reaching for it is a recorded
   // call rather than a crash — "never called" is the assertion.
@@ -52,6 +56,7 @@ vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksSettings: () => ({
     availability: mockAvailability.value,
     repos: mockRepos.value,
+    bindings: mockBindings.value,
     connectRepo: mockConnectRepo,
     connectVerifiedRepo: mockConnectVerifiedRepo,
     listInstallationRepos: mockListInstallationRepos,
@@ -369,5 +374,103 @@ describe("SuiteGithubChecksSection repository identity", () => {
     >;
     expect(sent).not.toHaveProperty("installationRef");
     expect(sent.repositoryId).toBe(301);
+  });
+});
+
+/**
+ * The listing is a one-shot ACTION over installations that arrive on a LIVE
+ * QUERY, exactly as on the settings page. No bind starts from here — that flow
+ * lives in Settings and navigates away — but a binding still changes under an
+ * open suite: another admin connects an account, the same person does it in a
+ * second tab, or a webhook suspends one. This section used to keep offering
+ * whatever it read when the page opened.
+ */
+describe("SuiteGithubChecksSection binding changes", () => {
+  function renderWithBindings(bindings: unknown[] | undefined) {
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [];
+    mockBindings.value = bindings;
+    return render(
+      <SuiteGithubChecksSection
+        suiteId="suite-1"
+        projectId="proj-1"
+        organizationId="org-1"
+      />
+    );
+  }
+
+  it("re-lists when an account is connected elsewhere", async () => {
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos
+      .mockResolvedValueOnce([])
+      .mockResolvedValue([{ repositoryId: 401, fullName: "acme/widgets" }]);
+
+    const user = userEvent.setup();
+    const { rerender } = renderWithBindings([]);
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    mockBindings.value = [
+      {
+        installationRef: "bind-acme",
+        accountLogin: "acme",
+        accountType: "Organization",
+        status: "active",
+        boundAt: 1,
+        statusChangedAt: 1,
+      },
+    ];
+    rerender(
+      <SuiteGithubChecksSection
+        suiteId="suite-1"
+        projectId="proj-1"
+        organizationId="org-1"
+      />
+    );
+
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+    );
+    await user.click(screen.getByLabelText("Repository"));
+    expect(
+      await screen.findByRole("option", { name: "acme/widgets" })
+    ).toBeInTheDocument();
+  });
+
+  it("does not re-list when the query re-delivers the same bindings", async () => {
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([
+      { repositoryId: 402, fullName: "acme/widgets" },
+    ]);
+    const rows = () => [
+      {
+        installationRef: "bind-acme",
+        accountLogin: "acme",
+        accountType: "Organization",
+        status: "active",
+        boundAt: 1,
+        statusChangedAt: 1,
+      },
+    ];
+
+    const { rerender } = renderWithBindings(rows());
+    await waitFor(() =>
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+    );
+
+    // A fresh array with identical content, which is what every delivery of a
+    // Convex subscription looks like.
+    mockBindings.value = rows();
+    rerender(
+      <SuiteGithubChecksSection
+        suiteId="suite-1"
+        projectId="proj-1"
+        organizationId="org-1"
+      />
+    );
+    await act(async () => {});
+
+    expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
   });
 });

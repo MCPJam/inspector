@@ -2,6 +2,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,12 +11,16 @@ import type {
   JourneySessionRow,
   SwarmOverview,
   SwarmOverviewRun,
+  SwarmWaveSignals,
 } from "@/lib/swarm-api";
 import {
   SWARM_COLUMN_HEADER,
   filterAndSortSwarmWaves,
   groupRunsIntoSwarmWaves,
+  swarmWaveTitle,
   waveLiveProgress,
+  waveRunState,
+  waveStatusDotClass,
 } from "../swarm-overview-panel";
 
 /**
@@ -239,10 +244,14 @@ const runSessions: JourneySessionRow[] = [
 
 const queryCalls: Array<{ name: string; args: unknown }> = [];
 const paginatedCalls: Array<{ name: string; args: unknown }> = [];
+const mutationCalls: Array<{ name: string; args: unknown }> = [];
+/** Per-name mutation outcome; a test installs a rejection to exercise failure. */
+let mutationResult: (name: string, args: unknown) => unknown = () => ({});
 
 let overviewData: SwarmOverview | undefined = overview;
 let personasData: unknown = [persona];
 let overviewThrows = false;
+let waveSignalsData: SwarmWaveSignals | undefined;
 
 vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
@@ -258,16 +267,34 @@ vi.mock("convex/react", () => ({
           throw new Error("Could not find public function getSwarmOverview");
         }
         return overviewData;
+      case "swarmWaveInsights:getWaveSignals":
+        return waveSignalsData;
       default:
         return undefined;
     }
   },
-  useMutation: () => vi.fn(),
+  // Recorded by NAME so a test can assert what a control actually wrote. The
+  // Swarms reads are string-keyed and cast through `as any`, so a renamed
+  // mutation would otherwise surface only as a button that silently does
+  // nothing.
+  useMutation: (name: string) => {
+    const spy = vi.fn(async (args: unknown) => {
+      mutationCalls.push({ name, args });
+      return mutationResult(name, args);
+    });
+    return spy;
+  },
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isLoading: false, isAuthenticated: true }),
   usePaginatedQuery: (name: string, args: unknown) => {
     paginatedCalls.push({ name, args });
-    if (name === "journeyRuns:listSessionsByJourneyRun") {
+    if (
+      name === "journeyRuns:listSessionsByJourneyRun" ||
+      // The Sessions panel reads the PROJECT feed. Serving it here is what lets
+      // a test see the focused-session viewer at all — without rows, the deep
+      // link never applies and the panel renders an empty list.
+      name === "journeyRuns:listSessionsByProject"
+    ) {
       return {
         results: runSessions,
         status: "Exhausted",
@@ -310,10 +337,11 @@ vi.mock("@/lib/scenario-session", () => ({
   getShareableAppOrigin: () => "https://app.test",
 }));
 vi.mock("@/lib/toast", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
 
 import { SwarmsTab } from "../SwarmsTab";
+import { toast } from "@/lib/toast";
 import { activeViewLabel } from "./swarms-tab-test-helpers";
 
 function withGroup(
@@ -345,7 +373,10 @@ beforeEach(() => {
   overviewData = overview;
   personasData = [persona];
   overviewThrows = false;
+  waveSignalsData = undefined;
   launchJourneyRunMock.mockReset();
+  mutationCalls.length = 0;
+  mutationResult = () => ({});
   window.history.replaceState({}, "", "/swarms");
 });
 
@@ -409,6 +440,31 @@ describe("waveLiveProgress", () => {
         },
       ])
     ).toEqual({ done: 0, total: 0, liveRuns: 1 });
+  });
+});
+
+describe("waveStatusDotClass", () => {
+  // The dot ran its own scan of `status` and tested `failed`/`stale` first,
+  // while `waveRunState` puts `running` first. A wave holding one failed goal
+  // and one still fanning out therefore painted a red dot beside a "Running"
+  // pill on the same row.
+  it("keeps the dot on the state the pill reports", () => {
+    const [newest, second] = overview.runs;
+    const runs = [
+      { ...newest!, status: "failed" },
+      { ...second!, status: "running" },
+    ] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("running");
+    expect(waveStatusDotClass(runs)).toBe("bg-primary");
+  });
+
+  it("still reds a wave whose goals have all settled badly", () => {
+    const [newest] = overview.runs;
+    const runs = [{ ...newest!, status: "failed" }] as SwarmOverviewRun[];
+
+    expect(waveRunState(runs)).toBe("failed");
+    expect(waveStatusDotClass(runs)).toBe("bg-red-500");
   });
 });
 
@@ -483,6 +539,60 @@ describe("groupRunsIntoSwarmWaves", () => {
   });
 });
 
+describe("swarmWaveTitle", () => {
+  it("titles a wave with the name its author gave the swarm", () => {
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
+      withGroup({ ...second!, swarmName: "Checkout regression" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
+  });
+
+  it("falls back to the short route id when no run carries a name", () => {
+    // Runs launched outside a swarm, plus every row from a backend that
+    // predates the field.
+    const [newest] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([withGroup(newest!, "wave-a")]);
+    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+  });
+
+  it("names a mixed wave after its newest member's swarm", () => {
+    // A reused journey carries its ORIGINAL swarm into another wave, so the
+    // wave can hold two names — the newest run decides, as it does for the id.
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup({ ...newest!, swarmName: "Checkout regression" }, "wave-a"),
+      withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Checkout regression");
+  });
+
+  it("keeps the id when the newest member is unnamed but an older one is not", () => {
+    // The case that separates "newest wins" from "first named wins": an ad-hoc
+    // wave that reused ONE journey would otherwise be titled after the swarm
+    // that journey was authored in.
+    const [newest, second] = overview.runs;
+    const [wave] = groupRunsIntoSwarmWaves([
+      withGroup(newest!, "wave-a"),
+      withGroup({ ...second!, swarmName: "Last quarter's swarm" }, "wave-a"),
+    ]);
+    expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+  });
+
+  it("treats an empty or whitespace-only name as no name at all", () => {
+    // Legacy rows, and any writer that isn't the create flow — which trims.
+    // Rendering these verbatim leaves the heading blank.
+    const [newest] = overview.runs;
+    for (const swarmName of ["", "   "]) {
+      const [wave] = groupRunsIntoSwarmWaves([
+        withGroup({ ...newest!, swarmName }, "wave-a"),
+      ]);
+      expect(swarmWaveTitle(wave!)).toBe("Swarm wave-a");
+    }
+  });
+});
+
 describe("Overview — swarm runs (waves), not bare journeys", () => {
   it("lists co-launched journeys as ONE Swarm Run titled by short id", async () => {
     renderTab();
@@ -530,30 +640,17 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
     ).toHaveAttribute("title", "—");
   });
 
-  it("scores a wave from the aggregate graded rollup across its journeys", async () => {
+  it("does not render a score column on the list", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
-
-    // Latest wave: (4+3)/(4+6) = 70%.
-    expect(
-      within(waveRow("run-2b")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("70%");
-    // run-1 wave: 4 of 10.
-    expect(
-      within(waveRow("run-1")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("40%");
-    expect(
-      within(waveRow("run-old")).getByTestId("swarm-overview-run-score")
-        .textContent
-    ).toBe("—");
+    expect(screen.queryByTestId("swarm-overview-run-score")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-sort")).toBeNull();
+    expect(document.querySelector(".lucide-chevron-right")).toBeNull();
   });
 
-  it("renders the filter / sort toolbar", async () => {
+  it("renders the filter toolbar", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-filters");
-    expect(screen.getByTestId("swarm-overview-sort")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-client-filter")).toBeTruthy();
     expect(screen.getByTestId("swarm-overview-env-filter")).toBeTruthy();
   });
@@ -562,8 +659,8 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
    * Asserted on classes rather than pixels because the regression is invisible
    * to jsdom layout: the filtering headers kept `SelectTrigger`'s
    * `dark:bg-input/30` (tailwind-merge won't drop it for an unprefixed
-   * `bg-transparent`), so in dark mode Client and Score sat in form-field
-   * boxes while the inert Model label stayed flat.
+   * `bg-transparent`), so in dark mode Client sat in a form-field box while
+   * the inert Model label stayed flat.
    */
   it("gives every column header the same ghost treatment, dark mode included", async () => {
     renderTab();
@@ -573,7 +670,6 @@ describe("Overview — swarm runs (waves), not bare journeys", () => {
       screen.getByTestId("swarm-overview-env-filter"),
       screen.getByTestId("swarm-overview-client-filter"),
       screen.getByTestId("swarm-overview-model-label"),
-      screen.getByTestId("swarm-overview-sort"),
     ];
 
     for (const header of headers) {
@@ -670,28 +766,75 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
   it("renders title and detail tabs for a known wave", async () => {
     renderTab("run-2b");
     expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
-    expect(screen.getByTestId("swarm-run-detail-title").textContent).toBe(
-      "Swarm run-2b"
-    );
-    expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
+    const heading = screen.getByTestId("swarm-run-detail-title");
+    expect(heading.textContent).toBe("Swarm run-2b");
+    // The heading truncates, and authored names run to SWARM_NAME_MAX — a
+    // clipped one is unreadable without the tooltip.
+    expect(heading.getAttribute("title")).toBe("Swarm run-2b");
+    expect(await screen.findByTestId("swarm-findings-tab")).toBeTruthy();
     expect(screen.queryByTestId("swarm-insights-statline")).toBeNull();
     expect(screen.queryByRole("button", { name: "Overview" })).toBeNull();
     expect(screen.queryByRole("button", { name: "Personas" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Findings" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Insights" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Sessions" })).toBeTruthy();
     expect(screen.queryByTestId("swarm-run-detail-score")).toBeNull();
     expect(screen.queryByTestId("swarms-tab-header-chrome")).toBeNull();
   });
 
-  it("shows persona chips, wave-scoped Sankey, and findings on the Insights tab", async () => {
+  it("does not render the retired launch-outcome strip", async () => {
+    // The wave needs a durable group id, or the detail page dispatches
+    // `getWaveSignals` with "skip" and this fixture never reaches the
+    // component — the assertions below would pass with the strip re-added.
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        withGroup(newest!, "wave-nightly"),
+        withGroup(second!, "wave-nightly"),
+        ...rest,
+      ],
+    };
+    waveSignalsData = {
+      candidates: [],
+      targetHealth: [
+        {
+          subjectKind: "environment",
+          subjectId: "env-1",
+          subjectLabel: "Prod stack",
+          attempted: 4,
+          succeeded: 1,
+          failed: 2,
+          rateLimited: 1,
+        },
+      ],
+      sessionCount: 0,
+      unanalyzedSessionCount: 0,
+      judgeCoverage: { graded: 0, total: 0 },
+      truncated: false,
+      lowConfidence: false,
+      terminal: true,
+    };
+
+    renderTab("wave-nightly");
+
+    expect(await screen.findByTestId("swarm-run-detail")).toBeTruthy();
+    // The query really fired with this wave's args, so the target-health
+    // fixture above did reach the component.
+    const signalsCall = queryCalls.find(
+      (c) => c.name === "swarmWaveInsights:getWaveSignals"
+    );
+    expect(signalsCall).toBeTruthy();
+    expect(signalsCall!.args).toMatchObject({ swarmRunGroupId: "wave-nightly" });
+    expect(screen.queryByTestId("swarm-target-health")).toBeNull();
+    expect(screen.queryByText(/Some launches did not reach a session/i)).toBeNull();
+  });
+
+  it("shows wave-scoped Sankey on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
 
-    fireEvent.click(screen.getByRole("button", { name: "2 personas" }));
-    expect(await screen.findByTestId("swarm-run-detail-personas")).toBeTruthy();
-    expect(screen.getAllByTestId("swarm-run-detail-persona").length).toBeGreaterThan(
-      0
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Insights" }));
     expect(await screen.findByTestId("swarm-insights-panel")).toBeTruthy();
     const sankeyCall = queryCalls.find(
       (c) => c.name === "chatSessions:getSwarmUsageBreakdown"
@@ -701,14 +844,10 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
       projectId: "proj-1",
       journeyRunIds: expect.arrayContaining(["run-2b", "run-2"]),
     });
-    expect(await screen.findByTestId("swarm-insights-scorecard")).toBeTruthy();
-    expect(await screen.findByTestId("swarm-overview-wave-findings")).toBeTruthy();
-
-    const findings = screen.getAllByTestId("swarm-overview-finding");
-    expect(findings).toHaveLength(2);
-    expect(within(findings[0]!).getByText("Quick resolution")).toBeTruthy();
-    expect(within(findings[0]!).getByText(/4 of 6 sessions/)).toBeTruthy();
-    expect(screen.queryByText("Invoice lookup")).toBeNull();
+    expect(screen.queryByTestId("swarm-insights-scorecard")).toBeNull();
+    expect(screen.queryByTestId("swarm-insights-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 
   it("copies the share URL", async () => {
@@ -775,28 +914,76 @@ describe("Swarm Run detail — /swarms/:swarmId", () => {
     expect(window.location.search).toBe("?tab=sessions");
   });
 
+  /**
+   * BB-76: a run whose attempts are ALL terminal but whose row still says
+   * `running` (the state `cancelJourneyRun` and the stale sweep both recompute
+   * defensively for). The strip must not claim work is in flight when the
+   * count it prints says otherwise.
+   */
+  it("stops claiming the wave is running once every session is accounted for", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    overviewData = {
+      ...overview,
+      runs: [
+        {
+          ...newest!,
+          status: "completed",
+          summary: { total: 5, succeeded: 5, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "running",
+          summary: { total: 15, succeeded: 14, failed: 1, rateLimited: 0 },
+        },
+        ...rest,
+      ],
+    };
+    renderTab("run-2b");
+
+    const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/Finishing up/);
+    expect(live.textContent).not.toMatch(/still running/i);
+    // The count itself stays honest — every session IS accounted for.
+    expect(live.textContent).toMatch(/20 of 20 sessions/);
+  });
+
+  /**
+   * The `total > 0` guard carries this: a run that has not published its
+   * fan-out yet reads 0 done of 0, which satisfies `done >= total` on its own.
+   * Calling that "finishing" would announce the end of work never started.
+   */
+  it("still reads as running when the fan-out is not known yet", async () => {
+    const [newest, second, ...rest] = overview.runs;
+    const noFanOut = { total: 0, succeeded: 0, failed: 0, rateLimited: 0 };
+    overviewData = {
+      ...overview,
+      runs: [
+        { ...newest!, status: "running", summary: noFanOut },
+        { ...second!, status: "running", summary: noFanOut },
+        ...rest,
+      ],
+    };
+    renderTab("run-2b");
+
+    const live = await screen.findByTestId("swarm-run-detail-live");
+    expect(live.textContent).toMatch(/still running/i);
+    expect(live.textContent).not.toMatch(/Finishing up/);
+    // No fan-out to report, so the count is omitted rather than reading 0 of 0.
+    expect(live.textContent).not.toMatch(/sessions/);
+  });
+
   it("shows no live strip once every run in the wave is terminal", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
-  it("expands finding sessions on the Insights tab", async () => {
+  it("does not show rubric findings on the Insights tab", async () => {
     renderTab("run-2b");
     await screen.findByTestId("swarm-run-detail");
     fireEvent.click(screen.getByRole("button", { name: "Insights" }));
-    await screen.findByTestId("swarm-insights-scorecard");
-
-    const finding = (
-      await screen.findAllByTestId("swarm-overview-finding")
-    )[0]!;
-    fireEvent.click(finding);
-
-    const sessions = await screen.findAllByTestId(
-      "swarm-overview-finding-session"
-    );
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]!.getAttribute("data-session-id")).toBe("thread-fail");
+    expect(screen.queryByTestId("swarm-overview-wave-findings")).toBeNull();
+    expect(screen.queryByTestId("swarm-overview-finding")).toBeNull();
   });
 });
 
@@ -911,57 +1098,412 @@ describe("Overview — empty and loading states", () => {
   });
 });
 
-describe("Swarm header body copy", () => {
-  // BB-120: the line explains what a swarm buys you, so it has to survive the
-  // page having data — it is not part of the empty state.
+describe("Swarm header chrome", () => {
   const SUBTITLE =
     "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
 
-  it("shows the body copy on the empty state", async () => {
+  it("keeps tabs inline and drops the subtitle on the empty state", async () => {
     personasData = [];
     renderTab();
     await screen.findByTestId("swarms-empty-hero");
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+    const header = screen.getByTestId("swarms-tab-header-chrome");
+    const title = within(header).getByRole("heading", { name: "Swarm" });
+    const row = title.closest("div.flex.items-center.justify-between");
+    expect(row?.contains(within(header).getByRole("button", { name: "Overview" }))).toBe(
+      true,
+    );
+    expect(screen.queryByText(SUBTITLE)).toBeNull();
   });
 
-  it("still shows it once the project has personas and runs", async () => {
+  it("keeps that chrome once the project has personas and runs", async () => {
     renderTab();
     await screen.findByTestId("swarm-overview-runs");
     expect(screen.queryByTestId("swarms-empty-hero")).toBeNull();
-    expect(screen.getByText(SUBTITLE)).toBeTruthy();
+    expect(screen.queryByText(SUBTITLE)).toBeNull();
+    expect(
+      screen.queryByText("The library of user personas you send into swarms."),
+    ).toBeNull();
   });
 });
 
-describe("Swarm header body copy — per tab", () => {
-  // Personas is a library of reusable personas, not a run surface, so the swarm
-  // pitch says nothing about it (BB-123).
-  const SWARM_PITCH =
-    "No recruiting, no scheduling, no setup. Agents find what breaks in every client.";
-  const PERSONAS_LINE = "The library of user personas you send into swarms.";
+/**
+ * BB-74 — run state and navigation.
+ *
+ * Four failures in one flow, all of them about losing the thread of a run:
+ * following a live finding was a one-way trip, the way back did nothing
+ * visible, a returning viewer could not tell a live run from a finished one and
+ * could not stop one, and the launch confirmation reported an internal count
+ * instead of taking anyone to the run.
+ */
+describe("Swarm run state and navigation", () => {
+  /** The wave under `/swarms/run-2b`, with every run still going. */
+  function runningOverview(): SwarmOverview {
+    const [newest, second, ...rest] = overview.runs;
+    return {
+      ...overview,
+      runs: [
+        {
+          ...newest!,
+          status: "running",
+          summary: { total: 5, succeeded: 1, failed: 0, rateLimited: 0 },
+        },
+        {
+          ...second!,
+          status: "running",
+          summary: { total: 15, succeeded: 3, failed: 1, rateLimited: 0 },
+        },
+        ...rest,
+      ],
+    };
+  }
 
-  const switchTo = (label: RegExp) => {
-    const nav = screen.getByLabelText("Swarm view");
-    fireEvent.click(within(nav).getByRole("button", { name: label }));
-  };
+  it("states the outcome when the viewer returns to a finished run", async () => {
+    renderTab("run-2b");
 
-  it("swaps the line on the Personas tab", async () => {
-    renderTab();
-    await screen.findByTestId("swarms-tab-header-chrome");
-    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
-
-    switchTo(/personas/i);
-
-    expect(screen.getByText(PERSONAS_LINE)).toBeVisible();
-    expect(screen.queryByText(SWARM_PITCH)).not.toBeInTheDocument();
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    // The page used to render NOTHING once the run settled, so a returning
+    // viewer had no way to tell a finished run from a live one.
+    expect(state.getAttribute("data-run-state")).toBe("complete");
+    expect(
+      screen.getByTestId("swarm-run-detail-state-label").textContent
+    ).toBe("Complete");
+    expect(state.textContent).toMatch(/sessions succeeded/);
+    expect(screen.queryByTestId("swarm-run-detail-live")).toBeNull();
   });
 
-  it("keeps the swarm pitch on Sessions", async () => {
+  it("closes the focused session when the viewer goes back to the run", async () => {
+    // THE reported bug: the button vanished and the session stayed on screen,
+    // because the panel seeded its selection from the URL once and never
+    // followed it again.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    expect(await screen.findByTestId("viewer")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("swarm-run-detail-back-to-run"));
+
+    expect(window.location.search).toBe("?tab=sessions");
+    await waitFor(() => expect(screen.queryByTestId("viewer")).toBeNull());
+  });
+
+  it("offers the way back out of a session on a run that has already finished", async () => {
+    // The control existed only inside the live strip, so a finding followed
+    // after the run settled was a dead end.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail"
+    );
+    renderTab("run-2b");
+
+    const back = await screen.findByTestId("swarm-run-detail-back-to-run");
+    expect(back.textContent).toMatch(/back to the run/i);
+  });
+
+  it("names the finding the viewer followed in on", async () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail&finding=crit-quick"
+    );
+    renderTab("run-2b");
+
+    const banner = await screen.findByTestId(
+      "swarm-run-detail-followed-finding"
+    );
+    expect(banner.getAttribute("data-criterion-id")).toBe("crit-quick");
+    expect(banner.textContent).toMatch(/Quick resolution/);
+    expect(banner.textContent).toMatch(/failed in 4 of 6 graded sessions/);
+  });
+
+  it("shows no finding banner for a criterion this wave does not carry", async () => {
+    // The URL carries an id, not a sentence, so an unknown or renamed criterion
+    // degrades to silence rather than to a stale claim.
+    window.history.replaceState(
+      {},
+      "",
+      "/swarms/run-2b?tab=sessions&session=thread-fail&finding=crit-gone"
+    );
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    expect(
+      screen.queryByTestId("swarm-run-detail-followed-finding")
+    ).toBeNull();
+  });
+
+  it("stops every running goal in the wave, once confirmed", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(
+        mutationCalls.filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+      ).toHaveLength(2)
+    );
+    // Both goals in the wave, by run id — a wave is N runs and the backend
+    // cancels one per call.
+    expect(
+      mutationCalls
+        .filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+        .map((c) => (c.args as { journeyRunId: string }).journeyRunId)
+        .sort()
+    ).toEqual(["run-2", "run-2b"].sort());
+    expect(toast.success).toHaveBeenCalledWith("Run stopped");
+  });
+
+  it("does not stop anything until the confirmation is taken", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+
+    // A stop cannot be undone — the queued sessions never run — so the trigger
+    // opens a confirmation rather than firing.
+    await screen.findByTestId("swarm-run-detail-stop-confirm");
+    expect(
+      mutationCalls.filter((c) => c.name === "journeyRuns:cancelJourneyRun")
+    ).toHaveLength(0);
+  });
+
+  it("reports a stop it could not make instead of claiming the run stopped", async () => {
+    overviewData = runningOverview();
+    mutationResult = (name) => {
+      if (name === "journeyRuns:cancelJourneyRun") {
+        throw new Error("Run already completed; only a running run can be canceled.");
+      }
+      return {};
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith(
+        "Run already completed; only a running run can be canceled."
+      )
+    );
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("says Stopped, not Failed, to the viewer who stopped the run", async () => {
+    overviewData = runningOverview();
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    // The wave settles the way a canceled run settles — `failed`, because the
+    // marker that separates a stop from a failure is not projected onto this
+    // read. Painting that red to the person who just pressed Stop says their
+    // action broke something.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).toBe("stopped");
+    expect(
+      screen.getByTestId("swarm-run-detail-state-label").textContent
+    ).toBe("Stopped");
+  });
+
+  it("does not call a run that finished on its own a failure to stop", async () => {
+    overviewData = runningOverview();
+    // The real shape: Convex redacts `message` for an application error and
+    // puts the payload on `data`, so only the structured code is readable.
+    mutationResult = (name) => {
+      if (name === "journeyRuns:cancelJourneyRun") {
+        throw Object.assign(new Error("[Request ID: abc123] Server Error"), {
+          data: {
+            code: "CONFLICT",
+            message: "Run already completed; only a running run can be canceled.",
+          },
+        });
+      }
+      return {};
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() => expect(toast.info).toHaveBeenCalled());
+    // Not an error — nothing is running, which is what was asked for. And not
+    // a success either: this viewer did not stop it, so the strip must keep
+    // reporting the run's own outcome.
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Sessions" }));
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).not.toBe("stopped");
+  });
+
+  it("reports a refusal even when another goal settled on its own", async () => {
+    overviewData = runningOverview();
+    // A mixed wave: one goal finished between the click and the call, the
+    // other genuinely refused. Reading the settled case first turned that
+    // refusal into "Run had already finished".
+    mutationResult = (name, args) => {
+      if (name !== "journeyRuns:cancelJourneyRun") return {};
+      const { journeyRunId } = args as { journeyRunId: string };
+      if (journeyRunId === "run-2") {
+        throw Object.assign(new Error("[Request ID: abc123] Server Error"), {
+          data: {
+            code: "CONFLICT",
+            message: "Run already completed; only a running run can be canceled.",
+          },
+        });
+      }
+      throw Object.assign(new Error("[Request ID: def456] Server Error"), {
+        data: { code: "FORBIDDEN", message: "Not a member of this project." },
+      });
+    };
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+
+    await waitFor(() =>
+      expect(toast.error).toHaveBeenCalledWith("Not a member of this project.")
+    );
+    // The goal that had already finished is not a goal that "could not be
+    // stopped", but it must not swallow the one that really refused.
+    expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.success).not.toHaveBeenCalled();
+  });
+
+  it("does not carry one wave's stop onto the next wave", async () => {
+    overviewData = runningOverview();
+    const { rerender } = renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail-live");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-stop"));
+    fireEvent.click(await screen.findByTestId("swarm-run-detail-stop-confirm"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    // The route this PR builds: Run again, then "View run". Same component
+    // instance, different wave — the stop belonged to the wave left behind.
+    overviewData = {
+      ...overview,
+      runs: overview.runs.map((run) =>
+        run.runId === "run-2" || run.runId === "run-2b"
+          ? { ...run, status: "failed" }
+          : run
+      ),
+    };
+    rerender(
+      <SwarmsTab projectId="proj-1" isAuthenticated swarmId="run-1" />
+    );
+
+    const state = await screen.findByTestId("swarm-run-detail-state");
+    expect(state.getAttribute("data-run-state")).not.toBe("stopped");
+  });
+
+  it("offers no link when the retry lands under the wave it already had", async () => {
+    // A failed launch keeps its wave id cached, so the NEXT attempt reuses it
+    // and ignores the freshly minted one. Offering "View run" into the new id
+    // was a link to "Swarm run not found."
+    // EVERY goal has to fail, or a goal that succeeded would have dropped its
+    // cached key and the retry would mint a fresh wave for it after all.
+    launchJourneyRunMock.mockRejectedValue(new Error("network down"));
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+
+    launchJourneyRunMock.mockReset();
+    launchJourneyRunMock.mockResolvedValue({
+      status: "launched",
+      runId: "run-new",
+    });
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+    await waitFor(() => expect(toast.success).toHaveBeenCalled());
+
+    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.at(-1)!;
+    const action = (
+      call[1] as { action?: { label: string } } | undefined
+    )?.action;
+    expect(action).toBeUndefined();
+  });
+
+  it("confirms a new run in the viewer's terms and offers the run itself", async () => {
+    launchJourneyRunMock.mockResolvedValue({ status: "launched" });
+    renderTab("run-2b");
+
+    await screen.findByTestId("swarm-run-detail");
+    fireEvent.click(screen.getByTestId("swarm-run-detail-run-again"));
+
+    await waitFor(() => expect(launchJourneyRunMock).toHaveBeenCalled());
+    const call = (toast.success as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls.at(-1)!;
+    // "Started 15 goals" reported a count and stranded the viewer on the run
+    // they had relaunched FROM.
+    expect(call[0]).toBe("New swarm run started — 2 goals");
+    const action = (
+      call[1] as { action?: { label: string; onClick: () => void } } | undefined
+    )?.action;
+    expect(action?.label).toBe("View run");
+
+    const groupId = (
+      launchJourneyRunMock.mock.calls[0]![0] as { swarmRunGroupId: string }
+    ).swarmRunGroupId;
+    expect(groupId).toBeTruthy();
+    action!.onClick();
+    expect(window.location.pathname).toBe(`/swarms/${groupId}`);
+  });
+
+  it("says Running on the list row, not just a coloured dot", async () => {
+    overviewData = runningOverview();
     renderTab();
-    await screen.findByTestId("swarms-tab-header-chrome");
 
-    switchTo(/sessions/i);
+    await screen.findByTestId("swarms-overview-panel");
+    const row = waveRow("run-2b");
+    const pill = within(row).getByTestId("swarm-overview-run-state");
+    expect(pill.getAttribute("data-run-state")).toBe("running");
+    expect(pill.textContent).toBe("Running");
+  });
 
-    expect(screen.getByText(SWARM_PITCH)).toBeVisible();
-    expect(screen.queryByText(PERSONAS_LINE)).not.toBeInTheDocument();
+  it("says Complete on a settled list row", async () => {
+    renderTab();
+
+    await screen.findByTestId("swarms-overview-panel");
+    const pill = within(waveRow("run-2b")).getByTestId(
+      "swarm-overview-run-state"
+    );
+    expect(pill.getAttribute("data-run-state")).toBe("complete");
+    expect(pill.textContent).toBe("Complete");
   });
 });

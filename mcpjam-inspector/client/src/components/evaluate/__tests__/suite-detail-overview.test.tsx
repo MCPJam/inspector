@@ -7,22 +7,6 @@ vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
 }));
 
-// The stage-analytics panel owns its own REST read. Stubbed at the api
-// boundary rather than by replacing the component, so this file still proves
-// the real section mounts with the props the page hands it.
-const { stageAnalyticsFetchMock } = vi.hoisted(() => ({
-  stageAnalyticsFetchMock: vi.fn(),
-}));
-vi.mock("@/lib/apis/eval-stage-analytics-api", async () => {
-  const actual = await vi.importActual<
-    typeof import("@/lib/apis/eval-stage-analytics-api")
-  >("@/lib/apis/eval-stage-analytics-api");
-  return {
-    ...actual,
-    fetchEvalSuiteStageAnalytics: stageAnalyticsFetchMock,
-  };
-});
-
 function makeSuite(overrides: Partial<EvalSuite> = {}): EvalSuite {
   return {
     _id: "suite-1",
@@ -166,10 +150,15 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByLabelText("Filter by verdict")).toBeTruthy();
     expect(screen.getByLabelText("Filter by client")).toBeTruthy();
     expect(screen.getByLabelText("Filter by model")).toBeTruthy();
-    expect(screen.getByTestId("suite-detail-run-aggregates")).toHaveTextContent(
-      "runs",
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "1 failing",
     );
-    expect(screen.getByText("card declined")).toBeTruthy();
+    expect(screen.getByTestId("suite-run-history-snapshot")).toHaveTextContent(
+      "0/1 passed",
+    );
+    expect(screen.queryByTestId("suite-metric-strip")).toBeNull();
+    expect(screen.queryByText("card declined")).toBeNull();
+    expect(screen.queryByText("Top failure signature")).toBeNull();
     expect(screen.getByText("GitHub #4188")).toBeTruthy();
     expect(screen.getByText("Hold")).toBeTruthy();
 
@@ -229,7 +218,9 @@ describe("SuiteDetailOverview", () => {
     );
     expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
     expect(screen.queryByRole("heading", { name: "Test Cases" })).toBeNull();
-    expect(screen.queryByText("No runs yet. Run this suite to see history.")).toBeNull();
+    // A suite with no cases cannot have run, so it gets the hero alone — not
+    // an empty run history stacked on top of an empty case list.
+    expect(screen.queryByTestId("suite-run-history-empty")).toBeNull();
     expect(screen.queryByText("No test cases yet.")).toBeNull();
 
     await user.click(screen.getByTestId("suite-empty-action-describe"));
@@ -336,7 +327,10 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-row-run-0")).toBeTruthy();
   });
 
-  it("hides run history when the suite has cases but no runs", () => {
+  it("says a runnable suite has no runs yet instead of hiding run history", () => {
+    // A suite that has cases can be run, so the card is its run surface even
+    // before the first run: "never run" and "runs failed to load" must not
+    // both render as an absent card.
     renderWithProviders(
       <SuiteDetailOverview
         suite={makeSuite()}
@@ -354,7 +348,17 @@ describe("SuiteDetailOverview", () => {
       />,
     );
 
-    expect(screen.queryByRole("heading", { name: "Run History" })).toBeNull();
+    expect(screen.getByRole("heading", { name: "Run History" })).toBeTruthy();
+    expect(screen.getByTestId("suite-run-history-empty")).toHaveTextContent(
+      "No runs yet.",
+    );
+    // The filtered-to-nothing copy would be a lie here — nothing is filtered.
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
+    // Nothing to summarize and nothing to filter, so neither chrome appears.
+    expect(screen.queryByTestId("suite-run-history-snapshot")).toBeNull();
+    expect(
+      screen.queryByRole("combobox", { name: "Filter by verdict" }),
+    ).toBeNull();
     expect(screen.getByRole("heading", { name: "Test Cases" })).toBeTruthy();
   });
 
@@ -471,10 +475,14 @@ describe("SuiteDetailOverview", () => {
     // `isSuiteRunsLoading` is its own query and resolves AFTER the detail
     // spinner clears, so a suite with runs would otherwise show nothing here
     // and then pop the whole section in.
+    //
+    // Cased on a suite with NO cases so `runsLoading` is the only term keeping
+    // the frame up: with cases the card renders either way, and this assertion
+    // would pass without testing anything.
     renderWithProviders(
       <SuiteDetailOverview
         suite={makeSuite()}
-        cases={[makeCase({ _id: "case-1" })]}
+        cases={[]}
         runs={[]}
         runsLoading
         allIterations={[]}
@@ -551,93 +559,4 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
 
-  describe("stage analytics section", () => {
-    function renderWithRuns(runs: EvalSuiteRun[], runsLoading = false) {
-      return renderWithProviders(
-        <SuiteDetailOverview
-          suite={makeSuite()}
-          cases={[makeCase({ _id: "case-1" })]}
-          runs={runs}
-          runsLoading={runsLoading}
-          allIterations={[]}
-          hostNamesById={hostNamesById}
-          onRerun={vi.fn()}
-          onEditSuite={vi.fn()}
-          onEditCases={vi.fn()}
-          onRunClick={vi.fn()}
-          onTestCaseClick={vi.fn()}
-          projectId="p1"
-        />,
-      );
-    }
-
-    it("mounts the section on the Evaluate suite page", async () => {
-      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
-      renderWithRuns([makeRun({ _id: "run-1" })]);
-
-      expect(
-        await screen.findByTestId("suite-detail-stage-analytics"),
-      ).toBeTruthy();
-      // Fed the suite and project the page already holds — never resolved in
-      // the browser, which is how a suite gets read against the wrong project.
-      expect(stageAnalyticsFetchMock).toHaveBeenCalledWith(
-        expect.objectContaining({ projectId: "p1", suiteId: "suite-1" }),
-        expect.any(AbortSignal),
-      );
-    });
-
-    it("distinguishes a suite with runs from one without", async () => {
-      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
-      const { unmount } = renderWithRuns([makeRun({ _id: "run-1" })]);
-      expect(
-        await screen.findByTestId("stage-analytics-unmeasured-legacy"),
-      ).toBeTruthy();
-      unmount();
-
-      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
-      renderWithRuns([]);
-      expect(await screen.findByTestId("stage-analytics-empty")).toBeTruthy();
-    });
-
-    it("omits the panel entirely when there is no project id", async () => {
-      // `projectId` is nullable on this page and the read is project-scoped, so
-      // without one there is no request to make. Rendering the panel anyway
-      // would leave it on a spinner for a fetch that never starts.
-      stageAnalyticsFetchMock.mockResolvedValue({ rows: [] });
-      renderWithProviders(
-        <SuiteDetailOverview
-          suite={makeSuite()}
-          cases={[makeCase({ _id: "case-1" })]}
-          runs={[makeRun({ _id: "run-1" })]}
-          runsLoading={false}
-          allIterations={[]}
-          hostNamesById={hostNamesById}
-          onRerun={vi.fn()}
-          onEditSuite={vi.fn()}
-          onEditCases={vi.fn()}
-          onRunClick={vi.fn()}
-          onTestCaseClick={vi.fn()}
-        />,
-      );
-
-      expect(screen.queryByTestId("suite-detail-stage-analytics")).toBeNull();
-      expect(screen.queryByTestId("stage-analytics-loading")).toBeNull();
-      expect(stageAnalyticsFetchMock).not.toHaveBeenCalled();
-      // The rest of the page is unaffected.
-      expect(screen.getByTestId("suite-detail-run-history")).toBeTruthy();
-    });
-
-    it("keeps the sibling sections alive when the panel read fails", async () => {
-      // A panel failure is a panel failure. The run history beside it is a
-      // different query and must not be taken down with it.
-      stageAnalyticsFetchMock.mockRejectedValue(new Error("upstream down"));
-      renderWithRuns([makeRun({ _id: "run-1" })]);
-
-      expect(
-        await screen.findByTestId("stage-analytics-unsupported"),
-      ).toBeTruthy();
-      expect(screen.getByTestId("suite-detail-run-history")).toBeTruthy();
-      expect(screen.getByTestId("suite-detail-test-cases")).toBeTruthy();
-    });
-  });
 });

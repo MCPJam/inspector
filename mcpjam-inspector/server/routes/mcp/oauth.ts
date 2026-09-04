@@ -55,6 +55,10 @@ oauth.post("/debug/proxy", async (c) => {
       method,
       body,
       headers,
+      // This router is mounted only outside hosted mode, so the target is a
+      // server on the developer's own machine or network as often as not.
+      // The hosted twin in routes/web/oauth.ts keeps httpsOnly: true.
+      allowPrivateNetwork: true,
       // Only the two fetch redirect modes we support; anything else is ignored
       // so a crafted value cannot reach fetch().
       ...(redirect === "manual" || redirect === "follow" ? { redirect } : {}),
@@ -123,7 +127,14 @@ oauth.post("/proxy", async (c) => {
   try {
     const { url, method, body, headers } = await c.req.json();
     proxyUrl = url;
-    const result = await executeOAuthProxy({ url, method, body, headers });
+    const result = await executeOAuthProxy({
+      url,
+      method,
+      body,
+      headers,
+      // Local router — see the debug proxy above.
+      allowPrivateNetwork: true,
+    });
     c.header(OAUTH_UPSTREAM_URL_HEADER, result.finalUrl);
     return c.json(result);
   } catch (error) {
@@ -188,7 +199,11 @@ oauth.get("/metadata", async (c) => {
       return c.json({ error: "Missing url parameter" }, 400);
     }
 
-    const result = await fetchOAuthMetadata(metadataUrl);
+    const result = await fetchOAuthMetadata(metadataUrl, {
+      // Local router — see the debug proxy above. This is the call that
+      // refused an authorization server named `auth.local` on 127.0.0.1.
+      allowPrivateNetwork: true,
+    });
     if ("status" in result && result.status !== undefined) {
       return c.json(
         {
