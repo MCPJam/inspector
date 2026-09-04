@@ -38,6 +38,10 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
   detectPlatform: () => "web",
@@ -53,6 +57,7 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 describe("getStepsBlockReason", () => {
