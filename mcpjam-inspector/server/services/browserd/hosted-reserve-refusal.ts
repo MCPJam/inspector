@@ -18,9 +18,18 @@
  * `null` means "not a refusal this understands" — the caller keeps its own
  * 500-and-report path, which is right for a genuine bug.
  */
+import type { ContentfulStatusCode } from "hono/utils/http-status";
 import { HostedReserveError } from "./hosted-reserve-error.js";
 
 export interface HostedRefusal {
+  /**
+   * Includes 499, which Hono's `ContentfulStatusCode` does not — deliberately,
+   * because it is nginx's "client closed request" rather than an IANA status.
+   * Kept because it is the honest label for the abort case in a log or a
+   * metric, and safe to write because by construction nobody is listening: it
+   * is produced only for our own abort signal. The route casts at the one
+   * place that has to hand it to an HTTP writer; see `httpStatus`.
+   */
   status: 401 | 403 | 409 | 429 | 499 | 502 | 503 | 504;
   code: string;
   /** Shown to the person. Says what happened AND what they can do about it. */
@@ -108,4 +117,14 @@ export function classifyHostedReserveError(
     default:
       return null;
   }
+}
+
+/**
+ * The refusal's status as something Hono will write.
+ *
+ * A cast, and it is confined to this one function so the reason lives with it
+ * rather than being re-derived at each call site.
+ */
+export function httpStatus(refusal: HostedRefusal): ContentfulStatusCode {
+  return refusal.status as ContentfulStatusCode;
 }

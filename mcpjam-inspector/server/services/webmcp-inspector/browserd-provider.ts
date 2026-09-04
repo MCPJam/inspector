@@ -120,7 +120,7 @@ interface BrowserdSessionOptions {
  * fewer commands is the difference between a daemon that lasts a working week
  * and one that hits its per-boot ceiling overnight.
  */
-const POLL_FAST_WINDOW_MS = 60_000;
+export const POLL_FAST_WINDOW_MS = 60_000;
 const TOOL_POLL_IDLE_MS = 10_000;
 
 /**
@@ -416,7 +416,10 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
   private async refreshTools(): Promise<void> {
     if (this.disposed) return;
     try {
-      const result = await this.run({ kind: "observe", mode: "webmcp_tools" });
+      const result = await this.run(
+        { kind: "observe", mode: "webmcp_tools" },
+        { background: true },
+      );
       const tools = parseTools(result.output);
       // Snapshot semantics: the interface takes the COMPLETE set each time, so
       // comparing serialized snapshots is both the change check and the guard
@@ -435,10 +438,25 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
 
   private async run(
     action: BrowserAction,
-    options: { commandId?: string; timeoutMs?: number } = {},
+    options: {
+      commandId?: string;
+      timeoutMs?: number;
+      /**
+       * This command is the POLL's own, not a person's.
+       *
+       * It still counts as keep-awake traffic — the poll only runs while
+       * somebody is watching, and watching is using — but it must not count as
+       * INTERACTION, because the cadence is derived from the last interaction.
+       * Letting the poll stamp that made the fast window self-sustaining: the
+       * 2s poll refreshed `lastCommandAt` every 2s, `idle` was never true, and
+       * the backoff to 10s that exists for exactly the watched-but-idle page
+       * could never engage.
+       */
+      background?: boolean;
+    } = {},
   ): Promise<BrowserCommandResult> {
     if (this.disposed) throw new Error("session disposed");
-    this.lastCommandAt = Date.now();
+    if (!options.background) this.lastCommandAt = Date.now();
     const response = await this.transport.sendCommand(
       {
         // A fresh id per send is right for everything EXCEPT an invocation:

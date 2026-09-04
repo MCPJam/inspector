@@ -34,7 +34,10 @@ import {
   WebMcpWebviewAttachError,
 } from "../../services/webmcp-inspector/electron-webview-provider";
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
-import { classifyHostedReserveError } from "../../services/browserd/hosted-reserve-refusal.js";
+import {
+  classifyHostedReserveError,
+  httpStatus,
+} from "../../services/browserd/hosted-reserve-refusal.js";
 import {
   HostedDesktopAsleepError,
   resolveHostedSession,
@@ -326,7 +329,7 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   if (hostedRefusal) {
     return c.json(
       { error: hostedRefusal.error, code: hostedRefusal.code },
-      hostedRefusal.status,
+      httpStatus(hostedRefusal),
     );
   }
   if (error instanceof WebMcpWebviewAttachError) {
@@ -653,12 +656,25 @@ webmcpInspector.post("/sessions", async (c) => {
       if (refusal) {
         return c.json(
           { error: refusal.error, code: refusal.code },
-          refusal.status,
+          httpStatus(refusal),
         );
       }
       return webMcpErrorResponse(c, error, "Could not start your computer.");
     }
-    provider = createBrowserdWebMcpProvider({ handle });
+    // The SAME hooks the re-hydration path gives a provider, because the
+    // session this builds is the same session that path picks up later. Without
+    // them a session created here polls the daemon unconditionally — no
+    // subscriber, no page anyone is looking at, an `observe` every two seconds
+    // — and never reports the traffic that keeps the computer from
+    // hibernating underneath its own inspector. Which of the two replicas a
+    // request happened to land on is not something a session's behaviour
+    // should depend on.
+    const derivedId = hostedSessionId(projectId, handle.computerId);
+    provider = createBrowserdWebMcpProvider({
+      handle,
+      onCommand: hostedKeepAwake,
+      hasWatchers: () => webMcpSessions.hasSubscribers(derivedId),
+    });
   }
 
   try {
@@ -676,10 +692,7 @@ webmcpInspector.post("/sessions", async (c) => {
       // else from doing so, since a derived id is guessable and a random one
       // was not.
       ...(handle && ownerId && projectId
-        ? {
-            sessionId: hostedSessionId(projectId, handle.computerId),
-            ownerId,
-          }
+        ? { sessionId: hostedSessionId(projectId, handle.computerId), ownerId }
         : {}),
     });
     return c.json(session, 201);

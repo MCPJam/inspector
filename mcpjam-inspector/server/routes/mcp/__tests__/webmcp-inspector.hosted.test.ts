@@ -30,10 +30,13 @@ const hostedState = vi.hoisted(() => ({
   ensureCalls: [] as Array<Record<string, unknown>>,
   /** Thrown by `ensureLiveBrowserSession` when set. */
   failWith: null as unknown,
+  /** Returned by it instead, for the tests that need a reserve to succeed. */
+  handle: null as Record<string, unknown> | null,
 }));
 vi.mock("../../../services/browserd/live-session-deps.js", () => ({
   ensureLiveBrowserSession: (args: Record<string, unknown>) => {
     hostedState.ensureCalls.push(args);
+    if (hostedState.handle) return Promise.resolve(hostedState.handle);
     return Promise.reject(
       hostedState.failWith ?? new Error("not reached in this test"),
     );
@@ -42,6 +45,23 @@ vi.mock("../../../services/browserd/live-session-deps.js", () => ({
 
 vi.mock("../../../utils/v1-convex-token.js", () => ({
   getConvexBearerForRequest: async () => "convex-bearer",
+}));
+
+/**
+ * The provider factory is where the route's decisions about polling and
+ * keep-awake become visible, so the deps it is handed are captured rather than
+ * a real browserd session being stood up.
+ */
+const providerState = vi.hoisted(() => ({
+  deps: [] as Array<Record<string, unknown>>,
+}));
+vi.mock("../../../services/webmcp-inspector/browserd-provider", () => ({
+  createBrowserdWebMcpProvider: (deps: Record<string, unknown>) => {
+    providerState.deps.push(deps);
+    return {
+      createSession: () => Promise.reject(new Error("no browser in this test")),
+    };
+  },
 }));
 
 import { Hono } from "hono";
@@ -258,21 +278,29 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
     configState.webmcpHosted = true;
     gateState.provisionable = true;
     hostedState.ensureCalls.length = 0;
+    hostedState.handle = null;
   });
 
-  for (const [status, code] of [
-    [401, "hosted-auth-required"],
-    [403, "hosted-forbidden"],
-    [429, "hosted-at-capacity"],
-    [503, "hosted-at-capacity"],
-    [504, "hosted-reserve-timeout"],
-    [502, "hosted-provision-failed"],
+  // The ANSWERED status is pinned beside the code, not just "never 500".
+  // Without it a regression that returned every refusal as 503 with the right
+  // code would pass: the caller would be told to retry a plan upgrade.
+  for (const [status, answered, code] of [
+    [401, 401, "hosted-auth-required"],
+    [403, 403, "hosted-forbidden"],
+    [429, 429, "hosted-at-capacity"],
+    [503, 503, "hosted-at-capacity"],
+    [504, 504, "hosted-reserve-timeout"],
+    [502, 502, "hosted-provision-failed"],
     // The one remap: the control plane says 410, the caller hears 409, so a
     // regression here is invisible unless it is pinned.
-    [410, "hosted-desktop-deleted"],
-    [0, "hosted-unconfigured"],
+    [410, 409, "hosted-desktop-deleted"],
+    // Ours, not the control plane's: the caller aborted mid-reserve. Nobody
+    // reads it, which is exactly why it needs a test — a silent fall-through
+    // to the 500-and-report path would page somebody for a cancelled request.
+    [499, 499, "hosted-reserve-abandoned"],
+    [0, 503, "hosted-unconfigured"],
   ] as const) {
-    it(`maps a ${status} from the control plane to ${code}`, async () => {
+    it(`maps a ${status} from the control plane to ${answered} ${code}`, async () => {
       hostedState.failWith = new HostedReserveError("nope", status);
       const res = await post(
         appWith(VERIFIED),
@@ -281,7 +309,7 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
       );
       // Never a 500: every one of these is a condition, not a bug, and a 500
       // additionally means a Sentry event for someone hitting their own quota.
-      expect(res.status).not.toBe(500);
+      expect(res.status).toBe(answered);
       expect(res.body.code).toBe(code);
     });
   }
@@ -380,5 +408,44 @@ describe("hosted WebMCP inspector — the invocation's answer", () => {
       state: "failed",
       errorMessage: "the page said no",
     });
+  });
+});
+
+/**
+ * What the replica that CREATES a hosted session hands its provider.
+ *
+ * The same session is picked up later by re-hydration on another replica, and
+ * that path passes both hooks. Which replica a request happened to land on is
+ * not something a session's polling or its keep-awake should depend on.
+ */
+describe("hosted WebMCP inspector — the creating replica polls like any other", () => {
+  beforeEach(() => {
+    providerState.deps.length = 0;
+    hostedState.handle = { computerId: "comp-1", sessionId: "bs-1" };
+  });
+
+  it("gives the provider the watcher predicate and the keep-awake hook", async () => {
+    // Without these, a session created here polls the daemon every two seconds
+    // with nobody watching, and never reports the traffic that stops the
+    // computer hibernating underneath its own inspector.
+    await post(appWith(VERIFIED), "/api/web/webmcp/sessions", START);
+    expect(providerState.deps).toHaveLength(1);
+    const deps = providerState.deps[0]!;
+    expect(typeof deps.onCommand).toBe("function");
+    expect(typeof deps.hasWatchers).toBe("function");
+  });
+
+  it("asks about the id the session will actually be registered under", async () => {
+    // `hasWatchers` is asked per session id. Asking about anything but the
+    // derived `hosted:<project>:<computer>` id would answer "nobody is
+    // watching" forever, and the poll would never run at all.
+    await post(appWith(VERIFIED), "/api/web/webmcp/sessions", START);
+    const deps = providerState.deps[0]!;
+    const spy = vi
+      .spyOn(webMcpSessions, "hasSubscribers")
+      .mockReturnValue(true);
+    (deps.hasWatchers as () => boolean)();
+    expect(spy).toHaveBeenCalledWith(hostedSessionId("p1", "comp-1"));
+    spy.mockRestore();
   });
 });

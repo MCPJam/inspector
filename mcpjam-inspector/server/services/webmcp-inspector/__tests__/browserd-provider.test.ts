@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { createBrowserdWebMcpProvider } from "../browserd-provider";
+import {
+  createBrowserdWebMcpProvider,
+  POLL_FAST_WINDOW_MS,
+} from "../browserd-provider";
 import { WebMcpBridge } from "../../browserd/daemon/webmcp-bridge";
 import type { BrowserSessionHandle } from "../../browserd/browser-session";
 import type { BrowserCommand } from "../../browserd/protocol";
@@ -27,6 +30,8 @@ function build(
     result: { ok: true, output: {} },
     bootId: "boot-1",
   }),
+  /** Provider options a test wants to override — a real poll interval, say. */
+  extras?: Record<string, unknown>,
 ) {
   const commands: BrowserCommand[] = [];
   const sendCommand = vi.fn(async (command: BrowserCommand) => {
@@ -44,12 +49,23 @@ function build(
     onCrashed: () => {},
     onFrame: () => {},
   };
+  const touches: Array<{ computerId: string; sessionId: string }> = [];
   const provider = createBrowserdWebMcpProvider({
     handle: HANDLE,
     transportFor: () => ({ sendCommand }) as never,
     toolPollMs: 0, // no background polling in tests
+    onCommand: (info) => touches.push(info),
+    ...(extras ?? {}),
   });
-  return { provider, commands, toolSets, navigations, callbacks, sendCommand };
+  return {
+    provider,
+    commands,
+    toolSets,
+    navigations,
+    callbacks,
+    sendCommand,
+    touches,
+  };
 }
 
 const withTools =
@@ -182,6 +198,86 @@ describe("browserd WebMCP provider", () => {
     );
     await provider.createSession({ url: "https://x.test/", callbacks });
     expect(toolSets[0].map((t) => t.name)).toEqual(["ok"]);
+  });
+
+  /** Tool-list polls the daemon has been asked for so far. */
+  const pollCount = (commands: BrowserCommand[]) =>
+    commands.filter(
+      (c) => (c.action as { mode?: string }).mode === "webmcp_tools",
+    ).length;
+
+  it("backs the poll off when only the poll itself is running", async () => {
+    // The backoff exists for the watched-but-idle page: somebody has the tab
+    // open, nobody is doing anything, and the daemon should not be asked for a
+    // tool list five times a minute forever. It could never engage, because
+    // the poll's own observe stamped the same "last command" the cadence is
+    // derived from — so the fast window renewed itself every two seconds.
+    vi.useFakeTimers();
+    try {
+      const { provider, callbacks, commands } = build(withTools([]), {
+        toolPollMs: 2_000,
+      });
+      const session = await provider.createSession({
+        url: "https://a.test/",
+        callbacks,
+      });
+
+      // Drain the FIRST tick. It is scheduled in the constructor, before any
+      // command has run, so it reads as idle and lands 10s out; measuring
+      // across it would measure that rather than the cadence.
+      await vi.advanceTimersByTimeAsync(11_000);
+
+      // A person does something. That opens the fast window, and the next
+      // minute is polled at 2s.
+      await session.navigate("https://b.test/");
+      const fastFrom = pollCount(commands);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(pollCount(commands) - fastFrom).toBeGreaterThanOrEqual(4);
+
+      // Nobody does anything else. Once the window closes, a further minute
+      // buys about six polls rather than thirty — which it cannot do if the
+      // poll's own observe keeps the window open.
+      await vi.advanceTimersByTimeAsync(POLL_FAST_WINDOW_MS);
+      const idleFrom = pollCount(commands);
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(pollCount(commands) - idleFrom).toBeLessThanOrEqual(8);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("still reports the poll as keep-awake traffic", async () => {
+    // Backing the CADENCE off is not the same as deciding nobody is there.
+    // The poll only runs while somebody is watching, and a watched browser
+    // must not hibernate underneath them.
+    vi.useFakeTimers();
+    try {
+      const { provider, callbacks, touches } = build(withTools([]), {
+        toolPollMs: 2_000,
+      });
+      await provider.createSession({ url: "https://a.test/", callbacks });
+      const before = touches.length;
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(touches.length).toBeGreaterThan(before);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops polling when nobody is watching this replica", async () => {
+    vi.useFakeTimers();
+    try {
+      const { provider, callbacks, commands } = build(withTools([]), {
+        toolPollMs: 2_000,
+        hasWatchers: () => false,
+      });
+      await provider.createSession({ url: "https://a.test/", callbacks });
+      const before = commands.length;
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(commands.length).toBe(before);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("surfaces the invocation output and cancels on abort", async () => {
