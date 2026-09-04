@@ -52,7 +52,7 @@
     "@changesets/cli": "^2.29.7",
     "@google/design.md": "0.4.0",
     "@types/dagre": "^0.7.54",
-    "concurrently": "^9.1.0"
+    "concurrently": "^10.0.5"
   },
   "dependencies": {
     "react-force-graph-2d": "^1.29.1"
