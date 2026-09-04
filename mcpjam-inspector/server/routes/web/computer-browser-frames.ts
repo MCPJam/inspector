@@ -64,7 +64,12 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
 const CLOSE_LEASE_HELD = 4409;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
 
-/** How often a watching pane keeps the session row and the box awake. */
+/**
+ * How often a WATCHED pane keeps the session row and the box awake.
+ *
+ * Watched, not merely connected: the touch on each tick needs a ping since the
+ * last one. See the timer below.
+ */
 const ACTIVITY_TOUCH_MS = 60_000;
 
 export interface BrowserFramesDeps {
@@ -219,6 +224,13 @@ export function createComputerBrowserFramesWsHandler(
     const abort = new AbortController();
     let registered: { close(): void } | undefined;
     let activityTimer: ReturnType<typeof setInterval> | undefined;
+    /**
+     * Has the pane said it is being looked at since the last activity touch?
+     *
+     * Reset by each touch and set by each ping, so a pane that goes quiet stops
+     * deferring the idle sweep within one interval.
+     */
+    let watched = false;
     let closed = false;
     const detach = () => {
       if (closed) return;
@@ -256,13 +268,27 @@ export function createComputerBrowserFramesWsHandler(
          * somebody is looking at.
          */
         const touch = () => {
+          watched = false;
           void touchSession({ sessionId: live.sessionId, kind: "panel" }).catch(
             () => {},
           );
           void touchActivity({ computerId: live.computerId }).catch(() => {});
         };
+        // Opening one counts: somebody just asked for it.
         touch();
-        activityTimer = setInterval(touch, ACTIVITY_TOUCH_MS);
+        activityTimer = setInterval(() => {
+          // AN OPEN SOCKET IS NOT SOMEBODY WATCHING. The pane stays connected
+          // behind the rail's other tabs — dropping it would stop the
+          // screencast and make the browser go dark on every glance — and it
+          // stays connected in a background browser tab too. It stops PINGING
+          // in both cases, which is the only evidence anybody is looking.
+          //
+          // Without this a pane left open behind the Logs tab holds a metered
+          // cloud box awake indefinitely, which the local socket never does
+          // and which the person pays for.
+          if (!watched) return;
+          touch();
+        }, ACTIVITY_TOUCH_MS);
 
         const started = await openUpstream({
           session: live,
@@ -320,6 +346,8 @@ export function createComputerBrowserFramesWsHandler(
         try {
           const parsed = JSON.parse(String(event.data)) as { type?: unknown };
           if (parsed?.type !== "ping" || closed) return;
+          // The evidence the activity timer waits for.
+          watched = true;
           ws.send(JSON.stringify({ type: "pong" }));
         } catch {
           // Not our protocol; ignore rather than close.

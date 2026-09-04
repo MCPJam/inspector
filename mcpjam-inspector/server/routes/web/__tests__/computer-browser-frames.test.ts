@@ -250,6 +250,42 @@ describe("browser frames socket — keeping the box awake", () => {
     });
   });
 
+  it("stops touching a pane nobody is looking at", async () => {
+    // AN OPEN SOCKET IS NOT SOMEBODY WATCHING. The pane stays connected behind
+    // the rail's other tabs and in a background browser tab — dropping it
+    // would stop the screencast and make the browser go dark on every glance —
+    // and stops PINGING in both cases. Without this gate a pane left open
+    // behind the Logs tab holds a metered cloud box awake indefinitely, and
+    // the person pays for it.
+    vi.useFakeTimers();
+    const f = build();
+    await f.connect();
+    f.touchSession.mockClear();
+    f.touchActivity.mockClear();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(f.touchSession).not.toHaveBeenCalled();
+    expect(f.touchActivity).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("keeps touching while the pane says somebody is looking", async () => {
+    vi.useFakeTimers();
+    const f = build();
+    const { events, ws } = await f.connect();
+    f.touchSession.mockClear();
+    const ping = () =>
+      (
+        events.onMessage as unknown as (e: unknown, w: unknown) => void
+      )({ data: JSON.stringify({ type: "ping" }) }, ws);
+
+    for (let i = 0; i < 3; i += 1) {
+      ping();
+      await vi.advanceTimersByTimeAsync(60_000);
+    }
+    expect(f.touchSession).toHaveBeenCalledTimes(3);
+    vi.useRealTimers();
+  });
+
   it("stops touching once the socket is gone", async () => {
     vi.useFakeTimers();
     const f = build();
