@@ -72,7 +72,10 @@ import {
   toggleHostCompareSelection,
   writeHostCompareSelection,
 } from "./host-compare-selection";
-import { buildPresetCompareEntries } from "./host-compare-presets";
+import {
+  buildPresetCompareEntries,
+  demoteMcpjamHosts,
+} from "./host-compare-presets";
 import {
   clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
@@ -275,6 +278,10 @@ export function HostConfigCompareView({
         excludedTemplateIds: excludedPresetTemplateIds,
     });
   }, [compareCatalog, excludedPresetTemplateIds]);
+  const [subjectsByHost, setSubjectsByHost] = useState<
+    Record<string, HostComparisonSubject>
+  >({});
+
   // Real created hosts first, then presets — what the selector chips iterate.
   // Presets carry the caniuse order on BOTH surfaces: the ranking is a
   // deliberate reading order, and having the same clients appear in a
@@ -283,13 +290,12 @@ export function HostConfigCompareView({
   // one belongs to the user.
   const hosts = useMemo(() => {
     const orderedPresets = sortCaniusePresetHosts(presets.hosts);
-    if (!presetOnly) return [...liveHosts, ...orderedPresets];
-    return orderedPresets;
-  }, [liveHosts, presetOnly, presets.hosts]);
-
-  const [subjectsByHost, setSubjectsByHost] = useState<
-    Record<string, HostComparisonSubject>
-  >({});
+    if (presetOnly) return orderedPresets;
+    // MCPJam last on Compare: it is the emulator doing the comparing, so it
+    // should not hold one of the leading chip slots. Still present, still
+    // selectable — the ranking demotes it rather than the filter removing it.
+    return demoteMcpjamHosts([...liveHosts, ...orderedPresets], subjectsByHost);
+  }, [liveHosts, presetOnly, presets.hosts, subjectsByHost]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);

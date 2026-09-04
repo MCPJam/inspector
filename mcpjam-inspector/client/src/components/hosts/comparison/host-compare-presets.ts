@@ -104,3 +104,30 @@ export function buildPresetCompareEntries(
 
   return { hosts, subjects };
 }
+
+/**
+ * Move MCPJam's own row out of the leading chips without removing it.
+ *
+ * MCPJam is the emulator doing the comparing, so it should not occupy one of
+ * the inline chip slots that the selector reserves for the clients you are
+ * actually comparing — but it stays selectable, on both surfaces.
+ *
+ * Two shapes to catch. As a catalog preset it is `preset:mcpjam`. As a live
+ * host it is whatever the user named it, so the id says nothing and the style
+ * has to come from the loaded subject. Subjects load asynchronously; until one
+ * arrives the host keeps its place, which is why the id check is not enough on
+ * its own.
+ *
+ * Stable: everything else keeps its relative order.
+ */
+export function demoteMcpjamHosts<T extends Pick<HostListItem, "hostId">>(
+  hosts: ReadonlyArray<T>,
+  subjectsByHost: Readonly<Record<string, { hostStyle?: string }>> = {},
+): T[] {
+  const isMcpjam = (host: T) =>
+    host.hostId === `${PRESET_HOST_ID_PREFIX}mcpjam` ||
+    subjectsByHost[host.hostId]?.hostStyle === "mcpjam";
+  const rest = hosts.filter((host) => !isMcpjam(host));
+  if (rest.length === hosts.length) return [...hosts];
+  return [...rest, ...hosts.filter(isMcpjam)];
+}
