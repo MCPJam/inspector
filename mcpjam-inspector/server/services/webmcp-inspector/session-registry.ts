@@ -275,7 +275,23 @@ export class WebMcpSessionRegistry {
     }
     this.sessions.set(runtime.sessionId, runtime);
     this.touch(runtime);
-    runtime.hardExpiresAt = runtime.createdAt + this.maxLifetimeMs;
+    // The absolute ceiling applies to a LOCAL session only, and saying so is
+    // the honest version of what already happened: a hosted runtime is rebuilt
+    // on every replica that re-hydrates it, so `createdAt` restarted and the
+    // "hard" deadline silently never arrived.
+    //
+    // Not a hole worth closing by carrying the original timestamp across,
+    // because the deadline would achieve nothing if it did. It bounds a real
+    // Chromium window on somebody's machine; a hosted runtime is a HANDLE to a
+    // browser on the member's own computer, and expiring it only drops the
+    // handle — the browser keeps running either way. What actually bounds that
+    // browser is the computer's own idle hibernation, which this process feeds
+    // through the keep-awake touch. The 10-minute idle sweep still reclaims
+    // the handle, its poll timer and its tool map when nobody is watching.
+    runtime.hardExpiresAt =
+      kindOf(runtime.sessionId) === "hosted"
+        ? 0
+        : runtime.createdAt + this.maxLifetimeMs;
     // The runtime published its first session event while attaching, before it
     // had any deadlines to report. Re-publish now that it does, so a client
     // replaying the stream never renders a session that expires at zero.

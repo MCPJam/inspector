@@ -21,6 +21,20 @@
 /** Don't touch computer activity more than once a minute per computer. */
 export const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
 
+/**
+ * How many computers this replica remembers having touched.
+ *
+ * The map is otherwise unbounded and never expires: a long-lived replica
+ * serving thousands of members accumulates an entry per computer for the life
+ * of the process. Each is small, and the failure is slow rather than sharp,
+ * which is exactly the kind that gets found in a heap dump a year later.
+ *
+ * Evicting the OLDEST entry is safe by construction — the worst an eviction
+ * can do is let one extra touch through, which is one control-plane write,
+ * and the entry it drops is the one longest past its window anyway.
+ */
+export const MAX_TRACKED_COMPUTERS = 4_096;
+
 const lastActivityTouchAt = new Map<string, number>();
 
 /**
@@ -35,13 +49,34 @@ export function shouldTouchActivity(
   // touched must always be eligible for its first touch, and coalescing to 0
   // makes that false whenever `now` is inside the window of the epoch.
   const previous = lastActivityTouchAt.get(computerId);
-  if (previous !== undefined && now - previous < ACTIVITY_TOUCH_THROTTLE_MS) {
+  // `now - previous` is compared as an ABSOLUTE gap, so a clock that steps
+  // backwards — an NTP correction, a suspended VM waking — cannot suppress
+  // every touch until real time catches up with a stamp from the future. That
+  // silence would be indefinite, and would end with somebody's browser
+  // hibernating underneath them while they were using it.
+  if (
+    previous !== undefined &&
+    Math.abs(now - previous) < ACTIVITY_TOUCH_THROTTLE_MS
+  ) {
     return false;
   }
+  // Re-inserted rather than updated in place, so the key moves to the end of
+  // the Map's insertion order and the eviction below takes a genuinely old
+  // entry rather than a busy one that happened to be added first.
+  lastActivityTouchAt.delete(computerId);
   lastActivityTouchAt.set(computerId, now);
+  while (lastActivityTouchAt.size > MAX_TRACKED_COMPUTERS) {
+    const oldest = lastActivityTouchAt.keys().next().value;
+    if (oldest === undefined) break;
+    lastActivityTouchAt.delete(oldest);
+  }
   return true;
 }
 
 export function resetActivityThrottleForTests(): void {
   lastActivityTouchAt.clear();
+}
+
+export function trackedComputerCountForTests(): number {
+  return lastActivityTouchAt.size;
 }

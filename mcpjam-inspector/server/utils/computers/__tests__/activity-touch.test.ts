@@ -8,8 +8,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   ACTIVITY_TOUCH_THROTTLE_MS,
+  MAX_TRACKED_COMPUTERS,
   resetActivityThrottleForTests,
   shouldTouchActivity,
+  trackedComputerCountForTests,
 } from "../activity-touch";
 
 beforeEach(() => resetActivityThrottleForTests());
@@ -45,6 +47,33 @@ describe("shouldTouchActivity", () => {
     // computer hibernates while someone is working on it.
     expect(shouldTouchActivity("comp-1", 0)).toBe(true);
     expect(shouldTouchActivity("comp-2", 0)).toBe(true);
+  });
+
+  it("recovers when the clock steps backwards", () => {
+    // An NTP correction, or a suspended VM waking, leaves a stamp in the
+    // future. Compared as a signed gap that suppresses every touch until real
+    // time catches up — indefinitely — and somebody's browser hibernates
+    // underneath them while they are using it.
+    expect(shouldTouchActivity("comp-1", 10 * ACTIVITY_TOUCH_THROTTLE_MS)).toBe(
+      true,
+    );
+    expect(shouldTouchActivity("comp-1", 0)).toBe(true);
+  });
+
+  it("does not grow without bound", () => {
+    // One entry per computer, for the life of the process. Small each, and the
+    // kind of leak that is found in a heap dump a year later.
+    for (let i = 0; i < MAX_TRACKED_COMPUTERS + 500; i += 1) {
+      shouldTouchActivity(`comp-${i}`, i);
+    }
+    expect(trackedComputerCountForTests()).toBeLessThanOrEqual(
+      MAX_TRACKED_COMPUTERS,
+    );
+    // And the eviction is harmless: the newest computer is still throttled.
+    const newest = `comp-${MAX_TRACKED_COMPUTERS + 499}`;
+    expect(shouldTouchActivity(newest, MAX_TRACKED_COMPUTERS + 499)).toBe(
+      false,
+    );
   });
 
   it("records only when it answers yes", () => {

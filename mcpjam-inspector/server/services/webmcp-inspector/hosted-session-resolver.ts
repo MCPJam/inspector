@@ -303,8 +303,20 @@ export async function resolveHostedSession(
     callbacks: runtime.callbacks(),
   });
   runtime.attach(session);
-  // `createSession` already awaited one tool snapshot through `navigate:false`,
-  // so the map is populated before anything can be invoked against it.
-  registry.register(runtime);
+  try {
+    // `createSession` already awaited one tool snapshot through
+    // `navigate:false`, so the map is populated before anything can be
+    // invoked against it.
+    registry.register(runtime);
+  } catch (error) {
+    // Registration can refuse — the hosted cap is full, or the process is
+    // shutting down. The session is already ATTACHED by then, with a poll
+    // timer running against the daemon, and nothing else holds a reference to
+    // it: left alone it observes forever on behalf of a runtime no request
+    // can ever reach. Dropping the handle does not touch the member's
+    // browser, which is what `detached` says.
+    await runtime.close("detached").catch(() => {});
+    throw error;
+  }
   return runtime;
 }

@@ -81,6 +81,41 @@ describe("WebMcpSessionRegistry — capacity", () => {
     expect(registry.size()).toBe(3);
   });
 
+  it("puts no absolute ceiling on a hosted handle, and keeps one locally", async () => {
+    // The ceiling bounds a real Chromium window. A hosted runtime is a HANDLE
+    // to a browser on the member's own computer, rebuilt on every replica that
+    // re-hydrates it — so the deadline restarted on each hop and silently
+    // never arrived. Expiring it would drop the handle and leave the browser
+    // running anyway; what bounds THAT is the computer's own hibernation. The
+    // idle sweep still reclaims the handle when nobody is watching.
+    const { registry, advance } = makeRegistry({
+      maxSessions: 4,
+      maxHostedSessions: 4,
+      maxLifetimeMs: 1_000,
+      idleTimeoutMs: 10_000,
+    });
+    const provider = new FakeProvider();
+    await startWebMcpSession({ url: "https://a.test/", provider, registry });
+    await startWebMcpSession({
+      url: "https://a.test/",
+      provider,
+      registry,
+      sessionId: "hosted:p1:c1",
+    });
+
+    advance(2_000);
+    registry.sweepExpired();
+    // The local window is gone on lifetime alone; the hosted handle is not,
+    // because it is still well inside its idle window.
+    expect(registry.peek("hosted:p1:c1")).toBeDefined();
+    expect(registry.size()).toBe(1);
+
+    // …and the idle sweep still takes it.
+    advance(20_000);
+    registry.sweepExpired();
+    expect(registry.peek("hosted:p1:c1")).toBeUndefined();
+  });
+
   it("counts in-flight launches, so concurrent starts cannot both pass the cap", async () => {
     const { registry } = makeRegistry({ maxSessions: 1 });
     const provider = new FakeProvider();
