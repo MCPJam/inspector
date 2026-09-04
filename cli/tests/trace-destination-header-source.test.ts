@@ -51,6 +51,34 @@ test("--clear-headers refuses to be combined with a header", () => {
   );
 });
 
+test("an argument with no separator says so; an empty name says THAT", () => {
+  // Two different mistakes, and folding them into one check told someone who
+  // wrote ": value" that their argument had no separator — the one thing it
+  // did have — while making the empty-name message unreachable.
+  assert.throws(
+    () => resolveHeaders({ header: ["Authorization Bearer tok"] }),
+    /had no ":"/
+  );
+  assert.throws(
+    () => resolveHeaders({ header: [": Bearer tok"] }),
+    /empty name before/
+  );
+});
+
+test("a malformed header does not echo what was in the name position", () => {
+  // `--header` splits on the FIRST colon, so a mistyped argument can put the
+  // credential in the name position. The message goes to stderr and into CI
+  // logs, so it states the rule and quotes nothing.
+  let message = "";
+  try {
+    resolveHeaders({ header: ["Bearer sk-live-do-not-echo=x: v"] });
+  } catch (error) {
+    message = error instanceof Error ? error.message : String(error);
+  }
+  assert.match(message, /not an HTTP token/);
+  assert.doesNotMatch(message, /sk-live-do-not-echo/);
+});
+
 test("--header splits on the first colon only", () => {
   assert.deepEqual(
     resolveHeaders({ header: ["Authorization: Bearer a:b:c"] }),

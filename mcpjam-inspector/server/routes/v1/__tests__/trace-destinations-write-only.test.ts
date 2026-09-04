@@ -150,6 +150,47 @@ describe("the trace-destinations surface is write-only for header values", () =>
     }
   });
 
+  it("decides scope before serving any caller-supplied destination id", () => {
+    // Two things have to hold on every by-id route, and they are different.
+    //
+    // SCOPE IS DECIDED FIRST — by a preflight (`assertDestinationInOrg`) or,
+    // where the read IS the response, by a scoping read. A route that read the
+    // row, acted on it, and only then checked the organization would mutate
+    // another org's destination and report 404 afterwards.
+    //
+    // AND THAT DECISION ANSWERS 404 — `isScopingPreflight`. Without it a
+    // refusal the gateway cannot attribute surfaces as 502, which
+    // distinguishes "no such id" from "exists, elsewhere" and pages someone
+    // per probe. The re-reads that follow a decision deliberately stay 502:
+    // there a 404 would tell a caller the destination they just wrote does
+    // not exist, when the read simply failed.
+    const source = readFileSync(ROUTE_PATH, "utf8");
+    const handlers = source
+      .split(/traceDestinations\.(?:get|post|patch|delete)\(/)
+      .slice(1);
+
+    const byId = handlers.filter((body) =>
+      body.includes('c.req.param("destinationId")'),
+    );
+    expect(byId.length).toBeGreaterThanOrEqual(8);
+
+    for (const body of byId) {
+      const path = body.slice(0, body.indexOf('",'));
+      const preflights = body.includes("assertDestinationInOrg(");
+      const scopingRead = /readDestination\([^;]*?\btrue\b/s.test(body);
+      expect(
+        preflights || scopingRead,
+        `${path} serves a caller-supplied id without deciding scope first`,
+      ).toBe(true);
+    }
+
+    // And the preflight itself is a scoping read, or every route above
+    // inherits a 502 for a refusal that should read as 404.
+    expect(source).toMatch(
+      /async function assertDestinationInOrg[\s\S]*?readDestination\([^;]*?\btrue\b/,
+    );
+  });
+
   it("is absent from the guest allowlist, so guests cannot reach it", () => {
     // `guest-allowed-paths.ts` is default-deny, so this is not "no rule denies
     // it" — it is "no rule ADMITS it". A single added entry would be the one

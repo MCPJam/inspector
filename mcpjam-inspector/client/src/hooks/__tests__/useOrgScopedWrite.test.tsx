@@ -127,6 +127,74 @@ describe("useOrgScopedWrite", () => {
     await waitFor(() => expect(result.current.isSaving).toBe(false));
   });
 
+  it("ignores a write left over from a PREVIOUS visit to the same org", async () => {
+    // `A → B → A` returns to the same id, so an id-equality check cannot tell
+    // the two visits apart. Without a visit token the first visit's write
+    // decremented the second visit's in-flight count and stopped the spinner
+    // while the second visit's own write was still running.
+    const stale = deferred();
+    const fresh = deferred();
+    const { result, rerender } = renderHook(
+      ({ org }: { org: string }) => useOrgScopedWrite(org),
+      { initialProps: { org: "org-a" } },
+    );
+
+    let staleSettled: Promise<void>;
+    act(() => {
+      staleSettled = result.current.run(() => stale.promise).catch(() => {});
+    });
+
+    rerender({ org: "org-b" });
+    rerender({ org: "org-a" });
+
+    let freshSettled: Promise<void>;
+    act(() => {
+      freshSettled = result.current.run(() => fresh.promise).catch(() => {});
+    });
+    expect(result.current.isSaving).toBe(true);
+
+    await act(async () => {
+      stale.resolve();
+      await staleSettled;
+    });
+    // The second visit's write is still in flight, so Save stays disabled.
+    expect(result.current.isSaving).toBe(true);
+
+    await act(async () => {
+      fresh.resolve();
+      await freshSettled;
+    });
+    await waitFor(() => expect(result.current.isSaving).toBe(false));
+  });
+
+  it("keeps the spinner up until the LAST write of a visit finishes", async () => {
+    // The counter's own job, in the ordering that motivated it.
+    const first = deferred();
+    const second = deferred();
+    const { result } = renderHook(() => useOrgScopedWrite("org-a"));
+
+    let firstSettled: Promise<void>;
+    let secondSettled: Promise<void>;
+    act(() => {
+      firstSettled = result.current.run(() => first.promise).catch(() => {});
+    });
+    act(() => {
+      secondSettled = result.current.run(() => second.promise).catch(() => {});
+    });
+
+    await act(async () => {
+      second.resolve();
+      await secondSettled;
+    });
+    expect(result.current.isSaving).toBe(true);
+
+    await act(async () => {
+      first.resolve();
+      await firstSettled;
+    });
+    await waitFor(() => expect(result.current.isSaving).toBe(false));
+  });
+
   it("lets only the NEWEST write of the same org report", async () => {
     // The org id alone cannot separate these: both writes belong to org-a.
     // Without a generation, the first to finish clears `isSaving` while the
