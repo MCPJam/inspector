@@ -76,6 +76,20 @@ export function isToolCalledWithAssert(step: TestStep): boolean {
  * Regression is the strict-order + no-extras pair. `argumentMatching` is
  * deliberately not part of the discriminant — both kinds keep `partial`.
  */
+/** Persisted kind wins; otherwise derive from resolved matchOptions. */
+export function displayCaseKind(
+  persisted: CaseKind | null | undefined,
+  resolvedMatchOptions: Pick<
+    EvalMatchOptions,
+    "toolCallOrder" | "maxExtraToolCalls"
+  >,
+): CaseKind {
+  if (persisted === "capability" || persisted === "regression") {
+    return persisted;
+  }
+  return deriveCaseKind(resolvedMatchOptions);
+}
+
 export function deriveCaseKind(
   resolvedMatchOptions: Pick<
     EvalMatchOptions,

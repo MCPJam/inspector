@@ -24,7 +24,7 @@ import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
 import { ChecksSection, ToolCalledWithFields } from "../checks-section";
 import {
-  deriveCaseKind,
+  displayCaseKind,
   initialToolsChoice,
   matchOptionsForKind,
   readSimpleCase,
@@ -83,6 +83,8 @@ export type SimpleCaseFormProps = {
   onStepsChange: (next: TestStep[]) => void;
   matchOptions?: EvalMatchOptions;
   onMatchOptionsChange: (next: EvalMatchOptions) => void;
+  kind?: CaseKind;
+  onKindChange?: (next: CaseKind) => void;
   suiteDefaultMatchOptions?: EvalMatchOptions;
   expectedOutput?: string;
   onExpectedOutputChange: (next: string) => void;
@@ -102,6 +104,8 @@ export function SimpleCaseForm({
   onStepsChange,
   matchOptions,
   onMatchOptionsChange,
+  kind: persistedKind,
+  onKindChange,
   suiteDefaultMatchOptions,
   expectedOutput,
   onExpectedOutputChange,
@@ -120,7 +124,7 @@ export function SimpleCaseForm({
     suiteDefaultMatchOptions,
     matchOptions,
   );
-  const kind = deriveCaseKind(resolvedMatch);
+  const kind = displayCaseKind(persistedKind, resolvedMatch);
 
   const [toolsChoice, setToolsChoice] = useState<ToolsChoice>(() =>
     initialToolsChoice({ tools: view.tools, isNegativeTest }),
@@ -152,6 +156,7 @@ export function SimpleCaseForm({
     resolvedPredicates.some((predicate) => predicate.type === "toolCalledWith");
 
   const setKind = (next: CaseKind) => {
+    onKindChange?.(next);
     onMatchOptionsChange(matchOptionsForKind(next));
   };
 

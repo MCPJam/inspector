@@ -6,6 +6,7 @@ import {
 import { type TestStep } from "@/shared/steps";
 import {
   deriveCaseKind,
+  displayCaseKind,
   initialToolsChoice,
   isSimpleCaseShape,
   matchOptionsForKind,
@@ -94,6 +95,21 @@ describe("deriveCaseKind", () => {
         }),
       ),
     ).toBe("regression");
+  });
+
+  it("lets a persisted kind win over derived matchOptions", () => {
+    expect(
+      displayCaseKind("regression", MATCH_OPTIONS_DEFAULTS),
+    ).toBe("regression");
+    expect(
+      displayCaseKind(
+        "capability",
+        { toolCallOrder: "strict", maxExtraToolCalls: 0 },
+      ),
+    ).toBe("capability");
+    expect(displayCaseKind(undefined, MATCH_OPTIONS_DEFAULTS)).toBe(
+      "capability",
+    );
   });
 });
 

@@ -241,6 +241,7 @@ interface TestTemplate {
   predicates?: CasePredicates;
   /** Authored rubric for the model judge. Empty string clears it. */
   expectedOutput?: string;
+  kind?: "capability" | "regression";
 }
 
 interface TestTemplateEditorProps {
@@ -1195,6 +1196,7 @@ export function TestTemplateEditor({
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
       expectedOutput: currentTestCase.expectedOutput ?? "",
+      kind: currentTestCase.kind,
     });
     // Seed the transient picker from the persisted runs so a user who saved
     // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
@@ -1622,6 +1624,8 @@ export function TestTemplateEditor({
     const normalizedCurrentExpectedOutput = (
       currentTestCase.expectedOutput ?? ""
     ).trim();
+    const formKind = editForm.kind ?? null;
+    const currentKind = currentTestCase.kind ?? null;
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -1632,6 +1636,7 @@ export function TestTemplateEditor({
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
       normalizedPredicates !== normalizedCurrentPredicates ||
       normalizedExpectedOutput !== normalizedCurrentExpectedOutput ||
+      formKind !== currentKind ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentSteps, currentTestCase]);
@@ -1970,6 +1975,7 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
+      ...(form.kind !== undefined ? { kind: form.kind } : {}),
     };
   };
 
@@ -3513,6 +3519,12 @@ export function TestTemplateEditor({
                         steps={editForm.steps}
                         onStepsChange={setSteps}
                         matchOptions={editForm.matchOptions}
+                        kind={editForm.kind}
+                        onKindChange={(next) =>
+                          setEditForm((current) =>
+                            current ? { ...current, kind: next } : current,
+                          )
+                        }
                         onMatchOptionsChange={(next) =>
                           setEditForm((current) =>
                             current

@@ -1294,6 +1294,7 @@ describe("TestTemplateEditor run view from route", () => {
       expectedToolCalls: [],
       lastMessageRun: undefined,
       expectedOutput: "Names the latest incident and its status",
+      kind: "capability" as const,
     };
 
     useQueryMock.mockImplementation((name: string) => {
@@ -1350,6 +1351,7 @@ describe("TestTemplateEditor run view from route", () => {
         expectedToolCalls: [],
         isNegativeTest: true,
         expectedOutput: "Names the latest incident and its status",
+        kind: "capability",
         steps: [
           expect.objectContaining({
             id: "turn-1",

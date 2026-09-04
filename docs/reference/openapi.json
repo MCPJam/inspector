@@ -11784,6 +11784,11 @@
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
             "description": "Optional authored analytics grouping label. Must be already trimmed; absent means unlabelled."
           },
+          "kind": {
+            "type": "string",
+            "enum": ["capability", "regression"],
+            "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
+          },
           "models": {
             "type": "array",
             "items": {
@@ -12007,6 +12012,11 @@
             "maxLength": 64,
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
             "description": "Optional authored analytics grouping label. Must be already trimmed."
+          },
+          "kind": {
+            "type": "string",
+            "enum": ["capability", "regression"],
+            "description": "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
           },
           "models": {
             "type": "array",
@@ -12368,6 +12378,11 @@
             "maxLength": 64,
             "pattern": "^\\S(?:[\\s\\S]*\\S)?$",
             "description": "Optional authored analytics grouping label. Must be already trimmed; omitted leaves the stored value unchanged and null clears it."
+          },
+          "kind": {
+            "type": ["string", "null"],
+            "enum": ["capability", "regression"],
+            "description": "Authored case kind. Omitted leaves the stored value unchanged; null clears it."
           },
           "models": {
             "type": "array",
