@@ -33,32 +33,35 @@ jobs:
             /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
             > pr-files.json
 
-          # ONE pattern for both outputs. The file list naming a file whose
-          # diff the agent never sees is an invitation to write about it from
-          # imagination.
+          # ONE pattern, and ONE capped set, for both outputs. A file list
+          # naming a file whose patch the agent never sees is an invitation to
+          # write about it from imagination — which is just as true when the
+          # patch is missing because the cap dropped it as when a filter did.
           SKIP='(^|/)dist/|\.generated\.|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$'
 
-          # Truncated by parameter expansion rather than `| head -c`: `head`
-          # closes the pipe as soon as it has enough, the writer takes SIGPIPE
-          # and exits 141, and a step that ever runs under `pipefail` would then
-          # fail on exactly the large diffs this cap exists to handle.
-          #
-          # LC_ALL=C so the cap counts BYTES. Under a UTF-8 locale the same
-          # expansion counts characters, and the limit it is protecting is a
-          # byte limit — 100k characters of a diff full of em-dashes is 300 KB,
-          # which is the failure this whole change exists to prevent.
-          export LC_ALL=C
-          PR_DIFF_RAW=$(jq -r --arg skip "$SKIP" '
-            .[]
-            | select((.filename | test($skip)) | not)
-            | "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")"
+          # The budget is applied per FILE, in jq, using `utf8bytelength`.
+          # Slicing the joined string instead would cut a patch in half and
+          # would count CHARACTERS — and the limit being respected here is a
+          # byte limit, so a diff full of em-dashes would sail past a cap that
+          # looked correct.
+          CAPPED=$(jq -c --arg skip "$SKIP" '
+            [ .[]
+              | select((.filename | test($skip)) | not)
+              | { filename: .filename,
+                  entry: "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")" } ]
+            | reduce .[] as $f ({ kept: [], bytes: 0 };
+                (.bytes + ($f.entry | utf8bytelength) + 1) as $next
+                | if $next <= 100000 then { kept: (.kept + [$f]), bytes: $next } else . end)
+            | { diff: (.kept | map(.entry) | join("\n")),
+                files: (.kept | map(.filename) | join(", ")) }
           ' pr-files.json)
-          PR_DIFF="${PR_DIFF_RAW:0:100000}"
 
-          FILES_CHANGED_RAW=$(jq -r --arg skip "$SKIP" '
-            [.[] | select((.filename | test($skip)) | not) | .filename] | join(", ")
-          ' pr-files.json)
-          FILES_CHANGED="${FILES_CHANGED_RAW:0:10000}"
+          # Here-strings, not pipes: `head`-style truncation lets the reader
+          # close early, the writer takes SIGPIPE and exits 141, and any step
+          # that later runs under `pipefail` fails on exactly the large diffs
+          # this cap exists to handle.
+          PR_DIFF=$(jq -r '.diff' <<< "$CAPPED")
+          FILES_CHANGED=$(jq -r '.files' <<< "$CAPPED")
 
           echo "pr_diff<<EOF" >> $GITHUB_OUTPUT
           echo "$PR_DIFF" >> $GITHUB_OUTPUT
