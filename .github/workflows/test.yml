@@ -61,7 +61,51 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # First use of actions/cache in this repo, so the reasoning lives here and
+      # the other jobs point back at it.
+      #
+      # `npm ci` runs ten times per PR — nine jobs in this workflow (test,
+      # packaging, six inspector shards, e2e), one in lint.yml — at 49-306 s
+      # each against a 1316-package tree. Only esbuild
+      # has a postinstall, so that is raw extract-and-link I/O, 25-57 % of every
+      # job. setup-node's `cache: npm` is already on everywhere and does not
+      # help: it caches ~/.npm, not node_modules.
+      #
+      # Four decisions worth keeping:
+      #  - Skip `npm ci` on a hit rather than running it anyway. `npm ci`
+      #    deletes node_modules before installing, so an unconditional install
+      #    makes the cache a pure download tax.
+      #  - No restore-keys. A near-miss restore still reports cache-hit=false,
+      #    so `npm ci` would run and immediately delete the tree just
+      #    downloaded. Partial restores help an npm *download* cache; for
+      #    node_modules they are strictly waste.
+      #  - Explicit paths, not `**/node_modules`. The glob would walk the whole
+      #    tree and also match node_modules/x/node_modules, which the root entry
+      #    already covers.
+      #  - A separate key from lint.yml's bare runner. Both are linux-x64 so the
+      #    resolved optional deps match, but the tree carries prebuilt native
+      #    artifacts (node-pty, @biomejs/cli-*, @next/swc-*, @cloudflare/
+      #    workerd-*, esbuild, @oven/bun-*) and node-pty is the one that can
+      #    fall back to compiling. One extra cache entry removes the question.
+      #
+      # Every job attempts the save and the losers log a benign "Cache already
+      # exists". Be honest about the cold case: the first run after any
+      # package-lock.json change gets no benefit at all — every job misses and
+      # installs, and only then is the cache populated for later runs on that
+      # lockfile. With cancel-in-progress above, a cancelled job also skips its
+      # save.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Install ripgrep (repo-guard checks in `npm test`)
@@ -76,7 +120,7 @@ jobs:
       - name: Run SDK → CLI verification
         # Everything except the inspector suite, which the sharded `inspector`
         # job below owns. Running all ten suites in one job meant the inspector
-        # (1189 files / ~14k tests) contended with the other nine for the same
+        # (1745 files / ~14k tests) contended with the other nine for the same
         # four cores and pinned the job at ~18 min.
         #
         # Node 24 auto-scales heap to ~half system RAM (~4 GB on ubuntu-latest).
@@ -86,17 +130,11 @@ jobs:
           NODE_OPTIONS: "--max-old-space-size=6144"
         run: npm run test:ci:rest
 
-  inspector:
+  packaging:
     runs-on: ubuntu-latest
-    name: Inspector Tests ${{ matrix.shard }}/4
+    name: Packaging
     # Same pinned Playwright image as the other jobs — see the note above.
     container: mcr.microsoft.com/playwright:v1.62.1-noble
-    strategy:
-      # Report every shard's result. Cancelling siblings on the first failure
-      # would hide unrelated breakage in the other three quarters of the suite.
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
 
     steps:
       - name: Checkout code
@@ -112,7 +150,84 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci --legacy-peer-deps
+
+      - name: Verify the packed tarballs install and run
+        # The tarball half of packaging, split out of `test:ci:rest` where it
+        # ran after all ten lanes had finished — bolted onto the critical path
+        # while three cores idled, for work that depends on nothing the lanes
+        # produce.
+        #
+        # The SDK's export-surface assertions deliberately did NOT move here.
+        # They stay in `test:ci:rest`, because this job is not a required check
+        # ("Build and Test" and "Run Tests" are) and a silent regression in a
+        # release-critical export surface must not be mergeable. They cost
+        # 1.2 s there — test:checks has already built the SDK, so the assert
+        # runs on its own. What moved is the expensive part: the duplicate
+        # ~38 s SDK build and this tarball suite.
+        #
+        # The build below is still needed: the @mcpjam/vitest suite packs sdk/
+        # and sdk has no prepack hook, so it tars whatever dist/ is on disk.
+        run: npm run test:ci:packaging
+
+  inspector:
+    runs-on: ubuntu-latest
+    name: Inspector Tests ${{ matrix.shard }}/6
+    # Same pinned Playwright image as the other jobs — see the note above.
+    container: mcr.microsoft.com/playwright:v1.62.1-noble
+    strategy:
+      # Report every shard's result. Cancelling siblings on the first failure
+      # would hide unrelated breakage in the other five sixths of the suite.
+      fail-fast: false
+      # Six, not four. Once installs are a cache restore (see the `test` job),
+      # this job's own ~4.7-5.7 min of tests is the gate's long pole, and two
+      # more shards are cheap when the expensive part is no longer the install.
+      # All four of the places that carry the denominator — this list, the job
+      # name, the step name and --shard — must move together, or the job
+      # silently runs the wrong fraction of the suite.
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # No step here uses git auth after checkout, so don't leave the token
+          # in .git/config where dependency install scripts and tests could read it.
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
+      - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Build the SDK
@@ -122,11 +237,11 @@ jobs:
         # in that chain, so it builds the SDK itself.
         run: npm run build -w @mcpjam/sdk
 
-      - name: Run inspector tests (shard ${{ matrix.shard }}/4)
+      - name: Run inspector tests (shard ${{ matrix.shard }}/6)
         # `npm run test -w @mcpjam/inspector` also fires the workspace's
         # `pretest` bundling step, which the suite needs; args after `--` reach
         # vitest. Shards split by test file, so no shard depends on another.
-        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/4
+        run: npm run test -w @mcpjam/inspector -- --shard=${{ matrix.shard }}/6
 
   e2e:
     runs-on: ubuntu-latest
@@ -148,7 +263,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Build inspector

@@ -152,6 +152,17 @@ export interface OAuthStateMachineFactoryConfig extends BaseOAuthStateMachineCon
    * LAN/link-local/reserved destinations regardless of this flag.
    */
   allowLoopbackMetadataFetch?: boolean;
+  /**
+   * Permit outbound OAuth metadata fetches to any private destination —
+   * loopback, RFC 1918, CGNAT, unique-local. This is the LOCAL inspector's
+   * default: on a developer's own machine, reaching their own network is the
+   * product, and the browser could not be steered anywhere the developer's
+   * shell cannot already reach. Hosted surfaces must never set it.
+   *
+   * Supersedes {@link allowLoopbackMetadataFetch}. Link-local and
+   * cloud-metadata destinations stay refused either way.
+   */
+  allowPrivateMetadataFetch?: boolean;
 }
 
 /**
@@ -189,6 +200,7 @@ export function createOAuthStateMachine(
   const {
     protocolVersion,
     allowLoopbackMetadataFetch,
+    allowPrivateMetadataFetch,
     ...rest
   } = config;
 
@@ -197,12 +209,16 @@ export function createOAuthStateMachine(
   // Validate the destination before the fetch runs — blocking private/reserved
   // hosts — with an explicit loopback opt-in for local dev.
   const allowLoopback = allowLoopbackMetadataFetch ?? false;
+  const allowPrivateNetwork = allowPrivateMetadataFetch ?? false;
   const guardedExecutor: OAuthRequestExecutor = async (request) => {
     // Validate the request URL (initial hop) for every machine request. The
     // executor is responsible for re-validating the FINAL URL after any
     // redirects (see the client executor / DNS-pinning proxy) — a URL-string
     // check here cannot catch a 3xx or DNS-rebind to a private host.
-    assertOutboundOAuthUrlAllowed(request.url, { allowLoopback });
+    assertOutboundOAuthUrlAllowed(request.url, {
+      allowLoopback,
+      allowPrivateNetwork,
+    });
     const result = await rest.requestExecutor(request);
     // Second cross-cutting guard at the same seam: catch a trace redactor that
     // was applied to live data before the sentinel is spent as a credential.

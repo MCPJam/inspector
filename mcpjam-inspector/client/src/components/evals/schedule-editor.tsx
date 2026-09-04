@@ -42,6 +42,8 @@ export type SuiteSchedule = {
   enabled: boolean;
   state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
   consecutiveFailures?: number;
+  /** The user a scheduled run executes as; absent on older backends. */
+  createdByUserId?: string;
   /**
    * The pinned project environment scheduled runs launch with. Required by
    * `setSuiteSchedule` when the suite attaches ≥2 environments; single-env
@@ -50,7 +52,19 @@ export type SuiteSchedule = {
   environmentId?: string;
 };
 
-const PAUSE_COPY: Record<Exclude<SuiteSchedule["state"], "active">, string> = {
+/**
+ * Why a schedule paused itself, in the words the person who owns it needs.
+ *
+ * EXPORTED because the Automations row renders the same three sentences at the
+ * top of the section, and a second copy is a second thing to keep true: the
+ * resume affordance below and the state chip above have to agree about what
+ * happened, or a reader gets one story from the chip and another from the
+ * banner.
+ */
+export const PAUSE_COPY: Record<
+  Exclude<SuiteSchedule["state"], "active">,
+  string
+> = {
   paused_quota:
     "Paused — the organization's eval iteration quota was exhausted. Resume after the quota resets or upgrade the plan.",
   paused_auth:

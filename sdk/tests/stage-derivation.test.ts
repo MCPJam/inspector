@@ -15,12 +15,18 @@ import { describe, expect, test } from "vitest";
 import { STAGE_REASON_LABELS } from "../src/contract/decision-labels.js";
 import { finalizePassedForEval } from "../src/eval-tool-execution";
 import {
+  GRADER_PRESENTATION_GROUP,
+  GRADER_STAGE,
   MAX_EVIDENCE_REASONS,
   MAX_EVIDENCE_REASON_CHARS,
+  PREDICATE_KINDS,
+  PREDICATE_STAGE,
   STAGE_ANALYZER_VERSION,
   STAGE_REASONS,
   USER_VALUE_STAGES,
   deriveStageResults,
+  isSelectionPredicateKind,
+  isSelectionStagePredicateKind,
   stageDerivationSchema,
   stageDerivationToMetadata,
   type StageAuthoredCase,
@@ -1141,6 +1147,139 @@ describe("an observed tool error reaches response, even unauthored", () => {
 // so these three kinds arrive as predicate results and used to be graded as
 // user value — the chain saying the user did not get what they asked for, when
 // what happened is the model picked the wrong tool.
+
+// =============================================================================
+// The grader → stage map (B7).
+//
+// This map is what lets a settings page say "your suite measures selection and
+// user value, and nothing checks the response" — a sentence no surface could
+// form before, because the routing lived inside the analyzer. Exporting it
+// creates exactly one hazard worth testing: a second copy that drifts.
+//
+// So the properties here are about AGREEMENT, not about any individual
+// mapping. Which stage `noToolErrors` belongs to is a product judgement; that
+// the map and the analyzer agree about it is a correctness property.
+// =============================================================================
+describe("the grader→stage map is total and agrees with the analyzer", () => {
+  test("every predicate the schema admits has a stage", () => {
+    // Derived from the schema rather than listed, so the next predicate
+    // someone adds fails HERE rather than rendering as a stage that looks
+    // unmeasured on a settings page.
+    for (const kind of PREDICATE_KINDS) {
+      expect(
+        PREDICATE_STAGE[kind],
+        `${kind} has no stage in PREDICATE_STAGE`
+      ).toBeDefined();
+      expect(USER_VALUE_STAGES).toContain(PREDICATE_STAGE[kind]);
+    }
+    expect(PREDICATE_KINDS.length).toBe(Object.keys(PREDICATE_STAGE).length);
+  });
+
+  test("the map names no predicate the schema does not", () => {
+    // The other direction. An entry for a kind nobody can author is a row a
+    // settings page would render for a grader that cannot exist.
+    for (const kind of Object.keys(PREDICATE_STAGE)) {
+      expect(PREDICATE_KINDS as readonly string[]).toContain(kind);
+    }
+  });
+
+  test("a selection-routed predicate really does fail at selection", () => {
+    // The agreement property, exercised through the analyzer rather than
+    // asserted against the table: each kind the map calls `selection` is made
+    // to fail, and the chain must file it there.
+    //
+    // `toolCalledWith` is excluded deliberately and is covered separately
+    // below: it is matcher-graded, so it never arrives as a predicate row.
+    const selectionKinds = (PREDICATE_KINDS as readonly string[]).filter(
+      (kind) =>
+        PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE] === "selection" &&
+        kind !== "toolCalledWith"
+    );
+    expect(selectionKinds.length).toBeGreaterThan(0);
+
+    for (const kind of selectionKinds) {
+      const { firstFailedStage } = derive({
+        evidence: {
+          spans: [toolSpan()],
+          predicateResults: [
+            {
+              passed: false,
+              reason: `${kind} says so`,
+              predicate: { type: kind, toolName: "get_project" },
+            },
+          ],
+        },
+      });
+      expect(firstFailedStage, `${kind} must file at its mapped stage`).toBe(
+        PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE]
+      );
+    }
+  });
+
+  test("toolCalledWith is mapped to selection but graded by the matcher", () => {
+    // The one entry that is a claim about AUTHORING intent rather than about a
+    // predicate row: `stepsToPromptTurns` promotes it into `expectedToolCalls`.
+    // The map says so because an author who wrote it is measuring selection;
+    // the analyzer must still route it through the matcher, and reading its
+    // raw predicate row would let a residual contradict the adjudicated
+    // verdict.
+    expect(PREDICATE_STAGE.toolCalledWith).toBe("selection");
+    expect(isSelectionPredicateKind("toolCalledWith")).toBe(false);
+    expect(isSelectionStagePredicateKind("toolCalledWith")).toBe(true);
+  });
+
+  test("the analyzer's selection routing is a subset of the map", () => {
+    // The invariant that makes the derivation safe: the analyzer may route
+    // FEWER kinds than the map (the matcher case above), but never a kind the
+    // map files somewhere else — that would be the silent disagreement this
+    // whole step exists to make impossible.
+    for (const kind of PREDICATE_KINDS) {
+      if (!isSelectionPredicateKind(kind)) continue;
+      expect(PREDICATE_STAGE[kind], `${kind} disagrees`).toBe("selection");
+    }
+  });
+
+  test("non-predicate graders are placed too", () => {
+    // A suite whose only user-value grader is the judge would otherwise render
+    // as "nothing measures whether the person got what they wanted".
+    expect(GRADER_STAGE["toolCalls:match"]).toBe("selection");
+    expect(GRADER_STAGE["judge:goalCompletion"]).toBe("userValue");
+  });
+
+  test("presentation grouping carries no analytical weight", () => {
+    // Budgets group together for reading, and are still filed where the
+    // analyzer files them. If these two ever disagreed, a settings page would
+    // be quietly redefining what a stage means.
+    for (const kind of Object.keys(GRADER_PRESENTATION_GROUP)) {
+      expect(PREDICATE_STAGE[kind as keyof typeof PREDICATE_STAGE]).toBe(
+        "userValue"
+      );
+    }
+  });
+
+  test("the derivation routes exactly the three kinds it routed before", () => {
+    // The refactor's own ratchet. `SELECTION_PREDICATE_REASONS` is now
+    // COMPUTED from the map, so a mistake in the derivation would silently
+    // widen or narrow what the analyzer routes — and the 93 behavioural tests
+    // above would still pass if it only widened. Naming the set makes either
+    // direction a failure.
+    const routed = (PREDICATE_KINDS as readonly string[])
+      .filter((kind) => isSelectionPredicateKind(kind))
+      .sort();
+    expect(routed).toEqual([
+      "firstToolWas",
+      "toolCalledAtLeastOnce",
+      "toolNeverCalled",
+    ]);
+  });
+
+  test("the analyzer version did not move", () => {
+    // B7 is a REFACTOR of where the routing lives, not a change to it. A bump
+    // here would mean historical failures are attributed differently, which is
+    // a re-derivation, not a refactor.
+    expect(STAGE_ANALYZER_VERSION).toBe(8);
+  });
+});
 
 describe("tool-call predicates route to selection", () => {
   /** One predicate row, with the discriminator the producer now preserves. */

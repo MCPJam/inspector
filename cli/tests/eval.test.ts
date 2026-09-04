@@ -267,6 +267,15 @@ const INCONCLUSIVE_DECISION_SUMMARY = INCONCLUSIVE_CORPUS_CASE.expected;
  * about, and the one whose request body must stay byte-identical.
  */
 interface EvalFixtureOptions {
+  /**
+   * Publish `secretGrants: true` from the environment-capabilities route.
+   *
+   * Absent is the DEFAULT and it is the interesting case: a deployment that
+   * predates credential grants does not publish the flag at all, and the CLI
+   * must refuse a grant with a sentence rather than let it die in a backend
+   * validator.
+   */
+  environmentSecretGrants?: boolean;
   suiteDetail?: {
     environmentIds?: string[];
     hosts?: Array<{ id: string; name: string }>;
@@ -277,10 +286,21 @@ interface EvalFixtureOptions {
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?:
     | "running"
+    | "grading"
     | "completed"
     | "cancelled"
     | "timed_out"
     | "failed";
+  /**
+   * A status PER POLL, so a test can watch a run move.
+   *
+   * The last entry repeats once the sequence is exhausted, which is what lets
+   * a "still grading forever" fixture be one short array. Overrides
+   * `runCaseStatus` when supplied.
+   */
+  runCaseStatusSequence?: ReadonlyArray<
+    "running" | "grading" | "completed" | "cancelled" | "timed_out" | "failed"
+  >;
   /** Stamp the fixture's `run-case` as decided under verdict policy 2. */
   runCasePolicyVersion2?: boolean;
   runCaseIterationFetchError?: boolean;
@@ -299,7 +319,14 @@ interface EvalFixtureOptions {
   runCaseIterationFetchAuthError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
   /** A terminal execution state distinct from the result verdict. */
-  runOneStatus?: "completed" | "cancelled";
+  runOneStatus?: "completed" | "cancelled" | "grading";
+  /**
+   * A status PER POLL for `run-1`, so an `eval gate --wait` test can watch a
+   * run move. The last entry repeats once exhausted; overrides `runOneStatus`.
+   */
+  runOneStatusSequence?: ReadonlyArray<
+    "running" | "grading" | "completed" | "cancelled"
+  >;
   /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
   runOneIterationFetchError?: boolean;
   /**
@@ -437,6 +464,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     message: "token expired",
   });
   let runCasePollCount = 0;
+  let runOnePollCount = 0;
   let networkFailureArmed = false;
   const sockets = new Set<import("node:net").Socket>();
   const server: Server = createServer(async (req, res) => {
@@ -510,6 +538,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
           modelOverrides: true,
           modelMatrix: true,
           ephemeralEnvironmentLaunch: true,
+          ...(options.environmentSecretGrants ? { secretGrants: true } : {}),
         })
       );
       return;
@@ -971,10 +1000,18 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         options.authFailure === "poll"
           ? undefined
           : options.runCaseResult ?? "passed";
+      const sequenced = options.runCaseStatusSequence
+        ? options.runCaseStatusSequence[
+            Math.min(
+              runCasePollCount - 1,
+              options.runCaseStatusSequence.length - 1
+            )
+          ] ?? "completed"
+        : undefined;
       const status =
         options.authFailure === "poll"
           ? "running"
-          : options.runCaseStatus ?? "completed";
+          : sequenced ?? options.runCaseStatus ?? "completed";
       const policy2 =
         options.runCasePolicyVersion2 || result === "inconclusive";
       res.end(
@@ -1118,12 +1155,24 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
-      const status = options.runOneStatus ?? "completed";
+      runOnePollCount += 1;
+      const status = options.runOneStatusSequence
+        ? options.runOneStatusSequence[
+            Math.min(
+              runOnePollCount - 1,
+              options.runOneStatusSequence.length - 1
+            )
+          ] ?? "completed"
+        : options.runOneStatus ?? "completed";
       // A cancelled run is an EXECUTION state, not a verdict: it carries no
       // result at all, distinct from an inconclusive result on a completed
-      // run — both are "incomplete" gate-wise, for different reasons.
+      // run — both are "incomplete" gate-wise, for different reasons. A run
+      // held in `grading` carries no verdict either — its `result` is the
+      // backend's `pending`, which is not one of the four this fixture emits.
       const result =
-        status === "cancelled" ? null : options.runOneResult ?? "passed";
+        status === "cancelled" || status === "grading" || status === "running"
+          ? null
+          : options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
           id: "run-1",
@@ -3835,6 +3884,88 @@ test("eval run --wait still prints the launch receipt when the wait times out", 
   }
 });
 
+/**
+ * B10e — the wait polls THROUGH a run held for its gating judge.
+ *
+ * `grading` means every trial finished and the run is waiting for the judge
+ * that may still take a green away. A CLI that stopped there would report a run
+ * with no verdict — and a CLI that let its default budget expire during the
+ * hold would report a run whose verdict is minutes away as a timeout, which is
+ * an infrastructure answer to a question the platform is about to answer.
+ */
+test("eval run --wait keeps polling through `grading` and reports the judge's verdict", async () => {
+  const fixture = await startEvalFixture({
+    runCaseStatusSequence: ["running", "grading", "completed"],
+    runCaseResult: "passed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // The verdict the judge produced, not a timeout and not a "still grading".
+    assert.equal(run.result.exitCode, 0);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.runs[0].status, "completed");
+    assert.equal(receipt.runs[0].result, "passed");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait with an explicit --wait-timeout does not extend for grading", async () => {
+  // A caller who named a budget meant it. Silently spending 31 more minutes of
+  // a CI job's wall clock is not a favour, so the extension is default-only.
+  const fixture = await startEvalFixture({ runCaseStatus: "grading" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Exit 5: no valid verdict observed. NEVER 1 — a judge that has not
+    // answered is an absence of verdict, not a regression.
+    assert.equal(run.result.exitCode, 5);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    // The per-run cause names the status it gave up on, so a reader learns the
+    // run was WAITING FOR ITS JUDGE rather than stuck mid-execution.
+    assert.match(failure.error.details.waitErrors[0].error, /still grading/);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
 test("eval run keeps a lowercase launch failure code out of the redactor", async () => {
   // `billing_limit_reached` and friends are the v1 API's real vocabulary. Under
   // the key name `code` the telemetry redactor read them as OAuth authorization
@@ -5979,6 +6110,365 @@ test("eval run --compose-* mints ephemerally and does not attach", async () => {
   }
 });
 
+test("eval run --compose-secret grants a credential to the composed cell", async () => {
+  // The gap this closes: a composed stack had no secrets axis at all, so a
+  // harness run that needed a token could only be launched from a NAMED
+  // environment. The flag has to survive three hops that each drop unknown
+  // keys — the CLI's compose object, the op's zod schema, and the compose
+  // resolver — so the assertion is on the ensure-adhoc BODY, not on exit 0.
+  const fixture = await startEvalFixture({ environmentSecretGrants: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers",
+            "--compose-secret",
+            "secret-vercel-token"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      secretSelection: {
+        mode: "explicit",
+        secretIds: ["secret-vercel-token"],
+      },
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-secret still needs --compose-host", async () => {
+  // Same rule as every other refinement: the host is what makes it a composed
+  // run, so a lone credential flag is a usage error rather than a silently
+  // ignored one.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /--compose-\* flags need --compose-host/);
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The version-skew probe for credential grants.
+ *
+ * `secretSelection` is a field an older deployment has never heard of, and an
+ * unknown argument dies in a Convex validator with a message that names
+ * neither the field nor a remedy. `modelId` has had a capability probe since
+ * it shipped; this is the same probe for the same reason, and the refusal is
+ * the half worth pinning — it is the behaviour a user meets.
+ */
+test("environments ensure-adhoc --secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--secret",
+          "secret-vercel-token",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    // Refused BEFORE the write: nothing was composed against a backend that
+    // would have dropped or rejected the grant.
+    assert.equal(fixture.composeBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("environments ensure-adhoc --secret sends the grant when the deployment publishes the flag", async () => {
+  const fixture = await startEvalFixture({ environmentSecretGrants: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--secret",
+          "secret-vercel-token",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.composeBodies.at(-1), {
+      hostId: "host-claude",
+      secretSelection: {
+        mode: "explicit",
+        secretIds: ["secret-vercel-token"],
+      },
+    });
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("environments ensure-adhoc pays for no preflight when it sends no grant", async () => {
+  // The probe costs a round trip, so it must only be spent by the calls that
+  // need it — the same rule the model-override probe follows.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          "node",
+          "mcpjam",
+          "cloud",
+          "environments",
+          "ensure-adhoc",
+          "--project",
+          "proj-alpha",
+          "--host",
+          "Claude Code",
+          "--api-key",
+          "sk_test",
+          "--api-url",
+          fixture.baseUrl,
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      fixture.requests.filter((path) => path.endsWith("/capabilities")).length,
+      0
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The same version-skew probe, on the LAUNCH paths.
+ *
+ * These were left unprobed on the argument that a launch should not pay for a
+ * preflight round-trip, matching `--compose-model`. Neither half holds:
+ * `--compose-model` IS probed on this path (`composeLaunchPolicy`), and the
+ * read it probes with — `probeComposeCapabilities` — is one the composed
+ * launch already performs before it mints anything. `secretGrants` comes back
+ * on that same response, so the check is a field read, not a request.
+ *
+ * The failure it replaces is the worst kind: the backend's rejection of an
+ * unknown `secretSelection` is a bare argument-validator error, NOT a
+ * `ConvexError` with a code and a remedy, so the v1 write translator cannot
+ * classify it and answers its terminal 500. The user gets `INTERNAL_ERROR`
+ * for a client-version skew, and the on-call gets paged for it.
+ *
+ * The refusal lives in the SDK's compose policy rather than in these two
+ * commands, so the CLI, the remote MCP surface and the in-app agent all get
+ * it — the same placement the model-override refusal already has.
+ */
+test("eval run --compose-secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--compose-host",
+          "Claude Code",
+          "--compose-host-servers",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    // Refused BEFORE anything was composed or launched: no half-built stack,
+    // no run row, nothing to clean up.
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval cases run --compose-secret refuses a deployment that cannot grant", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "cases",
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--case",
+          "echo works",
+          "--compose-host",
+          "Claude Code",
+          "--compose-host-servers",
+          "--compose-secret",
+          "secret-vercel-token"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /does not support environment secret grants/);
+    assert.equal(fixture.composeBodies.length, 0);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run --compose-secret spends no EXTRA round trip to check", async () => {
+  // The cost objection, answered by measurement. A composed launch ALREADY
+  // reads `/environments/capabilities` — `probeComposeCapabilities` needs
+  // `ephemeralEnvironmentLaunch` and `modelOverrides` from it before it mints
+  // anything — so reading `secretGrants` off the same response is free. One
+  // call with a grant, one call without: the preflight is not a new request,
+  // it is a field on a request the launch was making regardless.
+  const withGrant = await startEvalFixture({ environmentSecretGrants: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            withGrant.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers",
+            "--compose-secret",
+            "secret-vercel-token"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      withGrant.requests.filter((path) => path.endsWith("/capabilities"))
+        .length,
+      1
+    );
+  } finally {
+    await withGrant.close();
+  }
+
+  const withoutGrant = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            withoutGrant.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--compose-host",
+            "Claude Code",
+            "--compose-host-servers"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+    assert.equal(
+      withoutGrant.requests.filter((path) => path.endsWith("/capabilities"))
+        .length,
+      1
+    );
+  } finally {
+    await withoutGrant.close();
+  }
+});
+
 test("eval run --compose-model variadic launches one group without attaching", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -6264,6 +6754,88 @@ test("eval gate --reporter html renders a cancelled run's INCOMPLETE outcome as 
     assert.match(run.stdout, /badge-neutral">inconclusive/);
     assert.equal(run.stdout.includes('badge-fail">'), false);
   } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * B10e — `eval gate --wait` polls THROUGH a run held for its gating judge.
+ *
+ * The gate is where holding the run matters most: gating on a held run's
+ * stored summary would gate on the numbers written before the judge's rows
+ * landed, which is precisely the verdict the hold exists to be able to
+ * withdraw.
+ */
+test("eval gate --wait keeps polling through `grading` and gates on the judge's verdict", async () => {
+  const fixture = await startEvalFixture({
+    runOneStatusSequence: ["running", "grading", "completed"],
+    runOneResult: "passed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Decided on the run the judge finished, not on the summary it was
+    // holding while the judge ran.
+    assert.equal(run.result.exitCode, 0);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval gate --wait with an explicit --wait-timeout does not extend for grading", async () => {
+  const fixture = await startEvalFixture({ runOneStatus: "grading" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Exit 3 — incomplete. A wait timeout is INFRASTRUCTURE, never a verdict:
+    // the run may yet pass, and reporting it as a regression is the one thing
+    // the gate's exit-code contract forbids.
+    assert.equal(run.result.exitCode, 3);
+    const report = JSON.parse(run.stdout.trim());
+    const waitVerdict = report.gate.verdicts.find(
+      (verdict: { gate: string }) => verdict.gate === "wait"
+    );
+    assert.equal(waitVerdict.status, "non_gateable");
+    assert.match(waitVerdict.message, /still grading/);
+  } finally {
+    process.exitCode = 0;
     await fixture.close();
   }
 });

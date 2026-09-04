@@ -49,6 +49,27 @@ function appInventory(): Set<string> {
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
+  // Trace destinations — where an organization's traces are streamed.
+  "get /organizations/{organizationId}/trace-destinations":
+    "listTraceDestinations",
+  "post /organizations/{organizationId}/trace-destinations":
+    "createTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "getTraceDestination",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "updateTraceDestination",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}":
+    "deleteTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test":
+    "testTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause":
+    "pauseTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume":
+    "resumeTraceDestination",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "backfillTraceDestination",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills":
+    "listTraceDestinationBackfills",
   "get /me": "getMe",
   "get /models": "listModels",
   "get /organizations": "listOrganizations",
@@ -188,6 +209,8 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/revisions":
+    "listEvalSuiteRevisions",
   "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
     "listEvalSuiteStageAnalytics",
   "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
@@ -385,6 +408,8 @@ const EXCLUDED_FROM_SDK: Readonly<Record<string, string>> = {
     "The agent's own operation registry, serialized for the org-settings Capabilities page. It describes the tools THIS build offers its agent — an implementation detail whose shape changes with every tool added, not a contract to program against.",
   "get /harness/{harnessId}/builtin-tools":
     "Static published-package metadata about a harness's NATIVE tools, which are not callable through MCPJam. Display-only for the UI; an SDK method would imply they can be invoked.",
+  "get /harness/{harnessId}/capabilities":
+    "Which runtime surfaces THIS build's harness adapter can pause on, read by the host editor so the approval switch reflects the transport actually installed. It moves with a server flag rather than a release, so an SDK method would publish a value no caller could pin.",
   "get /host-catalog":
     "Unauthenticated static host-compat metadata. The SDK already fetches it through `fetchHostCompatCatalog`, which needs no client and no credential — routing it through the authenticated client would be a step backwards.",
   "get /trace-exports/otlp":

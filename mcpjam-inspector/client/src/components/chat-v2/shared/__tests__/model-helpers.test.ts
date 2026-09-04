@@ -179,10 +179,14 @@ describe("org model helpers", () => {
   });
 
   it("getProviderDisplayName title-cases unknown catalog providers", () => {
-    expect(getProviderDisplayName("arcee-ai")).toBe("Arcee Ai");
-    expect(getProviderDisplayName("nvidia")).toBe("Nvidia");
+    expect(getProviderDisplayName("sakana")).toBe("Sakana");
+    // No hyphen in the catalog slug (`thinkingmachines/inkling`), and
+    // `titleCaseProviderKey` splits only on [-_] — so this is the real output.
+    // The hyphenated spelling pinned a name the product never generates.
+    expect(getProviderDisplayName("thinkingmachines")).toBe("Thinkingmachines");
     // Known providers keep their curated names.
     expect(getProviderDisplayName("anthropic")).toBe("Anthropic");
+    expect(getProviderDisplayName("nvidia")).toBe("NVIDIA");
   });
 
   it("keeps OpenRouter models with provider-prefixed ids under configured providers", () => {

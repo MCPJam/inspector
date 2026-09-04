@@ -33,9 +33,11 @@ import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsPageShell } from "./SettingsPageShell";
 import {
   githubChecksWriteErrorMessage,
+  githubFeedbackCommentsErrorMessage,
   GITHUB_BINDING_STATUS_COPY,
   GITHUB_CONNECTION_STATUS_COPY,
   GITHUB_CONNECTION_STATUS_LABEL,
+  GITHUB_FEEDBACK_COMMENTS_COPY,
   GITHUB_UNBIND_CONFIRMATION,
 } from "@/lib/github-checks-errors";
 import { redirectToGithub } from "@/lib/github-external-redirect";
@@ -49,6 +51,7 @@ import {
 } from "@/lib/github-repo-picker";
 import {
   useGithubChecksSettings,
+  type GithubCheckFeedbackComments,
   type GithubCheckOutagePolicy,
   type GithubCheckRepoConfigRow,
   type GithubInstallationBinding,
@@ -218,6 +221,7 @@ export function GithubChecksRoute({
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
     startInstallation,
@@ -263,6 +267,12 @@ export function GithubChecksRoute({
   const [pendingConformance, setPendingConformance] = useState<
     ReadonlySet<string>
   >(() => new Set());
+  // Its own set, for the same reason the policy writes have one: three
+  // different writes land on one row, and a shared set would grey out a control
+  // the admin has no reason to think is busy.
+  const [pendingFeedback, setPendingFeedback] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
   // The picker's value is the repository's NUMERIC ID as a string, not its
   // name. Two accounts can both have a `widgets`, and the id is what the connect
   // is actually keyed on — selecting by name would make the disambiguation the
@@ -630,6 +640,47 @@ export function GithubChecksRoute({
     }
   };
 
+  const handleFeedbackCommentsToggle = async (
+    row: GithubCheckRepoConfigRow
+  ) => {
+    if (pendingFeedback.has(row._id)) return;
+    // ABSENT IS `on`. Only a stored `off` turns the comment off, so the flip of
+    // an untouched row is `off` — the same reading the switch below renders.
+    // Deriving the next value from `=== "on"` instead would send `on` for every
+    // repository that has never been touched, which is every repository, and
+    // the first click would appear to do nothing.
+    const next: GithubCheckFeedbackComments =
+      row.feedbackComments === "off" ? "on" : "off";
+    setPendingFeedback((current) => new Set(current).add(row._id));
+    try {
+      const result = await setRepoFeedbackComments({
+        configId: row._id,
+        feedbackComments: next,
+      });
+      // Announced, unlike the policy select: this write changes what MCPJam
+      // writes on OTHER PEOPLE'S pull requests, and the switch alone does not
+      // say that the check itself is unaffected.
+      //
+      // But ONLY on a real change, which is the policy select's rule and the
+      // reason it announces nothing. `{ changed: false }` is a successful
+      // no-op — the stored value already said this — and it is reachable
+      // whenever the row is stale: another tab, or a write that landed before
+      // this list refetched. Announcing then would tell an admin MCPJam "will
+      // stop commenting" on a repository whose setting nobody moved.
+      if (result?.changed) {
+        toast.success(GITHUB_FEEDBACK_COMMENTS_COPY[next]);
+      }
+    } catch (error) {
+      toast.error(githubFeedbackCommentsErrorMessage(error));
+    } finally {
+      setPendingFeedback((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
   const handleDisconnect = async (row: GithubCheckRepoConfigRow) => {
     try {
       await disconnectRepo({ configId: row._id });
@@ -704,7 +755,6 @@ export function GithubChecksRoute({
         pull request. The check runs the suite you pick here against the PR's
         preview server. Conformance is a second, opt-in check on the same build
         — existing repositories stay eval-only until you turn it on.
-        head commit and reports back as a status check.
       </p>
 
       <SettingsSection title="GitHub accounts">
@@ -838,6 +888,18 @@ export function GithubChecksRoute({
                   </div>
                   <RepoCheckState enabled={row.enabled} />
                   <RepoConnectionExplainer status={row.connectionStatus} />
+                  {/* Always shown, on every row. This is what MCPJam writes
+                      on somebody else's pull request, and a line that only
+                      appeared once it was switched off would be an explanation
+                      arriving after the decision. */}
+                  <span
+                    id={`feedback-comments-note-${row._id}`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    MCPJam posts one comment per pull request and updates it in
+                    place. Turning this off stops the comments and changes
+                    nothing else.
+                  </span>
                   {row.outagePolicy === undefined ? (
                     /* Not the same statement as "fail open": the backend does
                        behave that way for an unstamped row, but nobody chose
@@ -908,6 +970,21 @@ export function GithubChecksRoute({
                   disabled={pendingConformance.has(row._id) || !row.enabled}
                   onCheckedChange={() => void handleConformanceToggle(row)}
                   aria-label={`Enable conformance check for ${row.repoFullName}`}
+                />
+
+                {/* `!== "off"` — ABSENT IS ON. Every row connected before
+                    this existed, and every row nobody has touched since, is a
+                    repository MCPJam comments on; rendering those off would
+                    tell an admin the opposite of what is happening on their
+                    pull requests. Not gated on `row.enabled` the way
+                    conformance is: this is a policy about what MCPJam may
+                    write, and it stays answerable while checks are paused. */}
+                <Switch
+                  checked={row.feedbackComments !== "off"}
+                  disabled={pendingFeedback.has(row._id)}
+                  onCheckedChange={() => void handleFeedbackCommentsToggle(row)}
+                  aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
+                  aria-describedby={`feedback-comments-note-${row._id}`}
                 />
 
                 <Button
@@ -984,6 +1061,15 @@ export function GithubChecksRoute({
         </div>
 
         <OutagePolicyExplainer className="space-y-1 px-4 pb-3 text-xs text-muted-foreground" />
+
+        {/* The consent moment. Connecting starts MCPJam writing on pull
+            requests in somebody else's repository, so the page says so HERE,
+            before the click, rather than only on the row it creates. */}
+        <p className="px-4 pb-3 text-xs text-muted-foreground">
+          MCPJam will also post a comment on each pull request in this
+          repository, updated in place as new commits land. You can turn that
+          off per repository after connecting.
+        </p>
 
         {installationReposFailed ? (
           <div className="px-4 pb-4 text-sm text-muted-foreground">

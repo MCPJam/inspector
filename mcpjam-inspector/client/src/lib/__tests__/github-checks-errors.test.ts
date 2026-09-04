@@ -3,7 +3,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
+  GITHUB_FEEDBACK_COMMENTS_WRITE_FAILED_MESSAGE,
   githubChecksWriteErrorMessage,
+  githubFeedbackCommentsErrorMessage,
 } from "../github-checks-errors";
 
 /**
@@ -95,5 +97,50 @@ describe("githubChecksWriteErrorMessage", () => {
       expect(message).not.toContain("undefined");
       expect(message).not.toContain("[object Object]");
     }
+  });
+});
+
+describe("githubFeedbackCommentsErrorMessage", () => {
+  it("shows the backend's own refusal, unchanged", () => {
+    // The whole reason this wraps rather than replaces: the backend is the only
+    // side that knows WHICH refusal happened, and substituting our own sentence
+    // for one it worded would tell an admin the wrong thing to go and fix.
+    expect(
+      githubFeedbackCommentsErrorMessage(
+        asProductionRejection("Repository configuration not found")
+      )
+    ).toBe("Repository configuration not found");
+  });
+
+  it("still routes the availability refusal to this surface's copy", () => {
+    // Inherited from the wrapped helper. Asserted here too, because a future
+    // rewrite that stopped delegating would lose it silently.
+    expect(
+      githubFeedbackCommentsErrorMessage(
+        asProductionRejection(
+          "GitHub Checks settings are not currently available."
+        )
+      )
+    ).toBe(GITHUB_CHECKS_UNAVAILABLE_MESSAGE);
+  });
+
+  it("substitutes its own copy ONLY when the failure carried no message", () => {
+    // A dropped connection, a client-side throw. The generic
+    // "something went wrong" is true but useless here, because this write has a
+    // consequence worth stating: nothing changed, so the repository is still on
+    // whichever setting it was on and retrying is safe.
+    for (const nothing of [undefined, null, {}, new Error("")]) {
+      expect(githubFeedbackCommentsErrorMessage(nothing)).toBe(
+        GITHUB_FEEDBACK_COMMENTS_WRITE_FAILED_MESSAGE
+      );
+    }
+  });
+
+  it("never claims the check itself stopped", () => {
+    // The failure mode this copy exists to avoid: an admin reading a refused
+    // COMMENT toggle as having silenced the check that gates their merges.
+    const message = githubFeedbackCommentsErrorMessage(undefined);
+    expect(message).toContain("Nothing changed");
+    expect(message.toLowerCase()).not.toContain("check stopped");
   });
 });

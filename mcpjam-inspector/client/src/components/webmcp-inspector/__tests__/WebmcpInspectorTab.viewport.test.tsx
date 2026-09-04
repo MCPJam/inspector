@@ -126,7 +126,7 @@ describe("WebmcpInspectorTab — viewport", () => {
     expect(captureScreenshot.mock.calls.length).toBeGreaterThanOrEqual(3);
   });
 
-  it("polls rather than asking a hosted session for a screencast", async () => {
+  it("neither streams nor polls for a hosted session — it has a live view", async () => {
     useWebmcpInspectorStore.setState({
       session: session({
         viewportTransport: {
@@ -142,10 +142,12 @@ describe("WebmcpInspectorTab — viewport", () => {
     render(<WebmcpInspectorTab />);
     await act(async () => {});
 
-    // The hosted browser paints in a datacenter and shows itself through the
-    // Browser panel. There is no CDP screencast on this side to ask for.
+    // The hosted browser paints in a datacenter, so there is no CDP screencast
+    // on this side to ask for. It used to fall back to a screenshot every
+    // second, which was proof of life rather than a viewport; the pane embeds
+    // the browser's own live stream now, so neither is wanted.
     expect(setScreencast).not.toHaveBeenCalled();
-    expect(captureScreenshot).toHaveBeenCalled();
+    expect(captureScreenshot).not.toHaveBeenCalled();
   });
 
   it("hides the stale picture when Live view is switched off", async () => {
