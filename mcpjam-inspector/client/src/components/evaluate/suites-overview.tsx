@@ -309,20 +309,7 @@ function ClientCell({
   return (
     <span className="flex min-w-0 items-center gap-2">
       <span className="inline-flex size-6 shrink-0 items-center justify-center overflow-hidden rounded-md border border-border/50 bg-background">
-        {logoSrc ? (
-          <img
-            src={logoSrc}
-            alt=""
-            className="size-3.5 object-contain"
-          />
-        ) : (
-          <span
-            aria-hidden
-            className="text-[8px] font-semibold uppercase text-muted-foreground"
-          >
-            {name.slice(0, 2)}
-          </span>
-        )}
+        <img src={logoSrc} alt="" className="size-3.5 object-contain" />
       </span>
       <span className="min-w-0 truncate text-sm text-foreground">{name}</span>
       {extra > 0 ? (
