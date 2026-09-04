@@ -1141,6 +1141,73 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("shows the observational route rollup for a multi-trial quick run", async () => {
+    flagMock.mockReturnValue(true);
+    const metadata = { compareRunId: "cmp_rollup" };
+    const trials: EvalIteration[] = [
+      {
+        ...baseIteration,
+        _id: "t1",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 10,
+        actualToolCalls: [
+          { toolName: "search", arguments: {} },
+          { toolName: "get", arguments: {} },
+        ],
+        metadata,
+      },
+      {
+        ...baseIteration,
+        _id: "t2",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 11,
+        actualToolCalls: [
+          { toolName: "search", arguments: {} },
+          { toolName: "get", arguments: {} },
+        ],
+        metadata,
+      },
+      {
+        ...baseIteration,
+        _id: "t3",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 12,
+        actualToolCalls: [{ toolName: "list", arguments: {} }],
+        metadata,
+      },
+    ];
+    activeCaseDoc = { ...caseDoc, lastMessageRun: "t3" };
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteIterations={trials}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        trialChainEnabled
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-rollup-card")).toBeInTheDocument();
+    });
+    const card = screen.getByTestId("route-rollup-card");
+    expect(card).toHaveTextContent("Across 3 trials");
+    expect(card).toHaveTextContent("same route in 2 of 3");
+    expect(card).toHaveTextContent("Observational");
+    expect(card).not.toHaveTextContent(/pass|fail|verdict/i);
+  });
+
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {
     const user = userEvent.setup();
 

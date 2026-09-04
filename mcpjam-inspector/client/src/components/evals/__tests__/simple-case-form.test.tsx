@@ -9,6 +9,8 @@ import {
   matchOptionsForKind,
   UNSET_TOOLS_BLOCK_REASON,
 } from "../simple-case/simple-case-model";
+import { adoptRouteFromIteration } from "../simple-case/route-rollup";
+import type { EvalIteration } from "../types";
 
 const promptOnly: TestStep[] = [
   { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
@@ -30,14 +32,18 @@ const withTool: TestStep[] = [
 function StatefulForm(
   props: Partial<ComponentProps<typeof SimpleCaseForm>> = {},
 ) {
+  const [steps, setSteps] = useState(props.steps ?? promptOnly);
   const [matchOptions, setMatchOptions] = useState(props.matchOptions);
   const [expectedOutput, setExpectedOutput] = useState(
     props.expectedOutput ?? "",
   );
   return (
     <SimpleCaseForm
-      steps={props.steps ?? promptOnly}
-      onStepsChange={props.onStepsChange ?? vi.fn()}
+      steps={steps}
+      onStepsChange={(next) => {
+        setSteps(next);
+        props.onStepsChange?.(next);
+      }}
       matchOptions={matchOptions}
       onMatchOptionsChange={(next) => {
         setMatchOptions(next);
@@ -159,4 +165,94 @@ describe("SimpleCaseForm", () => {
     await user.click(screen.getByRole("button", { name: "Steps" }));
     expect(onOpenDeepEditor).toHaveBeenCalled();
   });
+
+  it("adopts a capability route as deduped names without arguments", () => {
+    const adopted = adoptRouteFromIteration(
+      promptOnly,
+      {
+        actualToolCalls: [
+          { toolName: "search", arguments: { q: "incidents" } },
+          { toolName: "search", arguments: { q: "again" } },
+          { toolName: "get", arguments: { id: "1" } },
+        ],
+      } as EvalIteration,
+      "capability",
+    );
+    expect(
+      adopted.flatMap((step) => {
+        if (step.kind !== "assert" || step.assertion.type !== "toolCalledWith") {
+          return [];
+        }
+        return [
+          {
+            toolName: step.assertion.toolName,
+            arguments: step.assertion.args.args,
+          },
+        ];
+      }),
+    ).toEqual([
+      { toolName: "search", arguments: {} },
+      { toolName: "get", arguments: {} },
+    ]);
+  });
+
+  it("adopts a regression route with arguments and clears the unset gate", async () => {
+    const user = userEvent.setup();
+    render(
+      <AdoptHarness
+        kind="regression"
+        iteration={{
+          actualToolCalls: [
+            { toolName: "search", arguments: { q: "incidents" } },
+            { toolName: "get", arguments: { id: "42" } },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Adopt route" }));
+    expect(screen.queryByTestId("simple-case-tools-unset")).not.toBeInTheDocument();
+    const rows = screen.getAllByTestId("simple-case-tool-row");
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("search");
+    expect(rows[1]).toHaveTextContent("get");
+  });
 });
+
+function AdoptHarness({
+  kind,
+  iteration,
+}: {
+  kind: "capability" | "regression";
+  iteration: Pick<EvalIteration, "actualToolCalls">;
+}) {
+  const [steps, setSteps] = useState(promptOnly);
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={() =>
+          setSteps(
+            adoptRouteFromIteration(
+              steps,
+              iteration as EvalIteration,
+              kind,
+            ),
+          )
+        }
+      >
+        Adopt route
+      </button>
+      <SimpleCaseForm
+        steps={steps}
+        onStepsChange={setSteps}
+        onMatchOptionsChange={vi.fn()}
+        onExpectedOutputChange={vi.fn()}
+        onPredicatesChange={vi.fn()}
+        onOpenDeepEditor={vi.fn()}
+        availableTools={["search", "get"]}
+        matchOptions={matchOptionsForKind(kind)}
+      />
+    </div>
+  );
+}

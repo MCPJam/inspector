@@ -219,9 +219,16 @@ import { SimpleCaseForm } from "./simple-case/simple-case-form";
 import { CaseSuiteChips } from "./simple-case/case-suite-chips";
 import {
   SIMPLE_CASE_EDITOR_FLAG,
+  deriveCaseKind,
   isSimpleCaseShape,
 } from "./simple-case/simple-case-model";
 import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
+import { RouteRollupCard } from "./simple-case/route-rollup-card";
+import {
+  adoptRouteFromIteration,
+  expectedPathKeyFromSteps,
+  summarizeRoutes,
+} from "./simple-case/route-rollup";
 
 interface TestTemplate {
   title: string;
@@ -1290,17 +1297,64 @@ export function TestTemplateEditor({
    * the client already holds.
    */
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
-    if (!iteration || !chainSlotEnabled) return null;
-    if (iteration.suiteRunId) {
-      const chain = trialChains.chains.get(iteration._id);
-      if (!chain) return null;
-      return <TrialChainPanel chain={chain} resetKey={iteration._id} />;
+    let chain: ReactNode = null;
+    if (iteration && chainSlotEnabled) {
+      if (iteration.suiteRunId) {
+        const assembled = trialChains.chains.get(iteration._id);
+        chain = assembled ? (
+          <TrialChainPanel chain={assembled} resetKey={iteration._id} />
+        ) : null;
+      } else {
+        chain = (
+          <TrialChainPanel
+            chain={chainForQuickRunIteration(iteration)}
+            resetKey={iteration._id}
+          />
+        );
+      }
     }
+
+    const rollup = summarizeRoutes(recentIterations);
+    const showRollup = simpleCaseEditorEnabled && rollup.total > 1;
+    if (!chain && !showRollup) return null;
+
+    const resolvedMatch = resolveMatchOptions(
+      suite?.defaultMatchOptions,
+      editForm?.matchOptions,
+    );
+    const kind = deriveCaseKind(resolvedMatch);
+    const expectedPathKey =
+      kind === "regression" && editForm
+        ? expectedPathKeyFromSteps(editForm.steps)
+        : undefined;
+
     return (
-      <TrialChainPanel
-        chain={chainForQuickRunIteration(iteration)}
-        resetKey={iteration._id}
-      />
+      <div className="space-y-2">
+        {chain}
+        {showRollup ? (
+          <RouteRollupCard
+            rollup={rollup}
+            expectedPathKey={expectedPathKey}
+            onAdoptTrialRoute={
+              iteration
+                ? () =>
+                    setEditForm((current) =>
+                      current
+                        ? {
+                            ...current,
+                            steps: adoptRouteFromIteration(
+                              current.steps,
+                              iteration,
+                              kind,
+                            ),
+                          }
+                        : current,
+                    )
+                : undefined
+            }
+          />
+        ) : null}
+      </div>
     );
   };
 

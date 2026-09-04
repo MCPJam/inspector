@@ -1588,3 +1588,11 @@ export type {
   GetTaskExtResult,
   UpdateTaskExtResult,
 } from "./mcp-client-manager/index.js";
+
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./tool-path.js";

@@ -135,6 +135,14 @@ export function SimpleCaseForm({
     return () => onToolsChoiceBlockReasonChange?.(null);
   }, [toolsChoice, onToolsChoiceBlockReasonChange]);
 
+  // Adopt / Generate / deep-editor writes can add tools while this form
+  // is mounted. Flip off "unset" so Save/Run unblock without a second click.
+  useEffect(() => {
+    if (view.tools.length > 0 && toolsChoice !== "tools") {
+      setToolsChoice("tools");
+    }
+  }, [view.tools, toolsChoice]);
+
   const resolvedPredicates =
     resolveCasePredicates(suiteDefaultPredicates, predicates) ?? [];
   const suiteToolCalledWithApplies =
