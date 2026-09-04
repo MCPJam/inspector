@@ -700,8 +700,13 @@ async function main() {
     const link = join(sessionStateDir, "work", "project");
     pwdSpellings.push(toAdapterPath(plan.workspacePath, "win32"), link, toAdapterPath(link, "win32"));
   }
-  const pwdText = WIN ? turn2.text.toLowerCase() : turn2.text;
-  if (!pwdSpellings.some((p) => pwdText.includes(WIN ? p.toLowerCase() : p))) failures.push(`turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model; accepted ${JSON.stringify(pwdSpellings)})`);
+  // Windows paths are case-insensitive and the vendor CLI's shell tool hands
+  // back a MIXED spelling (`D:\a/_temp/…` — a drive-native prefix with the
+  // shell's forward slashes after it), so there the comparison folds case and
+  // separators. POSIX stays exact.
+  const foldWin = (s: string) => s.toLowerCase().replace(/\//g, "\\");
+  const pwdText = WIN ? foldWin(turn2.text) : turn2.text;
+  if (!pwdSpellings.some((p) => pwdText.includes(WIN ? foldWin(p) : p))) failures.push(`turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model; accepted ${JSON.stringify(pwdSpellings)})`);
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));
