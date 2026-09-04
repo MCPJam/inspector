@@ -5,7 +5,11 @@
  * these fakes are free to be simple, and the suites that use them are free to
  * be fast and deterministic.
  */
-import type { WebMcpViewportTransport } from "@/shared/webmcp-inspector-protocol";
+import type {
+  WebMcpFrame,
+  WebMcpInputEvent,
+  WebMcpViewportTransport,
+} from "@/shared/webmcp-inspector-protocol";
 import {
   WebMcpInvocationCancelledError,
   type CreateWebMcpSessionOptions,
@@ -51,10 +55,18 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
   disposed = false;
   navigations: string[] = [];
   screenshots = 0;
+  /** Every `setScreencast` call, in order, so idempotence is observable. */
+  screencastCalls: boolean[] = [];
+  /** Every input batch, so ordering within a gesture is observable. */
+  inputBatches: WebMcpInputEvent[][] = [];
+  /** Reported by `viewportTransport`; overridden for the embedded cases. */
+  transport: WebMcpViewportTransport = { kind: "native-window" };
   /** Resolve/reject to settle an in-flight invocation from a test. */
   pending: Deferred<{ output: unknown }> | undefined;
   /** When set, invokeTool hangs until the test settles `pending`. */
   hangOnInvoke = false;
+  /** When set, the NEXT invocation rejects with this message and then clears. */
+  failNextInvokeWith: string | undefined;
   invocations: WebMcpInvokeRequest[] = [];
   private url: string;
 
@@ -71,6 +83,17 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
     this.callbacks.onToolsChanged(tools);
   }
 
+  /** Push a painted frame at the runtime, as a screencast would. */
+  emitFrame(frame: Partial<WebMcpFrame> = {}): void {
+    this.callbacks.onFrame({
+      data: "ZmFrZS1mcmFtZQ==",
+      deviceWidth: 1280,
+      deviceHeight: 800,
+      ts: 1_000,
+      ...frame,
+    });
+  }
+
   async navigate(url: string): Promise<void> {
     this.navigations.push(url);
     this.url = url;
@@ -84,6 +107,11 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
 
   async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
     this.invocations.push(request);
+    const failure = this.failNextInvokeWith;
+    if (failure !== undefined) {
+      this.failNextInvokeWith = undefined;
+      throw new Error(failure);
+    }
     if (!this.hangOnInvoke) {
       return { output: { echoed: request.input } };
     }
@@ -114,7 +142,31 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
   }
 
   viewportTransport(): WebMcpViewportTransport {
-    return { kind: "native-window" };
+    return this.transport;
+  }
+
+  /** Set false to model a browser that refuses `Page.startScreencast`. */
+  screencastAvailable = true;
+
+  async setScreencast(enabled: boolean): Promise<boolean> {
+    this.screencastCalls.push(enabled);
+    return enabled && this.screencastAvailable;
+  }
+
+  async dispatchInput(events: WebMcpInputEvent[]): Promise<void> {
+    this.inputBatches.push(events);
+  }
+
+  /** Frames a viewer's transport could not take. See `noteFramePressure`. */
+  pressureEvents = 0;
+
+  noteFramePressure(): void {
+    this.pressureEvents += 1;
+  }
+
+  /** Announce a quality change the way an adaptive provider would. */
+  emitStreamQuality(quality: number): void {
+    this.callbacks.onStreamQualityChanged?.(quality);
   }
 
   async dispose(): Promise<void> {
@@ -125,6 +177,8 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
 
 export class FakeProvider implements WebMcpBrowserProvider {
   readonly sessions: FakeBrowserSession[] = [];
+  /** Every `createSession` call's options, so plumbing is observable. */
+  readonly createOptions: CreateWebMcpSessionOptions[] = [];
   /** Gate every launch, to test the reserve-before-launch capacity window. */
   launchGate: Deferred<void> | undefined;
   /** Throw this instead of launching. */
@@ -134,6 +188,7 @@ export class FakeProvider implements WebMcpBrowserProvider {
   async createSession(
     options: CreateWebMcpSessionOptions,
   ): Promise<WebMcpBrowserSession> {
+    this.createOptions.push(options);
     if (this.launchGate) await this.launchGate.promise;
     if (this.failWith) throw this.failWith;
     const session = new FakeBrowserSession(

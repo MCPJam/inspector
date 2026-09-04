@@ -162,6 +162,20 @@ export interface StepEngineOutcome {
   iterationError?: string;
   iterationErrorDetails?: string;
   /**
+   * WHICH LAYER produced `iterationError`, reported by the catch site that
+   * raised it rather than inferred from its text.
+   *
+   * `model` is the model-call layer — our provider, not the MCP server under
+   * test. The chain uses it to stop filing an outage or an exhausted credit
+   * balance as an unattributed server failure. Absent when the caller does
+   * not know, which reads as "unclassified" and changes nothing.
+   */
+  errorSource?: "model" | "setup";
+  /** The engine's structured code, when the failure carried one. */
+  errorCode?: string;
+  /** HTTP status, when the failure came from a non-OK response. */
+  errorHttpStatus?: number;
+  /**
    * When true, the iterationError is a SETUP failure (status:"failed"), not an
    * assertion failure (status:"completed"+error). Mirrors the pinned
    * not-connected behavior.
@@ -214,6 +228,10 @@ export interface StepExecutorResult {
   /** Set when a `prompt`/`toolCall` step reported a fatal error. */
   iterationError?: string;
   iterationErrorDetails?: string;
+  /** Which layer raised `iterationError` — see `StepEngineOutcome`. */
+  errorSource?: "model" | "setup";
+  errorCode?: string;
+  errorHttpStatus?: number;
   /** True when `iterationError` is a setup (not assertion) failure. */
   setupFailure: boolean;
 }
@@ -340,7 +358,10 @@ async function drainAndDriveFollowUps(
   browser: Pick<BrowserSessionContext, "drainFollowUps">,
   handlers: StepExecutorHandlers,
   state: StepExecutionState,
-): Promise<string | undefined> {
+  // The failing OUTCOME, not just its message. Reducing it to a string here
+  // discarded the layer attribution, so a provider failure on a widget
+  // follow-up turn stayed uncategorised even once the hosted bridge carried it.
+): Promise<StepEngineOutcome | undefined> {
   if (!handlers.onFollowUp) return undefined;
   let remaining = MAX_WIDGET_FOLLOWUP_TURNS;
   while (remaining > 0) {
@@ -362,7 +383,7 @@ async function drainAndDriveFollowUps(
       remaining -= 1;
       const outcome = await handlers.onFollowUp!({ text, stepIndex, turnOrdinal: turn });
       applyOutcome(state, outcome, turn);
-      if (outcome.iterationError) return outcome.iterationError;
+      if (outcome.iterationError) return outcome;
     }
   }
   return undefined;
@@ -507,7 +528,7 @@ export async function executeSteps(args: {
     sIdx: number,
     turn: number,
   ): Promise<StepExecutorResult | undefined> => {
-    const err = await drainAndDriveFollowUps(
+    const failed = await drainAndDriveFollowUps(
       label,
       sIdx,
       turn,
@@ -515,16 +536,32 @@ export async function executeSteps(args: {
       handlers,
       state,
     );
-    if (!err) return undefined;
+    if (!failed) return undefined;
     emitStatus(sIdx, "fail");
     recordSkippedSteps(
       state,
       steps,
       sIdx + 1,
-      `widget follow-up turn errored (step ${sIdx}): ${err}`,
+      `widget follow-up turn errored (step ${sIdx}): ${failed.iterationError}`,
     );
     emitSkipped(sIdx + 1);
-    return { state, iterationError: err, setupFailure: false };
+    // The SAME shape the prompt-step failure path returns. A follow-up turn
+    // dying on the provider is the same event as a prompt turn dying on it, and
+    // reporting one and not the other made the attribution depend on which
+    // turn the model happened to fail.
+    return {
+      state,
+      iterationError: failed.iterationError,
+      ...(failed.iterationErrorDetails
+        ? { iterationErrorDetails: failed.iterationErrorDetails }
+        : {}),
+      ...(failed.errorSource ? { errorSource: failed.errorSource } : {}),
+      ...(failed.errorCode ? { errorCode: failed.errorCode } : {}),
+      ...(typeof failed.errorHttpStatus === "number"
+        ? { errorHttpStatus: failed.errorHttpStatus }
+        : {}),
+      setupFailure: false,
+    };
   };
 
   for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
@@ -556,6 +593,11 @@ export async function executeSteps(args: {
           state,
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }
@@ -593,6 +635,11 @@ export async function executeSteps(args: {
           state,
           iterationError: outcome.iterationError,
           iterationErrorDetails: outcome.iterationErrorDetails,
+          ...(outcome.errorSource ? { errorSource: outcome.errorSource } : {}),
+          ...(outcome.errorCode ? { errorCode: outcome.errorCode } : {}),
+          ...(typeof outcome.errorHttpStatus === "number"
+            ? { errorHttpStatus: outcome.errorHttpStatus }
+            : {}),
           setupFailure: outcome.setupFailure === true,
         };
       }

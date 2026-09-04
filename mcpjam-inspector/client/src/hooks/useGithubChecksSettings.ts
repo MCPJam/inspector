@@ -1,7 +1,7 @@
 import { useCallback } from "react";
-import { useAuth } from "@workos-inc/authkit-react";
-import { useAction, useConvexAuth, useMutation, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
+import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 
 /**
  * GitHub Checks settings — data layer.
@@ -60,6 +60,25 @@ export type GithubChecksAvailability =
  * neither read nor set. Copy on this surface must never promise a merge result.
  */
 export type GithubCheckOutagePolicy = "fail_open" | "fail_closed";
+
+/**
+ * Whether MCPJam comments on this repository's pull requests.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * ABSENT MEANS `on`. This is the ONE optional policy on the repo row whose
+ * default is inverted, and reading it the ordinary way misreports every
+ * repository that has never been touched.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * A comment blocks nothing — it is the same verdict the check run already
+ * published, written where somebody reading the pull request will find it — so
+ * the product decision is that it ships ON for every connected repository,
+ * including the ones connected before it existed, and an admin opts a
+ * repository OUT. `conformanceEnabled` beside it is absent ⇒ OFF for the
+ * opposite reason: that one adds a check, and growing one of those under a
+ * maintainer without asking is a merge-blocking surprise.
+ */
+export type GithubCheckFeedbackComments = "on" | "off";
 
 /**
  * How ready a connected repository actually is, DERIVED BY THE BACKEND.
@@ -152,6 +171,15 @@ export type GithubCheckRepoConfigRow = {
    */
   conformanceEnabled?: boolean;
   conformanceSuiteKinds?: Array<"protocol" | "apps" | "tasks" | "oauth">;
+  /**
+   * ABSENT IS `on`, NOT `off`. See {@link GithubCheckFeedbackComments}: an
+   * admin opts a repository out, so every row that predates the field — and
+   * every row nobody has touched — is a repository MCPJam comments on. A
+   * reader that treats absent the way it treats `conformanceEnabled` renders
+   * the control off for all of them and tells an admin the opposite of what is
+   * happening on their pull requests.
+   */
+  feedbackComments?: GithubCheckFeedbackComments;
   createdAt: number;
   updatedAt: number;
 };
@@ -210,12 +238,14 @@ const BINDINGS_QUERY = "github/appInstallLink:listBindingsForOrganization";
 export function useGithubChecksAvailability(
   organizationId: string | null | undefined
 ): GithubChecksAvailability {
-  const { user } = useAuth();
-  const { isAuthenticated } = useConvexAuth();
+  // `useIsMemberActor`, not `useAuth().user`: the WorkOS user object flips
+  // truthy while the Convex socket is still carrying the guest bearer that
+  // hosted prod injects into every document, and this query is signed-in-only.
+  // That window is what put 320 guest-identity refusals into CONVEX-19R. See
+  // the hook for the sequence.
+  const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
-  const canQuery = Boolean(
-    isAuthenticated && user && isUserReady && organizationId
-  );
+  const canQuery = Boolean(isMember && isUserReady && organizationId);
 
   return useQuery(
     AVAILABILITY_QUERY as any,
@@ -226,7 +256,7 @@ export function useGithubChecksAvailability(
 export function useGithubChecksSettings(
   organizationId: string | null | undefined
 ) {
-  const { isAuthenticated } = useConvexAuth();
+  const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
 
   const availability = useGithubChecksAvailability(organizationId);
@@ -236,8 +266,13 @@ export function useGithubChecksSettings(
   // `enabled`. Asking earlier would fire two queries the backend answers with
   // an empty list anyway, and would make the page flash content it may not be
   // allowed to show.
+  //
+  // `isMember` is repeated here rather than leaned on transitively: these two
+  // queries are signed-in-only in their own right, and this gate used to carry
+  // `isAuthenticated` where the availability gate carried `isAuthenticated &&
+  // user` — a weaker term that only `isEnabled` was holding shut.
   const canQuery = Boolean(
-    isAuthenticated && isUserReady && organizationId && isEnabled
+    isMember && isUserReady && organizationId && isEnabled
   );
 
   const repos = useQuery(
@@ -277,6 +312,9 @@ export function useGithubChecksSettings(
   );
   const setRepoConformanceMutation = useMutation(
     "github/checkRepoConfigs:setRepoConformance" as any
+  );
+  const setRepoFeedbackCommentsMutation = useMutation(
+    "github/checkRepoConfigs:setRepoFeedbackComments" as any
   );
   const disconnectRepoMutation = useMutation(
     "github/checkRepoConfigs:disconnectRepo" as any
@@ -416,6 +454,27 @@ export function useGithubChecksSettings(
     [setRepoConformanceMutation, organizationId]
   );
 
+  /**
+   * `feedbackComments` is REQUIRED here, and is a literal rather than a
+   * boolean, because absent already means something on this field: `on`. A
+   * caller that could omit it would be sending "no policy stored", which the
+   * backend reads as the ON default — the opposite of what an admin reaching
+   * for this control almost always wants.
+   */
+  const setRepoFeedbackComments = useCallback(
+    (args: {
+      configId: string;
+      feedbackComments: GithubCheckFeedbackComments;
+    }) =>
+      setRepoFeedbackCommentsMutation({
+        organizationId,
+        ...args,
+      } as any) as Promise<{
+        changed: boolean;
+      }>,
+    [setRepoFeedbackCommentsMutation, organizationId]
+  );
+
   const disconnectRepo = useCallback(
     (args: { configId: string }) =>
       disconnectRepoMutation({ organizationId, ...args } as any),
@@ -441,6 +500,7 @@ export function useGithubChecksSettings(
     setRepoSuite,
     setRepoOutagePolicy,
     setRepoConformance,
+    setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
     startInstallation,

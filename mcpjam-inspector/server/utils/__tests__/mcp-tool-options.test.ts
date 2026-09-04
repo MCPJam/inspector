@@ -1,7 +1,7 @@
 /**
  * The ONE builder for `getToolsForAiSdk`'s host-derived options.
  *
- * These assertions pin the property that four call sites depend on and that a
+ * These assertions pin the property that every call site depends on and that a
  * fifth (the harness host-executed projection) silently violated by building
  * nothing at all: absent-everything answers `undefined`, so a default turn
  * takes the no-options overload and produces byte-identical tools.
@@ -50,9 +50,43 @@ describe("mcpToolOptionsFor", () => {
     expect(mcpToolOptionsFor({ tasks: seam })).toEqual({ tasks: seam });
   });
 
-  it("reproduces the emulated engine's four-field object", () => {
+  /**
+   * `toolCallCancellation` is the ONE field here where absent and empty are
+   * different instructions, so it gets its own case rather than riding along
+   * with the policy-object one.
+   *
+   * `applyCancellationPolicy` reads `override ?? config?.toolCallCancellation`.
+   * Absent therefore falls through to the connection's connect-time copy — the
+   * stale value the per-turn override exists to beat — while `{}` overrides it
+   * with "no era is suppressed". Both chat routes send `{}` whenever a host
+   * config resolved, so if this builder ever dropped the empty record (which
+   * the `Object.keys` rule would do the moment the field stopped being
+   * counted) a host toggled back ON would keep suppressing. That was the bug.
+   */
+  it("keeps an EMPTY cancellation record, which is not the same as absent", () => {
+    expect(mcpToolOptionsFor({ toolCallCancellation: {} })).toEqual({
+      toolCallCancellation: {},
+    });
+    // ...and absent still answers undefined, so a default turn keeps taking
+    // the no-options overload.
+    expect(
+      mcpToolOptionsFor({ toolCallCancellation: undefined })
+    ).toBeUndefined();
+  });
+
+  it("carries a cancellation record through unchanged", () => {
+    const leaves = { legacy: false, modern: false };
+    expect(mcpToolOptionsFor({ toolCallCancellation: leaves })).toEqual({
+      toolCallCancellation: leaves,
+    });
+    expect(
+      mcpToolOptionsFor({ toolCallCancellation: { modern: false } })
+    ).toEqual({ toolCallCancellation: { modern: false } });
+  });
+
+  it("reproduces the emulated engine's full object", () => {
     // The shape `chat-v2-orchestration` built by hand before this helper
-    // existed, from the same four host-derived inputs.
+    // existed, from the same host-derived inputs.
     const policy = { directContent: { image: false } } as never;
     const seam = { mode: "detach" } as never;
     expect(
@@ -61,12 +95,14 @@ describe("mcpToolOptionsFor", () => {
         includeAppOnly: true,
         modelVisibleMcpToolResults: policy,
         tasks: seam,
+        toolCallCancellation: { modern: false },
       })
     ).toEqual({
       needsApproval: true,
       includeAppOnly: true,
       modelVisibleMcpToolResults: policy,
       tasks: seam,
+      toolCallCancellation: { modern: false },
     });
   });
 });

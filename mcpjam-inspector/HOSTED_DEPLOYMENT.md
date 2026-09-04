@@ -59,6 +59,34 @@ configured sandbox origin are equal by definition. No page can tell that apart
 from a deploy that pointed its sandbox at itself. Only the server knows which
 hostname it was supposed to answer as, which is why the check lives there.
 
+### Per-server view origins (optional)
+
+Each MCP server's views can be served from their own origin,
+`<label>.sandbox.example.com`, so apps do not share cookies or storage with
+each other and each gets an origin stable enough to name in an OAuth redirect
+URI or a third-party API-key allowlist. Off unless the deploy opts in:
+
+```bash
+# Client build time. Requires the DNS and certificate below.
+VITE_MCPJAM_VIEW_SUBDOMAINS=true
+```
+
+Before enabling it:
+
+- wildcard DNS for `*.sandbox.example.com` pointing at the same backend;
+- a certificate covering that wildcard. A one-level wildcard for the apex does
+  NOT cover `*.sandbox.example.com`, so this is usually a separate certificate;
+- if an access proxy fronts the sandbox host, its bypass must cover the
+  wildcard too, or the proxy document loads a login page instead.
+
+Enable it on staging first. With the DNS or certificate missing, a labelled
+host does not resolve and widgets fail to load rather than degrading — there is
+no fallback, by design, because silently sharing an origin is the failure this
+is meant to remove.
+
+`SANDBOX_HOSTS` needs no change: a label under a listed host is recognised
+automatically, and answers the sandbox proxy path only — not `/health`.
+
 ### DNS / routing
 
 Point the sandbox hostname at the same backend that serves the host app.
