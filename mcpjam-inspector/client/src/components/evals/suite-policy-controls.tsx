@@ -15,7 +15,7 @@
  * `entered / 100`, and nothing else on this path divides by anything.
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
 
@@ -55,12 +55,23 @@ function PercentInput({
   const asPercent = value === undefined ? "" : String(Math.round(value * 100));
   const [text, setText] = useState(asPercent);
   const [editing, setEditing] = useState(false);
+  // A REF, not state, because `commit` has to see it in the same tick. Escape
+  // calls `blur()`, which dispatches its event SYNCHRONOUSLY — so `onBlur`
+  // runs before React has applied anything this keydown queued, and `commit`
+  // still closes over the abandoned text. Without this flag, pressing Escape
+  // saved the very edit it was pressed to discard.
+  const abandoned = useRef(false);
   useEffect(() => {
     if (!editing) setText(asPercent);
   }, [asPercent, editing]);
 
   const commit = () => {
     setEditing(false);
+    if (abandoned.current) {
+      abandoned.current = false;
+      setText(asPercent);
+      return;
+    }
     const trimmed = text.trim();
     if (trimmed === "") {
       onCommit(undefined);
@@ -91,8 +102,7 @@ function PercentInput({
           onKeyDown={(event) => {
             if (event.key === "Enter") event.currentTarget.blur();
             if (event.key === "Escape") {
-              setEditing(false);
-              setText(asPercent);
+              abandoned.current = true;
               event.currentTarget.blur();
             }
           }}

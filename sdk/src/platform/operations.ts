@@ -5398,6 +5398,10 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "executionConfig",
       "hosts",
       "settings",
+      // The compare-and-set token. Validated above and advertised in the agent
+      // prompt notes, so leaving it out of the body made every caller that
+      // supplied it believe it had a precondition it did not have.
+      "expectedRevisionNumber",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }

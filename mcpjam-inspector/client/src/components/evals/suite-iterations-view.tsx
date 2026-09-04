@@ -651,7 +651,10 @@ export function SuiteIterationsView({
     const terminal = new Set(["completed", "failed", "cancelled", "timed_out"]);
     return (
       [...runs]
-        .sort(compareRunsBySequence)
+        // DESCENDING. `compareRunsBySequence` orders oldest-first, so the bare
+        // comparator would find the suite's FIRST judged run rather than its
+        // most recent one.
+        .sort((a, b) => compareRunsBySequence(b, a))
         .find(
           (run) =>
             terminal.has(run.status ?? "") && run.goalCompletion !== undefined,
@@ -981,7 +984,8 @@ export function SuiteIterationsView({
   // on a suite that has never run, in which case the footer action is not
   // offered rather than being offered and doing nothing.
   const latestRunForCompare = useMemo(
-    () => [...runs].sort(compareRunsBySequence)[0] ?? null,
+    // DESCENDING, so `[0]` is the newest run and not the oldest one.
+    () => [...runs].sort((a, b) => compareRunsBySequence(b, a))[0] ?? null,
     [runs],
   );
 
@@ -1030,9 +1034,9 @@ export function SuiteIterationsView({
   const verdictPolicyUpgradeDisabledReason: string | undefined =
     !capabilitiesReady
       ? "Checking whether this deployment allows verdict policy v2…"
-      : capabilities.verdictPolicyV2.canUpgrade
+      : capabilities.verdictPolicyV2?.canUpgrade
         ? undefined
-        : capabilities.verdictPolicyV2.deploymentMode === "off"
+        : capabilities.verdictPolicyV2?.deploymentMode === "off"
           ? DEPLOYMENT_REASON_COPY
           : "This suite is already on verdict policy v2";
 

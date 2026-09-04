@@ -75,6 +75,11 @@ export function TrialJudgeReviewPanel({
 
   useEffect(() => {
     let cancelled = false;
+    // CLEARED FIRST, synchronously. The read below is async, so without this
+    // the panel keeps rendering the PREVIOUS trial's label while the new one
+    // loads — and "Change label" would submit against the new `iterationId`
+    // carrying provenance the reader is looking at from the old one.
+    setReview(null);
     void (async () => {
       try {
         const row = await convex.query(

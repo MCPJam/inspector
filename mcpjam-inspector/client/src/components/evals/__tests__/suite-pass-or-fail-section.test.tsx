@@ -159,6 +159,31 @@ describe("VerdictPolicyV2Controls", () => {
     });
   });
 
+  it("Escape abandons the edit instead of committing it", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <VerdictPolicyV2Controls
+        defaults={{ repetitions: 3, passThreshold: 0.5 }}
+        onChange={onChange}
+      />,
+    );
+    const input = screen.getByLabelText(
+      /fraction of a case's trials that must pass/i,
+    ) as HTMLInputElement;
+
+    await user.clear(input);
+    await user.type(input, "90");
+    await user.keyboard("{Escape}");
+
+    // `blur()` dispatches SYNCHRONOUSLY, so the blur handler runs before React
+    // has applied anything the Escape keydown queued — which is how a keypress
+    // meant to discard an edit ended up saving it, then refreshing the field
+    // from the value it had just written so nothing looked wrong.
+    expect(onChange).not.toHaveBeenCalled();
+    expect(input.value).toBe("50");
+  });
+
   it("clamps a typed percent into the unit interval", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

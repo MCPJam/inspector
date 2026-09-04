@@ -198,7 +198,7 @@ export function SuiteAutomationRow({
               size="sm"
               variant="outline"
               className="h-7 text-xs"
-              disabled={isWriting}
+              disabled={isWriting || !canTakeOver}
               onClick={() =>
                 void write(
                   () => setSuiteSchedule({ suiteId, enabled: false }),
@@ -214,7 +214,7 @@ export function SuiteAutomationRow({
               size="sm"
               variant="outline"
               className="h-7 text-xs"
-              disabled={isWriting || !schedule}
+              disabled={isWriting || !schedule || !canTakeOver}
               onClick={() =>
                 void write(
                   () =>
@@ -257,6 +257,11 @@ export function SuiteAutomationRow({
             size="sm"
             variant="ghost"
             className="h-7 text-xs"
+            // `canTakeOver` is the whole row's write permission, not just Take
+            // over's: Manage opens an editor whose every control mutates the
+            // schedule, so offering it to a caller who may not write hands them
+            // a form that can only end in a refusal.
+            disabled={!canTakeOver}
             onClick={() => setManageOpen(true)}
           >
             Manage

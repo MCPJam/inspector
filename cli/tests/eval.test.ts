@@ -5492,6 +5492,40 @@ test("eval update --min-iterations sends the number", async () => {
   }
 });
 
+test("eval revisions rejects a partially numeric --limit rather than truncating it", async () => {
+  const fixture = await startEvalFixture();
+  try {
+    // `Number.parseInt` reads each of these as 1 and hands the schema a number
+    // the caller never asked for — a silently truncated limit the caller has
+    // no way to notice. (`1e2` is not here on purpose: it is exactly 100, and
+    // the point of the fix is that it now MEANS 100 rather than 1.)
+    for (const value of ["1.9", "1junk", ""]) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "revisions",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--limit",
+            value
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.notEqual(run.result.exitCode, 0);
+      assert.match(
+        run.stderr,
+        /--limit (must be a whole number|requires a value)/
+      );
+    }
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval update rejects an out-of-range --min-iterations before any write", async () => {
   const fixture = await startEvalFixture();
   try {

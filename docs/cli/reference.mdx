@@ -1207,7 +1207,7 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--match-options <json>` | No | Tool-call match options for this run, e.g. `'{"toolCallOrder":"exact"}'` |
 | `--idempotency-key <key>` | No | Retry-safety key: repeating the call returns the run it already started |
 | `--wait` | No | Wait for every launched run to reach a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait`. A run held in `grading` for its judge earns up to 31 more minutes on top of the default; passing this flag makes the budget strict and waives that extension. |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
 | `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
@@ -1573,7 +1573,7 @@ run before evaluating it.
 | `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
 | `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
 | `--wait` | No | Poll until the run reaches a terminal status |
-| `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
+| `--wait-timeout <ms>` | No | Maximum wait time (default 600000). A run held in `grading` for its judge earns up to 31 more minutes on top of the default; passing this flag makes the budget strict and waives that extension. |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
 

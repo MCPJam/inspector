@@ -2940,7 +2940,7 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--limit <n>",
         "Maximum number of runs to return (1-100)",
-        (value) => Number.parseInt(value, 10)
+        (value) => parseIntOption(value, "--limit")
       ).action(
     async (
       options: PlatformOptions & {
@@ -2970,7 +2970,9 @@ export function registerEvalCommands(program: Command): void {
       .option(
         "--limit <n>",
         "Maximum number of revisions to return (1-100)",
-        (value) => Number.parseInt(value, 10)
+        // NOT `Number.parseInt`, which reads "1.9", "1e2" and "1junk" as 1 and
+        // hands the schema a number the caller never asked for.
+        (value) => parseIntOption(value, "--limit")
       )
       .option("--cursor <cursor>", "Pagination cursor from a previous page")
       .action(

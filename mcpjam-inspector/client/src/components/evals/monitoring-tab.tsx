@@ -175,7 +175,12 @@ export function MonitoringTab({
                   ? ` (${stat.summary.passed}/${stat.summary.total} iterations)`
                   : ""
               }`}
-              aria-label={`Run ${formatRunId(stat.runId)}: ${stat.result}`}
+              // Same fallback as the title above: a run held for its judge
+              // carries `result: "pending"`, and a reader who cannot see the
+              // dot should hear what a sighted reader sees.
+              aria-label={`Run ${formatRunId(stat.runId)}: ${
+                stat.result === "pending" ? stat.status : stat.result
+              }`}
             />
           ))}
         </div>

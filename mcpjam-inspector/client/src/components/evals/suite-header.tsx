@@ -296,10 +296,20 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             breadcrumb is the way back. What belongs in this corner is the
             thing a reader of a shared suite actually needs — which revision
             these settings are, and who moved them last. */}
-        <SuiteRevisionPill
-          revisionNumber={suite.revisionNumber}
-          onOpenHistory={() => onOpenRevisionHistory?.()}
-        />
+        {onOpenRevisionHistory ? (
+          <SuiteRevisionPill
+            revisionNumber={suite.revisionNumber}
+            onOpenHistory={onOpenRevisionHistory}
+          />
+        ) : suite.revisionNumber !== undefined ? (
+          // The number without the drill-down. Rendering the pill here anyway
+          // would put a focusable control labelled "History" on the page that
+          // silently does nothing when clicked; the revision is still worth
+          // saying, so it is said as text.
+          <span className="shrink-0 px-2 text-xs text-muted-foreground">
+            r{suite.revisionNumber}
+          </span>
+        ) : null}
       </div>
     );
   }

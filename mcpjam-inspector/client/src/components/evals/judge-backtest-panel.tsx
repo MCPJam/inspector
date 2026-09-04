@@ -19,7 +19,7 @@
  * is still useful when "here is what changed" is unavailable.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useAction } from "convex/react";
 import { Button } from "@mcpjam/design-system/button";
 import type { EvalJudgeRubric } from "./types";
@@ -73,6 +73,18 @@ export function JudgeBacktestPanel({
   const [result, setResult] = useState<BacktestResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+
+  // A RESULT BELONGS TO THE RUBRIC THAT PRODUCED IT. Editing a criterion after
+  // backtesting leaves flip counts and bands on screen that were computed
+  // against the previous wording — the most confidently wrong thing this panel
+  // could show, since its whole purpose is to say what THIS draft would do.
+  // Keyed on the criteria rather than the object so a re-render that rebuilds
+  // an identical rubric does not throw away a still-valid answer.
+  const rubricKey = JSON.stringify(draftRubric?.criteria ?? null);
+  useEffect(() => {
+    setResult(null);
+    setError(null);
+  }, [rubricKey]);
 
   const requestJudgeBacktest = useAction(
     "goalCompletionAction:requestJudgeBacktest" as never,

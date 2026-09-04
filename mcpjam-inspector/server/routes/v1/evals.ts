@@ -5583,6 +5583,35 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     applyVerdictPolicySettings(suite!, s, updateArgs);
   }
 
+  // THE PRECONDITION APPLIES TO THE WHOLE REQUEST, not just to the mutation
+  // that carries it.
+  //
+  // `expectedRevisionNumber` rides on `testSuites:updateTestSuite` below, which
+  // checks it atomically — but that mutation only runs when the body carries a
+  // field it owns. A PATCH of `hosts`, `executionConfig` or `environmentIds`
+  // alone skips it entirely, and the precondition was then accepted, validated,
+  // and silently ignored: the caller believed they had compare-and-set and got
+  // last-write-wins. Checking the revision we already read closes that door.
+  //
+  // It is a PRE-CHECK, not a substitute for the atomic one. A suite edited
+  // between this read and the write still loses that race, which is why the
+  // token is also sent below; this only ensures that a caller who supplies it
+  // is never quietly unprotected.
+  if (body.expectedRevisionNumber !== undefined) {
+    const current = suite?.revisionNumber;
+    if (
+      typeof current === "number" &&
+      current !== body.expectedRevisionNumber
+    ) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `This suite changed since you loaded it (current revision ${current}).`,
+        { currentRevisionNumber: current },
+      );
+    }
+  }
+
   // ONE revision group for the whole request.
   //
   // This handler applies up to four mutations, and each one records its own

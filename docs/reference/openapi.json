@@ -14203,8 +14203,8 @@
           },
           "result": {
             "type": ["string", "null"],
-            "description": "Verdict once terminal. `inconclusive` exists only under `verdictPolicyVersion: 2` and is NOT a failure: the run did not measure the server well enough to say (too few gradeable trials, too many evaluator errors), so a gate that folds it into `failed` reports a defect the run never observed. Read `verdictSummary.reasons` for the check that withheld the verdict.",
-            "enum": ["passed", "failed", "inconclusive", null]
+            "description": "Verdict once terminal; `pending` until then, including while `status` is `grading`. `inconclusive` exists only under `verdictPolicyVersion: 2` and is NOT a failure: the run did not measure the server well enough to say (too few gradeable trials, too many evaluator errors), so a gate that folds it into `failed` reports a defect the run never observed. Read `verdictSummary.reasons` for the check that withheld the verdict.",
+            "enum": ["pending", "passed", "failed", "inconclusive", null]
           },
           "summary": {
             "type": ["object", "null"],

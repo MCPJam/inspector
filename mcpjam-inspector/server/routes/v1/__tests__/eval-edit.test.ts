@@ -3394,6 +3394,45 @@ describe("v1 eval-edit routes", () => {
       expect(json.details?.currentRevisionNumber).toBe(9);
     });
 
+    it("refuses a stale precondition on a PATCH that skips updateTestSuite", async () => {
+      // The gap CodeRabbit found. `expectedRevisionNumber` rides on
+      // `testSuites:updateTestSuite`, which is the mutation that checks it
+      // atomically — but a PATCH of `environmentIds` alone never calls it. The
+      // precondition was accepted, validated, and then silently ignored: the
+      // caller believed they had a compare-and-set and got last-write-wins.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 9 })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as any;
+      expect(json.message).toContain("9");
+      // Refused BEFORE anything was written, which is the whole point of a
+      // precondition: a caller who learns their draft is stale must not first
+      // have half of it applied.
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("lets a matching precondition through on that same path", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 7 })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(200);
+    });
+
     it("reports revisionNumber on the suite detail, null when unrecorded", async () => {
       const unset = await request(
         "GET",

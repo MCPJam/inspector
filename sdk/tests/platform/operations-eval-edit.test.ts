@@ -193,6 +193,24 @@ describe("eval-edit operation execution", () => {
     });
   });
 
+  it("update_eval_suite sends expectedRevisionNumber to the wire", async () => {
+    const { client, calls } = makeClient();
+    await updateEvalSuiteOperation.execute(
+      { suite: "s1", name: "Renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+    const patch = calls.find((c) => c.method === "PATCH");
+    // Validated by the schema and advertised in the agent prompt notes as what
+    // makes an edit safe against a concurrent one — so dropping it from the
+    // body did not merely lose a field. It handed every caller who supplied it
+    // a precondition the server never saw, and a last-write-wins edit they had
+    // been told was a compare-and-set.
+    expect(patch?.body).toEqual({
+      name: "Renamed",
+      expectedRevisionNumber: 7,
+    });
+  });
+
   it("create_eval_case carries the converter's import claim to the wire", async () => {
     const { client, calls } = makeClient();
     const claim = {

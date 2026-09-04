@@ -231,9 +231,16 @@ export function resolveIterationJudge(
     const byGradingKey = cases.find((c) => c.gradingKey === gradingKey);
     if (byGradingKey) return byGradingKey;
   }
-  // Legacy only. A run whose cases carry EITHER new key has already been
-  // handled above, so falling through here means this run predates them —
-  // and on such a run `caseKey` is what its verdicts were keyed by.
+  // Legacy only, and CHECKED rather than assumed. Reaching here on a run whose
+  // cases do carry a new key does not mean the run is old; it means this trial
+  // has no verdict in it — the judge errored on it, or has not reached it yet.
+  // Falling back to `caseKey` there would hand back a SIBLING trial's verdict,
+  // which is the exact confusion the join order exists to prevent. No verdict
+  // is the honest answer.
+  const keyedByTrial = cases.some(
+    (c) => c.iterationId !== undefined || c.gradingKey !== undefined,
+  );
+  if (keyedByTrial) return null;
   return cases.find((c) => c.caseKey === caseKey) ?? null;
 }
 

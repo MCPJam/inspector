@@ -890,22 +890,33 @@ export async function awaitJudgeVerdict(
       passCriteria?: { minimumPassRate?: number };
     } | null;
 
-  let run = await read();
+  // Guarded from the FIRST read on. A throw here is a transport hiccup, not
+  // evidence about the run, and letting the opening read reject would abandon
+  // the judge wait on exactly the failure the loop below already survives.
+  // `undefined` means "no row read yet", which is not `grading`, so a first
+  // read that never succeeds simply falls out and lets the caller decide.
+  const readOrNull = async () => {
+    try {
+      return await read();
+    } catch (error) {
+      logger.warn("[github-checks] failed to read a run held for grading", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return undefined;
+    }
+  };
+
+  let run = await readOrNull();
   while (run?.status === "grading") {
     if (options.isLeaseHeld?.() === false) return run;
     if (now() >= deadline) return run;
     await sleep(options.pollMs);
-    try {
-      run = await read();
-    } catch (error) {
-      // Not evidence about the run. Keep the last row and try again.
-      logger.warn("[github-checks] failed to re-read a run held for grading", {
-        runId,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+    // Keep the last row when a re-read fails, rather than forgetting that the
+    // run was grading.
+    run = (await readOrNull()) ?? run;
   }
-  return run;
+  return run ?? null;
 }
 
 /**
