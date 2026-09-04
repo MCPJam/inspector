@@ -43,6 +43,7 @@ import {
 } from "../daemon/chromium-launch.js";
 import type { DriverContext } from "../daemon/browser-page.js";
 import { probeSingletonOwner } from "../daemon/profile-lock.js";
+import { launchElectronContext } from "../electron/electron-context.js";
 import { createInProcessBrowserdClient } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
@@ -73,9 +74,45 @@ export function getLocalBrowserProfileDir(projectId: string): string {
   return dir;
 }
 
+/**
+ * Which Chromium this machine's browser actually is.
+ *
+ * `playwright` downloads and launches one; `electron` drives the one the
+ * desktop app already IS. They are the same engine to everything above —
+ * `ComputerEngine` stays `"local"` and the tools, the lease, the pane and the
+ * approval rules are untouched — because the only real difference is which
+ * factory builds the `DriverContext`.
+ */
+export type LocalBrowserRuntime = "playwright" | "electron";
+
+/**
+ * Which runtime this process can drive.
+ *
+ * `process.versions.electron` rather than the `ELECTRON_APP` env var: the var
+ * says how the app was STARTED, and a dev server started with it set is still
+ * a plain Node process with no `BrowserWindow` to open. This asks the only
+ * question that matters, and it cannot be wrong.
+ */
+export function resolveLocalBrowserRuntime(): LocalBrowserRuntime {
+  return process.versions.electron ? "electron" : "playwright";
+}
+
 /** Everything this module needs from the outside, injectable for tests. */
 export interface LocalBrowserDeps {
   launch(options: LaunchBrowserdContextOptions): Promise<DriverContext>;
+  /**
+   * Hidden `BrowserWindow`s, for the packaged desktop app.
+   *
+   * The packaged app ships no `node_modules`, so `launch` above cannot work
+   * there at all — `import("playwright")` rejects. This is the same engine
+   * reaching a Chromium that is already on the machine.
+   */
+  launchElectron(options: {
+    contextMode: BrowserContextMode;
+    partitionKey?: string;
+  }): Promise<DriverContext>;
+  /** Which of the two this process can actually use. */
+  runtime(): LocalBrowserRuntime;
   chromiumInstalled(): Promise<boolean>;
   probeProfileOwner(
     dir: string,
@@ -94,6 +131,8 @@ export interface LocalBrowserDeps {
 
 const liveDeps = (): LocalBrowserDeps => ({
   launch: launchBrowserdContext,
+  launchElectron: launchElectronContext,
+  runtime: resolveLocalBrowserRuntime,
   chromiumInstalled: isChromiumInstalled,
   probeProfileOwner: probeSingletonOwner,
   profileDirFor: getLocalBrowserProfileDir,
@@ -187,7 +226,8 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
  */
 function wantsHeadedWindow(env: NodeJS.ProcessEnv): boolean {
   if (env.MCPJAM_BROWSER_HEADED !== "1") return false;
-  if (process.platform === "win32" || process.platform === "darwin") return true;
+  if (process.platform === "win32" || process.platform === "darwin")
+    return true;
   return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
 }
 
@@ -260,8 +300,12 @@ async function startSession(
   // afterwards. The install probe below is an await too: read this first or a
   // kill during that probe is invisible and the launch survives the sweep.
   const bornAt = killGeneration;
+  const runtime = deps.runtime();
 
-  if (!(await deps.chromiumInstalled())) {
+  // Electron BRINGS its Chromium: there is nothing to install, and asking
+  // would show the consent screen a download prompt for a browser the user
+  // already has open.
+  if (runtime === "playwright" && !(await deps.chromiumInstalled())) {
     // Never install from inside a chat turn: the download is hundreds of
     // megabytes and the model would sit in a tool call for minutes with no way
     // to say why. The consent screen installs it, with progress.
@@ -275,9 +319,15 @@ async function startSession(
   }
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
-  const profileDir = persistent
-    ? deps.profileDirFor(args.projectId)
-    : undefined;
+  // Electron's profile is a session PARTITION, not a directory we create and
+  // lock: `persist:mcpjam-browser-<key>` is the whole of it, managed by
+  // Electron inside the app's own userData. So no directory, and no singleton
+  // probe — the app's `requestSingleInstanceLock` already guarantees that one
+  // process owns it, which is the thing the probe exists to establish.
+  const profileDir =
+    persistent && runtime === "playwright"
+      ? deps.profileDirFor(args.projectId)
+      : undefined;
 
   if (profileDir) {
     await mkdir(profileDir, { recursive: true, mode: 0o700 });
@@ -301,16 +351,24 @@ async function startSession(
     }
   }
 
-  const context = await deps.launch({
-    userDataDir: profileDir ?? "",
-    headless: !wantsHeadedWindow(deps.env),
-    // The FULL Chromium build, not the headless shell: `headless: true` alone
-    // selects `chromium-headless-shell`, which is the old headless — a
-    // different binary with a different compositor path and a fingerprint that
-    // public sites recognise and block.
-    channel: "chromium",
-    contextMode,
-  });
+  const context =
+    runtime === "electron"
+      ? await deps.launchElectron({
+          contextMode,
+          ...(persistent
+            ? { partitionKey: validateLocalProjectKey(args.projectId) }
+            : {}),
+        })
+      : await deps.launch({
+          userDataDir: profileDir ?? "",
+          headless: !wantsHeadedWindow(deps.env),
+          // The FULL Chromium build, not the headless shell: `headless: true`
+          // alone selects `chromium-headless-shell`, which is the old headless
+          // — a different binary with a different compositor path and a
+          // fingerprint that public sites recognise and block.
+          channel: "chromium",
+          contextMode,
+        });
 
   // The launch is the long await in this function, and a sweep can begin
   // inside it. A Chromium registered after the drain has already run is one
@@ -336,6 +394,7 @@ async function startSession(
 
   const handle: LocalBrowserSessionHandle = {
     engine: "local",
+    runtime,
     bootId: stack.bootId,
     client,
     contextMode,
@@ -477,7 +536,10 @@ export async function sweepLocalBrowserSessions(
       // merely has not expired yet: the sweep runs every 30 s, so refreshing
       // there would push `lastUsedAt` forward forever and the idle reap could
       // never fire at all.
-      if (session.context.isConnected() && session.lease.state().state === "held") {
+      if (
+        session.context.isConnected() &&
+        session.lease.state().state === "held"
+      ) {
         session.lastUsedAt = now;
       }
       continue;

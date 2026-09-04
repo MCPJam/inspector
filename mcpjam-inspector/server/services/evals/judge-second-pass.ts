@@ -27,14 +27,16 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
- * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
- * judge's row is ADVISORY, so it is structurally excluded from the gating
- * arithmetic that decides the result; the backend refuses lifecycle fields on
- * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
- * backend's own verify seam runs on the merged rows, so if a re-derivation ever
- * DID move the verdict, the run is marked non-gateable rather than quietly
- * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
- * rows `dual_write` writes) and nothing about what it may touch.
+ * THAT HOLDS AT `enforce` TOO, AND IT HOLDS FOR A GATING JUDGE. The judge's row
+ * now carries the role the RUN froze — advisory by default, gating when the
+ * suite earned it — so on a gating run the row does enter the arithmetic that
+ * decides a verdict. What does not change is who applies it: this pass still
+ * posts rows and nothing else. The backend refuses lifecycle fields on this
+ * route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`), and it is
+ * `finalizeAfterJudge` — not this module — that reads the judge's row,
+ * downgrades STRICTER-ONLY, quarantines an unanswered trial, and then decides
+ * the run once. `enforce` therefore changes what this pass runs FOR (the same
+ * real rows `dual_write` writes) and nothing about what it may touch.
  *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale job id and refuses terminal iterations,
@@ -136,6 +138,15 @@ type JudgeVerdictMetadata = {
    */
   reason?: unknown;
   reasons?: unknown;
+  /**
+   * Whether the run's frozen config let this judge DECIDE the trial.
+   *
+   * Forwarded to `hostedScoreDefinitionInputs` with the rest of the object,
+   * which reads the literal `"gating"` and treats everything else as advisory.
+   * Read here rather than resolved from the suite, because a role resolved at
+   * projection time could disagree with the one the run was actually held for.
+   */
+  role?: unknown;
 };
 
 /** A finite number, or `undefined` — judge scores arrive as `unknown`. */

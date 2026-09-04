@@ -33,6 +33,16 @@ import {
   type LeaseState,
 } from "./lease";
 
+/**
+ * The most input events one request may carry.
+ *
+ * Mirrors `INPUT_BATCH_LIMIT` at the inspector's own edge
+ * (`routes/mcp/computers.ts`), deliberately duplicated rather than shared: this
+ * daemon answers on a public host of its own, so a cap enforced only by the
+ * caller is a cap that is not enforced.
+ */
+const MAX_INPUT_EVENTS = 64;
+
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
   method: string;
@@ -43,6 +53,15 @@ export interface DaemonRequest {
   authorization: string | undefined;
   /** The raw request body (already size-limited by the adapter). */
   body: string;
+  /**
+   * The URL's query, when the adapter bothered to parse it.
+   *
+   * Optional because nothing routed through `handle` reads it — the JSON API
+   * takes its arguments in the body. It exists for the STREAMING route, which
+   * the adapter serves itself (a chunked response cannot come back as a
+   * `DaemonResponse`) and which needs `tabId`/`holder` before it can subscribe.
+   */
+  query?: URLSearchParams;
 }
 
 /** What the handler wants written back. `body` undefined → empty response. */
@@ -95,6 +114,31 @@ export class BrowserdRequestHandler {
     this.lease = deps.lease ?? new HandoffLease();
   }
 
+  /**
+   * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
+   * the refusal to write back.
+   *
+   * Extracted so the STREAMING route can share it. That route cannot go through
+   * `handle` — its response is a chunked body, not a `DaemonResponse` — and a
+   * second copy of an auth check is how one of them quietly stops matching the
+   * other. Order matters and is preserved: an unauthenticated request carrying
+   * an Origin gets 401, not 403, so a caller learns nothing about the second
+   * check from failing the first.
+   */
+  authorize(req: DaemonRequest): DaemonResponse | undefined {
+    // No `WWW-Authenticate` (browserd is not an OAuth resource server) and no
+    // body — a 401 says nothing about why.
+    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
+      return { status: 401 };
+    }
+    // DNS-rebinding defence: every legitimate caller is server-side and sends no
+    // Origin, so any Origin at all is rejected.
+    if (req.origin !== undefined) {
+      return { status: 403, body: { error: "cross_origin_forbidden" } };
+    }
+    return undefined;
+  }
+
   async handle(req: DaemonRequest): Promise<DaemonResponse> {
     // `/healthz` is unauthenticated liveness and carries NO secrets — not the
     // token, not the bootId. The supervisor polls it to decide kill/relaunch on
@@ -109,17 +153,8 @@ export class BrowserdRequestHandler {
         : { status: 503, body: { ok: false, detail: health.detail } };
     }
 
-    // Everything else is authenticated. No `WWW-Authenticate` (browserd is not
-    // an OAuth resource server) and no body — a 401 says nothing about why.
-    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
-      return { status: 401 };
-    }
-
-    // DNS-rebinding defence: every legitimate caller is server-side and sends no
-    // Origin, so any Origin at all is rejected.
-    if (req.origin !== undefined) {
-      return { status: 403, body: { error: "cross_origin_forbidden" } };
-    }
+    const refusal = this.authorize(req);
+    if (refusal) return refusal;
 
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
@@ -158,7 +193,68 @@ export class BrowserdRequestHandler {
       return this.handleLease(req);
     }
 
+    // Human input, which does NOT travel with the frames.
+    //
+    // One direction each: frames stream out over `/v1/frames`, input comes back
+    // as ordinary requests. That split is the local engine's (its pane POSTs to
+    // `/local-browser/input` while its socket only ever receives), and it is why
+    // the frame transport can be a one-way body instead of a socket.
+    if (req.path === "/v1/input") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleInput(req);
+    }
+
     return { status: 404 };
+  }
+
+  private async handleInput(req: DaemonRequest): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+    }
+    const { holder, tabId, events } = parsed as {
+      holder?: unknown;
+      tabId?: unknown;
+      events?: unknown;
+    };
+    if (typeof holder !== "string" || holder.length === 0) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
+    }
+    if (!Array.isArray(events)) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId },
+      };
+    }
+    // CAPPED HERE, not only at the inspector's edge. The daemon is reachable on
+    // its own public host, so a cap that lives only in the caller is a cap an
+    // attacker skips — and each event is a synchronous CDP round trip.
+    if (events.length > MAX_INPUT_EVENTS) {
+      return {
+        status: 413,
+        body: { error: "too_many_events", bootId: this.bootId },
+      };
+    }
+    const outcome = await this.dispatchInput({
+      ...(typeof tabId === "string" ? { tabId } : {}),
+      holder,
+      events: events as ViewportInputEvent[],
+    });
+    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    return {
+      status: outcome.error === "unknown_tab" ? 404 : 423,
+      body: { error: outcome.error, bootId: this.bootId },
+    };
   }
 
   private async handleCommand(req: DaemonRequest): Promise<DaemonResponse> {
@@ -264,6 +360,17 @@ export class BrowserdRequestHandler {
          * quiet page. The transport calls this on its own heartbeat.
          */
         revalidate: () => void;
+        /**
+         * Is the tab this subscription was made against still the live one?
+         *
+         * `TabViewport.dispose()` clears its listeners SILENTLY — no callback,
+         * no terminal event — so a closed tab, a crashed renderer or a
+         * `driver.close()` leaves a subscriber holding a subscription that will
+         * simply never fire again. Over a socket that is indistinguishable from
+         * a page nobody is touching. The transport asks on its heartbeat and
+         * ends the stream when the answer turns false.
+         */
+        stillCurrent: () => Promise<boolean>;
       }
     | { ok: false; error: string }
   > {
@@ -312,6 +419,26 @@ export class BrowserdRequestHandler {
         if (!live) return;
         const lost = this.watcherRefusal(args.holder);
         if (lost) revoke(lost);
+      },
+      // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
+      // tab that was closed and reopened, so "something is there" would answer
+      // true while this subscription pointed at a dead object.
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return (await this.driver.viewport?.(args.tabId)) === viewport;
+        } catch {
+          return false;
+        }
       },
     };
   }

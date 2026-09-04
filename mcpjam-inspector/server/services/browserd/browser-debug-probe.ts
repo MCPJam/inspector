@@ -11,7 +11,11 @@
  * connection released in a `finally`, on every path.
  */
 import { randomUUID } from "node:crypto";
-import type { BootBrowserdOptions, BrowserdHandle, BrowserdSandbox } from "./boot-browserd";
+import type {
+  BootBrowserdOptions,
+  BrowserdHandle,
+  BrowserdSandbox,
+} from "./boot-browserd";
 import type { BrowserdCommandResponse } from "./browserd-client";
 import type { BrowserCommand } from "./protocol";
 
@@ -41,7 +45,10 @@ export interface BrowserProbeDeps {
   /** Connect to the sandbox. */
   connect(sandboxId: string): Promise<ProbeSandbox>;
   /** Boot browserd (the real `bootBrowserd` in production). */
-  boot(sandbox: BrowserdSandbox, options: BootBrowserdOptions): Promise<BrowserdHandle>;
+  boot(
+    sandbox: BrowserdSandbox,
+    options: BootBrowserdOptions,
+  ): Promise<BrowserdHandle>;
   /** Build the client for a booted daemon. */
   createClient(baseUrl: string, bearer: string): ProbeClient;
 }
@@ -109,7 +116,9 @@ export async function runBrowserProbe(
       throw new Error(`browserd navigate rejected: ${nav.status}`);
     }
     if (!nav.result.ok) {
-      throw new Error(`browserd navigate failed: ${nav.result.error ?? "unknown"}`);
+      throw new Error(
+        `browserd navigate failed: ${nav.result.error ?? "unknown"}`,
+      );
     }
     const shot = await client.sendCommand(
       inspectorCommand({ kind: "observe", mode: "screenshot" }),
@@ -119,10 +128,13 @@ export async function runBrowserProbe(
       throw new Error(`browserd screenshot rejected: ${shot.status}`);
     }
     if (!shot.result.ok) {
-      throw new Error(`browserd screenshot failed: ${shot.result.error ?? "unknown"}`);
+      throw new Error(
+        `browserd screenshot failed: ${shot.result.error ?? "unknown"}`,
+      );
     }
 
-    const screenshot = (shot.result.output as { screenshot?: string })?.screenshot ?? "";
+    const screenshot =
+      (shot.result.output as { screenshot?: string })?.screenshot ?? "";
     return {
       computerId,
       bootId: handle.bootId,

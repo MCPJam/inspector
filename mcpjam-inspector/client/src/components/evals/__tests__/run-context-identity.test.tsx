@@ -115,6 +115,21 @@ describe("buildHostNamesById", () => {
     expect(names.get("host-claude")).toBe("Claude (suite)");
     expect(names.get("host-cursor")).toBe("Cursor");
   });
+
+  it("keeps a derived display name when an attachment stores the raw name", () => {
+    const names = buildHostNamesById(
+      [{ namedHostId: "host-cursor", hostName: "Cursor" }],
+      [
+        {
+          hostId: "host-cursor",
+          name: "Cursor",
+          displayName: "Cursor #2",
+        },
+      ],
+    );
+
+    expect(names.get("host-cursor")).toBe("Cursor #2");
+  });
 });
 
 describe("runContextLabel / runRevisionLabel", () => {

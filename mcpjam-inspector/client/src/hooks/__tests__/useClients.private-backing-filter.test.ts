@@ -83,6 +83,49 @@ describe("useHostList private-backing filter", () => {
     ]);
   });
 
+  it("adds display names without letting hidden clients consume suffixes", () => {
+    mockUseQuery.mockReturnValue([
+      {
+        hostId: "hidden-acme",
+        name: "Acme",
+        createdAt: 1,
+        ownerScope: { type: "user_testing" },
+      },
+      { hostId: "visible-acme", name: "Acme", createdAt: 2 },
+      { hostId: "saved-cursor", name: "Cursor", createdAt: 3 },
+    ]);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(
+      result.current.hosts.map(({ hostId, displayName }) => ({
+        hostId,
+        displayName,
+      })),
+    ).toEqual([
+      { hostId: "visible-acme", displayName: "Acme" },
+      { hostId: "saved-cursor", displayName: "Cursor" },
+    ]);
+  });
+
+  it("numbers only duplicate saved clients", () => {
+    mockUseQuery.mockReturnValue([
+      { hostId: "saved-future", name: "Future Client", createdAt: 1 },
+      { hostId: "saved-cursor", name: "Cursor", createdAt: 2 },
+      { hostId: "saved-cursor-copy", name: "Cursor", createdAt: 3 },
+    ]);
+
+    const { result } = renderHook(() =>
+      useHostList({ isAuthenticated: true, projectId: PROJECT_ID }),
+    );
+
+    expect(result.current.hosts[0]?.displayName).toBe("Future Client");
+    expect(result.current.hosts[1]?.displayName).toBe("Cursor");
+    expect(result.current.hosts[2]?.displayName).toBe("Cursor #2");
+  });
+
   it("reports loading (not an empty list) while the query is in flight", () => {
     mockUseQuery.mockReturnValue(undefined);
 

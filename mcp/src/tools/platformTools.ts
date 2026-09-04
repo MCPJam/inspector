@@ -67,6 +67,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listImagesOperation,
   getImageOperation,
@@ -246,6 +247,10 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // for asking ahead of that decision, same rationale as `get_capabilities`.
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  // The suite's settings HISTORY, beside the edit that writes it: "who changed
+  // this, and when" is the first question after an unexplained result, and its
+  // `revisionNumber` is what makes an `update_eval_suite` a compare-and-set.
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,

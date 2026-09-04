@@ -55,6 +55,7 @@ import {
   searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
   createProjectServerOperation,
@@ -161,6 +162,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // The suite's settings HISTORY. In-product because it answers the first
+  // question after an unexplained change in results — who edited this suite,
+  // and when — and because its `revisionNumber` is what turns an
+  // `update_eval_suite` into a compare-and-set rather than a last-write-wins.
+  listEvalSuiteRevisionsOperation,
   // Read-only, checked BEFORE a launch decision — placed ahead of the two run
   // operations it exists to inform. `run_eval_suite` already fetches and
   // returns its own disclosure on the receipt, so this is for when a caller

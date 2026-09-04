@@ -27,7 +27,10 @@ export interface BrowserdSandbox {
    */
   runBackground(
     command: string,
-    options: { envs: Record<string, string>; onStdout: (chunk: string) => void },
+    options: {
+      envs: Record<string, string>;
+      onStdout: (chunk: string) => void;
+    },
   ): Promise<{ kill: () => Promise<unknown>; wait: () => Promise<unknown> }>;
   /** The public HTTPS host for a sandbox port. */
   getHost(port: number): string;
@@ -82,11 +85,15 @@ function parseReadyLine(line: string): BrowserdReadyLine | null {
   const record = parsed as Record<string, unknown>;
   if (record.event !== "listening") return null;
   if (typeof record.port !== "number") return null;
-  if (typeof record.bootId !== "string" || record.bootId.length === 0) return null;
+  if (typeof record.bootId !== "string" || record.bootId.length === 0)
+    return null;
   return { port: record.port, bootId: record.bootId };
 }
 
-function buildEnv(bearer: string, options: BootBrowserdOptions): Record<string, string> {
+function buildEnv(
+  bearer: string,
+  options: BootBrowserdOptions,
+): Record<string, string> {
   const env: Record<string, string> = {
     MCPJAM_BROWSERD_TOKEN: bearer,
     MCPJAM_BROWSERD_PORT: String(options.port),
@@ -176,7 +183,9 @@ export function bootBrowserd(
         }
         void command
           .wait()
-          .then(() => finish(new Error("browserd exited before it reported listening")))
+          .then(() =>
+            finish(new Error("browserd exited before it reported listening")),
+          )
           .catch((error) =>
             finish(
               new Error(
@@ -187,10 +196,17 @@ export function bootBrowserd(
             ),
           );
       })
-      .catch((error) => finish(error instanceof Error ? error : new Error(String(error))));
+      .catch((error) =>
+        finish(error instanceof Error ? error : new Error(String(error))),
+      );
 
     timer = setTimeout(
-      () => finish(new Error(`browserd did not report listening within ${readyTimeoutMs}ms`)),
+      () =>
+        finish(
+          new Error(
+            `browserd did not report listening within ${readyTimeoutMs}ms`,
+          ),
+        ),
       readyTimeoutMs,
     );
     // A synchronous ready line settles before the timer exists; clear it.

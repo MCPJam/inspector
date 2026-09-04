@@ -23,9 +23,31 @@ export const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "timed_out",
 ]);
 
-/** Whether a run status means the run has finished, however it finished. */
+/**
+ * Whether a run status means the run has finished, however it finished.
+ *
+ * `grading` is NOT here, and adding it would be the single most damaging edit
+ * to this file. A run held for its gating judge has `result: "pending"` and no
+ * verdict at all; a poller, a gate or a check that read it as terminal would
+ * report the absence of a verdict as one.
+ */
 export function isTerminalRunStatus(status: unknown): boolean {
   return typeof status === "string" && TERMINAL_RUN_STATUSES.has(status);
+}
+
+/**
+ * The narrower question the EXECUTION path asks: has the runner got anything
+ * left to do?
+ *
+ * Distinct from terminality because `grading` splits the two apart. Every trial
+ * of a held run has finished — there is nothing to execute, and re-executing it
+ * would double-bill a customer for a run already paid for — but the run has no
+ * verdict yet, so a poller must keep waiting and a reader must not quote it.
+ *
+ * Use this to decide "should I run this", never "is this done".
+ */
+export function isRunPastExecution(status: unknown): boolean {
+  return isTerminalRunStatus(status) || status === "grading";
 }
 
 /**

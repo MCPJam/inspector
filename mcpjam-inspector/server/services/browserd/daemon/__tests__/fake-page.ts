@@ -59,6 +59,7 @@ export interface FakePage extends DriverPage {
    *  that cannot be watched at all. */
   cdpSession?: CdpLike | null;
   setDom(d: string): void;
+  setText(t: string): void;
   pushConsole(entry: { type: string; text: string; at: number }): void;
   readonly calls: {
     goto: string[];
@@ -88,6 +89,14 @@ export function fakePage(init: {
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
   a11y?: unknown;
+  /** What `observe {mode:"text"}` reads off this page. */
+  text?: string;
+  /**
+   * Called inside `pageText`, for the same reason `onA11y` exists: it is the
+   * only way to open the window in which a person takes the browser WHILE a
+   * read is in flight.
+   */
+  onText?: () => void;
   /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
   a11yBySelector?: Record<string, unknown>;
   console?: Array<{ type: string; text: string; at: number }>;
@@ -96,6 +105,7 @@ export function fakePage(init: {
   let url = init.url ?? "about:blank";
   const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
+  let text = init.text ?? "";
   let closed = false;
   const calls = {
     goto: [] as string[],
@@ -108,6 +118,7 @@ export function fakePage(init: {
   };
   const defaultCdp = fakeCdpSession();
   const setDom = (d: string) => { dom = d; };
+  const setText = (t: string) => { text = t; };
   const setUrl = (u: string) => { url = u; };
   const act = (entry: string) => {
     calls.acts.push(entry);
@@ -158,6 +169,10 @@ export function fakePage(init: {
       }
       return (init.a11y ?? null) as never;
     },
+    async pageText() {
+      init.onText?.();
+      return text;
+    },
     consoleEntries: () => consoleEntries,
     dropConsoleSince: (since: number) => {
       let keep = consoleEntries.length;
@@ -174,6 +189,7 @@ export function fakePage(init: {
 
     setUrl,
     setDom,
+    setText,
     pushConsole: (e: { type: string; text: string; at: number }) =>
       consoleEntries.push(e),
     calls,

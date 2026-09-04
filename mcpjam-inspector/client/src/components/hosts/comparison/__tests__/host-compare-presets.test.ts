@@ -7,6 +7,7 @@ import {
 import {
   PRESET_HOST_ID_PREFIX,
   buildPresetCompareEntries,
+  demoteMcpjamHosts,
   isPresetHostId,
 } from "../host-compare-presets";
 
@@ -124,4 +125,91 @@ describe("host-compare-presets", () => {
       );
     },
   );
+});
+
+describe("demoteMcpjamHosts", () => {
+  // MCPJam is the emulator doing the comparing, so it should not hold one of
+  // the leading chip slots — but it stays present and selectable.
+  it("sends the MCPJam preset to the back", () => {
+    const hosts = [
+      { hostId: `${PRESET_HOST_ID_PREFIX}mcpjam` },
+      { hostId: `${PRESET_HOST_ID_PREFIX}claude` },
+      { hostId: `${PRESET_HOST_ID_PREFIX}chatgpt` },
+    ];
+    expect(demoteMcpjamHosts(hosts).map((h) => h.hostId)).toEqual([
+      `${PRESET_HOST_ID_PREFIX}claude`,
+      `${PRESET_HOST_ID_PREFIX}chatgpt`,
+      `${PRESET_HOST_ID_PREFIX}mcpjam`,
+    ]);
+  });
+
+  it("sends a LIVE MCPJam host to the back too, identified by style", () => {
+    // A created host can be named anything, so the id proves nothing. This is
+    // the case the preset id check alone would miss.
+    const hosts = [{ hostId: "h_mine" }, { hostId: "h_other" }];
+    const subjects = {
+      h_mine: { hostStyle: "mcpjam" },
+      h_other: { hostStyle: "claude" },
+    };
+    expect(demoteMcpjamHosts(hosts, subjects).map((h) => h.hostId)).toEqual([
+      "h_other",
+      "h_mine",
+    ]);
+  });
+
+  it("demotes an UNSELECTED live MCPJam host by name", () => {
+    // The case that kept MCPJam in slot one for guests: subjects are loaded
+    // only for SELECTED hosts, so an unselected live host has no hostStyle to
+    // read. The name is what the chip's own logo lookup uses, so it is the
+    // signal available at exactly the moment the style is not.
+    const hosts = [
+      { hostId: "h_mine", name: "MCPJam" },
+      { hostId: "h_other", name: "My Claude" },
+    ];
+    expect(demoteMcpjamHosts(hosts, {}).map((h) => h.hostId)).toEqual([
+      "h_other",
+      "h_mine",
+    ]);
+  });
+
+  it("matches the name case-insensitively and when decorated", () => {
+    const hosts = [
+      { hostId: "h_a", name: "mcpjam (staging)" },
+      { hostId: "h_b", name: "Cursor" },
+    ];
+    expect(demoteMcpjamHosts(hosts).map((h) => h.hostId)).toEqual([
+      "h_b",
+      "h_a",
+    ]);
+  });
+
+  it("leaves an unnamed host alone when no signal identifies it", () => {
+    const hosts = [{ hostId: "h_mine" }, { hostId: "h_other" }];
+    expect(demoteMcpjamHosts(hosts, {}).map((h) => h.hostId)).toEqual([
+      "h_mine",
+      "h_other",
+    ]);
+  });
+
+  it("keeps everything else in its original order", () => {
+    const hosts = [
+      { hostId: "h_a" },
+      { hostId: `${PRESET_HOST_ID_PREFIX}mcpjam` },
+      { hostId: "h_b" },
+      { hostId: `${PRESET_HOST_ID_PREFIX}claude` },
+    ];
+    expect(demoteMcpjamHosts(hosts).map((h) => h.hostId)).toEqual([
+      "h_a",
+      "h_b",
+      `${PRESET_HOST_ID_PREFIX}claude`,
+      `${PRESET_HOST_ID_PREFIX}mcpjam`,
+    ]);
+  });
+
+  it("does not mutate its input and returns a copy when nothing moves", () => {
+    const hosts = [{ hostId: "h_a" }, { hostId: "h_b" }];
+    const out = demoteMcpjamHosts(hosts);
+    expect(out).not.toBe(hosts);
+    expect(hosts.map((h) => h.hostId)).toEqual(["h_a", "h_b"]);
+  });
 });

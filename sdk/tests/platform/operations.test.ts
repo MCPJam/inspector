@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
@@ -858,6 +859,59 @@ describe("listEvalSuiteRunsOperation", () => {
     expect((error as PlatformApiError).message).toContain(
       "Smoke (id: suite-1)"
     );
+  });
+});
+
+
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
   });
 });
 
@@ -1913,6 +1967,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {

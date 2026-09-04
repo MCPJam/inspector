@@ -160,6 +160,7 @@ describe("workspace tool catalog", () => {
       "get_conformance_report",
       "list_eval_suites",
       "list_eval_suite_runs",
+      "list_eval_suite_revisions",
       "get_eval_run_disclosure",
       "run_eval_case",
       "run_eval_suite",

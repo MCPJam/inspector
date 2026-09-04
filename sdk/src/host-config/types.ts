@@ -245,7 +245,6 @@ export const MRTR_SUPPORT_MODES = [
   "none",
 ] as const satisfies readonly MrtrSupport[];
 
-
 /**
  * Which cancellation leaf a connection on `version` is governed by.
  *
@@ -259,7 +258,7 @@ export const MRTR_SUPPORT_MODES = [
  * against any server that supports it.
  */
 export function cancellationLeafForVersion(
-  version: string | undefined,
+  version: string | undefined
 ): "legacy" | "modern" {
   if (version === undefined || version === "auto") return "modern";
   return isStatelessProtocolVersion(version) ? "modern" : "legacy";
@@ -521,6 +520,17 @@ export type McpAppsCapabilities = {
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
+  /**
+   * Whether the host sends `hostContext.safeAreaInsets` at all. SEP-1865
+   * makes the key optional and hosts split cleanly: Claude reports a real
+   * 12px inset on every edge, while Slackbot, Cursor, VS Code, Codex and
+   * Le Chat omit it, so a widget reading `insets.top` gets `undefined`
+   * rather than a zero.
+   *
+   * About the DECLARATION, not the value — a host reporting `{0,0,0,0}` is
+   * `true` here, because it answered.
+   */
+  safeAreaInsets?: boolean;
   // Host policy for `ui/request-display-mode` originating from the widget.
   //   "accept": grant the requested mode
   //   "user-initiated-only": grant only after the user moved off `inline`

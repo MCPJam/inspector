@@ -10,6 +10,10 @@ import {
 } from "@mcpjam/sdk/contract";
 import type { ScoreDefinition, ScoreResult } from "@mcpjam/sdk/contract";
 import {
+  EVAL_FAILED_BADGE_STRONG_CLASS,
+  EVAL_PASSED_BADGE_STRONG_CLASS,
+} from "../constants";
+import {
   ScoresList,
   isGatingScore,
   parseEvaluationConfig,
@@ -198,6 +202,60 @@ describe("ScoresList", () => {
     ).toBeInTheDocument();
   });
 
+  it("keeps a not_applicable gating row visible but out of the count", () => {
+    // The section and the denominator are different memberships on purpose: an
+    // operator wants to see that the scorer was out of scope, and counting it
+    // would claim a check passed that never ran. The compact chip
+    // (`isGatingScore`) leaves it out, so the header must too — the same
+    // iteration summarized two ways on one screen is the bug.
+    const notApplicable = notApplicableScoreResult(gate, "no refund in scope");
+    render(
+      <ScoresList
+        scores={[
+          finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+          notApplicable,
+        ]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    expect(screen.getByText("1 / 1 gating scores passed")).toBeInTheDocument();
+    expect(screen.getByText("N/A")).toBeInTheDocument();
+    expect(isGatingScore(notApplicable, snapshot)).toBe(false);
+  });
+
+  it("counts an unjoinable row in the denominator, as a failure", () => {
+    const orphan: ScoreResult = {
+      ...finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+      scorerId: "vanished",
+      definitionHash: "0".repeat(64),
+    };
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(gate, { kind: "scored", value: 1 }), orphan]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    // It renders in its own section, but "1 / 1 passed" beside a row nobody can
+    // verify is the reassurance this view must never give.
+    expect(screen.getByText("1 / 2 gating scores passed")).toBeInTheDocument();
+  });
+
+  it("stays NEUTRAL when there was nothing to gate on", () => {
+    render(
+      <ScoresList
+        scores={[finalizeScoreResult(advisory, { kind: "scored", value: 1 })]}
+        evaluationConfig={snapshot}
+      />,
+    );
+    // Neither verdict is available to claim here: a green check would say a
+    // threshold was cleared, a red cross would report a regression that never
+    // happened. "0 / 0 passed" under either badge is the version to avoid.
+    const badge = screen.getByText("no gating scores");
+    expect(badge.className).not.toContain(EVAL_PASSED_BADGE_STRONG_CLASS);
+    expect(badge.className).not.toContain(EVAL_FAILED_BADGE_STRONG_CLASS);
+    expect(screen.queryByText(/gating scores passed/)).toBeNull();
+  });
+
   it("renders a row with no matching definition as unresolved, not a crash", () => {
     const orphan: ScoreResult = {
       ...finalizeScoreResult(gate, { kind: "scored", value: 1 }),
@@ -286,5 +344,38 @@ describe("ScoresList", () => {
       <ScoresList scores={[]} evaluationConfig={snapshot} />,
     );
     expect(container).toBeEmptyDOMElement();
+  });
+
+  /**
+   * S6 — A CALIBRATION LABEL IS NOT A VERDICT.
+   *
+   * A reviewer's label is evidence about the JUDGE. It changes no score row,
+   * no gating/advisory split, and no run result — the whole point of measuring
+   * agreement is that the two readings stay independent, and a label that
+   * moved a verdict would be measuring itself.
+   *
+   * Pinned by RENDERING the same score set twice, because that is the only
+   * thing a label could reach from here: this component derives everything it
+   * shows from the iteration's stored rows, and reviews are stored elsewhere
+   * entirely. A future edit that threaded a review into this file would have to
+   * break this test to do it.
+   */
+  it("renders identically whether or not the trial has been reviewed", () => {
+    const scores: ScoreResult[] = [
+      finalizeScoreResult(gate, { kind: "scored", value: 0 }),
+      finalizeScoreResult(advisory, { kind: "scored", value: 0.9 }),
+    ];
+    const first = render(
+      <ScoresList scores={scores} evaluationConfig={snapshot} />,
+    );
+    const before = first.container.innerHTML;
+    first.unmount();
+
+    // The "reviewed" render passes the same inputs, because a review adds no
+    // input here. Byte-identical output is the assertion.
+    const second = render(
+      <ScoresList scores={scores} evaluationConfig={snapshot} />,
+    );
+    expect(second.container.innerHTML).toBe(before);
   });
 });

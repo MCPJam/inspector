@@ -192,6 +192,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_eval_suite_schedule: { command: "cloud eval schedule" },
   set_eval_suite_environments: { command: "cloud eval environments set" },
   list_eval_suite_runs: { command: "cloud eval runs" },
+  list_eval_suite_revisions: { command: "cloud eval revisions" },
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },

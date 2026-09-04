@@ -113,6 +113,11 @@ function statusMeta(row: ProjectRunRow): {
       };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // A held run's `result` is the truthy "pending", so the fallback above
+      // routes it here by STATUS — which is what stops it reading as a queued
+      // run when its verdict is minutes away.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return { label: "Pending", className: "bg-muted text-muted-foreground" };
   }

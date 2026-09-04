@@ -65,6 +65,8 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
   pending: Deferred<{ output: unknown }> | undefined;
   /** When set, invokeTool hangs until the test settles `pending`. */
   hangOnInvoke = false;
+  /** When set, the NEXT invocation rejects with this message and then clears. */
+  failNextInvokeWith: string | undefined;
   invocations: WebMcpInvokeRequest[] = [];
   private url: string;
 
@@ -105,6 +107,11 @@ export class FakeBrowserSession implements WebMcpBrowserSession {
 
   async invokeTool(request: WebMcpInvokeRequest): Promise<{ output: unknown }> {
     this.invocations.push(request);
+    const failure = this.failNextInvokeWith;
+    if (failure !== undefined) {
+      this.failNextInvokeWith = undefined;
+      throw new Error(failure);
+    }
     if (!this.hangOnInvoke) {
       return { output: { echoed: request.input } };
     }

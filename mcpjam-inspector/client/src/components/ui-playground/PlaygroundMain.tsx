@@ -156,6 +156,7 @@ import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 import { usePersistedHost } from "@/hooks/use-persisted-host";
 import { usePlaygroundHostSlots } from "@/hooks/use-playground-host-slots";
+import { clientDisplayName } from "@/lib/client-display-name";
 import {
   loadSelectedHostIds,
   replaceLeadHostId,
@@ -1795,7 +1796,9 @@ export function PlaygroundMain({
       if (!host) continue;
       columns.push({
         compareId: host.hostId,
-        compareLabel: host.name,
+        compareLabel: clientDisplayName(
+          hostList.find((item) => item.hostId === host.hostId) ?? host,
+        ),
         compareKind: "host",
         compareSubLabel: sharedHostColumnModel.name,
         model: sharedHostColumnModel,
@@ -1810,6 +1813,7 @@ export function PlaygroundMain({
     sharedHostColumnModel,
     selectedHostIds,
     resolvedSelectedHosts,
+    hostList,
     systemPrompt,
     temperature,
     requireToolApproval,
@@ -4327,7 +4331,14 @@ export function PlaygroundMain({
   const conversationTargetNotice = needsConversationTargetAck ? (
     <ConversationTargetNotice
       disclosure={conversationTargetDisclosure}
-      composerHostName={previewedHost?.name ?? null}
+      composerHostName={
+        previewedHost
+          ? clientDisplayName(
+              hostList.find((item) => item.hostId === previewedHost.hostId) ??
+                previewedHost,
+            )
+          : null
+      }
       composerEnvironmentId={
         composerExecutionTarget.kind === "environment"
           ? composerExecutionTarget.environmentId
@@ -4852,7 +4863,12 @@ export function PlaygroundMain({
             protocol={selectedProtocol}
             isMultiModelLayoutMode={isMultiModelLayoutMode}
             leadHostInMultiHost={
-              isMultiHostMode ? (leadHost?.name ?? null) : null
+              isMultiHostMode && leadHost
+                ? clientDisplayName(
+                    hostList.find((item) => item.hostId === leadHost.hostId) ??
+                      leadHost,
+                  )
+                : null
             }
             // Project Environments (Phase 2.5). The header's leading slot is the
             // Playground's only always-rendered chrome row, so the Environments

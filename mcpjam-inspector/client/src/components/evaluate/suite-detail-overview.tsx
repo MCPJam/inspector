@@ -216,10 +216,27 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
-  // Runs load after the detail spinner has already cleared (`isSuiteRunsLoading`
-  // is its own query), so keying purely on `runs.length` hides the whole section
-  // from a suite that HAS runs and then pops it in. Hold the frame instead.
-  const showRunHistory = runs.length > 0 || runsLoading;
+  /**
+   * The card is the suite's run surface, so it is present whenever the suite
+   * COULD have runs — not only when it happens to have some.
+   *
+   * Keying purely on `runs.length` made "this suite has never run" and "this
+   * suite's runs did not load" the same picture: no card, no heading, nothing
+   * to distinguish an empty history from a broken one. A reader looking at a
+   * suite they had just run over the API had no way to tell which they were
+   * seeing. The empty history says so in words instead.
+   *
+   * `runsLoading` still counts on its own: runs resolve AFTER the detail
+   * spinner clears (`isSuiteRunsLoading` is its own query), and the frame has
+   * to be held for a suite that has runs rather than popped in under the
+   * reader.
+   *
+   * The one case that stays hidden is a suite with NO CASES: it cannot have
+   * run, the empty-cases hero owns that page, and an empty history card above
+   * it would be scaffolding around a suite that has nothing yet.
+   */
+  const showRunHistory = hasCases || runs.length > 0 || runsLoading;
+  const hasRuns = runs.length > 0;
   const showEmptyCasesHero = !hasCases;
 
   const runButton = (
@@ -366,8 +383,20 @@ export function SuiteDetailOverview({
         <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
 
         {filteredRows.length === 0 ? (
-          <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            {runsLoading ? "Loading runs…" : "No runs match these filters."}
+          <div
+            className="bg-card px-5 py-10 text-center text-sm text-muted-foreground"
+            data-testid="suite-run-history-empty"
+          >
+            {/*
+              Three different states, and they must not read alike: still
+              loading, never run, and filtered down to nothing. The middle one
+              is the reason this card renders at all now.
+            */}
+            {runsLoading
+              ? "Loading runs…"
+              : hasRuns
+                ? "No runs match these filters."
+                : "No runs yet. Run this suite — verdict, pass rate, latency and cost land here."}
           </div>
         ) : (
           <div className="overflow-x-auto bg-card">

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   CANIUSE_CAPABILITIES,
+  PUBLIC_CAN_I_USE_INLINE_PRESET_IDS,
+  sortCaniusePresetHosts,
   CANIUSE_LAST_VERIFIED_DATE,
   CLIENT_COMPARE_FIELDS,
   PUBLIC_CAN_I_USE_FIELDS,
@@ -195,5 +197,59 @@ describe("unmeasured rows stay off the public surface", () => {
       expect(getCaniuseSupportLevel(field, config)).toBe("unknown");
     }
     expect(getCaniuseSupportLabel("unknown")).toBe("Not yet tested");
+  });
+});
+
+describe("sortCaniusePresetHosts", () => {
+  // Client Compare shows the same preset chips as caniuse.dev and now sorts
+  // them the same way. The ranking is a deliberate reading order — vendors
+  // grouped, VS Code and Slackbot pinned rightmost — so two pages showing the
+  // same clients in different sequences was needless friction.
+  it("puts ranked presets in the catalog's order", () => {
+    const shuffled = [
+      { hostId: "preset:slack" },
+      { hostId: "preset:claude" },
+      { hostId: "preset:cursor" },
+      { hostId: "preset:chatgpt" },
+    ];
+    expect(sortCaniusePresetHosts(shuffled).map((h) => h.hostId)).toEqual([
+      "preset:claude",
+      "preset:chatgpt",
+      "preset:cursor",
+      "preset:slack",
+    ]);
+  });
+
+  it("keeps unranked hosts after the ranked ones, in their original order", () => {
+    // Live hosts a user created are not in the rank list. They must not be
+    // reshuffled among themselves just because they sort to the same bucket.
+    const mixed = [
+      { hostId: "h_zeta" },
+      { hostId: "preset:vscode" },
+      { hostId: "h_alpha" },
+      { hostId: "preset:claude" },
+    ];
+    expect(sortCaniusePresetHosts(mixed).map((h) => h.hostId)).toEqual([
+      "preset:claude",
+      "preset:vscode",
+      "h_zeta",
+      "h_alpha",
+    ]);
+  });
+
+  it("does not mutate its input", () => {
+    const input = [{ hostId: "preset:slack" }, { hostId: "preset:claude" }];
+    sortCaniusePresetHosts(input);
+    expect(input.map((h) => h.hostId)).toEqual([
+      "preset:slack",
+      "preset:claude",
+    ]);
+  });
+
+  it("ranks every id it lists", () => {
+    const ranked = PUBLIC_CAN_I_USE_INLINE_PRESET_IDS.map((hostId) => ({
+      hostId,
+    }));
+    expect(sortCaniusePresetHosts([...ranked].reverse())).toEqual(ranked);
   });
 });

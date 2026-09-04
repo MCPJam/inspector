@@ -35,6 +35,16 @@ const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
   "settings.matchOptions": { toolCallOrder: "exact" },
   "settings.checks": [{ type: "responseContains", needle: "hi" }],
   "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
+  // S6 — the suite's judge criteria, nested under the judge on the wire.
+  "settings.judge.rubric": {
+    criteria: [{ id: "cites", label: "Cites a source" }],
+  },
+  // B9b — the v2 verdict policy. FRACTIONS: `passThreshold: 0.8` is the same
+  // bar `minimumAccuracy: 80` sets in the other unit, which is why the schema
+  // refuses the two together.
+  "settings.repetitions": 3,
+  "settings.passThreshold": 0.8,
+  "settings.validity": { minCompletionRate: 0.9 },
   "environment.computerEnvironment": "Playwright",
   environmentIds: ["env_1"],
 };

@@ -418,6 +418,10 @@ export function gateInputFromPlatformRun(
   run: PlatformEvalRun,
   iterations?: { items: PlatformEvalIteration[]; complete: boolean }
 ): GateInput {
+  // Hosted summaries bucket per TEST CASE, not per iteration — a case that ran
+  // five times is one entry, passing only if every run of it passed. That is
+  // the number the dashboard shows for this run, so a pass-rate gate agrees
+  // with what a human reading the same run sees.
   const total = run.summary?.total ?? 0;
   const passed = run.summary?.passed ?? 0;
   const integrity =
@@ -441,10 +445,21 @@ export function gateInputFromPlatformRun(
   // merely smaller — and a token cap evaluated against an undercount passes
   // for the wrong reason. Absent beats approximate: the gate reports
   // non-gateable instead.
+  //
+  // The emptiness check is not redundant: `every` on an EMPTY array is `true`,
+  // so an empty-but-"complete" page would sum to 0 tokens and pass every cap.
+  // A run we saw no iterations of has no token total — the same rule the
+  // latency branch below already applies, shared here so the two cannot drift.
+  //
+  // There is no count-completeness check to add on top: `run.summary.total`
+  // counts TEST CASES, not iterations (a case is one bucket however many times
+  // it ran), so it is not a count these items can be compared against.
   const tokenCounts = usable.map((iteration) => iteration.tokensUsed);
-  const tokens = tokenCounts.every((count) => typeof count === "number")
-    ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
-    : undefined;
+  const tokens =
+    tokenCounts.length > 0 &&
+    tokenCounts.every((count) => typeof count === "number")
+      ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
+      : undefined;
 
   // Same rule for latency: p95 over a partial set is not this run's p95.
   const durations = usable.map((iteration) => iteration.durationMs);
@@ -482,14 +497,31 @@ export function gateInputFromPlatformRun(
 
 // ──────────────────────────────────────────────────────────────── engine ──
 
+/**
+ * Index definitions by the id a policy names them with.
+ *
+ * The value is a LIST because a scorerId is only unique within one case:
+ * `gateInputFromSuiteResult` and `gateInputFromPlatformRun` both merge
+ * definitions across cases, and two cases may grade "tone" with different
+ * thresholds, rubrics or roles. Keeping the last one would resolve a policy to
+ * whichever definition happened to land last in the map, and average rows
+ * minted under two different rules into a single number.
+ *
+ * Byte-identical repeats collapse — the shared built-ins (`legacy:test`,
+ * `tool-match`) appear once per case and are not an ambiguity.
+ */
 function definitionsById(
   config: EvaluationConfigSnapshot | undefined
-): Map<string, ResolvedScoreDefinition> {
-  const byId = new Map<string, ResolvedScoreDefinition>();
+): Map<string, ResolvedScoreDefinition[]> {
+  const byId = new Map<string, Map<string, ResolvedScoreDefinition>>();
   for (const definition of config?.definitions ?? []) {
-    byId.set(definition.scorerId, definition);
+    const variants = byId.get(definition.scorerId) ?? new Map();
+    variants.set(definitionHash(definition), definition);
+    byId.set(definition.scorerId, variants);
   }
-  return byId;
+  return new Map(
+    [...byId].map(([scorerId, variants]) => [scorerId, [...variants.values()]])
+  );
 }
 
 /**
@@ -499,10 +531,11 @@ function definitionsById(
  */
 function resolveScorer(
   scorerId: string,
-  byId: Map<string, ResolvedScoreDefinition>,
+  byId: Map<string, ResolvedScoreDefinition[]>,
   gate: string
 ): { ok: true; definition: ResolvedScoreDefinition } | { ok: false; verdict: GateVerdict } {
-  const definition = byId.get(scorerId);
+  const variants = byId.get(scorerId) ?? [];
+  const definition = variants[0];
   if (!definition) {
     return {
       ok: false,
@@ -512,6 +545,24 @@ function resolveScorer(
         message:
           `no scorer "${scorerId}" in this run's evaluation config ` +
           `(available: ${[...byId.keys()].join(", ") || "none"})`,
+      },
+    };
+  }
+  if (variants.length > 1) {
+    // Ambiguous, so neither picked nor merged. Reported as a usage error and
+    // not as `non_gateable`: nothing about the run is missing or unverified,
+    // and the fix is the author's — gate a scorer whose id means one thing.
+    return {
+      ok: false,
+      verdict: {
+        gate,
+        status: "usage_error",
+        message:
+          `scorer "${scorerId}" resolves to ${variants.length} different ` +
+          `definitions in this run (cases graded it with different settings), ` +
+          `so a gate naming it would aggregate rows produced under different ` +
+          `rules. Give the variants distinct ids, or gate on a scorer that is ` +
+          `configured identically everywhere.`,
       },
     };
   }
@@ -531,8 +582,18 @@ function resolveScorer(
   return { ok: true, definition };
 }
 
-function rowsFor(scores: GateScore[], scorerId: string): GateScore[] {
-  return scores.filter((score) => score.scorerId === scorerId);
+/**
+ * The rows minted under EXACTLY the definition the policy resolved to.
+ *
+ * Matched on `definitionHash`, like every other consumer of a score row. A row
+ * carrying a familiar id but a hash this run's snapshot does not contain was
+ * produced under a different configuration, and averaging it in would grade
+ * this run partly on another one's evidence. It drops out instead, and a gate
+ * left with nothing reports `non_gateable` rather than passing on the remainder.
+ */
+function rowsFor(scores: GateScore[], definition: ResolvedScoreDefinition): GateScore[] {
+  const hash = definitionHash(definition);
+  return scores.filter((score) => score.definitionHash === hash);
 }
 
 /** `not_applicable` is excluded from EVERY denominator — that is what it means. */
@@ -738,7 +799,7 @@ export function evaluateGates(
       });
       continue;
     }
-    const rows = countable(rowsFor(scores, scorerId));
+    const rows = countable(rowsFor(scores, resolved.definition));
     if (rows.length === 0) {
       verdicts.push({
         gate,
@@ -794,7 +855,7 @@ export function evaluateGates(
     // Only `scored` rows carry a value; an errored or skipped scorer has no
     // number to average, and inventing a 0 for it would conflate "crashed"
     // with "graded badly".
-    const values = rowsFor(scores, scorerId)
+    const values = rowsFor(scores, resolved.definition)
       .filter((row) => row.status === "scored" && row.value !== undefined)
       .map((row) => row.value as number);
     if (values.length === 0) {

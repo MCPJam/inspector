@@ -12,6 +12,18 @@ export {
   type TranscriptProps,
 } from "./read-only-transcript";
 export { MessageView, type MessageViewProps } from "./message-view";
+export {
+  MESSAGE_TIMESTAMP_METADATA_KEY,
+  MessageTimestamp,
+  formatMessageDateTime,
+  formatMessageTime,
+  getMessageTimestampMs,
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestamp,
+  withMessageTimestampMetadata,
+  type MessageTurnTiming,
+} from "./message-timestamp";
 export { PartSwitch, type PartSwitchProps } from "./part-switch";
 export { ToolCallPart, type ToolCallPartProps } from "./tool-call-part";
 export { WidgetPlaceholder } from "./widget-placeholder";

@@ -23,6 +23,7 @@
  * Nothing here is persisted. The stream is live only.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import { BrowserStream } from "./BrowserStream";
 import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 
 /** Heartbeat cadence while holding the lease (the daemon TTL is 2 minutes). */
@@ -38,9 +39,9 @@ type LeaseState =
 
 interface SessionInfo {
   bootId: string;
-  streamUrl: string;
-  streamPassword: string;
   lease: LeaseState;
+  // No `streamUrl` or `streamPassword`: the route stopped returning them, and
+  // the stream socket authenticates on the server. See `BrowserStream`.
 }
 
 export interface BrowserPanelProps {
@@ -61,6 +62,12 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
 
   /** Every call mints its own token: they last ~60s, so caching one across a
    *  panel's lifetime would just produce expiry failures. */
+  /** A bare token for the stream socket, which cannot send an auth header. */
+  const mintStreamToken = useCallback(async () => {
+    const { token } = await mintBrowserToken({ projectId });
+    return token;
+  }, [mintBrowserToken, projectId]);
+
   const authorized = useCallback(
     async (path: string, init: RequestInit = {}): Promise<Response> => {
       const { token } = await mintBrowserToken({ projectId });
@@ -231,15 +238,14 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         </p>
       )}
 
-      <iframe
-        // `view_only` is the interaction gate; the daemon-side lease is the
-        // real one. Both, deliberately: this stops a stray click, the 423
-        // stops everything else.
-        src={`${session.streamUrl}?autoconnect=true&resize=scale&password=${encodeURIComponent(
-          session.streamPassword,
-        )}${holding ? "" : "&view_only=true"}`}
-        title="Computer browser"
-        className="min-h-0 flex-1 border-0"
+      {/* The stream comes through our own RFB proxy, not from an iframe
+          carrying the desktop's password in its URL. `viewOnly` here stops a
+          stray click from being sent at all; the gate that actually holds is
+          server-side, where a client cannot opt out of it. */}
+      <BrowserStream
+        mintToken={mintStreamToken}
+        viewOnly={!holding}
+        bootId={session.bootId}
       />
     </div>
   );

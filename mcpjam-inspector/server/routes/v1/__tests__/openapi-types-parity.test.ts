@@ -83,6 +83,7 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
   EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
+  EvalSuiteRevision: "PlatformEvalSuiteRevision",
   EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",

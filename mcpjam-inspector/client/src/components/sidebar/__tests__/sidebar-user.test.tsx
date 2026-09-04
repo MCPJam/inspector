@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ButtonHTMLAttributes, ReactNode } from "react";
+import {
+  isSignOutInProgress,
+  resetSignOutLatchForTests,
+} from "@/lib/auth/sign-out-latch";
 
 const authState = vi.hoisted(() => ({
   signInMock: vi.fn(),
@@ -110,8 +114,9 @@ describe("SidebarUser", () => {
   beforeEach(() => {
     authState.user = null;
     authState.signInMock.mockClear();
-    authState.signOutMock.mockClear();
+    authState.signOutMock.mockReset();
     window.isElectron = false;
+    resetSignOutLatchForTests();
   });
 
   it("renders nothing when unauthenticated", () => {
@@ -147,6 +152,28 @@ describe("SidebarUser", () => {
     expect(screen.getByText("Settings")).toBeInTheDocument();
     expect(screen.getByText("Notifications")).toBeInTheDocument();
     expect(screen.getByText("Support")).toBeInTheDocument();
+  });
+
+  it("latches sign-out before calling WorkOS, not after", () => {
+    // authkit's refresh timer fires ~1s later, sees the revoked session, and
+    // would redirect this tab to the hosted login page on top of the logout
+    // navigation. The latch has to be set by the time `signOut` is entered.
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    let latchedWhenSignOutRan = false;
+    authState.signOutMock.mockImplementation(() => {
+      latchedWhenSignOutRan = isSignOutInProgress();
+    });
+
+    render(<SidebarUser />);
+
+    fireEvent.click(screen.getByText("Log out"));
+
+    expect(authState.signOutMock).toHaveBeenCalled();
+    expect(latchedWhenSignOutRan).toBe(true);
   });
 
   it("returns logout to the app origin instead of the callback route", () => {

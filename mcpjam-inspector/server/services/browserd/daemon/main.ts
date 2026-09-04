@@ -42,6 +42,11 @@ async function main(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     if (shuttingDown) return;
     shuttingDown = true;
+    // Streams first: `server.close()` stops accepting and then waits on open
+    // connections, and a frame stream never ends on its own. Ending them says
+    // `shutting_down` in-band too, so a watcher knows the daemon went away
+    // rather than inferring it from a socket that stopped.
+    stack.closeStreams();
     stack.server.close();
     await driver.close().catch(() => {});
     log(`shut down on ${signal}`);

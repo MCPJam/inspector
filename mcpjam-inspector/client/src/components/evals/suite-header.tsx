@@ -22,7 +22,6 @@ import {
   RotateCw,
   Settings,
   Sparkles,
-  X,
 } from "lucide-react";
 import {
   Popover,
@@ -36,6 +35,7 @@ import {
   getEffectiveSuiteServers,
   getRunMetricSource,
 } from "./helpers";
+import { SuiteRevisionPill } from "./suite-revision-pill";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -130,6 +130,15 @@ interface SuiteHeaderProps {
    */
   iterationOverride?: number;
   onIterationOverrideChange?: (value: number | undefined) => void;
+  /**
+   * Open the settings-history slide-over.
+   *
+   * Optional, and the revision pill still RENDERS without it: the number is
+   * the useful half — which version of these settings am I looking at — and
+   * withholding it because the drill-down is unavailable takes the answer away
+   * along with the panel.
+   */
+  onOpenRevisionHistory?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -171,6 +180,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runsViewMode = "runs",
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
+    onOpenRevisionHistory,
   } = props;
 
   const showTestCaseCtas =
@@ -261,7 +271,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     // Settings sheet header — matches the body's max-w-2xl column so the
     // title sits flush over the form. Title is light-weight (semibold,
     // not text-xl bold) so the eyebrow-labelled sections below carry the
-    // visual rhythm; Done is a ghost chip, not a heavy outline button.
+    // visual rhythm.
     return (
       <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
         {/* READ-ONLY in the settings sheet. Renaming lives in the sheet's own
@@ -279,15 +289,17 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             {suite.name}
           </h1>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => onViewModeChange("overview")}
-        >
-          Done
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        {/* WHAT VERSION AM I LOOKING AT, not "am I finished".
+            The Done button told a reader this sheet was a form to fill in and
+            submit, which it has not been since the draft-and-commit bar
+            shipped: Done only navigated, and the save lives in the bar. The
+            breadcrumb is the way back. What belongs in this corner is the
+            thing a reader of a shared suite actually needs — which revision
+            these settings are, and who moved them last. */}
+        <SuiteRevisionPill
+          revisionNumber={suite.revisionNumber}
+          onOpenHistory={() => onOpenRevisionHistory?.()}
+        />
       </div>
     );
   }

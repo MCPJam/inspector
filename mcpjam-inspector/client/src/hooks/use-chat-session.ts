@@ -103,6 +103,11 @@ import {
   transcriptToUIMessages,
 } from "@/lib/transcript-to-ui-messages";
 import {
+  hydrateMessageTimestamps,
+  timestampMessageById,
+  withMessageTimestampMetadata,
+} from "@mcpjam/chat-ui";
+import {
   getCachedBlobJson,
   invalidateChatHistoryPrefetch,
 } from "@/components/chat-v2/history/chat-history-prefetch";
@@ -3165,8 +3170,11 @@ export function useChatSession(
     // React renders that status — so a post-stream effect reading it on the
     // ready transition always sees THIS turn's answer. Same ordering guarantee
     // the persist receipt already relies on.
-    onFinish: ({ isAbort }) => {
+    onFinish: ({ isAbort, message }) => {
       turnAbortedRef.current = isAbort;
+      baseSetMessages((current) =>
+        timestampMessageById(current, message.id, Date.now()),
+      );
     },
     // SEP-1865 App-Provided Tools: AI SDK v6 IGNORES the return value of
     // `onToolCall`. Tool results must be supplied imperatively via
@@ -3869,7 +3877,6 @@ export function useChatSession(
       // continuations — tool-approval responses, tool outputs — reuse the same
       // client and go through `addToolApprovalResponse`/`addToolOutput`.)
       chatToolCallRequestIdsRef.current.clear();
-      const extra = metadata ? ({ metadata } as { metadata: unknown }) : {};
       pendingWidgetModelContextRef.current =
         widgetModelContext && widgetModelContext.length > 0
           ? widgetModelContext
@@ -3957,6 +3964,13 @@ export function useChatSession(
           }
         }
         try {
+          const timestampedMetadata = withMessageTimestampMetadata(
+            metadata,
+            Date.now(),
+          );
+          const extra = {
+            metadata: timestampedMetadata,
+          } as { metadata: unknown };
           if (files && files.length > 0) {
             // AI SDK accepts FileUIPart[] with data URLs
             baseSendMessage({ text, files, ...extra });
@@ -4432,6 +4446,9 @@ export function useChatSession(
       const hydratedTurnTraces = await resolveHydratedTurnTraces(
         session.turnTraces,
       );
+      if (hydratedTurnTraces !== undefined) {
+        uiMessages = hydrateMessageTimestamps(uiMessages, hydratedTurnTraces);
+      }
 
       if (options?.shouldApply && !options.shouldApply()) {
         return;

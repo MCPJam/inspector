@@ -302,6 +302,23 @@ export function formatRunOutcome(run, url, actorId, decisionSummary) {
 				...chainLine,
 			],
 		};
+	// A RUN STILL BEING GRADED HAS NOT FAILED. `grading` means every trial
+	// finished and the run is held for its gating judge, so there is no verdict
+	// yet — and falling through to the red branch below rendered it as "Run
+	// grading — see what broke", which is red for a run nothing has decided.
+	//
+	// No counts and no chain line either: both describe a decided run, and a
+	// pass count quoted here is the number the judge may still overturn.
+	if (run.status === "grading")
+		return {
+			severity: "info",
+			code: "run_grading",
+			parts: [
+				"Run is being graded by its judge",
+				...who,
+				...(link ? [" — ", link] : []),
+			],
+		};
 	// A NO-VERDICT IS NOT A FAILURE. `inconclusive` is a decision the validity
 	// phase reached — the run did not measure the server well enough to judge it
 	// — and falling through to the red branch below rendered it as "Run

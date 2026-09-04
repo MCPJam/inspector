@@ -12,6 +12,7 @@ import { canonicalizeHostConfigV2 } from "../src/host-config/internal.js";
 const ALL_IDS: HostTemplateId[] = [
   "mcpjam",
   "claude",
+  "claude-desktop",
   "claude-code",
   "chatgpt",
   "mistral",

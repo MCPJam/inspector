@@ -13,6 +13,11 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
 import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
+import {
+  createFrameStreamHost,
+  type FrameStreamHost,
+  type FrameStreamOptions,
+} from "./frame-stream-route";
 import { guardLease, guardStaleness, type BrowserDriver } from "./browser-driver";
 import { HandoffLease } from "./lease";
 
@@ -71,23 +76,59 @@ function writeResponse(
 
 export interface DaemonServerOptions {
   bodyLimitBytes?: number;
+  /** Frame-stream tunables. Test seam, like `bodyLimitBytes`. */
+  frames?: FrameStreamOptions;
 }
 
-/** Bind a request handler to a Node http server. Does not call `listen`. */
+/**
+ * Bind a request handler to a Node http server. Does not call `listen`.
+ *
+ * Returns the frame-stream host alongside the server because open streams are
+ * state the server does not know about: `server.close()` stops accepting and
+ * then waits for existing connections, so a live stream makes it hang forever.
+ * The caller ends the streams first.
+ */
 export function createDaemonServer(
   handler: BrowserdRequestHandler,
   options: DaemonServerOptions = {},
-): Server {
+): { server: Server; frames: FrameStreamHost } {
   const bodyLimit = options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES;
-  return createServer((req, res) => {
+  const frames = createFrameStreamHost(handler, options.frames ?? {});
+  const server = createServer((req, res) => {
+    let path: string;
+    let query: URLSearchParams | undefined;
+    try {
+      const url = new URL(req.url ?? "/", "http://browserd.invalid");
+      path = url.pathname;
+      query = url.searchParams;
+    } catch {
+      writeResponse(res, { status: 404 });
+      return;
+    }
+
+    // BEFORE the async block below, and deliberately so: that block's catch
+    // ends the response, which for a stream that is already flowing would cut
+    // it off mid-record for a reason that has nothing to do with it.
+    //
+    // Matched on PATH, not on method — the 405 belongs to this route, not to
+    // the handler's catch-all 404.
+    if (path === "/v1/frames") {
+      frames.handle({
+        req,
+        res,
+        daemonRequest: {
+          method: req.method ?? "GET",
+          path,
+          origin: headerValue(req.headers.origin),
+          authorization: headerValue(req.headers.authorization),
+          body: "",
+          query,
+        },
+      });
+      return;
+    }
+
     void (async () => {
-      let path: string;
-      try {
-        path = new URL(req.url ?? "/", "http://browserd.invalid").pathname;
-      } catch {
-        writeResponse(res, { status: 404 });
-        return;
-      }
       let body = "";
       if (req.method === "POST" || req.method === "PUT") {
         try {
@@ -105,6 +146,7 @@ export function createDaemonServer(
         origin: headerValue(req.headers.origin),
         authorization: headerValue(req.headers.authorization),
         body,
+        query,
       });
       writeResponse(res, response);
     })().catch(() => {
@@ -112,6 +154,7 @@ export function createDaemonServer(
       else res.end();
     });
   });
+  return { server, frames };
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -125,6 +168,15 @@ export interface BrowserdStack {
   bootId: string;
   /** The human-handoff lease this stack's handler and driver share. */
   lease: HandoffLease;
+  /**
+   * End every open frame stream, saying why.
+   *
+   * Must run BEFORE `server.close()`, which waits on existing connections and
+   * would otherwise never resolve. Saying why is the point: a reader that gets
+   * a final record knows the daemon went down, rather than guessing at a
+   * connection that simply stopped.
+   */
+  closeStreams(reason?: "shutting_down"): void;
 }
 
 /**
@@ -163,8 +215,16 @@ export function buildBrowserdStack(
     token: config.token,
     lease,
   });
-  const server = createDaemonServer(handler, {
+  const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
+    ...(config.frames ? { frames: config.frames } : {}),
   });
-  return { server, handler, queue, bootId, lease };
+  return {
+    server,
+    handler,
+    queue,
+    bootId,
+    lease,
+    closeStreams: (reason = "shutting_down") => frames.closeAll(reason),
+  };
 }

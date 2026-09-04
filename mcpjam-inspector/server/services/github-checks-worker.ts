@@ -83,6 +83,18 @@ const ERROR_BACKOFF_MS = 60_000;
 const HEARTBEAT_INTERVAL_MS = 60_000;
 
 /**
+ * How long to wait out a run held for its gating judge.
+ *
+ * The backend's hold has a 30-minute deadline and a sweep that ends it; one
+ * minute of slack covers the sweep landing after the deadline. Inside the lease
+ * budget by construction: the claim is refreshed by a heartbeat with no wall
+ * cap, and that interval already spans the whole `runEvalSuite` call.
+ */
+const JUDGE_GRADING_WAIT_MS = 31 * 60_000;
+/** How often to re-read a held run. Slow: the judge takes minutes, not ticks. */
+const JUDGE_GRADING_POLL_MS = 15_000;
+
+/**
  * The claim payload, HAND-MIRRORED from the backend's `ClaimedGithubCheck`
  * (`convex/github/checkTriggers.ts`). The two repos share no types, so this
  * shape IS the contract: adding a field is a two-repo change, and unknown
@@ -574,6 +586,14 @@ export type CheckExecutionDeps = {
      * unbindable run is a run whose result nothing may read.
      */
     onRunStarted?: (runId: string) => Promise<void>;
+    /**
+     * False once the claim stops being ours.
+     *
+     * Read only while WAITING OUT a gating judge's hold — there is no point
+     * spending half an hour on a check the backend has already concluded, and
+     * the completion would be rejected anyway.
+     */
+    isLeaseHeld?: () => boolean;
   }) => Promise<{ runId: string; result?: string; summary?: CheckSummary }>;
   /**
    * Dual-check: run the conformance suites against the same verified preview
@@ -792,7 +812,19 @@ const TERMINAL_RUN_STATUSES = new Set([
  * the run alone lands the check as `infra_error` (neutral), which is the honest
  * answer when we cannot see the run.
  */
-type RunTerminality = "terminal" | "non_terminal" | "unknown";
+type RunTerminality =
+  | "terminal"
+  | "non_terminal"
+  /**
+   * Every trial finished; the run is HELD for its gating judge.
+   *
+   * Its own answer rather than `non_terminal`, because the two want opposite
+   * treatment on the throwing path below: a non-terminal run is abandoned and
+   * must be finalized `failed`, while a held run is one the platform is about
+   * to decide — finalizing it would overwrite a verdict that is minutes away.
+   */
+  | "grading"
+  | "unknown";
 
 async function runTerminality(
   client: { query: (name: any, args: any) => Promise<any> },
@@ -803,12 +835,77 @@ async function runTerminality(
       runId,
     })) as { status?: string } | null;
     if (!run) return "unknown";
+    if (run.status === "grading") return "grading";
     return TERMINAL_RUN_STATUSES.has(String(run.status))
       ? "terminal"
       : "non_terminal";
   } catch {
     return "unknown";
   }
+}
+
+/**
+ * Read a run, waiting out a gating judge's hold.
+ *
+ * IT DECIDES NOTHING. It returns the last row it read, and every judgement
+ * stays where it was: `runReachedAVerdict` is unchanged and still answers
+ * `false` for `grading`, so a wait that runs out throws and the check lands
+ * `infra_error` (neutral). That is the property worth having — a gating run is
+ * never neutral while its judge is still within its deadline, and it is never
+ * RED without a verdict.
+ *
+ * A read that throws is logged and retried: a transient Convex blip during a
+ * 31-minute wait is not evidence about the run.
+ */
+export async function awaitJudgeVerdict(
+  client: { query: (name: any, args: any) => Promise<any> },
+  runId: string,
+  options: {
+    waitMs: number;
+    pollMs: number;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    /** False once the claim stops being ours — stop waiting for somebody else. */
+    isLeaseHeld?: () => boolean;
+  }
+): Promise<{
+  status?: string;
+  result?: string;
+  summary?: CheckSummary;
+  passCriteria?: { minimumPassRate?: number };
+} | null> {
+  const now = options.now ?? (() => Date.now());
+  const sleep =
+    options.sleep ??
+    ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + options.waitMs;
+
+  const read = async () =>
+    (await client.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    })) as {
+      status?: string;
+      result?: string;
+      summary?: CheckSummary;
+      passCriteria?: { minimumPassRate?: number };
+    } | null;
+
+  let run = await read();
+  while (run?.status === "grading") {
+    if (options.isLeaseHeld?.() === false) return run;
+    if (now() >= deadline) return run;
+    await sleep(options.pollMs);
+    try {
+      run = await read();
+    } catch (error) {
+      // Not evidence about the run. Keep the last row and try again.
+      logger.warn("[github-checks] failed to re-read a run held for grading", {
+        runId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return run;
 }
 
 /**
@@ -967,6 +1064,7 @@ async function defaultRunEvalSuite(args: {
   serverId: string;
   serverName: string;
   onRunStarted?: (runId: string) => Promise<void>;
+  isLeaseHeld?: () => boolean;
 }): Promise<{ runId: string; result?: string; summary?: CheckSummary }> {
   // Empty caller context = plain-JWT caller; the delegated JWT is the principal
   // (same contract as the scheduled worker).
@@ -1118,22 +1216,31 @@ async function defaultRunEvalSuite(args: {
 
       // `unknown` (we could not read the run) also lands here: not being able to
       // see the run is not evidence the PR failed.
+      //
+      // `grading` falls THROUGH to the verdict read below, exactly as a
+      // completed run does. The run's trials all finished and the backend is
+      // holding it for its judge — the throw was about something after the
+      // run, and rethrowing here would land the check neutral on a run that is
+      // about to produce a real verdict.
+      if (terminality !== "terminal" && terminality !== "grading") {
+        throw error;
+      }
       if (
-        terminality !== "terminal" ||
+        terminality === "terminal" &&
         !(await runCompleted(client, prepared.runId))
       ) {
         throw error;
       }
     }
 
-    const run = (await client.query("testSuites:getTestSuiteRun" as any, {
-      runId: prepared.runId,
-    })) as {
-      status?: string;
-      result?: string;
-      summary?: CheckSummary;
-      passCriteria?: { minimumPassRate?: number };
-    } | null;
+    // Waits out a gating judge's hold, and decides nothing: `runReachedAVerdict`
+    // below is unchanged and still refuses `grading`, so a wait that runs out
+    // lands the check `infra_error` (neutral) rather than red on no verdict.
+    const run = await awaitJudgeVerdict(client, prepared.runId, {
+      waitMs: JUDGE_GRADING_WAIT_MS,
+      pollMs: JUDGE_GRADING_POLL_MS,
+      ...(args.isLeaseHeld ? { isLeaseHeld: args.isLeaseHeld } : {}),
+    });
 
     // Only `completed` carries a verdict — the same rule `runCompleted` states for
     // the throwing path, applied here too. The runner reaches THIS path without
@@ -1527,6 +1634,7 @@ export async function executeClaimedCheck(
           afterEvalAction = decision.action;
           runBound = true;
         },
+        isLeaseHeld: () => leaseLost === null,
       })
       .catch(async (error: unknown) => {
         evalFailureDetails = await describeEvalFailure(

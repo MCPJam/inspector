@@ -734,6 +734,7 @@ export function mergeMcpAppsCapabilities(
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
     requestTeardown: override.requestTeardown ?? base.requestTeardown,
+    safeAreaInsets: override.safeAreaInsets ?? base.safeAreaInsets,
     widgetDisplayModeRequests:
       override.widgetDisplayModeRequests ?? base.widgetDisplayModeRequests,
   };

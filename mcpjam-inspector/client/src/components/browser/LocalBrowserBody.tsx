@@ -1,20 +1,21 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Hand, Loader2, MousePointer2 } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { PaneMessage } from "@/components/computer/PaneMessage";
+import {
+  BrowserPaneSurface,
+  type PaneControl,
+} from "@/components/browser/BrowserPaneSurface";
+import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import {
   actOnLocalBrowserLease,
   createInputForwarder,
   ensureLocalBrowser,
   fetchLocalBrowserStatus,
   mintLocalBrowserFrameNonce,
-  modifiersOf,
   openLocalBrowserFrameStream,
   sendLocalBrowserInput,
   startLocalBrowserInstall,
-  toPageCoordinates,
-  type LocalBrowserFrame,
-  type LocalBrowserInputEvent,
   type LocalBrowserLease,
   type LocalBrowserStatus,
 } from "@/lib/local-browser/client";
@@ -58,13 +59,6 @@ function usePaneHolderId(): string {
   return ref.current;
 }
 
-/** The DOM's button numbering, in the daemon's names. */
-function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
-  if (event.button === 1) return "middle";
-  if (event.button === 2) return "right";
-  return "left";
-}
-
 /**
  * The agent's browser, in the Playground rail.
  *
@@ -73,11 +67,12 @@ function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
  * OVER, because the agent will hit a CAPTCHA or an SSO prompt it cannot solve,
  * and without a way in the run simply stops.
  *
- * Taking over is explicit — a button, not a click into the picture. While
- * nobody holds the browser the agent may be mid-turn, and two drivers on one
- * page is exactly what the lease exists to prevent; the server refuses input
- * that arrives without one, so the button is the honest shape of the rule
- * rather than decoration over it.
+ * What this file owns is everything the LOCAL engine does differently:
+ * downloading a Chromium, minting a frame nonce against device consent, and a
+ * lease identity kept in `sessionStorage` because there is no signed-in user
+ * to be. The picture, the pointer and the take-control bar are
+ * `BrowserPaneSurface`, shared with the hosted pane — what a person does to a
+ * rendered browser does not depend on where it runs.
  */
 export function LocalBrowserBody({
   projectId,
@@ -102,23 +97,12 @@ export function LocalBrowserBody({
   const [status, setStatus] = useState<LocalBrowserStatus | null>(null);
   const [session, setSession] = useState<{ bootId: string } | null>(null);
   const [lease, setLease] = useState<LocalBrowserLease>({ state: "free" });
-  const [frame, setFrame] = useState<LocalBrowserFrame | null>(null);
+  const [frame, setFrame] = useState<PaneFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Bumped to re-open the frame socket after it was refused — see the 4401
   // branch below.
   const [streamAttempt, setStreamAttempt] = useState(0);
-  const imageRef = useRef<HTMLImageElement | null>(null);
-  const paneRef = useRef<HTMLDivElement | null>(null);
-  /**
-   * Which button this pane is holding down, if any.
-   *
-   * The BUTTON, not a boolean: a drag started with the middle or right button
-   * has to be released with that same one, or the page is left holding it
-   * while a left-release it never saw goes somewhere else.
-   */
-  const draggingRef = useRef<"left" | "middle" | "right" | null>(null);
-
   /**
    * This pane's identity as a lease holder.
    *
@@ -142,14 +126,6 @@ export function LocalBrowserBody({
   // rebuilt (and the socket with it) every time the user changes tab.
   const activeRef = useRef(active);
   activeRef.current = active;
-
-  // Taking control moves the KEYBOARD, not just the lease: the click that
-  // acquired it left focus on the button, so everything typed afterwards went
-  // to the button and nothing reached the page.
-  useEffect(() => {
-    if (!holding || !active) return;
-    paneRef.current?.focus();
-  }, [holding, active]);
 
   useEffect(() => {
     let cancelled = false;
@@ -208,6 +184,16 @@ export function LocalBrowserBody({
    * the only thing that tells them apart.
    */
   const railGeneration = useRef(0);
+  // CONSENT REVOKED IS A PRIVACY BOUNDARY, and the surface cannot enforce it:
+  // it renders the picture whenever there is one, so a placeholder alone left
+  // the last captured frame of somebody's signed-in browser on screen after
+  // the grant was withdrawn. The socket does close on its own — its nonce
+  // carries a consent fingerprint — but not before the next frame, and never
+  // for the one already in state.
+  useEffect(() => {
+    if (!consentGranted) setFrame(null);
+  }, [consentGranted]);
+
   useEffect(() => {
     if (projectRef.current === projectId) return;
     projectRef.current = projectId;
@@ -216,7 +202,6 @@ export function LocalBrowserBody({
     setLease({ state: "free" });
     setFrame(null);
     setError(null);
-    draggingRef.current = null;
   }, [projectId]);
 
   const start = useCallback(async () => {
@@ -267,7 +252,7 @@ export function LocalBrowserBody({
           try {
             const parsed = JSON.parse(String(event.data)) as {
               type?: string;
-              frame?: LocalBrowserFrame;
+              frame?: PaneFrame;
             };
             if (parsed.type === "frame" && parsed.frame) setFrame(parsed.frame);
           } catch {
@@ -406,23 +391,20 @@ export function LocalBrowserBody({
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(
-    (events: LocalBrowserInputEvent[]) => {
+    (events: BrowserInputEvent[]) => {
       if (!forwarder || !holding || events.length === 0) return;
       forwarder.push(events);
     },
     [forwarder, holding],
   );
 
-  const pointAt = useCallback(
-    (event: React.MouseEvent, options: { clampToPage?: boolean } = {}) => {
-      const image = imageRef.current;
-      if (!image || !frame) return null;
-      return toPageCoordinates(event, image, frame, options);
-    },
-    [frame],
-  );
-
-  const paneBody = () => {
+  /**
+   * What this pane shows when there is no picture yet.
+   *
+   * `undefined` for the one case every engine shares — a session exists and the
+   * first frame has not landed — which the surface answers itself.
+   */
+  const placeholder = (() => {
     if (!consentGranted) {
       // A pointer, not a second consent gate: the Computer tab owns the grant.
       return (
@@ -464,163 +446,52 @@ export function LocalBrowserBody({
           <span data-testid="rail-browser-idle">
             No browser is running for this project yet.
           </span>
-          <Button size="sm" disabled={busy || !projectId} onClick={() => void start()}>
-            {busy ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : null}
+          <Button
+            size="sm"
+            disabled={busy || !projectId}
+            onClick={() => void start()}
+          >
+            {busy ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : null}
             Open the browser
           </Button>
         </PaneMessage>
       );
     }
-    if (!frame) {
-      return (
-        <PaneMessage>
-          <span className="flex items-center gap-2">
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            Waiting for the first frame…
-          </span>
-        </PaneMessage>
-      );
-    }
-    return (
-      <img
-        ref={imageRef}
-        data-testid="rail-browser-frame"
-        alt="The agent's browser"
-        src={`data:image/jpeg;base64,${frame.data}`}
-        className="h-full w-full select-none object-contain"
-        draggable={false}
-        onMouseMove={(event) => {
-          // Mid-drag a move must still land, even over a letterbox bar: the
-          // page is tracking the pointer and a gap reads as a jump.
-          const point = pointAt(event, {
-            clampToPage: draggingRef.current !== null,
-          });
-          if (point) send([{ type: "mouse_move", ...point, modifiers: modifiersOf(event) }]);
-        }}
-        onMouseDown={(event) => {
-          // A press that starts on a bar is still dropped: the page has
-          // nothing there, and inventing a target clicks where nobody aimed.
-          const point = pointAt(event);
-          if (!point) return;
-          draggingRef.current = buttonOf(event);
-          send([
-            {
-              type: "mouse_down",
-              ...point,
-              button: buttonOf(event),
-              clickCount: event.detail || 1,
-              modifiers: modifiersOf(event),
-            },
-          ]);
-        }}
-        onMouseUp={(event) => {
-          // The release always lands. Dropping it because the pointer drifted
-          // onto a bar leaves the page holding the button down forever, stuck
-          // mid-selection with no way for the person to let go.
-          const point = pointAt(event, {
-            clampToPage: draggingRef.current !== null,
-          });
-          draggingRef.current = null;
-          if (!point) return;
-          send([
-            {
-              type: "mouse_up",
-              ...point,
-              button: buttonOf(event),
-              clickCount: event.detail || 1,
-              modifiers: modifiersOf(event),
-            },
-          ]);
-        }}
-        onMouseLeave={(event) => {
-          // Leaving the element mid-drag ends it, for the same reason — with
-          // the button that was actually pressed, not always the left one.
-          const held = draggingRef.current;
-          if (!held) return;
-          const point = pointAt(event, { clampToPage: true });
-          draggingRef.current = null;
-          if (point) {
-            send([
-              {
-                type: "mouse_up",
-                ...point,
-                button: held,
-                modifiers: modifiersOf(event),
-              },
-            ]);
-          }
-        }}
-        onContextMenu={(event) => {
-          // The page gets the right-click; the host's own menu would cover it.
-          if (holding) event.preventDefault();
-        }}
-        onWheel={(event) => {
-          const point = pointAt(event);
-          if (!point) return;
-          send([
-            {
-              type: "wheel",
-              ...point,
-              deltaX: event.deltaX,
-              deltaY: event.deltaY,
-              modifiers: modifiersOf(event),
-            },
-          ]);
-        }}
-      />
-    );
-  };
+    return undefined;
+  })();
+
+  const control: PaneControl =
+    lease.state === "free"
+      ? "agent"
+      : holding
+        ? "you"
+        : lease.holderKind === "script"
+          ? "script"
+          : "other";
 
   return (
-    <>
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-        <span className="text-xs text-muted-foreground">
-          {lease.state === "free"
-            ? "The agent is driving"
-            : holding
-              ? "You have control"
-              : `${lease.holderKind === "script" ? "A script" : "Someone else"} has control`}
-        </span>
-        {session ? (
-          holding ? (
-            <Button size="sm" variant="outline" onClick={() => void setLeaseAction("resume")}>
-              <Hand className="mr-1.5 h-3.5 w-3.5" />
-              Hand back
-            </Button>
-          ) : lease.state === "free" ? (
-            <Button size="sm" onClick={() => void setLeaseAction("acquire")}>
-              <MousePointer2 className="mr-1.5 h-3.5 w-3.5" />
-              Take control
-            </Button>
-          ) : null
-        ) : null}
-      </div>
-      <div
-        ref={paneRef}
-        className="min-h-0 flex-1 px-3 pb-3 outline-none"
-        // Keys go to the page only while this pane holds the browser.
-        tabIndex={holding ? 0 : -1}
-        onKeyDown={(event) => {
-          if (!holding) return;
-          event.preventDefault();
-          // A printable character is inserted as TEXT: paste and IME
-          // composition have no keystrokes to replay, and a key table that
-          // tried would be wrong for every non-US layout.
-          if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
-            send([{ type: "text", text: event.key }]);
-            return;
-          }
-          send([
-            { type: "key_down", key: event.key, code: event.code, modifiers: modifiersOf(event) },
-            { type: "key_up", key: event.key, code: event.code, modifiers: modifiersOf(event) },
-          ]);
-        }}
-      >
-        {paneBody()}
-      </div>
-      {error ? (
-        <div className="shrink-0 px-3 pb-2 text-xs text-destructive">{error}</div>
-      ) : null}
-    </>
+    <BrowserPaneSurface
+      // Gated as well as cleared: a frame that lands in the same tick as the
+      // revocation must not be the one that gets painted.
+      frame={consentGranted ? frame : null}
+      holding={holding}
+      control={control}
+      // Offered only when there is a browser to take and nobody has it. A
+      // lease held by somebody else is not something this pane may step over.
+      onTakeControl={
+        session && !holding && lease.state === "free"
+          ? () => void setLeaseAction("acquire")
+          : undefined
+      }
+      onHandBack={
+        session && holding ? () => void setLeaseAction("resume") : undefined
+      }
+      onInput={send}
+      placeholder={placeholder}
+      error={error}
+      active={active}
+    />
   );
 }

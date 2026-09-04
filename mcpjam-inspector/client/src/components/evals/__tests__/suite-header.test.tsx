@@ -547,4 +547,53 @@ describe("SuiteHeader", () => {
 
     expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });
   });
+
+  /**
+   * S5 — the settings header carries the REVISION, not a Done button.
+   *
+   * Done told a reader this sheet was a form to fill in and submit. It has not
+   * been one since the draft-and-commit bar shipped: the button only
+   * navigated, and the save lives in the bar. What belongs in that corner is
+   * the thing a reader of a shared suite actually needs — which version of
+   * these settings am I looking at.
+   */
+  describe("settings header", () => {
+    const editProps = {
+      ...baseProps,
+      isEditMode: true,
+      viewMode: "overview" as const,
+      selectedRunDetails: null,
+      readOnlyConfig: false,
+    };
+
+    it("has no Done button", () => {
+      renderWithProviders(
+        <SuiteHeader {...editProps} onOpenRevisionHistory={vi.fn()} />
+      );
+      expect(screen.queryByRole("button", { name: /^Done$/ })).toBeNull();
+    });
+
+    it("hides the pill when the backend records no revisions", () => {
+      renderWithProviders(<SuiteHeader {...editProps} />);
+      // "r—" is a number that does not exist, and a reader cannot tell it from
+      // a suite nobody has ever edited.
+      expect(screen.queryByTestId("suite-revision-pill")).toBeNull();
+    });
+
+    it("shows the revision and opens the history", async () => {
+      const user = userEvent.setup();
+      const onOpenRevisionHistory = vi.fn();
+      renderWithProviders(
+        <SuiteHeader
+          {...editProps}
+          suite={{ ...baseSuite, revisionNumber: 7 }}
+          onOpenRevisionHistory={onOpenRevisionHistory}
+        />
+      );
+      const pill = screen.getByTestId("suite-revision-pill");
+      expect(pill.textContent).toContain("On r7");
+      await user.click(pill);
+      expect(onOpenRevisionHistory).toHaveBeenCalled();
+    });
+  });
 });

@@ -24,6 +24,9 @@ export { UNKNOWN_HOST_LOGO };
 const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/mcpjam/i, "mcpjam"],
   [/claude[ -]?code/i, "claude-code"],
+  // BEFORE the bare /claude/i below, same ordering trap as claude-code: a host
+  // named "Claude Desktop" would otherwise resolve to the web app's mark.
+  [/claude[ -]?desktop/i, "claude-desktop"],
   [/claude/i, "claude"],
   [/chatgpt|openai/i, "chatgpt"],
   [/copilot/i, "copilot"],

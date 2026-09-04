@@ -92,6 +92,18 @@ export function useOrgScopedWrite(organizationId: string | null): {
    */
   const inFlightRef = useRef(0);
 
+  /**
+   * Which VISIT to an organization this is.
+   *
+   * The id cannot stand in for it. Switching `A → B → A` returns to the same
+   * id, so a write left over from the first visit to A satisfied an
+   * id-equality check on the second — and decremented a counter that had been
+   * zeroed in between, stopping the spinner while the second visit's own write
+   * was still in flight. A monotonic token separates the two visits, which an
+   * id by construction cannot.
+   */
+  const visitRef = useRef(0);
+
   // LAYOUT, not passive. A passive effect runs after the browser paints, and a
   // write for the previous org can settle in the window between the commit for
   // the new one and that flush — reading a `currentOrgRef` that still says the
@@ -103,6 +115,11 @@ export function useOrgScopedWrite(organizationId: string | null): {
     // Retire every write in flight: a completion from the previous org must
     // not land on this one, whatever order the round trips finish in.
     generationRef.current += 1;
+    // A NEW VISIT, even to an org just left. `A → B → A` reuses the id, so
+    // comparing ids alone let the first visit's write decrement the second
+    // visit's counter — clearing `isSaving` while the second visit's own
+    // write was still in flight, and re-enabling Save under it.
+    visitRef.current += 1;
     inFlightRef.current = 0;
     setError(null);
     setIsSaving(false);
@@ -116,11 +133,15 @@ export function useOrgScopedWrite(organizationId: string | null): {
       // own — reports to nobody rather than to the wrong page or over a
       // fresher answer.
       const startedFor = organizationId;
+      const visit = visitRef.current;
       generationRef.current += 1;
       const generation = generationRef.current;
-      const isSameOrg = () => currentOrgRef.current === startedFor;
+      // THE VISIT, not the id. Both have to match: the id alone cannot tell
+      // this visit to org A from the last one.
+      const isSameVisit = () =>
+        currentOrgRef.current === startedFor && visitRef.current === visit;
       const isNewest = () =>
-        isSameOrg() && generationRef.current === generation;
+        isSameVisit() && generationRef.current === generation;
 
       inFlightRef.current += 1;
       setError(null);
@@ -131,10 +152,11 @@ export function useOrgScopedWrite(organizationId: string | null): {
         if (isNewest()) setError(messageOf(nextError));
         throw nextError;
       } finally {
-        // The org, not the generation: an older write of the SAME org still
+        // The visit, not the generation: an older write of THIS visit still
         // has to decrement the count it incremented, or the spinner never
-        // stops.
-        if (isSameOrg()) {
+        // stops. A write from a previous visit decrements nothing — its
+        // counter was reset when the visit ended.
+        if (isSameVisit()) {
           inFlightRef.current -= 1;
           if (inFlightRef.current <= 0) {
             inFlightRef.current = 0;

@@ -97,14 +97,18 @@ function splitOnFirst(
   flag: string
 ): [string, string] {
   const index = raw.indexOf(separator);
-  if (index <= 0) {
+  // `< 0` and `=== 0` are different mistakes and get different sentences.
+  // Folding them into `<= 0` told someone who wrote ": value" that their
+  // argument had no separator, which is the one thing it did have, and made
+  // the empty-name message below unreachable.
+  if (index < 0) {
     throw usageError(
       `${flag} expects "Name${separator}value"; the argument had no "${separator}".`
     );
   }
   const name = raw.slice(0, index).trim();
   if (!name) {
-    throw usageError(`${flag} has an empty header name.`);
+    throw usageError(`${flag} has an empty name before the "${separator}".`);
   }
   return [name, raw.slice(index + separator.length)];
 }
@@ -155,8 +159,13 @@ export function resolveHeaders(
     // header-injection attempt, and it should not travel the wire to be
     // refused as a malformed record key. Same pattern the route enforces.
     if (!HEADER_NAME_PATTERN.test(name)) {
+      // The name is NOT echoed. `--header` splits on the first colon, so a
+      // malformed argument can put credential material in the name position
+      // (`--header "Bearer sk-live-…"` with the colon mistyped), and this
+      // message goes to stderr and into CI logs. The rule is enough to act on
+      // without quoting what failed it.
       throw usageError(
-        `Header name "${name}" is not an HTTP token. Use letters, digits and !#$%&'*+.^_\`|~- only.`
+        `That ${flag} name is not an HTTP token. Use letters, digits and !#$%&'*+.^_\`|~- only.`
       );
     }
     const key = name.toLowerCase();
