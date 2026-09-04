@@ -84,6 +84,16 @@ export interface WebMcpInvokeRequest {
   input: Record<string, unknown>;
   /** Aborting cancels the browser-side invocation, not just our wait for it. */
   signal: AbortSignal;
+  /**
+   * This invocation's stable id, for providers that can de-duplicate on it.
+   *
+   * The hosted provider carries it to the daemon's at-most-once queue, so a
+   * retry of the same logical invocation — a dropped connection, a request
+   * re-sent onto a different replica — returns the original outcome instead of
+   * running a side-effecting page tool twice. Local providers ignore it: they
+   * cannot receive a retry, because the browser is in this process.
+   */
+  invokeId?: string;
 }
 
 export interface WebMcpBrowserSession {
@@ -95,6 +105,12 @@ export interface WebMcpBrowserSession {
   captureScreenshot(): Promise<string | undefined>;
   currentUrl(): string;
   viewportTransport(): WebMcpViewportTransport;
+  /**
+   * The remote machine this session drives, for callers that must keep it
+   * awake. Absent on providers whose browser is local — there is nothing to
+   * keep awake, and nothing that bills for being awake.
+   */
+  hostedTarget?(): { computerId: string; sessionId: string } | undefined;
   /**
    * Start or stop streaming frames, reporting whether frames are now flowing.
    *
@@ -155,6 +171,16 @@ export type WebMcpViewportMode = "window" | "embedded";
 
 export interface CreateWebMcpSessionOptions {
   url: string;
+  /**
+   * `false` ⇒ adopt the page the browser is ALREADY on instead of driving it
+   * to `url`.
+   *
+   * For a remote browser being re-hydrated by a replica that did not start it.
+   * The session is live and a person may be mid-flow on it; navigating would
+   * reload the page under them, once per replica that ever serves a request.
+   * Omitted means navigate, which is what every local caller wants.
+   */
+  navigate?: boolean;
   /** False only in tests; a user-facing session always opens a real window. */
   headless?: boolean;
   /**
@@ -233,6 +259,37 @@ export class WebMcpToolGoneError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "WebMcpToolGoneError";
+  }
+}
+
+/**
+ * A person has taken control of the browser, so nothing ran and — the point of
+ * enforcing it at the daemon — nothing was observed either.
+ *
+ * Its own type because it is a normal, expected condition with a specific
+ * remedy ("hand control back"), not a failure. As a bare `Error` it reached
+ * the route's catch-all and became a 500 plus a Sentry event, every time
+ * somebody used the take-control button the feature ships with.
+ */
+export class WebMcpLeaseBlockedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebMcpLeaseBlockedError";
+  }
+}
+
+/**
+ * The invocation ran, and what it did is no longer knowable.
+ *
+ * The honest terminal state for a remote invocation whose result the browser
+ * retained and then evicted. Neither "succeeded" nor "failed" is true, and
+ * re-running to find out is exactly what must not happen to a tool that may
+ * have charged a card. The timeline shows it as `unknown`.
+ */
+export class WebMcpOutcomeUnknownError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WebMcpOutcomeUnknownError";
   }
 }
 

@@ -73,18 +73,73 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "environmentIds",
   },
   {
-    key: "toolCalls",
-    label: "Tool calls",
+    key: "passOrFail",
+    label: "Pass or fail",
+    // A PRESENTATION grouping, not a setting. It has no stored field of its
+    // own: it arranges settings.matchOptions, settings.checks and
+    // settings.judge under the chain stage each one measures, and every one of
+    // those is reachable on its own below.
+    excluded:
+      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own; the group itself carries no setting.",
+  },
+  {
+    key: "matchOptions",
+    label: "Tool-call matching",
     api: "settings.matchOptions",
   },
   {
-    key: "defaultChecks",
-    label: "Default checks",
+    key: "checks",
+    label: "Checks",
     api: "settings.checks",
   },
   {
+    key: "judge",
+    label: "Judge",
+    api: "settings.judge",
+  },
+  {
+    key: "judgeRubric",
+    label: "Judge criteria",
+    api: "settings.judge.rubric",
+  },
+  {
+    key: "budgets",
+    label: "Budgets",
+    // The token and turn ceilings, lifted out of the user-value group so they
+    // read as a set. They are ordinary checks, authored and edited through the
+    // one Checks editor, so there is nothing here an agent cannot already
+    // write.
+    excluded:
+      "A presentation subset of settings.checks (token and turn ceilings); reachable through settings.checks.",
+  },
+  {
+    key: "policy",
+    label: "Policy",
+    // The row itself only chooses WHICH policy is on screen. Both policies'
+    // fields are reachable: settings.minimumAccuracy and
+    // settings.minimumIterations for a legacy suite, settings.repetitions and
+    // settings.passThreshold for a v2 one.
+    excluded:
+      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions and settings.passThreshold; the row itself only picks which policy's fields are shown.",
+  },
+  {
+    key: "repetitions",
+    label: "Repetitions",
+    api: "settings.repetitions",
+  },
+  {
+    key: "passThreshold",
+    label: "Pass threshold",
+    api: "settings.passThreshold",
+  },
+  {
+    key: "validity",
+    label: "Validity",
+    api: "settings.validity",
+  },
+  {
     key: "schedule",
-    label: "Schedule",
+    label: "Automations",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
     // environment — a validation the suite PATCH would have to grow a
@@ -100,11 +155,6 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     // own operations rather than a field on `update_eval_suite`. The op named
     // here is the WRITE this row performs; `list_eval_check_repos` is its read.
     op: "connect_eval_check_repo",
-  },
-  {
-    key: "llmAsJudge",
-    label: "LLM as Judge",
-    api: "settings.judge",
   },
   {
     key: "deleteSuite",

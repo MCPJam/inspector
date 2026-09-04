@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
@@ -587,9 +588,9 @@ function makeClient(overrides: FixtureOverrides = {}): {
         {
           id: "scenario-1",
           environmentId,
-          name: created ? (requestBody.name as string) ?? "Checkout" : "Kept",
+          name: created ? ((requestBody.name as string) ?? "Checkout") : "Kept",
           mode: created
-            ? (requestBody.mode as string) ?? "project_members"
+            ? ((requestBody.mode as string) ?? "project_members")
             : "anyone_with_link",
           accessVersion: 1,
           link: "https://app.mcpjam.com/s/checkout?t=abc",
@@ -858,6 +859,59 @@ describe("listEvalSuiteRunsOperation", () => {
     expect((error as PlatformApiError).message).toContain(
       "Smoke (id: suite-1)"
     );
+  });
+});
+
+
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
   });
 });
 
@@ -1913,6 +1967,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {
@@ -2003,6 +2058,31 @@ describe("operation catalog consistency", () => {
     },
     update_secret: { secret: "sec", value: "sk_live_rotated_value" },
     delete_secret: { secret: "sec" },
+    list_trace_destinations: { organization: "org" },
+    get_trace_destination: { organization: "org", destination: "td" },
+    create_trace_destination: {
+      organization: "org",
+      name: "Coralogix",
+      endpointUrl: "https://ingress.eu2.coralogix.com:443",
+    },
+    update_trace_destination: {
+      organization: "org",
+      destination: "td",
+      name: "Coralogix (production)",
+    },
+    delete_trace_destination: { organization: "org", destination: "td" },
+    test_trace_destination: { organization: "org", destination: "td" },
+    pause_trace_destination: { organization: "org", destination: "td" },
+    resume_trace_destination: { organization: "org", destination: "td" },
+    backfill_trace_destination: {
+      organization: "org",
+      destination: "td",
+      days: 7,
+    },
+    list_trace_destination_backfills: {
+      organization: "org",
+      destination: "td",
+    },
     generate_personas: { environmentId: "e" },
     get_journey: { journey: "j" },
     create_journey: {
@@ -2259,6 +2339,19 @@ describe("operation catalog consistency", () => {
       "create_secret",
       "update_secret",
       "delete_secret",
+      // Trace-destination writes. `create` and `update` carry vendor
+      // credentials in their INPUT and decide whether customer content leaves
+      // the platform (risk: exposure); `resume` is exposure too, because it
+      // restarts an export someone stopped. `test` and `pause` persist but
+      // expose nothing, and `backfill` is `spend` — it can queue a month of an
+      // organization's history at a vendor that bills on ingest.
+      "create_trace_destination",
+      "update_trace_destination",
+      "delete_trace_destination",
+      "test_trace_destination",
+      "pause_trace_destination",
+      "resume_trace_destination",
+      "backfill_trace_destination",
       "create_journey",
       "update_journey",
       "archive_journey",

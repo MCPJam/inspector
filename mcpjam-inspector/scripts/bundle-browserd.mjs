@@ -11,7 +11,7 @@
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
-import { readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,10 +56,29 @@ const result = await build({
   entryPoints: [entry],
   outfile,
   bundle: true,
+  // NOTHING IS WRITTEN UNTIL THE GUARD BELOW HAS PASSED. esbuild writes its
+  // output before this script gets to look at the metafile, so a build that
+  // the dependency check then REFUSES used to leave the rejected bundle in
+  // `dist/mcpjam-browserd.mjs` while `.generated.ts` kept the old base64 and
+  // hash. The two dist files then disagree, the freshness test fails for a
+  // reason unrelated to the actual mistake, and `git checkout` is the only way
+  // back. Holding the bytes in memory makes the refusal a genuine no-op.
+  write: false,
   platform: "node",
   format: "esm",
   target: "node20",
-  external: ["playwright", "playwright-core"],
+  // `electron` is external for a DIFFERENT reason than the Playwright pair,
+  // and the difference is the whole point. Playwright is external because the
+  // sandbox resolves it at runtime. Electron is external because it must never
+  // resolve AT ALL: this bundle is uploaded to a box that has no Electron, and
+  // left non-external esbuild does not fail on an accidental import — it walks
+  // into `node_modules/electron` and INLINES the npm shim, which runs
+  // `getElectronPath()` at import and `spawnSync`s the package's `install.js`.
+  // The artifact then carries no bare `"electron"` specifier for a guard to
+  // find, so the check in `bundle-freshness.test.ts` passes on a bundle that
+  // would try to download Electron inside E2B. Listing it here is what makes
+  // that guard's premise true: an external import survives as a literal.
+  external: ["playwright", "playwright-core", "electron"],
   legalComments: "none",
   metafile: true,
   banner: {
@@ -67,12 +86,52 @@ const result = await build({
   },
 });
 
-// Local inputs only: a bare specifier here would be an external (`playwright`),
-// which is resolved inside the sandbox at runtime and has no bytes to hash.
-const sourceFiles = Object.keys(result.metafile.inputs)
+const metafileInputs = Object.keys(result.metafile.inputs)
   .map((input) => input.replaceAll("\\", "/"))
-  .filter((input) => !input.startsWith("node_modules/"))
   .sort();
+
+// REFUSED HERE, where the cause is on screen. The bundle is uploaded to an E2B
+// box that has nothing but these bytes, so a package quietly inlined here is a
+// runtime failure one upload away from the commit that caused it — and the
+// build is the last place that still knows WHICH import pulled it in.
+//
+// The source list below is the raw metafile, so `bundle-freshness.test.ts` can
+// assert the same property honestly as a second line of defence. That was not
+// always true: the list used to be built by REMOVING exactly these paths, which
+// made "no node_modules in the source list" a tautology that passed whatever
+// got bundled. It is a real assertion now, and it is still not a substitute for
+// refusing to emit the artifact in the first place.
+//
+// `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
+// the workspace root, so a bundled package arrives as `../node_modules/<name>/…`
+// and a prefix test walks straight past it.
+const bundledDependencies = metafileInputs.filter((input) =>
+  input.includes("node_modules/"),
+);
+if (bundledDependencies.length > 0) {
+  console.error(
+    "browserd bundle: a dependency was inlined into the daemon.\n" +
+      "It runs on a box with only what this artifact ships, so it must be\n" +
+      "declared external in this script or vendored deliberately.\n\n" +
+      bundledDependencies.map((file) => `  ${file}`).join("\n"),
+  );
+  process.exit(1);
+}
+
+// Local inputs only, which after the refusal above is all of them: a bare
+// specifier would be an external (`playwright`, `electron`), resolved inside
+// the sandbox at runtime with no bytes to hash.
+const sourceFiles = metafileInputs;
+
+// The guard passed, so the artifact may land. esbuild wrote nothing (`write:
+// false`), and a single entry point yields a single output file.
+mkdirSync(distDir, { recursive: true });
+const [output] = result.outputFiles ?? [];
+if (!output) {
+  console.error("browserd bundle: esbuild produced no output file.");
+  process.exit(1);
+}
+writeFileSync(outfile, output.contents);
 
 // Also emit the bundle base64-encoded as a TS const. The inspector server reads
 // this at runtime to UPLOAD the daemon into a sandbox; embedding it in the

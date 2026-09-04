@@ -184,7 +184,7 @@ Without declaring a domain in your CSP, the sandbox will block the request. Only
 
 #### Third-party APIs with referrer or origin restrictions
 
-Some APIs (such as Google Maps with a referrer-restricted key) validate the page URL before serving a response. Widgets run at a real sandbox URL — `http://localhost:*` locally and `https://sandbox.mcpjam.com` when hosted — so you can allowlist those origins in your API provider's dashboard.
+Some APIs (such as Google Maps with a referrer-restricted key) validate the page URL before serving a response. Widgets run at a real sandbox URL, so you can allowlist it in your API provider's dashboard. Locally that is `http://localhost:*` **and** `http://127.0.0.1:*` — the sandbox uses whichever of the two you did not open the Inspector with — and `https://sandbox.mcpjam.com` when hosted. See [View origins](/inspector/view-origins) for how to read the exact value.
 
 You still need to declare the API's domains in `_meta.ui.csp`:
 - Add script and asset CDN domains to `resourceDomains`

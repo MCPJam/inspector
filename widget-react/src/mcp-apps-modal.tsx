@@ -474,6 +474,7 @@ export function McpAppsModal({
             hostedMode={host.surface.hostedMode}
             sandboxOrigin={host.surface.sandboxOrigin}
             mountMode={host.surface.viewMountMode}
+            viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
             className="min-w-full border-0 rounded-md bg-transparent overflow-hidden"
             style={{
               height: "100%",
