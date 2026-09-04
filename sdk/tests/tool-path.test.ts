@@ -5,7 +5,7 @@ import {
   buildPathKey,
   collapseImmediateRepeats,
   toolNamesFromPathKey,
-} from "../src/tool-path.js";
+} from "../src/contract/tool-path.js";
 
 describe("tool-path", () => {
   it("collapses immediate repeats so search,search,get becomes search→get", () => {
@@ -14,13 +14,13 @@ describe("tool-path", () => {
       "get",
     ]);
     expect(buildPathKey(["search", "search", "get"])).toBe(
-      `search${PATH_SEPARATOR}get`,
+      `search${PATH_SEPARATOR}get`
     );
   });
 
   it("keeps a genuine revisit (search→get→search)", () => {
     expect(buildPathKey(["search", "get", "search"])).toBe(
-      `search${PATH_SEPARATOR}get${PATH_SEPARATOR}search`,
+      `search${PATH_SEPARATOR}get${PATH_SEPARATOR}search`
     );
   });
 

@@ -1653,7 +1653,7 @@ export function stageDerivationToMetadata(
  * `stageResults`) is omitted so those iterations stay byte-identical.
  */
 export function projectStageDerivation(
-  metadata: unknown,
+  metadata: unknown
 ): Record<string, unknown> {
   if (!metadata || typeof metadata !== "object") return {};
   const record = metadata as Record<string, unknown>;
@@ -1685,9 +1685,7 @@ export function projectStageDerivation(
   const version = record.stageAnalyzerVersion;
   return {
     stageResultsUnverified: true,
-    ...(typeof version === "number" &&
-    Number.isInteger(version) &&
-    version >= 0
+    ...(typeof version === "number" && Number.isInteger(version) && version >= 0
       ? { stageAnalyzerVersion: version }
       : {}),
   };

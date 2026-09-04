@@ -1595,4 +1595,4 @@ export {
   buildPathKey,
   collapseImmediateRepeats,
   toolNamesFromPathKey,
-} from "./tool-path.js";
+} from "./contract/tool-path.js";

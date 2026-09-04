@@ -23,7 +23,7 @@ describe("projectStageDerivation", () => {
         failureCategory: "arguments",
         stageAnalyzerVersion: STAGE_ANALYZER_VERSION + 1,
         internalOnly: "drop me",
-      }),
+      })
     ).toEqual({
       stageResults: rows,
       firstFailedStage: "call",
@@ -39,7 +39,7 @@ describe("projectStageDerivation", () => {
         firstFailedStage: "call",
         failureCategory: "arguments",
         stageAnalyzerVersion: 7,
-      }),
+      })
     ).toEqual({
       stageResultsUnverified: true,
       stageAnalyzerVersion: 7,
@@ -48,7 +48,7 @@ describe("projectStageDerivation", () => {
       projectStageDerivation({
         stageResults: [{ stage: "call", state: "failed" }],
         stageAnalyzerVersion: -1,
-      }),
+      })
     ).toEqual({ stageResultsUnverified: true });
   });
 

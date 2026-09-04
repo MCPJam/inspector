@@ -40,7 +40,7 @@ export function toolNamesFromPathKey(pathKey: string | undefined): string[] {
       pathKey
         .split(PATH_SEPARATOR)
         .map((name) => name.trim())
-        .filter(Boolean),
-    ),
+        .filter(Boolean)
+    )
   );
 }
