@@ -79,13 +79,14 @@ function unconditionalWebPrefixes(source: string): string[] {
 
 /** Literal paths registered directly on the root app, wrapped calls included. */
 function rootAppPaths(source: string): string[] {
+  // One pattern covers both forms: `\s` matches newlines, so the wrapped call
+  // prettier produces — the path literal on the line after `app.get(` — is
+  // already caught here. A second newline-specific pattern only looked like it
+  // was doing something.
   const pattern =
     /\bapp\.(?:route|use|get|post|put|patch|delete|options|all)\(\s*"([^"]*)"/g;
-  const wrapped =
-    /\bapp\.(?:route|use|get|post|put|patch|delete|options|all)\(\s*\n\s*"([^"]*)"/g;
   const paths = new Set<string>();
   for (const match of source.matchAll(pattern)) paths.add(match[1]!);
-  for (const match of source.matchAll(wrapped)) paths.add(match[1]!);
   return [...paths].filter((path) => path.startsWith("/api/web/"));
 }
 

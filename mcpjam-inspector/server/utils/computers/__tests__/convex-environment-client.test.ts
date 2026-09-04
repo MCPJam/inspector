@@ -30,10 +30,6 @@ vi.mock("convex/browser", () => ({
   },
 }));
 
-vi.mock("@/convex/_generated/api", () => ({
-  api: { projectComputers: { getComputerStatus: "getComputerStatus" } },
-}));
-
 import { convexGetDesktopComputerStatus } from "../convex-environment-client";
 
 beforeEach(() => {

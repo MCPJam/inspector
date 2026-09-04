@@ -27,7 +27,10 @@ import {
   WebMcpToolGoneError,
   WebMcpUnsupportedError,
 } from "../../services/webmcp-inspector/provider";
-import { WebMcpQueueFullError } from "../../services/webmcp-inspector/session-runtime";
+import {
+  WebMcpInvokeIdReusedError,
+  WebMcpQueueFullError,
+} from "../../services/webmcp-inspector/session-runtime";
 import { createBrowserdWebMcpProvider } from "../../services/webmcp-inspector/browserd-provider";
 import {
   createElectronWebviewProvider,
@@ -298,6 +301,13 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   }
   if (error instanceof WebMcpSessionCapacityError) {
     return c.json({ error: error.message, code: "capacity" }, 429);
+  }
+  if (error instanceof WebMcpInvokeIdReusedError) {
+    // 409, not 400: the request is well-formed, it just conflicts with an
+    // invocation that already owns this id. Refused rather than served from
+    // the earlier call, which would hand back a result for something this
+    // caller never asked to run while never running what it did.
+    return c.json({ error: error.message, code: "invoke-id-reused" }, 409);
   }
   if (error instanceof WebMcpQueueFullError) {
     return c.json({ error: error.message, code: "queue-full" }, 429);

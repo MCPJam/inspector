@@ -100,6 +100,35 @@ interface TrackedTool extends WebMcpToolDescriptor {
  * entry reports. Without it the inline answer could say output was truncated
  * but not by how much, which is the one thing that figure is for.
  */
+/**
+ * What an `invokeId` was minted for.
+ *
+ * Serialized rather than compared field by field because the input is
+ * arbitrary page-tool JSON; unserializable input degrades to "not equal",
+ * which refuses a reuse rather than allowing one.
+ */
+function invocationIdentity(
+  toolKey: string,
+  input: Record<string, unknown>,
+): string {
+  try {
+    return `${toolKey}\u0000${JSON.stringify(input ?? {})}`;
+  } catch {
+    return `${toolKey}\u0000<unserializable:${Math.random()}>`;
+  }
+}
+
+/** A caller reused an invocation id for a different call. */
+export class WebMcpInvokeIdReusedError extends Error {
+  constructor(invokeId: string) {
+    super(
+      `Invocation id ${invokeId} was already used for a different tool or input. ` +
+        `An id identifies one call; use a fresh one.`,
+    );
+    this.name = "WebMcpInvokeIdReusedError";
+  }
+}
+
 export interface WebMcpSettledOutput {
   output: unknown;
   truncated: boolean;
@@ -208,7 +237,23 @@ export class WebMcpSessionRuntime {
    */
   private readonly settledByInvokeId = new Map<
     string,
-    { at: number; settled: Promise<WebMcpSettledOutput> }
+    {
+      /**
+       * When it SETTLED, not when it was queued.
+       *
+       * Anchoring at enqueue made the window expire as a slow tool finished —
+       * a fifteen-minute invocation had no replay window left at the moment a
+       * retry was most likely — and the daemon's own cache, which starts when
+       * IT finishes, would still have answered. The two are matched (15 min /
+       * 512) so they expire together; they only do if both start counting from
+       * the same event.
+       */
+      at: number;
+      settled: Promise<WebMcpSettledOutput>;
+      /** What this id was minted for, so a reused one cannot be answered. */
+      toolKey: string;
+      input: string;
+    }
   >();
   /**
    * The quality the provider's stream is encoding at, when it has an adaptive
@@ -504,13 +549,23 @@ export class WebMcpSessionRuntime {
     settled: Promise<WebMcpSettledOutput>;
   } {
     if (requestedInvokeId) {
+      // What this id stands for. An id identifies ONE call, so a caller that
+      // reuses one for a different tool or different arguments is not retrying
+      // — and answering it from the first call would hand back a result for
+      // something it never asked to run, while never running what it did.
+      const identity = invocationIdentity(toolKey, input);
       // Already running or queued: hand back the SAME promise, so both callers
       // watch one execution.
       const live =
         this.running?.invokeId === requestedInvokeId
           ? this.running
           : this.queue.find((item) => item.invokeId === requestedInvokeId);
-      if (live) return { invokeId: live.invokeId, settled: live.settled };
+      if (live) {
+        if (invocationIdentity(live.toolKey, live.input) !== identity) {
+          throw new WebMcpInvokeIdReusedError(requestedInvokeId);
+        }
+        return { invokeId: live.invokeId, settled: live.settled };
+      }
       // Already finished: replay the recorded outcome. The daemon would also
       // de-duplicate this, but only the execution — a second trip through the
       // queue would still write a second `invocation_started`/`settled` pair
@@ -524,6 +579,12 @@ export class WebMcpSessionRuntime {
       const done = this.settledByInvokeId.get(requestedInvokeId);
       if (done) {
         if (this.now() - done.at < INVOKE_REPLAY_TTL_MS) {
+          if (
+            invocationIdentity(done.toolKey, JSON.parse(done.input)) !==
+            identity
+          ) {
+            throw new WebMcpInvokeIdReusedError(requestedInvokeId);
+          }
           return { invokeId: requestedInvokeId, settled: done.settled };
         }
         this.settledByInvokeId.delete(requestedInvokeId);
@@ -554,7 +615,7 @@ export class WebMcpSessionRuntime {
       reject,
       settled,
     });
-    this.rememberOutcome(invokeId, settled);
+    this.rememberOutcome(invokeId, settled, toolKey, input);
     this.draining_ = this.drain();
     void this.draining_;
     return { invokeId, settled };
@@ -573,8 +634,26 @@ export class WebMcpSessionRuntime {
   private rememberOutcome(
     invokeId: string,
     settled: Promise<WebMcpSettledOutput>,
+    toolKey: string,
+    input: Record<string, unknown>,
   ): void {
-    this.settledByInvokeId.set(invokeId, { at: this.now(), settled });
+    const entry = {
+      at: this.now(),
+      settled,
+      toolKey,
+      input: JSON.stringify(input ?? {}),
+    };
+    this.settledByInvokeId.set(invokeId, entry);
+    // RE-STAMPED when it settles. The window has to start where the daemon's
+    // does — at completion — or a slow invocation's replay expires exactly
+    // when a retry is most likely, and re-runs a tool the daemon would still
+    // have de-duplicated.
+    const restamp = () => {
+      if (this.settledByInvokeId.get(invokeId) === entry) {
+        entry.at = this.now();
+      }
+    };
+    void settled.then(restamp, restamp);
     const cutoff = this.now() - INVOKE_REPLAY_TTL_MS;
     for (const [id, entry] of this.settledByInvokeId) {
       if (entry.at < cutoff) this.settledByInvokeId.delete(id);

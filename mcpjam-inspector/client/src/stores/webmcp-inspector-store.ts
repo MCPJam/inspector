@@ -851,6 +851,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               signal: controller.signal,
             });
             if (!response.ok || !response.body) {
+              // A 5xx is the replica, not the session: a deploy rolling under
+              // an open tab answers a few requests badly and then answers them
+              // fine. Treated as terminal it killed the stream for good — in
+              // exactly the scenario the retry loop below exists for. Retried
+              // on the same backoff as a thrown network error.
+              if (response.status >= 500 && response.body) {
+                throw new Error(`hosted event stream: ${response.status}`);
+              }
               // A 409 here is the interesting one: the computer is asleep, and
               // the session is recoverable rather than gone. Surfaced through
               // the same error channel a failed request would use, so the tab
@@ -1178,6 +1186,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async startSession(url, options) {
+        // A REPLACEMENT is as much a session change as a closure, and the
+        // generation is what every in-flight caller checks across its await.
+        // Bumped only by `failOutstandingWaiters` before this, so a reattach
+        // or an inline outcome belonging to the OLD session still passed its
+        // guard and overwrote the new one — the guards read as covering this
+        // and did not.
+        sessionGeneration += 1;
         // A new session starts a new timeline, so the dedup set starts over
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
@@ -1344,7 +1359,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
                 "The browser session went away while this tool was running.",
             };
           }
-          return response.outcome;
+          // `unknown` means "it ran, and what it did is not establishable" —
+          // which is only actionable with the id to ask again. The server
+          // returns that id BESIDE the outcome, not inside it, so passing the
+          // outcome through untouched drops it and leaves the caller with no
+          // way to find out except running a side-effecting tool twice.
+          return response.outcome.state === "unknown"
+            ? { invokeId, ...response.outcome }
+            : response.outcome;
         }
 
         if (!response?.invokeId) {

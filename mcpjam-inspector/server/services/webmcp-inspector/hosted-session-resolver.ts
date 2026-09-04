@@ -75,6 +75,10 @@ function describeUnavailable(status: string): {
   message: string;
 } {
   switch (status) {
+    // `requested` is the FIRST thing the control plane reports, before
+    // provisioning has visibly begun. Reading it as "asleep" tells somebody to
+    // start a machine that is already starting.
+    case "requested":
     case "provisioning":
     case "starting":
       return {
@@ -128,14 +132,37 @@ const LIVE_STATUSES = new Set(["ready", "waking"]);
 export const ACCESS_RECHECK_MS = 60_000;
 
 const accessCheckedAt = new Map<string, number>();
+/** Rechecks currently in flight, by session. See the call site. */
+const accessInFlight = new Map<string, Promise<void>>();
+
+/**
+ * How many sessions this replica remembers having checked.
+ *
+ * Bounded for the same reason the activity throttle is: an entry per distinct
+ * hosted session id, removed only on refusal, so a long-lived replica keeps
+ * one for every computer it ever served. Eviction only ever takes entries
+ * already PAST their window — dropping a live one would let a rotating set of
+ * ids skip the check, which is the one thing this must not do. If nothing has
+ * expired the new session is simply not recorded, so it is rechecked next
+ * time: more round trips, never fewer checks.
+ */
+const MAX_TRACKED_SESSIONS = 4_096;
 
 function shouldRecheckAccess(sessionId: string, now: number): boolean {
   const previous = accessCheckedAt.get(sessionId);
   // `undefined` kept distinct from a recorded 0, as in `activity-touch`: a
   // session nobody has checked must always be checked, and coalescing to 0
-  // makes that false for any `now` inside the window of the epoch.
-  if (previous !== undefined && now - previous < ACCESS_RECHECK_MS)
+  // makes that false for any `now` inside the window of the epoch. The gap is
+  // ABSOLUTE so a clock stepping backwards cannot suppress checks either.
+  if (previous !== undefined && Math.abs(now - previous) < ACCESS_RECHECK_MS) {
     return false;
+  }
+  if (accessCheckedAt.size >= MAX_TRACKED_SESSIONS) {
+    for (const [id, at] of accessCheckedAt) {
+      if (Math.abs(now - at) >= ACCESS_RECHECK_MS) accessCheckedAt.delete(id);
+    }
+    if (accessCheckedAt.size >= MAX_TRACKED_SESSIONS) return true;
+  }
   accessCheckedAt.set(sessionId, now);
   return true;
 }
@@ -146,6 +173,7 @@ function forgetAccess(sessionId: string): void {
 
 export function resetAccessRecheckForTests(): void {
   accessCheckedAt.clear();
+  accessInFlight.clear();
 }
 
 /**
@@ -229,25 +257,57 @@ export async function resolveHostedSession(
     // put a Convex query in front of a keystroke. Once a minute is the same
     // trade the activity touch makes, and it bounds the window rather than
     // leaving it open for the session's lifetime.
-    if (shouldRecheckAccess(sessionId, now())) {
-      // A THROWN lookup is not a refusal. The control plane being briefly
-      // unreachable would otherwise tear down every live session on this
-      // replica at once, which is a much worse failure than a minute of
-      // access somebody has just lost — and the throttle bounds that minute.
-      // A definite answer that the computer is not theirs IS a refusal.
-      const status = await statusOf(bearer, parsed.projectId).catch(
-        () => undefined,
-      );
-      if (status !== undefined && status?.computerId !== parsed.computerId) {
-        forgetAccess(sessionId);
-        // Their handle on it goes too. Leaving the runtime registered would
-        // keep its poll running against a machine this caller may no longer
-        // reach, and would let the next request inside the throttle window
-        // through on the strength of a check that has just failed.
-        void registry.close(sessionId, { reason: "detached" }).catch(() => {});
-        throw new WebMcpSessionNotFoundError(
-          "That WebMCP session no longer exists. Open the page again to start a new one.",
+    // Awaited whether or not THIS request started it: a check already running
+    // for this session is the answer for everyone waiting on it. Recording the
+    // timestamp before awaiting is what makes the throttle cheap, and on its
+    // own it is also a hole — a second request arriving mid-check sees a fresh
+    // timestamp, skips the check, and is served from a runtime whose ownership
+    // is at that moment being disproved.
+    const running = accessInFlight.get(sessionId);
+    if (running) {
+      await running;
+    } else if (shouldRecheckAccess(sessionId, now())) {
+      const check = (async () => {
+        // A THROWN lookup is not a refusal. The control plane being briefly
+        // unreachable would otherwise tear down every live session on this
+        // replica at once, which is a much worse failure than a minute of
+        // access somebody has just lost — and the throttle bounds that minute.
+        // A definite answer that the computer is not theirs IS a refusal.
+        const status = await statusOf(bearer, parsed.projectId).catch(
+          () => undefined,
         );
+        // `undefined` means the lookup failed; `null` means a definite
+        // "no such computer for this caller", which IS a refusal.
+        if (status === undefined) return;
+        if (!status || status.computerId !== parsed.computerId) {
+          forgetAccess(sessionId);
+          // Their handle on it goes too. Leaving the runtime registered would
+          // keep its poll running against a machine this caller may no longer
+          // reach, and would let the next request inside the throttle window
+          // through on the strength of a check that has just failed.
+          await registry
+            .close(sessionId, { reason: "detached" })
+            .catch(() => {});
+          throw new WebMcpSessionNotFoundError(
+            "That WebMCP session no longer exists. Open the page again to start a new one.",
+          );
+        }
+        // Still theirs, but it may have gone to sleep, been deleted or failed
+        // since this runtime was built. Serving the stale handle would queue
+        // commands against a daemon that is not there.
+        if (!LIVE_STATUSES.has(status.status)) {
+          forgetAccess(sessionId);
+          await registry
+            .close(sessionId, { reason: "detached" })
+            .catch(() => {});
+          throw new HostedDesktopUnavailableError(status.status);
+        }
+      })();
+      accessInFlight.set(sessionId, check);
+      try {
+        await check;
+      } finally {
+        accessInFlight.delete(sessionId);
       }
     }
     registry.touch(existing);

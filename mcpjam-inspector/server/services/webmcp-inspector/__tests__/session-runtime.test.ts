@@ -7,6 +7,7 @@ import {
 } from "@/shared/webmcp-inspector-protocol";
 import {
   assignToolKeys,
+  WebMcpInvokeIdReusedError,
   WebMcpQueueFullError,
   WebMcpSessionRuntime,
 } from "../session-runtime";
@@ -373,6 +374,61 @@ describe("invocation", () => {
     expect(() =>
       runtime.invoke("https://example.test::echo", {}, "manual"),
     ).toThrow(WebMcpQueueFullError);
+  });
+});
+
+describe("an invokeId identifies ONE call", () => {
+  it("refuses a reused id for a different tool", async () => {
+    // An id is the retry key. Answering a different call from the first one
+    // hands back a result for something this caller never asked to run, and
+    // never runs what it did.
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" }), fakeTool({ name: "b" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      {},
+      "manual",
+      "inv-1",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(() =>
+      runtime.invoke("https://example.test::b", {}, "manual", "inv-1"),
+    ).toThrow(WebMcpInvokeIdReusedError);
+  });
+
+  it("refuses a reused id for different input", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-2",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(() =>
+      runtime.invoke("https://example.test::a", { q: 2 }, "manual", "inv-2"),
+    ).toThrow(WebMcpInvokeIdReusedError);
+  });
+
+  it("still replays the SAME call, which is the point of the id", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-3",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    const retry = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-3",
+    );
+    expect(retry.settled).toBe(first.settled);
+    expect(session.invocations).toHaveLength(1);
   });
 });
 

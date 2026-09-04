@@ -101,12 +101,38 @@ export interface UpstreamSocket {
   onOpen(handler: () => void): void;
 }
 
+/**
+ * The desktop's noVNC endpoint, derived from the daemon's own origin.
+ *
+ * E2B's `getHost(port)` returns `<port>-<sandboxId>.<domain>`, so the daemon's
+ * origin already names a port in its hostname and the stream is the same
+ * sandbox at 6080. Rewriting it is the whole derivation.
+ *
+ * THROWS rather than falling through when the shape is not what it expects.
+ * Left as a silent `replace` that matched nothing, an unfamiliar host — a
+ * changed E2B scheme, or the SDK's own `localhost:<port>` debug form — dialled
+ * the DAEMON's port instead, where the RFB handshake would hang against an
+ * HTTP server until the timeout. A named failure is a bug report; that was a
+ * mystery.
+ */
+export function noVncWebSocketUrl(publicOrigin: string): string {
+  const origin = new URL(publicOrigin);
+  // The SDK's debug mode returns `localhost:<port>`, where the port is a real
+  // URL port rather than part of the hostname.
+  if (origin.port) return `wss://${origin.hostname}:6080/websockify`;
+  if (!/^\d+-/.test(origin.hostname)) {
+    throw new Error(
+      `cannot derive the noVNC endpoint from "${publicOrigin}": expected a ` +
+        `"<port>-<sandbox>" host or an explicit port`,
+    );
+  }
+  return `wss://${origin.hostname.replace(/^\d+-/, "6080-")}/websockify`;
+}
+
 function wsUpstream(session: BrowserSessionRecord): UpstreamSocket {
-  // The daemon's origin names its own port; the stream is on the desktop's
-  // noVNC port, so the host is reused and the port replaced.
-  const origin = new URL(session.publicOrigin);
-  const host = origin.hostname.replace(/^\d+-/, "6080-");
-  const socket = new WebSocket(`wss://${host}/websockify`, ["binary"]);
+  const socket = new WebSocket(noVncWebSocketUrl(session.publicOrigin), [
+    "binary",
+  ]);
   socket.binaryType = "nodebuffer";
   return {
     send: (data) => socket.send(data),

@@ -9,6 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createComputerBrowserStreamWsHandler,
+  noVncWebSocketUrl,
   type BrowserStreamDeps,
   type UpstreamSocket,
 } from "../computer-browser-stream";
@@ -300,6 +301,26 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
       await harness.events().onMessage?.({ data: chunk }, harness.client.ws);
     }
   }
+
+  it("derives the noVNC endpoint, and refuses a host shape it cannot", () => {
+    // E2B's `getHost(port)` returns `<port>-<sandbox>.<domain>`, so the
+    // daemon's origin already names a port in its hostname and the stream is
+    // the same sandbox at 6080.
+    expect(noVncWebSocketUrl("https://49983-abc123.e2b.app")).toBe(
+      "wss://6080-abc123.e2b.app/websockify",
+    );
+    // The SDK's debug mode returns `localhost:<port>` instead, where the port
+    // is a real URL port rather than part of the hostname.
+    expect(noVncWebSocketUrl("http://localhost:49983")).toBe(
+      "wss://localhost:6080/websockify",
+    );
+    // And an unfamiliar shape is a named failure, not a silent no-op. A
+    // `replace` that matched nothing dialled the DAEMON's port, where the RFB
+    // handshake hangs against an HTTP server until the timeout.
+    expect(() => noVncWebSocketUrl("https://box-8791.e2b.dev")).toThrow(
+      /cannot derive the noVNC endpoint/,
+    );
+  });
 
   it("drops input from a viewer who does not hold the lease", async () => {
     // The threat is not a misbehaving UI: it is a raw RFB client pointed at

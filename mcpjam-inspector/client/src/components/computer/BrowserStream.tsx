@@ -49,10 +49,26 @@ export function BrowserStream({
   const [detail, setDetail] = useState<string | null>(null);
   /** Bumped to force a reconnect; see the 4401 path below. */
   const [attempt, setAttempt] = useState(0);
+  /**
+   * CONSECUTIVE reconnects, not reconnects ever.
+   *
+   * `attempt` never resets, so after five expired tokens across a long viewing
+   * session — the normal way a 60s token ends — every later expiry stopped
+   * reconnecting and the pane went dead for good. What the cap is for is a
+   * token being rejected for some OTHER reason, which shows up as failures
+   * back to back; a connection that succeeded in between proves it was not
+   * that.
+   */
+  const consecutiveRef = useRef(0);
 
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
+    // A new boot is a new stream. Leaving the previous status up shows "lost"
+    // over a connection that is being established, or "live" over one that is
+    // already gone.
+    setStatus("connecting");
+    setDetail(null);
     let disposed = false;
     let rfb: RFB | null = null;
     let retry: ReturnType<typeof setTimeout> | undefined;
@@ -88,7 +104,11 @@ export function BrowserStream({
       socket.binaryType = "arraybuffer";
       socket.addEventListener("close", (event) => {
         if (disposed) return;
-        if (event.code === CLOSE_UNAUTHORIZED && attempt < MAX_RECONNECTS) {
+        if (
+          event.code === CLOSE_UNAUTHORIZED &&
+          consecutiveRef.current < MAX_RECONNECTS
+        ) {
+          consecutiveRef.current += 1;
           // The 60s token expired, which is how a long view normally ends.
           // Reconnecting mints a fresh one; nothing about the session changed.
           // Capped and delayed, so a token that is being rejected for some
@@ -116,6 +136,9 @@ export function BrowserStream({
 
       rfb.addEventListener("connect", () => {
         if (disposed) return;
+        // Proof the failures before this were transient, so the budget for
+        // back-to-back ones starts over.
+        consecutiveRef.current = 0;
         setStatus("live");
         setDetail(null);
       });

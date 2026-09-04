@@ -272,6 +272,90 @@ describe("resolveHostedSession", () => {
     expect(statusOf).toHaveBeenCalledTimes(1);
   });
 
+  it("serializes concurrent rechecks, so neither request rides past a pending one", async () => {
+    // The timestamp is recorded BEFORE the control plane answers — that is what
+    // makes the throttle cheap. On its own it is also a hole: a second request
+    // arriving mid-check sees a fresh timestamp, skips the check, and is served
+    // from a runtime whose ownership is at that moment being disproved.
+    let clock = 1_000;
+    let release!: (
+      value: { computerId: string; status: string } | null,
+    ) => void;
+    const replica = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    const { deps: d, statusOf } = deps();
+    const call = () =>
+      resolveHostedSession({
+        sessionId: SESSION_ID,
+        bearer: "bearer",
+        ownerId: OWNER,
+        registry: replica,
+        deps: { ...d, now: () => clock },
+      });
+
+    await call();
+    clock += ACCESS_RECHECK_MS * 2;
+    statusOf.mockImplementationOnce(
+      () => new Promise((resolve) => (release = resolve)) as never,
+    );
+
+    // Two requests, one check. The second must wait for it rather than pass.
+    const first = call();
+    const second = call();
+    await Promise.resolve();
+    expect(statusOf).toHaveBeenCalledTimes(2); // the re-hydration + this one
+
+    release(null); // the computer is no longer theirs
+    await expect(first).rejects.toBeInstanceOf(WebMcpSessionNotFoundError);
+    await expect(second).rejects.toBeInstanceOf(WebMcpSessionNotFoundError);
+  });
+
+  it("stops serving a live runtime whose computer went to sleep under it", async () => {
+    // Ownership can hold while the machine does not. Serving the stale handle
+    // queues commands against a daemon that is not there.
+    let clock = 1_000;
+    const replica = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    const { deps: d, statusOf } = deps();
+    const call = () =>
+      resolveHostedSession({
+        sessionId: SESSION_ID,
+        bearer: "bearer",
+        ownerId: OWNER,
+        registry: replica,
+        deps: { ...d, now: () => clock },
+      });
+
+    await call();
+    clock += ACCESS_RECHECK_MS * 2;
+    statusOf.mockResolvedValueOnce({
+      computerId: COMPUTER,
+      status: "hibernating",
+    } as never);
+    await expect(call()).rejects.toBeInstanceOf(HostedDesktopUnavailableError);
+    expect(replica.peek(SESSION_ID)).toBeUndefined();
+  });
+
+  it("tells someone to WAIT for a computer that is still coming up", async () => {
+    // "Open the browser again to wake it" is wrong advice for a machine that
+    // is already provisioning — including the `requested` status, which is the
+    // first thing the control plane reports.
+    const replica = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    const { deps: d } = deps({
+      statusOf: vi.fn(async () => ({
+        computerId: COMPUTER,
+        status: "requested",
+      })),
+    });
+    await expect(
+      resolveHostedSession({
+        sessionId: SESSION_ID,
+        bearer: "bearer",
+        ownerId: OWNER,
+        registry: replica,
+        deps: d,
+      }),
+    ).rejects.toMatchObject({ code: "hosted-desktop-starting" });
+  });
+
   it("re-proves project access on the hit path, and stops serving when it fails", async () => {
     // The owner id is recorded when the session is created, and access can be
     // taken away afterwards. Checked against that id alone, somebody removed

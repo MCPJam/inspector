@@ -1376,7 +1376,13 @@ function ErrorBanner({
   code?: string;
   onDismiss: () => void;
 }) {
-  const guidance = code ? ERROR_GUIDANCE[code] : undefined;
+  // Own keys only. A server code of `__proto__` or `constructor` otherwise
+  // resolves through the prototype chain to something that is not a string,
+  // and React is handed a child it cannot render.
+  const guidance =
+    code && Object.prototype.hasOwnProperty.call(ERROR_GUIDANCE, code)
+      ? ERROR_GUIDANCE[code]
+      : undefined;
 
   return (
     <div className="flex items-start gap-3 border-b bg-destructive/10 px-3 py-2 text-sm">
