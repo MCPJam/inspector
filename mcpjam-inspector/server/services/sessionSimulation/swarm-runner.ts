@@ -294,23 +294,34 @@ function terminalForOutcome(
   };
 }
 
+/** Backend denial codes whose limit belongs to the ACCOUNT, not to one host's
+ * provider key. Mirrors `USER_OWNED_DENIAL_CODES` in
+ * `server/utils/mcpjam-stream-handler.ts` plus MCPJam's own throttle. */
+const ACCOUNT_LIMIT_CODE =
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included)\b/i;
+
 /**
  * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
  * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
- * A spend/cap/quota/budget message is the org cap (WHOLE-RUN stop); anything
- * else (a provider 429 / rate limit) is a per-HOST stop. A missing message
- * defaults to the narrower per-host stop — never escalate to a whole-run halt
- * on ambiguous signal.
+ * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
+ * host's own key is a per-HOST stop. A missing message defaults to the narrower
+ * per-host stop — never escalate to a whole-run halt on ambiguous signal.
  *
- * `cap`/`quota`/`budget` are word-anchored so only genuine spend-cap wording
- * matches: "spend cap exceeded" / "quota exceeded" / "budget exhausted" →
- * org cap, but "capacity" / "rate capacity exceeded" / "recap" / "escape" →
- * NOT a spend cap (they stay a per-host provider rate-limit).
+ * The backend's denial code decides it. `runner.ts` concatenates that code into
+ * the message ("<sentence> (<code>, HTTP <status>)"), and it is the only
+ * reliable signal: no MCPJam limit sentence — "Daily credit limit reached.",
+ * "Daily MCPJam model limit reached." — contains spend/cap/quota/budget wording.
+ *
+ * The prose check is kept as a second signal for a backend that words a cap
+ * without a code. `cap`/`quota`/`budget` stay word-anchored so "capacity" /
+ * "recap" / "escape" remain a per-host provider rate-limit.
  */
 function classifyRateLimit(
   message: string | undefined
 ): "org_spend_cap" | "provider_rate_limit" {
-  if (message && /spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
+  if (!message) return "provider_rate_limit";
+  if (ACCOUNT_LIMIT_CODE.test(message)) return "org_spend_cap";
+  if (/spend|\bcap\b|\bquota\b|\bbudget\b/i.test(message)) {
     return "org_spend_cap";
   }
   return "provider_rate_limit";
