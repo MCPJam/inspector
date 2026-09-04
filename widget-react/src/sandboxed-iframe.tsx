@@ -437,6 +437,14 @@ export const SandboxedIframe = forwardRef<
         return;
       }
 
+      // The CSP string the proxy actually injected (not JSON-RPC) — the only
+      // place the host can learn what `injectCSP` really emitted, since both
+      // the permissive literal and the buildCSP result live inside the proxy.
+      if (event.data?.type === "mcpjam:csp-applied") {
+        onMessageRef.current(event);
+        return;
+      }
+
       // Tier 2 recorder messages (not JSON-RPC) — forward to the host so the
       // eval authoring preview can capture recorded steps / detect readiness,
       // and receive per-step results from a host-driven replay.

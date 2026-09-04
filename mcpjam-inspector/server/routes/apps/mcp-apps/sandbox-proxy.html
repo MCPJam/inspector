@@ -1149,57 +1149,72 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const baseAllow = buildAllowAttribute(permissions);
 
             if (typeof html === "string") {
-              if (permissive) {
-                // Permissive mode: inject maximally permissive CSP
-                // Must explicitly allow everything since the view inherits this
-                // document's policy container (see mountInner).
-                const permissiveCsp = [
-                  "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
-                  "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
-                  "style-src * 'unsafe-inline' data: blob:",
-                  "img-src * data: blob: https: http:",
-                  "media-src * data: blob: https: http:",
-                  "font-src * data: blob: https: http:",
-                  "connect-src * data: blob: https: http: ws: wss: about:",
-                  "frame-src * data: blob: https: http: about:",
-                  "object-src * data: blob:",
-                  "base-uri *",
-                  "form-action *",
-                ].join("; ");
-                const processedHtml = injectCSP(
-                  html,
-                  permissiveCsp,
-                  recorderScript,
-                  browserStorageGuardScript
-                );
-                const mode = mountInner(
-                  processedHtml,
-                  sandboxValue,
-                  baseAllow,
-                  colorScheme,
-                  mountMode,
-                );
-                recorderDebug("view mounted", { mode });
-              } else {
-                // Build CSP and inject into HTML (SEP-1865). cspDirectives
-                // is the inspector-only per-directive source-expression
-                // override map (e.g. `script-src` adds `'unsafe-eval'`).
-                const cspValue = buildCSP(csp, cspDirectives, cspSubtypePolicy);
-                const processedHtml = injectCSP(
-                  html,
-                  cspValue,
-                  recorderScript,
-                  connectGuardScript + browserStorageGuardScript
-                );
-                const mode = mountInner(
-                  processedHtml,
-                  sandboxValue,
-                  baseAllow,
-                  colorScheme,
-                  mountMode,
-                );
-                recorderDebug("view mounted", { mode });
-              }
+              // Permissive mode: maximally permissive CSP. Must explicitly
+              // allow everything since the view inherits this document's
+              // policy container (see mountInner).
+              const permissiveCsp = [
+                "default-src * 'unsafe-inline' 'unsafe-eval' data: blob: filesystem: about:",
+                "script-src * 'unsafe-inline' 'unsafe-eval' data: blob:",
+                "style-src * 'unsafe-inline' data: blob:",
+                "img-src * data: blob: https: http:",
+                "media-src * data: blob: https: http:",
+                "font-src * data: blob: https: http:",
+                "connect-src * data: blob: https: http: ws: wss: about:",
+                "frame-src * data: blob: https: http: about:",
+                "object-src * data: blob:",
+                "base-uri *",
+                "form-action *",
+              ].join("; ");
+
+              // The single policy string this mount injects. Hoisted out of
+              // the two branches so there is exactly one value to inject and
+              // exactly one value to report to the host — the Policy Diff's
+              // "Effective" column is only trustworthy if it reads the same
+              // string `injectCSP` receives, not a re-derivation of it.
+              //
+              // Declared branch (SEP-1865): `cspDirectives` is the
+              // inspector-only per-directive source-expression override map
+              // (e.g. `script-src` adds `'unsafe-eval'`).
+              const appliedCsp = permissive
+                ? permissiveCsp
+                : buildCSP(csp, cspDirectives, cspSubtypePolicy);
+
+              // The permissive branch omits `connectGuardScript`: the guard
+              // emulates a host that restricts connect subtypes, which has no
+              // meaning under a policy that allows every origin.
+              const guardScript = permissive
+                ? browserStorageGuardScript
+                : connectGuardScript + browserStorageGuardScript;
+
+              const processedHtml = injectCSP(
+                html,
+                appliedCsp,
+                recorderScript,
+                guardScript
+              );
+
+              // Report the policy the host cannot otherwise see. Posted
+              // BEFORE mountInner so the header lands ahead of that mount's
+              // `mcpjam:view-mode`, keeping the host's ordering faithful to
+              // what actually happened. targetOrigin mirrors mountInner: "*"
+              // until host-origin pinning narrows it.
+              window.parent.postMessage(
+                {
+                  type: "mcpjam:csp-applied",
+                  csp: appliedCsp,
+                  mode: permissive ? "permissive" : "widget-declared",
+                },
+                hostOrigin || "*",
+              );
+
+              const mode = mountInner(
+                processedHtml,
+                sandboxValue,
+                baseAllow,
+                colorScheme,
+                mountMode,
+              );
+              recorderDebug("view mounted", { mode });
             }
           } else if (
             event.data &&
