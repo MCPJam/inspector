@@ -116,6 +116,7 @@ describe("MessageView", () => {
       expect(time).toHaveAttribute("dateTime");
       expect(time!.closest(".opacity-0")).not.toBeNull();
       expect(container.textContent).toContain(time!.textContent);
+      expect(time!.parentElement?.firstElementChild).toBe(time);
     });
 
     it("renders multiple parts for user message", () => {
@@ -653,7 +654,9 @@ describe("MessageView", () => {
         </PreferencesStoreProvider>,
       );
 
-      expect(container.querySelector("time")).not.toBeNull();
+      const time = container.querySelector("time");
+      expect(time).not.toBeNull();
+      expect(time!.parentElement?.lastElementChild).toBe(time);
     });
 
     it("renders a leading assistant avatar outside host-style contexts", () => {

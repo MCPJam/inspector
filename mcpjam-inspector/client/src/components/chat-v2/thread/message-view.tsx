@@ -414,6 +414,7 @@ function UserMessageRow({
           {bubble}
           {showActionRow ? (
             <div className="flex max-w-[min(100%,48rem)] items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              <MessageTimestamp message={message} />
               <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
@@ -422,7 +423,6 @@ function UserMessageRow({
                 />
               ) : null}
               {actions}
-              <MessageTimestamp message={message} />
             </div>
           ) : null}
         </>
@@ -686,12 +686,12 @@ function MessageViewImpl({
         ) : null}
         {hasAssistantText || hasTimestamp ? (
           <div className="flex items-center gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
-            <MessageTimestamp message={message} />
             {hasAssistantText ? (
               <CopyMessageAction
                 getText={() => extractEditableUserMessageText(message)}
               />
             ) : null}
+            <MessageTimestamp message={message} />
           </div>
         ) : null}
         {renderAssistantTurnFooter?.(message)}
