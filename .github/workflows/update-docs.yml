@@ -29,16 +29,36 @@ jobs:
           # generated and vendored files, then hard-cap what is left well under
           # the limit. Nothing dropped could teach a documentation agent
           # anything; all of it is enough to break the job.
-          PR_DIFF=$(gh api --paginate \
+          gh api --paginate \
             /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
-            --jq '.[]
-              | select((.filename | test("(^|/)dist/|\\.generated\\.|(^|/)(package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock)$")) | not)
-              | "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")"' \
-            | head -c 100000)
+            > pr-files.json
 
-          FILES_CHANGED=$(gh api --paginate \
-            /repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files \
-            --jq '[.[] | .filename] | join(", ")' | head -c 10000)
+          # ONE pattern for both outputs. The file list naming a file whose
+          # diff the agent never sees is an invitation to write about it from
+          # imagination.
+          SKIP='(^|/)dist/|\.generated\.|(^|/)(package-lock\.json|pnpm-lock\.yaml|yarn\.lock)$'
+
+          # Truncated by parameter expansion rather than `| head -c`: `head`
+          # closes the pipe as soon as it has enough, the writer takes SIGPIPE
+          # and exits 141, and a step that ever runs under `pipefail` would then
+          # fail on exactly the large diffs this cap exists to handle.
+          #
+          # LC_ALL=C so the cap counts BYTES. Under a UTF-8 locale the same
+          # expansion counts characters, and the limit it is protecting is a
+          # byte limit — 100k characters of a diff full of em-dashes is 300 KB,
+          # which is the failure this whole change exists to prevent.
+          export LC_ALL=C
+          PR_DIFF_RAW=$(jq -r --arg skip "$SKIP" '
+            .[]
+            | select((.filename | test($skip)) | not)
+            | "--- \(.filename)\n\(.patch // "(patch omitted: binary or too large)")"
+          ' pr-files.json)
+          PR_DIFF="${PR_DIFF_RAW:0:100000}"
+
+          FILES_CHANGED_RAW=$(jq -r --arg skip "$SKIP" '
+            [.[] | select((.filename | test($skip)) | not) | .filename] | join(", ")
+          ' pr-files.json)
+          FILES_CHANGED="${FILES_CHANGED_RAW:0:10000}"
 
           echo "pr_diff<<EOF" >> $GITHUB_OUTPUT
           echo "$PR_DIFF" >> $GITHUB_OUTPUT
