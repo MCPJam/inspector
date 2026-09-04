@@ -133,6 +133,37 @@ describe("hosted store — where it talks", () => {
     );
   });
 
+  it("lets a session be picked back up after the stream gave up", async () => {
+    // A 409 means the computer is asleep — recoverable, not gone. The handle
+    // is what `connect()` reads to decide whether a stream is already open, so
+    // leaving it set after giving up made a dead stream look live forever, and
+    // every later reconnect declined to replace it.
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/events"),
+      respond: () =>
+        json({ error: "asleep", code: "hosted-desktop-asleep" }, 409),
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() =>
+      expect(useWebmcpInspectorStore.getState().error?.code).toBe(
+        "hosted-desktop-asleep",
+      ),
+    );
+
+    // The computer wakes; the next reconnect must actually try again.
+    fetches.handlers.shift();
+    const before = fetches.calls.filter((c) =>
+      c.url.includes("/events"),
+    ).length;
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() =>
+      expect(
+        fetches.calls.filter((c) => c.url.includes("/events")).length,
+      ).toBe(before + 1),
+    );
+  });
+
   it("stops reading a stream it has replaced", async () => {
     // A reader left running keeps pulling its old response body and applying
     // what it finds — to whatever session took its place.

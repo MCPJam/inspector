@@ -340,6 +340,8 @@ export function createComputerBrowserStreamWsHandler(
         let ready = false;
         let closed = false;
         let leaseCheckedAt = 0;
+        /** Orders overlapping lease reads; only the newest may apply. */
+        let leaseGeneration = 0;
         let leaseTimer: ReturnType<typeof setInterval> | null = null;
         let handshakeTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -370,10 +372,19 @@ export function createComputerBrowserStreamWsHandler(
           const now = Date.now();
           if (now - leaseCheckedAt < LEASE_CACHE_MS) return;
           leaseCheckedAt = now;
+          // The cache window bounds how OFTEN a read starts, not how long one
+          // takes. A slow read and the next one can overlap, and applying them
+          // in completion order lets a stale "you hold it" land after a fresh
+          // "they took it back" — re-enabling a viewer's keyboard on somebody
+          // else's desktop until the following tick. Only the newest read may
+          // speak.
+          const generation = ++leaseGeneration;
           try {
             const holder = await leaseHolder(live);
+            if (generation !== leaseGeneration || closed) return;
             filter.setHoldsInput(holder === viewerId);
           } catch {
+            if (generation !== leaseGeneration || closed) return;
             filter.setHoldsInput(false);
           }
         };

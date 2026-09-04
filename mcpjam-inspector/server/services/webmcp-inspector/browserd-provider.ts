@@ -258,7 +258,23 @@ class BrowserdWebMcpSession implements WebMcpBrowserSession {
     // on the page. The daemon reports its invocation id on the way back, but
     // an abort can land before that, so record it as soon as it is known and
     // let the abort listener fire whenever it fires.
-    let aborted = request.signal.aborted;
+    // BEFORE anything is sent. A caller that has already given up must not
+    // have its tool run at all — the daemon's `webmcp_invoke` is synchronous
+    // and side-effecting, and our signal does not travel with the command, so
+    // a request dispatched here runs to completion no matter what this side
+    // does afterwards. Reading the flag and sending anyway is how a cancelled
+    // checkout still gets submitted.
+    if (request.signal.aborted) {
+      throw new WebMcpInvocationCancelledError(
+        request.signal.reason === "timeout"
+          ? "The page tool did not respond in time."
+          : "Cancelled before it started.",
+        request.signal.reason === "timeout" ? "timeout" : "cancelled",
+      );
+    }
+    // Typed rather than inferred: the guard above narrows `aborted` to
+    // `false`, and the abort listener has to be able to set it.
+    let aborted: boolean = false;
     /** Settles the caller's wait on abort; see the race below. */
     let onAborted: (() => void) | undefined;
     const onAbort = () => {

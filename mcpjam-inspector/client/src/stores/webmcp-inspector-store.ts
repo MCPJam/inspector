@@ -865,6 +865,14 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
                   code: typeof body?.code === "string" ? body.code : undefined,
                 },
               });
+              // Cleared on the way out, because `connect()` reads this handle
+              // to decide whether a stream is already open for this session.
+              // Left set, a stream that gave up on a 409 looks live forever
+              // and every later `reconnect()` declines to replace it — so a
+              // computer that has since woken is never picked back up.
+              if (generation === hostedStreamGeneration) {
+                hostedStream = undefined;
+              }
               return;
             }
             attempt = 0;

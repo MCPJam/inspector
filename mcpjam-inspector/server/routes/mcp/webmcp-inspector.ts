@@ -1026,7 +1026,12 @@ async function outcomeOf(
       // Already cut to `WEBMCP_RESULT_CAP_BYTES` by the runtime; the flag and
       // the pre-cap size say so, exactly as the stream entry does.
       ...(result.truncated
-        ? { outputTruncated: true, outputBytes: result.bytes }
+        ? {
+            outputTruncated: true,
+            ...(result.bytes !== undefined
+              ? { outputBytes: result.bytes }
+              : {}),
+          }
         : {}),
     };
   } catch (error) {

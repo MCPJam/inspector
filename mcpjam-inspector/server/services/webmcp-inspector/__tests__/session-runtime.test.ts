@@ -383,6 +383,19 @@ describe("result capping", () => {
     expect(capped.value).toEqual({ content: "small" });
   });
 
+  it("reports NO size for output that cannot be serialized at all", () => {
+    // `outputBytes` is read as "how much was dropped". There is no serialized
+    // form to measure here, so any number is a fabrication — and zero says the
+    // result was truncated from nothing, which is the one reading that is
+    // certainly false.
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const capped = capResult(cyclic);
+    expect(capped.truncated).toBe(true);
+    expect(capped.bytes).toBeUndefined();
+    expect(capped.value).toBe("[unserializable tool output]");
+  });
+
   it("truncates an oversized result and says how big it really was", () => {
     const huge = { content: "x".repeat(WEBMCP_RESULT_CAP_BYTES + 5_000) };
     const capped = capResult(huge);

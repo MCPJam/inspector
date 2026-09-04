@@ -103,7 +103,12 @@ interface TrackedTool extends WebMcpToolDescriptor {
 export interface WebMcpSettledOutput {
   output: unknown;
   truncated: boolean;
-  bytes: number;
+  /**
+   * Absent when there is no serialized form to measure — cyclic output, say.
+   * `outputBytes` is read as "how much was dropped", so a fabricated zero
+   * there says the result was truncated from nothing.
+   */
+  bytes?: number;
 }
 
 interface QueuedInvocation {
@@ -686,14 +691,19 @@ export class WebMcpSessionRuntime {
       await this.settle(item, "succeeded", startedAt, {
         output: capped.value,
         ...(capped.truncated
-          ? { outputTruncated: true, outputBytes: capped.bytes }
+          ? {
+              outputTruncated: true,
+              ...(capped.bytes !== undefined
+                ? { outputBytes: capped.bytes }
+                : {}),
+            }
           : {}),
       });
       this.release(item);
       item.resolve({
         output: capped.value,
         truncated: capped.truncated,
-        bytes: capped.bytes,
+        ...(capped.bytes !== undefined ? { bytes: capped.bytes } : {}),
       });
     } catch (error) {
       const state: WebMcpInvocationState =

@@ -324,6 +324,30 @@ describe("browserd WebMCP provider", () => {
     });
   });
 
+  it("sends NOTHING when the caller has already given up", async () => {
+    // The daemon's `webmcp_invoke` is synchronous and side-effecting, and our
+    // signal does not travel with the command — so anything dispatched here
+    // runs to completion whatever this side does next. Reading the abort flag
+    // and sending anyway is how a cancelled checkout still gets submitted.
+    const controller = new AbortController();
+    controller.abort();
+    const { provider, callbacks, commands } = build();
+    const session = await provider.createSession({
+      url: "https://a.test/",
+      callbacks,
+    });
+    const before = commands.length;
+    await expect(
+      session.invokeTool({
+        frameId: "f1",
+        toolName: "search",
+        input: {},
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/cancelled/i);
+    expect(commands.length).toBe(before);
+  });
+
   it("cancels IN THE BROWSER when the caller aborts mid-invocation", async () => {
     // Stopping our wait is not enough: a tool left running keeps acting on the
     // page after the user hit stop.

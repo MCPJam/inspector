@@ -356,6 +356,47 @@ describe("browser stream — the lease is enforced here or nowhere", () => {
     expect(upstream.sent.length).toBe(before);
   });
 
+  it(
+    "never lets a stale lease read re-enable input",
+    { timeout: 15_000 },
+    async () => {
+      // The cache window bounds how OFTEN a read starts, not how long one takes.
+      // A slow read saying "you hold it" landing after a fast one saying "they
+      // took it back" puts a viewer's keyboard on somebody else's desktop until
+      // the next tick.
+      const gates: Array<(holder: string | null) => void> = [];
+      const harness = await connected({
+        leaseHolder: () =>
+          new Promise<string | null>((resolve) => gates.push(resolve)),
+      });
+      await past(harness);
+      const { events, upstream, client } = harness;
+
+      // Two reads in flight, the second started after the first.
+      // The refresh runs on an interval, so a SECOND read starts while the first
+      // is still in flight — the overlap this exists to order. Waited out in
+      // real time rather than with fake timers: this harness drives real
+      // promises through a WebSocket, and swapping the timer source under it
+      // would change what is being tested.
+      const deadline = Date.now() + 6_000;
+      while (gates.length < 2 && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+      }
+      expect(gates.length).toBeGreaterThanOrEqual(2);
+
+      // The NEWER one answers first: control was handed back.
+      gates.at(-1)!(null);
+      await new Promise((r) => setTimeout(r, 0));
+      // …then the older one arrives claiming this viewer still holds it.
+      gates[0]!(CLAIMS.userId);
+      await new Promise((r) => setTimeout(r, 0));
+
+      const before = upstream.sent.length;
+      await events().onMessage?.({ data: POINTER }, client.ws);
+      expect(upstream.sent.length).toBe(before);
+    },
+  );
+
   it("always forwards watching messages, lease or not", async () => {
     const harness = await connected();
     await past(harness);

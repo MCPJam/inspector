@@ -829,7 +829,8 @@ function cutToCap(serialized: string, cap: number, totalBytes: number): string {
 export function capResult(value: unknown): {
   value: unknown;
   truncated: boolean;
-  bytes: number;
+  /** Absent when there is no serialized form to measure — see below. */
+  bytes: number | undefined;
 } {
   let serialized: string;
   try {
@@ -839,7 +840,10 @@ export function capResult(value: unknown): {
     return {
       value: "[unserializable tool output]",
       truncated: true,
-      bytes: 0,
+      // NOT a size. There is no serialized form to measure, so any number here
+      // is a fabrication — and `outputBytes` is read as "how much was dropped".
+      // Zero said the result was truncated from nothing.
+      bytes: undefined,
     };
   }
   const bytes = Buffer.byteLength(serialized, "utf8");
