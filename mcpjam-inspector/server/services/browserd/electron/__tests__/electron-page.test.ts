@@ -215,6 +215,23 @@ describe("electron page — observation", () => {
 });
 
 describe("electron page — navigation", () => {
+  it("keeps the address that answered, not the one that was asked for", async () => {
+    // `url()` feeds the unattended origin allowlist, which decides whether a
+    // page's content is returned or stripped. A redirect that lands back on
+    // the page we were already on is the case a URL comparison cannot see:
+    // the committed address equals the previous one, so the old code treated
+    // that as "no event fired" and wrote the REQUESTED address over it.
+    const contents = new FakeBrowserWebContents();
+    const { page } = makePage(contents);
+    await page.goto("https://a.test/");
+
+    // Now ask for somewhere else, and have it redirect back to where we are.
+    contents.redirectTo = "https://a.test/";
+    await page.goto("https://elsewhere.test/");
+
+    expect(page.url()).toBe("https://a.test/");
+  });
+
   it("tracks the URL it navigated to", async () => {
     const { page, contents } = makePage();
     await page.goto("https://example.test/one");
@@ -281,12 +298,10 @@ describe("electron page — settling", () => {
 
     // Enabled with the other domains, before anything navigates.
     expect(dbg.methods()).toContain("Network.enable");
-    const order = dbg.methods();
-    expect(order.indexOf("Network.enable")).toBeLessThan(order.length);
 
     // A request in flight, then the wait: it must not resolve until the
     // request finishes.
-    dbg.emitCdp("Network.requestWillBeSent", {});
+    dbg.emitCdp("Network.requestWillBeSent", { requestId: "r1" });
     let settled = false;
     const waiting = page
       .waitForNetworkIdle(new AbortController().signal)
@@ -296,9 +311,29 @@ describe("electron page — settling", () => {
     await new Promise((r) => setTimeout(r, 700));
     expect(settled).toBe(false);
 
-    dbg.emitCdp("Network.loadingFinished", {});
+    dbg.emitCdp("Network.loadingFinished", { requestId: "r1" });
     await waiting;
     expect(settled).toBe(true);
+  }, 10_000);
+
+  it("does not stay busy forever after a redirect", async () => {
+    // A redirect emits a fresh `requestWillBeSent` for each hop under the SAME
+    // requestId and exactly one terminal event at the end. A counter would go
+    // up three times and down once and never reach zero again — the page would
+    // never settle for the rest of its life, which is a hang rather than a
+    // wrong answer.
+    const contents = new FakeBrowserWebContents();
+    const { page, dbg } = makePage(contents);
+    await page.cdp();
+
+    dbg.emitCdp("Network.requestWillBeSent", { requestId: "r1" });
+    dbg.emitCdp("Network.requestWillBeSent", { requestId: "r1" });
+    dbg.emitCdp("Network.requestWillBeSent", { requestId: "r1" });
+    dbg.emitCdp("Network.loadingFinished", { requestId: "r1" });
+
+    await expect(
+      page.waitForNetworkIdle(new AbortController().signal),
+    ).resolves.toBeUndefined();
   }, 10_000);
 
   it("does not add three CDP listeners per observation", async () => {
@@ -309,6 +344,14 @@ describe("electron page — settling", () => {
     const { page } = makePage(contents);
     await page.cdp();
 
+    // The adapter's OWN handler map is what grows — asserting on the
+    // debugger emitter's `listenerCount("message")` measures the single
+    // listener the adapter installs in its constructor, which stays at one
+    // however badly the map leaks. That version of this test passed with the
+    // regression reintroduced.
+    const cdp = (await page.cdp()) as unknown as { handlerCount(): number };
+    const before = cdp.handlerCount();
+
     for (let i = 0; i < 5; i += 1) {
       const controller = new AbortController();
       const waiting = page.waitForNetworkIdle(controller.signal);
@@ -316,9 +359,7 @@ describe("electron page — settling", () => {
       await waiting;
     }
 
-    // One registration each, made once at session setup.
-    const registered = contents.debugger.listenerCount("message");
-    expect(registered).toBe(1);
+    expect(cdp.handlerCount()).toBe(before);
   });
 });
 

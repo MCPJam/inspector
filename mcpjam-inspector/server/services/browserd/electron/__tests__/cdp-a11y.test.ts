@@ -59,9 +59,28 @@ describe("cdp-a11y — the tree says what the page means", () => {
     const tree = await readAxTree(cdp);
 
     const [checkbox, heading, link] = tree?.children ?? [];
-    expect(checkbox).toMatchObject({ role: "checkbox", checked: "true" });
+    // A BOOLEAN, matching what `ariaSnapshot` gives the Playwright engine.
+    // CDP reports the tristates as strings, and a consumer written against one
+    // engine would read `checked: "false"` as truthy — an empty box reported
+    // as ticked.
+    expect(checkbox).toMatchObject({ role: "checkbox", checked: true });
     expect(heading).toMatchObject({ role: "heading", level: 2 });
     expect(link).toMatchObject({ role: "link", url: "https://docs.test/" });
+  });
+
+  it('keeps "mixed" as a string, because it is not a boolean', async () => {
+    const { cdp } = fakeCdp({
+      "Accessibility.getFullAXTree": {
+        nodes: [
+          {
+            nodeId: "1",
+            role: { value: "checkbox" },
+            properties: [{ name: "checked", value: { value: "mixed" } }],
+          },
+        ],
+      },
+    });
+    expect(await readAxTree(cdp)).toMatchObject({ checked: "mixed" });
   });
 
   it("keeps a false, because false is an answer", async () => {

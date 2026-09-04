@@ -646,10 +646,12 @@ function createMainWindow(serverUrl: string): BrowserWindow {
   window.on("closed", () => {
     mainWindow = null;
     // The agent's hidden windows are windows too, so leaving them open means
-    // `window-all-closed` never fires: on Windows and Linux the app would
-    // never quit, and on macOS the server would never be torn down. Close them
-    // with the UI that was watching them — the pane is gone either way, and on
-    // macOS `window-all-closed` will kill them a moment later regardless.
+    // `window-all-closed` NEVER FIRES: on Windows and Linux the app would never
+    // quit, and on macOS the server would never be torn down.
+    //
+    // Which makes this call the thing that unblocks that event, not a tidy-up
+    // it will do anyway — do not read it as redundant and remove it. The pane
+    // watching these windows has gone with the UI regardless.
     if (agentBrowserWindowCount() > 0) {
       browserTeardown = (killLocalBrowsers?.() ?? Promise.resolve()).catch(
         () => {},

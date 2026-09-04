@@ -42,6 +42,14 @@ interface AxValue {
   value?: unknown;
 }
 
+/** AX properties CDP reports as tristate strings rather than booleans. */
+const TRISTATE_PROPERTIES = new Set([
+  "checked",
+  "pressed",
+  "selected",
+  "expanded",
+]);
+
 interface AxProperty {
   name?: string;
   value?: AxValue;
@@ -187,9 +195,16 @@ function build(
     // `false` and `0` are answers, so only absence is skipped. A `false` on
     // `checked` is the difference between "not ticked" and "not a checkbox".
     if (raw === undefined || raw === null || raw === "") continue;
-    // CDP reports tristate `checked` as "true" / "false" / "mixed" strings;
-    // the booleans stay booleans so a consumer need not parse prose.
-    built[key] = raw;
+    // CDP reports the tristates as STRINGS — "true" / "false" / "mixed" — where
+    // `ariaSnapshot` gives a boolean for the first two. A consumer written
+    // against one engine and handed the other would read `checked: "false"` as
+    // truthy and call an empty box ticked, so the two booleans are normalised
+    // and only "mixed" stays a string, because it is not a boolean.
+    built[key] =
+      TRISTATE_PROPERTIES.has(property.name!) &&
+      (raw === "true" || raw === "false")
+        ? raw === "true"
+        : raw;
   }
   if (children.length > 0) built.children = children;
   return [built];

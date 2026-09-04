@@ -103,6 +103,12 @@ describe("key-events — chords", () => {
       text: "!",
       code: "Digit1",
     });
+    // The keypad has no shifted layer: looking "+" up in the main-row table
+    // would answer "=", a character that key cannot produce on any keyboard.
+    expect(resolveKeyPress("Shift+NumpadAdd").key).toMatchObject({
+      key: "+",
+      code: "NumpadAdd",
+    });
     // A key with no character to shift is left exactly as it is.
     expect(resolveKeyPress("Shift+Tab").key).toMatchObject({
       key: "Tab",
@@ -121,6 +127,9 @@ describe("key-events — chords", () => {
     expect(describeKey("NumpadAdd")).toMatchObject({
       key: "+",
       code: "NumpadAdd",
+      // `code` alone does not reach `KeyboardEvent.location`; a page that
+      // routes keypad input differently needs this told explicitly.
+      keypad: true,
     });
     expect(describeKey("CapsLock")).toMatchObject({ code: "CapsLock" });
   });

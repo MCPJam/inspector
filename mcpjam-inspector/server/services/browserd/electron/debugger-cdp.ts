@@ -82,6 +82,21 @@ export class DebuggerCdpAdapter implements CdpLike {
     this.handlers.set(event, list);
   }
 
+  /**
+   * How many event handlers are registered, across all methods.
+   *
+   * Exists for tests. `CdpLike` has deliberately no `off`, so a caller that
+   * subscribes per operation leaks a handler per call and nothing in the
+   * public surface can see it — a leak test written against the underlying
+   * emitter's `listenerCount` measures the ONE `"message"` listener installed
+   * in the constructor and passes no matter how badly the map grows.
+   */
+  handlerCount(): number {
+    let total = 0;
+    for (const list of this.handlers.values()) total += list.length;
+    return total;
+  }
+
   dispose(): void {
     if (!this.alive) return;
     this.alive = false;

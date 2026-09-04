@@ -64,6 +64,12 @@ const DOM_SIGNAL_FN = `() => {
   return parts.join(">");
 }`;
 
+/** The `requestId` off a Network event, when it carries one. */
+function requestIdOf(payload: unknown): string | undefined {
+  const id = (payload as { requestId?: unknown } | undefined)?.requestId;
+  return typeof id === "string" ? id : undefined;
+}
+
 /** Reject when the signal aborts, so a settle-timeout unblocks a waiting step. */
 function abortPromise(signal: AbortSignal): Promise<never> {
   return new Promise((_resolve, reject) => {
@@ -172,6 +178,18 @@ export function createElectronPage(
   const consoleRing: ConsoleEntry[] = [];
   let closed = false;
   let currentUrl = "about:blank";
+  /**
+   * Did a navigation event actually report a destination for this load?
+   *
+   * A FLAG, not a comparison of URLs. "Did the address change?" cannot tell
+   * "no event fired" from "the event committed to the address we were already
+   * on" — and a redirect landing back on the current page is exactly the
+   * second case, where comparing values then overwrote the committed URL with
+   * the REQUESTED one. `url()` feeds the unattended origin allowlist, so that
+   * is a security control being handed the address that was asked for rather
+   * than the one that answered.
+   */
+  let committed = false;
   let cdpPromise: Promise<CdpLike | null> | undefined;
   let webmcpPromise: Promise<WebMcpBridge | null> | undefined;
   let adapter: DebuggerCdpAdapter | undefined;
@@ -187,8 +205,14 @@ export function createElectronPage(
    * life of the page.
    *
    * One monitor, enabled with the other domains before anything navigates.
+   *
+   * Keyed by `requestId` rather than counted, because a REDIRECT emits a fresh
+   * `requestWillBeSent` for each hop under the SAME id and only one terminal
+   * event at the end. A counter would go up three times and down once and
+   * never return to zero, so the page would never settle again for the rest of
+   * its life — a hang, not a wrong answer.
    */
-  let inFlightRequests = 0;
+  const inFlightRequests = new Set<string>();
   /** Resolvers waiting for the page to go quiet. */
   const quietWaiters = new Set<() => void>();
   let quietTimer: ReturnType<typeof setTimeout> | undefined;
@@ -221,11 +245,15 @@ export function createElectronPage(
   // whether the page's content is returned or stripped.
   wc.on("did-navigate", (...args: unknown[]) => {
     const url = args[1];
-    if (typeof url === "string") currentUrl = url;
+    if (typeof url !== "string") return;
+    currentUrl = url;
+    committed = true;
   });
   wc.on("did-navigate-in-page", (...args: unknown[]) => {
     const [, url, isMainFrame] = args;
-    if (isMainFrame === true && typeof url === "string") currentUrl = url;
+    if (isMainFrame !== true || typeof url !== "string") return;
+    currentUrl = url;
+    committed = true;
   });
 
   /** The CDP session, attached once and shared by everything that needs one. */
@@ -241,15 +269,18 @@ export function createElectronPage(
         await adapter.send("Page.enable").catch(() => {});
         await adapter.send("Runtime.enable").catch(() => {});
         // Before anything navigates, for the reason in `inFlightRequests`.
-        adapter.on("Network.requestWillBeSent", () => {
-          inFlightRequests += 1;
+        adapter.on("Network.requestWillBeSent", (payload) => {
+          const id = requestIdOf(payload);
+          if (id === undefined) return;
+          inFlightRequests.add(id);
           if (quietTimer) {
             clearTimeout(quietTimer);
             quietTimer = undefined;
           }
         });
-        const settled = () => {
-          inFlightRequests = Math.max(0, inFlightRequests - 1);
+        const settled = (payload: unknown) => {
+          const id = requestIdOf(payload);
+          if (id !== undefined) inFlightRequests.delete(id);
           armQuiet();
         };
         adapter.on("Network.loadingFinished", settled);
@@ -270,7 +301,7 @@ export function createElectronPage(
   function armQuiet(): void {
     if (quietTimer) clearTimeout(quietTimer);
     quietTimer = undefined;
-    if (inFlightRequests > 0 || quietWaiters.size === 0) return;
+    if (inFlightRequests.size > 0 || quietWaiters.size === 0) return;
     quietTimer = setTimeout(() => {
       quietTimer = undefined;
       for (const release of [...quietWaiters]) release();
@@ -391,6 +422,10 @@ export function createElectronPage(
       code: key.code,
       windowsVirtualKeyCode: key.keyCode,
       modifiers,
+      // `code` alone does not reach `KeyboardEvent.location`, so without this
+      // the page sees a keypad press at location 0 — indistinguishable from
+      // the number row to anything that routes them differently.
+      ...(key.keypad ? { isKeypad: true } : {}),
       ...(text === undefined ? {} : { text }),
     });
     await cdp.send("Input.dispatchKeyEvent", {
@@ -399,6 +434,7 @@ export function createElectronPage(
       code: key.code,
       windowsVirtualKeyCode: key.keyCode,
       modifiers,
+      ...(key.keypad ? { isKeypad: true } : {}),
     });
 
     // Released in reverse, so a held Control outlives the Shift inside it.
@@ -415,6 +451,10 @@ export function createElectronPage(
 
   const page: DriverPage = {
     async goto(url) {
+      // BEFORE the load, not inside the settle that follows it: `Network.enable`
+      // does not replay, so a request this navigation starts before the monitor
+      // exists is invisible to the settle for the life of the page.
+      await session();
       await deadline(
         (async () => {
           // `did-navigate` has already recorded the COMMITTED url by the time
@@ -425,9 +465,11 @@ export function createElectronPage(
           // control reading the wrong value. Only fall back to the request
           // when no navigation event arrived at all (a fake, a same-document
           // load), never overwrite one that did.
-          const before = currentUrl;
+          committed = false;
           await wc.loadURL(url);
-          if (currentUrl === before) currentUrl = url;
+          // Only when nothing reported a destination at all — a fake, or a
+          // load that resolved without an event. A committed URL always wins.
+          if (!committed) currentUrl = url;
         })(),
         NAV_TIMEOUT_MS,
         `navigating to ${url}`,
@@ -435,6 +477,7 @@ export function createElectronPage(
       );
     },
     async reload() {
+      await session();
       await deadline(
         navigationSettled(wc, () => wc.reload()),
         NAV_TIMEOUT_MS,
@@ -443,6 +486,7 @@ export function createElectronPage(
       );
     },
     async goBack() {
+      await session();
       const history = wc.navigationHistory;
       if (!history?.canGoBack())
         throw new Error("not found: there is no page to go back to");
@@ -694,6 +738,7 @@ function navigationSettled(
       settled = true;
       wc.removeListener?.("did-finish-load", onLoad);
       wc.removeListener?.("did-fail-load", onFail);
+      wc.removeListener?.("did-fail-provisional-load", onFail);
       if (error) reject(error);
       else resolve();
     };
@@ -706,6 +751,11 @@ function navigationSettled(
       );
     wc.on("did-finish-load", onLoad);
     wc.on("did-fail-load", onFail);
+    // `wc.stop()` on a deadline CANCELS the load, and a cancelled load reports
+    // through `did-fail-provisional-load` — not `did-fail-load`. Without this
+    // the listeners above stay attached to a promise nobody is waiting on any
+    // more, and fire on whatever navigates next.
+    wc.on("did-fail-provisional-load", onFail);
     try {
       start();
     } catch (error) {

@@ -77,6 +77,8 @@ export class FakeBrowserWebContents extends EventEmitter {
   focused = 0;
   /** How many times a load was called off. */
   stopped = 0;
+  /** Where a load actually commits, when that differs from what was asked. */
+  redirectTo: string | undefined;
   windowOpenHandler: ((details: { url: string }) => unknown) | undefined;
   private url: string;
   private readonly options: FakeBrowserWebContentsOptions;
@@ -92,9 +94,10 @@ export class FakeBrowserWebContents extends EventEmitter {
     this.navigations.push(url);
     if (this.options.loadURL) return this.options.loadURL(url);
     if (this.options.loadError) throw this.options.loadError;
-    this.url = url;
+    const committed = this.redirectTo ?? url;
+    this.url = committed;
     this.historyDepth += 1;
-    this.emit("did-navigate", { preventDefault() {} }, url);
+    this.emit("did-navigate", { preventDefault() {} }, committed);
     return undefined;
   }
 

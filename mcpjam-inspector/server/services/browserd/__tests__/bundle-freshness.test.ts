@@ -154,8 +154,13 @@ describe("browserd bundle freshness", () => {
     // engine name or a flag, and a test that trips on prose is a test people
     // learn to edit rather than to read.
     const artifact = readFileSync(bundleFile, "utf8");
+    // Every specifier form, each behind the same non-word guard so a
+    // legitimate mention in prose ("switched from \"electron\" runtime") does
+    // not trip it: `import("electron")`, `require("electron")`,
+    // `from "electron"`, and the side-effect `import "electron"` — which has
+    // neither parentheses nor a `from` and slipped past the first version.
     const importEdge =
-      /(?:^|[^\w$])(?:import|require)\s*\(\s*["']electron["']\s*\)|from\s*["']electron["']/;
+      /(?:^|[^\w$])(?:(?:import|require)\s*\(\s*["']electron["']\s*\)|from\s*["']electron["']|import\s+["']electron["'])/;
     expect(
       importEdge.test(artifact),
       "the daemon bundle imports `electron` directly",

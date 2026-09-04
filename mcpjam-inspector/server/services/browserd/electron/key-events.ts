@@ -45,6 +45,14 @@ export interface CdpKey {
   text?: string;
   /** Set when this key IS a modifier, so a chord can hold it down. */
   modifier?: KeyModifier;
+  /**
+   * A numeric-keypad key, which CDP wants told explicitly.
+   *
+   * `code` alone does not reach `KeyboardEvent.location`: without `isKeypad`
+   * the page sees `Numpad1` at location 0, so a form that routes keypad input
+   * differently (a POS terminal, a game) treats it as the number row.
+   */
+  keypad?: true;
 }
 
 /** One key press, already resolved into what the two CDP events need. */
@@ -95,12 +103,48 @@ const NAMED_KEYS: Record<string, CdpKey> = {
   // The numpad, which is a DIFFERENT physical key from the one on the main
   // row: a page listening for `code` tells `Numpad1` from `Digit1`, and a
   // calculator or a game will act on exactly that difference.
-  NumpadEnter: { key: "Enter", code: "NumpadEnter", keyCode: 13, text: "\r" },
-  NumpadAdd: { key: "+", code: "NumpadAdd", keyCode: 107, text: "+" },
-  NumpadSubtract: { key: "-", code: "NumpadSubtract", keyCode: 109, text: "-" },
-  NumpadMultiply: { key: "*", code: "NumpadMultiply", keyCode: 106, text: "*" },
-  NumpadDivide: { key: "/", code: "NumpadDivide", keyCode: 111, text: "/" },
-  NumpadDecimal: { key: ".", code: "NumpadDecimal", keyCode: 110, text: "." },
+  NumpadEnter: {
+    key: "Enter",
+    code: "NumpadEnter",
+    keyCode: 13,
+    text: "\r",
+    keypad: true,
+  },
+  NumpadAdd: {
+    key: "+",
+    code: "NumpadAdd",
+    keyCode: 107,
+    text: "+",
+    keypad: true,
+  },
+  NumpadSubtract: {
+    key: "-",
+    code: "NumpadSubtract",
+    keyCode: 109,
+    text: "-",
+    keypad: true,
+  },
+  NumpadMultiply: {
+    key: "*",
+    code: "NumpadMultiply",
+    keyCode: 106,
+    text: "*",
+    keypad: true,
+  },
+  NumpadDivide: {
+    key: "/",
+    code: "NumpadDivide",
+    keyCode: 111,
+    text: "/",
+    keypad: true,
+  },
+  NumpadDecimal: {
+    key: ".",
+    code: "NumpadDecimal",
+    keyCode: 110,
+    text: ".",
+    keypad: true,
+  },
 };
 
 for (let n = 0; n <= 9; n += 1) {
@@ -109,6 +153,7 @@ for (let n = 0; n <= 9; n += 1) {
     code: `Numpad${n}`,
     keyCode: 96 + n,
     text: String(n),
+    keypad: true,
   };
 }
 
@@ -304,6 +349,10 @@ export function resolveKeyPress(chord: string): ResolvedKeyPress {
  */
 function shiftedKey(key: CdpKey): CdpKey {
   if (key.text === undefined || key.modifier) return key;
+  // The keypad has no shifted layer. Sending Shift+NumpadAdd through the
+  // main-row table would look up "+" and answer "=" — a character that key
+  // cannot produce on any keyboard.
+  if (key.keypad) return key;
   const upper = key.text.toUpperCase();
   if (upper !== key.text) return { ...key, key: upper, text: upper };
   const shiftedChar = SHIFTED_BY_BASE[key.text];
