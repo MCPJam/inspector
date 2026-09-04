@@ -164,10 +164,21 @@ describe("TraceDestinationDialog", () => {
     fireEvent.change(screen.getByLabelText("Endpoint URL"), {
       target: { value: "https://my-collector.internal.example.com" },
     });
-    // Picking a vendor for its header names must not discard the URL.
+
+    // The OPTION has to be picked, not just the trigger clicked. `applyPreset`
+    // runs from the Select's `onValueChange`, so opening the list alone
+    // exercises nothing and the assertion below would hold even if picking a
+    // vendor discarded the URL.
     fireEvent.click(screen.getByLabelText(/vendor/i));
-    expect(
-      screen.getByDisplayValue("https://my-collector.internal.example.com"),
-    ).toBeTruthy();
+    const option = await screen.findByRole("option", { name: /coralogix/i });
+    fireEvent.click(option);
+
+    await waitFor(() =>
+      expect(
+        screen.getByDisplayValue("https://my-collector.internal.example.com"),
+      ).toBeTruthy(),
+    );
+    // And the preset still did its real job: its header name is now offered.
+    expect(screen.getByDisplayValue("Authorization")).toBeTruthy();
   });
 });

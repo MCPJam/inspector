@@ -146,16 +146,37 @@ export async function probeSingletonOwner(
   // the owner wedges the profile on every launch, with no way out but deleting
   // the symlink by hand. So ask what the process actually is: only a browser
   // can be holding a browser profile.
-  const command = describeProcess(pid);
-  if (command !== undefined && !looksLikeBrowser(command)) {
+  //
+  // EMPTY IS NOT AN ANSWER. `""` used to fall through this check as a
+  // confirmed non-browser and clear the lock, which is exactly the confusion
+  // the comment on `describeProcess` warns against: it is a reading we failed
+  // to take, not a reading that came back negative.
+  const command = describeProcess(pid)?.trim();
+  if (command && !looksLikeBrowser(command)) {
     return { live: false, pid };
   }
   return { live: true, pid };
 }
 
-/** Chromium's own binaries, under the names each platform reports. */
+/**
+ * Does this look like a browser holding a browser profile?
+ *
+ * THE TWO ERRORS ARE NOT EQUAL, which is what decides how loose this is.
+ * Saying "browser" about something else keeps a stale lock: the profile stays
+ * wedged until a person clears it, which the refusal now tells them how to do.
+ * Saying "not a browser" about a real one DELETES the singleton files of a
+ * running Chromium and corrupts a profile somebody is using. So the list is
+ * deliberately generous, and anything Chromium-shaped counts.
+ *
+ * `chrom` alone missed the ones that do not carry it in their name — Brave and
+ * Edge are Chromium, and a user who pointed either at this directory would
+ * have had their lock cleared underneath them. Electron is here for the same
+ * reason: the desktop app is a Chromium too.
+ */
 function looksLikeBrowser(command: string): boolean {
-  return /chrom|headless_shell/i.test(command);
+  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron|firefox|safari/i.test(
+    command,
+  );
 }
 
 /**
