@@ -105,13 +105,13 @@ describe("HostConfigCompareView public mode", () => {
     document.documentElement.classList.remove("dark");
   });
 
-  it("offers the flag-gated hosts in public mode but not in the signed-in matrix", async () => {
+  it("shows Claude Code and Codex in public and signed-in Compare", async () => {
     // `useFeatureFlagEnabled` is mocked false above — the anonymous-visitor
     // case, and the one that used to drop these two from caniuse entirely.
     // They sit past the 6-chip inline limit, so assert them where they live:
     // the More menu. Public caniuse is reference data and lists every catalog
-    // host; the signed-in matrix sits beside hosts you can actually create,
-    // so it keeps the rollout gate. Pinned together so the split can't drift.
+    // host. The signed-in matrix is also reference data, even though its New
+    // Client picker remains gated separately.
     const { unmount } = render(
       <MemoryRouter>
         <HostConfigCompareView
@@ -150,11 +150,12 @@ describe("HostConfigCompareView public mode", () => {
       screen.getByTestId("host-compare-chip-preset:claude"),
     ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
-    // ...and the overflow menu opened and lists other unranked presets, so
-    // the two absences below are the gate, not an unrendered menu.
+    // ...and the overflow menu includes the requested read-only presets while
+    // unrelated gated hosts retain their existing rollout behavior.
     expect(await screen.findByText("Notion")).toBeInTheDocument();
-    expect(screen.queryByText("Claude Code")).not.toBeInTheDocument();
-    expect(screen.queryByText("Codex")).not.toBeInTheDocument();
+    expect(screen.getByText("Claude Code")).toBeInTheDocument();
+    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(screen.queryByText("Cursor CLI")).not.toBeInTheDocument();
   });
 
   it("renders preset compare content without requiring sign-in or a project", async () => {
