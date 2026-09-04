@@ -288,13 +288,17 @@ export function HostConfigCompareView({
   // different sequence on Compare than on caniuse.dev made the two pages hard
   // to read against each other. Live hosts keep their own order, since that
   // one belongs to the user.
+  // MCPJam goes last on BOTH surfaces: it is the emulator doing the comparing,
+  // so it should not hold one of the leading chip slots. Still present and
+  // still selectable — this demotes rather than filters. On caniuse its preset
+  // already sorted past the inline limit, but relying on where it happens to
+  // land is what let it back in once live hosts joined the list.
   const hosts = useMemo(() => {
     const orderedPresets = sortCaniusePresetHosts(presets.hosts);
-    if (presetOnly) return orderedPresets;
-    // MCPJam last on Compare: it is the emulator doing the comparing, so it
-    // should not hold one of the leading chip slots. Still present, still
-    // selectable — the ranking demotes it rather than the filter removing it.
-    return demoteMcpjamHosts([...liveHosts, ...orderedPresets], subjectsByHost);
+    const ordered = presetOnly
+      ? orderedPresets
+      : [...liveHosts, ...orderedPresets];
+    return demoteMcpjamHosts(ordered, subjectsByHost);
   }, [liveHosts, presetOnly, presets.hosts, subjectsByHost]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);

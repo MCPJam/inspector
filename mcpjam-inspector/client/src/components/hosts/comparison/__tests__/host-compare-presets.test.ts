@@ -157,9 +157,33 @@ describe("demoteMcpjamHosts", () => {
     ]);
   });
 
-  it("leaves a live MCPJam host in place until its subject has loaded", () => {
-    // Subjects arrive asynchronously. Before one does there is nothing to
-    // identify the host by, so it keeps its position rather than jumping.
+  it("demotes an UNSELECTED live MCPJam host by name", () => {
+    // The case that kept MCPJam in slot one for guests: subjects are loaded
+    // only for SELECTED hosts, so an unselected live host has no hostStyle to
+    // read. The name is what the chip's own logo lookup uses, so it is the
+    // signal available at exactly the moment the style is not.
+    const hosts = [
+      { hostId: "h_mine", name: "MCPJam" },
+      { hostId: "h_other", name: "My Claude" },
+    ];
+    expect(demoteMcpjamHosts(hosts, {}).map((h) => h.hostId)).toEqual([
+      "h_other",
+      "h_mine",
+    ]);
+  });
+
+  it("matches the name case-insensitively and when decorated", () => {
+    const hosts = [
+      { hostId: "h_a", name: "mcpjam (staging)" },
+      { hostId: "h_b", name: "Cursor" },
+    ];
+    expect(demoteMcpjamHosts(hosts).map((h) => h.hostId)).toEqual([
+      "h_b",
+      "h_a",
+    ]);
+  });
+
+  it("leaves an unnamed host alone when no signal identifies it", () => {
     const hosts = [{ hostId: "h_mine" }, { hostId: "h_other" }];
     expect(demoteMcpjamHosts(hosts, {}).map((h) => h.hostId)).toEqual([
       "h_mine",
