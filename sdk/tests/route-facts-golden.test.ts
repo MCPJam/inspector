@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
 import {
   NO_TOOL_PATH_KEY,
-  ROUTE_PATH_SEPARATOR,
+  PATH_SEPARATOR,
   buildEvalRunRouteFacts,
   evalRunRouteFactsSchema,
   type RouteFactsInput,
@@ -193,7 +193,7 @@ describe("golden fixture", () => {
     );
     expect(
       caseA.routes.routes.some(
-        (row) => row.pathKey === `tool_a${ROUTE_PATH_SEPARATOR}tool_b`
+        (row) => row.pathKey === `tool_a${PATH_SEPARATOR}tool_b`
       )
     ).toBe(true);
     expect(caseA.routes.loopedOn).toEqual([{ tool: "tool_a", trials: 1 }]);
@@ -206,7 +206,7 @@ describe("golden fixture", () => {
     if (caseB.mismatch.state !== "measured") throw new Error("measured");
     expect(caseB.mismatch.substitutions).toEqual([]);
     expect(caseB.routes.routes[0]).toMatchObject({
-      pathKey: `tool_a${ROUTE_PATH_SEPARATOR}tool_b`,
+      pathKey: `tool_a${PATH_SEPARATOR}tool_b`,
       passed: 1,
     });
   });

@@ -168,6 +168,7 @@ export {
   deriveStageResults,
   isPositiveToolCallPredicateKind,
   isSelectionPredicateKind,
+  projectStageDerivation,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
@@ -603,14 +604,10 @@ export {
   MAX_MISMATCH_TOOLS,
   MAX_ROUTES_PER_CASE,
   MAX_ROUTE_TOOL_CALLS,
-  NO_TOOL_PATH_KEY,
   ROUTE_FACTS_VERSION,
   ROUTE_LOOPING_THRESHOLD,
-  ROUTE_PATH_SEPARATOR,
   buildEvalRunRouteFacts,
-  buildPathKey,
   classifyRouteTrial,
-  collapseImmediateRepeats,
   deriveTrialRoute,
   evalRouteCatalogStateSchema,
   evalRouteMismatchFactsSchema,
@@ -688,3 +685,10 @@ export {
   isDescriptionExperimentEvidenceLabel,
   isDescriptionExperimentExclusionReason,
 } from "./description-experiment.js";
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./tool-path.js";

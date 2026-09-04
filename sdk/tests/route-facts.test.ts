@@ -24,7 +24,7 @@ import {
   MAX_ROUTES_PER_CASE,
   NO_TOOL_PATH_KEY,
   ROUTE_FACTS_VERSION,
-  ROUTE_PATH_SEPARATOR,
+  PATH_SEPARATOR,
   buildEvalRunRouteFacts,
   buildPathKey,
   classifyRouteTrial,
@@ -153,7 +153,7 @@ describe("readToolName / path helpers", () => {
       "tool_b",
     ]);
     expect(buildPathKey(["tool_a", "tool_a", "tool_b"])).toBe(
-      `tool_a${ROUTE_PATH_SEPARATOR}tool_b`
+      `tool_a${PATH_SEPARATOR}tool_b`
     );
     expect(buildPathKey([])).toBe(NO_TOOL_PATH_KEY);
   });
@@ -164,7 +164,7 @@ describe("readToolName / path helpers", () => {
       call("tool_a"),
       call("tool_b"),
     ]);
-    expect(retried.pathKey).toBe(`tool_a${ROUTE_PATH_SEPARATOR}tool_b`);
+    expect(retried.pathKey).toBe(`tool_a${PATH_SEPARATOR}tool_b`);
     expect(retried.tags).toEqual(["retried"]);
     expect(retried.retryCount).toBe(1);
 
@@ -174,7 +174,7 @@ describe("readToolName / path helpers", () => {
       call("tool_a"),
     ]);
     expect(revisit.pathKey).toBe(
-      `tool_a${ROUTE_PATH_SEPARATOR}tool_b${ROUTE_PATH_SEPARATOR}tool_a`
+      `tool_a${PATH_SEPARATOR}tool_b${PATH_SEPARATOR}tool_a`
     );
     expect(revisit.tags).toEqual([]);
   });
@@ -386,7 +386,7 @@ describe("buildEvalRunRouteFacts", () => {
     expect(row.routes.routes).toEqual([
       { pathKey: NO_TOOL_PATH_KEY, trials: 1, passed: 0, failed: 1 },
       {
-        pathKey: `tool_a${ROUTE_PATH_SEPARATOR}tool_b`,
+        pathKey: `tool_a${PATH_SEPARATOR}tool_b`,
         trials: 1,
         passed: 1,
         failed: 0,

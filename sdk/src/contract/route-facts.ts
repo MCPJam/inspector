@@ -63,6 +63,16 @@ import {
   type EvalTrialExclusionReason,
   type EvalTrialExclusions,
 } from "./verdict-policy.js";
+import { buildPathKey } from "./tool-path.js";
+// The path helpers are the contract's shared `tool-path` module; re-exported
+// here so a caller that imports the route-facts module directly sees the
+// same names the route facts are built from.
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+} from "./tool-path.js";
 
 /**
  * The contract version, as a literal.
@@ -89,14 +99,6 @@ export type RouteFactsVersion = typeof ROUTE_FACTS_VERSION;
 const countSchema = z.number().int().min(0);
 
 // ── ported trajectory constants ──────────────────────────────────────────────
-/**
- * Path separator. Chosen so a `pathKey` is readable as-is in the UI.
- * Ported from the backend usage-insights trajectory helper.
- */
-export const ROUTE_PATH_SEPARATOR = "→";
-
-/** Sentinel `pathKey` for a trial that never called a tool. */
-export const NO_TOOL_PATH_KEY = "no_tools";
 
 /** Same-tool repetition count at or above which a trial is tagged `looping`. */
 export const ROUTE_LOOPING_THRESHOLD = 3;
@@ -226,23 +228,6 @@ export function readToolName(call: unknown): string | undefined {
     nonEmptyString(record.tool) ??
     nonEmptyString(record.name)
   );
-}
-
-/** Collapse immediately-repeated names; `[]` in, `[]` out. */
-export function collapseImmediateRepeats(names: readonly string[]): string[] {
-  const out: string[] = [];
-  for (const name of names) {
-    if (out[out.length - 1] === name) continue;
-    out.push(name);
-  }
-  return out;
-}
-
-/** `pathKey` for an already-ordered tool-name sequence. */
-export function buildPathKey(toolCallSequence: readonly string[]): string {
-  const collapsed = collapseImmediateRepeats(toolCallSequence);
-  if (collapsed.length === 0) return NO_TOOL_PATH_KEY;
-  return collapsed.join(ROUTE_PATH_SEPARATOR);
 }
 
 export type DerivedTrialRoute = {
