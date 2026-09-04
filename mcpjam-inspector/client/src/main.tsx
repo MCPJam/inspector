@@ -13,7 +13,11 @@ import { reportCaught } from "./lib/error-reporting";
 import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
-import { initializeSessionToken } from "./lib/session-token.js";
+import {
+  initializeSessionToken,
+  isSessionTokenHostDenied,
+} from "./lib/session-token.js";
+import { NetworkAccessError } from "./components/NetworkAccessError";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
 import { detectSandboxOriginFault } from "./lib/sandbox-origin-fault";
@@ -439,8 +443,24 @@ if (isInIframe) {
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
-      // This branch replaces the whole app with a static screen — without a
-      // report the failure is invisible outside the user's own console.
+
+      // Expected case: the token was withheld with a 403 because this host
+      // isn't localhost or allowlisted — a self-hosted user reaching the
+      // inspector over the network. This is a config problem with a
+      // self-service fix, not a defect, so show tailored guidance and do NOT
+      // report it (these 403s were the bulk of the Sentry noise on this path).
+      if (isSessionTokenHostDenied(error)) {
+        root.render(
+          <StrictMode>
+            <NetworkAccessError />
+          </StrictMode>
+        );
+        return;
+      }
+
+      // Genuine failure (transport error, 5xx, malformed response). This branch
+      // replaces the whole app with a static screen — without a report the
+      // failure is invisible outside the user's own console.
       reportCaught(error, { source: "session_token_bootstrap" });
       // Show error UI instead of crashing
       root.render(

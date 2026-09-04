@@ -32,6 +32,35 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
+/**
+ * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
+ * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
+ * genuine failure.
+ *
+ * A 403 here is not a bug: the server withholds the token from any host that
+ * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
+ * A self-hosted user reaching the inspector over the network hits exactly this,
+ * and it has a self-service fix (allowlist their host) — so it gets a tailored
+ * screen and is NOT reported to Sentry, unlike a real 5xx/transport failure.
+ */
+export class SessionTokenError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Failed to get session token: ${status}`);
+    this.name = "SessionTokenError";
+    this.status = status;
+  }
+}
+
+/**
+ * Whether `error` is the expected "host not allowed" session-token denial (403).
+ * These are self-inflicted-by-config, not defects: the caller renders guidance
+ * instead of a generic error and skips error reporting.
+ */
+export function isSessionTokenHostDenied(error: unknown): boolean {
+  return error instanceof SessionTokenError && error.status === 403;
+}
+
 type AuthFetchSurface = "scenario";
 
 const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
@@ -148,7 +177,7 @@ export async function initializeSessionToken(): Promise<string> {
     initPromise = fetch("/api/session-token")
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Failed to get session token: ${response.status}`);
+          throw new SessionTokenError(response.status);
         }
         const data = await response.json();
         cachedToken = data.token;

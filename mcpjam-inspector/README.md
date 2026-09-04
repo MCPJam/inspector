@@ -72,6 +72,27 @@ docker build -t mcpjam/mcp-inspector:local -f mcpjam-inspector/Dockerfile .
 docker run -p 127.0.0.1:6274:6274 mcpjam/mcp-inspector:local
 ```
 
+## Accessing over the network
+
+Network access requires **Docker**. A native (`npx`) install binds to
+`127.0.0.1` (localhost only) and has no bind-address override, so it is not
+reachable from another machine. The Docker image binds `0.0.0.0`, so it is.
+
+For security, the inspector only issues its session token to `localhost`. When
+you open a Docker install from another machine (e.g. `http://192.168.1.50:6274`),
+it will otherwise dead-end on an authentication error. To allow a specific host,
+set `MCPJAM_ALLOWED_HOSTS` to that hostname (or a comma-separated list; wildcards
+like `*.example.com` are supported), and publish the port on your network
+interface (drop the `127.0.0.1:` prefix from `-p`):
+
+```bash
+docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
+```
+
+Only add hosts you trust — any client that can reach an allowlisted host can
+obtain the session token. Tunnel/relay domains are never allowed, even if
+listed.
+
 # Key features
 
 | Capability            | Description                                                                                                                                                                                                                                                                                        |

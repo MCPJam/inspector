@@ -709,7 +709,6 @@ app.get("/api/session-token", (c) => {
       host,
       forwardedHost,
       allowedHosts: ALLOWED_HOSTS,
-      hostedMode: HOSTED_MODE,
       activeTunnelDomains: getActiveTunnelDomains(),
     })
   ) {
@@ -827,7 +826,6 @@ if (process.env.NODE_ENV === "production") {
           host,
           forwardedHost,
           allowedHosts: ALLOWED_HOSTS,
-          hostedMode: HOSTED_MODE,
           activeTunnelDomains: getActiveTunnelDomains(),
         })
       ) {
@@ -876,7 +874,6 @@ if (process.env.NODE_ENV === "production") {
           host,
           forwardedHost,
           allowedHosts: ALLOWED_HOSTS,
-          hostedMode: HOSTED_MODE,
           activeTunnelDomains: getActiveTunnelDomains(),
         })
       ) {

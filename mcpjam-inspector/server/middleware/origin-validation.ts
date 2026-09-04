@@ -10,6 +10,7 @@
 
 import type { Context, Next } from "hono";
 import { SERVER_PORT } from "../config.js";
+import { hostnameMatchesAllowlist } from "../utils/localhost-check.js";
 import { logger as appLogger } from "../utils/logger.js";
 
 /**
@@ -53,6 +54,59 @@ function getAllowedOrigins(): string[] {
 }
 
 /**
+ * The admin-configured `MCPJAM_ALLOWED_HOSTS` allowlist, read at call time so
+ * tests (and any late env setup) see the current value — the same reason
+ * `getAllowedOrigins` reads `ALLOWED_ORIGINS` lazily. Parsed identically to
+ * `ALLOWED_HOSTS` in `config.ts` (the token gate's source).
+ */
+function getConfiguredAllowedHosts(): string[] {
+  return process.env.MCPJAM_ALLOWED_HOSTS
+    ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
+        h.trim().toLowerCase()
+      )
+    : [];
+}
+
+/**
+ * Is the request Origin's host on the `MCPJAM_ALLOWED_HOSTS` allowlist?
+ *
+ * This is what closes the gap where an operator sets `MCPJAM_ALLOWED_HOSTS`
+ * to reach the inspector over the LAN (e.g. `192.168.1.50`): the token gate
+ * then serves the token, but without this the origin gate still 403'd every
+ * `connect` / tool / chat POST, because it only knew localhost + ALLOWED_ORIGINS.
+ * One env var now opens BOTH gates. Localhost is intentionally NOT matched here
+ * (its exact scheme+port origins stay governed by `getAllowedOrigins`); a bare
+ * IP/host in the allowlist can never widen to localhost. DNS rebinding is still
+ * blocked — a malicious domain's Origin host is not the allowlisted host.
+ *
+ * Matching is host-only (any scheme/port on the allowlisted host is accepted),
+ * unlike the exact scheme+port localhost half. This is deliberate and mirrors
+ * the token gate (`isAllowedHost` in localhost-check.ts also matches host-only),
+ * so one `MCPJAM_ALLOWED_HOSTS` entry opens both gates consistently — the
+ * allowlist is host-based and carries no port to match against. The tradeoff:
+ * another service on the same allowlisted host (e.g. `https://192.168.1.50:9999`)
+ * is also accepted as an Origin. That is the operator's trust decision when they
+ * allowlist a host; an operator who wants a narrower origin surface can use the
+ * exact-origin `ALLOWED_ORIGINS` instead.
+ */
+function originHostIsAllowlisted(origin: string): boolean {
+  const allowedHosts = getConfiguredAllowedHosts();
+  if (allowedHosts.length === 0) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(origin);
+  } catch {
+    return false;
+  }
+  // A real browser `Origin` is a serialized origin: scheme://host[:port], with
+  // no path, query, fragment, or userinfo. Reject anything else so a value like
+  // `http://192.168.1.50:6274/evil` or `http://user@192.168.1.50:6274` can't
+  // smuggle an allowlisted host past the check via `hostname` extraction.
+  if (parsed.origin !== origin) return false;
+  return hostnameMatchesAllowlist(parsed.hostname.toLowerCase(), allowedHosts);
+}
+
+/**
  * Check whether an origin matches the allowed list.
  *
  * Supports `*` anywhere in the host portion of the pattern, e.g.:
@@ -66,7 +120,7 @@ function getAllowedOrigins(): string[] {
  */
 function matchesAllowedOrigin(
   origin: string,
-  allowedOrigins: string[],
+  allowedOrigins: string[]
 ): boolean {
   for (const allowed of allowedOrigins) {
     if (allowed.includes("*")) {
@@ -105,7 +159,10 @@ function matchesAllowedOrigin(
  */
 export function isAllowedRequestOrigin(origin: string | undefined): boolean {
   if (!origin) return false;
-  return matchesAllowedOrigin(origin, getAllowedOrigins());
+  return (
+    matchesAllowedOrigin(origin, getAllowedOrigins()) ||
+    originHostIsAllowlisted(origin)
+  );
 }
 
 /**
@@ -114,7 +171,7 @@ export function isAllowedRequestOrigin(origin: string | undefined): boolean {
  */
 export async function originValidationMiddleware(
   c: Context,
-  next: Next,
+  next: Next
 ): Promise<Response | void> {
   // Allow CORS preflight requests through
   if (c.req.method === "OPTIONS") {
@@ -140,14 +197,17 @@ export async function originValidationMiddleware(
 
   const allowedOrigins = getAllowedOrigins();
 
-  if (!matchesAllowedOrigin(origin, allowedOrigins)) {
+  if (
+    !matchesAllowedOrigin(origin, allowedOrigins) &&
+    !originHostIsAllowlisted(origin)
+  ) {
     appLogger.warn(`[Security] Blocked request from origin: ${origin}`);
     return c.json(
       {
         error: "Forbidden",
         message: "Request origin not allowed.",
       },
-      403,
+      403
     );
   }
 

@@ -68,7 +68,7 @@ export function isPubliclyReachableUrl(raw: string): boolean {
         const hi = parseInt(hex[1], 16);
         const lo = parseInt(hex[2], 16);
         return isRoutableIpv4(
-          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`,
+          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
         );
       }
       return false;
@@ -195,7 +195,6 @@ export function mayServeSessionToken(options: {
   host: string | undefined;
   forwardedHost?: string | undefined;
   allowedHosts: string[];
-  hostedMode: boolean;
   activeTunnelDomains?: string[];
 }): boolean {
   const tunnelDomains = options.activeTunnelDomains ?? [];
@@ -205,7 +204,7 @@ export function mayServeSessionToken(options: {
   ) {
     return false;
   }
-  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+  return isAllowedHost(options.host, options.allowedHosts);
 }
 
 /**
@@ -227,7 +226,6 @@ export function mayServeGuestBootstrap(options: {
   host: string | undefined;
   forwardedHost?: string | undefined;
   allowedHosts: string[];
-  hostedMode: boolean;
   activeTunnelDomains?: string[];
 }): boolean {
   const tunnelDomains = options.activeTunnelDomains ?? [];
@@ -237,49 +235,91 @@ export function mayServeGuestBootstrap(options: {
   ) {
     return false;
   }
-  return isAllowedHost(options.host, options.allowedHosts, options.hostedMode);
+  return isAllowedHost(options.host, options.allowedHosts);
 }
 
 /**
  * Check if the request is from an allowed host.
  *
- * In hosted mode (cloud deployments), this allows both localhost and
- * configured allowed hosts (MCPJAM_ALLOWED_HOSTS) to receive tokens.
- * This enables deployment to platforms like Railway while maintaining
- * security by only allowing explicitly configured hosts.
+ * Localhost is always allowed. Beyond that, `MCPJAM_ALLOWED_HOSTS`
+ * (`allowedHosts`) is an explicit, admin-controlled opt-in that names the
+ * exact hosts permitted to receive the token — in BOTH hosted and self-hosted
+ * deployments:
+ * - Hosted (cloud, e.g. Railway): the deployment sets it to its canonical app
+ *   host(s) so `app.mcpjam.com` can receive the token/guest bearer.
+ * - Self-hosted (npx/Docker on a remote box, accessed over the LAN via a raw
+ *   IP like `192.168.x.x:6274`): the operator sets it to their own host so the
+ *   inspector is reachable off-localhost. Without this opt-in the token is
+ *   localhost-only and network access dead-ends on an auth error.
+ *
+ * The allowlist is deliberately NOT gated on `hostedMode`: withholding it in
+ * self-hosted mode gave those operators no supported way to reach the
+ * inspector over the network, which is the whole point of self-hosting on a
+ * remote box. This does not weaken DNS-rebinding protection — the match is
+ * against the exact `Host` the operator configured, so a malicious domain that
+ * resolves to the same IP still fails the check (its `Host` isn't allowlisted).
+ * The tunnel veto in `mayServeSessionToken`/`mayServeGuestBootstrap` runs
+ * BEFORE this, so a tunnel host can never be allowlisted into a token leak.
  *
  * @param hostHeader - The Host header value from the request
  * @param allowedHosts - List of additional allowed hosts (from config)
- * @param hostedMode - Whether hosted mode is enabled
  * @returns true if the request is from an allowed host, false otherwise
  */
 export function isAllowedHost(
   hostHeader: string | undefined,
-  allowedHosts: string[],
-  hostedMode: boolean
+  allowedHosts: string[]
 ): boolean {
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {
     return true;
   }
 
-  // In hosted mode, check configured allowed hosts
-  if (hostedMode && hostHeader && allowedHosts.length > 0) {
+  // Explicit admin opt-in via MCPJAM_ALLOWED_HOSTS (both hosted + self-hosted).
+  if (hostHeader && allowedHosts.length > 0) {
     const host = hostHeader.toLowerCase();
-    // Extract hostname without port for comparison
-    const hostWithoutPort = host.split(":")[0];
-
-    return allowedHosts.some((allowed) => {
-      // Support exact match or subdomain matching (e.g., "*.railway.app")
-      if (allowed.startsWith("*.")) {
-        const domain = allowed.slice(2);
-        return (
-          hostWithoutPort === domain || hostWithoutPort.endsWith(`.${domain}`)
-        );
-      }
-      return hostWithoutPort === allowed;
-    });
+    return hostnameMatchesAllowlist(stripPort(host), allowedHosts);
   }
 
   return false;
+}
+
+/**
+ * Strip the port from a Host/authority value while keeping an IPv6 literal's
+ * brackets intact: `192.168.1.50:6274` → `192.168.1.50`, and
+ * `[fd00::50]:6274` → `[fd00::50]`. A naive `split(":")[0]` would turn the
+ * IPv6 form into `[fd00`, so an allowlisted IPv6 host could never match.
+ */
+function stripPort(host: string): string {
+  if (host.startsWith("[")) {
+    const close = host.indexOf("]");
+    return close === -1 ? host : host.slice(0, close + 1);
+  }
+  return host.split(":")[0];
+}
+
+/**
+ * Does a lowercased, port-stripped hostname match one of the admin-configured
+ * `MCPJAM_ALLOWED_HOSTS` entries? Exact match, or a `*.domain` subdomain match.
+ *
+ * This is the ALLOWLIST half of `isAllowedHost` on its own — it deliberately
+ * does NOT include the localhost auto-allow. The origin-validation gate reuses
+ * it so both gates agree on the configured allowlist (a host allowlisted for
+ * token delivery is also accepted as a request Origin), while origin validation
+ * keeps its own exact-origin rule for localhost (specific scheme + port).
+ */
+export function hostnameMatchesAllowlist(
+  hostnameWithoutPort: string,
+  allowedHosts: string[]
+): boolean {
+  return allowedHosts.some((allowed) => {
+    // Support exact match or subdomain matching (e.g., "*.railway.app")
+    if (allowed.startsWith("*.")) {
+      const domain = allowed.slice(2);
+      return (
+        hostnameWithoutPort === domain ||
+        hostnameWithoutPort.endsWith(`.${domain}`)
+      );
+    }
+    return hostnameWithoutPort === allowed;
+  });
 }
