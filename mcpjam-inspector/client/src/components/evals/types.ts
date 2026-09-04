@@ -876,6 +876,15 @@ export type EvalSuiteRun = {
    */
   namedHostId?: string;
   /**
+   * Inline catalog captured at run start. Present on live run docs from the
+   * browser list/detail queries even though older TypeScript omitted it;
+   * archived runs keep only `toolSnapshotHash`. Route facts treat absence as
+   * `catalogState: notLoaded` — no client fetch of snapshots.
+   */
+  toolSnapshot?: unknown;
+  /** Digest of {@link toolSnapshot}. Sibling of the inline catalog, not inside `runInsights`. */
+  toolSnapshotHash?: string;
+  /**
    * Client-generated UUID shared by every per-host run from the same
    * multi-host eval launch. The UI groups runs by this id; runs without
    * a `runGroupId` (legacy or single-host launches) render as standalone

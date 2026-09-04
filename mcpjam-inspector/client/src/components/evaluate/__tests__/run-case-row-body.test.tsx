@@ -209,6 +209,75 @@ describe("RunCaseRowBody", () => {
     expect(nudge.textContent).not.toMatch(PASS_WORDS);
   });
 
+  it("renders route facts between failure groups and nudges", () => {
+    render(
+      <RunCaseRowBody
+        row={row({ iterations: { passed: 0, total: 1 } })}
+        iterations={ITERATIONS}
+        catalogState="loaded"
+        routeFacts={{
+          caseVariantKey: "tc_1\u0000",
+          caseKey: "tc_1",
+          routes: {
+            population: "trial",
+            totalTrials: 1,
+            includedTrials: 1,
+            exclusions: {},
+            routes: [
+              { pathKey: "create_view", trials: 1, passed: 0, failed: 1 },
+            ],
+            tags: {
+              noToolCalled: {
+                state: "measured",
+                value: 0,
+                numerator: 0,
+                denominator: 1,
+                exclusions: {},
+              },
+              retried: {
+                state: "measured",
+                value: 0,
+                numerator: 0,
+                denominator: 1,
+                exclusions: {},
+              },
+              looping: {
+                state: "measured",
+                value: 0,
+                numerator: 0,
+                denominator: 1,
+                exclusions: {},
+              },
+            },
+            loopedOn: [],
+            endedWithQuestion: {
+              state: "notMeasured",
+              value: null,
+              numerator: 0,
+              denominator: 0,
+              exclusions: {},
+            },
+          },
+          mismatch: {
+            state: "measured",
+            expected: [
+              {
+                tool: "export_to_excalidraw",
+                expectedIn: 1,
+                notCalledIn: 1,
+                notCalledInFailed: 1,
+              },
+            ],
+            unexpected: [],
+            substitutions: [],
+          },
+        }}
+      />,
+    );
+    expect(screen.getByTestId("route-facts-section")).toBeInTheDocument();
+    expect(screen.getByText("Routes")).toBeInTheDocument();
+  });
+
   it("explains a case that passed only on its threshold", () => {
     render(
       <RunCaseRowBody

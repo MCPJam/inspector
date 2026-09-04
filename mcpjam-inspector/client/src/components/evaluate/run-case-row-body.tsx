@@ -19,6 +19,8 @@ import { copyToClipboard } from "@/lib/clipboard";
 import {
   USER_VALUE_STAGE_LABELS,
   type EvalRunDecisionDiagnostic,
+  type EvalRunRouteFacts,
+  type EvalRunRouteFactsCase,
 } from "@mcpjam/sdk/contract";
 
 import type { EvalIteration } from "../evals/types";
@@ -29,6 +31,7 @@ import type {
 import { buildStageFixPrompt } from "./stage-fix-prompt";
 import { remedyForReason, type StageRemedy } from "./stage-remedy";
 import { EvaluateToolList } from "./evaluate-tool-list";
+import { RouteFactsSection } from "./route-facts-section";
 
 function groupHeading(group: CaseFailureGroup, count: number): string {
   const iterations = count === 1 ? "1 iteration" : `${count} iterations`;
@@ -178,11 +181,15 @@ function FailureGroup({
 export function RunCaseRowBody({
   row,
   iterations,
+  routeFacts,
+  catalogState,
   onOpenIteration,
   onEditCase,
 }: {
   row: EvaluateCaseRow;
   iterations: readonly EvalIteration[];
+  routeFacts?: EvalRunRouteFactsCase | null;
+  catalogState?: EvalRunRouteFacts["catalogState"];
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -225,8 +232,15 @@ export function RunCaseRowBody({
             group={group}
             iterations={iterations}
           />
-        ))
-      )}
+          ))
+        )}
+
+      {routeFacts ? (
+        <RouteFactsSection
+          facts={routeFacts}
+          catalogState={catalogState ?? "notLoaded"}
+        />
+      ) : null}
 
       {nudges.map((nudge) => (
         <p key={nudge} className="text-[12px] text-muted-foreground">

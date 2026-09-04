@@ -26,6 +26,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
+import { useRouteFactsEnabled } from "@/hooks/useRouteFactsEnabled";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -48,6 +49,11 @@ import { useEvalRunCompare } from "./use-eval-run-compare";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
+import {
+  buildRunRouteFacts,
+  routeFactsForRow,
+  routeLinesByRowKey,
+} from "./route-facts-model";
 import { RunStageStrip } from "./run-stage-strip";
 import { buildStageStrip } from "./run-stage-strip-model";
 import { RunGradingPeek } from "./run-grading-peek";
@@ -142,6 +148,19 @@ export function EvaluateRunContent({
   ]);
 
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
+
+  const routeFactsEnabled = useRouteFactsEnabled();
+  const routeFactsDoc = useMemo(
+    () => (routeFactsEnabled ? buildRunRouteFacts(run, iterations) : null),
+    [routeFactsEnabled, run, iterations],
+  );
+  const routeLines = useMemo(
+    () =>
+      routeFactsDoc
+        ? routeLinesByRowKey(routeFactsDoc, caseRows, iterations)
+        : undefined,
+    [routeFactsDoc, caseRows, iterations],
+  );
 
   // No second flag. This whole surface is already behind `evaluate-enabled`,
   // and gating the strip again meant it vanished with no way for a reader to
@@ -390,10 +409,21 @@ export function EvaluateRunContent({
           rows={visibleRows}
           defaultOpenKey={openRowKey}
           pills={rowPills}
+          {...(routeLines ? { routeLines } : {})}
           renderBody={(row) => (
             <RunCaseRowBody
               row={row}
               iterations={iterations}
+              {...(routeFactsDoc
+                ? {
+                    routeFacts: routeFactsForRow(
+                      routeFactsDoc,
+                      row,
+                      iterations,
+                    ),
+                    catalogState: routeFactsDoc.catalogState,
+                  }
+                : {})}
               {...(onOpenIteration ? { onOpenIteration } : {})}
               {...(onEditCase ? { onEditCase } : {})}
             />

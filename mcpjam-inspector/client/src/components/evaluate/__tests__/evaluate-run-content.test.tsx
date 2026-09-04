@@ -51,6 +51,7 @@ const stageAnalytics = vi.hoisted(() => ({
   },
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
+const routeFactsFlag = vi.hoisted(() => ({ current: false }));
 const compareState = vi.hoisted(() => ({
   current: {
     status: "disabled" as string,
@@ -64,7 +65,10 @@ vi.mock("../use-eval-run-compare", () => ({
 }));
 
 vi.mock("posthog-js/react", () => ({
-  useFeatureFlagEnabled: () => flagEnabled.current,
+  useFeatureFlagEnabled: (flag: string) =>
+    flag === "evaluate-route-facts-enabled"
+      ? routeFactsFlag.current
+      : flagEnabled.current,
 }));
 vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
   useEvalRunStageAnalytics: () => ({
@@ -183,6 +187,7 @@ afterEach(() => {
     error: null,
   };
   flagEnabled.current = false;
+  routeFactsFlag.current = false;
   compareState.current = { status: "disabled", dto: null, errorKind: null };
   detailState.current = {
     ...detailState.current,
@@ -439,5 +444,64 @@ describe("EvaluateRunContent", () => {
     renderContent({ onOpenIteration: vi.fn() });
 
     expect(screen.queryByTestId("run-verdict-open-trace")).toBeNull();
+  });
+
+  it("does not compute or render route facts when the flag is off", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+    expect(screen.queryByTestId("route-facts-section")).toBeNull();
+    expect(screen.queryByTestId("route-line-case_1")).toBeNull();
+  });
+
+  it("renders route facts on the default-open failing row when the flag is on", () => {
+    routeFactsFlag.current = true;
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: {
+        ...RUN,
+        suiteId: "suite_1",
+        toolSnapshot: {
+          servers: [
+            {
+              tools: [
+                { name: "export_to_excalidraw" },
+                { name: "create_view" },
+              ],
+            },
+          ],
+        },
+      } as EvalSuiteRun,
+      iterations: [
+        {
+          ...ITERATIONS[0],
+          actualToolCalls: [{ toolName: "create_view", arguments: {} }],
+          testCaseSnapshot: {
+            title: "Draw and share a diagram",
+            caseKey: "hash:a",
+            query: "q",
+            provider: "anthropic",
+            model: "claude",
+            expectedToolCalls: [
+              { toolName: "export_to_excalidraw", arguments: {} },
+            ],
+          },
+        },
+        ITERATIONS[1],
+      ] as EvalIteration[],
+    });
+
+    expect(screen.getByTestId("route-facts-section")).toBeInTheDocument();
+    expect(screen.getByText("Routes")).toBeInTheDocument();
+    expect(screen.getByText("Expected vs observed")).toBeInTheDocument();
   });
 });
