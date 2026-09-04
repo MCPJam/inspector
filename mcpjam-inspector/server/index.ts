@@ -170,7 +170,6 @@ import computerBrowserPanel from "./routes/web/computer-browser-panel.js";
 import { createComputerBrowserStreamWsHandler } from "./routes/web/computer-browser-stream.js";
 import {
   createComputerBrowserFramesWsHandler,
-  killBrowserFrameSockets,
   shutdownBrowserFrameSockets,
 } from "./routes/web/computer-browser-frames.js";
 import { logGradingEngineModeOnce } from "./services/evals/grading-mode.js";

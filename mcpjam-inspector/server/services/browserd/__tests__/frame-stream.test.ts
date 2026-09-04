@@ -139,9 +139,7 @@ describe("frame-stream — chunk boundaries are not record boundaries", () => {
     const a = encodeFrameStreamRecord(frame({ seq: 1 }));
     const b = encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat });
     const c = encodeFrameStreamRecord(frame({ seq: 2 }));
-    const joined = new Uint8Array(
-      a.byteLength + b.byteLength + c.byteLength,
-    );
+    const joined = new Uint8Array(a.byteLength + b.byteLength + c.byteLength);
     joined.set(a);
     joined.set(b, a.byteLength);
     joined.set(c, a.byteLength + b.byteLength);
@@ -231,6 +229,28 @@ describe("frame-stream — a reader that has lost its place says so", () => {
     expect(result.ok).toBe(false);
     expect(result).not.toHaveProperty("records");
     expect(result.ok === false && result.error).toMatch(/version/i);
+  });
+
+  it("refuses a frame record that carries no image", () => {
+    // The encoder cannot produce one, so a zero-length frame payload is
+    // corruption. Forwarded, it hands the pane an empty
+    // `data:image/jpeg;base64,` — which REPLACES the picture with a blank one,
+    // the single most misleading thing a viewport can show, because it looks
+    // like a page that went white rather than a stream that broke.
+    const bytes = encodeFrameStreamRecord(frame());
+    const truncated = bytes.slice(0, FRAME_STREAM_HEADER_BYTES);
+    new DataView(truncated.buffer, truncated.byteOffset).setUint32(20, 0, true);
+    const result = createFrameStreamDecoder().push(truncated);
+    expect(result).toMatchObject({ ok: false });
+    expect(result.ok === false && result.error).toMatch(/no image/);
+  });
+
+  it("still accepts an empty HEARTBEAT, which is what one is", () => {
+    // The same zero length is correct for the other kinds; the rule is about a
+    // frame promising an image and delivering none.
+    expect(
+      decodeAll(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat })),
+    ).toEqual([{ kind: FRAME_STREAM_KIND.heartbeat }]);
   });
 
   it("accepts a payload exactly at the cap", () => {

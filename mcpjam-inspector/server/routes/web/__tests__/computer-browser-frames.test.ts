@@ -14,6 +14,7 @@ import {
   shutdownBrowserFrameSockets,
   type BrowserFramesDeps,
 } from "../computer-browser-frames";
+import { resetActivityThrottleForTests } from "../../../utils/computers/activity-touch.js";
 
 const CLAIMS = {
   userId: "users_1",
@@ -50,15 +51,18 @@ function fakeSocket() {
 
 type Upstream = NonNullable<BrowserFramesDeps["openUpstream"]>;
 
-function build(over: Partial<BrowserFramesDeps> = {}) {
+function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
+  const { counted = true, ...depsOver } = over;
   const upstreamCalls: Parameters<Upstream>[0][] = [];
-  const touchSession = vi.fn(async () => ({ counted: true }));
+  const touchSession = vi.fn(async () => ({ counted }));
   const touchActivity = vi.fn(async () => {});
 
   // Captures the handlers the route hands back, so a test can drive the socket
   // lifecycle without a real upgrade.
   let events: Record<string, (...args: never[]) => unknown> = {};
-  const upgradeWebSocket = ((createEvents: (c: unknown) => Promise<unknown>) => {
+  const upgradeWebSocket = ((
+    createEvents: (c: unknown) => Promise<unknown>,
+  ) => {
     return async (c: unknown) => {
       events = (await createEvents(c)) as typeof events;
       return events;
@@ -89,7 +93,7 @@ function build(over: Partial<BrowserFramesDeps> = {}) {
       upstreamCalls.push(args);
       return { ok: true };
     }) as Upstream,
-    ...over,
+    ...depsOver,
   });
 
   /** Run the pre-upgrade resolution and open the socket. */
@@ -106,10 +110,9 @@ function build(over: Partial<BrowserFramesDeps> = {}) {
     };
     await (handler as unknown as (c: unknown) => Promise<unknown>)(ctx);
     const ws = fakeSocket();
-    await (events.onOpen as unknown as (e: unknown, w: unknown) => Promise<void>)(
-      {},
-      ws,
-    );
+    await (
+      events.onOpen as unknown as (e: unknown, w: unknown) => Promise<void>
+    )({}, ws);
     return { ws, events };
   }
 
@@ -118,6 +121,10 @@ function build(over: Partial<BrowserFramesDeps> = {}) {
 
 beforeEach(() => {
   resetBrowserFramesForTests();
+  // The activity throttle is process-wide and keyed by computer id, which
+  // every case here shares: without this the first touch in the file would
+  // suppress every later one for a minute.
+  resetActivityThrottleForTests();
   vi.useRealTimers();
 });
 
@@ -245,9 +252,72 @@ describe("browser frames socket — keeping the box awake", () => {
     expect(f.touchSession).toHaveBeenCalledWith(
       expect.objectContaining({ sessionId: SESSION.sessionId, kind: "panel" }),
     );
-    expect(f.touchActivity).toHaveBeenCalledWith({
-      computerId: SESSION.computerId,
-    });
+    // Awaited now rather than fired alongside: the box is only touched once
+    // the backend says this panel still counts.
+    await vi.waitFor(() =>
+      expect(f.touchActivity).toHaveBeenCalledWith({
+        computerId: SESSION.computerId,
+      }),
+    );
+  });
+
+  it("does not hold the box awake once the backend stops counting the panel", async () => {
+    // The ceiling `/keepalive` already honours: a browser idle of real
+    // commands for long enough stops being kept awake by somebody merely
+    // looking at it. Discarding `counted` and touching anyway bypassed it, so
+    // a pinging pane held a metered box open with no limit at all — the same
+    // bug as the connected-but-unwatched socket, one layer further in.
+    const f = build({ counted: false });
+    await f.connect();
+    await vi.waitFor(() =>
+      expect(f.touchSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "panel" }),
+      ),
+    );
+    expect(f.touchActivity).not.toHaveBeenCalled();
+  });
+
+  it("stops touching a pane nobody is looking at", async () => {
+    // AN OPEN SOCKET IS NOT SOMEBODY WATCHING. The pane stays connected behind
+    // the rail's other tabs and in a background browser tab — dropping it
+    // would stop the screencast and make the browser go dark on every glance —
+    // and stops PINGING in both cases. Without this gate a pane left open
+    // behind the Logs tab holds a metered cloud box awake indefinitely, and
+    // the person pays for it.
+    vi.useFakeTimers();
+    const f = build();
+    await f.connect();
+    f.touchSession.mockClear();
+    f.touchActivity.mockClear();
+    await vi.advanceTimersByTimeAsync(5 * 60_000);
+    expect(f.touchSession).not.toHaveBeenCalled();
+    expect(f.touchActivity).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("keeps touching while the pane says somebody is looking", async () => {
+    vi.useFakeTimers();
+    const f = build();
+    const { events, ws } = await f.connect();
+    f.touchSession.mockClear();
+    const ping = () =>
+      (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+        { data: JSON.stringify({ type: "ping" }) },
+        ws,
+      );
+
+    // INTERLEAVED, because pinging before every interval cannot fail: the
+    // timer fires either way and the count is the same with the gate deleted.
+    // Skipping the middle window is what makes the assertion about the ping
+    // rather than about the clock.
+    ping();
+    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(60_000); // no ping — this one must not touch
+    ping();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(f.touchSession).toHaveBeenCalledTimes(2);
+    vi.useRealTimers();
   });
 
   it("stops touching once the socket is gone", async () => {
@@ -259,6 +329,29 @@ describe("browser frames socket — keeping the box awake", () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000);
     expect(f.touchSession).not.toHaveBeenCalled();
     vi.useRealTimers();
+  });
+
+  it("does not touch a computer for a pane that hung up mid-touch", async () => {
+    // The session touch is a round trip, and the socket can close while it is
+    // in flight. Its continuation then reached a computer for a pane that is
+    // gone — one more minute of a metered box kept awake per disconnect.
+    let settle: (value: { counted: boolean }) => void = () => {};
+    const touchSession = vi.fn(
+      () =>
+        new Promise<{ counted: boolean }>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const f = build({
+      touchSession:
+        touchSession as unknown as BrowserFramesDeps["touchSession"],
+    });
+    const { events } = await f.connect();
+    (events.onClose as unknown as () => void)();
+    settle({ counted: true });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(f.touchActivity).not.toHaveBeenCalled();
   });
 
   it("hangs up the daemon stream when the pane closes", async () => {
