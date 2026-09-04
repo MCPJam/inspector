@@ -347,6 +347,10 @@ export const BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /** A ref this tab's last observation never issued. */
+  "unknown_ref",
+  /** The page could not answer an accessibility tree at all. */
+  "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
   /** A dialog is open and waiting for the person who holds the lease. */

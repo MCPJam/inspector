@@ -375,6 +375,112 @@ describe("ChromiumDriver — observe", () => {
     expect((res.output as { a11y: string }).a11y).toContain('button "Go"');
   });
 
+  it("REFUSES a rootRef minted for a page this tab has left", async () => {
+    // Node ids are per document. Without the token check the ref resolves
+    // against whatever the NEW page happens to number the same, or falls
+    // through to name-matching and answers with a same-named element on a page
+    // the model never asked about.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            {
+              role: "region",
+              name: "Panel",
+              id: 31,
+              children: [{ role: "button", name: "Go", id: 32 }],
+            },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/next" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/stale_ref/);
+  });
+
+  it("does not keep refs from an observation a handoff discarded", async () => {
+    // The model never received them, so a guessed ref must not resolve against
+    // the page a person was looking at.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "Private", id: 77 }],
+        }),
+      },
+      onA11y: () => lease.acquire("person-1", 60_000),
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const blocked = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    expect(blocked.leaseBlocked).toBe(true);
+
+    lease.release("person-1");
+    const guess = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+    expect(guess.ok).toBe(false);
+    expect(guess.error).toMatch(/unknown_ref|stale_ref/);
+  });
+
+  it("says a11y_unavailable when the page cannot answer, not 'nothing here'", async () => {
+    // "There is nothing to click" sends the model elsewhere; "I could not read
+    // this" sends it back to look again. Answering the first for the second is
+    // how a model gives up on a page it never read.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: { "Accessibility.getFullAXTree": { nodes: [] } },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/a11y_unavailable/);
+  });
+
+  it("keeps a NAMED landmark in the interactive view, control or not", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            { role: "search", name: "Site search", id: 51 },
+            { role: "contentinfo", name: "Legal", id: 52 },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    const output = res.output as { a11y: string };
+    expect(output.a11y).toContain('search "Site search" [ref=e1]');
+    expect(output.a11y).toContain('contentinfo "Legal" [ref=e2]');
+  });
+
   it("REFUSES a rootRef it never issued, rather than reading the whole page", async () => {
     // Silently widening to the whole page would answer a question the model
     // did not ask, and it would never learn its ref was stale.

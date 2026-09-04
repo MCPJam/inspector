@@ -102,23 +102,38 @@ function scalar(value: AxValue | undefined): string | number | undefined {
 }
 
 /**
+ * The outcome of a read: whether the page could ANSWER, and what it said.
+ *
+ * The two used to collapse into `null`, and the driver reported the result as
+ * a successful observation of a page with no controls. Those are opposite
+ * instructions: "there is nothing to click here" tells a model to go
+ * elsewhere, while "I could not read this page" tells it to look again or
+ * fall back to text. A reader that cannot tell them apart makes the model
+ * confidently wrong about a page it never read.
+ */
+export type AxTreeRead = { ok: true; tree: A11yNode | null } | { ok: false };
+
+/**
  * Read the tree, rooted at the whole document or at one node.
  *
- * Resolves `null` when the tree cannot be had — the domain is unavailable, the
- * page is mid-navigation, the root matched nothing. The driver distinguishes
- * "no tree" from "root selector matched nothing" by whether it asked for a
- * root, so this must not invent an empty tree for either case.
+ * `{ok: false}` means the page could not answer at all — the domain is
+ * unavailable, the page is mid-navigation. `{ok: true, tree: null}` means it
+ * answered with nothing, which for a requested root means that root is gone;
+ * the driver decides what each means, because only it knows whether it asked
+ * for a root.
  */
 export async function readAxTree(
   cdp: CdpLike,
   rootBackendNodeId?: number,
-): Promise<A11yNode | null> {
+): Promise<AxTreeRead> {
   try {
     await cdp.send("Accessibility.enable");
     const response = (await cdp.send("Accessibility.getFullAXTree")) as
       { nodes?: AxNode[] } | undefined;
     const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return null;
+    // No nodes at all is the page failing to answer, not a page with nothing
+    // in it: every document has at least a root.
+    if (!nodes || nodes.length === 0) return { ok: false };
 
     const byId = new Map<string, AxNode>();
     for (const node of nodes) byId.set(node.nodeId, node);
@@ -126,7 +141,9 @@ export async function readAxTree(
     const root = rootBackendNodeId
       ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId)
       : nodes[0];
-    if (!root) return null;
+    // A requested root that is not in the tree ANSWERED — with "that element
+    // is gone". The whole-document case cannot reach this.
+    if (!root) return { ok: true, tree: null };
 
     // `getFullAXTree` answers a flat list joined by ids, and a malformed or
     // cyclic set would otherwise walk forever. Visiting each id once bounds it.
@@ -134,12 +151,16 @@ export async function readAxTree(
     const built = build(root, byId, seen);
     // A root that folds away entirely (a bare `generic` wrapper) still has to
     // answer with its children rather than with nothing.
-    if (built.length === 0) return null;
-    return built.length === 1
-      ? built[0]!
-      : { role: "RootWebArea", children: built };
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree:
+        built.length === 1
+          ? built[0]!
+          : { role: "RootWebArea", children: built },
+    };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 

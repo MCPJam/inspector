@@ -276,7 +276,10 @@ export function axTree(root: AxSpec): { nodes: unknown[] } {
         : {}),
       properties: Object.entries(spec.props ?? {}).map(([name, value]) => ({
         name,
-        value: { type: typeof value === "number" ? "number" : "string", value },
+        // CDP types these by what they are; the reader ignores `type` today,
+        // and a fixture that mislabels what it claims to model is a trap for
+        // whoever writes the code that stops ignoring it.
+        value: { type: typeof value, value },
       })),
       childIds,
     });

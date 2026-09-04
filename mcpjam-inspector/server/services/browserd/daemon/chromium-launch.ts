@@ -96,18 +96,7 @@ export type AnyPage = {
     value: string,
     options?: unknown,
   ): Promise<unknown>;
-  ariaSnapshot(options?: unknown): Promise<string>;
-  locator(selector: string): AnyLocator;
   on(event: string, handler: (payload: any) => void): void;
-};
-
-/**
- * The sliver of Playwright's `Locator` the daemon uses: narrow a selector to
- * its first match and take that element's aria snapshot.
- */
-export type AnyLocator = {
-  first(): AnyLocator;
-  ariaSnapshot(options?: unknown): Promise<string>;
 };
 
 /**
@@ -121,13 +110,6 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
-
-/**
- * Accessibility capture timeout. Shorter than an act: an observation that
- * cannot be taken promptly is better answered as "unavailable" than held
- * open, because the caller has a screenshot and a DOM outline to fall back on.
- */
-const A11Y_TIMEOUT_MS = 5_000;
 
 /**
  * JPEG quality for model-facing captures. High enough that text stays legible

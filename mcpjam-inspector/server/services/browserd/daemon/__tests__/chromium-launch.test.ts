@@ -36,14 +36,6 @@ function fakeAnyPage(over: Partial<AnyPage> = {}): AnyPage {
     hover: noop,
     fill: noop,
     async selectOption() { return []; },
-    async ariaSnapshot() { return ""; },
-    locator() {
-      const self = {
-        first: () => self,
-        ariaSnapshot: async () => "",
-      };
-      return self;
-    },
     on() {},
     ...over,
   };

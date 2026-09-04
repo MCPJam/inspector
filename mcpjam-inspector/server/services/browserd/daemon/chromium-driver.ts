@@ -25,7 +25,7 @@ import {
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
-import { computeStateToken } from "./state-token";
+import { computeStateToken, shortHash } from "./state-token";
 import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
@@ -661,13 +661,6 @@ export class ChromiumDriver implements BrowserDriver {
         const rendered = renderA11yTree(tree, {
           interactiveOnly: raw.filter === "interactive",
         });
-        // Replaces the per-tab map wholesale: refs are valid for exactly one
-        // observation, and leaving an older map merged underneath is how `e7`
-        // comes to mean two things at once.
-        this.refs.set(tabId, {
-          stateToken: undefined,
-          entries: refs,
-        });
         const result = this.observation(
           tabId,
           entry,
@@ -684,11 +677,21 @@ export class ChromiumDriver implements BrowserDriver {
           frame,
           permit,
         );
-        // Bound to the token the observation actually carries, so an act with
-        // a ref minted against a different page is refused rather than
+        // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+        // mid-read discards the result — and refs stored anyway would be names
+        // for a page the model was never shown, guessable afterwards by a model
+        // that never received them. On that path the old map goes too: it
+        // described a page this tab may no longer be on.
+        if (!result.ok) {
+          this.refs.delete(tabId);
+          return result;
+        }
+        // Replaces the per-tab map wholesale: refs are valid for exactly one
+        // observation, and leaving an older map merged underneath is how `e7`
+        // comes to mean two things at once. Bound to the token the observation
+        // carries, so a ref used after the page moved is refused rather than
         // resolved by name against whatever is there now.
-        const map = this.refs.get(tabId);
-        if (map) map.stateToken = result.stateToken;
+        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
         return result;
       }
       case "console": {
@@ -1134,7 +1137,25 @@ export class ChromiumDriver implements BrowserDriver {
     let rootBackendNodeId: number | undefined;
     if (action.rootRef !== undefined) {
       const parsed = parseRef(action.rootRef);
-      const known = parsed ? this.refs.get(tabId)?.entries.get(parsed) : undefined;
+      const map = this.refs.get(tabId);
+      // The token is the page the refs were minted against. Without this
+      // check a ref survives a navigation, and scoping to it would read a
+      // node id that a DIFFERENT document happens to reuse — or fall through
+      // to name-matching and answer with a same-named element on a page the
+      // model never asked about.
+      if (map && !this.refsStillDescribe(tabId, entry, map)) {
+        this.refs.delete(tabId);
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `stale_ref: ${action.rootRef} was issued for a page this tab has ` +
+              "since left; re-observe and use a ref from the new page",
+          },
+        };
+      }
+      const known = parsed ? map?.entries.get(parsed) : undefined;
       if (!known?.backendDOMNodeId) {
         return {
           ok: false,
@@ -1163,11 +1184,55 @@ export class ChromiumDriver implements BrowserDriver {
       }
       rootBackendNodeId = resolved;
     }
-    return {
-      ok: true,
-      tree: await readAxTree(cdp, rootBackendNodeId),
-      filter,
-    };
+    const read = await readAxTree(cdp, rootBackendNodeId);
+    if (!read.ok) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page could not answer an accessibility " +
+            'tree; observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    if (rootBackendNodeId !== undefined && read.tree === null) {
+      // The root resolved when it was issued and is gone now. An empty tree
+      // here would read as "that subtree is empty" — the model would believe
+      // the page rather than re-observing.
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            `stale_ref: the element ${action.rootRef ?? action.rootSelector} ` +
+            "named is no longer on this page; re-observe and pick one it shows",
+        },
+      };
+    }
+    return { ok: true, tree: read.tree, filter };
+  }
+
+  /**
+   * Do this tab's refs still describe the page it is on?
+   *
+   * Compares page IDENTITY (which navigation, which URL) and not content: a
+   * DOM that mutated under a ref is what `stale_ref` recovery by role and name
+   * exists to survive, and refusing every ref after any mutation would make
+   * them useless on exactly the pages that need them.
+   */
+  private refsStillDescribe(
+    tabId: string,
+    entry: TabEntry,
+    map: RefMap,
+  ): boolean {
+    const minted = map.stateToken;
+    if (!minted) return false;
+    return (
+      minted.tabId === tabId &&
+      minted.navCounter === entry.navCounter &&
+      minted.urlHash === shortHash(entry.page.url())
+    );
   }
 
   /** Forget a tab and everything attached to it. */

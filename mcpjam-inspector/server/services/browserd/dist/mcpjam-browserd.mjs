@@ -49,6 +49,10 @@ var BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /** A ref this tab's last observation never issued. */
+  "unknown_ref",
+  /** The page could not answer an accessibility tree at all. */
+  "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
   /** A dialog is open and waiting for the person who holds the lease. */
@@ -1563,17 +1567,20 @@ async function readAxTree(cdp, rootBackendNodeId) {
     await cdp.send("Accessibility.enable");
     const response = await cdp.send("Accessibility.getFullAXTree");
     const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return null;
+    if (!nodes || nodes.length === 0) return { ok: false };
     const byId = /* @__PURE__ */ new Map();
     for (const node of nodes) byId.set(node.nodeId, node);
     const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
-    if (!root) return null;
+    if (!root) return { ok: true, tree: null };
     const seen = /* @__PURE__ */ new Set();
     const built = build(root, byId, seen);
-    if (built.length === 0) return null;
-    return built.length === 1 ? built[0] : { role: "RootWebArea", children: built };
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+    };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 function build(node, byId, seen) {
@@ -1661,9 +1668,18 @@ var CONTENT_ROLES = /* @__PURE__ */ new Set([
   "rowheader",
   "listitem",
   "article",
+  // The landmark set, whole. A named `search` or `contentinfo` is exactly the
+  // sort of thing a model zooms into, and leaving half the landmarks out meant
+  // a named one vanished from the default view unless it happened to contain a
+  // control — which is not a property of the landmark at all.
   "region",
   "main",
-  "navigation"
+  "navigation",
+  "banner",
+  "complementary",
+  "contentinfo",
+  "form",
+  "search"
 ]);
 function isRefWorthy(node) {
   const role = node.role;
@@ -1671,18 +1687,37 @@ function isRefWorthy(node) {
   if (INTERACTIVE_ROLES.has(role)) return true;
   return CONTENT_ROLES.has(role) && typeof node.name === "string" && node.name.length > 0;
 }
-function filterInteractive(node) {
-  const children = [];
-  for (const child of node.children ?? []) {
-    const kept = filterInteractive(child);
-    if (kept) children.push(kept);
+function filterInteractive(root) {
+  const rootKept = [];
+  const stack = [
+    { frame: { node: root, parentKept: rootKept }, kept: [], expanded: false }
+  ];
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1];
+    if (!top.expanded) {
+      top.expanded = true;
+      const children = top.frame.node.children ?? [];
+      for (let i = children.length - 1; i >= 0; i -= 1) {
+        stack.push({
+          frame: { node: children[i], parentKept: top.kept },
+          kept: [],
+          expanded: false
+        });
+      }
+      continue;
+    }
+    stack.pop();
+    const { node, parentKept } = top.frame;
+    const { children: _dropped, ...rest } = node;
+    if (isRefWorthy(node)) {
+      parentKept?.push(
+        top.kept.length > 0 ? { ...rest, children: top.kept } : { ...rest }
+      );
+    } else if (top.kept.length > 0) {
+      parentKept?.push({ ...rest, children: top.kept });
+    }
   }
-  const { children: _dropped, ...rest } = node;
-  if (isRefWorthy(node)) {
-    return children.length > 0 ? { ...rest, children } : { ...rest };
-  }
-  if (children.length === 0) return null;
-  return { ...rest, children };
+  return rootKept[0] ?? null;
 }
 function assignRefs(root) {
   const entries = /* @__PURE__ */ new Map();
@@ -1735,6 +1770,7 @@ var FLAG_ATTRS = [
   "focused",
   "readonly"
 ];
+var TRISTATE_ATTRS = ["checked", "pressed", "expanded"];
 function isTransparent(node) {
   const role = node.role;
   if (typeof role !== "string" || role.length === 0) return true;
@@ -1750,11 +1786,20 @@ function isTransparent(node) {
 function attributes(node) {
   const parts = [];
   if (typeof node.level === "number") parts.push(`level=${node.level}`);
-  if (node.checked !== void 0) parts.push(`checked=${String(node.checked)}`);
-  if (node.expanded !== void 0)
-    parts.push(`expanded=${String(node.expanded)}`);
+  for (const key of TRISTATE_ATTRS) {
+    if (node[key] !== void 0) parts.push(`${key}=${String(node[key])}`);
+  }
   for (const flag of FLAG_ATTRS) {
     if (node[flag] === true) parts.push(flag);
+  }
+  for (const [key, label] of [
+    ["valueMin", "min"],
+    ["valueMax", "max"]
+  ]) {
+    const bound = node[key];
+    if (typeof bound === "number" || typeof bound === "string") {
+      parts.push(`${label}=${String(bound)}`);
+    }
   }
   if (typeof node.ref === "string") parts.push(`ref=${node.ref}`);
   if (typeof node.url === "string" && node.url.length > 0) {
@@ -1769,9 +1814,12 @@ function line(node, indent) {
     text += ` ${JSON.stringify(node.name)}`;
   }
   text += attributes(node);
-  const value = node.value;
+  if (typeof node.description === "string" && node.description.length > 0) {
+    text += ` (${JSON.stringify(node.description)})`;
+  }
+  const value = node.valueText ?? node.value;
   if ((typeof value === "string" || typeof value === "number") && String(value).length > 0 && String(value) !== node.name) {
-    text += `: ${String(value)}`;
+    text += `: ${JSON.stringify(String(value))}`;
   }
   return text;
 }
@@ -1780,7 +1828,7 @@ function renderA11yTree(root, options = {}) {
   const visit = (node, indent, parentRef) => {
     if (node.role === "omitted") {
       const hidden = typeof node.hiddenNodes === "number" ? node.hiddenNodes : 0;
-      const retrieval = parentRef ? `; observe {mode:"a11y", rootRef:"${parentRef}"} to read it` : "";
+      const retrieval = parentRef ? `; observe {mode:"a11y", rootRef:"${parentRef}"} to read it` : '; narrow with observe {mode:"a11y", rootSelector} or read it with {mode:"text"}';
       lines.push(
         `${"  ".repeat(indent)}- \u2026 [${hidden} node(s) omitted${retrieval}]`
       );
@@ -2914,10 +2962,6 @@ var ChromiumDriver = class {
         const rendered = renderA11yTree(tree, {
           interactiveOnly: raw.filter === "interactive"
         });
-        this.refs.set(tabId, {
-          stateToken: void 0,
-          entries: refs
-        });
         const result = this.observation(
           tabId,
           entry,
@@ -2934,8 +2978,11 @@ var ChromiumDriver = class {
           frame,
           permit
         );
-        const map = this.refs.get(tabId);
-        if (map) map.stateToken = result.stateToken;
+        if (!result.ok) {
+          this.refs.delete(tabId);
+          return result;
+        }
+        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
         return result;
       }
       case "console": {
@@ -3292,7 +3339,18 @@ var ChromiumDriver = class {
     let rootBackendNodeId;
     if (action.rootRef !== void 0) {
       const parsed = parseRef(action.rootRef);
-      const known = parsed ? this.refs.get(tabId)?.entries.get(parsed) : void 0;
+      const map = this.refs.get(tabId);
+      if (map && !this.refsStillDescribe(tabId, entry, map)) {
+        this.refs.delete(tabId);
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error: `stale_ref: ${action.rootRef} was issued for a page this tab has since left; re-observe and use a ref from the new page`
+          }
+        };
+      }
+      const known = parsed ? map?.entries.get(parsed) : void 0;
       if (!known?.backendDOMNodeId) {
         return {
           ok: false,
@@ -3316,11 +3374,39 @@ var ChromiumDriver = class {
       }
       rootBackendNodeId = resolved;
     }
-    return {
-      ok: true,
-      tree: await readAxTree(cdp, rootBackendNodeId),
-      filter
-    };
+    const read = await readAxTree(cdp, rootBackendNodeId);
+    if (!read.ok) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error: 'a11y_unavailable: this page could not answer an accessibility tree; observe {mode:"text"} or {mode:"screenshot"} instead'
+        }
+      };
+    }
+    if (rootBackendNodeId !== void 0 && read.tree === null) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error: `stale_ref: the element ${action.rootRef ?? action.rootSelector} named is no longer on this page; re-observe and pick one it shows`
+        }
+      };
+    }
+    return { ok: true, tree: read.tree, filter };
+  }
+  /**
+   * Do this tab's refs still describe the page it is on?
+   *
+   * Compares page IDENTITY (which navigation, which URL) and not content: a
+   * DOM that mutated under a ref is what `stale_ref` recovery by role and name
+   * exists to survive, and refusing every ref after any mutation would make
+   * them useless on exactly the pages that need them.
+   */
+  refsStillDescribe(tabId, entry, map) {
+    const minted = map.stateToken;
+    if (!minted) return false;
+    return minted.tabId === tabId && minted.navCounter === entry.navCounter && minted.urlHash === shortHash(entry.page.url());
   }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {

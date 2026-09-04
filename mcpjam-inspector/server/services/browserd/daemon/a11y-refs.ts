@@ -66,9 +66,18 @@ export const CONTENT_ROLES = new Set([
   "rowheader",
   "listitem",
   "article",
+  // The landmark set, whole. A named `search` or `contentinfo` is exactly the
+  // sort of thing a model zooms into, and leaving half the landmarks out meant
+  // a named one vanished from the default view unless it happened to contain a
+  // control — which is not a property of the landmark at all.
   "region",
   "main",
   "navigation",
+  "banner",
+  "complementary",
+  "contentinfo",
+  "form",
+  "search",
 ]);
 
 /** Does this node get a ref? */
@@ -121,21 +130,56 @@ export interface RefMap {
  * surviving children take its place, so `div > div > button` collapses to
  * `button` instead of vanishing with its wrapper.
  */
-export function filterInteractive(node: A11yNode): A11yNode | null {
-  const children: A11yNode[] = [];
-  for (const child of node.children ?? []) {
-    const kept = filterInteractive(child);
-    if (kept) children.push(kept);
+export function filterInteractive(root: A11yNode): A11yNode | null {
+  // ITERATIVE. This runs on the RAW tree, before the depth budget applies, so
+  // a deeply nested page would overflow the stack here and fail the whole
+  // observation — the same reason the budget's node counter is iterative. The
+  // walk is two passes over an explicit stack: down to collect, then up to
+  // rebuild, because whether a node survives depends on its children.
+  interface Frame {
+    node: A11yNode;
+    /** Where this node's kept children land in the parent's list. */
+    parentKept: A11yNode[] | null;
   }
-  const { children: _dropped, ...rest } = node;
-  if (isRefWorthy(node)) {
-    return children.length > 0 ? { ...rest, children } : { ...rest };
+  const rootKept: A11yNode[] = [];
+  // `kept` for a node is filled by its children before the node itself is
+  // rebuilt, so each frame is visited twice: once to push its children, once
+  // to decide its own fate.
+  const stack: Array<{ frame: Frame; kept: A11yNode[]; expanded: boolean }> = [
+    { frame: { node: root, parentKept: rootKept }, kept: [], expanded: false },
+  ];
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1]!;
+    if (!top.expanded) {
+      top.expanded = true;
+      const children = top.frame.node.children ?? [];
+      // Pushed in reverse so the first child is rebuilt first and the kept
+      // list comes back in document order.
+      for (let i = children.length - 1; i >= 0; i -= 1) {
+        stack.push({
+          frame: { node: children[i]!, parentKept: top.kept },
+          kept: [],
+          expanded: false,
+        });
+      }
+      continue;
+    }
+    stack.pop();
+    const { node, parentKept } = top.frame;
+    const { children: _dropped, ...rest } = node;
+    if (isRefWorthy(node)) {
+      parentKept?.push(
+        top.kept.length > 0 ? { ...rest, children: top.kept } : { ...rest },
+      );
+    } else if (top.kept.length > 0) {
+      // Not actionable itself, but on the path to something that is. Keeping
+      // the node (rather than splicing its children into the parent)
+      // preserves the nesting a model uses to tell one list row's button from
+      // the next one's.
+      parentKept?.push({ ...rest, children: top.kept });
+    }
   }
-  if (children.length === 0) return null;
-  // Not actionable itself, but on the path to something that is. Keeping the
-  // node (rather than splicing its children into the parent) preserves the
-  // nesting a model uses to tell one list row's button from the next one's.
-  return { ...rest, children };
+  return rootKept[0] ?? null;
 }
 
 /**

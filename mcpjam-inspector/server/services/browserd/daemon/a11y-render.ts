@@ -42,6 +42,15 @@ const FLAG_ATTRS = [
 ] as const;
 
 /**
+ * States where FALSE is an answer, not an absence.
+ *
+ * "Not ticked" and "not a checkbox" are different things, and so are "not
+ * pressed" and "not a toggle". A model that cannot tell them apart acts on a
+ * control that was already in the state it wanted.
+ */
+const TRISTATE_ATTRS = ["checked", "pressed", "expanded"] as const;
+
+/**
  * Roles that carry no information once their children are rendered.
  *
  * `generic` with a single child is a wrapper the page author needed and the
@@ -66,11 +75,23 @@ function isTransparent(node: A11yNode): boolean {
 function attributes(node: A11yNode): string {
   const parts: string[] = [];
   if (typeof node.level === "number") parts.push(`level=${node.level}`);
-  if (node.checked !== undefined) parts.push(`checked=${String(node.checked)}`);
-  if (node.expanded !== undefined)
-    parts.push(`expanded=${String(node.expanded)}`);
+  for (const key of TRISTATE_ATTRS) {
+    if (node[key] !== undefined) parts.push(`${key}=${String(node[key])}`);
+  }
   for (const flag of FLAG_ATTRS) {
     if (node[flag] === true) parts.push(flag);
+  }
+  // A slider whose ends the model cannot see is one it cannot aim. The reader
+  // already carries these; dropping them here made the tree read the same
+  // shape while saying strictly less.
+  for (const [key, label] of [
+    ["valueMin", "min"],
+    ["valueMax", "max"],
+  ] as const) {
+    const bound = node[key];
+    if (typeof bound === "number" || typeof bound === "string") {
+      parts.push(`${label}=${String(bound)}`);
+    }
   }
   if (typeof node.ref === "string") parts.push(`ref=${node.ref}`);
   if (typeof node.url === "string" && node.url.length > 0) {
@@ -89,13 +110,21 @@ function line(node: A11yNode, indent: number): string {
     text += ` ${JSON.stringify(node.name)}`;
   }
   text += attributes(node);
-  const value = node.value;
+  // What a name cannot say: `aria-describedby` is where a page puts "this
+  // cannot be undone".
+  if (typeof node.description === "string" && node.description.length > 0) {
+    text += ` (${JSON.stringify(node.description)})`;
+  }
+  const value = node.valueText ?? node.value;
   if (
     (typeof value === "string" || typeof value === "number") &&
     String(value).length > 0 &&
     String(value) !== node.name
   ) {
-    text += `: ${String(value)}`;
+    // QUOTED, like the name and for the same reason: a textarea holding a
+    // newline would otherwise end this line, and everything after it would
+    // read as more nodes in the tree.
+    text += `: ${JSON.stringify(String(value))}`;
   }
   return text;
 }
@@ -120,9 +149,13 @@ export function renderA11yTree(
       // an act or a re-observation can actually take.
       const hidden =
         typeof node.hiddenNodes === "number" ? node.hiddenNodes : 0;
+      // With no ref anywhere above, there is nothing on this tree to zoom
+      // into — a page with hundreds of controls directly under the document
+      // has no container to name. Saying that, with the verbs that DO work, is
+      // the honest version of L9's promise; a bare count is a dead end.
       const retrieval = parentRef
         ? `; observe {mode:"a11y", rootRef:"${parentRef}"} to read it`
-        : "";
+        : '; narrow with observe {mode:"a11y", rootSelector} or read it with {mode:"text"}';
       lines.push(
         `${"  ".repeat(indent)}- … [${hidden} node(s) omitted${retrieval}]`,
       );

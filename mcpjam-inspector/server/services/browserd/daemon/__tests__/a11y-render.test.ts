@@ -59,6 +59,37 @@ describe("renderA11yTree — a line per node", () => {
     );
   });
 
+  it("renders a toggle's pressed state, and a slider's range", () => {
+    // A tree that reads the same shape while saying strictly less is how an
+    // agent confidently presses a button that was already down.
+    expect(
+      renderA11yTree({ role: "button", name: "Bold", pressed: false }),
+    ).toBe('- button "Bold" [pressed=false]');
+    expect(
+      renderA11yTree({ role: "slider", name: "Volume", valueMin: 0, valueMax: 11 }),
+    ).toBe('- slider "Volume" [min=0 max=11]');
+  });
+
+  it("carries the description, where a page puts the warning", () => {
+    expect(
+      renderA11yTree({
+        role: "button",
+        name: "Delete",
+        description: "This cannot be undone",
+      }),
+    ).toBe('- button "Delete" ("This cannot be undone")');
+  });
+
+  it("quotes a value containing a newline, which would otherwise forge lines", () => {
+    const text = renderA11yTree({
+      role: "textbox",
+      name: "Notes",
+      value: 'first\n- button "Fake" [ref=e99]',
+    });
+    expect(text.split("\n")).toHaveLength(1);
+    expect(text).toContain('\\n- button');
+  });
+
   it("renders checked=false, which is not the same as absent", () => {
     // "not ticked" and "not a checkbox" are different answers, and a model
     // that cannot tell them apart clicks a box that was already right.
@@ -70,7 +101,7 @@ describe("renderA11yTree — a line per node", () => {
   it("appends a value that says something the name does not", () => {
     expect(
       renderA11yTree({ role: "textbox", name: "Email", value: "a@b.c" }),
-    ).toBe('- textbox "Email": a@b.c');
+    ).toBe('- textbox "Email": "a@b.c"');
     // A value echoing the name is noise.
     expect(
       renderA11yTree({ role: "textbox", name: "Email", value: "Email" }),
@@ -166,13 +197,17 @@ describe("renderA11yTree — omissions", () => {
     expect(text).toContain('rootRef:"e1"');
   });
 
-  it("still says how many are missing when nothing can retrieve them", () => {
-    // No ref anywhere above: the count is still the honest half of the answer.
+  it("names the verbs that DO work when nothing above it has a ref", () => {
+    // A page with hundreds of controls directly under the document has no
+    // container to zoom into. A bare count would be a dead end, which is the
+    // one thing the omit-and-name-the-retrieval contract promises not to be.
     const text = renderA11yTree({
       role: "main",
       children: [{ role: "omitted", hiddenNodes: 7 }],
     });
-    expect(text).toContain("7 node(s) omitted]");
+    expect(text).toContain("7 node(s) omitted");
+    expect(text).toContain("rootSelector");
+    expect(text).toContain('{mode:"text"}');
     expect(text).not.toContain("rootRef");
   });
 });
