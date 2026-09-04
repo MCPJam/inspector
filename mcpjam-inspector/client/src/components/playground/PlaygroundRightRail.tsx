@@ -28,6 +28,8 @@ import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { mintLocalTerminalNonce } from "@/lib/local-computer-consent";
 import { LOCAL_TERMINAL_WS_PATH } from "@/lib/computer-terminal-connection";
 import { LocalBrowserBody } from "@/components/browser/LocalBrowserBody";
+import { HostedBrowserBody } from "@/components/browser/HostedBrowserBody";
+import { useMintBrowserToken } from "@/hooks/useProjectComputer";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 /**
@@ -99,17 +101,22 @@ function RightRailTabbed({
   // ask for. The CHIP follows the resolved `engine`, so it can never claim
   // "This machine" while commands actually run in the cloud.
   const isLocalShell = engine.selectedEngine === "local";
-  // The Browser tab follows the HOST's attached capability, not the engine:
-  // a host without `browser` has no browser for the model to drive, so a pane
-  // for one would be showing something nothing can use.
-  const hasBrowser = Boolean(
-    hostConfig?.builtInToolIds?.includes("browser") &&
-      engine.selectedEngine === "local",
-  );
+  // The Browser tab follows the HOST's attached capability, and ONLY that: a
+  // host without `browser` has no browser for the model to drive, so a pane for
+  // one would be showing something nothing can use. The engine decides which
+  // BODY goes in it, not whether the tab exists — both engines have a browser,
+  // and the tab vanishing on an engine switch was a rail that looked broken.
+  const hasBrowser = Boolean(hostConfig?.builtInToolIds?.includes("browser"));
+  // Which body. Follows `selectedEngine` like the Shell above, so someone who
+  // picked "This machine" but has not authorized it yet sees the local body's
+  // pointer rather than a cloud browser they did not ask for.
+  const isLocalBrowser = engine.selectedEngine === "local";
+  const mintBrowserToken = useMintBrowserToken();
 
-  // A tab that disappears cannot stay selected: switching the engine to cloud
-  // with Browser open used to hide the Browser body AND leave `activeTab` on
-  // it, so all three panes were hidden and the rail looked broken.
+  // A tab that disappears cannot stay selected. Only a host losing the browser
+  // capability can do that now — the engine switch swaps the body instead —
+  // but leaving `activeTab` on a hidden pane hides all three and the rail looks
+  // broken.
   useEffect(() => {
     if (!hasBrowser && activeTab === "browser") setActiveTab("logs");
   }, [hasBrowser, activeTab]);
@@ -181,16 +188,26 @@ function RightRailTabbed({
         >
           {/* Mounted-hidden like the others: switching tabs must not drop the
               frame socket, which would stop the screencast and make the agent's
-              browser go dark every time somebody glanced at the logs. */}
-          <LocalBrowserBody
-            projectId={projectId}
-            consentGranted={engine.consent.granted}
-            consentToken={engine.consent.token}
-            // Mounted-hidden is not "being watched": the pane heartbeats to
-            // defer the browser's idle reap, and a pane behind the Logs tab
-            // must stop claiming somebody is looking at it.
-            active={activeTab === "browser"}
-          />
+              browser go dark every time somebody glanced at the logs.
+
+              `active` is what makes that safe. Mounted-hidden is not "being
+              watched": both panes say somebody is looking in order to defer the
+              idle reap, and a pane behind the Logs tab must stop claiming it —
+              on the hosted engine that claim keeps a METERED box awake. */}
+          {isLocalBrowser ? (
+            <LocalBrowserBody
+              projectId={projectId}
+              consentGranted={engine.consent.granted}
+              consentToken={engine.consent.token}
+              active={activeTab === "browser"}
+            />
+          ) : (
+            <HostedBrowserBody
+              projectId={projectId}
+              mintToken={mintBrowserToken}
+              active={activeTab === "browser"}
+            />
+          )}
         </div>
       ) : null}
       <div
