@@ -3,7 +3,7 @@
  *
  * The repo rule is that advertising a capability means enforcing it, so the flag
  * may only be on if the REAL adapter actually delivers. These tests therefore
- * drive the installed `@ai-sdk/harness-codex` `doStart` against a fake sandbox
+ * drive the installed `@ai-sdk/harness-codex` adapter against a fake sandbox
  * session (no mock of the adapter, no reimplementation of its writer) and assert
  * what it puts on the box, then assert the SAME payload through the installed
  * `@ai-sdk/harness-claude-code` adapter to show the two runtimes are at parity
@@ -16,14 +16,22 @@
  *   2. That the delivered SKILL.md is valid frontmatter for our descriptions
  *      (both runtimes interpolate `description: ${value}` raw, hence
  *      `frontmatterSafeSkills`).
- *   3. That a name MCPJam accepts is a name Codex accepts — its validator
- *      THROWS inside `doStart`, which would fail the whole turn.
+ *   3. That a name MCPJam accepts is a name the adapters accept — the shared
+ *      writer's validator THROWS mid-turn, which would fail the whole turn.
  *
- * `doStart` is stopped at `spawn` (the point a real CLI process would start):
- * everything under test happens before it.
+ * HOW THE DRIVE WORKS on the `1.0.x` stable line. The canary adapters wrote
+ * skills during `doStart` (so the old version of this file stopped `doStart`
+ * at `spawn`); stable writes them at PROMPT time, inside `doPromptTurn`,
+ * re-synced every turn. Reaching `doPromptTurn` requires a live session, so
+ * each test runs a minimal fake bridge: a real WebSocket server standing in
+ * for the in-sandbox bridge process, a `bridge-meta.json` read that reports it
+ * ready, and a spawn that returns an inert process handle. The skill writes
+ * land BEFORE the adapter sends its start message, so the fake bridge never
+ * has to answer anything (beyond claude-code's `bridge-hello` greeting).
  */
 import { describe, expect, it } from "vitest";
 import matter from "gray-matter";
+import { WebSocketServer } from "ws";
 import { createCodex } from "@ai-sdk/harness-codex";
 import { createClaudeCode } from "@ai-sdk/harness-claude-code";
 import { getHarnessAdapter } from "../registry";
@@ -35,17 +43,23 @@ import {
 
 /** `$HOME` on the E2B harness box (see `e2b-sandbox-provider`). */
 const BOX_HOME = "/home/user";
-/** Sentinel thrown to end `doStart` at the process boundary. */
-const STOP_AT_SPAWN = "stop-at-spawn";
 
 type Write = { path: string; content: string };
 
+type HarnessSkillPayload = Array<{
+  name: string;
+  description: string;
+  content: string;
+  files?: Array<{ path: string; content: string }>;
+}>;
+
 /**
- * Minimal fake of the sandbox session the harness drives. Only the surface
- * `doStart` touches before spawning is implemented; `spawn` throws so no real
- * process (or bridge socket) is ever created.
+ * Minimal fake of the sandbox session the harness drives — the same surface
+ * MCPJam's `e2b-sandbox-provider` exposes. `bridge-meta.json` always reads as
+ * "waiting" so `waitForBridgeReady` resolves on its first metadata poll, and
+ * `getPortEndpoint` points the adapter's bridge WebSocket at the test server.
  */
-function fakeSandboxSession() {
+function fakeSandboxSession(bridgeType: "codex" | "claude-code", port: number) {
   const writes: Write[] = [];
   const commands: string[] = [];
   const restricted = {
@@ -57,13 +71,21 @@ function fakeSandboxSession() {
       }
       return { exitCode: 0, stdout: "", stderr: "" };
     },
-    readTextFile: async () => null,
+    readTextFile: async ({ path }: { path: string }) =>
+      path.endsWith("/bridge-meta.json")
+        ? JSON.stringify({ type: bridgeType, state: "waiting", port })
+        : null,
     writeTextFile: async (write: Write) => {
       writes.push(write);
     },
-    spawn: async () => {
-      throw new Error(STOP_AT_SPAWN);
-    },
+    // An inert bridge process: the real bridge is the test's WebSocket server,
+    // so the handle only has to satisfy stream readers and teardown.
+    spawn: async () => ({
+      stdout: new ReadableStream<Uint8Array>({ start() {} }),
+      stderr: new ReadableStream<Uint8Array>({ start() {} }),
+      kill: async () => {},
+      wait: async () => ({ exitCode: 0, stdout: "", stderr: "" }),
+    }),
   };
   return {
     writes,
@@ -71,48 +93,89 @@ function fakeSandboxSession() {
     session: {
       id: "sandbox-1",
       defaultWorkingDirectory: `${BOX_HOME}/work`,
-      ports: [8080],
+      ports: [port],
       restricted: () => restricted,
-      getPortUrl: async () => "ws://localhost:8080",
+      getPortEndpoint: async () => ({ url: `ws://127.0.0.1:${port}` }),
     },
   };
 }
 
-/** Run the adapter's real `doStart` up to the spawn boundary. */
-async function startWithSkills(
-  harness: { doStart: (opts: unknown) => Promise<unknown> },
-  skills: Array<{
-    name: string;
-    description: string;
-    content: string;
-    files?: Array<{ path: string; content: string }>;
-  }>
+/**
+ * Drive the adapter's real `doStart` to a live session, then its real
+ * `doPromptTurn` — the point where the stable adapters write skills — and
+ * capture everything written to the box. The turn itself is never answered;
+ * skills land before the start message goes out.
+ */
+async function promptWithSkills(
+  harness: {
+    harnessId: string;
+    doStart: (opts: unknown) => Promise<{
+      doPromptTurn: (opts: unknown) => Promise<{ done: Promise<unknown> }>;
+      doDestroy: () => Promise<unknown>;
+    }>;
+  },
+  skills: HarnessSkillPayload
 ): Promise<{ writes: Write[]; commands: string[]; error: unknown }> {
-  const box = fakeSandboxSession();
+  const bridgeType = harness.harnessId as "codex" | "claude-code";
+  const wss = new WebSocketServer({ host: "127.0.0.1", port: 0 });
+  await new Promise((resolve) => wss.once("listening", resolve));
+  const port = (wss.address() as { port: number }).port;
+  wss.on("connection", (socket) => {
+    // claude-code's connect handshake waits for the bridge's greeting; codex
+    // opens the socket and moves on.
+    if (bridgeType === "claude-code") {
+      socket.send(JSON.stringify({ type: "bridge-hello" }));
+    }
+  });
+
+  const box = fakeSandboxSession(bridgeType, port);
+  let session:
+    | Awaited<ReturnType<(typeof harness)["doStart"]>>
+    | undefined;
   let error: unknown;
   try {
-    await harness.doStart({
+    session = await harness.doStart({
       sessionId: "session-1",
       sessionWorkDir: `${BOX_HOME}/work`,
       sandboxSession: box.session,
       permissionMode: "allow-all",
-      skills,
     });
+    const control = await session.doPromptTurn({
+      prompt: "hello",
+      tools: [],
+      skills,
+      emit: () => {},
+    });
+    // The fake bridge never finishes the turn; teardown rejects `done`.
+    control.done.catch(() => {});
   } catch (err) {
     error = err;
+  } finally {
+    try {
+      await session?.doDestroy();
+    } catch {
+      /* teardown only */
+    }
+    for (const client of wss.clients) client.terminate();
+    await new Promise((resolve) => wss.close(() => resolve(undefined)));
   }
   return { writes: box.writes, commands: box.commands, error };
 }
 
-/** Writes under a skills root, in order (the adapter also writes bridge state). */
+/** Skill-content writes under a skills root, excluding the shared writer's own
+ *  `.ai-sdk-harness-skills.json` sync manifest (an adapter implementation
+ *  detail, not a delivered skill). */
 function skillWrites(writes: Write[], skillsBaseDir: string): Write[] {
-  return writes.filter((w) => w.path.startsWith(`${skillsBaseDir}/`));
+  return writes.filter(
+    (w) =>
+      w.path.startsWith(`${skillsBaseDir}/`) &&
+      !w.path.includes("/.ai-sdk-harness-skills.json")
+  );
 }
 
-/** A write is "expected to have happened" only if we got past it to `spawn`. */
-function expectReachedSpawn(error: unknown): void {
-  expect(error).toBeInstanceOf(Error);
-  expect((error as Error).message).toBe(STOP_AT_SPAWN);
+/** Writes are "expected to have happened" only if the whole turn setup ran. */
+function expectReachedPrompt(error: unknown): void {
+  expect(error).toBeUndefined();
 }
 
 function skill(p: Partial<RuntimeSkill> & { skillId: string }): RuntimeSkill {
@@ -133,21 +196,22 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
       skill({ skillId: "s2", name: "csv-tools", description: "Read CSVs" }),
     ]);
 
-    const { writes, error } = await startWithSkills(
+    const { writes, error } = await promptWithSkills(
       createCodex() as never,
       prepared.payload
     );
 
-    expectReachedSpawn(error);
+    expectReachedPrompt(error);
     // The load-bearing assertion: the registry's root IS where codex writes.
     // If the adapter ever moves its root, every MCPJam skill pass would silently
     // target a directory the CLI does not read — this fails first.
     expect(adapter.skillsBaseDir).toBe(`${BOX_HOME}/.agents/skills`);
+    // (The stable writer syncs skills sorted by name, so csv-tools lands first.)
     expect(
       skillWrites(writes, adapter.skillsBaseDir).map((w) => w.path)
     ).toEqual([
-      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
       `${adapter.skillsBaseDir}/csv-tools/SKILL.md`,
+      `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
     ]);
     // Nothing lands anywhere else under $HOME's skill roots — in particular not
     // Claude Code's, which MCPJam's passes would then also have to reconcile.
@@ -160,7 +224,7 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     // MCPJam materializes supporting files itself (Convex blobs, byte budget),
     // but it must write them into the SAME dir layout the adapter uses.
     const adapter = getHarnessAdapter("codex");
-    const { writes, error } = await startWithSkills(createCodex() as never, [
+    const { writes, error } = await promptWithSkills(createCodex() as never, [
       {
         name: "pdf-tools",
         description: "Process PDFs",
@@ -169,9 +233,12 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
       },
     ]);
 
-    expectReachedSpawn(error);
+    expectReachedPrompt(error);
+    // Within a skill the writer orders files by locale, so compare as a set.
     expect(
-      skillWrites(writes, adapter.skillsBaseDir).map((w) => w.path)
+      skillWrites(writes, adapter.skillsBaseDir)
+        .map((w) => w.path)
+        .sort()
     ).toEqual([
       `${adapter.skillsBaseDir}/pdf-tools/SKILL.md`,
       `${adapter.skillsBaseDir}/pdf-tools/scripts/run.py`,
@@ -186,12 +253,12 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     const runtime = [
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ];
-    const { writes, error } = await startWithSkills(
+    const { writes, error } = await promptWithSkills(
       createCodex() as never,
       prepareCodexSkills(runtime).payload
     );
 
-    expectReachedSpawn(error);
+    expectReachedPrompt(error);
     const parsed = matter(
       skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)[0]!.content
     );
@@ -204,14 +271,14 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     // The negative half of the previous test: the semantic payload — what a
     // structurally-composing adapter could take — yields YAML that does not
     // round-trip through codex's raw interpolation.
-    const { writes, error } = await startWithSkills(
+    const { writes, error } = await promptWithSkills(
       createCodex() as never,
       toHarnessSkills([
         skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
       ])
     );
 
-    expectReachedSpawn(error);
+    expectReachedPrompt(error);
     const written = skillWrites(
       writes,
       getHarnessAdapter("codex").skillsBaseDir
@@ -242,22 +309,23 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
     );
     expect(prepared.skipped).toEqual([]);
 
-    const { writes, error } = await startWithSkills(
+    const { writes, error } = await promptWithSkills(
       createCodex() as never,
       prepared.payload
     );
 
-    expectReachedSpawn(error);
+    expectReachedPrompt(error);
     expect(
       skillWrites(writes, getHarnessAdapter("codex").skillsBaseDir)
     ).toHaveLength(names.length);
   });
 
   it("THROWS on a name MCPJam filters out — which is why it filters", async () => {
-    // Demonstrates the failure mode `prepareCodexSkills` exists to prevent: the
-    // rejection happens inside `doStart`, so an unfiltered bad name takes down
-    // the entire turn (not just that skill).
-    const { error } = await startWithSkills(createCodex() as never, [
+    // Demonstrates the failure mode `prepareCodexSkills` exists to prevent: on
+    // the stable line the rejection happens inside `doPromptTurn` (skills are
+    // synced per turn), so an unfiltered bad name takes down the entire turn
+    // (not just that skill).
+    const { error } = await promptWithSkills(createCodex() as never, [
       { name: "..", description: "d", content: "c" },
     ]);
     expect((error as Error).message).toMatch(/Invalid Codex skill name/);
@@ -273,14 +341,14 @@ describe("codex skill parity (real @ai-sdk/harness-codex adapter)", () => {
       skill({ skillId: "s1", description: 'Process: PDFs "safely"' }),
     ]).payload;
 
-    const codexRun = await startWithSkills(createCodex() as never, payload);
-    const claudeRun = await startWithSkills(
+    const codexRun = await promptWithSkills(createCodex() as never, payload);
+    const claudeRun = await promptWithSkills(
       createClaudeCode() as never,
       payload
     );
 
-    expectReachedSpawn(codexRun.error);
-    expectReachedSpawn(claudeRun.error);
+    expectReachedPrompt(codexRun.error);
+    expectReachedPrompt(claudeRun.error);
     const codexWrite = codexRun.writes.find((w) =>
       w.path.endsWith("/SKILL.md")
     )!;

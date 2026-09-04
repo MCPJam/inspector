@@ -142,7 +142,9 @@ export function ScenarioPerTurnFeedbackToggle({
   };
 
   return (
-    <div className="mt-8 border-t border-border/40 pt-4">
+    // No heading or rule of its own: this sits under the Edit page's
+    // "Ratings" section, which owns both.
+    <div>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <p className="text-sm font-medium text-foreground">

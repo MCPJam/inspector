@@ -96,6 +96,15 @@ export type ConnectionDefaults = {
   suppressListenChannel?: true;
   dropToolListChanged?: true;
   /**
+   * Per-era cancellation from `mcpProfile.toolCallCancellation`, carrying only
+   * the degraded (`false`) leaves. NOT reduced to one flag here: on an
+   * unpinned host the era is not known until the connection negotiates, so the
+   * SDK picks the leaf then. Like the pagination/MRTR knobs it is not
+   * HTTP-only — withholding the caller's abort signal suppresses whichever
+   * mechanism that era would have used.
+   */
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  /**
    * The host's enterprise-managed authorization policy, resolved client-side
    * via `readXaaEnterprisePolicy(hostConfig.mcpProfile)`. Present only when
    * the policy is validly ON — the client surfaces an `invalid` policy as a
