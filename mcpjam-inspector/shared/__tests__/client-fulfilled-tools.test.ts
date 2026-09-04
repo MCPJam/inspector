@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  BROWSER_TOOL_NAMES,
+  classifyBrowserToolApprovals,
   classifyPageToolApprovals,
+  isBrowserToolName,
+  mergeUiToolApprovalClassifications,
   classifyUiToolApprovals,
   isAppToolAlias,
   isClientFulfilledToolName,
@@ -270,5 +274,92 @@ describe("client-fulfilled tool names", () => {
       const { requiredNames } = classifyPageToolApprovals(["page_deadbeef"]);
       expect(requiredNames.has("page_deadbeef")).toBe(true);
     });
+  });
+});
+
+/**
+ * W3: the hosted `browser_*` tools are name-classified like page tools, and
+ * several namespaces now have to share the engines' ONE approval slot.
+ */
+describe("classifyBrowserToolApprovals", () => {
+  it("gates everything by default — interactive AND observational", () => {
+    // There is nothing trustworthy to classify on: a page is third-party code
+    // and the browser is signed into things.
+    const { requiredNames, freeNames } = classifyBrowserToolApprovals(
+      BROWSER_TOOL_NAMES,
+    );
+    expect(requiredNames.size).toBe(BROWSER_TOOL_NAMES.length);
+    expect(freeNames.size).toBe(0);
+  });
+
+  it("frees ONLY observation tools under an explicit read-only policy", () => {
+    const { requiredNames, freeNames } = classifyBrowserToolApprovals(
+      BROWSER_TOOL_NAMES,
+      { readOnly: true },
+    );
+    expect([...freeNames].sort()).toEqual([
+      "browser_observe",
+      "browser_webmcp_tools",
+    ]);
+    // A policy cannot make clicking a button on a live, logged-in page safe.
+    expect([...requiredNames].sort()).toEqual([
+      "browser_act",
+      "browser_navigate",
+      "browser_tabs",
+      "browser_webmcp_invoke",
+    ]);
+  });
+
+  it("handles undefined and empty inputs", () => {
+    expect(classifyBrowserToolApprovals(undefined).requiredNames.size).toBe(0);
+    expect(classifyBrowserToolApprovals([]).freeNames.size).toBe(0);
+  });
+
+  it("identifies browser tool names", () => {
+    expect(isBrowserToolName("browser_act")).toBe(true);
+    expect(isBrowserToolName("browser_observe")).toBe(true);
+    expect(isBrowserToolName("bash")).toBe(false);
+    expect(isBrowserToolName("page_1234abcd")).toBe(false);
+  });
+});
+
+describe("mergeUiToolApprovalClassifications", () => {
+  it("unions the namespaces that share the engines' single slot", () => {
+    const merged = mergeUiToolApprovalClassifications(
+      classifyPageToolApprovals(["page_1234abcd"]),
+      classifyBrowserToolApprovals(["browser_act"]),
+      { requiredNames: new Set(), freeNames: new Set(["ui_snapshot_app"]) },
+    );
+    expect([...merged.requiredNames].sort()).toEqual([
+      "browser_act",
+      "page_1234abcd",
+    ]);
+    expect([...merged.freeNames]).toEqual(["ui_snapshot_app"]);
+  });
+
+  it("REQUIRED wins over free — merging must never be why something stops gating", () => {
+    const merged = mergeUiToolApprovalClassifications(
+      { requiredNames: new Set(["shared_name"]), freeNames: new Set() },
+      { requiredNames: new Set(), freeNames: new Set(["shared_name"]) },
+    );
+    expect(merged.requiredNames.has("shared_name")).toBe(true);
+    // A name must never appear in both sets: an engine reads required first,
+    // but leaving it in `free` would mislead anything else that looks.
+    expect(merged.freeNames.has("shared_name")).toBe(false);
+  });
+
+  it("tolerates undefined contributors (a turn with no browser tools)", () => {
+    const merged = mergeUiToolApprovalClassifications(
+      undefined,
+      classifyPageToolApprovals(["page_abcd1234"]),
+      undefined,
+    );
+    expect([...merged.requiredNames]).toEqual(["page_abcd1234"]);
+  });
+
+  it("returns empty sets for no contributors at all", () => {
+    const merged = mergeUiToolApprovalClassifications();
+    expect(merged.requiredNames.size).toBe(0);
+    expect(merged.freeNames.size).toBe(0);
   });
 });

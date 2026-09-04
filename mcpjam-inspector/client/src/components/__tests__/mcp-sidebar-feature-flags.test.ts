@@ -47,7 +47,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "registry-enabled": false }
+      { "registry-enabled": false },
     );
     const titles = result[0].items.map((i) => i.title);
     expect(titles).toEqual(["Always Visible"]);
@@ -69,7 +69,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { xaa: false }
+      { xaa: false },
     );
 
     expect(result[0].items.map((i) => i.title)).toEqual(["OAuth Debugger"]);
@@ -150,7 +150,7 @@ describe("filterByFeatureFlags", () => {
           ],
         },
       ],
-      { "mcpjam-conformance": false }
+      { "mcpjam-conformance": false },
     );
 
     expect(result[0].items.map((item) => item.title)).toEqual([
@@ -175,7 +175,7 @@ describe("filterByFeatureFlags", () => {
     ];
 
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items
+      filterByFeatureFlags(sections, { "sandboxes-enabled": true })[0].items,
     ).toEqual([
       {
         title: "Scenarios",
@@ -186,7 +186,7 @@ describe("filterByFeatureFlags", () => {
       },
     ]);
     expect(
-      filterByFeatureFlags(sections, { "sandboxes-enabled": false })
+      filterByFeatureFlags(sections, { "sandboxes-enabled": false }),
     ).toHaveLength(0);
   });
 
@@ -209,7 +209,7 @@ describe("filterByFeatureFlags", () => {
         billingUiEnabled: true,
         gateDenied: { scenarios: true },
         enforcementActive: true,
-      }
+      },
     );
 
     expect(result[0].items[0].disabled).toBe(true);
@@ -311,7 +311,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: false,
-      }
+      },
     );
 
     expect(result[0].items[0].disabled).not.toBe(true);
@@ -341,7 +341,7 @@ describe("applyBillingGateNavState", () => {
         billingUiEnabled: true,
         gateDenied: { evals: true },
         enforcementActive: true,
-      }
+      },
     );
 
     const evalItem = result[0].items.find((i) => i.title === "Testing");
@@ -357,8 +357,9 @@ describe("getHostedNavigationSections", () => {
       {
         id: "others",
         items: [
-          // Tracing is the one surface hosted cannot serve (it needs the
-          // local OTLP collector), so it is the one item dropped here.
+          // Tracing is the one surface hosted cannot serve (its live feed
+          // comes from the local Inspector's RPC bus), so it is the one item
+          // dropped here.
           { title: "Tracing", url: "#tracing", icon: FakeIcon },
           { title: "Tasks", url: "#tasks", icon: FakeIcon },
           {
@@ -464,8 +465,8 @@ describe("Skills is no longer a sidebar item", () => {
     const skillsItems = (sections: typeof navigationSections) =>
       sections.flatMap((section) =>
         section.items.filter(
-          (item) => item.url.replace(/^[#/]+/, "") === "skills"
-        )
+          (item) => item.url.replace(/^[#/]+/, "") === "skills",
+        ),
       );
 
     const hosted = getHostedNavigationSections(navigationSections);

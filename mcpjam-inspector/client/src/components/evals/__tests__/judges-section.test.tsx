@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { JudgesSection } from "../judges-section";
+import { JudgesSection, pruneEmpty } from "../judges-section";
 import type { EvalJudgeConfig } from "../types";
 
 function renderBare(value: EvalJudgeConfig | undefined) {
@@ -57,5 +57,44 @@ describe("JudgesSection — bare (suite settings) auto-grade toggle", () => {
   it("surfaces that it uses credits", () => {
     renderBare({ goalCompletion: { enabled: true, autoRun: true } });
     expect(screen.getByText(/uses credits/i)).toBeInTheDocument();
+  });
+});
+
+describe("pruneEmpty keeps a config that still means something", () => {
+  it("drops a config with nothing set", () => {
+    expect(pruneEmpty({ goalCompletion: {} })).toBeUndefined();
+    expect(pruneEmpty({})).toBeUndefined();
+  });
+
+  it("treats an empty model string as nothing", () => {
+    expect(pruneEmpty({ goalCompletion: { judgeModel: "" } })).toBeUndefined();
+  });
+
+  it("KEEPS a config whose only field is the gating role", () => {
+    // The case that matters. `enabled` may legitimately be absent — the
+    // backend resolves an absent one to on — so a gating suite can carry
+    // `role` and nothing else. Resetting the model to the managed default
+    // clears `judgeModel`, and before `role` was counted here that made the
+    // whole config prune away: a gate the organization had to earn, erased by
+    // an unrelated edit, with no error and no toast.
+    expect(pruneEmpty({ goalCompletion: { role: "gating" } })).toEqual({
+      goalCompletion: { role: "gating" },
+    });
+    expect(pruneEmpty({ goalCompletion: { role: "advisory" } })).toEqual({
+      goalCompletion: { role: "advisory" },
+    });
+  });
+
+  it("keeps each of the other meaningful fields on its own", () => {
+    for (const gc of [
+      { enabled: false },
+      { judgeModel: "openai/gpt-5.4-mini" },
+      { threshold: 0.8 },
+      { autoRun: true },
+    ]) {
+      expect(pruneEmpty({ goalCompletion: gc })).toEqual({
+        goalCompletion: gc,
+      });
+    }
   });
 });
