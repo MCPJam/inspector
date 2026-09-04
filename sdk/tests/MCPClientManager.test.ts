@@ -285,11 +285,14 @@ describe("MCPClientManager", () => {
     it("lets explicit stdio env override inherited parent values", async () => {
       process.env[overrideEnvKey] = "from-parent";
 
-      await manager.connectToServer("env-override", everythingServerConfig({
-        env: {
-          [overrideEnvKey]: "from-config",
-        },
-      }));
+      await manager.connectToServer(
+        "env-override",
+        everythingServerConfig({
+          env: {
+            [overrideEnvKey]: "from-config",
+          },
+        })
+      );
 
       const result = await manager.executeTool("env-override", "get-env", {});
       const env = JSON.parse(extractSingleText(result));
