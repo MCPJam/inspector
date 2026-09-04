@@ -82,6 +82,17 @@ describe("RouteFactsSection", () => {
     expect(section).toHaveTextContent("ended with a question: not measured");
   });
 
+  it("notes when the facts were computed on the page", () => {
+    render(
+      <RouteFactsSection
+        facts={facts()}
+        catalogState="loaded"
+        computedHere
+      />,
+    );
+    expect(screen.getByText("computed here")).toBeInTheDocument();
+  });
+
   it("omits the mismatch expander for a negative test", () => {
     render(
       <RouteFactsSection

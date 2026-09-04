@@ -19,6 +19,7 @@ import {
   getEvalIterationTraceOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -3896,6 +3897,41 @@ export function registerEvalCommands(program: Command): void {
       );
       await executeOp(
         operation as PlatformOperation<Record<string, unknown>, unknown>,
+        input,
+        options,
+        command
+      );
+    }
+  );
+
+      addProjectOption(
+      evals
+      .command("route-facts")
+      .description(
+        "Read the tool routes a run's trials took — which paths were used, and which expected tools were missing or substituted"
+      )
+      .requiredOption("--run <id>", "Eval run ID (from `eval run`)")
+      ).action(
+    async (
+      options: PlatformOptions & { project?: string; run: string },
+      command
+    ) => {
+      const input = validateOpInput(
+        getEvalRunRouteFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          runId: options.run,
+          ...(options.project === undefined ? {} : { project: options.project }),
+        },
+        { projectOptional: true }
+      );
+      await executeOp(
+        getEvalRunRouteFactsOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
         input,
         options,
         command

@@ -178,6 +178,7 @@ const PLAIN_TOOLS = [
   // Stage analytics: a measured description with slice arrays and exclusion
   // tallies. The app renders it as a funnel; a tool result is the numbers.
   "get_eval_run_stage_analytics",
+  "get_eval_run_route_facts",
   "list_eval_suite_stage_analytics",
   "set_eval_suite_environments",
   // Project environments: agent-oriented payloads, no widget view.
@@ -442,6 +443,7 @@ describe("platform tool registration", () => {
       "generate_eval_cases",
       "get_eval_run",
       "get_eval_run_stage_analytics",
+      "get_eval_run_route_facts",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       "get_eval_gate_waiver",

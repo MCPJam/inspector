@@ -11,10 +11,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import {
+  buildEvalRunRouteFacts,
+  evalCaseAggregationKey,
   evalRunDecisionDiagnosticSchema,
   evalRunDecisionSummaryStructuralSchema,
   type EvalRunDecisionDiagnostic,
   type EvalRunDecisionSummary,
+  type EvalRunRouteFacts,
 } from "@mcpjam/sdk/contract";
 
 import { GOLDEN_STAGE_ANALYTICS } from "@/test/stage-analytics-fixtures";
@@ -50,6 +53,13 @@ const stageAnalytics = vi.hoisted(() => ({
     error: null,
   },
 }));
+const routeFacts = vi.hoisted(() => ({
+  current: {
+    status: "absent" as string,
+    document: null as unknown,
+    error: null,
+  },
+}));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
 const routeFactsFlag = vi.hoisted(() => ({ current: false }));
 const compareState = vi.hoisted(() => ({
@@ -73,6 +83,12 @@ vi.mock("posthog-js/react", () => ({
 vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
   useEvalRunStageAnalytics: () => ({
     ...stageAnalytics.current,
+    refetch: () => {},
+  }),
+}));
+vi.mock("@/hooks/use-eval-run-route-facts", () => ({
+  useEvalRunRouteFacts: () => ({
+    ...routeFacts.current,
     refetch: () => {},
   }),
 }));
@@ -182,6 +198,11 @@ function renderContent(
 afterEach(() => {
   cleanup();
   stageAnalytics.current = {
+    status: "absent",
+    document: null,
+    error: null,
+  };
+  routeFacts.current = {
     status: "absent",
     document: null,
     error: null,
@@ -503,5 +524,123 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("route-facts-section")).toBeInTheDocument();
     expect(screen.getByText("Routes")).toBeInTheDocument();
     expect(screen.getByText("Expected vs observed")).toBeInTheDocument();
+  });
+
+  const ROUTE_FACTS_RUN = {
+    ...RUN,
+    suiteId: "suite_1",
+    toolSnapshot: {
+      servers: [
+        {
+          tools: [
+            { name: "export_to_excalidraw" },
+            { name: "create_view" },
+          ],
+        },
+      ],
+    },
+  } as EvalSuiteRun;
+
+  const ROUTE_FACTS_ITERATIONS = [
+    {
+      ...ITERATIONS[0],
+      actualToolCalls: [{ toolName: "create_view", arguments: {} }],
+      testCaseSnapshot: {
+        title: "Draw and share a diagram",
+        caseKey: "hash:a",
+        query: "q",
+        provider: "anthropic",
+        model: "claude",
+        expectedToolCalls: [
+          { toolName: "export_to_excalidraw", arguments: {} },
+        ],
+      },
+    },
+    ITERATIONS[1],
+  ] as EvalIteration[];
+
+  function persistedRouteFactsDoc(): EvalRunRouteFacts {
+    return buildEvalRunRouteFacts({
+      run: {
+        runId: "run_1",
+        suiteId: "suite_1",
+        materializationState: "final",
+        now: 0,
+      },
+      trials: [
+        {
+          trialKey: "it_1",
+          status: "completed",
+          result: "failed",
+          actualToolCalls: [
+            { toolName: "persisted_search" },
+            { toolName: "persisted_get" },
+          ],
+          expectedToolCalls: [{ toolName: "export_to_excalidraw" }],
+          caseVariantKey: evalCaseAggregationKey({
+            caseId: "hash:a",
+            executionVariant: { model: "claude", provider: "anthropic" },
+          }),
+          caseKey: "hash:a",
+          executionVariant: { model: "claude", provider: "anthropic" },
+        },
+      ],
+      catalog: {
+        state: "loaded",
+        toolNames: [
+          "persisted_search",
+          "persisted_get",
+          "export_to_excalidraw",
+        ],
+      },
+    });
+  }
+
+  it("prefers the persisted route-facts document when the hook is ready", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "ready",
+      document: persistedRouteFactsDoc(),
+      error: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: ROUTE_FACTS_ITERATIONS,
+    });
+
+    const section = screen.getByTestId("route-facts-section");
+    expect(section).toHaveTextContent("persisted_search→persisted_get");
+    expect(section).not.toHaveTextContent("create_view");
+    expect(screen.queryByText("computed here")).toBeNull();
+  });
+
+  it("falls back to local route facts when the persisted document is absent", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "absent",
+      document: null,
+      error: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: ROUTE_FACTS_ITERATIONS,
+    });
+
+    const section = screen.getByTestId("route-facts-section");
+    expect(section).toHaveTextContent("create_view");
+    expect(section).not.toHaveTextContent("persisted_search→persisted_get");
+    expect(screen.getByText("computed here")).toBeInTheDocument();
   });
 });

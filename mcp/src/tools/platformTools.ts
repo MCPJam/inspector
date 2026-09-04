@@ -46,6 +46,7 @@ import {
   getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -267,6 +268,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // stopped; these say how much of the run was measured at all — and until
   // now nothing outside the web app could ask.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already

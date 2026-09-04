@@ -183,6 +183,7 @@ export function RunCaseRowBody({
   iterations,
   routeFacts,
   catalogState,
+  computedHere,
   onOpenIteration,
   onEditCase,
 }: {
@@ -190,6 +191,7 @@ export function RunCaseRowBody({
   iterations: readonly EvalIteration[];
   routeFacts?: EvalRunRouteFactsCase | null;
   catalogState?: EvalRunRouteFacts["catalogState"];
+  computedHere?: boolean;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -239,6 +241,7 @@ export function RunCaseRowBody({
         <RouteFactsSection
           facts={routeFacts}
           catalogState={catalogState ?? "notLoaded"}
+          {...(computedHere ? { computedHere: true } : {})}
         />
       ) : null}
 

@@ -15,6 +15,7 @@ import type {
 } from "../contract/types.js";
 import type {
   EvalRunDecisionSummary,
+  EvalRunRouteFacts,
   EvalStageAnalyticsV1,
   EvalSuiteFileCaseImport,
   EvalVerdictDecision,
@@ -52,6 +53,19 @@ export type PlatformEvalRunDecisionSummary = EvalRunDecisionSummary;
  * instead of becoming a `0%` nobody can act on.
  */
 export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
+
+/**
+ * Response of
+ * `GET /projects/{p}/eval-runs/{runId}/route-facts` — one RUN's
+ * materialized route-facts document.
+ *
+ * An ALIAS, for the same reason the decision summary and stage analytics
+ * are aliases: the shape is owned by `@mcpjam/sdk/contract`
+ * (`evalRunRouteFactsSchema`), and re-declaring it here would produce two
+ * hand-mirrored descriptions of one contract that drift the first time a
+ * field is added.
+ */
+export type PlatformEvalRouteFacts = EvalRunRouteFacts;
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {

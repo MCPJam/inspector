@@ -25,6 +25,7 @@ import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
+import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
 import { useRouteFactsEnabled } from "@/hooks/useRouteFactsEnabled";
 import {
@@ -150,10 +151,22 @@ export function EvaluateRunContent({
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
 
   const routeFactsEnabled = useRouteFactsEnabled();
-  const routeFactsDoc = useMemo(
-    () => (routeFactsEnabled ? buildRunRouteFacts(run, iterations) : null),
-    [routeFactsEnabled, run, iterations],
-  );
+  const persistedRouteFacts = useEvalRunRouteFacts({
+    projectId,
+    runId: run._id,
+    runStatus: run.status,
+    enabled: routeFactsEnabled && active,
+  });
+  const routeFactsDoc = useMemo(() => {
+    if (!routeFactsEnabled) return null;
+    return (
+      persistedRouteFacts.document ?? buildRunRouteFacts(run, iterations)
+    );
+  }, [routeFactsEnabled, persistedRouteFacts.document, run, iterations]);
+  const routeFactsComputedHere =
+    routeFactsEnabled &&
+    (persistedRouteFacts.status === "absent" ||
+      persistedRouteFacts.document === null);
   const routeLines = useMemo(
     () =>
       routeFactsDoc
@@ -422,6 +435,7 @@ export function EvaluateRunContent({
                       iterations,
                     ),
                     catalogState: routeFactsDoc.catalogState,
+                    ...(routeFactsComputedHere ? { computedHere: true } : {}),
                   }
                 : {})}
               {...(onOpenIteration ? { onOpenIteration } : {})}

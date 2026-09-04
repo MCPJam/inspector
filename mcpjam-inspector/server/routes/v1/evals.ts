@@ -52,13 +52,17 @@ import {
   caseIntentSchema,
   caseIntentUpdateSchema,
   EVAL_VERDICT_POLICY_VERSION,
+  evalRunRouteFactsSchema,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
 } from "@mcpjam/sdk/contract";
-import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
+import type {
+  EvalRunRouteFacts,
+  EvalStageAnalyticsV1,
+} from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
@@ -1582,6 +1586,7 @@ function toIterationDto(iteration: IterationDoc) {
     usage: iteration.usage ?? null,
     actualToolCalls: iteration.actualToolCalls ?? [],
     expectedToolCalls: snapshot.expectedToolCalls ?? [],
+    ...(snapshot.isNegativeTest === true ? { isNegativeTest: true } : {}),
     error: iteration.error ?? null,
     ...toScoreProjection(iteration.metadata),
     ...toStageProjection(iteration.metadata),
@@ -5240,6 +5245,103 @@ evals.get("/projects/:projectId/eval-runs/:runId/stage-analytics", async (c) => 
   }
 
   return v1Resource(c, parsed.data as EvalStageAnalyticsV1);
+});
+
+// GET /v1/projects/:projectId/eval-runs/:runId/route-facts
+//
+// ONE run's materialized `EvalRunRouteFacts` document, addressed by run.
+//
+// A 404 covers BOTH "not visible to this caller" and "this run has no
+// document", and the two are deliberately not distinguished: to a reader both
+// mean UNMEASURED, and separating them would tell a caller that a run exists
+// in a project they cannot see. The Convex reader fail-softs a visibility
+// failure to `null` for the same reason.
+//
+// NOT backfilled: a run that terminalized before the materializer shipped has
+// no row. That absence is the honest "unmeasured" answer and is never served
+// as a document of zeros.
+/**
+ * ONE message for both 404 facts, because the route promises not to tell them
+ * apart. `v1ErrorBody` returns this text to the caller, so distinct strings
+ * would have handed anyone holding a run id the exact bit that answering both
+ * with 404 was meant to hide.
+ */
+const RUN_ROUTE_FACTS_NOT_FOUND = "Eval run route facts not found";
+
+evals.get("/projects/:projectId/eval-runs/:runId/route-facts", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  let runSuiteId: string | undefined;
+  try {
+    // The run is read and project-matched FIRST, exactly as the suite route
+    // matches its suite: a valid run id from another of the caller's projects
+    // must read as NOT_FOUND here rather than relying on the backend's
+    // fail-soft null, which is defense in depth and not the answer.
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    // Kept for the identity check below — the run we authorized is the only
+    // thing that can say which suite this document is allowed to name.
+    const suiteId = (run as { suiteId?: unknown } | null)?.suiteId;
+    runSuiteId = typeof suiteId === "string" ? suiteId : undefined;
+    document = await convex.query("testSuites:getEvalRunRouteFacts" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(
+        404,
+        ErrorCode.NOT_FOUND,
+        RUN_ROUTE_FACTS_NOT_FOUND,
+      );
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    // The SAME body as the not-visible 404 above, deliberately. The route's
+    // whole non-enumeration promise is that "no document" and "not visible to
+    // you" are indistinguishable — and `v1ErrorBody` returns the message to
+    // the caller, so two different strings handed anyone holding a run id the
+    // exact bit the matching status codes were hiding.
+    throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_ROUTE_FACTS_NOT_FOUND);
+  }
+
+  const parsed = evalRunRouteFactsSchema.safeParse(document);
+  if (!parsed.success) {
+    logger.warn("[v1 evals] run route facts failed contract validation", {
+      projectId,
+      runId,
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Route facts payload failed validation",
+    );
+  }
+
+  const identityMismatch =
+    parsed.data.runId !== runId ||
+    (runSuiteId !== undefined && parsed.data.suiteId !== runSuiteId);
+  if (identityMismatch) {
+    logger.warn("[v1 evals] run route facts identity does not match", {
+      projectId,
+      runId,
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Route facts payload failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as EvalRunRouteFacts);
 });
 
 // ── Eval suite/case editing routes ───────────────────────────────────

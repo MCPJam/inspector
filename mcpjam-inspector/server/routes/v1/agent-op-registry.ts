@@ -71,6 +71,7 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -1581,6 +1582,14 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
       "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalRunRouteFactsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` stays notMeasured until a producer exists. Report-only: never a verdict.",
+      "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
     ],
   },
   {

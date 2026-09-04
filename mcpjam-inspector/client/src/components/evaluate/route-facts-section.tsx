@@ -18,9 +18,12 @@ function namesOf(
 export function RouteFactsSection({
   facts,
   catalogState,
+  computedHere,
 }: {
   facts: EvalRunRouteFactsCase;
   catalogState: EvalRunRouteFacts["catalogState"];
+  /** True when the section is using the page-local producer, not the persisted row. */
+  computedHere?: boolean;
 }) {
   const mismatch = facts.mismatch;
   const lines = mismatchLines(facts, catalogState);
@@ -38,6 +41,9 @@ export function RouteFactsSection({
 
   return (
     <div className="flex flex-col gap-2" data-testid="route-facts-section">
+      {computedHere ? (
+        <p className="text-[12px] text-muted-foreground">computed here</p>
+      ) : null}
       <details className="group rounded-lg border border-border/40 bg-muted/20 px-3.5 py-2.5">
         <summary className="cursor-pointer list-none text-[12.5px] text-muted-foreground marker:content-none hover:text-foreground">
           Routes

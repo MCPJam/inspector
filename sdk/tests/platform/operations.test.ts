@@ -2002,6 +2002,7 @@ describe("operation catalog consistency", () => {
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_route_facts: { project: "p", runId: "r" },
     list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
