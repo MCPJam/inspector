@@ -6,8 +6,15 @@ import {
   JudgeVerdictPanel,
   type JudgeCase,
 } from "./goal-completion-presentation";
+import { TrialJudgeReviewPanel } from "./trial-judge-review";
 import { evaluateToolCalls } from "@/shared/eval-matching";
 import { ToolCallDiff } from "./tool-call-diff";
+// One copy, deliberately. This module used to carry a byte-identical
+// `resolveTraceModel` (plus its own hand-copied `KNOWN_MODEL_PROVIDERS`), so a
+// provider added to the union had to be remembered in two places or the trace
+// header silently labelled the run `custom` — which is exactly how `cursor`
+// nearly shipped half-registered.
+import { resolveTraceModel } from "./compare-playground-helpers";
 import {
   PredicatesList,
   parseIterationPredicates,
@@ -49,11 +56,6 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@mcpjam/design-system/collapsible";
-import {
-  getModelById,
-  type ModelDefinition,
-  type ModelProvider,
-} from "@/shared/types";
 import { cn } from "@/lib/utils";
 import { formatConvexBlobLoadError } from "@/lib/convex-action-error";
 import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
@@ -87,24 +89,6 @@ function formatToolCallsSummary(
   if (s.length <= maxLen) return s;
   return `${s.slice(0, maxLen - 1)}…`;
 }
-const KNOWN_MODEL_PROVIDERS: ModelProvider[] = [
-  "anthropic",
-  "azure",
-  "bedrock",
-  "openai",
-  "ollama",
-  "deepseek",
-  "google",
-  "meta",
-  "xai",
-  "mistral",
-  "moonshotai",
-  "openrouter",
-  "z-ai",
-  "minimax",
-  "qwen",
-  "custom",
-];
 
 function tryParseStructuredArgumentString(value: string): unknown | null {
   const trimmed = value.trim();
@@ -180,38 +164,6 @@ export function resolveFormattedArgumentValue(
   };
 }
 
-function normalizeModelProvider(provider?: string): ModelProvider {
-  return KNOWN_MODEL_PROVIDERS.includes(provider as ModelProvider)
-    ? (provider as ModelProvider)
-    : "custom";
-}
-
-function resolveTraceModel(
-  iteration: EvalIteration,
-  testCase: EvalCase | null,
-): ModelDefinition {
-  const snapshotProvider = iteration.testCaseSnapshot?.provider;
-  const snapshotModel = iteration.testCaseSnapshot?.model;
-  const fallbackProvider = testCase?.models[0]?.provider;
-  const fallbackModel = testCase?.models[0]?.model;
-
-  const provider = snapshotProvider || fallbackProvider || "openai";
-  const model = snapshotModel || fallbackModel || "unknown-model";
-  const providerModelId =
-    model.startsWith(`${provider}/`) || !provider
-      ? model
-      : `${provider}/${model}`;
-
-  return (
-    getModelById(providerModelId) ??
-    getModelById(model) ?? {
-      id: providerModelId,
-      name: model.includes("/") ? model.split("/").slice(1).join("/") : model,
-      provider: normalizeModelProvider(provider),
-    }
-  );
-}
-
 function TraceBlobLoadErrorPanel({
   error,
   layoutMode,
@@ -271,6 +223,8 @@ export function IterationDetails({
   layoutMode = "compact",
   caseInsightSlot,
   judgeCase = null,
+  enableJudgeReview = false,
+  trialChainSlot,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -280,6 +234,29 @@ export function IterationDetails({
   caseInsightSlot?: ReactNode;
   /** Advisory judge verdict for this case+run; surfaced on the Results tab. */
   judgeCase?: JudgeCase | null;
+  /**
+   * Offer the CALIBRATION LABEL beside the judge's verdict.
+   *
+   * Opt-in for the same reason `trialChainSlot` is a slot: this component has
+   * five hosts, and the label's read and write have no business firing for the
+   * four that never asked. The host that shows a trial from a real suite run
+   * turns it on; the quick-run and playground hosts do not. Even when on, a
+   * trial with no `suiteRunId` (a quick run) gets the read-only verdict: the
+   * backend refuses every label for it (`JUDGE_REVIEW_NO_RUN`), so offering
+   * the control would only offer the refusal.
+   */
+  enableJudgeReview?: boolean;
+  /**
+   * This trial's user-value chain — where value stopped travelling, and why.
+   *
+   * A SLOT, not a read this component performs. It has five hosts and knows
+   * only its iteration: not the run it belongs to, not the project, not
+   * whether the Evaluate opt-in is on — and the chain read needs all three.
+   * The one host that holds them builds the node; the other four pass nothing
+   * and issue no request, which is what keeps this shared component free of a
+   * fetch four of its callers never asked for.
+   */
+  trialChainSlot?: ReactNode;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -1069,11 +1046,31 @@ export function IterationDetails({
       )}
     >
       {previewTraceToolbar}
+      {/* WHERE VALUE STOPPED, above the transcript.
+          A reader who opened this trial is asking why it did not deliver, and
+          the answer is six cards wide — putting it under the trace would make
+          them scroll a transcript to reach the summary of it. Absent for the
+          hosts that pass no slot, which is most of them. */}
+      {trialChainSlot ? (
+        <div className="shrink-0 px-3" data-testid="iteration-trial-chain">
+          {trialChainSlot}
+        </div>
+      ) : null}
       {/* Advisory judge verdict — pinned under the tab row so it's visible on
           every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
       {layoutMode === "full" && judgeCase ? (
         <div className="shrink-0 px-3">
-          <JudgeVerdictPanel judgeCase={judgeCase} />
+          {enableJudgeReview && iteration.suiteRunId ? (
+            // Keyed by trial: a switch remounts the panel, so no read or label
+            // state from the previous trial can survive into this one.
+            <TrialJudgeReviewPanel
+              key={iteration._id}
+              iterationId={iteration._id}
+              judgeCase={judgeCase}
+            />
+          ) : (
+            <JudgeVerdictPanel judgeCase={judgeCase} />
+          )}
         </div>
       ) : null}
       {/* Error Display */}
