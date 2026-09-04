@@ -236,6 +236,14 @@ const CASES: Case[] = [
     build: () => new Error("Anthropic returned Too Many Requests"),
     expectSlug: "provider/quota",
   },
+  {
+    // What a real throttle looks like: the AI SDK retries three times, then
+    // wraps the last provider error in a `RetryError` that keeps no status.
+    name: "AI SDK RetryError wording",
+    build: () =>
+      new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",

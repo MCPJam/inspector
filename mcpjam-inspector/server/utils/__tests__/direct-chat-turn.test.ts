@@ -835,4 +835,73 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
     });
     expect(stepCountIsMock).toHaveBeenLastCalledWith(20);
   });
+
+  it("throws the stream's own error, not the SDK's no-output wrapper", async () => {
+    // Measured against ai@6.0.160 and a 429 provider: the error reaches ONLY
+    // `streamText`'s `onError`, `consumeStream` reports nothing, and every
+    // awaited accessor rejects with `NoOutputGeneratedError` — a sentence
+    // naming no provider, which is all `classifyTurnFailure` would see.
+    const providerError = new Error(
+      "Failed after 3 attempts. Last error: Too Many Requests",
+    );
+    // Pre-handled so the accessors the consumer never reaches don't surface as
+    // unhandled rejections.
+    const noOutput = () => {
+      const rejected = Promise.reject(
+        new Error("No output generated. Check the stream for errors."),
+      );
+      rejected.catch(() => {});
+      return rejected;
+    };
+
+    // Play the SDK: hand the error to the `onError` the engine wired, leave
+    // `consumeStream` silent, then reject what the consumer awaits.
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      ...defaultStreamTextReturn(),
+      consumeStream: async () => {
+        await options.onError({ error: providerError });
+      },
+      response: noOutput(),
+      steps: noOutput(),
+      totalUsage: noOutput(),
+      finishReason: noOutput(),
+    }));
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    await expect(consumeDirectChatTurnHeadless(handle)).rejects.toThrow(
+      "Failed after 3 attempts. Last error: Too Many Requests",
+    );
+  });
+
+  it("leaves an abort as the abort, with no stream error to prefer", async () => {
+    // The engine's `onError` returns early on an abort, so an aborted turn must
+    // not start reporting a stream error the caller would classify as failure.
+    const abortError = Object.assign(new Error("Aborted"), {
+      name: "AbortError",
+    });
+    streamTextMock.mockImplementationOnce((options: any) => ({
+      ...defaultStreamTextReturn(),
+      consumeStream: async () => {
+        await options.onError({ error: abortError });
+      },
+    }));
+
+    const handle = runDirectChatTurn({
+      llmModel: { id: "mock" } as any,
+      modelId: "gpt-4-turbo",
+      messageHistory: [{ role: "user", content: "Hi" } as any],
+      systemPrompt: "s",
+      tools: {} as any,
+    });
+
+    const result = await consumeDirectChatTurnHeadless(handle);
+    expect(result.aborted).toBe(true);
+  });
 });

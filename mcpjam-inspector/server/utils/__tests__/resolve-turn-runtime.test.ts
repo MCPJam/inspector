@@ -387,6 +387,13 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
     expect(classifyTurnFailure("Anthropic returned Too Many Requests")).toBe(
       "rate_limited",
     );
+    // The wording a real throttle produces: the AI SDK retries three times and
+    // wraps the last provider error in a `RetryError`.
+    expect(
+      classifyTurnFailure(
+        "Failed after 3 attempts. Last error: Too Many Requests",
+      ),
+    ).toBe("rate_limited");
   });
 
   it("does NOT read a port or id that merely contains 429 as rate_limited", () => {
