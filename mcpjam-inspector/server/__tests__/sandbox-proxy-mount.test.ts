@@ -56,6 +56,8 @@ const applyColorSchemeSrc = extract("applyColorScheme");
 const createInnerFrameSrc = extract("createInnerFrame");
 const mountInnerSrc = extract("mountInner");
 const remountLastSrc = extract("remountLast");
+const parseOriginPatternSrc = extract("parseOriginPattern");
+const hostOriginAllowedSrc = extract("hostOriginAllowed");
 
 interface MountHarness {
   mountInner: (
@@ -103,6 +105,8 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     const INNER_STYLE = "width:100%; height:100%; border:none;";
     let inner = null;
     let lastMount = null;
+    // Pinning is off in this harness; the view-mode post falls back to "*".
+    let hostOrigin = null;
     ${applyColorSchemeSrc}
     ${createInnerFrameSrc}
     ${mountInnerSrc}
@@ -356,5 +360,97 @@ describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
     expect(guard).toContain("remountLast();");
     expect(guard).toContain("return;");
     expect(guard).not.toContain("window.parent.postMessage");
+  });
+});
+
+describe("sandbox-proxy host-origin allowlist", () => {
+  // The proxy loads untrusted HTML on request and relays that widget's
+  // messages back out, so "who may post to this document" is a real gate,
+  // not bookkeeping. Everything ambiguous has to fail closed.
+  const allowed = new Function(
+    "origin",
+    "patterns",
+    `${parseOriginPatternSrc}\n${hostOriginAllowedSrc}\nreturn hostOriginAllowed(origin, patterns);`,
+  ) as (origin: string, patterns: string[] | null) => boolean;
+
+  const parse = new Function(
+    "pattern",
+    `${parseOriginPatternSrc}\nreturn parseOriginPattern(pattern);`,
+  ) as (pattern: string) => unknown;
+
+  const HOSTED = ["https://app.mcpjam.com", "http://localhost:*"];
+
+  it("accepts an exact origin", () => {
+    expect(allowed("https://app.mcpjam.com", HOSTED)).toBe(true);
+  });
+
+  it("accepts any port when the pattern wildcards it", () => {
+    expect(allowed("http://localhost:5173", HOSTED)).toBe(true);
+    expect(allowed("http://localhost:6274", HOSTED)).toBe(true);
+  });
+
+  it("rejects a different scheme, host, or port", () => {
+    expect(allowed("http://app.mcpjam.com", HOSTED)).toBe(false);
+    expect(allowed("https://evil.com", HOSTED)).toBe(false);
+    expect(allowed("https://app.mcpjam.com:8443", HOSTED)).toBe(false);
+  });
+
+  it("does not let a wildcard span a dot in the host", () => {
+    // The danger a host wildcard would introduce: a pattern for mcpjam.com
+    // matching an attacker-registered lookalike.
+    expect(parse("https://*.mcpjam.com")).toBeNull();
+    expect(allowed("https://evil-mcpjam.com", ["https://*mcpjam.com"])).toBe(
+      false,
+    );
+  });
+
+  it("treats a suffix or prefix of an allowed host as a different host", () => {
+    expect(allowed("https://app.mcpjam.com.evil.test", HOSTED)).toBe(false);
+    expect(allowed("https://notapp.mcpjam.com", HOSTED)).toBe(false);
+  });
+
+  it("matches a default port against a pattern that names none", () => {
+    expect(allowed("https://app.mcpjam.com:443", HOSTED)).toBe(true);
+  });
+
+  it("fails closed on an opaque origin and on an empty list", () => {
+    // A sandboxed document without allow-same-origin posts "null".
+    expect(allowed("null", HOSTED)).toBe(false);
+    expect(allowed("https://app.mcpjam.com", [])).toBe(false);
+    expect(allowed("https://app.mcpjam.com", null)).toBe(false);
+  });
+
+  it("ignores unparsable patterns rather than widening on them", () => {
+    expect(allowed("https://app.mcpjam.com", ["not-an-origin", "*"])).toBe(
+      false,
+    );
+  });
+});
+
+describe("sandbox-proxy host-origin pinning (source contract)", () => {
+  // The lock lives inline in the message listener rather than in a named
+  // function, so pin its shape where it is: the gate must precede any
+  // handling, and the inner→host relay must answer the locked origin.
+  it("gates the parent branch before handling and locks the origin", () => {
+    const branch = html.slice(
+      html.indexOf("if (event.source === window.parent)"),
+      html.indexOf(
+        'event.data.method === "ui/notifications/sandbox-resource-ready"',
+      ),
+    );
+    expect(branch).toContain(
+      "hostOriginAllowed(event.origin, hostOriginPatterns)",
+    );
+    expect(branch).toContain("hostOrigin = event.origin");
+    expect(branch).toContain("event.origin !== hostOrigin");
+  });
+
+  it("relays to the locked origin rather than any window", () => {
+    expect(html).toContain(
+      'window.parent.postMessage(data, hostOrigin || "*")',
+    );
+    // And the boot handshake, which happens before any host message, is the
+    // only postMessage that can still be unaddressed.
+    expect(html).not.toContain('window.parent.postMessage(data, "*")');
   });
 });
