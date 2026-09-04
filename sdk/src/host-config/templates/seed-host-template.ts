@@ -718,6 +718,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture reports a uniform 12px inset on every edge.
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -1405,6 +1407,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "Le Chat", version: "1.0.0" },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: false,
@@ -1677,6 +1681,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "Slackbot", version: "1.0.0" },
           },
           mcpAppsOverrides: {
+            // The 2026-09-03 captures (both themes) omit the key entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
@@ -1848,6 +1854,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "Cursor", version: "3.14.27" },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
             cspConnectDomains: {
               fetch: true,
               xhr: true,
@@ -1996,6 +2004,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // The 2026-09-01 and 2026-09-02 captures both omit the key entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -2465,6 +2475,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             // The handshake probe did not exercise lifecycle, display-request,
             // or resource-metadata behavior. These values deliberately retain
