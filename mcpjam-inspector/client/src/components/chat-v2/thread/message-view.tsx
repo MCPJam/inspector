@@ -413,8 +413,7 @@ function UserMessageRow({
           {/* Text and other parts inside the bubble */}
           {bubble}
           {showActionRow ? (
-            <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
-              <MessageTimestamp message={message} />
+            <div className="flex max-w-[min(100%,48rem)] items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
               <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
@@ -423,6 +422,7 @@ function UserMessageRow({
                 />
               ) : null}
               {actions}
+              <MessageTimestamp message={message} />
             </div>
           ) : null}
         </>
@@ -685,7 +685,7 @@ function MessageViewImpl({
           </div>
         ) : null}
         {hasAssistantText || hasTimestamp ? (
-          <div className="flex gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+          <div className="flex items-center gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
             <MessageTimestamp message={message} />
             {hasAssistantText ? (
               <CopyMessageAction

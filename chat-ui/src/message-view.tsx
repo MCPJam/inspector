@@ -119,7 +119,7 @@ function MessageViewImpl({
           </div>
         ) : null}
         {getMessageTimestampMs(message) !== undefined ? (
-          <div className="opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+          <div className="flex items-center justify-end opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
             <MessageTimestamp message={message} />
           </div>
         ) : null}
@@ -164,7 +164,7 @@ function MessageViewImpl({
           ))}
         </div>
         {getMessageTimestampMs(message) !== undefined ? (
-          <div className="pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+          <div className="flex items-center pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
             <MessageTimestamp message={message} />
           </div>
         ) : null}

@@ -124,7 +124,7 @@ export function MessageTimestamp({ message }: { message: UIMessage }) {
     <time
       dateTime={date.toISOString()}
       title={formatMessageDateTime(timestampMs)}
-      className="px-1 text-xs tabular-nums text-muted-foreground"
+      className="inline-flex h-6 items-center px-1 text-xs leading-none tabular-nums text-muted-foreground"
     >
       {formatMessageTime(timestampMs)}
     </time>
