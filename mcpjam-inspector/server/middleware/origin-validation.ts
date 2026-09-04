@@ -90,20 +90,35 @@ function getConfiguredAllowedHosts(): string[] {
  * wildcard-origin opt-in exists to gate. The TOKEN gate keeps honoring wildcard
  * `MCPJAM_ALLOWED_HOSTS` unchanged (it has its own established behavior/tests);
  * this narrowing applies only to Origin acceptance.
+ *
+ * Memoized on (opt-in flag, raw allowlist) so the "wildcard ignored" warning
+ * fires ONCE per distinct configuration rather than on every Origin-bearing
+ * request — this is on the hot path (see getConfiguredAllowedHosts), and a
+ * per-request warn would flood the log sink.
  */
+let cachedWildcardGateKey: string | undefined;
+let cachedWildcardGatedHosts: string[] = [];
 function getWildcardGatedAllowedHosts(): string[] {
+  const optIn = process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS === "true";
+  const key = `${optIn ? "1" : "0"}|${process.env.MCPJAM_ALLOWED_HOSTS ?? ""}`;
+  if (key === cachedWildcardGateKey) return cachedWildcardGatedHosts;
+  cachedWildcardGateKey = key;
+
   const hosts = getConfiguredAllowedHosts();
-  if (process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS === "true") {
-    return hosts;
+  if (optIn) {
+    cachedWildcardGatedHosts = hosts;
+    return cachedWildcardGatedHosts;
   }
   const wildcards = hosts.filter((h) => h.includes("*"));
   if (wildcards.length > 0) {
     appLogger.warn(
       `[Security] Wildcard MCPJAM_ALLOWED_HOSTS entries ignored for Origin validation without MCPJAM_ALLOW_WILDCARD_ORIGINS=true: ${wildcards.join(", ")}`,
     );
-    return hosts.filter((h) => !h.includes("*"));
+    cachedWildcardGatedHosts = hosts.filter((h) => !h.includes("*"));
+  } else {
+    cachedWildcardGatedHosts = hosts;
   }
-  return hosts;
+  return cachedWildcardGatedHosts;
 }
 
 /**

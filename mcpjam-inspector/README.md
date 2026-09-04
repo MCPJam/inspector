@@ -91,6 +91,12 @@ docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspecto
 
 For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
 
+If you use a **wildcard** entry (e.g. `MCPJAM_ALLOWED_HOSTS=*.lan`), also set
+`MCPJAM_ALLOW_WILDCARD_ORIGINS=true`. Wildcards deliver the session token on
+their own, but for security the request-origin check ignores wildcard hosts
+unless you opt in with that variable — without it, API calls still 403. A
+single exact host (like the IP above) needs no extra flag.
+
 Only add hosts you trust. Allowlisting a host does more than expose the session
 token: the same host is accepted as a request Origin, which also reaches the
 local shell and agent-browser tools that are enabled by default in self-hosted
