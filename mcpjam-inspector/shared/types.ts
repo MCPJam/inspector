@@ -118,6 +118,13 @@ export type ModelProvider =
   | "z-ai"
   | "minimax"
   | "qwen"
+  // Not a model provider a customer configures a BYOK key for (that is
+  // `OrgModelProvider`) — it is who SERVES the model for a Cursor CLI harness
+  // turn: the request runs on the customer's own Cursor account. Registered so
+  // the `cursor/auto` sentinel classifies honestly instead of falling through
+  // the bare-id rule to `ollama` and stamping eval metadata with a provider
+  // nothing ran on.
+  | "cursor"
   | "custom";
 
 // The MCPJam-hosted ("free") model ids — the billing seed. Sourced from the
@@ -144,6 +151,7 @@ export type CanonicalModelCandidate = { id: string | Model; provider: string };
 // the prefix. Everything else uses the prefix verbatim.
 const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
   "x-ai": "xai",
+  spacexai: "xai",
   "meta-llama": "meta",
   mistralai: "mistral",
 };
@@ -173,7 +181,7 @@ export const getCanonicalModelId = (
    * list here so catalog-only ids canonicalize correctly; defaults to `[]`, so
    * every server/shared caller keeps the exact prior static behavior.
    */
-  extraModels: readonly CanonicalModelCandidate[] = []
+  extraModels: readonly CanonicalModelCandidate[] = [],
 ): string => {
   const normalizedModelId = modelId.trim();
   if (!normalizedModelId) {
@@ -194,14 +202,14 @@ export const getCanonicalModelId = (
   // counterparts (e.g. "openai/gpt-4o-mini" — MCPJam-provided).
   if (normalizedProvider) {
     const providerModels = knownModels.filter(
-      (model) => model.provider.toLowerCase() === normalizedProvider
+      (model) => model.provider.toLowerCase() === normalizedProvider,
     );
 
     // If the caller didn't already pass a prefixed id, look for a prefixed
     // (hosted) match first within this provider — bare ids must not win here.
     const prefixedMatch = !normalizedModelId.includes("/")
       ? providerModels.find((model) =>
-          String(model.id).endsWith(`/${normalizedModelId}`)
+          String(model.id).endsWith(`/${normalizedModelId}`),
         )
       : undefined;
 
@@ -215,7 +223,7 @@ export const getCanonicalModelId = (
   }
 
   const exactMatch = knownModels.find(
-    (model) => String(model.id) === normalizedModelId
+    (model) => String(model.id) === normalizedModelId,
   );
   if (exactMatch) {
     return String(exactMatch.id);
@@ -226,19 +234,19 @@ export const getCanonicalModelId = (
 
 export const isMCPJamProvidedModel = (
   modelId: string,
-  provider?: string
+  provider?: string,
 ): boolean => {
   return MCPJAM_PROVIDED_MODEL_IDS.includes(
-    getCanonicalModelId(modelId, provider)
+    getCanonicalModelId(modelId, provider),
   );
 };
 
 export const isMCPJamGuestAllowedModel = (
   modelId: string,
-  provider?: string
+  provider?: string,
 ): boolean => {
   return MCPJAM_GUEST_ALLOWED_MODEL_IDS.includes(
-    getCanonicalModelId(modelId, provider)
+    getCanonicalModelId(modelId, provider),
   );
 };
 
@@ -286,7 +294,7 @@ export const modelSupportsTemperature = (modelId: string | Model): boolean => {
  * on a stale cache.
  */
 export const modelDefinitionSupportsTemperature = (
-  model: ModelDefinition
+  model: ModelDefinition,
 ): boolean => {
   if (!modelSupportsTemperature(model.id)) {
     return false;
@@ -359,6 +367,9 @@ export enum Model {
   GPT_5_1 = "gpt-5.1",
   GPT_5_1_CODEX = "gpt-5.1-codex",
   GPT_5_1_CODEX_MINI = "gpt-5.1-codex-mini",
+  GPT_5_6_LUNA = "gpt-5.6-luna",
+  GPT_5_6_SOL = "gpt-5.6-sol",
+  GPT_5_6_TERRA = "gpt-5.6-terra",
   GPT_3_5_TURBO = "gpt-3.5-turbo",
   DEEPSEEK_CHAT = "deepseek-chat",
   DEEPSEEK_REASONER = "deepseek-reasoner",
@@ -453,6 +464,24 @@ export const SUPPORTED_MODELS: ModelDefinition[] = [
     name: "Claude Haiku 4.5",
     provider: "anthropic",
     contextLength: 200000,
+  },
+  {
+    id: Model.GPT_5_6_LUNA,
+    name: "GPT-5.6 Luna",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_5_6_SOL,
+    name: "GPT-5.6 Sol",
+    provider: "openai",
+    contextLength: 1050000,
+  },
+  {
+    id: Model.GPT_5_6_TERRA,
+    name: "GPT-5.6 Terra",
+    provider: "openai",
+    contextLength: 1050000,
   },
   {
     id: Model.GPT_5_1,
@@ -787,15 +816,15 @@ export const DEFAULT_OAUTH_PROTOCOL_CONCRETE_MODE: ServerFormOAuthProtocolConcre
   "2025-11-25";
 
 export function isConcreteOauthProtocolMode(
-  value: string
+  value: string,
 ): value is ServerFormOAuthProtocolConcreteMode {
   return (SERVER_FORM_OAUTH_PROTOCOL_MODES as readonly string[]).includes(
-    value
+    value,
   );
 }
 
 export function isServerFormOAuthProtocolMode(
-  value: unknown
+  value: unknown,
 ): value is ServerFormOAuthProtocolMode {
   return (
     value === "auto" ||
@@ -816,7 +845,7 @@ export function isServerFormOAuthProtocolMode(
  * silently degrading a stored 2026-07-28 pin down to 2025-11-25.
  */
 export function normalizeOauthProtocolMode(
-  value?: string
+  value?: string,
 ): ServerFormOAuthProtocolMode {
   if (value === "auto") {
     return "auto";
@@ -840,7 +869,7 @@ export function normalizeOauthProtocolMode(
 export function resolveEffectiveOauthProtocolMode(
   mode: ServerFormOAuthProtocolMode,
   wireProtocolVersion?: string,
-  negotiatedProtocolVersion?: string
+  negotiatedProtocolVersion?: string,
 ): ServerFormOAuthProtocolConcreteMode {
   if (mode !== "auto") {
     return mode;
@@ -887,7 +916,7 @@ export function resolveOAuthProtocolSelection(input: {
     protocolVersion: resolveEffectiveOauthProtocolMode(
       mode,
       input.wireProtocolVersion,
-      input.negotiatedProtocolVersion
+      input.negotiatedProtocolVersion,
     ),
     source:
       mode !== "auto"

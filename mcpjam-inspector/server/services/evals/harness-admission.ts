@@ -42,6 +42,9 @@ import {
   type HarnessUnavailableKind,
 } from "../../utils/harness/harness-availability.js";
 import { getHarnessAdapter } from "../../utils/harness/registry.js";
+import { isRuntimeChosenModelSentinel } from "@/shared/model-provider";
+import { buildSyntheticModelDefinition } from "../../utils/org-model-config.js";
+import type { ModelDefinition } from "@/shared/types";
 
 /**
  * `ok` means the run may proceed. `harness` is present when a harness was
@@ -186,6 +189,69 @@ function harnessCannotObserveWidgetsReason(
  * before target 2 has passed the checks that do not need a run row. The
  * per-case model rules stay in the full check, which runs at prepare time.
  */
+/**
+ * Whether a run reaches ANY MCP server — the input the approval gate keys off.
+ *
+ * Its own function, and exported, because it is the rule rather than an
+ * expression: PLUGIN-contributed servers count, so a host whose servers come
+ * solely from a pinned plugin version cannot slip a gate that only looked at
+ * the explicitly-selected set. Both admission paths call this so the two can't
+ * drift, and it stays directly testable no matter which harnesses happen to
+ * refuse on the surface today — a caller inlining the `serverIds`-only half is
+ * the bug this exists to prevent.
+ */
+/**
+ * The model an eval case ACTUALLY runs on — the host's, whenever the host runs
+ * an external-account harness that carries a runtime-chosen sentinel.
+ *
+ * A per-case model is normal and legitimate in evals: a suite names a model per
+ * case and is then pointed at a host. On an external-account host that model is
+ * consumed by nothing — Cursor's adapter passes NO model and Cursor Auto picks
+ * one on the customer's account — so the case's id describes nothing that runs.
+ * Carrying it downstream is the same mis-attribution this change closes on the
+ * chat rails, and it made ADMISSION and EXECUTION disagree: admission reads the
+ * host's id and accepts, then the dispatch's eligibility check sees the case's
+ * id and refuses a run that was already admitted.
+ *
+ * Promoted rather than refused, deliberately. Refusing at admission would be
+ * self-consistent and would also make every Cursor eval suite unrunnable: the
+ * model pickers cannot hold `cursor/auto` (it is not a selectable entry), so no
+ * case can name it. The host's model is authoritative on every other surface
+ * for exactly this reason; eval is the last one that was not.
+ *
+ * Only a SENTINEL host promotes. A host whose harness is external-account but
+ * whose model is an ordinary id is a broken configuration, and the admission
+ * gate refuses it on the host's own id — promoting that id would launder it.
+ */
+export function resolveEvalCaseModelDefinition(args: {
+  hostConfig: Record<string, unknown> | null | undefined;
+  /** The model the CASE names, already built into a definition. */
+  caseModel: ModelDefinition;
+}): ModelDefinition {
+  const harness = harnessOfHostConfig(args.hostConfig);
+  if (!harness) return args.caseModel;
+  if (getHarnessAdapter(harness).modelAccess !== "external-account") {
+    return args.caseModel;
+  }
+  const hostConfig = args.hostConfig as Record<string, unknown>;
+  const hostModelId =
+    typeof hostConfig.modelId === "string" ? hostConfig.modelId.trim() : "";
+  if (!isRuntimeChosenModelSentinel(hostModelId)) return args.caseModel;
+  // The same builder the swarm runner uses, so the sentinel arrives with its
+  // curated label and its registered provider rather than a re-derived guess.
+  return buildSyntheticModelDefinition(hostModelId);
+}
+
+export function hasSelectedMcpServersForAdmission(args: {
+  serverIds?: readonly string[];
+  pluginServerIds?: readonly string[];
+}): boolean {
+  return (
+    (args.serverIds?.length ?? 0) > 0 ||
+    (args.pluginServerIds?.length ?? 0) > 0
+  );
+}
+
 export function checkEvalHarnessStaticAdmission(args: {
   hostConfig: Record<string, unknown> | null | undefined;
   /** The run's resolved server set (the manager connects exactly this). */
@@ -199,9 +265,7 @@ export function checkEvalHarnessStaticAdmission(args: {
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
 
-  const hasSelectedMcpServers =
-    (args.serverIds?.length ?? 0) > 0 ||
-    (args.pluginServerIds?.length ?? 0) > 0;
+  const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
 
   // A model is required by the shared gate's signature, but the per-case
   // models are not known yet on this path. Probe with the host's own pinned
@@ -222,6 +286,11 @@ export function checkEvalHarnessStaticAdmission(args: {
     // rules rather than fail on a model nobody named: `checkModelEligibility`
     // below owns that decision once the run's cases are known.
     model: { id: hostModelId ?? "" },
+    // The same id again, under the name the external-account rule reads. It is
+    // not redundant on the FULL check below, where `model` becomes a per-case
+    // model and this stays the host's — an external-account host must carry the
+    // sentinel whatever a case asks for.
+    ...(hostModelId ? { hostModelId } : {}),
     // Same tri-state read the swarm gate makes: `invalid` is treated exactly
     // like `on`, because a malformed enterprise policy must never be MORE
     // permissive than a valid one.
@@ -276,12 +345,16 @@ export function checkEvalHarnessAdmission(args: {
   if (!harness) return { ok: true };
   const hostConfig = args.hostConfig as Record<string, unknown>;
 
-  const hasSelectedMcpServers =
-    (args.serverIds?.length ?? 0) > 0 ||
-    (args.pluginServerIds?.length ?? 0) > 0;
+  const hasSelectedMcpServers = hasSelectedMcpServersForAdmission(args);
   const xaaEnterprisePolicyOn =
     readXaaEnterprisePolicy(hostConfig.mcpProfile).kind !== "off";
   const requireToolApproval = hostConfig.requireToolApproval === true;
+  // Read once for the external-account rule below. Absent ⇒ the host pinned no
+  // model, and the gate holds the case's own model to the rule instead.
+  const fullCheckHostModelId =
+    typeof hostConfig.modelId === "string" && hostConfig.modelId.trim()
+      ? hostConfig.modelId.trim()
+      : undefined;
 
   // Model-bearing cases only. A model-free case runs pinned tool calls with no
   // runtime at all, so gating it on model eligibility would refuse a suite for
@@ -311,6 +384,10 @@ export function checkEvalHarnessAdmission(args: {
           id: String(test.model),
           ...(test.provider ? { provider: test.provider } : {}),
         },
+        // The HOST's id, not the case's: the external-account rule is about
+        // this host carrying the runtime's sentinel, and a case model can no
+        // more answer that than a request body can.
+        ...(fullCheckHostModelId ? { hostModelId: fullCheckHostModelId } : {}),
         xaaEnterprisePolicyOn,
       });
       verdict = availability.ok

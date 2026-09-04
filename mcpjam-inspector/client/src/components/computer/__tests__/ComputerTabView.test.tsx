@@ -11,7 +11,10 @@ vi.mock("@/lib/config", () => ({
 // The two faces are stubbed — this suite is about which one the wrapper picks
 // and whether the toggle shows, not their internals.
 vi.mock("../ComputerView", () => ({
-  ComputerView: (props: { projectId: string | null; isSignedInMember: boolean }) => (
+  ComputerView: (props: {
+    projectId: string | null;
+    isSignedInMember: boolean | undefined;
+  }) => (
     <div
       data-testid="cloud-face"
       data-project={String(props.projectId)}
@@ -70,6 +73,23 @@ describe("ComputerTabView", () => {
     const cloud = screen.getByTestId("cloud-face");
     expect(cloud.dataset.member).toBe("false");
     expect(screen.queryByTestId("local-face")).not.toBeInTheDocument();
+  });
+
+  /**
+   * The local face is member-only too, so the unresolved actor takes the cloud
+   * branch — and the tri-state has to reach `ComputerView` intact, because it
+   * owns the "not resolved yet" pane and the sign-in prompt is the wrong
+   * answer for a member whose identity has simply not landed.
+   */
+  it("unresolved actor: cloud face with the third state passed through", () => {
+    engineState.value.selectedEngine = "local";
+    render(<ComputerTabView projectId="p1" isSignedInMember={undefined} />);
+    const cloud = screen.getByTestId("cloud-face");
+    expect(cloud.dataset.member).toBe("undefined");
+    expect(screen.queryByTestId("local-face")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /This machine/i }),
+    ).not.toBeInTheDocument();
   });
 
   it("no synced project: cloud face (owns the no-project empty state)", () => {
