@@ -354,6 +354,7 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | Flag | Required | Description |
 |------|----------|-------------|
 | `--url <url>` | Yes | OAuth metadata URL to fetch |
+| `--https-only` | No | Apply the hosted policy: reject non-HTTPS and private targets |
 
 ### `oauth proxy` / `oauth debug-proxy`
 
@@ -363,6 +364,13 @@ For a cloud authorization server, expose the inspector origin through a tunnel a
 | `--method <method>` | No | `GET` | HTTP method |
 | `--header <header>` | No | | HTTP header `Key: Value` (repeatable) |
 | `--body <value>` | No | | Request body as JSON, raw string, `@path`, or `-` for stdin |
+| `--https-only` | No | | Apply the hosted policy: reject non-HTTPS and private targets |
+
+These three commands reach private destinations by default — a server on
+loopback, on your LAN, or on a hostname that resolves to one — because the CLI
+runs on your own machine. `--https-only` opts in to the policy the hosted web
+app enforces, which is what you want when reproducing a hosted failure. Neither
+mode will dial a link-local or cloud-metadata address.
 
 ---
 

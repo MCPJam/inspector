@@ -3728,6 +3728,8 @@ export default function App() {
     mirrorToolParamHeaders: hostedMcpProfilePins.mirrorToolParamHeaders,
     firstPageOnly: hostedMcpProfilePins.firstPageOnly,
     supportsMrtr: hostedMcpProfilePins.supportsMrtr,
+    suppressListenChannel: hostedMcpProfilePins.suppressListenChannel,
+    dropToolListChanged: hostedMcpProfilePins.dropToolListChanged,
     toolCallCancellation: hostedMcpProfilePins.toolCallCancellation,
     xaaPolicy: hostedMcpProfilePins.xaaPolicy,
     clientConfigSyncPending:
