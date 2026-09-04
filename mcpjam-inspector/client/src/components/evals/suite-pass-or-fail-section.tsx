@@ -202,7 +202,19 @@ export function SuitePassOrFailSection({
                 onChange={onJudgeConfigChange}
               />
               {judgeAccessory}
-              {rubricEditor}
+              {rubricEditor ? (
+                <div className="space-y-1.5" data-setting-key="judgeRubric">
+                  <div className="text-[11px] font-medium text-foreground/80">
+                    Judge criteria
+                  </div>
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Applied to every case, alongside each case&apos;s own
+                    expected output. The judge cites criterion ids in its
+                    reasons.
+                  </p>
+                  {rubricEditor}
+                </div>
+              ) : null}
             </div>
           ) : null}
         </StageGroup>

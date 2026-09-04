@@ -27,10 +27,14 @@ vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: () => true,
 }));
 
-function renderSection(overrides: {
-  predicates?: Predicate[];
-  judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
-} = {}) {
+function renderSection(
+  overrides: {
+    predicates?: Predicate[];
+    judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
+    judgeAccessory?: React.ReactNode;
+    rubricEditor?: React.ReactNode;
+  } = {},
+) {
   const onPredicatesChange = vi.fn();
   const onJudgeConfigChange = vi.fn();
   const onMatchOptionsChange = vi.fn();
@@ -43,6 +47,8 @@ function renderSection(overrides: {
       judgeConfig={overrides.judgeConfig}
       onJudgeConfigChange={onJudgeConfigChange}
       availableModels={[]}
+      judgeAccessory={overrides.judgeAccessory}
+      rubricEditor={overrides.rubricEditor}
     />,
   );
   return { ...result, onPredicatesChange, onJudgeConfigChange };
@@ -95,6 +101,26 @@ describe("SuitePassOrFailSection", () => {
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
     expect(within(group).getByText("Gate")).toBeTruthy();
+  });
+
+  it("mounts the judge's gate panel and rubric editor under user value", () => {
+    // The LAST link of the chain is the one a judge measures, so its readiness
+    // and its criteria belong beside it rather than in a row of their own.
+    const { container } = renderSection({
+      judgeAccessory: <div data-testid="gate-panel" />,
+      rubricEditor: <div data-testid="rubric-editor" />,
+    });
+    const group = container.querySelector(
+      '[data-stage-group="userValue"]',
+    ) as HTMLElement;
+    expect(within(group).getByTestId("gate-panel")).toBeTruthy();
+    expect(within(group).getByTestId("rubric-editor")).toBeTruthy();
+    // Stamped so the settings manifest can claim it, and labelled so a reader
+    // can match the row to the manifest entry.
+    const rubricRow = container.querySelector(
+      '[data-setting-key="judgeRubric"]',
+    );
+    expect(rubricRow?.textContent).toContain("Judge criteria");
   });
 
   it("keeps one Add-check affordance for the whole section", () => {

@@ -5302,6 +5302,32 @@ const updateEvalSuiteInput = z.strictObject({
             .describe(
               "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
+          rubric: z
+            .union([
+              z.object({
+                criteria: z
+                  .array(
+                    z.object({
+                      id: z
+                        .string()
+                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                        .describe(
+                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    })
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional()
+            .describe(
+              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+            ),
         })
         .optional(),
       repetitions: z

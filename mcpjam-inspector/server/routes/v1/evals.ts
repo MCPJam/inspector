@@ -1915,6 +1915,21 @@ function toSuiteDetailDto(
           typeof goal?.threshold === "number"
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
+        // The suite's own criteria, so a caller can read back what it wrote.
+        // `null` for a suite with none — distinct from an empty list, which the
+        // write side refuses precisely because "asks nothing" is not "absent".
+        rubric: Array.isArray(suite.judgeRubric?.criteria)
+          ? {
+              criteria: suite.judgeRubric.criteria.map((criterion: any) => ({
+                id: String(criterion.id),
+                label: String(criterion.label),
+                ...(typeof criterion.description === "string"
+                  ? { description: criterion.description }
+                  : {}),
+                ...(criterion.required === true ? { required: true } : {}),
+              })),
+            }
+          : null,
       },
       // The v2 verdict policy this suite's runs are decided under, with the
       // defaults a case inherits. ABSENT for a legacy suite — its runs are
@@ -2290,6 +2305,35 @@ export const updateSuiteSchema = z.strictObject({
           // `enabled` forever and never grade a run.
           autoRun: z.boolean().optional(),
           threshold: z.number().min(0).max(1).optional(),
+          // The suite's own grading criteria, handed to the judge alongside
+          // each case's expected output. `null` CLEARS them; an empty array is
+          // refused because a rubric that asks nothing is not the absence of
+          // one — it still changes what the judge was asked. The limits mirror
+          // the platform's own so a rejection arrives before the write rather
+          // than taking the settings beside it down with it.
+          rubric: z
+            .union([
+              z.object({
+                criteria: z
+                  .array(
+                    z.object({
+                      id: z
+                        .string()
+                        .regex(
+                          /^[A-Za-z0-9_-]{1,64}$/,
+                          "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    }),
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional(),
         })
         .optional(),
       // ── The v2 verdict policy ────────────────────────────────────────────
@@ -5529,6 +5573,11 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
         goalCompletion.threshold = s.judge.threshold;
+      // The RUBRIC is a suite field, not a judge-config one — it is stored
+      // beside `judgeConfig` because it is hashed into every verdict and
+      // editing it retires the suite's calibration. Nested under `judge` on
+      // the wire because that is where a caller looks for it.
+      if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
       updateArgs.judgeConfig = { goalCompletion };
     }
     applyVerdictPolicySettings(suite!, s, updateArgs);

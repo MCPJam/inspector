@@ -40,6 +40,9 @@ import {
   SuiteBudgetsList,
   SuitePassOrFailSection,
 } from "./suite-pass-or-fail-section";
+import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
+import { JudgeGatePanel } from "./judge-gate-panel";
+import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import {
   VerdictPolicyUpgradeButton,
   VerdictPolicyV2Controls,
@@ -559,7 +562,12 @@ export function SuiteIterationsView({
   // key) and a zod parse over every default check, and this component re-renders
   // on every run-progress tick of every suite in the project.
   const draftCanCommit = useMemo(
-    () => canCommit(draft, areAllChecksValid),
+    // A half-written rubric is refused HERE rather than by the backend, for the
+    // same reason a half-written check is: the save is one batched mutation, so
+    // a rubric the platform rejects takes the settings beside it down with it.
+    () =>
+      canCommit(draft, areAllChecksValid) &&
+      isRubricValid(draft.current.judgeRubric),
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
@@ -574,9 +582,13 @@ export function SuiteIterationsView({
   // may do next (acknowledging a judge gate, upgrading the verdict policy)
   // should change the rows, not leave them describing the suite as it was when
   // the page loaded.
+  // Bumped by an acknowledgement, which changes what the gate switch may do
+  // WITHOUT changing the suite's revision — the acknowledgement is stored on
+  // the suite but is not a settings edit, so nothing else would re-ask.
+  const [capabilitiesRefresh, setCapabilitiesRefresh] = useState(0);
   const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
     isEditMode ? suite._id : null,
-    suite.revisionNumber,
+    `${suite.revisionNumber ?? "none"}:${capabilitiesRefresh}`,
   );
   // The ONE rule every row below shares: when capabilities could not be read,
   // behave exactly as the page did before they existed. Capabilities make a
@@ -628,6 +640,24 @@ export function SuiteIterationsView({
     // not on every render that produces a new object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [liveSettingsKey]);
+
+  // S6 — the run a rubric edit can be backtested against.
+  //
+  // The newest TERMINAL run that was actually judged: a run with no
+  // `goalCompletion` has no stored verdict to compare a draft against, and a
+  // run still going has nothing to re-grade at all. Absent means the panel is
+  // not offered rather than offered and refused.
+  const backtestableRun = useMemo(() => {
+    const terminal = new Set(["completed", "failed", "cancelled", "timed_out"]);
+    return (
+      [...runs]
+        .sort(compareRunsBySequence)
+        .find(
+          (run) =>
+            terminal.has(run.status ?? "") && run.goalCompletion !== undefined,
+        ) ?? null
+    );
+  }, [runs]);
 
   const handleCommitSettings = useCallback(
     async (note: string) => {
@@ -2081,6 +2111,35 @@ export function SuiteIterationsView({
                     })
                   }
                   availableModels={availableModels}
+                  judgeAccessory={
+                    <JudgeGatePanel
+                      suiteId={suite._id}
+                      judge={capabilitiesReady ? capabilities.judge : undefined}
+                      judgeConfig={draft.current.judgeConfig}
+                      onJudgeConfigChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "judgeConfig",
+                          value: next,
+                        })
+                      }
+                      onAcknowledged={() =>
+                        setCapabilitiesRefresh((n) => n + 1)
+                      }
+                    />
+                  }
+                  rubricEditor={
+                    <JudgeRubricEditor
+                      value={draft.current.judgeRubric}
+                      onChange={(next) =>
+                        dispatchDraft({
+                          type: "edit",
+                          key: "judgeRubric",
+                          value: next,
+                        })
+                      }
+                    />
+                  }
                   scenarioMigrationNotice={
                     suiteScenarioMigrationCount > 0 ? (
                       <p className="text-[11px] text-amber-700 dark:text-amber-400">
@@ -2255,6 +2314,20 @@ export function SuiteIterationsView({
         )}
         isCommitting={isCommitting}
         onConfirm={handleCommitSettings}
+        extraContent={
+          // Only when the RUBRIC is what changed, and only when there is a
+          // judged run to compare against. The backtest spends credits, so it
+          // is never offered for a save it could not inform.
+          draftChanges.some((change) => change.key === "judgeRubric") &&
+          backtestableRun ? (
+            <JudgeBacktestPanel
+              suiteId={suite._id}
+              runId={backtestableRun._id}
+              runNumber={backtestableRun.runNumber}
+              draftRubric={draft.current.judgeRubric}
+            />
+          ) : undefined
+        }
       />
       <EvalExportModal
         open={exportState !== null}

@@ -284,6 +284,9 @@ describe("v1 eval-edit routes", () => {
       model: "openai/gpt-5-mini",
       autoRun: false,
       threshold: 0.7,
+      // S6 — the suite's own criteria, `null` when it has none. Distinct from
+      // an empty list, which the write side refuses.
+      rubric: null,
     });
     expect(body.executionConfig).toEqual({
       model: "anthropic/claude-haiku-4.5",
@@ -485,6 +488,7 @@ describe("v1 eval-edit routes", () => {
       model: "openai/gpt-5.4-mini",
       autoRun: false,
       threshold: 0.7,
+      rubric: null,
     });
   });
 
@@ -3407,6 +3411,118 @@ describe("v1 eval-edit routes", () => {
         "/api/v1/projects/p1/eval-suites/suite_1"
       );
       expect(((await set.json()) as any).revisionNumber).toBe(4);
+    });
+  });
+
+  /**
+   * S6 — the suite's judge criteria on the public PATCH.
+   *
+   * `null` clears; an empty list is refused, because a rubric that asks nothing
+   * is not the absence of one — it still changes what the judge was asked, and
+   * every verdict is hashed against it.
+   */
+  describe("judge rubric on PATCH", () => {
+    function suiteUpdateArgs(): any {
+      return convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )?.[1];
+    }
+
+    it("maps settings.judge.rubric onto the suite's judgeRubric", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          settings: {
+            judge: {
+              rubric: {
+                criteria: [
+                  { id: "cites", label: "Cites a source", required: true },
+                ],
+              },
+            },
+          },
+        }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      // The rubric is a SUITE field, not a judge-config one: it is hashed into
+      // every verdict and editing it retires the suite's calibration.
+      expect(args.judgeRubric).toEqual({
+        criteria: [{ id: "cites", label: "Cites a source", required: true }],
+      });
+    });
+
+    it("clears with null and refuses an empty list", async () => {
+      const cleared = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { judge: { rubric: null } } }
+      );
+      expect(cleared.status).toBe(200);
+      expect(suiteUpdateArgs()).toHaveProperty("judgeRubric", null);
+
+      vi.clearAllMocks();
+      convexQueryMock.mockImplementation((name: string) =>
+        defaultQueryImpl(name)
+      );
+      const empty = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { judge: { rubric: { criteria: [] } } } }
+      );
+      expect(empty.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a malformed criterion before the write", async () => {
+      for (const criteria of [
+        [{ id: "not valid!", label: "x" }],
+        [{ id: "ok", label: "" }],
+        [{ id: "a", label: "x" }, { id: "a", label: "y" }].slice(0, 1).concat([
+          { id: "b", label: "z".repeat(201) },
+        ]),
+      ]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "PATCH",
+          "/api/v1/projects/p1/eval-suites/suite_1",
+          { settings: { judge: { rubric: { criteria } } } }
+        );
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it("reports the rubric back on the suite detail, null when there is none", async () => {
+      const none = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await none.json()) as any).settings.judge.rubric).toBeNull();
+
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              judgeRubric: {
+                criteria: [
+                  { id: "cites", label: "Cites a source", description: "d" },
+                ],
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+      const some = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await some.json()) as any).settings.judge.rubric).toEqual({
+        criteria: [{ id: "cites", label: "Cites a source", description: "d" }],
+      });
     });
   });
 

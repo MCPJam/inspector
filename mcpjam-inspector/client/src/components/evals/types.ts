@@ -966,12 +966,31 @@ export type EvalSuiteRun = {
     threshold: number;
     cases: Array<{
       caseKey: string;
+      /**
+       * The case AND ITS REPETITION — `${caseKey}#${iterationNumber}` — which
+       * is the only key that identifies one trial under verdict policy v2. A
+       * join on `caseKey` alone is ambiguous the moment a case runs more than
+       * once, and it silently attributes one trial's verdict to another.
+       * Absent on runs judged before the key existed.
+       */
+      gradingKey?: string;
+      /** The trial this verdict graded, when the backend resolved one. */
+      iterationId?: string;
       /** How fully the final answer satisfied expectedOutput, in [0,1]. */
       score: number;
       /** Advisory pass = score >= threshold. Does NOT gate the run. */
       passed: boolean;
       reason: string;
       rubricHits: string[];
+      /**
+       * Whether the judge actually ANSWERED. An `error` or `skipped` case
+       * carries a score the judge did not produce from evidence, so it is a
+       * non-answer rather than a low grade.
+       */
+      status?: "scored" | "error" | "skipped";
+      /** The rubric this verdict was graded against. */
+      rubricHash?: string;
+      rubricSource?: "expected_output" | "assertions" | "suite_criteria";
     }>;
   };
   // Groundedness judge (second named advisory judge): grades whether each

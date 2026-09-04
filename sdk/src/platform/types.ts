@@ -1296,6 +1296,25 @@ export interface PlatformEvalSuiteSettings {
      * Absent on older API deployments.
      */
     threshold?: number;
+    /**
+     * The suite's own grading criteria, handed to the judge alongside each
+     * case's expected output.
+     *
+     * The judge cites `id` in its reasons, which is what makes a verdict
+     * auditable rather than a number — so ids are stable, unique, and
+     * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
+     * agreement measured against criteria the suite no longer uses is
+     * agreement with a question nobody is asking. Absent on older API
+     * deployments and on suites with no criteria.
+     */
+    rubric?: {
+      criteria: Array<{
+        id: string;
+        label: string;
+        description?: string;
+        required?: boolean;
+      }>;
+    } | null;
   };
   /**
    * The verdict policy this suite's runs are decided under.

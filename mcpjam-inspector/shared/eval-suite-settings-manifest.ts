@@ -98,6 +98,11 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge",
   },
   {
+    key: "judgeRubric",
+    label: "Judge criteria",
+    api: "settings.judge.rubric",
+  },
+  {
     key: "budgets",
     label: "Budgets",
     // The token and turn ceilings, lifted out of the user-value group so they

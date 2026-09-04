@@ -13506,6 +13506,34 @@
                   "threshold": {
                     "type": "number",
                     "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
+                  },
+                  "rubric": {
+                    "type": ["object", "null"],
+                    "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
+                    "required": ["criteria"],
+                    "properties": {
+                      "criteria": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "required": ["id", "label"],
+                          "properties": {
+                            "id": {
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "required": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               },
@@ -16823,6 +16851,41 @@
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1
+                  },
+                  "rubric": {
+                    "type": ["object", "null"],
+                    "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` CLEARS them; an empty `criteria` array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration.",
+                    "required": ["criteria"],
+                    "properties": {
+                      "criteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 25,
+                        "items": {
+                          "type": "object",
+                          "required": ["id", "label"],
+                          "properties": {
+                            "id": {
+                              "type": "string",
+                              "pattern": "^[A-Za-z0-9_-]{1,64}$",
+                              "description": "Stable id the judge cites in its reasons. Unique within the rubric."
+                            },
+                            "label": {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 200
+                            },
+                            "description": {
+                              "type": "string",
+                              "maxLength": 1000
+                            },
+                            "required": {
+                              "type": "boolean"
+                            }
+                          }
+                        }
+                      }
+                    }
                   }
                 }
               },
