@@ -6,39 +6,37 @@
  * host-template seed can run in Node. The client re-exports
  * `getMistralStyleVariables` from here for a single source of truth.
  *
- * Dark values are captured from Le Chat's
- * `ui/notifications/host-context-changed` payload on 2026-06-16. Light values
- * mirror the same semantic slots so Mistral hosts follow MCPJam's global theme
- * like the other built-in hosts.
+ * Both themes are captured from Le Chat's
+ * `ui/notifications/host-context-changed` payload, re-probed 2026-09-02. The
+ * light column used to be hand-mirrored from dark; it is now measured, which
+ * is why every light value moved in that pass.
+ *
+ * That capture also dropped Le Chat's four proprietary keys
+ * (`--bg-badge-orange`, `--bg-basic-orange-strong`, `--bg-brand-500`,
+ * `--text-white-default`) — the only ones outside the MCP Apps key list — so
+ * the surface is 15 keys, down from 19.
  */
 
-const MISTRAL_LIGHT_DARK_VARS: Record<
-  string,
-  [light: string, dark: string]
-> = {
-  "--color-background-primary": ["#fff", "#111115"],
-  "--color-background-secondary": ["#f7f7f8", "#18181b"],
-  "--color-background-tertiary": ["#f0f0f2", "#09090b"],
-  "--color-background-inverse": ["#111115", "#fff"],
-  "--color-text-primary": ["#111115", "#fff"],
-  "--color-text-secondary": ["#4f4f57", "#ffffffb2"],
-  "--color-text-tertiary": ["#6f6f78", "#ffffff7f"],
-  "--color-text-inverse": ["#fff", "#111115"],
-  "--color-text-info": ["#0072ce", "#48bfff"],
-  "--color-text-danger": ["#d92d20", "#ff5d59"],
-  "--color-text-success": ["#2e7d32", "#7af526"],
-  "--color-text-warning": ["#b85c00", "#fc783b"],
-  "--color-border-primary": ["#00000019", "#ffffff19"],
+const MISTRAL_LIGHT_DARK_VARS: Record<string, [light: string, dark: string]> = {
+  "--color-background-primary": ["#fff", "#101013"],
+  "--color-background-secondary": ["#fbfbf8", "#1a1a1e"],
+  "--color-background-tertiary": ["#f5f4ef", "#27272b"],
+  "--color-background-inverse": ["#1a1a1e", "#fff"],
+  "--color-text-primary": ["#201f1c", "#fff"],
+  "--color-text-secondary": ["#615f57", "#ccccd1"],
+  "--color-text-tertiary": ["#928f86", "#a1a1aa"],
+  "--color-text-inverse": ["#fff", "#101013"],
+  "--color-text-info": ["#0082e6", "#55b3fb"],
+  "--color-text-danger": ["#e51300", "#f66c60"],
+  "--color-text-success": ["#3aa475", "#44ba82"],
+  "--color-text-warning": ["#de4408", "#ff6529"],
+  "--color-border-primary": ["#0000001a", "#ffffff1a"],
   "--color-border-secondary": ["#00000026", "#ffffff26"],
-  "--color-border-tertiary": ["#0000003f", "#ffffff3f"],
-  "--bg-badge-orange": ["#faeee7", "#53330f"],
-  "--bg-basic-orange-strong": ["#c4290a", "#ff8a00"],
-  "--bg-brand-500": ["#fa500e", "#fa500f"],
-  "--text-white-default": ["#fff", "#fff"],
+  "--color-border-tertiary": ["#00000040", "#ffffff40"],
 };
 
 export function getMistralStyleVariables(
-  theme: "light" | "dark",
+  theme: "light" | "dark"
 ): Record<string, string> {
   const idx = theme === "light" ? 0 : 1;
   const resolved: Record<string, string> = {};

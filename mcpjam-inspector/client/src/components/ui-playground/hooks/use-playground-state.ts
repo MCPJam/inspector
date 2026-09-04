@@ -1062,6 +1062,9 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     activeServerNames,
 
     // misc
+    // Surfaces that connect a server in place (the Tools rail's empty state)
+    // need the handler, not just the connection status.
+    onConnect,
     hostStyle,
     prefersReducedMotion,
   };

@@ -1,6 +1,7 @@
 import type { HostThemeMode } from "@/lib/client-styles";
 import mcpjamLogo from "/mcp_jam.svg";
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -25,6 +26,7 @@ export const UNKNOWN_HOST_LOGO = "/mcp.svg";
 const LOGO_BY_HOST_ID: Record<string, string> = {
   mcpjam: mcpjamLogo,
   claude: claudeLogo,
+  "claude-desktop": claudeDesktopLogo,
   "claude-code": claudeCodeLogo,
   chatgpt: openaiLogo,
   mistral: mistralLogo,

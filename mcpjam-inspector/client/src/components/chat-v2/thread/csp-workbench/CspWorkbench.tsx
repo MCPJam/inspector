@@ -99,6 +99,8 @@ export function CspWorkbench({ sandboxInfo, protocol }: CspWorkbenchProps) {
           <FindingsTab
             diagnoses={diagnoses}
             onViewPolicyDiff={handleViewPolicyDiff}
+            declaredDomain={sandboxInfo.declaredDomain}
+            assignedOrigin={sandboxInfo.applied?.assignedOrigin}
           />
         </TabsContent>
 
