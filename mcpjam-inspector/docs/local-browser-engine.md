@@ -142,18 +142,56 @@ The same caveat governs rollback as for the shell: this is a *server* env var,
 and users on published npm or Electron builds are on their own machines. UI
 exposure needs its own client-evaluated flag before wide release.
 
+## The same pane for the hosted engine
+
+The rail's Browser tab serves both engines from one component. The picture,
+the pointer arithmetic, the keyboard and the take-control bar are
+`BrowserPaneSurface`; `LocalBrowserBody` and `HostedBrowserBody` each own only
+what their engine genuinely does differently.
+
+The hosted path has one more hop than the local one, because the browser is in
+somebody else's sandbox:
+
+```
+daemon GET /v1/frames  ──packed binary──▶  replica  ──JSON frame──▶  pane
+pane   ──POST /api/web/computers/browser/input──▶  replica  ──▶  daemon POST /v1/input
+```
+
+Three things about it are load-bearing:
+
+- **The holder is the verified user, on both routes.** The daemon admits a
+  watcher, and input, when `holder === lease.holder`. A holder the client could
+  name would let anyone who echoed the right id watch — or type into — somebody
+  else's HELD session, which is a password field mid-login.
+- **`yours` comes from the server.** The holder is a user id the pane never
+  sees, so the panel routes answer whether the lease is the caller's. A pane
+  that tracked "I acquired it" itself would forget across a reload and lock
+  itself out of a PARKED lease it still holds, since only the holder may hand
+  one back.
+- **An open socket is not somebody watching.** The pane stays mounted behind
+  the rail's other tabs, so it pings only while it is the visible tab in a
+  visible document, and the frame socket defers the idle sweep only on a ping.
+  Without that a pane behind the Logs tab holds a metered box awake.
+
+`BrowserPanel` and its RFB stream are unchanged and remain the right thing for
+"open the full desktop" — window manager, dialogs, popups. The rail pane is the
+PAGE, at the daemon's own observation viewport.
+
 ## What is not here yet
 
-- **The hosted engine still uses noVNC** for its viewport; the frame socket
-  above is local-only. Unifying them is the next step, along with removing the
-  stream password from the panel's JSON.
-- **Electron** runs the local engine's code path but still launches Playwright,
-  which the packaged app does not ship. A `DriverPage` over a hidden
-  `BrowserWindow` + `webContents.debugger` is the fix.
+- **Electron is unproven in a PACKAGED build.** It runs its own driver over a
+  hidden `BrowserWindow` + `webContents.debugger` rather than launching
+  Playwright, so it no longer needs a browser the app does not ship — but that
+  path has only been exercised in development.
 - **Unattended runs** cannot reach a hosted browser at all: no ephemeral box
   carries a desktop runtime kind. Locally they get an ephemeral profile, but
   the registry coerces those actors to the cloud family, so in practice
   unattended browsing waits on the backend work.
+- **One upstream stream per pane.** Two panes on one hosted session open two
+  daemon streams. Fine at the daemon's cap of four, but `viewport.ts`'s
+  byte-identical dedupe keys off a `lastData` shared across subscribers, so a
+  congested watcher can miss a repaint the other received. Fanning out from one
+  upstream fixes that and halves the box's egress.
 - **No `browser_*` artifacts** are recorded for evals — no screenshots, no step
   replay.
 - The **quality governor and settle-still** from the WebMCP inspector are not
@@ -167,9 +205,15 @@ exposure needs its own client-evaluated flag before wide release.
 npx vitest run --project server \
   server/services/browserd server/routes/mcp/__tests__/computers-local-browser
 
-# The pane and its coordinate mapping.
+# The hosted routes, both hops.
+npx vitest run --project server \
+  server/routes/web/__tests__/computer-browser-frames.test.ts \
+  server/routes/web/__tests__/computer-browser-panel.test.ts
+
+# Both panes, the shared surface, and its coordinate mapping.
 npx vitest run --project client \
-  client/src/components/browser client/src/lib/local-browser
+  client/src/components/browser client/src/lib/browser-pane \
+  client/src/lib/local-browser client/src/lib/hosted-browser
 
 # Against a REAL Chromium (starts a browser; skipped otherwise).
 RUN_BROWSERD_SPIKE=true npx vitest run --project server \
