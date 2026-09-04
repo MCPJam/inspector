@@ -223,6 +223,8 @@ interface TestTemplate {
   matchOptions?: EvalMatchOptions;
   /** Case-level predicate gate override; undefined ⇒ inherit suite defaults. */
   predicates?: CasePredicates;
+  /** Authored rubric for the model judge. Empty string clears it. */
+  expectedOutput?: string;
 }
 
 interface TestTemplateEditorProps {
@@ -1167,6 +1169,7 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(currentTestCase.advancedConfig),
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
+      expectedOutput: currentTestCase.expectedOutput ?? "",
     });
     // Seed the transient picker from the persisted runs so a user who saved
     // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
@@ -1528,6 +1531,10 @@ export function TestTemplateEditor({
     const normalizedCurrentPredicates = JSON.stringify(
       normalizeForComparison(currentTestCase.predicates ?? null),
     );
+    const normalizedExpectedOutput = (editForm.expectedOutput ?? "").trim();
+    const normalizedCurrentExpectedOutput = (
+      currentTestCase.expectedOutput ?? ""
+    ).trim();
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -1537,6 +1544,7 @@ export function TestTemplateEditor({
       normalizedAdvancedConfig !== normalizedCurrentAdvancedConfig ||
       normalizedMatchOptions !== normalizedCurrentMatchOptions ||
       normalizedPredicates !== normalizedCurrentPredicates ||
+      normalizedExpectedOutput !== normalizedCurrentExpectedOutput ||
       serverNegativeFlagMismatch
     );
   }, [editForm, currentAdvancedConfig, currentSteps, currentTestCase]);
@@ -1849,10 +1857,9 @@ export function TestTemplateEditor({
       scenario: form.scenario?.trim() ? form.scenario.trim() : undefined,
       query,
       expectedToolCalls,
-      // No per-step `expectedOutput` in the steps model (the legacy per-turn
-      // field is gone); it stays undefined just as it already did for any
-      // steps-authored case.
-      expectedOutput: undefined as string | undefined,
+      // Authored rubric for the model judge. Send "" to clear — the backend
+      // preserves the field on omit, and the judge trims "" to absent.
+      expectedOutput: form.expectedOutput?.trim() ?? "",
       steps,
       isNegativeTest,
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
