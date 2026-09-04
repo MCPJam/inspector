@@ -64,8 +64,9 @@ jobs:
       # First use of actions/cache in this repo, so the reasoning lives here and
       # the other jobs point back at it.
       #
-      # `npm ci` runs seven times per PR — six jobs in this workflow, one in
-      # lint.yml — at 49-306 s each against a 1316-package tree. Only esbuild
+      # `npm ci` runs ten times per PR — nine jobs in this workflow (test,
+      # packaging, six inspector shards, e2e), one in lint.yml — at 49-306 s
+      # each against a 1316-package tree. Only esbuild
       # has a postinstall, so that is raw extract-and-link I/O, 25-57 % of every
       # job. setup-node's `cache: npm` is already on everywhere and does not
       # help: it caches ~/.npm, not node_modules.
@@ -164,15 +165,22 @@ jobs:
         if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
-      - name: Verify published package surfaces
-        # Split out of `test:ci:rest`, where these two suites ran after all ten
-        # lanes had finished — 64 s bolted onto the critical path while three
-        # cores idled, for work that depends on nothing the lanes produce.
+      - name: Verify the packed tarballs install and run
+        # The tarball half of packaging, split out of `test:ci:rest` where it
+        # ran after all ten lanes had finished — bolted onto the critical path
+        # while three cores idled, for work that depends on nothing the lanes
+        # produce.
         #
-        # Order matters inside the job: the @mcpjam/vitest suite packs sdk/ and
-        # sdk has no prepack hook, so it tars whatever dist/ is on disk. Its
-        # dependency on the SDK build is what the leading `build -w @mcpjam/sdk`
-        # satisfies for both halves.
+        # The SDK's export-surface assertions deliberately did NOT move here.
+        # They stay in `test:ci:rest`, because this job is not a required check
+        # ("Build and Test" and "Run Tests" are) and a silent regression in a
+        # release-critical export surface must not be mergeable. They cost
+        # 1.2 s there — test:checks has already built the SDK, so the assert
+        # runs on its own. What moved is the expensive part: the duplicate
+        # ~38 s SDK build and this tarball suite.
+        #
+        # The build below is still needed: the @mcpjam/vitest suite packs sdk/
+        # and sdk has no prepack hook, so it tars whatever dist/ is on disk.
         run: npm run test:ci:packaging
 
   inspector:
