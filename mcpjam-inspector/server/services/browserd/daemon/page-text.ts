@@ -43,88 +43,136 @@
  */
 export const PAGE_TEXT_FN = `() => {
   const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
-  const DROP = new Set(["IMG","PICTURE","VIDEO","AUDIO","SOURCE","TRACK","INPUT","SELECT","TEXTAREA","BUTTON"]);
+  // INPUT/SELECT/TEXTAREA hold no text of the page's own — a control's value is
+  // the user's, and the a11y tree already reports it next to the control it
+  // belongs to. BUTTON is NOT here: its label ("Continue", "Delete everything")
+  // is often the most important sentence on a confirmation page.
+  const DROP = new Set(["IMG","PICTURE","VIDEO","AUDIO","SOURCE","TRACK","INPUT","SELECT","TEXTAREA"]);
   const BLOCK = new Set(["P","DIV","SECTION","ARTICLE","MAIN","HEADER","FOOTER","NAV","BLOCKQUOTE","TABLE","TR","UL","OL","DL","DT","DD","FORM","FIELDSET","FIGURE","FIGCAPTION","ASIDE","HR","ADDRESS","DETAILS","SUMMARY"]);
+  // Far above the observation's byte budget, so it never changes what a caller
+  // sees — it only stops a pathological page from building a huge string in
+  // the renderer before anything gets the chance to trim it.
+  const MAX_CHARS = 400000;
   const chunks = [];
+  let total = 0;
   let pre = 0;
+  const push = (t, isPre) => {
+    if (!t || total >= MAX_CHARS) return;
+    total += t.length;
+    chunks.push({ t: t, pre: !!isPre });
+  };
   const hidden = (el) => {
     if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
     if (el.hidden) return true;
     if (typeof el.checkVisibility === "function") {
-      return !el.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true });
+      // opacityProperty included: text at opacity 0 is invisible to the person
+      // whose page this is, and reading it back is how a page says something to
+      // the model that it never said to anyone else.
+      return !el.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true, opacityProperty: true });
     }
     const style = window.getComputedStyle(el);
-    return style.display === "none" || style.visibility === "hidden";
+    return style.display === "none" || style.visibility === "hidden" || style.opacity === "0";
   };
   const absolute = (href) => {
     try { return new URL(href, document.baseURI).href; } catch (e) { return href; }
   };
-  const walk = (node) => {
+  // An EXPLICIT stack, not recursion. DOM depth is unbounded, and a page nested
+  // deeply enough to overflow the in-page call stack would fail the whole
+  // observation rather than returning a long page — the same reason the node
+  // counter in the observation budget is iterative.
+  const stack = [{ k: "node", n: document.body }];
+  while (stack.length > 0) {
+    const job = stack.pop();
+    if (job.k === "text") { push(job.t, false); continue; }
+    if (job.k === "preEnd") { pre -= 1; push("\\n" + job.fence + "\\n\\n", false); continue; }
+    if (job.k === "linkEnd") {
+      // The label may be several nodes deep, so it is collected and re-emitted
+      // as one unit once its children are done.
+      const parts = chunks.splice(job.start);
+      let label = "";
+      for (let i = 0; i < parts.length; i++) label += parts[i].t;
+      label = label.trim();
+      if (label) push(job.href ? "[" + label + "](" + absolute(job.href) + ")" : label, false);
+      continue;
+    }
+    const node = job.n;
+    if (!node) continue;
     if (node.nodeType === 3) {
       const raw = node.nodeValue || "";
-      chunks.push(pre > 0 ? raw : raw.replace(/\\s+/g, " "));
-      return;
+      push(pre > 0 ? raw : raw.replace(/\\s+/g, " "), pre > 0);
+      continue;
     }
-    if (node.nodeType !== 1) return;
+    if (node.nodeType !== 1) continue;
     const tag = node.tagName;
-    if (SKIP.has(tag) || DROP.has(tag)) return;
-    if (hidden(node)) return;
-    if (tag === "BR") { chunks.push("\\n"); return; }
+    if (SKIP.has(tag) || DROP.has(tag)) continue;
+    if (hidden(node)) continue;
+    if (tag === "BR") { push("\\n", false); continue; }
+    const kids = node.childNodes;
+    // Pushed in reverse so the first child is the next thing popped, and any
+    // closing job pushed before them pops last.
+    const descend = () => { for (let i = kids.length - 1; i >= 0; i--) stack.push({ k: "node", n: kids[i] }); };
     if (tag === "A") {
-      // Collected first, then re-emitted as one unit: a link's text may be
-      // several nodes deep, and the markdown form needs it whole.
-      const start = chunks.length;
-      for (const child of node.childNodes) walk(child);
-      const text = chunks.splice(start).join("").trim();
-      if (!text) return;
-      const href = node.getAttribute("href");
-      chunks.push(href ? "[" + text + "](" + absolute(href) + ")" : text);
-      return;
+      stack.push({ k: "linkEnd", start: chunks.length, href: node.getAttribute("href") });
+      descend();
+      continue;
     }
     if (/^H[1-6]$/.test(tag)) {
-      chunks.push("\\n\\n" + "#".repeat(Number(tag[1])) + " ");
-      for (const child of node.childNodes) walk(child);
-      chunks.push("\\n\\n");
-      return;
+      push("\\n\\n" + "#".repeat(Number(tag[1])) + " ", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
     }
     if (tag === "LI") {
-      chunks.push("\\n- ");
-      for (const child of node.childNodes) walk(child);
-      chunks.push("\\n");
-      return;
+      push("\\n- ", false);
+      stack.push({ k: "text", t: "\\n" });
+      descend();
+      continue;
     }
     if (tag === "PRE") {
-      chunks.push("\\n\\n\\u0060\\u0060\\u0060\\n");
+      // A fence long enough that the content cannot close it. Page text
+      // containing three backticks would otherwise end the block early and the
+      // prose after it would read as code.
+      const body = node.textContent || "";
+      let fence = "\\u0060\\u0060\\u0060";
+      while (body.indexOf(fence) !== -1) fence += "\\u0060";
+      push("\\n\\n" + fence + "\\n", false);
       pre += 1;
-      for (const child of node.childNodes) walk(child);
-      pre -= 1;
-      chunks.push("\\n\\u0060\\u0060\\u0060\\n\\n");
-      return;
+      stack.push({ k: "preEnd", fence: fence });
+      descend();
+      continue;
     }
     if (tag === "TD" || tag === "TH") {
-      for (const child of node.childNodes) walk(child);
-      chunks.push(" | ");
-      return;
+      stack.push({ k: "text", t: " | " });
+      descend();
+      continue;
     }
     if (BLOCK.has(tag)) {
-      chunks.push("\\n\\n");
-      for (const child of node.childNodes) walk(child);
-      chunks.push("\\n\\n");
-      return;
+      push("\\n\\n", false);
+      stack.push({ k: "text", t: "\\n\\n" });
+      descend();
+      continue;
     }
-    for (const child of node.childNodes) walk(child);
-  };
-  if (document.body) walk(document.body);
-  // Collapse only OUTSIDE fences: a fence's whitespace is its content. Odd
-  // segments of the split are the fenced runs, so only even ones are squeezed.
-  const parts = chunks.join("").split("\\u0060\\u0060\\u0060");
-  for (let i = 0; i < parts.length; i += 2) {
-    parts[i] = parts[i]
-      .replace(/[ \\t]+/g, " ")
-      .replace(/ ?\\n ?/g, "\\n")
-      .replace(/\\n{3,}/g, "\\n\\n");
+    descend();
   }
-  return parts.join("\\u0060\\u0060\\u0060").trim();
+  // Collapse whitespace only OUTSIDE fenced runs, where it is markup rather
+  // than content. Tracked as the walk goes rather than recovered afterwards by
+  // splitting on the fence: page content can contain a fence, and a split
+  // would then mistake ordinary prose for code.
+  let out = "";
+  let buffer = "";
+  let bufferPre = false;
+  const flush = () => {
+    out += bufferPre
+      ? buffer
+      : buffer.replace(/[ \\t]+/g, " ").replace(/ ?\\n ?/g, "\\n").replace(/\\n{3,}/g, "\\n\\n");
+    buffer = "";
+  };
+  for (let i = 0; i < chunks.length; i++) {
+    if (chunks[i].pre !== bufferPre) { flush(); bufferPre = chunks[i].pre; }
+    buffer += chunks[i].t;
+  }
+  flush();
+  return out.trim();
 }`;
 
 /**

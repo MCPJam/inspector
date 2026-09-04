@@ -897,7 +897,12 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
     value.push({ type: "image-data", data: shot, mediaType: imageMediaType(shot) });
   }
   const { ours, page } = splitPageDerived(rest);
-  value.push({ type: "text", text: JSON.stringify(ours) });
+  // An empty `{}` is not worth a content part: a plain observation says
+  // everything it has to say inside the fence, and a bare pair of braces above
+  // it reads like a field the model failed to get.
+  if (Object.keys(ours).length > 0 || !page) {
+    value.push({ type: "text", text: JSON.stringify(ours) });
+  }
   if (page) {
     value.push({ type: "text", text: fencePageContent(page, originOf(rest)) });
   }
@@ -910,8 +915,16 @@ export function toBrowserModelOutput({ output }: { output: unknown }): {
  * Everything a page can put words into: the text and a11y renderings, the DOM
  * signal, console lines the page logged, the tool names and descriptions a
  * page advertises over WebMCP, and whatever a page tool returned.
+ *
+ * `url` IS ONE OF THEM. It reads like our own metadata — we are the ones who
+ * report it — but a page chooses its own path, query and fragment, and a URL
+ * is a perfectly good place to write a sentence addressed to the model. The
+ * fence header still names the origin (scheme and host only, which a page
+ * cannot write prose into), so nothing is lost: the model can see where it is
+ * without reading untrusted text to find out.
  */
 const PAGE_DERIVED_KEYS = [
+  "url",
   "text",
   "a11y",
   "dom",
@@ -970,24 +983,54 @@ function originOf(rest: Record<string, unknown>): string {
 }
 
 /**
- * The nonce that makes the boundary unforgeable.
+ * The nonce that makes the boundary unforgeable — one per observation.
  *
- * Random per process and never derived from anything the page can read, so a
- * page cannot close the block early and continue outside it — which is the
- * whole attack a fixed delimiter invites. One value per process is enough: the
- * page never learns it, because it only ever appears in what we send onward.
+ * Per observation, not per process. A process-wide value appears verbatim in
+ * every observation the model receives, and "the page never learns it" holds
+ * only as long as the model never repeats it back. It does not take much for a
+ * page to arrange that: text telling the model to type what it just read into
+ * a form field, and the next act types the marker into the page. From then on
+ * that page can close a fence early and write outside it for the rest of the
+ * process. A fresh nonce means a harvested one is already spent.
  */
-const PAGE_CONTENT_NONCE = randomBytes(16).toString("hex");
+function pageContentNonce(): string {
+  return randomBytes(16).toString("hex");
+}
+
+/**
+ * The origin, reduced to scheme + host, or "unknown".
+ *
+ * The header line sits OUTSIDE the fence, where the model is told it can trust
+ * what it reads — so anything a page controls must not reach it. A URL is
+ * page-controlled well past the host: path, query and fragment are all
+ * attacker-writable, and a URL is a perfectly good place to put a sentence
+ * addressed to the model. `new URL(...).origin` keeps only the part that
+ * cannot carry a message, and anything unparseable degrades to "unknown"
+ * rather than being passed through for want of a better answer.
+ */
+function safeOrigin(url: string): string {
+  try {
+    const origin = new URL(url).origin;
+    // `origin` is "null" for opaque origins (data:, sandboxed frames), and a
+    // conservative charset check keeps anything exotic out of the header line.
+    return /^[a-z][a-z0-9+.-]*:\/\/[A-Za-z0-9.:\[\]-]+$/.test(origin)
+      ? origin
+      : "unknown";
+  } catch {
+    return "unknown";
+  }
+}
 
 /** Wrap page-written values in a delimited block the model can recognize. */
 function fencePageContent(
   page: Record<string, unknown>,
   origin: string,
 ): string {
+  const nonce = pageContentNonce();
   return (
-    `--- MCPJAM_PAGE_CONTENT nonce=${PAGE_CONTENT_NONCE} origin=${origin} ---\n` +
+    `--- MCPJAM_PAGE_CONTENT nonce=${nonce} origin=${safeOrigin(origin)} ---\n` +
     JSON.stringify(page) +
-    `\n--- END_MCPJAM_PAGE_CONTENT nonce=${PAGE_CONTENT_NONCE} ---`
+    `\n--- END_MCPJAM_PAGE_CONTENT nonce=${nonce} ---`
   );
 }
 

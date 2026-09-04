@@ -94,6 +94,41 @@ describe("ChromiumDriver — observe {mode:\"text\"}", () => {
     expect(res.output).not.toHaveProperty("truncated");
   });
 
+  it("flags settled:false when the page moves under the read", async () => {
+    // The prose is from before the change and the token from after it. Left
+    // unflagged, `guardStaleness` would admit an act chosen from text the page
+    // no longer shows — the same P1 the screenshot loop exists for.
+    const page = fakePage({ url: "https://x.test/", text: "first" });
+    let reads = 0;
+    const shifting = {
+      ...page,
+      async pageText() {
+        reads += 1;
+        // The page navigates while each read is in flight.
+        page.setUrl(`https://x.test/step-${reads}`);
+        return `text-${reads}`;
+      },
+    } as typeof page;
+    const { context } = fakeContext({ pages: [shifting] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+
+    expect(res.ok).toBe(true);
+    expect(res.settled).toBe(false);
+    expect(reads).toBeGreaterThan(1); // it retried before giving up
+  });
+
+  it("keeps settled true when the page holds still", async () => {
+    const page = fakePage({ url: "https://x.test/", text: "steady" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.settled).not.toBe(false);
+  });
+
   it("refuses to hand over text captured while a person holds the browser", async () => {
     // Same rule as every other capture: a read in flight when someone takes
     // control must not return what they are looking at.

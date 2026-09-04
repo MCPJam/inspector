@@ -276,8 +276,16 @@ export function wrapPage(page: AnyPage): DriverPage {
       }
     },
     async pageText() {
-      const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
-      return typeof text === "string" ? text : "";
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
+      try {
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
+      } catch {
+        return "";
+      }
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since: number) => {
