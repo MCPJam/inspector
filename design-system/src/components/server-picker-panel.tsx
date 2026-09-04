@@ -24,8 +24,12 @@ export type PickerTab = "servers" | "groups";
 export type ServerPickerServerRow = {
   id: string;
   name: string;
-  /** Resolved by the caller — the panel never maps a ConnectionStatus itself. */
-  status: { label: string; indicatorColor: string };
+  /**
+   * Resolved by the caller — the panel never maps a ConnectionStatus itself.
+   * The dot's colour arrives as a role-token class (`bg-success`,
+   * `bg-destructive`, …) so it follows the theme; an inline colour cannot.
+   */
+  status: { label: string; indicatorClassName: string };
   /**
    * Present only when connecting is offered for this row. Absence is how the
    * caller says "nothing to do here", so the panel needs no status rules of
@@ -192,8 +196,10 @@ export function ServerPickerPanel({
                   role="img"
                   aria-label={server.status.label}
                   data-testid={`server-status-dot-${server.id}`}
-                  className="size-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: server.status.indicatorColor }}
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    server.status.indicatorClassName,
+                  )}
                 />
                 <span className="min-w-0 flex-1 truncate">{server.name}</span>
               </button>

@@ -392,7 +392,7 @@ export function ProjectEnvironmentEditor({
       </div>
 
       <div className="space-y-1.5">
-        <Label className="text-xs">Server group</Label>
+        <Label className="text-xs">Servers</Label>
         <div className="flex items-center gap-2">
           <ServerPicker
             projectId={projectId}
@@ -401,7 +401,7 @@ export function ProjectEnvironmentEditor({
               setDraft((d) => ({ ...d, serverAttachmentId }))
             }
             disabled={readOnly}
-            emptyTriggerLabel="Client default · pick a group"
+            emptyTriggerLabel="Client default · pick a server or group"
           />
           {draft.serverAttachmentId && !readOnly ? (
             <Button

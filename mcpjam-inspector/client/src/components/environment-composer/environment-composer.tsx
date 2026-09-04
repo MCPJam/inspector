@@ -84,7 +84,7 @@ export function EnvironmentComposer({
   className,
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
-  emptyServerLabel = "Server group · client default",
+  emptyServerLabel = "Servers · client default",
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -394,6 +394,7 @@ export function EnvironmentComposer({
             disabled={slotsDisabled}
             emptyTriggerLabel={emptyServerLabel}
             triggerTestId={testId("servers-picker")}
+            onClearSelection={() => patchStack({ serverAttachmentId: null })}
             inModal={inModal}
           />
         ) : null}

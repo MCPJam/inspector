@@ -9,8 +9,8 @@
  * Storage has no column for a bare server, so picking one resolves to the row
  * holding exactly it — reused when it exists, minted otherwise.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ChevronDown, Server } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
   Popover,
@@ -49,7 +49,20 @@ import {
  */
 const UNKNOWN_STATUS = {
   label: "Connection state unavailable",
-  indicatorColor: "transparent",
+  indicatorClassName: "bg-transparent",
+};
+
+/**
+ * The dot's colour, as a role token rather than the hex `getConnectionStatusMeta`
+ * carries — the panel renders in both themes and a fixed colour follows neither.
+ * The helper still supplies the label, so the two stay in step.
+ */
+const STATUS_INDICATOR: Record<ConnectionStatus, string> = {
+  connected: "bg-success",
+  connecting: "bg-info",
+  "oauth-flow": "bg-pending",
+  failed: "bg-destructive",
+  disconnected: "bg-muted-foreground",
 };
 
 export type ServerPickerProps = {
@@ -63,6 +76,12 @@ export type ServerPickerProps = {
   disabled?: boolean;
   /** Trigger label when nothing is selected. */
   emptyTriggerLabel?: string;
+  /**
+   * Return to no selection. Only surfaces where the server is optional pass
+   * this, and only they get the control — the picker itself cannot tell an
+   * optional field from a required one.
+   */
+  onClearSelection?: () => void;
   /**
    * Render the popover in place instead of portaling it. Set inside a modal
    * Dialog, whose overlay swallows clicks on portaled content. Same escape
@@ -78,6 +97,7 @@ export function ServerPicker({
   onChange,
   disabled = false,
   emptyTriggerLabel = "Select server",
+  onClearSelection,
   inModal = false,
   triggerTestId,
 }: ServerPickerProps) {
@@ -102,6 +122,10 @@ export function ServerPicker({
     null,
   );
 
+  // The latch the write paths read. `creating` renders the UI but is only
+  // readable a commit later, and both writes start within one tick of a click.
+  const writing = useRef(false);
+
   /**
    * One list for every reader: the live query plus a row we just minted that it
    * has not caught up with. Without it the trigger falls back to the empty
@@ -116,17 +140,21 @@ export function ServerPicker({
     return [...serverAttachments, justCreated];
   }, [serverAttachments, justCreated]);
 
-  // Released as soon as the query reflects the row, with a bounded fallback so
-  // a parent that resets `value` mid-flight cannot strand it.
   useEffect(() => {
     if (!justCreated) return;
+    // Released as soon as the query reflects the row.
     if (serverAttachments.some((a) => a._id === justCreated._id)) {
       setJustCreated(null);
       return;
     }
+    // While it is still what `value` points at, it is the only thing that can
+    // name the trigger — dropping it on a timer would blank a live selection.
+    if (value === justCreated._id) return;
+    // The parent moved on without the query ever catching up: stop holding a
+    // row nothing refers to.
     const timer = setTimeout(() => setJustCreated(null), 3000);
     return () => clearTimeout(timer);
-  }, [justCreated, serverAttachments]);
+  }, [justCreated, serverAttachments, value]);
 
   /**
    * `ensureServersReady` runs with `allowInteractiveOAuthFlow: false`, so a
@@ -184,15 +212,16 @@ export function ServerPicker({
           server.name,
           runtime,
         );
-        const meta =
-          status === null
-            ? null
-            : getConnectionStatusMeta(status as ConnectionStatus);
+        const connectionStatus =
+          status === null ? null : (status as ConnectionStatus);
         return {
           id: server._id,
           name: server.name,
-          status: meta
-            ? { label: meta.label, indicatorColor: meta.indicatorColor }
+          status: connectionStatus
+            ? {
+                label: getConnectionStatusMeta(connectionStatus).label,
+                indicatorClassName: STATUS_INDICATOR[connectionStatus],
+              }
             : UNKNOWN_STATUS,
           onConnect:
             canConnect && actions
@@ -224,7 +253,9 @@ export function ServerPicker({
 
       const server = catalog.find((row) => row._id === serverId);
       if (!server) return;
+      if (writing.current) return;
 
+      writing.current = true;
       setCreating(true);
       try {
         const name = deriveServerGroupName(
@@ -253,6 +284,7 @@ export function ServerPicker({
             : `Couldn't select ${server.name}`,
         );
       } finally {
+        writing.current = false;
         setCreating(false);
       }
     },
@@ -262,6 +294,9 @@ export function ServerPicker({
   /** Persist a multi-server group from the panel's form, then select it. */
   const handleCreateGroup = useCallback(
     async (name: string, serverIds: string[]) => {
+      // Held for the same reason the server path holds it: the Servers tab
+      // stays clickable while the form is submitting.
+      writing.current = true;
       setCreating(true);
       try {
         const result = (await createServerAttachment({
@@ -290,6 +325,7 @@ export function ServerPicker({
         );
         throw err;
       } finally {
+        writing.current = false;
         setCreating(false);
       }
     },
@@ -355,6 +391,18 @@ export function ServerPicker({
           <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
         </button>
       </PopoverTrigger>
+
+      {onClearSelection && selection && !disabled ? (
+        <button
+          type="button"
+          data-testid="server-picker-clear"
+          aria-label="Clear server selection"
+          onClick={onClearSelection}
+          className="ml-1 flex size-6 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground"
+        >
+          <X className="size-3" />
+        </button>
+      ) : null}
 
       <PopoverContent
         className="w-72 p-1.5"
