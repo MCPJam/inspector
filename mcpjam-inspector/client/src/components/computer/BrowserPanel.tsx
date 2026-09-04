@@ -177,10 +177,19 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
    */
   const openDesktop = useCallback(async () => {
     setBusy(true);
+    // OPENED SYNCHRONOUSLY, inside the click. A `window.open` that happens
+    // after an await has lost the user gesture, and every popup blocker
+    // refuses it — so the tab is claimed now, parked on `about:blank`, and
+    // pointed at the ticket once the POST answers. `noopener` cannot be used
+    // for that, because it makes `window.open` return null and there would be
+    // no tab to redirect; clearing `opener` by hand is the same guarantee.
+    const tab = window.open("about:blank", "_blank");
+    if (tab) tab.opener = null;
     try {
       const res = await authorized("/open-desktop", { method: "POST" });
       const body = await res.json();
       if (!res.ok) {
+        tab?.close();
         setError(
           body?.error === "lease_held"
             ? "Someone else is using this browser right now."
@@ -190,10 +199,15 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
       }
       setHolding(true);
       setError(null);
-      // The ticket is single-use and short-lived, so it is navigated to
-      // immediately and never stored.
-      window.open(String(body.url), "_blank", "noopener,noreferrer");
+      // The ticket is single-use and expires in a minute, so it is navigated
+      // to immediately and never stored. `replace`, so the blank page does not
+      // sit in that tab's history with the ticket after it.
+      if (tab) tab.location.replace(String(body.url));
+      else window.location.assign(String(body.url));
       await refresh();
+    } catch (cause) {
+      tab?.close();
+      throw cause;
     } finally {
       setBusy(false);
     }
