@@ -464,11 +464,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
-    // BB-64: leaving silently read as "did my click even register?". The
-    // toast is the acknowledgement, and it must fire only on a real cancel —
-    // never on a successful launch (that path is onDone, not onCancel). The
-    // negative half is pinned in the launch test below.
-    expect(toast.success).toHaveBeenCalledWith("New swarm discarded");
+    // BB-64: leaving silently read as "did my click register?" — the toast is
+    // the acknowledgement. The launch test pins the negative half: it never
+    // fires when a run actually launches.
+    expect(toast.info).toHaveBeenCalledWith("New swarm discarded");
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -965,9 +964,10 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
     );
-    // BB-64: the discard toast is cancel-only. A real launch leaves via onDone,
-    // so it must never fire — the negative half of the cancel test's claim.
-    expect(toast.success).not.toHaveBeenCalledWith("New swarm discarded");
+    // BB-64: the discard toast belongs to leaving setup, not to launching. A
+    // real launch leaves via onDone, so it must never fire here — the negative
+    // half of the cancel test's claim.
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm discarded");
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
