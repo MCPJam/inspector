@@ -116,6 +116,15 @@ export interface MultiPageFixtureOptions {
    * or silently reverts to a conforming one.
    */
   hideFromList?: string[];
+  /**
+   * Advertise the held-open `slow-tool` in `tools/list` as well as serving it.
+   *
+   * Off by default because every pagination assertion in this fixture counts
+   * `FIXTURE_TOTAL_ITEMS`, and an extra listed tool would move those numbers.
+   * Opt in when the tool has to arrive through a path that only knows listed
+   * tools — `getToolsForAiSdk`, for one, builds its set from `tools/list`.
+   */
+  listSlowTool?: boolean;
 }
 
 /** The SEP-2243 `HeaderMismatch` JSON-RPC error code (2026-07-28). */
@@ -212,10 +221,23 @@ export function buildMultiPageFixtureServer(
   const { tools, prompts, resources, resourceTemplates } = buildItems();
 
   if (caps.tools) {
+    const baseTools = options.listSlowTool
+      ? [
+          ...tools,
+          {
+            name: "slow-tool",
+            description: "Held open until the caller aborts",
+            inputSchema: {
+              type: "object" as const,
+              properties: { delayMs: { type: "number" as const } },
+            },
+          },
+        ]
+      : tools;
     const listedTools =
       options.hideFromList && options.hideFromList.length > 0
-        ? tools.filter((tool) => !options.hideFromList!.includes(tool.name))
-        : tools;
+        ? baseTools.filter((tool) => !options.hideFromList!.includes(tool.name))
+        : baseTools;
     server.setRequestHandler("tools/list", (request: any) => {
       const { items, nextCursor } = paginatedPage(
         listedTools,

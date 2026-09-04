@@ -482,6 +482,44 @@ describe("buildStageMetadata — the seam a setup abort finalizes through", () =
     expect(buildStageMetadata({ status: "failed", error: "boom" })).toEqual({});
   });
 
+  test("records the model-layer classification beside the chain it produced", () => {
+    // The WRITE half of the persisted attribution. Without it the judge second
+    // pass has to infer the classification from the chain, and the chain does
+    // not always carry it: a model-call failure where nothing failed gets a
+    // `setup` category with no row relabelled.
+    //
+    // Asserted here rather than only where it is read, because a test that
+    // hands the reader a hand-built metadata bag passes whether or not this
+    // function ever writes one.
+    const metadata = buildStageMetadata({
+      stageCase: authoredCase,
+      status: "failed",
+      error: "provider outage",
+      stepError: { source: "model" },
+    });
+    expect(metadata.stageStepErrorSource).toBe("model");
+  });
+
+  test("writes no classification marker when the failure was not the model's", () => {
+    // `setup` is our own layer and needs no marker: it changes no derivation
+    // the second pass would otherwise get wrong, and writing it would invite a
+    // reader to treat the absence of a marker as meaningful.
+    expect(
+      buildStageMetadata({
+        stageCase: authoredCase,
+        status: "failed",
+        error: "our own preparation broke",
+        stepError: { source: "setup" },
+      }).stageStepErrorSource,
+    ).toBeUndefined();
+    expect(
+      buildStageMetadata({
+        stageCase: authoredCase,
+        status: "completed",
+      }).stageStepErrorSource,
+    ).toBeUndefined();
+  });
+
   test("an authored case that captured nothing reports a setup abort", () => {
     const metadata = buildStageMetadata({
       stageCase: authoredCase,

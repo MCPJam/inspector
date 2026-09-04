@@ -60,11 +60,15 @@ function normalizeProvenance(value: string | undefined): SkillProvenance {
   return value === "computer-adopted" ? "computer-adopted" : "authored";
 }
 
+// A project skill has no filesystem path, so `path` carries a human label for
+// the store it lives in. It used to repeat the sharing tier ("Shared"/
+// "Personal"), which the UI already renders as its own badge — the same word
+// twice in one header. The store is what the path slot is for.
 function cloudToListItem(s: CloudSkillWire): SkillListItem {
   return {
     name: s.name,
     description: s.description,
-    path: s.sharing === "project" ? "Shared" : "Personal",
+    path: "Library",
     skillId: s.skillId,
     sharing: s.sharing,
     isOwner: s.isOwner,
@@ -83,7 +87,7 @@ function cloudToSkill(s: CloudSkillWire): Skill {
     name: s.name,
     description: s.description,
     content: s.content ?? "",
-    path: s.sharing === "project" ? "Shared" : "Personal",
+    path: "Library",
   };
 }
 
