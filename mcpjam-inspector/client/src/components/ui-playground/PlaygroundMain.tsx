@@ -4582,15 +4582,33 @@ export function PlaygroundMain({
                 ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
+                      {/*
+                        BB-106: render both theme variants and toggle with CSS
+                        rather than swapping `src`. During NUX `effectiveThreadTheme`
+                        flips once `hostContext` resolves asynchronously; swapping the
+                        `src` forced a fresh fetch of the other PNG and left a blank
+                        frame (the logo "disappearing"). Both files download once, so
+                        the theme flip is now instant with no refetch.
+                      */}
                       <img
-                        src={
-                          effectiveThreadTheme === "dark"
-                            ? "/mcp_jam_dark.png"
-                            : "/mcp_jam_light.png"
-                        }
+                        src="/mcp_jam_light.png"
                         alt="MCPJam"
                         draggable={false}
-                        className="h-10 w-auto mx-auto mb-4"
+                        aria-hidden={effectiveThreadTheme === "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme === "dark" && "hidden"
+                        )}
+                      />
+                      <img
+                        src="/mcp_jam_dark.png"
+                        alt="MCPJam"
+                        draggable={false}
+                        aria-hidden={effectiveThreadTheme !== "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme !== "dark" && "hidden"
+                        )}
                       />
                       <div className="space-y-3">
                         <h3

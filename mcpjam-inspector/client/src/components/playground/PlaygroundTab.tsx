@@ -234,7 +234,7 @@ export function PlaygroundTab(props: PlaygroundTabProps) {
   if (playgroundState.loadingState.kind === "skeleton") {
     return (
       <div className="fixed inset-0 z-[100] bg-background">
-        <LoadingScreen />
+        <LoadingScreen message="Setting things up..." />
       </div>
     );
   }
