@@ -18,7 +18,7 @@
  *
  * Style presets:
  *   - "chatgpt" | "copilot" | "mcpjam" → true
- *   - "claude"  | "cursor"  | "codex" | "goose" → false
+ *   - "claude" | "claude-desktop" | "cursor" | "codex" | "goose" → false
  *   - anything else → undefined (falls through; ultimate default is false)
  */
 
@@ -63,6 +63,7 @@ export const OPENAI_COMPAT_PRESET_BY_STYLE: Readonly<Record<string, boolean>> =
     copilot: true,
     mcpjam: true,
     claude: false,
+    "claude-desktop": false,
     cursor: false,
     codex: false,
     goose: false,

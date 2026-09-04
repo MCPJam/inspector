@@ -260,10 +260,15 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
 });
 
 describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
-  const commandFrom = (source: BrowserCommand["source"]) =>
+  const commandFrom = (source: BrowserCommand["source"], holder?: string) =>
     req({
       body: JSON.stringify({
-        command: { commandId: "c1", source, action: { kind: "reload" } },
+        command: {
+          commandId: "c1",
+          source,
+          action: { kind: "reload" },
+          ...(holder ? { holder } : {}),
+        },
       }),
     });
 
@@ -310,16 +315,84 @@ describe("BrowserdRequestHandler — handoff lease gate (W4)", () => {
 
   it("still runs the person's own `manual` command while they hold it", async () => {
     const { handler, submit } = makeHandler({ lease: heldLease() });
-    const res = await handler.handle(commandFrom("manual"));
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
     expect(res.status).toBe(200);
     expect(submit).toHaveBeenCalledOnce();
   });
 
-  it("still runs a `manual` command while the lease is parked", async () => {
+  it("still runs the holder's `manual` command while the lease is parked", async () => {
+    // Parked is "your time ran out mid-flow", not "you are done" — the person
+    // may still be typing a card number. Their own commands keep working.
     const { handler, submit } = makeHandler({ lease: parkedLease() });
-    const res = await handler.handle(commandFrom("manual"));
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
     expect(res.status).toBe(200);
     expect(submit).toHaveBeenCalledOnce();
+  });
+
+  it("423s a `manual` command that names NOBODY — the source is not a credential", async () => {
+    // The bypass this closes: `manual` is the one source the gate lets past,
+    // so anything able to reach the daemon could drive and observe a browser
+    // someone is signing into by simply claiming to be them.
+    const { handler, submit } = makeHandler({ lease: heldLease() });
+    const res = await handler.handle(commandFrom("manual"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_held_by_other" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("423s a `manual` command from someone who is not the holder", async () => {
+    const { handler, submit } = makeHandler({ lease: heldLease() });
+    const res = await handler.handle(commandFrom("manual", "panel-b"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_held_by_other" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("423s a `manual` command while NOBODY holds the lease", async () => {
+    // With the lease free the agent may be mid-turn, and two drivers on one
+    // page is the exact thing the lease exists to prevent. Take it first.
+    const { handler, submit } = makeHandler();
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({ error: "lease_required" });
+    expect(submit).not.toHaveBeenCalled();
+  });
+
+  it("reports WHAT holds the browser, so the pane and the model can say", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("script-1", 60_000, "script");
+    const { handler } = makeHandler({ lease });
+    const res = await handler.handle(commandFrom("chat"));
+    expect(res.status).toBe(423);
+    expect(res.body).toMatchObject({
+      error: "lease_held",
+      holder: "script-1",
+      holderKind: "script",
+    });
+  });
+
+  it("maps a result the lease caught INSIDE the queue to the same 423", async () => {
+    // The gate cannot see a command that was already admitted. `guardLease`
+    // and the driver's capture permit answer those with `leaseBlocked`, and a
+    // caller must read one refusal whichever side of the queue it happened on.
+    const lease = heldLease();
+    const { handler } = makeHandler({
+      lease,
+      submit: vi.fn().mockResolvedValue({
+        status: "ok",
+        bootId: "boot-1",
+        result: { ok: false, leaseBlocked: true, error: "lease_held: taken" },
+      }),
+    });
+    const res = await handler.handle(commandFrom("manual", "panel-a"));
+    expect(res.status).toBe(423);
+    // The ENVELOPE carries the bare code — that is what the client codec
+    // matches on — and the prose rides alongside as `detail`.
+    expect(res.body).toMatchObject({
+      error: "lease_held",
+      detail: "lease_held: taken",
+      holder: "panel-a",
+    });
   });
 
   it("blocks OBSERVATIONS too — the privacy half of the gate", async () => {
@@ -485,3 +558,236 @@ function heldLeaseFor(holder: string): HandoffLease {
   lease.acquire(holder, 60_000);
   return lease;
 }
+
+describe("BrowserdRequestHandler — watching and touching the page", () => {
+  function makeViewport() {
+    const listeners: Array<(f: unknown) => void> = [];
+    const dispatched: unknown[][] = [];
+    const viewport = {
+      subscribe(listener: (f: unknown) => void) {
+        listeners.push(listener);
+        return () => {
+          const i = listeners.indexOf(listener);
+          if (i >= 0) listeners.splice(i, 1);
+        };
+      },
+      subscriberCount: () => listeners.length,
+      // Mirrors the real viewport: the permit is re-asked BEFORE each event,
+      // so a batch that spans a handoff stops at the boundary instead of
+      // delivering the rest under the new holder.
+      async dispatchInput(events: unknown[], stillPermitted?: () => boolean) {
+        for (const event of events) {
+          if (stillPermitted && !stillPermitted()) return;
+          dispatched.push([event]);
+        }
+      },
+      async dispose() {},
+    };
+    const emit = (frame: unknown) => {
+      for (const listener of [...listeners]) listener(frame);
+    };
+    return { viewport, listeners, dispatched, emit };
+  }
+
+  function handlerWith(lease?: HandoffLease) {
+    const { viewport, listeners, dispatched, emit } = makeViewport();
+    const handler = new BrowserdRequestHandler({
+      queue: { submit: vi.fn() },
+      driver: {
+        health: async () => ({ ok: true }),
+        viewport: async () => viewport as never,
+      },
+      bootId: "boot-1",
+      token: "t",
+      ...(lease ? { lease } : {}),
+    });
+    return { handler, listeners, dispatched, emit };
+  }
+
+  it("lets anyone watch while nobody holds the browser", async () => {
+    const { handler, listeners } = handlerWith();
+    const result = await handler.subscribeFrames({ listener: () => {} });
+    expect(result.ok).toBe(true);
+    expect(listeners).toHaveLength(1);
+  });
+
+  it("shows frames to the holder, and to nobody else", async () => {
+    // A second pane showing a person's password field as they type it is the
+    // same leak as an agent screenshotting it.
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const { handler, listeners } = handlerWith(lease);
+
+    const theirs = await handler.subscribeFrames({
+      holder: "rail-1",
+      listener: () => {},
+    });
+    expect(theirs.ok).toBe(true);
+
+    const others = await handler.subscribeFrames({
+      holder: "rail-2",
+      listener: () => {},
+    });
+    expect(others).toMatchObject({ ok: false, error: "lease_held" });
+    const anonymous = await handler.subscribeFrames({ listener: () => {} });
+    expect(anonymous).toMatchObject({ ok: false, error: "lease_held" });
+    expect(listeners).toHaveLength(1);
+  });
+
+  it("takes input only from the person who holds the browser", async () => {
+    const lease = new HandoffLease();
+    lease.acquire("rail-1", 60_000);
+    const { handler, dispatched } = handlerWith(lease);
+
+    expect(
+      await handler.dispatchInput({
+        holder: "rail-1",
+        events: [{ type: "text", text: "hunter2" }],
+      }),
+    ).toEqual({ ok: true });
+
+    expect(
+      await handler.dispatchInput({
+        holder: "someone-else",
+        events: [{ type: "text", text: "steal" }],
+      }),
+    ).toMatchObject({ ok: false, error: "lease_held_by_other" });
+
+    expect(dispatched).toEqual([[{ type: "text", text: "hunter2" }]]);
+  });
+
+  it("refuses input when nobody has taken control", async () => {
+    // With the lease free the agent may be mid-turn, and two drivers on one
+    // page is what the lease exists to prevent. Take it first.
+    const { handler, dispatched } = handlerWith();
+    expect(
+      await handler.dispatchInput({
+        holder: "rail-1",
+        events: [{ type: "text", text: "x" }],
+      }),
+    ).toMatchObject({ ok: false, error: "lease_required" });
+    expect(dispatched).toHaveLength(0);
+  });
+});
+
+/**
+ * The setup-time checks above answer "who may start watching". These answer
+ * "who may KEEP watching" — the lease moves, and a subscription taken while it
+ * was free must not outlive that.
+ */
+describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
+  function makeViewport(afterEvent?: (delivered: number) => void) {
+    const listeners: Array<(f: unknown) => void> = [];
+    const viewport = {
+      subscribe(listener: (f: unknown) => void) {
+        listeners.push(listener);
+        return () => {
+          const i = listeners.indexOf(listener);
+          if (i >= 0) listeners.splice(i, 1);
+        };
+      },
+      subscriberCount: () => listeners.length,
+      async dispatchInput(events: unknown[], stillPermitted?: () => boolean) {
+        for (const event of events) {
+          if (stillPermitted && !stillPermitted()) return;
+          delivered.push(event);
+          afterEvent?.(delivered.length);
+        }
+      },
+      async dispose() {},
+    };
+    const delivered: unknown[] = [];
+    return {
+      viewport,
+      delivered,
+      emit: (frame: unknown) => {
+        for (const listener of [...listeners]) listener(frame);
+      },
+      subscriberCount: () => listeners.length,
+    };
+  }
+
+  function handlerWith(
+    lease: HandoffLease,
+    afterEvent?: (delivered: number) => void,
+  ) {
+    const v = makeViewport(afterEvent);
+    const handler = new BrowserdRequestHandler({
+      queue: { submit: vi.fn() },
+      driver: {
+        health: async () => ({ ok: true }),
+        viewport: async () => v.viewport as never,
+      },
+      bootId: "boot-1",
+      token: "t",
+      lease,
+    });
+    return { handler, ...v };
+  }
+
+  it("stops frames, unsubscribes and says why when someone else takes control", async () => {
+    const lease = new HandoffLease();
+    const { handler, emit, subscriberCount } = handlerWith(lease);
+    const frames: unknown[] = [];
+    const revoked: string[] = [];
+
+    const sub = await handler.subscribeFrames({
+      listener: (f) => frames.push(f),
+      onRevoked: (reason) => revoked.push(reason),
+    });
+    expect(sub.ok).toBe(true);
+
+    emit({ seq: 1 });
+    expect(frames).toHaveLength(1);
+
+    // Somebody takes the browser. The socket that was watching a free page is
+    // now a stranger looking over their shoulder.
+    lease.acquire("rail-1", 60_000);
+    emit({ seq: 2 });
+
+    expect(frames).toHaveLength(1);
+    expect(revoked).toEqual(["lease_held"]);
+    expect(subscriberCount()).toBe(0);
+
+    // Idempotent: further frames cannot revive it, and revoke fires once.
+    emit({ seq: 3 });
+    expect(frames).toHaveLength(1);
+    expect(revoked).toHaveLength(1);
+  });
+
+  it("keeps showing the HOLDER their own frames", async () => {
+    const lease = new HandoffLease();
+    const { handler, emit } = handlerWith(lease);
+    const frames: unknown[] = [];
+
+    lease.acquire("rail-1", 60_000);
+    await handler.subscribeFrames({
+      holder: "rail-1",
+      listener: (f) => frames.push(f),
+    });
+
+    emit({ seq: 1 });
+    emit({ seq: 2 });
+
+    expect(frames).toHaveLength(2);
+  });
+
+  it("stops a keystroke batch at the moment control changes", async () => {
+    const lease = new HandoffLease();
+    // The person hands the browser back (or their lease lapses) halfway
+    // through a batch that is already in flight.
+    const { handler, delivered } = handlerWith(lease, (count) => {
+      if (count === 2) lease.release("rail-1");
+    });
+    lease.acquire("rail-1", 60_000);
+
+    const events = ["h", "u", "n", "t"].map(
+      (text) => ({ type: "text", text }) as const,
+    );
+    const result = await handler.dispatchInput({ holder: "rail-1", events });
+
+    expect(result).toEqual({ ok: true });
+    // Two, not four: the tail belongs to whoever holds the browser now.
+    expect(delivered).toHaveLength(2);
+  });
+});

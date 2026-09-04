@@ -155,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },

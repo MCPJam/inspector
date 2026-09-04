@@ -102,6 +102,10 @@ describe("authFetch bearer on the eval chain routes", () => {
     // Same narrowness for the compare read: the literal segment only.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare-export",
     "/api/v1/projects/proj_1/eval-runs/run_1/compare/cases",
+    // The suite's revision history is an AGENT read. The app reads the same
+    // history through Convex (`testSuites:listSuiteRevisions`), so allowlisting
+    // this route would widen the UI bearer's reach for nothing the app uses.
+    "/api/v1/projects/proj_1/eval-suites/suite_1/revisions",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });

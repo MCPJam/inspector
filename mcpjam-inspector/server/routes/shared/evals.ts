@@ -24,7 +24,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isTerminalRunStatus } from "../../services/evals/run-status.js";
+import { isRunPastExecution } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -1122,12 +1122,19 @@ export type PreparedEvalRun = {
  *
  * FALSE against a backend with no `deduped` field, for the same reason: unknown
  * is not a licence to change behaviour.
+ *
+ * TRUE for a replay of a run held in `grading`, which is why this reads
+ * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
+ * every trial and is waiting only for its judge; a redelivered claim that
+ * executed it would run the whole suite a second time and bill for it, against
+ * a run whose trials are already recorded — the exact double-spend above, in a
+ * status that is deliberately not terminal.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
+  return prepared.deduped === true && isRunPastExecution(prepared.status);
 }
 
 /**

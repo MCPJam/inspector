@@ -118,6 +118,47 @@ export const mcpProtocolVersionsByServerIdSchema = z
   .record(z.string().min(1), mcpProtocolVersionEnum)
   .optional();
 
+/**
+ * The client-conformance knobs as they travel on the wire.
+ *
+ * ONE declaration, spread into every hosted route schema that builds a
+ * connection out of the request body. Zod strips what it does not declare, so
+ * a schema missing one of these does not fail — it silently runs the session
+ * as a fully conforming client, which is indistinguishable from the host
+ * having no opinion at all. That has now shipped three times (mirroring, then
+ * cancellation, then both `toolListChanged` halves): a knob the client
+ * computed correctly and a route schema quietly ate.
+ *
+ * Only the non-default value is ever sent, so an absent field means the
+ * conforming behavior and a host with no opinion sends nothing.
+ *
+ * Spread this rather than re-declaring the fields: a new knob reaches every
+ * body-built surface by being added HERE, once.
+ */
+export const conformanceKnobWireShape = {
+  // SEP-2243 `Mcp-Param-*` mirroring, from
+  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Only `false` is ever
+  // sent: `"mirror"` is the SDK's no-field default.
+  mirrorToolParamHeaders: z.boolean().optional(),
+  // `mcpProfile.paginationTraversal` / `.mrtrSupport`.
+  firstPageOnly: z.boolean().optional(),
+  supportsMrtr: z.boolean().optional(),
+  // `mcpProfile.toolListChanged.listens` / `.refetches`, as the two
+  // suppression switches the SDK reads.
+  suppressListenChannel: z.boolean().optional(),
+  dropToolListChanged: z.boolean().optional(),
+  // `mcpProfile.toolCallCancellation`, per era. Carried as a record because
+  // the era that governs is only known once the connection negotiates:
+  // `extractMcpInitializeOptions` keeps the `false` leaves and the SDK picks
+  // between them after the handshake.
+  toolCallCancellation: z
+    .object({
+      legacy: z.boolean().optional(),
+      modern: z.boolean().optional(),
+    })
+    .optional(),
+} as const;
+
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
   serverId: z.string().min(1),
@@ -154,18 +195,7 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
-  // SEP-2243 `Mcp-Param-*` mirroring, resolved client-side from
-  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Declared here for the
-  // same reason as the pins above — Zod strips undeclared fields, and the
-  // client sends it on every hosted route call once the host opts in. Only
-  // `false` is ever sent: `"mirror"` is the SDK's no-field default.
-  mirrorToolParamHeaders: z.boolean().optional(),
-  // Sibling client-conformance knobs. Declared for the SAME reason as the
-  // field above: Zod strips what it does not declare, so a knob the client
-  // faithfully sends would vanish here and the hosted session would execute
-  // as a fully conforming client. Only the non-default value is ever sent.
-  firstPageOnly: z.boolean().optional(),
-  supportsMrtr: z.boolean().optional(),
+  ...conformanceKnobWireShape,
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -825,6 +855,14 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    /**
+     * `mcpProfile.toolListChanged`, forwarded onto
+     * `BaseServerConfig.suppressListenChannel` / `.dropToolListChanged`:
+     * `listens: false` never opens the GET listen stream, `refetches: false`
+     * drops `notifications/tools/list_changed` before the client sees it.
+     */
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   /**
@@ -874,6 +912,12 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(initializePins?.suppressListenChannel === true
+          ? { suppressListenChannel: true }
+          : {}),
+        ...(initializePins?.dropToolListChanged === true
+          ? { dropToolListChanged: true }
           : {}),
         ...(initializePins?.toolCallCancellation
           ? { toolCallCancellation: initializePins.toolCallCancellation }
@@ -959,6 +1003,12 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
     ...(initializePins?.toolCallCancellation
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
@@ -982,6 +1032,8 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
@@ -996,6 +1048,8 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
       toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     }
   | undefined {
@@ -1030,6 +1084,12 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
     ...(initializePins?.toolCallCancellation
       ? { toolCallCancellation: initializePins.toolCallCancellation }
       : {}),
@@ -1101,6 +1161,8 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
       toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     };
     /**
@@ -1536,6 +1598,15 @@ export async function createAuthorizedManager(
               effectiveInitializePins?.supportedProtocolVersions,
             firstPageOnly: effectiveInitializePins?.firstPageOnly,
             supportsMrtr: effectiveInitializePins?.supportsMrtr,
+            // Only the drop half reaches a stdio child: there is no GET
+            // listen stream on stdio for `suppressListenChannel` to refuse.
+            dropToolListChanged: effectiveInitializePins?.dropToolListChanged,
+            // Era-scoped, not transport-scoped: a 2026 stdio connection
+            // cancels with `notifications/cancelled` exactly as a 2025 one
+            // does, so a host that cancels on neither must be honored here as
+            // well. `resolveLocalStdioServerConfig` has accepted this since
+            // the knob shipped; only the hand-off was missing.
+            toolCallCancellation: effectiveInitializePins?.toolCallCancellation,
             xaaPolicy: options?.xaaPolicy,
             // The local reread + secret reveal must carry the same scope and
             // delegated identity as the hosted mint path below — a harness
@@ -1969,6 +2040,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
@@ -2005,6 +2078,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const suppressListenChannel = raw.suppressListenChannel === true;
+  const dropToolListChanged = raw.dropToolListChanged === true;
   const rawCancellation =
     raw.toolCallCancellation && typeof raw.toolCallCancellation === "object"
       ? (raw.toolCallCancellation as { legacy?: unknown; modern?: unknown })
@@ -2020,6 +2095,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     suppressParamMirroring ||
     truncatePagination ||
     disableMrtr ||
+    suppressListenChannel ||
+    dropToolListChanged ||
     disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
@@ -2031,6 +2108,8 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
+          ...(suppressListenChannel ? { suppressListenChannel: true } : {}),
+          ...(dropToolListChanged ? { dropToolListChanged: true } : {}),
           ...(disableCancellation
             ? { toolCallCancellation: cancellationLeaves }
             : {}),
