@@ -214,7 +214,7 @@ export interface AdaptedTraceResult {
   sourceMessageIndexToFocusUiMessageId: Record<number, string>;
 }
 
-type ToolResultDisplay = "sibling-text" | "attached-to-tool";
+type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
 type TraceDisplayMode = "markdown" | "json-markdown";
 type TraceDisplayAttachment =
   | { kind: "text"; text: string; mode: "markdown" }
@@ -728,7 +728,10 @@ function buildToolParts(params: {
     return parts;
   }
 
-  if (params.toolResultDisplay === "attached-to-tool") {
+  if (
+    params.toolResultDisplay === "attached-to-tool" ||
+    params.toolResultDisplay === "tool-card"
+  ) {
     return parts;
   }
 

@@ -186,6 +186,48 @@ describe("adaptTraceToUiMessages", () => {
     );
   });
 
+  it("keeps the raw result in the shared tool card without a sibling", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              input: { id: 42 },
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-1",
+              toolName: "read_me",
+              output: { type: "json", value: { hello: "world" } },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "tool-card",
+    });
+
+    expect(result.messages[0].parts).toHaveLength(1);
+    expect(result.messages[0].parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      input: { id: 42 },
+      output: { hello: "world" },
+    });
+    expect(result.messages[0].parts[0]).not.toHaveProperty("traceDisplayMode");
+  });
+
   // --- Test 2: Multiple tool calls ---
   it("groups multiple tool-calls and results into a single assistant UIMessage", () => {
     const trace: TraceEnvelope = {

@@ -486,7 +486,7 @@ export function TraceViewer({
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
-        toolResultDisplay: "attached-to-tool",
+        toolResultDisplay: "tool-card",
       }),
     [trace, toolsMetadata, toolServerMap, connectedServerIds]
   );

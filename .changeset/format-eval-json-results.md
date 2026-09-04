@@ -3,4 +3,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Render eval tool results inside the full shared tool card, including structured JSON and widget diagnostics, instead of raw sibling text.
+Render eval tool calls with the full shared playground card, including its Input, Result, widget controls, and diagnostics, without a duplicate sibling result.

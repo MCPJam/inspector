@@ -1248,8 +1248,9 @@ describe("TraceViewer", () => {
     expect(message.parts).toHaveLength(1);
     expect(message.parts[0]).toMatchObject({
       type: "dynamic-tool",
-      traceDisplayMode: "json-markdown",
+      output: { ok: true },
     });
+    expect(message.parts[0]).not.toHaveProperty("traceDisplayMode");
   });
 
   it("requests collapsed reasoning rendering in chat trace mode", () => {
