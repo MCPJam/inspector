@@ -58,7 +58,9 @@ function build(over: Partial<BrowserFramesDeps> = {}) {
   // Captures the handlers the route hands back, so a test can drive the socket
   // lifecycle without a real upgrade.
   let events: Record<string, (...args: never[]) => unknown> = {};
-  const upgradeWebSocket = ((createEvents: (c: unknown) => Promise<unknown>) => {
+  const upgradeWebSocket = ((
+    createEvents: (c: unknown) => Promise<unknown>,
+  ) => {
     return async (c: unknown) => {
       events = (await createEvents(c)) as typeof events;
       return events;
@@ -106,10 +108,9 @@ function build(over: Partial<BrowserFramesDeps> = {}) {
     };
     await (handler as unknown as (c: unknown) => Promise<unknown>)(ctx);
     const ws = fakeSocket();
-    await (events.onOpen as unknown as (e: unknown, w: unknown) => Promise<void>)(
-      {},
-      ws,
-    );
+    await (
+      events.onOpen as unknown as (e: unknown, w: unknown) => Promise<void>
+    )({}, ws);
     return { ws, events };
   }
 
@@ -274,9 +275,10 @@ describe("browser frames socket — keeping the box awake", () => {
     const { events, ws } = await f.connect();
     f.touchSession.mockClear();
     const ping = () =>
-      (
-        events.onMessage as unknown as (e: unknown, w: unknown) => void
-      )({ data: JSON.stringify({ type: "ping" }) }, ws);
+      (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+        { data: JSON.stringify({ type: "ping" }) },
+        ws,
+      );
 
     for (let i = 0; i < 3; i += 1) {
       ping();

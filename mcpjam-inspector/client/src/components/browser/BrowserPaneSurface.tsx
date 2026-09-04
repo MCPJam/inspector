@@ -180,7 +180,9 @@ export function BrowserPaneSurface({
             clampToPage: draggingRef.current !== null,
           });
           if (point)
-            send([{ type: "mouse_move", ...point, modifiers: modifiersOf(event) }]);
+            send([
+              { type: "mouse_move", ...point, modifiers: modifiersOf(event) },
+            ]);
         }}
         onMouseDown={(event) => {
           // A press that starts on a bar is still dropped: the page has

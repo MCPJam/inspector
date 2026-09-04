@@ -50,11 +50,9 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
   }));
   const attachSession = vi.fn(async () => {});
   const sendInput = vi.fn(
-    async (_args: {
-      holder: string;
-      events: unknown[];
-      tabId?: string;
-    }) => ({ ok: true as const }),
+    async (_args: { holder: string; events: unknown[]; tabId?: string }) => ({
+      ok: true as const,
+    }),
   );
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
@@ -125,7 +123,10 @@ describe("browser panel — auth", () => {
         body:
           path === "/session"
             ? undefined
-            : JSON.stringify({ action: "acquire", events: [{ type: "text", text: "x" }] }),
+            : JSON.stringify({
+                action: "acquire",
+                events: [{ type: "text", text: "x" }],
+              }),
       });
       expect(res.status).toBe(401);
       expect(await res.json()).toMatchObject({
@@ -531,8 +532,14 @@ describe("browser panel — is this lease mine?", () => {
     // The holder is the authenticated user id, which the client never sees.
     // Without this the pane would have to remember "I acquired it" in its own
     // state — and forget across a reload.
-    const f = withLease({ state: "held", holder: CLAIMS.userId, bootId: "boot-1" });
-    expect(await (await f.call("/session")).json()).toMatchObject({ yours: true });
+    const f = withLease({
+      state: "held",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: true,
+    });
   });
 
   it("says a PARKED lease is still theirs", async () => {
@@ -541,22 +548,40 @@ describe("browser panel — is this lease mine?", () => {
     // its holder may hand it back. Reported as somebody else's, a reloading
     // pane would be locked out of a browser it still holds, with nothing but
     // a server restart to clear it.
-    const f = withLease({ state: "parked", holder: CLAIMS.userId, bootId: "boot-1" });
-    expect(await (await f.call("/session")).json()).toMatchObject({ yours: true });
+    const f = withLease({
+      state: "parked",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: true,
+    });
   });
 
   it("does not claim somebody else's browser", async () => {
-    const f = withLease({ state: "held", holder: "users_someone_else", bootId: "boot-1" });
-    expect(await (await f.call("/session")).json()).toMatchObject({ yours: false });
+    const f = withLease({
+      state: "held",
+      holder: "users_someone_else",
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: false,
+    });
   });
 
   it("is false while nobody holds it", async () => {
     const f = withLease({ state: "free", bootId: "boot-1" });
-    expect(await (await f.call("/session")).json()).toMatchObject({ yours: false });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: false,
+    });
   });
 
   it("answers on the lease action too, so a take needs no second round trip", async () => {
-    const f = withLease({ state: "held", holder: CLAIMS.userId, bootId: "boot-1" });
+    const f = withLease({
+      state: "held",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
     const res = await f.call("/lease", {
       method: "POST",
       body: JSON.stringify({ action: "acquire" }),

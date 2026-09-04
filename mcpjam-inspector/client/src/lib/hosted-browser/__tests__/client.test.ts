@@ -34,10 +34,12 @@ function minter(lifetimeMs = 60_000) {
 function stubFetch(...responses: Response[]) {
   const calls: Array<{ url: string; init: RequestInit }> = [];
   let next = 0;
-  const impl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-    calls.push({ url: String(url), init: init ?? {} });
-    return responses[Math.min(next++, responses.length - 1)]!.clone();
-  });
+  const impl = vi.fn(
+    async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init: init ?? {} });
+      return responses[Math.min(next++, responses.length - 1)]!.clone();
+    },
+  );
   vi.stubGlobal("fetch", impl);
   return { calls };
 }
@@ -108,9 +110,9 @@ describe("an authorized call", () => {
       }),
     );
     const cache = createBrowserTokenCache(minter().mint);
-    expect(await fetchHostedBrowserSession(cache, { ensure: true })).toMatchObject(
-      { bootId: "boot-1", yours: false },
-    );
+    expect(
+      await fetchHostedBrowserSession(cache, { ensure: true }),
+    ).toMatchObject({ bootId: "boot-1", yours: false });
     expect(calls[0]!.url).toBe("/api/web/computers/browser/session?ensure=1");
     expect(new Headers(calls[0]!.init.headers).get("authorization")).toBe(
       "Bearer tok-1",
@@ -127,7 +129,9 @@ describe("an authorized call", () => {
       json(200, { ok: true, counted: true }),
     );
     const cache = createBrowserTokenCache(m.mint);
-    await sendHostedBrowserInput(cache, { events: [{ type: "text", text: "a" }] });
+    await sendHostedBrowserInput(cache, {
+      events: [{ type: "text", text: "a" }],
+    });
     expect(calls).toHaveLength(2);
     expect(new Headers(calls[0]!.init.headers).get("authorization")).toBe(
       "Bearer tok-1",
@@ -143,9 +147,9 @@ describe("an authorized call", () => {
     const m = minter();
     const { calls } = stubFetch(json(401, { error: "nope" }));
     const cache = createBrowserTokenCache(m.mint);
-    await expect(
-      fetchHostedBrowserSession(cache),
-    ).rejects.toBeInstanceOf(HostedBrowserError);
+    await expect(fetchHostedBrowserSession(cache)).rejects.toBeInstanceOf(
+      HostedBrowserError,
+    );
     expect(calls).toHaveLength(2);
   });
 
@@ -170,13 +174,13 @@ describe("changing who holds the browser", () => {
       }),
     );
     const cache = createBrowserTokenCache(minter().mint);
-    expect(
-      await actOnHostedBrowserLease(cache, { action: "acquire" }),
-    ).toEqual({
-      took: false,
-      lease: { state: "held", holderKind: "human" },
-      yours: false,
-    });
+    expect(await actOnHostedBrowserLease(cache, { action: "acquire" })).toEqual(
+      {
+        took: false,
+        lease: { state: "held", holderKind: "human" },
+        yours: false,
+      },
+    );
   });
 
   it("carries the server's verdict on whether the lease is theirs", async () => {

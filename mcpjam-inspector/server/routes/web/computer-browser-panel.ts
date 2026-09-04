@@ -75,7 +75,7 @@ const INPUT_BATCH_LIMIT = 64;
 type Claims = { userId: string; computerId: string; projectId: string };
 
 type AuthFailure = { status: 401 | 503; error: string };
-type AuthResult = { ok: true; claims: Claims } | { ok: false } & AuthFailure;
+type AuthResult = { ok: true; claims: Claims } | ({ ok: false } & AuthFailure);
 
 /** Deps seam so the route is testable without E2B or a live Convex. */
 export interface BrowserPanelDeps {
@@ -386,7 +386,10 @@ export function createComputerBrowserPanelRoutes(
       ? (body.events as ViewportInputEvent[]).slice(0, INPUT_BATCH_LIMIT)
       : [];
     if (events.length === 0) {
-      return c.json({ ok: false, error: "At least one event is required." }, 400);
+      return c.json(
+        { ok: false, error: "At least one event is required." },
+        400,
+      );
     }
 
     try {
@@ -423,22 +426,29 @@ export function createComputerBrowserPanelRoutes(
       // dispatch that actually landed — refused input reached no page, and
       // must not hold a machine awake.
       if (shouldTouchActivity(computerId)) {
-        void touchSession({ sessionId: session.sessionId, kind: "command" }).catch(
-          () => {},
-        );
+        void touchSession({
+          sessionId: session.sessionId,
+          kind: "command",
+        }).catch(() => {});
         void touchActivity({ computerId }).catch(() => {});
       }
       return c.json({ ok: true });
     } catch (error) {
       if (error instanceof BrowserdClientError) {
-        return c.json({ ok: false, error: "The browser did not accept the input." }, 502);
+        return c.json(
+          { ok: false, error: "The browser did not accept the input." },
+          502,
+        );
       }
       reportRouteFailure("browser panel input failed", error, {
         source: "computer-browser-panel.input",
         hop: "mcpjam_internal",
         context: { computerId },
       });
-      return c.json({ ok: false, error: "Failed to send input to the browser." }, 502);
+      return c.json(
+        { ok: false, error: "Failed to send input to the browser." },
+        502,
+      );
     }
   });
 

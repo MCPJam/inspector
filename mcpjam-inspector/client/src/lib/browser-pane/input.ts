@@ -51,7 +51,6 @@ export type BrowserInputEvent =
     }
   | { type: "text"; text: string };
 
-
 /**
  * A frame as it arrives: base64 JPEG plus the geometry it measured itself at.
  *
@@ -65,7 +64,6 @@ export interface PaneFrame {
   ts: number;
   seq: number;
 }
-
 
 /**
  * Where a click on the rendered image lands in the PAGE.

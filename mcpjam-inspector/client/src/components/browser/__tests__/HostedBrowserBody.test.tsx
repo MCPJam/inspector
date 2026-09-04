@@ -33,10 +33,9 @@ const api = vi.hoisted(() => ({
 }));
 
 vi.mock("@/lib/hosted-browser/client", async () => {
-  const actual =
-    await vi.importActual<typeof import("@/lib/hosted-browser/client")>(
-      "@/lib/hosted-browser/client",
-    );
+  const actual = await vi.importActual<
+    typeof import("@/lib/hosted-browser/client")
+  >("@/lib/hosted-browser/client");
   return {
     ...actual,
     createBrowserTokenCache: () => ({
@@ -50,10 +49,7 @@ vi.mock("@/lib/hosted-browser/client", async () => {
     }),
     fetchHostedBrowserSession: async () => {
       if (api.sessionError) {
-        throw new actual.HostedBrowserError(
-          "nope",
-          api.sessionError.status,
-        );
+        throw new actual.HostedBrowserError("nope", api.sessionError.status);
       }
       return api.session;
     },
@@ -154,7 +150,9 @@ describe("the hosted pane — finding a browser", () => {
     // a promise nothing can keep.
     api.sessionError = { status: 503 };
     renderBody();
-    expect(await screen.findByTestId("hosted-browser-unavailable")).toBeTruthy();
+    expect(
+      await screen.findByTestId("hosted-browser-unavailable"),
+    ).toBeTruthy();
   });
 
   it("watches a browser that is already running", async () => {
@@ -232,9 +230,7 @@ describe("the hosted pane — the socket", () => {
     renderBody();
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     act(() => socket().onclose?.({ code: 4409 }));
-    expect(
-      screen.getByText(/Somebody else has taken control/),
-    ).toBeTruthy();
+    expect(screen.getByText(/Somebody else has taken control/)).toBeTruthy();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(5_000);
     });
@@ -291,7 +287,11 @@ describe("the hosted pane — what keeps the box awake", () => {
     expect(whileWatching).toBeGreaterThan(0);
 
     view.rerender(
-      <HostedBrowserBody projectId="proj-1" mintToken={mintToken} active={false} />,
+      <HostedBrowserBody
+        projectId="proj-1"
+        mintToken={mintToken}
+        active={false}
+      />,
     );
     await act(async () => {
       await vi.advanceTimersByTimeAsync(60_000);

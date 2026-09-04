@@ -166,9 +166,7 @@ export function HostedBrowserBody({
           setError(null);
           return;
         }
-        setUnavailable(
-          cause instanceof Error ? cause.message : String(cause),
-        );
+        setUnavailable(cause instanceof Error ? cause.message : String(cause));
       }
     },
     [tokens],

@@ -29,7 +29,11 @@ describe("mapping a click onto the page", () => {
 
   it("maps a click when the picture fills the element exactly", () => {
     expect(
-      toPageCoordinates({ clientX: 512, clientY: 384 }, image(1024, 768), frame),
+      toPageCoordinates(
+        { clientX: 512, clientY: 384 },
+        image(1024, 768),
+        frame,
+      ),
     ).toEqual({ x: 512, y: 384 });
   });
 
@@ -103,7 +107,11 @@ describe("releases and drags", () => {
 
   it("still drops a PRESS on a bar", () => {
     expect(
-      toPageCoordinates({ clientX: 512, clientY: 950 }, image(1024, 968), frame),
+      toPageCoordinates(
+        { clientX: 512, clientY: 950 },
+        image(1024, 968),
+        frame,
+      ),
     ).toBeNull();
   });
 });

@@ -138,8 +138,7 @@ async function authorized(
 
 async function decode<T>(res: Response): Promise<T> {
   const body = (await res.json().catch(() => null)) as
-    | (T & { error?: string; detail?: string })
-    | null;
+    (T & { error?: string; detail?: string }) | null;
   if (!res.ok) {
     throw new HostedBrowserError(
       body?.detail ?? body?.error ?? "The browser could not be reached.",

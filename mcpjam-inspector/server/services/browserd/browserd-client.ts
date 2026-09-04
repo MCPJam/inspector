@@ -138,7 +138,10 @@ export class BrowserdClient {
       },
       true,
     );
-    return decodeLeaseAction({ status: res.status, body: await this.json(res) });
+    return decodeLeaseAction({
+      status: res.status,
+      body: await this.json(res),
+    });
   }
 
   /** Send a command and interpret the daemon's reply. */
@@ -341,7 +344,8 @@ export class BrowserdClient {
         }
         for (const record of decoded.records) {
           if (record.kind === FRAME_STREAM_KIND.frame) args.onFrame(record);
-          else if (record.kind === FRAME_STREAM_KIND.end) reason = record.reason;
+          else if (record.kind === FRAME_STREAM_KIND.end)
+            reason = record.reason;
         }
         if (reason !== undefined) break;
       }

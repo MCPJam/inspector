@@ -48,10 +48,7 @@ function assertSecureLocalOrigin(): void {
 }
 
 /** What the pane knows about this machine's browser. */
-import type {
-  BrowserInputEvent,
-  PaneFrame,
-} from "@/lib/browser-pane/input";
+import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 
 export interface LocalBrowserStatus {
   /**
@@ -217,4 +214,3 @@ export function openLocalBrowserFrameStream(args: {
     },
   };
 }
-

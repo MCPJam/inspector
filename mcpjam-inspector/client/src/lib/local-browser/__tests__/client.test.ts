@@ -17,7 +17,10 @@ describe("where the consent token may be sent", () => {
       isSecureLocalOrigin({ protocol: "http:", hostname: "127.0.0.1" }),
     ).toBe(true);
     expect(
-      isSecureLocalOrigin({ protocol: "https:", hostname: "inspector.example" }),
+      isSecureLocalOrigin({
+        protocol: "https:",
+        hostname: "inspector.example",
+      }),
     ).toBe(true);
   });
 
