@@ -124,3 +124,68 @@ describe("BrowserdClient base URL", () => {
     expect(calls[0].url).toBe("https://box-8791.e2b.dev/healthz");
   });
 });
+
+describe("BrowserdClient.sendInput", () => {
+  const EVENTS = [
+    { type: "mouse_move" as const, x: 10, y: 20 },
+    { type: "text" as const, text: "hunter2" },
+  ];
+
+  it("posts the batch to /v1/input under the boot bearer", async () => {
+    const { client, calls } = makeClient(json(200, { ok: true, bootId: "boot-1" }));
+    expect(
+      await client.sendInput({ holder: "users_1", events: EVENTS, tabId: "tab-2" }),
+    ).toEqual({ ok: true });
+
+    expect(calls[0]!.url).toBe("https://box-8791.e2b.dev/v1/input");
+    expect(calls[0]!.init.method).toBe("POST");
+    expect(new Headers(calls[0]!.init.headers).get("authorization")).toBe(
+      "Bearer boot-bearer",
+    );
+    expect(JSON.parse(String(calls[0]!.init.body))).toEqual({
+      holder: "users_1",
+      events: EVENTS,
+      tabId: "tab-2",
+    });
+  });
+
+  it("omits tabId rather than sending it as null", async () => {
+    // The daemon reads `typeof tabId === "string"`, so a null would be ignored
+    // — but it would also be the first thing to read as "this pane asked for a
+    // tab" if that check ever loosened.
+    const { client, calls } = makeClient(json(200, { ok: true }));
+    await client.sendInput({ holder: "users_1", events: EVENTS });
+    expect(JSON.parse(String(calls[0]!.init.body))).not.toHaveProperty("tabId");
+  });
+
+  it("REPORTS a lease refusal rather than throwing it", async () => {
+    // 423 is the ordinary answer while the agent is driving. A client that
+    // threw here would make a pane show an error about a browser that is
+    // working exactly as designed — and would do it on every keystroke.
+    const { client } = makeClient(json(423, { error: "lease_held", bootId: "boot-1" }));
+    expect(
+      await client.sendInput({ holder: "users_1", events: EVENTS }),
+    ).toEqual({ ok: false, status: 423, error: "lease_held" });
+  });
+
+  it("carries the daemon's own reason for 404 and 413", async () => {
+    for (const [status, error] of [
+      [404, "unknown_tab"],
+      [413, "too_many_events"],
+    ] as const) {
+      const { client } = makeClient(json(status, { error }));
+      expect(await client.sendInput({ holder: "users_1", events: EVENTS })).toEqual(
+        { ok: false, status, error },
+      );
+    }
+  });
+
+  it("falls back to the status when the body says nothing", async () => {
+    const { client } = makeClient(new Response("upstream is unwell", { status: 502 }));
+    expect(await client.sendInput({ holder: "users_1", events: EVENTS })).toEqual({
+      ok: false,
+      status: 502,
+      error: "http_502",
+    });
+  });
+});

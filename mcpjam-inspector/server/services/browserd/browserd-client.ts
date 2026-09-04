@@ -36,6 +36,7 @@ import {
   FRAME_STREAM_KIND,
   type FrameStreamFrame,
 } from "./frame-stream.js";
+import type { ViewportInputEvent } from "./daemon/viewport.js";
 
 export {
   BrowserdClientError,
@@ -171,6 +172,46 @@ export class BrowserdClient {
       status: res.status,
       body: await this.json(res),
     });
+  }
+
+  /**
+   * Forward a person's pointer and keys to `POST /v1/input`.
+   *
+   * A REFUSAL IS A NORMAL ANSWER, not an error, which is why this returns a
+   * result instead of throwing. `423` means the lease is not this holder's —
+   * the ordinary state of affairs while the agent is driving — and a pane that
+   * surfaced it as a failure would be reporting a browser that is working
+   * exactly as designed. Only the transport itself throws.
+   *
+   * Batched, and NOT routed through `sendCommand`: a drag emits input twenty
+   * times a second, and every command spends an idempotency slot from a ledger
+   * that stops issuing ids once exhausted.
+   */
+  async sendInput(args: {
+    holder: string;
+    events: readonly ViewportInputEvent[];
+    tabId?: string;
+  }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await this.request(
+      "/v1/input",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          holder: args.holder,
+          events: args.events,
+          ...(args.tabId ? { tabId: args.tabId } : {}),
+        }),
+      },
+      true,
+    );
+    if (res.ok) return { ok: true };
+    const body = await this.json(res);
+    return {
+      ok: false,
+      status: res.status,
+      error: typeof body.error === "string" ? body.error : `http_${res.status}`,
+    };
   }
 
   /**
