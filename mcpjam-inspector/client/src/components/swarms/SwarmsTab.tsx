@@ -976,13 +976,7 @@ export function SwarmsTab({
             await updateJourney({ journeyRefId, ...patch } as any);
           }}
           launchJourney={launchJourney}
-          onCancel={() => {
-            // "Discarded", not "cancelled" — nothing launched, so no run was
-            // cancelled. Fires on both exits from setup (Cancel and the
-            // ← Swarms back link), each of which drops the draft.
-            toast.info("New swarm discarded");
-            navigate(routePaths.swarms);
-          }}
+          onCancel={() => navigate(routePaths.swarms)}
           onDone={(runLabels, swarmRunGroupId) => {
             // Labels are component state and `/swarms/new` → `/swarms/:id`
             // swaps sibling routes without remounting this component, so

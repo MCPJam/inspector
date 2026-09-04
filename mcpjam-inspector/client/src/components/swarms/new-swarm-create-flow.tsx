@@ -1574,6 +1574,12 @@ export function NewSwarmCreateFlow({
   /** Leaving the flow ends it — the draft is for remounts, not for history. */
   const leaveFlow = useCallback(() => {
     clearNewSwarmFlowDraft();
+    // Feedback that the exit registered — a draft thrown away, not a success,
+    // so `toast.info`. Both exits (Cancel and the ← Swarms header link) land
+    // here, so this is the one place to say it. It promises ONLY the draft:
+    // rows a failed launch already persisted are real and stay, and the header
+    // link is disabled mid-launch so this never races handleLaunch's toast.
+    toast.info("New swarm draft discarded");
     onCancel();
   }, [onCancel]);
 
@@ -1641,7 +1647,8 @@ export function NewSwarmCreateFlow({
       <button
         type="button"
         onClick={leaveFlow}
-        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
+        disabled={launching}
+        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
         data-testid="new-swarm-back-to-swarms"
       >
         <ChevronLeft className="size-3.5" />
