@@ -94,6 +94,7 @@ export type SimpleCaseFormProps = {
   onOpenDeepEditor: () => void;
   onToolsChoiceBlockReasonChange?: (reason: string | null) => void;
   evalValidationBorderClass?: string;
+  autoFocusPrompt?: boolean;
 };
 
 export function SimpleCaseForm({
@@ -112,6 +113,7 @@ export function SimpleCaseForm({
   onOpenDeepEditor,
   onToolsChoiceBlockReasonChange,
   evalValidationBorderClass,
+  autoFocusPrompt = false,
 }: SimpleCaseFormProps) {
   const view = useMemo(() => readSimpleCase(steps), [steps]);
   const resolvedMatch = resolveMatchOptions(
@@ -262,6 +264,7 @@ export function SimpleCaseForm({
           onChange={(event) => setPrompt(event.target.value)}
           rows={4}
           placeholder="Enter the user prompt…"
+          autoFocus={autoFocusPrompt}
           aria-label="What does the user ask?"
           className={cn(
             "resize-none bg-background font-mono text-sm leading-relaxed",

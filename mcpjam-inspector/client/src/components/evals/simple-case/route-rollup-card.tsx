@@ -23,28 +23,31 @@ export function RouteRollupCard({
   onAdoptTrialRoute,
   adoptPrimary = false,
 }: RouteRollupCardProps) {
-  if (rollup.total < 2) return null;
+  if (rollup.total < 2 && !onAdoptTrialRoute) return null;
   const top = rollup.routes[0];
+  const showSummary = rollup.total >= 2;
   return (
     <div
       className="space-y-2 rounded-md border border-border bg-muted/20 p-3"
       data-testid="route-rollup-card"
     >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <p className="text-[11px] font-medium text-foreground">
-            Across {rollup.total} trials
-          </p>
-          {top ? (
-            <p className="text-[11px] text-muted-foreground">
-              same route in {top.count} of {rollup.total}
+      {showSummary ? (
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <p className="text-[11px] font-medium text-foreground">
+              Across {rollup.total} trials
             </p>
-          ) : null}
+            {top ? (
+              <p className="text-[11px] text-muted-foreground">
+                same route in {top.count} of {rollup.total}
+              </p>
+            ) : null}
+          </div>
+          <span className="rounded-md border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+            Observational
+          </span>
         </div>
-        <span className="rounded-md border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-          Observational
-        </span>
-      </div>
+      ) : null}
       {expectedPathKey ? (
         <p className="text-[11px] text-muted-foreground">
           Expected route: {formatPath(expectedPathKey)}

@@ -1316,7 +1316,12 @@ export function TestTemplateEditor({
 
     const rollup = summarizeRoutes(recentIterations);
     const showRollup = simpleCaseEditorEnabled && rollup.total > 1;
-    if (!chain && !showRollup) return null;
+    const showRecordAdopt =
+      simpleCaseEditorEnabled &&
+      draftKind === "record" &&
+      !!iteration &&
+      rollup.total >= 1;
+    if (!chain && !showRollup && !showRecordAdopt) return null;
 
     const resolvedMatch = resolveMatchOptions(
       suite?.defaultMatchOptions,
@@ -1331,10 +1336,11 @@ export function TestTemplateEditor({
     return (
       <div className="space-y-2">
         {chain}
-        {showRollup ? (
+        {showRollup || showRecordAdopt ? (
           <RouteRollupCard
             rollup={rollup}
             expectedPathKey={expectedPathKey}
+            adoptPrimary={draftKind === "record"}
             onAdoptTrialRoute={
               iteration
                 ? () =>
@@ -3543,6 +3549,7 @@ export function TestTemplateEditor({
                           setToolsChoiceBlockReason
                         }
                         evalValidationBorderClass={evalValidationBorderClass}
+                        autoFocusPrompt={draftKind === "record"}
                       />
                     ) : editForm ? (
                       <StepListEditor
