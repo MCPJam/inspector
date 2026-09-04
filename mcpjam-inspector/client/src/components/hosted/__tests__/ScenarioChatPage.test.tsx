@@ -9,6 +9,10 @@ import {
   writeScenarioSession,
 } from "@/lib/scenario-session";
 import {
+  readScenarioChatTranscript,
+  writeScenarioChatTranscript,
+} from "@/lib/scenario-chat-transcript";
+import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
@@ -285,6 +289,75 @@ describe("ScenarioChatPage", () => {
     );
   });
 
+  it("does not brand the shell as Claude while the link is still redeeming", async () => {
+    // Reported by testers on an org-invited scenario: the header showed the
+    // Claude mark and the word "Claude" for the whole load, on a scenario that
+    // wasn't a Claude host at all. The redeem is held open here so the
+    // bootstrapping frame is the one under assertion.
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_loading" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]')
+    ).toBeInTheDocument();
+    // No host identity is claimed until the redeem says which host this is —
+    // painting one brand and swapping to another reads as a glitch.
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+    // The visible placeholder is decorative, so the heading has to carry the
+    // shell's name for a screen reader in the meantime.
+    expect(
+      screen.getByRole("heading", { name: "Loading scenario" })
+    ).toBeInTheDocument();
+  });
+
+  it("does not wear the previous scenario's brand while a new link redeems", async () => {
+    // sessionStorage outlives the page, so a tester opening a second link still
+    // holds the first scenario's session. Dressing the redemption in that
+    // scenario's host is the same impersonation as seeding one — the stored
+    // session simply supplies the wrong vendor instead of a hardcoded one.
+    writeScenarioSession({
+      scenarioId: "sbx_previous",
+      accessVersion: 1,
+      shareToken: "tok_previous",
+      payload: {
+        projectId: "ws_1",
+        scenarioId: "sbx_previous",
+        name: "Previous Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude",
+        mode: "invited_only",
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+    mockAuthFetch.mockImplementation(() => new Promise(() => {}));
+
+    const { container } = render(<ScenarioChatPage pathToken="tok_new" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+
+    expect(
+      container.querySelector('[data-host-style="claude"]')
+    ).not.toBeInTheDocument();
+    expect(
+      container.querySelector('[data-host-style="mcpjam"]')
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Claude")).not.toBeInTheDocument();
+    expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
+  });
+
   // Removed: "uses the Claude loading indicator variant for Claude-style
   // hosted scenarios". The indicator no longer flows through a
   // `loadingIndicatorVariant` prop on ChatTabV2 — the inner thread reads
@@ -429,6 +502,111 @@ describe("ScenarioChatPage", () => {
       scenarioId: "sbx_outer",
       accessVersion: 7,
     });
+  });
+
+  it("drops the stored transcript when the link no longer redeems", async () => {
+    // The other half of the teardown: a redeem that fails is just as terminal
+    // as a revocation, and the resume must not outlive the grant.
+    writeScenarioSession({
+      scenarioId: "sbx_stale",
+      accessVersion: 1,
+      payload: {
+        projectId: "ws_stale",
+        scenarioId: "sbx_stale",
+        name: "Stored Scenario",
+        description: "Hosted scenario",
+        hostStyle: "claude" as const,
+        mode: "invited_only" as const,
+        allowGuestAccess: false,
+        viewerIsProjectMember: true,
+        systemPrompt: "You are helpful.",
+        modelId: "openai/gpt-5-mini",
+        temperature: 0.4,
+        requireToolApproval: true,
+        servers: [],
+      },
+    });
+    writeScenarioChatTranscript("sbx_stale", {
+      chatSessionId: "chat-stale",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    writeScenarioChatTranscript("sbx_other", {
+      chatSessionId: "chat-other",
+      messages: [
+        { id: "user-2", role: "user", parts: [{ type: "text", text: "yo" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" }
+      )
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(readScenarioSession()).toBeNull());
+    expect(readScenarioChatTranscript("sbx_stale")).toBeNull();
+    // A different scenario the same tab happens to hold is left alone.
+    expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+      "chat-other"
+    );
+  });
+
+  it("leaves the tab-shared transcript alone inside the Preview embed", async () => {
+    // Same rule as the session itself: the embed shares sessionStorage with the
+    // outer dashboard, so it must neither read nor delete what lives there.
+    mockIsEmbeddedPreview.mockReturnValue(true);
+    writeScenarioChatTranscript("sbx_outer", {
+      chatSessionId: "chat-outer",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" }
+      )
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(readScenarioChatTranscript("sbx_outer")?.chatSessionId).toBe(
+      "chat-outer"
+    );
+  });
+
+  it("survives a teardown with no scenario id to clear", async () => {
+    // No stored session, so the failing redeem has no scenario to name. The
+    // clear must be a no-op rather than a crash — and must not sweep the tab.
+    clearScenarioSession();
+    writeScenarioChatTranscript("sbx_other", {
+      chatSessionId: "chat-other",
+      messages: [
+        { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any[],
+    });
+    mockAuthFetch.mockResolvedValue(
+      createFetchResponse(
+        { error: "Scenario link is no longer valid" },
+        { ok: false, status: 404, statusText: "Not Found" }
+      )
+    );
+    window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
+
+    render(<ScenarioChatPage pathToken="scenario-token" />);
+
+    await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
+    expect(readScenarioSession()).toBeNull();
+    expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+      "chat-other"
+    );
   });
 
   it("waits for active WorkOS and Convex loading to settle before bootstrapping the link", async () => {
@@ -1482,6 +1660,46 @@ describe("ScenarioChatPage", () => {
         await screen.findByRole("heading", { name: "Access Denied" })
       ).toBeInTheDocument();
       expect(readScenarioSession()).toBeNull();
+    });
+
+    it("drops only the revoked scenario's transcript when access is lost", async () => {
+      // Terminal access loss: the resume must go with the grant, or the tester
+      // is offered a conversation for a scenario they can no longer open. Any
+      // OTHER scenario's row in the same tab is none of this teardown's
+      // business.
+      await renderPostStrip();
+      writeScenarioChatTranscript("sbx_recover", {
+        chatSessionId: "chat-revoked",
+        messages: [
+          { id: "user-1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any[],
+      });
+      writeScenarioChatTranscript("sbx_other", {
+        chatSessionId: "chat-other",
+        messages: [
+          { id: "user-2", role: "user", parts: [{ type: "text", text: "yo" }] },
+        ] as any[],
+      });
+
+      const onAccessRevoked = latestHostedContext()?.onAccessRevoked as (error: {
+        status: number;
+        code?: string;
+        message: string;
+      }) => void;
+
+      act(() => {
+        onAccessRevoked({
+          status: 403,
+          code: "SCENARIO_ACCESS_DENIED",
+          message: "You don't have access to Recoverable Scenario.",
+        });
+      });
+
+      await waitFor(() => expect(readScenarioSession()).toBeNull());
+      expect(readScenarioChatTranscript("sbx_recover")).toBeNull();
+      expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
+        "chat-other"
+      );
     });
 
     it("in an embedded preview, refresh updates React state but never writes sessionStorage", async () => {
