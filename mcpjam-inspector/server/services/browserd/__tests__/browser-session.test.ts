@@ -76,6 +76,8 @@ interface Fakes {
 function makeFakes(over?: {
   lookups?: BrowserSessionLookup[];
   status?: () => Promise<BrowserdStatus>;
+  /** The daemon's lease, when a test needs the relaunch to see one. */
+  lease?: () => Promise<{ state: "free" | "held" | "parked"; holder?: string }>;
   recordResult?: BrowserSessionRecordResult;
   bootError?: Error;
   streamError?: Error;
@@ -144,6 +146,7 @@ function makeFakes(over?: {
       sendCommand: vi.fn(async () => {
         throw new Error("not under test");
       }),
+      ...(over?.lease ? { lease: over.lease } : {}),
     })),
     store: { lookup, record, touch },
     bundle: () => new Uint8Array([1, 2, 3]),
@@ -226,6 +229,93 @@ describe("ensureBrowserSession — relaunch triggers", () => {
       status: async () => ({ kind: "ok", bootId: "boot-someone-else" }),
     });
     await expectRelaunch(f);
+  });
+
+  it("wakes a paused box and reuses the daemon it finds there", async () => {
+    // `tryReuse` deliberately never touches the sandbox, so a merely PAUSED
+    // box fails its probe exactly like a dead daemon does. Connecting resumes
+    // it — and the relaunch that used to follow rotates `bootId` and the
+    // stream password, breaking every open pane and in-flight command against
+    // that box, to replace a daemon that was only asleep.
+    let probes = 0;
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => {
+        probes += 1;
+        // Asleep for the first probe; awake once `connect` has resumed it.
+        return probes === 1
+          ? { kind: "unreachable", detail: "box is paused" }
+          : { kind: "ok", bootId: ROW.bootId };
+      },
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe(ROW.bootId);
+    // Woken, but nothing torn down.
+    expect(f.connect).toHaveBeenCalledTimes(1);
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.record).not.toHaveBeenCalled();
+    // The connection is still released even on this early return.
+    expect(f.sandbox.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to restart a browser somebody is holding", async () => {
+    // The relaunch pkills their Chromium and rotates the boot, which from
+    // their side is the page vanishing mid-login. The lease is the whole
+    // reason we can know that.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      lease: async () => ({ state: "held", holder: "panel-1" }),
+    });
+
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /lease_held/,
+    );
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses for a PARKED lease too, which is a hold nobody let go of", async () => {
+    // Parking is what an expired hold becomes when a pane stops its
+    // heartbeat — the tab was closed, or the machine slept. It is not
+    // evidence the private moment is over.
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      lease: async () => ({ state: "parked", holder: "panel-1" }),
+    });
+
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /lease_held/,
+    );
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("relaunches when the lease is free, or cannot be asked", async () => {
+    // A daemon that cannot answer is not one anybody is driving, and an older
+    // daemon without the endpoint answers nothing at all — neither may block
+    // recovery of a genuinely dead browser.
+    await expectRelaunch(
+      makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        lease: async () => ({ state: "free" }),
+      }),
+    );
+    await expectRelaunch(
+      makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        lease: async () => {
+          throw new Error("this daemon predates the endpoint");
+        },
+      }),
+    );
   });
 
   it("relaunches on an unhealthy daemon", async () => {

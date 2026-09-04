@@ -34,7 +34,7 @@ import type {
   BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
-import type { BrowserCommand } from "./protocol";
+import { formatBrowserdError, type BrowserCommand } from "./protocol";
 import type {
   BrowserContextMode,
   BrowserSessionLookup,
@@ -295,6 +295,43 @@ async function tryReuse(
   return handleFromRecord(session, client, true);
 }
 
+/**
+ * Throw when somebody holds this box's browser.
+ *
+ * Cheap and best-effort: a daemon that cannot answer is not one anybody is
+ * driving, and an older daemon without the endpoint answers nothing. Only a
+ * clear "held" or "parked" stops the relaunch — both mean a person's session
+ * is on that screen, and `parked` especially so, since parking is what an
+ * expired hold becomes when a pane stops its heartbeat rather than evidence
+ * that the private moment is over.
+ */
+async function refuseIfHeld(
+  deps: BrowserSessionDeps,
+  lookup: BrowserSessionLookup,
+  contextMode: BrowserContextMode,
+): Promise<void> {
+  const session = lookup.session;
+  if (!session || session.contextMode !== contextMode) return;
+  const client = deps.createClient(session.publicOrigin, session.browserdToken);
+  const state = await client.lease?.().catch(() => null);
+  if (!state) return;
+  if (state.state !== "held" && state.state !== "parked") return;
+  throw new BrowserSessionInUseError(
+    state.state === "held"
+      ? "somebody is using this browser right now; restarting it would take the page out from under them"
+      : "somebody still holds this browser — their pane stopped responding, but the session is theirs until they hand it back",
+  );
+}
+
+/** The relaunch was refused because a person holds the browser. */
+export class BrowserSessionInUseError extends Error {
+  readonly code = "browser_in_use";
+  constructor(detail: string) {
+    super(formatBrowserdError("lease_held", detail));
+    this.name = "BrowserSessionInUseError";
+  }
+}
+
 function handleFromRecord(
   session: BrowserSessionRecord,
   client: SessionClient,
@@ -353,6 +390,24 @@ async function ensureOnComputer(
   const sandbox = await deps.connect(sandboxId);
   let handle: BrowserdHandle | undefined;
   try {
+    // WAKE, THEN ASK AGAIN, before deciding the daemon is gone.
+    //
+    // `tryReuse` above deliberately never touches the sandbox, so a merely
+    // PAUSED box fails its probe exactly like a dead daemon does. Connecting
+    // is what resumes one — which has already happened by the time we get
+    // here — so the probe that failed a moment ago may well succeed now, and
+    // the whole relaunch below would be for nothing: it rotates `bootId` and
+    // the stream password, so every open pane and every in-flight command
+    // against this box breaks, to replace a daemon that was only asleep.
+    const awake = await tryReuse(deps, lookup, contextMode, args.signal);
+    if (awake) return awake;
+
+    // A person is DRIVING this browser. The relaunch below pkills their
+    // Chromium and rotates the boot, which from their side is the page
+    // vanishing mid-login. The lease is the whole reason we can know that, so
+    // refuse rather than take the browser out from under them.
+    await refuseIfHeld(deps, lookup, contextMode);
+
     await sandbox.killBrowserd();
     await sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
     try {
