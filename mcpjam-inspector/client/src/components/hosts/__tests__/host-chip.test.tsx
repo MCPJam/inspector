@@ -29,8 +29,11 @@ describe("HostChip", () => {
     expect(screen.getByTitle("host-1")).not.toHaveClass("rounded-full");
   });
 
-  it("shows initials fallback when no logo is available", () => {
-    render(<HostChip name="Custom Host" layout="stack" />);
-    expect(screen.getByText("Cu")).toBeInTheDocument();
+  it("shows the generic MCP badge when no branded logo is available", () => {
+    const { container } = render(<HostChip name="Custom Host" layout="stack" />);
+    expect(container.querySelector("img")).toHaveAttribute(
+      "src",
+      expect.stringContaining("mcp")
+    );
   });
 });

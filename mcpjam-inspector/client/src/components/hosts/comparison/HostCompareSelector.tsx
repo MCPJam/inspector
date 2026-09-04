@@ -17,12 +17,14 @@ import {
 import { cn } from "@/lib/utils";
 import {
   getScenarioHostLogo,
-  resolveHostLogoByDisplayName,
 } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
 import type { SupportFilterMode } from "./support-level";
+import { clientDisplayName } from "@/lib/client-display-name";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 const INITIAL_INLINE_CHIP_LIMIT = 6;
 
@@ -328,7 +330,7 @@ function HostCompareChip({
           subject.config.chatUiOverride,
           themeMode
         )
-      : resolveHostLogoByDisplayName(host.name, themeMode);
+      : resolveHostLogoByName(host.name, themeMode);
   const reduceMotion = useReducedMotion();
 
   return (
@@ -353,16 +355,12 @@ function HostCompareChip({
       transition={{ type: "spring", stiffness: 480, damping: 28, mass: 0.5 }}
       onClick={onToggle}
     >
-      {logoSrc ? (
-        <img
-          src={logoSrc}
-          alt=""
-          className="size-3.5 shrink-0 object-contain"
-        />
-      ) : (
-        <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
-      )}
-      <span className="truncate">{host.name}</span>
+      <HostChipLogo
+        logoSrc={logoSrc}
+        name={clientDisplayName(host)}
+        size="sm"
+      />
+      <span className="truncate">{clientDisplayName(host)}</span>
     </motion.button>
   );
 }
@@ -421,29 +419,24 @@ function HostCompareOverflowMenu({
                       subject.config.chatUiOverride,
                       themeMode
                     )
-                  : resolveHostLogoByDisplayName(host.name, themeMode);
+                  : resolveHostLogoByName(host.name, themeMode);
 
               return (
                 <CommandItem
                   key={host.hostId}
-                  value={`${host.name} ${host.hostId}`}
+                  value={`${clientDisplayName(host)} ${host.name} ${
+                    host.hostId
+                  }`}
                   onSelect={() => onToggleHost(host.hostId)}
                   data-testid={`host-compare-overflow-${host.hostId}`}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    {logoSrc ? (
-                      <img
-                        src={logoSrc}
-                        alt=""
-                        className="size-3.5 shrink-0 object-contain"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="size-3.5 shrink-0 rounded-full bg-muted"
-                      />
-                    )}
-                    <span className="truncate">{host.name}</span>
+                    <HostChipLogo
+                      logoSrc={logoSrc}
+                      name={clientDisplayName(host)}
+                      size="sm"
+                    />
+                    <span className="truncate">{clientDisplayName(host)}</span>
                   </span>
                   <span
                     className={cn(
