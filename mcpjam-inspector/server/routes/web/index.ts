@@ -124,7 +124,7 @@ web.use(
   "/audio/*",
   bearerAuthMiddleware,
   guestRateLimitMiddleware,
-  audioDailyLimitMiddleware
+  audioDailyLimitMiddleware,
 );
 
 // The WebMCP Inspector, hosted. The SAME router the local inspector mounts at
