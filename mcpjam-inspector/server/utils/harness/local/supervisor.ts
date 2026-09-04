@@ -88,6 +88,14 @@ export interface SupervisedSpawnRequest {
    *  root is written to the durable registry; short-lived helpers are tracked
    *  in memory, because a record we cannot outlive is noise. */
   role: "root" | "helper";
+  /**
+   * Windows only: the digest-verified Job Object launcher from the resolved
+   * runtime (`ResolvedRuntime.jobLauncherPath`). Spawned in FRONT of
+   * `executable`, so the process and everything it starts land in a job that
+   * dies with the launcher. Ignored on every other platform; required for a
+   * win32 root.
+   */
+  jobLauncherPath?: string;
 }
 
 export interface SupervisedProcessHandle {
@@ -294,6 +302,29 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
+    // Windows: the verified Job Object launcher goes in front of the process.
+    // `supportsOwnershipProof('win32')` only answers true once runtime
+    // resolution has verified one, so a root reaching here without a path is
+    // a wiring fault rather than a policy outcome — refused all the same,
+    // because the alternative is a tree that "stop" cannot reach.
+    const jobLauncher =
+      this.platform === "win32" ? request.jobLauncherPath : undefined;
+    if (this.platform === "win32" && jobLauncher === undefined) {
+      if (request.role === "root") {
+        throw new SupervisorError(
+          "refusing to start a root process on win32 without the verified " +
+            "Job Object launcher: without it, stopping the session could not " +
+            "be guaranteed to stop everything it started",
+        );
+      }
+    }
+    if (jobLauncher !== undefined && !isAbsolute(jobLauncher)) {
+      throw new SupervisorError(
+        "the Job Object launcher must be an absolute path inside the " +
+          "verified runtime pack",
+      );
+    }
+
     // Read SYNCHRONOUSLY, before anything can yield: this is the value a stop
     // landing mid-launch will change.
     const stopGenerationAtEntry =
@@ -391,7 +422,14 @@ export class LocalHarnessSupervisor {
       );
     }
 
-    const child = spawn(request.executable, [...request.args], {
+    // On Windows the launcher is the process we hold and record: its pid is
+    // the root, its birth identity is the one verified before a kill, and its
+    // exit — by any route — is what takes the job down.
+    const [spawnExecutable, spawnArgs] =
+      jobLauncher !== undefined
+        ? [jobLauncher, [request.executable, ...request.args]]
+        : [request.executable, [...request.args]];
+    const child = spawn(spawnExecutable, spawnArgs, {
       cwd: request.workingDirectory,
       env: request.env,
       stdio: ["ignore", "pipe", "pipe"],

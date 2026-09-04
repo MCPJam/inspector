@@ -58,6 +58,7 @@ import {
   localBridgeUrl,
 } from "./bridge-endpoint.js";
 import { confinePath } from "./confine.js";
+import { fromAdapterPath, toAdapterPath } from "./adapter-path.js";
 import {
   classifyBootstrapPath,
   translateAdapterCommand,
@@ -111,6 +112,8 @@ export interface SupervisedLocalHarnessProviderOptions {
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
   /** Maximum bytes one file API operation may read or write. */
   maxFileBytes?: number;
+  /** Test seam. Production is always the host platform. */
+  platform?: NodeJS.Platform;
 }
 
 /** The `SandboxProcess` shape, synthesized for translations that need no
@@ -395,6 +398,32 @@ export function createSupervisedLocalHarnessProvider(
   // the two roots the file API allows.
   const workRoot = join(opts.sessionStateDir, "work");
   const WORKSPACE_LINK_NAME = "project";
+  const platform = opts.platform ?? process.platform;
+  // What the ADAPTER is told the roots are. On POSIX these are the native
+  // paths; on Windows they are the MSYS spelling (`/c/Users/…`) the framework's
+  // unconditional POSIX composition can work on, and `confine` maps every
+  // operand back to native before anything touches the disk. The child's own
+  // environment (`HOME`, `PWD`, cwd) stays native: the OS reads that, not the
+  // adapter. See `adapter-path.ts`.
+  const adapterWorkRoot = toAdapterPath(workRoot, platform);
+  const adapterHome = toAdapterPath(syntheticHome, platform);
+
+  /**
+   * Point `<work>/project` at the granted workspace.
+   *
+   * A symlink on POSIX. On Windows a JUNCTION: creating a real symlink there
+   * needs Developer Mode or elevation, which a user running an npx server
+   * does not have, while a junction is an ordinary user's operation — and
+   * `lstat().isSymbolicLink()`, `readlink` and `realpath` all treat it as the
+   * link it is, so confinement is unchanged.
+   */
+  const linkWorkspace = async (link: string): Promise<void> => {
+    await symlink(
+      opts.workspacePath,
+      link,
+      platform === "win32" ? "junction" : undefined,
+    );
+  };
 
   const buildSession = async (
     sessionId: string,
@@ -403,7 +432,7 @@ export function createSupervisedLocalHarnessProvider(
     // Session state first: the synthetic home must exist before a vendor CLI's
     // first write, and it must be owner-only from the moment it exists rather
     // than tightened afterwards.
-    for (const dir of syntheticHomeDirectories(syntheticHome)) {
+    for (const dir of syntheticHomeDirectories(syntheticHome, platform)) {
       await mkdir(dir, { recursive: true, mode: 0o700 });
     }
     await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
@@ -436,16 +465,23 @@ export function createSupervisedLocalHarnessProvider(
           throw error;
         },
       );
-      if (current !== opts.workspacePath || resolved !== opts.workspacePath) {
+      // On Windows the link is a junction, and `readlink` reports its target
+      // in whatever spelling the reparse point holds (a `\??\` prefix, a
+      // trailing separator, the case it was created with). Only the resolved
+      // path is a reliable comparison there; the text check stays on POSIX,
+      // where it catches a link whose target was itself replaced by a link.
+      const textAgrees =
+        platform === "win32" ? true : current === opts.workspacePath;
+      if (!textAgrees || resolved !== opts.workspacePath) {
         logger.warn("[local-harness] repointing a stale workspace link", {
           sessionStateDir: opts.sessionStateDir,
         });
         await rm(workspaceLink, { force: true });
-        await symlink(opts.workspacePath, workspaceLink);
+        await linkWorkspace(workspaceLink);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await symlink(opts.workspacePath, workspaceLink);
+      await linkWorkspace(workspaceLink);
     }
 
     // The two roots the Inspector file API will touch, and nothing else.
@@ -457,7 +493,13 @@ export function createSupervisedLocalHarnessProvider(
     // is realpath'd when its grant is issued; the state directory is resolved
     // here, after the directories above exist.
     const roots = [await realpath(opts.sessionStateDir), opts.workspacePath];
-    const confine = (path: string) => confinePath(path, { roots });
+    // The ONE place an adapter-facing path becomes a native one. Everything
+    // the translator confines — every operand, the bridge's own argv, the
+    // file API's paths — comes through here, so the mapping cannot be
+    // forgotten at a call site. A path that is not in the adapter's shape
+    // passes through unchanged and is judged by `confinePath` as before.
+    const confine = (path: string) =>
+      confinePath(fromAdapterPath(path, platform), { roots });
 
     const env = {
       ...buildLocalHarnessEnv({
@@ -474,7 +516,7 @@ export function createSupervisedLocalHarnessProvider(
       // default working directory — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        workRoot,
+        adapterWorkRoot,
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
@@ -484,9 +526,10 @@ export function createSupervisedLocalHarnessProvider(
       // Launch the pack's loopback wrapper rather than the remapped
       // `bridge.mjs`, which stays byte-identical so the recipe compare holds.
       bridgeLauncherPath: opts.runtime.launcherPath,
-      // The framework's default working directory (and the bridge's cwd).
-      sessionRoot: workRoot,
-      syntheticHome,
+      // The framework's default working directory (and the bridge's cwd), in
+      // the shape the adapter composes with. `confine` turns it native.
+      sessionRoot: adapterWorkRoot,
+      syntheticHome: adapterHome,
       // The same symlink-aware check the file API uses. The translator awaits
       // it for every session-scoped operand, including the bridge's own
       // `--workdir` and `--bridge-state-dir`, which nothing downstream would
@@ -670,6 +713,9 @@ export function createSupervisedLocalHarnessProvider(
             workspaceGrantId: opts.workspaceGrantId,
             targetKind: opts.targetKind,
             sessionStateDir: opts.sessionStateDir,
+            ...(opts.runtime.jobLauncherPath !== undefined
+              ? { jobLauncherPath: opts.runtime.jobLauncherPath }
+              : {}),
             role: "helper",
             ...(abort ? { abortSignal: abort } : {}),
           });
@@ -694,7 +740,7 @@ export function createSupervisedLocalHarnessProvider(
       // session's artefacts stay identifiable inside the user's own checkout.
       // Staged materialization with diff-based apply-back is a separate step
       // and is not pretended here.
-      defaultWorkingDirectory: workRoot,
+      defaultWorkingDirectory: adapterWorkRoot,
       description:
         `Supervised local ${opts.harnessId} process on this machine. ` +
         `Working directory ${opts.workspacePath}. Bridge on loopback port ` +
@@ -843,6 +889,9 @@ export function createSupervisedLocalHarnessProvider(
             workspaceGrantId: opts.workspaceGrantId,
             targetKind: opts.targetKind,
             sessionStateDir: opts.sessionStateDir,
+            ...(opts.runtime.jobLauncherPath !== undefined
+              ? { jobLauncherPath: opts.runtime.jobLauncherPath }
+              : {}),
             // The first spawned process is the session's root: killing it must
             // take the whole tree, and it is the record the janitor reclaims.
             role: isBridge ? "root" : "helper",

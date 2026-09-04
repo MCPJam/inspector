@@ -284,7 +284,30 @@ const freePort = () =>
  * for a zombie on both macOS and Linux; an empty answer means the pid is gone
  * outright.
  */
+/**
+ * Windows has none of `ps`, `pgrep` or `lsof`, and Git Bash's MSYS `ps` only
+ * sees MSYS processes — so on the windows leg these helpers would answer
+ * "nothing running, nothing listening" for a tree that is very much alive,
+ * and the verdicts below would either pass vacuously or fail by construction.
+ * Each helper therefore has a Windows arm that asks the OS directly:
+ * `tasklist` for liveness, `netstat -ano` for listeners, and CIM for the
+ * parent/child tree. Still deliberately NOT the code under test.
+ */
+const WIN = process.platform === "win32";
+const powershell = (script: string) =>
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+    windowsHide: true,
+  });
+
 async function running(pid: number): Promise<boolean> {
+  if (WIN) {
+    try {
+      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
+      return stdout.includes(`"${pid}"`);
+    } catch {
+      return false;
+    }
+  }
   let state: string;
   try {
     state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
@@ -305,11 +328,13 @@ async function descendants(pid: number): Promise<number[]> {
   const walk = async (p: number) => {
     let kids = "";
     try {
-      kids = (await execFileP("pgrep", ["-P", String(p)])).stdout;
+      kids = WIN
+        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
     } catch {
       return;
     }
-    for (const k of kids.split("\n").map((s) => Number(s.trim())).filter(Boolean)) {
+    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
       out.push(k);
       await walk(k);
     }
@@ -326,6 +351,20 @@ async function psLine(pid: number, withEnv = false) {
   }
 }
 async function listeners(pid: number) {
+  if (WIN) {
+    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
+    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
+    // loopback verdict's regex reads both.
+    try {
+      return (await execFileP("netstat", ["-ano"])).stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim().split(/\s+/))
+        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
+        .map((f) => `${f[1]} (LISTEN)`);
+    } catch {
+      return [];
+    }
+  }
   try {
     return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
       .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));

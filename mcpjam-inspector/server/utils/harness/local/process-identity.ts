@@ -15,15 +15,18 @@
  * Linux reads `/proc/<pid>/stat` — exact, cheap, no subprocess. macOS shells
  * out to `/bin/ps` for the start time, which is second-granular; combined with
  * the process's own argv-derived name that is good enough to refuse a wrong
- * kill, which is the property that matters. Windows has neither, and the Job
- * Object work that would give it a real answer is not implemented here, so
- * `readProcessBirthIdentity` returns null and every ownership question answers
- * "cannot prove" — which fails closed: nothing is adopted, nothing is killed
- * by the janitor, and Windows is not offered as a native platform in the
- * compatibility manifest.
+ * kill, which is the property that matters. Windows has neither `/proc` nor
+ * `ps`, so it asks PowerShell's `Get-Process` for the kernel's creation time
+ * (100 ns resolution), after a cheap `kill(pid, 0)` has said the process is
+ * there at all. Windows has no process GROUP either: the whole-tree guarantee
+ * there is a Job Object with `KILL_ON_JOB_CLOSE`, created by the verified
+ * launcher the supervisor puts in front of every root — so the root's own
+ * liveness stands in for the group's, and `supportsOwnershipProof('win32')`
+ * answers true only once runtime resolution has verified that launcher.
  */
 import { execFile } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /** Opaque, comparable string identifying "this exact process instance". */
 export type ProcessBirthIdentity = string;
@@ -214,6 +217,147 @@ async function probeDarwin(pid: number): Promise<ProcessProbe> {
   };
 }
 
+/**
+ * Windows.
+ *
+ * PowerShell is slow to start — hundreds of milliseconds warm, seconds on a
+ * cold CI runner — so liveness is asked first through `process.kill(pid, 0)`,
+ * which libuv answers from the process object without a subprocess. That call
+ * reports an EXITED process as ESRCH even while a handle to it is still open
+ * (it checks the exit code, not the handle), so a child the supervisor has not
+ * released yet is still reported gone. Only a live pid pays for PowerShell,
+ * whose `StartTime` is the kernel's own creation time as a FILETIME — a far
+ * stronger discriminator than darwin's second-granular `lstart`.
+ */
+const WIN32_PROBE_TIMEOUT_MS = 15_000;
+
+function win32SystemRoot(): string {
+  return process.env.SYSTEMROOT ?? process.env.WINDIR ?? "C:\\Windows";
+}
+
+function win32PowerShellPath(): string {
+  return join(
+    win32SystemRoot(),
+    "System32",
+    "WindowsPowerShell",
+    "v1.0",
+    "powershell.exe",
+  );
+}
+
+/** What PowerShell needs to start at all, and nothing from the user's session
+ *  beyond that: the probe reads the process table, not configuration. */
+function win32ProbeEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const name of [
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "WINDIR",
+    "TEMP",
+    "TMP",
+    "PATHEXT",
+    "COMSPEC",
+  ]) {
+    const value = process.env[name];
+    if (value) env[name] = value;
+  }
+  const root = win32SystemRoot();
+  env.PATH = [
+    root,
+    join(root, "System32"),
+    join(root, "System32", "WindowsPowerShell", "v1.0"),
+  ].join(";");
+  return env;
+}
+
+/** Parse the one line the probe script prints: `<filetime>|<process name>`. */
+export function parseWin32ProbeLine(
+  raw: string,
+): { fileTime: string; name: string } | null {
+  const line = raw.trim();
+  const match = /^(\d+)\|(.+)$/.exec(line);
+  if (match === null) return null;
+  return { fileTime: match[1]!, name: match[2]! };
+}
+
+async function probeWin32(pid: number): Promise<ProcessProbe> {
+  try {
+    process.kill(pid, 0);
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return { state: "gone" };
+    // EPERM is "exists, and not ours to signal" — still alive. Anything else
+    // is a failure to look.
+    if (code !== "EPERM") {
+      return {
+        state: "unknown",
+        reason: `kill(0) failed (${code ?? "unknown"})`,
+      };
+    }
+  }
+  // `exit 1` is the process being absent — an answer. `exit 3` is a process
+  // whose start time could not be read (a protected process, or one that left
+  // between the two calls), which is not.
+  const script = [
+    `$p = Get-Process -Id ${pid} -ErrorAction SilentlyContinue`,
+    "if ($null -eq $p) { exit 1 }",
+    "try { $t = $p.StartTime.ToFileTimeUtc() } catch { exit 3 }",
+    "Write-Output ('{0}|{1}' -f $t, $p.ProcessName)",
+  ].join("; ");
+  const result = await new Promise<
+    | { ok: true; stdout: string }
+    | { ok: false; exitCode: number | null; reason: string }
+  >((resolve) => {
+    execFile(
+      win32PowerShellPath(),
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        script,
+      ],
+      {
+        timeout: WIN32_PROBE_TIMEOUT_MS,
+        maxBuffer: 16 * 1024,
+        encoding: "utf8",
+        env: win32ProbeEnv(),
+        windowsHide: true,
+      },
+      (error, out) => {
+        if (!error) {
+          resolve({ ok: true, stdout: typeof out === "string" ? out : "" });
+          return;
+        }
+        const err = error as NodeJS.ErrnoException & {
+          code?: number | string;
+          killed?: boolean;
+        };
+        resolve({
+          ok: false,
+          exitCode: typeof err.code === "number" ? err.code : null,
+          reason: err.killed
+            ? "Get-Process timed out"
+            : `Get-Process failed (${String(err.code ?? "unknown")})`,
+        });
+      },
+    );
+  });
+  if (!result.ok) {
+    if (result.exitCode === 1) return { state: "gone" };
+    return { state: "unknown", reason: result.reason };
+  }
+  const parsed = parseWin32ProbeLine(result.stdout);
+  if (parsed === null) {
+    return { state: "unknown", reason: "unparseable Get-Process output" };
+  }
+  return {
+    state: "alive",
+    identity: `win32:${parsed.fileTime}|${parsed.name}`,
+  };
+}
+
 /** Probe a pid, distinguishing gone from unprovable. */
 export async function probeProcess(
   pid: number,
@@ -224,6 +368,7 @@ export async function probeProcess(
   }
   if (platform === "linux") return probeLinux(pid);
   if (platform === "darwin") return probeDarwin(pid);
+  if (platform === "win32") return probeWin32(pid);
   return { state: "unknown", reason: `no liveness primitive on ${platform}` };
 }
 
@@ -454,6 +599,21 @@ export async function probeProcessGroup(
   if (!Number.isInteger(pid) || pid <= 0) return "unknown";
   if (platform === "linux") return probeLinuxGroup(pid);
   if (platform === "darwin") return probeDarwinGroup(pid);
+  if (platform === "win32") {
+    // No process groups. The root was started through the Job Object launcher
+    // — the supervisor refuses a win32 root any other way — and its job has
+    // KILL_ON_JOB_CLOSE: the launcher exiting, however it exits, closes the
+    // last handle and the kernel terminates every member. So the root's
+    // liveness IS the group's liveness, and no member can outlive it.
+    //
+    // That is an OS guarantee, not an enumeration, which is why the windows
+    // conformance leg asserts it empirically with a survivor scan after every
+    // run rather than trusting this comment.
+    const root = await probeProcess(pid, platform);
+    if (root.state === "gone") return "empty";
+    if (root.state === "alive") return "live";
+    return "unknown";
+  }
   return "unknown";
 }
 
@@ -631,10 +791,13 @@ export function signalProcessGroup(
   if (!Number.isInteger(pid) || pid <= 0) return false;
   try {
     if (platform === "win32") {
-      // No process groups. The supervisor does not offer Windows native mode;
-      // this arm exists so a caller on Windows gets `false` rather than a
-      // silently-succeeded no-op it might mistake for a kill.
-      return false;
+      // No process groups; `pid` is the Job Object launcher, and Node maps any
+      // signal here to `TerminateProcess`. The launcher dying closes its job
+      // handle and KILL_ON_JOB_CLOSE takes the tree with it — so there is no
+      // graceful phase on Windows, only the kill, delivered on the first
+      // signal.
+      process.kill(pid, signal);
+      return true;
     }
     process.kill(-pid, signal);
     return true;

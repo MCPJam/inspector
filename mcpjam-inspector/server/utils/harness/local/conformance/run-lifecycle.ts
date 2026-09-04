@@ -20,7 +20,7 @@ import { getLocalMachineId, grantLocalHarnessConsent, localHarnessStateRoot, reg
 import { computeTreeDigest, resolveManagedBundle } from "../runtime-identity.js";
 import { resolveNodeLauncher } from "../node-launcher.js";
 import { LOCAL_HARNESS_MANIFEST } from "../compatibility.js";
-import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION } from "../targets.js";
+import { localPackTarget, LOCAL_HARNESS_POLICY_VERSION, type LocalPlatform } from "../targets.js";
 import { listProcessRecords } from "../process-registry.js";
 import { installedAdapterVersion } from "./adapter-version.js";
 
@@ -28,7 +28,8 @@ import { installedAdapterVersion } from "./adapter-version.js";
 const execFileP = promisify(execFile);
 const ROOT = process.env.CONFORMANCE_ROOT!;
 /** The pack is per platform, and so is the digest that admits it. */
-const PLATFORM = process.platform as "darwin" | "linux";
+// `LocalPlatform`, which includes win32 — the windows leg runs this script too.
+const PLATFORM = process.platform as LocalPlatform;
 /**
  * …and per ARCHITECTURE, which is the key the digest table actually uses. The
  * pack the build step produced is for this machine, so this is the entry the
@@ -90,7 +91,20 @@ function assert(condition: boolean, message: string): void {
  * for a zombie on both macOS and Linux; an empty answer means the pid is gone
  * outright.
  */
+/** Windows arms, for the same reason as in `run-native-turn.ts`: no `ps`, no
+ *  `pgrep`, and the MSYS `ps` Git Bash ships cannot see native processes. */
+const WIN = process.platform === "win32";
+const powershell = (script: string) =>
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+
 async function running(pid: number): Promise<boolean> {
+  if (WIN) {
+    try {
+      return (await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"])).stdout.includes(`"${pid}"`);
+    } catch {
+      return false;
+    }
+  }
   let state: string;
   try {
     state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
@@ -110,8 +124,13 @@ async function stillRunning(pids: readonly number[]): Promise<number[]> {
 async function descendants(pid: number): Promise<number[]> {
   const out: number[] = [];
   const walk = async (p: number) => {
-    let kids = ""; try { kids = (await execFileP("pgrep", ["-P", String(p)])).stdout; } catch { return; }
-    for (const k of kids.split("\n").map((s) => Number(s.trim())).filter(Boolean)) { out.push(k); await walk(k); }
+    let kids = "";
+    try {
+      kids = WIN
+        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
+    } catch { return; }
+    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) { out.push(k); await walk(k); }
   };
   await walk(pid); return out;
 }
@@ -262,7 +281,7 @@ async function setup() {
   const digest = await computeTreeDigest(BUNDLE);
   const bridgeBytes = await readFile(join(BUNDLE, "bridge.mjs"));
   const base = LOCAL_HARNESS_MANIFEST["claude-code"];
-  const manifest = { ...base, runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: "launcher.mjs" }, lifecycleConformanceVersion: CONFORMANCE_VERSION, bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}` } as typeof base;
+  const manifest = { ...base, runtime: { ...(base.runtime as any), bundleDigest: { [PACK_TARGET]: digest }, launcherRelativePath: "launcher.mjs" }, /* THIS scenario's manifest admits the platform it runs on; the shipped one keeps refusing win32 until this leg is green — same rule as run-native-turn. */ nativePlatforms: [...new Set([...base.nativePlatforms, PLATFORM])], lifecycleConformanceVersion: CONFORMANCE_VERSION, bridgeBundleDigest: `sha256:${createHash("sha256").update(bridgeBytes).digest("hex")}` } as typeof base;
   const rt = await resolveManagedBundle({ manifest, runtimeRoot: RUNTIME_ROOT, platform: PLATFORM }); if (!rt.ok) throw new Error(rt.message);
   const machineId = await getLocalMachineId();
   const target = { kind: "local-native" as const, machineId, workspaceGrantId: ws.grant.workspaceGrantId, harnessId: "claude-code" as const, runtimeId: rt.runtime.runtimeId, permissionProfile: "workspace-edits" as const, policyVersion: LOCAL_HARNESS_POLICY_VERSION };
