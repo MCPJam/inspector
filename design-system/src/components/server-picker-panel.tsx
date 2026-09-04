@@ -5,8 +5,8 @@
  * members as static chips: nothing here expands, which the tests assert.
  *
  * Purely presentational and fully controlled. It is handed a resolved
- * `{ label, indicatorColor }` per server rather than a connection status, so
- * it imports nothing from the app and needs no Convex mock to test.
+ * `{ label, indicatorClassName }` per server rather than a connection status,
+ * so it imports nothing from the app and needs no Convex mock to test.
  */
 import { useEffect, useId, useMemo, useState } from "react";
 import { Loader2, Plus } from "lucide-react";

@@ -454,7 +454,7 @@ export function ProjectEnvironmentEditor({
             Sandbox image
           </Label>
           <div className="flex items-center gap-2">
-            {/* Same picker primitive as the Client and Server group rows above.
+            {/* Same picker primitive as the Client and Servers rows above.
                 Personal drafts are listed but not selectable — the backend
                 rejects them (a draft would resolve for every member while being
                 visible/mutable only to its owner) — and the annotated

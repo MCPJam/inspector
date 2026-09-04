@@ -405,6 +405,7 @@ export function CreateSuitePage({
                     testIdPrefix="create-suite-servers"
                     slots={EVALS_CREATE_SERVER_SLOTS}
                     emptyServerLabel="No server group · pick one"
+                    serverOptional={false}
                   />
                 </div>
 

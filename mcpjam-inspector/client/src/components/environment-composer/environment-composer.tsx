@@ -85,6 +85,7 @@ export function EnvironmentComposer({
   slots = DEFAULT_COMPOSER_SLOTS,
   clientDefaultLabel,
   emptyServerLabel = "Servers · client default",
+  serverOptional = true,
 }: {
   projectId: string;
   /** Selectable saved environments. Archived rows are filtered out here. */
@@ -113,6 +114,12 @@ export function EnvironmentComposer({
    * offering "client default" for a choice it will then block on.
    */
   emptyServerLabel?: string;
+  /**
+   * Whether this surface accepts no server at all. Surfaces that gate submit
+   * on one pass `false`, and lose the clear control — offering it there empties
+   * a field the form will not take.
+   */
+  serverOptional?: boolean;
   /**
    * Prefix for this surface's test ids. The suffixes are historical (Swarms was
    * the first surface, hence "target"/"lego") — they are not composer concepts.
@@ -394,7 +401,11 @@ export function EnvironmentComposer({
             disabled={slotsDisabled}
             emptyTriggerLabel={emptyServerLabel}
             triggerTestId={testId("servers-picker")}
-            onClearSelection={() => patchStack({ serverAttachmentId: null })}
+            onClearSelection={
+              serverOptional
+                ? () => patchStack({ serverAttachmentId: null })
+                : undefined
+            }
             inModal={inModal}
           />
         ) : null}

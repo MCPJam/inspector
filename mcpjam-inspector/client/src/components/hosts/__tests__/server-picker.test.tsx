@@ -229,6 +229,19 @@ describe("ServerPicker — connection state", () => {
     ).toBeNull();
   });
 
+  it("falls back the DOT the same way the label falls back", async () => {
+    // The runtime value is a plain string widened with `as ConnectionStatus`,
+    // so a value outside the union reaches here. `getConnectionStatusMeta`
+    // answers "Disconnected"; a bare record lookup answers `undefined` and
+    // leaves the dot unpainted next to that word.
+    mockState.runtime = { alpha: { connectionStatus: "reticulating" } };
+    open();
+
+    const dot = await screen.findByTestId("server-status-dot-srv_1");
+    expect(dot).toHaveAccessibleName("Disconnected");
+    expect(dot).toHaveClass("bg-muted-foreground");
+  });
+
   it("holds the row's alignment without a colour when the state is unknown", async () => {
     mockState.runtime = null;
     open();
@@ -440,9 +453,9 @@ describe("ServerPicker — the window before the query refetches", () => {
         <ServerPicker projectId="p_1" value="att_new" onChange={onChange} />,
       );
 
-      // The bridge has a timeout so a parent that moves `value` elsewhere
-      // cannot strand it. Firing it while the row is still the selection
-      // blanks the trigger instead.
+      // The bridge's timeout exists for a parent that moves `value` elsewhere.
+      // No timer is scheduled while the row is still the selection, so time
+      // passing cannot take the only thing that can name the trigger.
       await act(async () => {
         vi.advanceTimersByTime(10_000);
       });
@@ -461,7 +474,7 @@ describe("ServerPicker — a write already in flight", () => {
     // `creating` is state, so it is not readable by the second click in the
     // same tick. Two rows in a row hits the same window.
     mockState.createSpy = vi.fn(
-      () => new Promise((resolve) => setTimeout(() => resolve({ _id: "att_new" }), 20)),
+      () => new Promise(() => {}),
     );
     open();
     const row = await serverRow("srv_1");
@@ -472,13 +485,91 @@ describe("ServerPicker — a write already in flight", () => {
     expect(mockState.createSpy).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores REUSING a row while a mint is still in flight", async () => {
+    // The reuse path writes nothing, so it looks harmless — but it reports a
+    // selection the pending mint's own `onChange` then overwrites.
+    mockState.attachments = [
+      {
+        _id: "att_beta",
+        name: "beta",
+        serverIds: ["srv_2"],
+        resolvedServerNames: ["beta"],
+      },
+    ];
+    mockState.runtime = {
+      alpha: { connectionStatus: "connected" },
+      beta: { connectionStatus: "connected" },
+    };
+    mockState.createSpy = vi.fn(
+      () => new Promise(() => {}),
+    );
+    const onChange = open();
+
+    fireEvent.click(await serverRow("srv_1"));
+    fireEvent.click(await serverRow("srv_2"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("ignores picking a GROUP while a mint is still in flight", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_pair",
+        name: "pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
+    mockState.createSpy = vi.fn(
+      () => new Promise(() => {}),
+    );
+    const onChange = open();
+
+    fireEvent.click(await serverRow("srv_1"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    fireEvent.click(await screen.findByText("pair"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("ignores a row while a GROUP create is still in flight", async () => {
+    // The latch has to span both write paths, or the form's pending write and
+    // a click on the Servers tab race to report a different selection.
+    mockState.attachments = [
+      {
+        _id: "att_alpha",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
+    ];
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    const onChange = open();
+
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
+    fireEvent.click(await serverRow("srv_1"));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
   it("ignores a second server while the first is still being written", async () => {
     mockState.runtime = {
       alpha: { connectionStatus: "connected" },
       beta: { connectionStatus: "connected" },
     };
     mockState.createSpy = vi.fn(
-      () => new Promise((resolve) => setTimeout(() => resolve({ _id: "att_new" }), 20)),
+      () => new Promise(() => {}),
     );
     open();
 

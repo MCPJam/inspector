@@ -55,7 +55,8 @@ const UNKNOWN_STATUS = {
 /**
  * The dot's colour, as a role token rather than the hex `getConnectionStatusMeta`
  * carries — the panel renders in both themes and a fixed colour follows neither.
- * The helper still supplies the label, so the two stay in step.
+ * The helper still supplies the label, so the two stay in step, including its
+ * fall back to `disconnected` for a status outside the union.
  */
 const STATUS_INDICATOR: Record<ConnectionStatus, string> = {
   connected: "bg-success",
@@ -220,7 +221,9 @@ export function ServerPicker({
           status: connectionStatus
             ? {
                 label: getConnectionStatusMeta(connectionStatus).label,
-                indicatorClassName: STATUS_INDICATOR[connectionStatus],
+                indicatorClassName:
+                  STATUS_INDICATOR[connectionStatus] ??
+                  STATUS_INDICATOR.disconnected,
               }
             : UNKNOWN_STATUS,
           onConnect:
@@ -244,6 +247,10 @@ export function ServerPicker({
 
   const handleSelectServer = useCallback(
     async (serverId: string) => {
+      // Before the reuse branch too: reporting a selection mid-write costs
+      // nothing to store, but the pending write's own `onChange` overwrites it.
+      if (writing.current) return;
+
       const existing = findSoloGroup(attachments, serverId);
       if (existing) {
         onChange(existing._id, existing as EvalServerAttachment);
@@ -253,7 +260,6 @@ export function ServerPicker({
 
       const server = catalog.find((row) => row._id === serverId);
       if (!server) return;
-      if (writing.current) return;
 
       writing.current = true;
       setCreating(true);
@@ -295,7 +301,9 @@ export function ServerPicker({
   const handleCreateGroup = useCallback(
     async (name: string, serverIds: string[]) => {
       // Held for the same reason the server path holds it: the Servers tab
-      // stays clickable while the form is submitting.
+      // stays clickable while the form is submitting. Refused by throwing
+      // rather than returning, so the panel keeps the draft it was handed.
+      if (writing.current) throw new Error("A server write is already in flight");
       writing.current = true;
       setCreating(true);
       try {
@@ -345,6 +353,7 @@ export function ServerPicker({
 
   const handleSelectGroup = useCallback(
     (groupId: string) => {
+      if (writing.current) return;
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
       onChange(group._id, group as EvalServerAttachment);

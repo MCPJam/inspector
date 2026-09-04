@@ -85,10 +85,12 @@ function Harness({
   slots,
   environments = [],
   initialValue,
+  serverOptional,
 }: {
   slots?: Parameters<typeof EnvironmentComposer>[0]["slots"];
   environments?: Parameters<typeof EnvironmentComposer>[0]["environments"];
   initialValue?: EnvironmentComposerState;
+  serverOptional?: boolean;
 }) {
   const [value, setValue] = useState<EnvironmentComposerState>(
     () => initialValue ?? emptyComposerState(),
@@ -101,8 +103,17 @@ function Harness({
       onChange={setValue}
       testIdPrefix="strip"
       slots={slots}
+      serverOptional={serverOptional}
     />
   );
+}
+
+function withServer(): EnvironmentComposerState {
+  const seeded = emptyComposerState();
+  return {
+    ...seeded,
+    stack: { ...seeded.stack, serverAttachmentId: "att_1" },
+  };
 }
 
 describe("EnvironmentComposer slots", () => {
@@ -124,20 +135,26 @@ describe("EnvironmentComposer slots", () => {
   });
 
   it("can put the servers slot back to the client default", () => {
-    // The slot is optional, and the picker only offers a way out when the
-    // caller supplies one. Without this the strip is a one-way door.
-    const seeded = emptyComposerState();
+    // The slot is optional by default, and the picker only offers a way out
+    // when the caller supplies one. Without this the strip is a one-way door.
+    render(<Harness slots={["servers"]} initialValue={withServer()} />);
+
+    fireEvent.click(screen.getByTestId("servers-picker-clear"));
+
+    expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
+    expect(screen.queryByTestId("servers-picker-clear")).toBeNull();
+  });
+
+  it("offers no way out where the surface requires a server", () => {
+    // Evals create gates submit on `hasServer`. A clear there empties a field
+    // the form will not accept, so the user has to re-pick to get back.
     render(
       <Harness
         slots={["servers"]}
-        initialValue={{
-          ...seeded,
-          stack: { ...seeded.stack, serverAttachmentId: "att_1" },
-        }}
+        initialValue={withServer()}
+        serverOptional={false}
       />,
     );
-
-    fireEvent.click(screen.getByTestId("servers-picker-clear"));
 
     expect(screen.getByTestId("strip-servers-picker")).toBeVisible();
     expect(screen.queryByTestId("servers-picker-clear")).toBeNull();
