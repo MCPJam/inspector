@@ -47,6 +47,17 @@ vi.mock("../../../utils/v1-convex-token.js", () => ({
 import { Hono } from "hono";
 import webmcpInspector from "../webmcp-inspector";
 import { HostedReserveError } from "../../../services/browserd/hosted-reserve-error";
+import {
+  hostedSessionId,
+  startWebMcpSession,
+  webMcpSessions,
+} from "../../../services/webmcp-inspector/session-registry";
+import {
+  FakeProvider,
+  fakeTool,
+  type FakeBrowserSession,
+} from "../../../services/webmcp-inspector/__tests__/fake-provider";
+import { WEBMCP_RESULT_CAP_BYTES } from "@/shared/webmcp-inspector-protocol";
 
 /**
  * Stands in for `bearerAuthMiddleware` + `requireVerifiedAuth`, which the web
@@ -293,5 +304,81 @@ describe("hosted WebMCP inspector — control-plane refusals are answers, not cr
       START,
     );
     expect(status).toBe(500);
+  });
+});
+
+/**
+ * What a hosted invocation ANSWERS with.
+ *
+ * Hosted does not point the caller at the activity stream for the settle: the
+ * subscriber watching it may be attached to a different replica than the one
+ * that ran the tool, so the invoke response IS the settle. That makes its shape
+ * load-bearing in a way the local 202 never was — chat fulfils a model's
+ * page-tool call straight from this value.
+ */
+describe("hosted WebMCP inspector — the invocation's answer", () => {
+  const SESSION_ID = hostedSessionId("p1", "c1");
+
+  /** A live hosted runtime in the registry, as a prior `POST` would leave. */
+  async function liveSession(): Promise<FakeBrowserSession> {
+    const provider = new FakeProvider();
+    await startWebMcpSession({
+      url: "https://a.test",
+      provider,
+      sessionId: SESSION_ID,
+      ownerId: VERIFIED.workosUserId,
+    });
+    const session = provider.sessions.at(-1)!;
+    session.emitTools([fakeTool({ name: "echo" })]);
+    return session;
+  }
+
+  const invoke = (input: Record<string, unknown> = {}) =>
+    post(appWith(VERIFIED), `/api/web/webmcp/sessions/${SESSION_ID}/command`, {
+      type: "invoke_tool",
+      toolKey: "https://example.test::echo",
+      input,
+      source: "chat",
+    });
+
+  beforeEach(async () => {
+    await webMcpSessions.disposeAll("test");
+  });
+
+  it("carries the tool's OUTPUT, not just that it succeeded", async () => {
+    // The regression this exists for: an outcome of `{state:"succeeded"}` with
+    // nothing in it reaches the model as `null`, so every hosted page tool
+    // answers a question with nothing while reporting that it worked.
+    await liveSession();
+    const { status, body } = await invoke({ a: 1 });
+    expect(status).toBe(200);
+    expect(body.outcome).toMatchObject({
+      state: "succeeded",
+      output: { echoed: { a: 1 } },
+    });
+    expect(body.outcome.outputTruncated).toBeUndefined();
+  });
+
+  it("says how much it cut when the result did not fit", async () => {
+    await liveSession();
+    const { body } = await invoke({ big: "x".repeat(WEBMCP_RESULT_CAP_BYTES) });
+    expect(body.outcome.state).toBe("succeeded");
+    expect(body.outcome.outputTruncated).toBe(true);
+    // The size BEFORE the cut — the figure is only useful as the whole.
+    expect(body.outcome.outputBytes).toBeGreaterThan(WEBMCP_RESULT_CAP_BYTES);
+    expect(String(body.outcome.output)).toContain("truncated");
+  });
+
+  it("names a failure in the field the client actually reads", async () => {
+    // `errorMessage`, as `invocation_settled` carries it — not `error`. The
+    // two shipped differing, and the client, typed against the stream's shape,
+    // read `undefined` and told the model the tool had failed for no reason.
+    const session = await liveSession();
+    session.failNextInvokeWith = "the page said no";
+    const { body } = await invoke();
+    expect(body.outcome).toMatchObject({
+      state: "failed",
+      errorMessage: "the page said no",
+    });
   });
 });

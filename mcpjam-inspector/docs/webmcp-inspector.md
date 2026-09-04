@@ -371,6 +371,18 @@ rules keep that safe (`services/webmcp-inspector/hosted-session-resolver.ts`):
 Eviction of a hosted session publishes `detached`, not `closed`. The browser is
 still running; only this replica's handle went away, and the client re-fetches.
 
+The session id is also what the embedded viewport reads to decide which
+project's computer it may authorize against. Not the sidebar's active project:
+that moves when somebody switches projects, and the panel would then be looking
+at a different machine than the session it claims to be showing.
+
+The two kinds are capped **separately** (`MCPJAM_WEBMCP_HOSTED_MAX_SESSIONS`,
+default 50, against `DEFAULT_MAX_SESSIONS` of 2). They count different things —
+a Chromium window on this machine versus a handle to a browser on the member's
+own desktop — and both live in one process whenever the local inspector runs a
+hosted browser, so counting them together let two hosted handles fill the local
+limit and refuse to open a window.
+
 ## Invocations are idempotent, and can end in `unknown`
 
 A hosted request can be dropped mid-flight or retried onto another replica, so
@@ -382,7 +394,12 @@ call), and the daemon recognises the id if a retry gets that far.
 
 Hosted invocations answer **inline** rather than pointing at the event stream,
 because the subscriber watching that stream may be attached to a different
-replica than the one running the tool.
+replica than the one running the tool. That inline answer is the SETTLE, not a
+summary of it: it carries the same `WebMcpInvocationOutcome` — output,
+truncation flag, pre-cap byte count, `errorMessage` — that `invocation_settled`
+carries on the stream, because for a hosted caller it is all they will get. Chat
+fulfils a model's page-tool call straight from that value, so an outcome that
+says `succeeded` and carries nothing answers the model with `null`.
 
 `unknown` is a real terminal state, not a hedge. The daemon's `webmcp_invoke` is
 synchronous — it reports an `invocationId` only once the tool has settled — so

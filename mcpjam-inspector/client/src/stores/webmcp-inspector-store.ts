@@ -15,7 +15,7 @@ import {
 } from "@/lib/session-token";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
-  type WebMcpInvocationState,
+  type WebMcpInvocationOutcome,
 } from "@/shared/webmcp-inspector-protocol";
 import { isHostedMode } from "@/lib/apis/mode-client";
 import { authFetch } from "@/lib/session-token";
@@ -68,11 +68,7 @@ export interface PendingInvocation {
 }
 
 /** The settled outcome of one invocation, as a caller awaiting it sees it. */
-export interface PageToolInvocationResult {
-  state: WebMcpInvocationState;
-  output?: unknown;
-  outputTruncated?: boolean;
-  errorMessage?: string;
+export interface PageToolInvocationResult extends WebMcpInvocationOutcome {
   /**
    * Present when the outcome is `unknown` and the caller may ask again: the
    * same id re-queries the same invocation rather than starting a new one.
@@ -704,6 +700,7 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
           state: entry.state,
           output: entry.output,
           outputTruncated: entry.outputTruncated,
+          outputBytes: entry.outputBytes,
           errorMessage: entry.errorMessage,
         };
         const waiter = invocationWaiters.get(entry.invokeId);
@@ -749,6 +746,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      */
     function openEventSource(sessionId: string, frames: "on" | "off") {
       source?.close();
+      // The hosted reader has to go the same way the `EventSource` does.
+      // `ensureSseFrames` reopens this stream to turn frames on or off, and a
+      // reader left running keeps pulling its old response body and delivering
+      // the very frames the reopen asked to stop — two streams feeding one
+      // session, the older one contradicting the newer.
+      hostedStream?.abort();
+      hostedStream = undefined;
       sourceSessionId = sessionId;
       sourceFrames = frames;
       // `frames=on` is never sent — the parameter is OMITTED — so a server
@@ -808,8 +812,6 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
         return;
       }
 
-      // The token rides in the query string because EventSource cannot send
-      // headers, which is the same accommodation the traffic-log stream makes.
       // The token rides in the query string because EventSource cannot send
       // headers, which is the same accommodation the traffic-log stream makes.
       source = new EventSource(addTokenToUrl(path));
@@ -872,6 +874,17 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
             for (;;) {
               const { done, value } = await reader.read();
               if (done) break;
+              // Checked per CHUNK, not only per reconnect: abort is what ends
+              // the read, and a chunk already in flight when it happens would
+              // otherwise be applied to whatever session took this one's
+              // place.
+              if (
+                controller.signal.aborted ||
+                generation !== hostedStreamGeneration
+              ) {
+                await reader.cancel().catch(() => {});
+                return;
+              }
               buffered += decoder.decode(value, { stream: true });
               // SSE frames end at a blank line; a chunk can hold several, or
               // half of one.
@@ -1011,7 +1024,13 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
     }
 
     function connect(sessionId: string) {
-      if (source && sourceSessionId === sessionId) return;
+      // "Already streaming this session" has two shapes, and checking only for
+      // the `EventSource` misses the hosted one entirely — hosted never sets
+      // `source`, so this guard never tripped and every `reconnect()` (one per
+      // surface mount) tore the stream down and rebuilt it, replaying the last
+      // 200 events each time.
+      const streaming = isHostedMode() ? hostedStream : source;
+      if (streaming && sourceSessionId === sessionId) return;
       disconnectStream();
       // Only a `frame-stream` session has pixels to carry. A native-window
       // session drives its own real browser and a hosted one paints in a

@@ -301,7 +301,6 @@ export type WebMcpCommandResult =
   | { ok: true; streaming: boolean };
 
 /** Terminal state of an invocation, ours rather than CDP's. */
-/** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
   | "succeeded"
   | "failed"
@@ -320,6 +319,58 @@ export type WebMcpInvocationState =
    * guess about or to re-run to find out.
    */
   | "unknown";
+
+/**
+ * A hosted session's id is DERIVED, not issued.
+ *
+ * `hosted:<projectId>:<computerId>` — because there is exactly one persistent
+ * browser per desktop computer, so there is exactly one inspector session for
+ * it, and any replica can name it without having been the one to create it.
+ * That is the whole mechanism behind surviving a hosted deploy: a request that
+ * lands on a replica which has never seen this session can still work out what
+ * it refers to and re-establish it, rather than 404ing because the process
+ * that held the map is not the one that got the request.
+ *
+ * Shared rather than server-only because the CLIENT reads it too: the browser
+ * panel embedded in the inspector must authorize against the project the
+ * SESSION is running on, and the session id is the only place that says so.
+ */
+export function hostedSessionId(projectId: string, computerId: string): string {
+  return `hosted:${projectId}:${computerId}`;
+}
+
+export function parseHostedSessionId(
+  sessionId: string | undefined,
+): { projectId: string; computerId: string } | null {
+  if (!sessionId?.startsWith("hosted:")) return null;
+  const [, projectId, computerId, ...rest] = sessionId.split(":");
+  if (!projectId || !computerId || rest.length > 0) return null;
+  return { projectId, computerId };
+}
+
+/**
+ * How an invocation finished, as one value.
+ *
+ * There are TWO ways a caller learns an invocation's fate and they must agree
+ * field for field. Locally the settle arrives on the activity stream, as an
+ * `invocation_settled` entry. Hosted it comes back INLINE on the invoke
+ * response, because the subscriber watching that stream may be attached to a
+ * different replica than the one that ran the tool.
+ *
+ * Naming them separately is how they drift: the inline arm shipped carrying
+ * `error` where the stream arm carries `errorMessage`, and carrying no output
+ * at all — so a hosted page tool answered a model with `null` and a hosted
+ * failure answered it with nothing. One type, used by both.
+ */
+export interface WebMcpInvocationOutcome {
+  state: WebMcpInvocationState;
+  /** Only on `succeeded`, and only up to the result cap. */
+  output?: unknown;
+  outputTruncated?: boolean;
+  /** Total bytes before truncation, so the UI can say what was dropped. */
+  outputBytes?: number;
+  errorMessage?: string;
+}
 
 export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_started"; url: string }

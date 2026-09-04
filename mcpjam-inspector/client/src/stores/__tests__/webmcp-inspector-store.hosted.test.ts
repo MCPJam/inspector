@@ -62,6 +62,11 @@ function openStream(): Response {
 }
 
 beforeEach(() => {
+  // The stream handles are MODULE state, not store state, so setting the
+  // store below does not release them. Without this a stream opened by the
+  // previous test stays live and the next `reconnect()` correctly declines to
+  // open a second one for the same session id.
+  useWebmcpInspectorStore.getState().disconnect();
   fetches.calls.length = 0;
   fetches.handlers.length = 0;
   fetches.handlers.push({
@@ -106,6 +111,64 @@ describe("hosted store — where it talks", () => {
     const stream = fetches.calls.find((c) => c.url.includes("/events"))!;
     expect(stream.url).toContain("/api/web/webmcp/");
     expect(stream.url).not.toContain("token=");
+  });
+
+  it("opens ONE stream however many times the surface reconnects", async () => {
+    // `reconnect()` runs on every mount and is documented as idempotent for
+    // the same session. Its guard used to check only for an `EventSource`,
+    // which hosted never creates — so hosted took the teardown-and-rebuild
+    // path every time, replaying two hundred events per mount.
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() =>
+      expect(
+        fetches.calls.filter((c) => c.url.includes("/events")),
+      ).toHaveLength(1),
+    );
+    useWebmcpInspectorStore.getState().reconnect();
+    useWebmcpInspectorStore.getState().reconnect();
+    await Promise.resolve();
+    expect(fetches.calls.filter((c) => c.url.includes("/events"))).toHaveLength(
+      1,
+    );
+  });
+
+  it("stops reading a stream it has replaced", async () => {
+    // A reader left running keeps pulling its old response body and applying
+    // what it finds — to whatever session took its place.
+    const controllers: Array<ReadableStreamDefaultController<Uint8Array>> = [];
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/events"),
+      respond: () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start: (controller) => void controllers.push(controller),
+          }),
+          { status: 200, headers: { "content-type": "text/event-stream" } },
+        ),
+    });
+
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    useWebmcpInspectorStore.getState().reconnect();
+    await vi.waitFor(() => expect(controllers).toHaveLength(1));
+
+    // The tab moves to another session, then the ABANDONED stream speaks.
+    useWebmcpInspectorStore.getState().disconnect();
+    const event = {
+      type: "activity",
+      entry: {
+        id: "a1",
+        ts: 1,
+        kind: "navigated",
+        url: "https://evil.test/",
+        origin: "https://evil.test",
+      },
+    };
+    controllers[0]!.enqueue(
+      new TextEncoder().encode(`data: ${JSON.stringify(event)}\n\n`),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
   });
 });
 

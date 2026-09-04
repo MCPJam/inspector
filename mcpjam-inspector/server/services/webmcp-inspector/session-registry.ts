@@ -74,7 +74,24 @@ export interface WebMcpSessionRegistryOptions {
  * `detached`, and only a local session's browser actually closes.
  */
 function closeReasonFor(sessionId: string): "closed" | "detached" {
-  return sessionId.startsWith("hosted:") ? "detached" : "closed";
+  return kindOf(sessionId) === "hosted" ? "detached" : "closed";
+}
+
+/**
+ * The two things this registry holds, which are NOT the same resource.
+ *
+ * A local session is a Chromium window on this machine; a hosted one is a
+ * handle to a browser running on a member's own desktop. They have their own
+ * ceilings for that reason, and therefore their own tallies: counting them
+ * together made each ceiling apply to the sum, so two hosted handles — well
+ * inside a limit of 50 — filled the local limit of 2 and refused to open a
+ * window. Both kinds live in one process whenever the local inspector runs a
+ * hosted browser, which is a supported thing to do.
+ */
+type SessionKind = "hosted" | "local";
+
+function kindOf(sessionId: string | undefined): SessionKind {
+  return sessionId?.startsWith("hosted:") ? "hosted" : "local";
 }
 
 const DEFAULT_MAX_SESSIONS = 2;
@@ -95,29 +112,13 @@ function hostedMaxSessions(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_MAX_HOSTED_SESSIONS;
 }
 
-/**
- * A hosted session's id is DERIVED, not issued.
- *
- * `hosted:<projectId>:<computerId>` — because there is exactly one persistent
- * browser per desktop computer, so there is exactly one inspector session for
- * it, and any replica can name it without having been the one to create it.
- * That is the whole mechanism behind surviving a hosted deploy: a request that
- * lands on a replica which has never seen this session can still work out what
- * it refers to and re-establish it, rather than 404ing because the process
- * that held the map is not the one that got the request.
- */
-export function hostedSessionId(projectId: string, computerId: string): string {
-  return `hosted:${projectId}:${computerId}`;
-}
-
-export function parseHostedSessionId(
-  sessionId: string,
-): { projectId: string; computerId: string } | null {
-  if (!sessionId.startsWith("hosted:")) return null;
-  const [, projectId, computerId, ...rest] = sessionId.split(":");
-  if (!projectId || !computerId || rest.length > 0) return null;
-  return { projectId, computerId };
-}
+// The `hosted:<projectId>:<computerId>` id format lives in the shared protocol
+// — the client reads it too — and is re-exported here because every server
+// caller already reaches for the registry to get it.
+export {
+  hostedSessionId,
+  parseHostedSessionId,
+} from "@/shared/webmcp-inspector-protocol";
 const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60_000;
 const DEFAULT_MAX_LIFETIME_MS = 60 * 60_000;
 const DEFAULT_SWEEP_INTERVAL_MS = 30_000;
@@ -143,9 +144,16 @@ export class WebMcpSessionRegistry {
   private readonly now: () => number;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
   /** Removed from the map, but their Chromium is still going away. */
-  private disposingCount = 0;
-  private reservedCount = 0;
-  private readonly reservationIds = new Set<string>();
+  private readonly disposingCount: Record<SessionKind, number> = {
+    hosted: 0,
+    local: 0,
+  };
+  private readonly reservedCount: Record<SessionKind, number> = {
+    hosted: 0,
+    local: 0,
+  };
+  /** Reservation id → the kind it is holding a slot for, so release can undo it. */
+  private readonly reservationKinds = new Map<string, SessionKind>();
   private shuttingDown = false;
 
   constructor(options: WebMcpSessionRegistryOptions = {}) {
@@ -175,15 +183,18 @@ export class WebMcpSessionRegistry {
     return this.idleTimeoutMs;
   }
 
-  private activeCount(): number {
-    return this.sessions.size + this.disposingCount + this.reservedCount;
+  /** Live, dying and reserved slots OF ONE KIND — never of both together. */
+  private activeCount(kind: SessionKind): number {
+    let live = 0;
+    for (const sessionId of this.sessions.keys()) {
+      if (kindOf(sessionId) === kind) live += 1;
+    }
+    return live + this.disposingCount[kind] + this.reservedCount[kind];
   }
 
   /** Which ceiling applies: local windows are scarce, hosted handles are not. */
-  private ceilingFor(sessionId?: string): number {
-    return sessionId && sessionId.startsWith("hosted:")
-      ? this.maxHostedSessions
-      : this.maxSessions;
+  private ceilingFor(kind: SessionKind): number {
+    return kind === "hosted" ? this.maxHostedSessions : this.maxSessions;
   }
 
   reserve(sessionId?: string): WebMcpSessionReservation {
@@ -193,25 +204,28 @@ export class WebMcpSessionRegistry {
       );
     }
     this.sweepExpired();
-    if (this.activeCount() >= this.ceilingFor(sessionId)) {
+    const kind = kindOf(sessionId);
+    if (this.activeCount(kind) >= this.ceilingFor(kind)) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(sessionId)} WebMCP browser sessions can run at once. Close one and try again.`,
+        `Only ${this.ceilingFor(kind)} WebMCP browser sessions can run at once. Close one and try again.`,
       );
     }
     const reservation: WebMcpSessionReservation = {
       id: randomUUID(),
       active: true,
     };
-    this.reservationIds.add(reservation.id);
-    this.reservedCount += 1;
+    this.reservationKinds.set(reservation.id, kind);
+    this.reservedCount[kind] += 1;
     this.ensureSweeping();
     return reservation;
   }
 
   release(reservation: WebMcpSessionReservation): void {
-    if (!this.reservationIds.delete(reservation.id)) return;
+    const kind = this.reservationKinds.get(reservation.id);
+    if (kind === undefined) return;
+    this.reservationKinds.delete(reservation.id);
     reservation.active = false;
-    this.reservedCount -= 1;
+    this.reservedCount[kind] -= 1;
     this.stopSweepingIfIdle();
   }
 
@@ -227,9 +241,12 @@ export class WebMcpSessionRegistry {
     }
     if (reservation) {
       this.release(reservation);
-    } else if (this.activeCount() >= this.ceilingFor(runtime.sessionId)) {
+    } else if (
+      this.activeCount(kindOf(runtime.sessionId)) >=
+      this.ceilingFor(kindOf(runtime.sessionId))
+    ) {
       throw new WebMcpSessionCapacityError(
-        `Only ${this.ceilingFor(runtime.sessionId)} WebMCP browser sessions can run at once.`,
+        `Only ${this.ceilingFor(kindOf(runtime.sessionId))} WebMCP browser sessions can run at once.`,
       );
     }
     // Close whatever held this id first. Ids used to be random per runtime, so
@@ -240,13 +257,14 @@ export class WebMcpSessionRegistry {
     // of a session nothing can reach.
     const displaced = this.sessions.get(runtime.sessionId);
     if (displaced && displaced !== runtime) {
+      const displacedKind = kindOf(runtime.sessionId);
       this.sessions.delete(runtime.sessionId);
-      this.disposingCount += 1;
+      this.disposingCount[displacedKind] += 1;
       void displaced
         .close()
         .catch(() => {})
         .finally(() => {
-          this.disposingCount -= 1;
+          this.disposingCount[displacedKind] -= 1;
           this.stopSweepingIfIdle();
         });
     }
@@ -358,12 +376,13 @@ export class WebMcpSessionRegistry {
   ): Promise<boolean> {
     const runtime = this.sessions.get(sessionId);
     if (!runtime) return false;
+    const kind = kindOf(sessionId);
     this.sessions.delete(sessionId);
-    this.disposingCount += 1;
+    this.disposingCount[kind] += 1;
     try {
       await runtime.close(options.reason ?? "closed");
     } finally {
-      this.disposingCount -= 1;
+      this.disposingCount[kind] -= 1;
       this.stopSweepingIfIdle();
     }
     return true;
@@ -405,8 +424,10 @@ export class WebMcpSessionRegistry {
   private stopSweepingIfIdle(): void {
     if (
       this.sessions.size === 0 &&
-      this.disposingCount === 0 &&
-      this.reservedCount === 0
+      this.disposingCount.hosted === 0 &&
+      this.disposingCount.local === 0 &&
+      this.reservedCount.hosted === 0 &&
+      this.reservedCount.local === 0
     ) {
       this.stopSweeping();
     }

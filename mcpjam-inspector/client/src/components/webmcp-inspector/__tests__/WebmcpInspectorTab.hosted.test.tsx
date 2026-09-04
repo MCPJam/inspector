@@ -5,7 +5,7 @@
  * a file with the local-mode viewport tests.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 
 vi.mock("@/lib/config", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/config")>();
@@ -106,6 +106,21 @@ describe("hosted WebMCP tab — the browser runs elsewhere", () => {
     ).toBeInTheDocument();
   });
 
+  it("does not start on Enter either, when the button is disabled", async () => {
+    // The URL field starts a session on Enter, and that path never consults
+    // the button's `disabled` — so the guard has to be in the handler. Without
+    // it, hosted-with-no-project sends a start the server can only refuse, and
+    // the person gets an error banner where the tooltip already said what to
+    // do.
+    contextState.activeProjectId = null;
+    const startSession = vi.fn(async () => {});
+    useWebmcpInspectorStore.setState({ startSession });
+    render(<WebmcpInspectorTab />);
+    fireEvent.keyDown(screen.getByLabelText(/page url/i), { key: "Enter" });
+    await Promise.resolve();
+    expect(startSession).not.toHaveBeenCalled();
+  });
+
   it("warns that the browser cannot reach the viewer's own network", () => {
     // The single most likely first thing someone tries is localhost, and it
     // will never work: the browser is in a datacenter.
@@ -125,6 +140,18 @@ describe("hosted WebMCP tab — the viewport is the panel", () => {
     const panel = screen.getByTestId("browser-panel");
     expect(panel).toBeInTheDocument();
     expect(panel.getAttribute("data-project")).toBe("proj-1");
+  });
+
+  it("keeps the panel on the SESSION's project when the sidebar moves", () => {
+    // The panel authorizes against whatever project it is handed. Handed the
+    // live `activeProjectId`, switching projects mid-session would point the
+    // viewport at a different project's computer than the session it claims to
+    // be showing. The session id carries the answer.
+    contextState.activeProjectId = "proj-2";
+    render(<WebmcpInspectorTab />);
+    expect(
+      screen.getByTestId("browser-panel").getAttribute("data-project"),
+    ).toBe("proj-1");
   });
 
   it("never lets the viewport provision a machine", () => {

@@ -18,7 +18,10 @@ import {
   buildSessionExport,
   exportFilename,
 } from "@/lib/webmcp-inspector/session-export";
-import { WEBMCP_VIEWPORT } from "@/shared/webmcp-inspector-protocol";
+import {
+  parseHostedSessionId,
+  WEBMCP_VIEWPORT,
+} from "@/shared/webmcp-inspector-protocol";
 import {
   createInputForwarder,
   type InputForwarder,
@@ -308,6 +311,17 @@ export function WebmcpInspectorTab() {
   }, []);
 
   const live = Boolean(session) && session?.status !== "closed";
+  /**
+   * The project the OPEN session is running on, read off its own id.
+   *
+   * Not `activeProjectId`. That one moves the moment somebody switches
+   * projects in the sidebar, and the browser panel below authorizes against
+   * whatever it is handed — so a switch mid-session would point the viewport
+   * at a different project's computer than the session it claims to be
+   * showing. A hosted session id is `hosted:<projectId>:<computerId>`, so the
+   * session carries the answer and cannot disagree with itself.
+   */
+  const sessionProjectId = parseHostedSessionId(session?.sessionId)?.projectId;
   const transportKind = session?.viewportTransport.kind;
   /** Everything this screen does differently per transport, decided in one place. */
   const behaviour = viewportBehaviour(transportKind);
@@ -449,6 +463,11 @@ export function WebmcpInspectorTab() {
    * DOM would destroy the guest silently.
    */
   const openBrowser = async () => {
+    // The Enter key in the URL field reaches this too, and it does NOT go
+    // through the button's `disabled`. Without this, hosted-with-no-project
+    // sends a start the server can only refuse, and the person gets an error
+    // banner where the tooltip and the empty state already said what to do.
+    if (HOSTED_MODE && !activeProjectId) return;
     if (!useEmbeddedSurface) {
       await startSession(url, startOptions());
       return;
@@ -815,7 +834,7 @@ export function WebmcpInspectorTab() {
               onNavigate={setUrl}
               onError={setLocalError}
             />
-          ) : live && behaviour.embedsBrowserPanel && activeProjectId ? (
+          ) : live && behaviour.embedsBrowserPanel && sessionProjectId ? (
             /* The remote browser's own live view, in the pane rather than
                somewhere else to go and find.
        
@@ -826,7 +845,7 @@ export function WebmcpInspectorTab() {
                to reserve anywhere — a viewport must not be able to provision a
                machine; the session it is watching already did. */
             <div className="min-h-0 flex-1 border-b">
-              <BrowserPanel projectId={activeProjectId} ensure={false} />
+              <BrowserPanel projectId={sessionProjectId} ensure={false} />
             </div>
           ) : live ? (
             <ViewportPane

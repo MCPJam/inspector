@@ -45,6 +45,42 @@ describe("WebMcpSessionRegistry — capacity", () => {
     expect(provider.sessions).toHaveLength(1);
   });
 
+  it("keeps the hosted and local ceilings independent", async () => {
+    // They count different things — a Chromium window here versus a handle to
+    // a browser on somebody's own desktop — so one filling up must not refuse
+    // the other. The local inspector runs both at once whenever a person picks
+    // a hosted browser, which is the case that made this visible: two hosted
+    // handles, well inside a limit of 50, filled a local limit of 2.
+    const { registry } = makeRegistry({
+      maxSessions: 1,
+      maxHostedSessions: 2,
+    });
+    const provider = new FakeProvider();
+    const start = (sessionId?: string) =>
+      startWebMcpSession({
+        url: "https://a.test/",
+        provider,
+        registry,
+        ...(sessionId ? { sessionId } : {}),
+      });
+
+    await start("hosted:p1:c1");
+    await start("hosted:p1:c2");
+    // Hosted is now FULL, and a local window is still on offer.
+    await expect(start("hosted:p1:c3")).rejects.toBeInstanceOf(
+      WebMcpSessionCapacityError,
+    );
+    await start();
+
+    // …and now local is full, which says nothing about hosted either: closing
+    // one hosted handle frees a hosted slot and only a hosted slot.
+    await expect(start()).rejects.toBeInstanceOf(WebMcpSessionCapacityError);
+    await registry.close("hosted:p1:c1");
+    await expect(start()).rejects.toBeInstanceOf(WebMcpSessionCapacityError);
+    await start("hosted:p1:c3");
+    expect(registry.size()).toBe(3);
+  });
+
   it("counts in-flight launches, so concurrent starts cannot both pass the cap", async () => {
     const { registry } = makeRegistry({ maxSessions: 1 });
     const provider = new FakeProvider();

@@ -39,7 +39,10 @@ import {
   HostedDesktopAsleepError,
   resolveHostedSession,
 } from "../../services/webmcp-inspector/hosted-session-resolver.js";
-import type { WebMcpSessionRuntime } from "../../services/webmcp-inspector/session-runtime";
+import type {
+  WebMcpSessionRuntime,
+  WebMcpSettledOutput,
+} from "../../services/webmcp-inspector/session-runtime";
 import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
 import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
 import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
@@ -49,7 +52,7 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   WEBMCP_INPUT_TEXT_MAX_CHARS,
-  type WebMcpInvocationState,
+  type WebMcpInvocationOutcome,
 } from "@/shared/webmcp-inspector-protocol";
 
 /**
@@ -946,11 +949,19 @@ webmcpInspector.get("/sessions/:id/events", async (c) => {
  * a tool that may still be filling in a form. `unknown` is the true answer,
  * and the client can ask again with the same `invokeId` to find out how it
  * ended.
+ *
+ * It answers in `WebMcpInvocationOutcome`, the SAME shape the activity stream's
+ * `invocation_settled` entry carries, because for a hosted caller this replaces
+ * that entry rather than summarizing it — the subscriber may be on another
+ * replica, so what is returned here is all the client will ever get. That
+ * includes the OUTPUT: chat fulfils a page-tool call from this value and hands
+ * it back to the model, and an outcome that says `succeeded` and carries
+ * nothing answers the model with `null`.
  */
 async function outcomeOf(
-  settled: Promise<{ output: unknown; truncated: boolean }>,
+  settled: Promise<WebMcpSettledOutput>,
   c: Context,
-): Promise<{ state: WebMcpInvocationState; error?: string }> {
+): Promise<WebMcpInvocationOutcome> {
   const aborted = new Promise<"aborted">((resolve) => {
     if (c.req.raw.signal.aborted) return resolve("aborted");
     c.req.raw.signal.addEventListener("abort", () => resolve("aborted"), {
@@ -960,17 +971,25 @@ async function outcomeOf(
   try {
     const result = await Promise.race([settled, aborted]);
     if (result === "aborted") return { state: "unknown" };
-    return { state: "succeeded" };
+    return {
+      state: "succeeded",
+      output: result.output,
+      // Already cut to `WEBMCP_RESULT_CAP_BYTES` by the runtime; the flag and
+      // the pre-cap size say so, exactly as the stream entry does.
+      ...(result.truncated
+        ? { outputTruncated: true, outputBytes: result.bytes }
+        : {}),
+    };
   } catch (error) {
     if (error instanceof WebMcpOutcomeUnknownError) {
-      return { state: "unknown", error: error.message };
+      return { state: "unknown", errorMessage: error.message };
     }
     if (error instanceof WebMcpInvocationCancelledError) {
-      return { state: error.reason, error: error.message };
+      return { state: error.reason, errorMessage: error.message };
     }
     return {
       state: "failed",
-      error: error instanceof Error ? error.message : "The tool failed.",
+      errorMessage: error instanceof Error ? error.message : "The tool failed.",
     };
   }
 }

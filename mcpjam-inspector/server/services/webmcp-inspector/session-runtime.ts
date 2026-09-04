@@ -92,16 +92,30 @@ interface TrackedTool extends WebMcpToolDescriptor {
   frameId: string;
 }
 
+/**
+ * What an invocation resolves to internally.
+ *
+ * `bytes` is the size BEFORE the cap, carried alongside the (possibly cut)
+ * value so the hosted route can report the same `outputBytes` the timeline
+ * entry reports. Without it the inline answer could say output was truncated
+ * but not by how much, which is the one thing that figure is for.
+ */
+export interface WebMcpSettledOutput {
+  output: unknown;
+  truncated: boolean;
+  bytes: number;
+}
+
 interface QueuedInvocation {
   invokeId: string;
   toolKey: string;
   input: Record<string, unknown>;
   source: WebMcpInvocationSource;
   controller: AbortController;
-  resolve: (result: { output: unknown; truncated: boolean }) => void;
+  resolve: (result: WebMcpSettledOutput) => void;
   reject: (error: Error) => void;
   /** Handed to a duplicate so both callers await the one execution. */
-  settled: Promise<{ output: unknown; truncated: boolean }>;
+  settled: Promise<WebMcpSettledOutput>;
 }
 
 /**
@@ -189,7 +203,7 @@ export class WebMcpSessionRuntime {
    */
   private readonly settledByInvokeId = new Map<
     string,
-    { at: number; settled: Promise<{ output: unknown; truncated: boolean }> }
+    { at: number; settled: Promise<WebMcpSettledOutput> }
   >();
   /**
    * The quality the provider's stream is encoding at, when it has an adaptive
@@ -482,7 +496,7 @@ export class WebMcpSessionRuntime {
     requestedInvokeId?: string,
   ): {
     invokeId: string;
-    settled: Promise<{ output: unknown; truncated: boolean }>;
+    settled: Promise<WebMcpSettledOutput>;
   } {
     if (requestedInvokeId) {
       // Already running or queued: hand back the SAME promise, so both callers
@@ -505,14 +519,12 @@ export class WebMcpSessionRuntime {
       );
     }
     const invokeId = requestedInvokeId ?? randomUUID();
-    let resolve!: (result: { output: unknown; truncated: boolean }) => void;
+    let resolve!: (result: WebMcpSettledOutput) => void;
     let reject!: (error: Error) => void;
-    const settled = new Promise<{ output: unknown; truncated: boolean }>(
-      (res, rej) => {
-        resolve = res;
-        reject = rej;
-      },
-    );
+    const settled = new Promise<WebMcpSettledOutput>((res, rej) => {
+      resolve = res;
+      reject = rej;
+    });
     // Never rejects unhandled: the map hands this promise to a later retry,
     // which may attach long after the original caller stopped watching.
     settled.catch(() => {});
@@ -544,7 +556,7 @@ export class WebMcpSessionRuntime {
    */
   private rememberOutcome(
     invokeId: string,
-    settled: Promise<{ output: unknown; truncated: boolean }>,
+    settled: Promise<WebMcpSettledOutput>,
   ): void {
     this.settledByInvokeId.set(invokeId, { at: this.now(), settled });
     const cutoff = this.now() - INVOKE_REPLAY_TTL_MS;
@@ -667,7 +679,11 @@ export class WebMcpSessionRuntime {
           : {}),
       });
       this.release(item);
-      item.resolve({ output: capped.value, truncated: capped.truncated });
+      item.resolve({
+        output: capped.value,
+        truncated: capped.truncated,
+        bytes: capped.bytes,
+      });
     } catch (error) {
       const state: WebMcpInvocationState =
         error instanceof WebMcpOutcomeUnknownError

@@ -125,12 +125,23 @@ web.use("/computers/exec", bearerAuthMiddleware, guestRateLimitMiddleware);
 // serves commands from an in-process map, and nothing downstream re-checks the
 // caller. Without verification here, a bearer of any shape plus a session id
 // would drive somebody else's browser.
-web.use(
-  "/webmcp/*",
-  bearerAuthMiddleware,
-  requireVerifiedAuth(),
-  guestRateLimitMiddleware,
-);
+//
+// Gated on HOSTED_MODE together with the router it guards, and it has to be:
+// LOCALLY this prefix already has an occupant. `/api/web/webmcp/sessions/:id/
+// frames` is the viewport frame socket, registered on the root app (a WS
+// upgrade cannot come from a sub-router) but AFTER `app.route("/api/web", ...)`
+// — so a `/webmcp/*` middleware registered here runs in front of it. It
+// authenticates with a token on `Sec-WebSocket-Protocol` and carries no
+// `Authorization` header, so `requireVerifiedAuth` refuses the upgrade and the
+// stream dies at 1006 before it opens.
+if (HOSTED_MODE) {
+  web.use(
+    "/webmcp/*",
+    bearerAuthMiddleware,
+    requireVerifiedAuth(),
+    guestRateLimitMiddleware,
+  );
+}
 // Cloud Skills live on the caller's Computer (E2B sandbox); every op needs a
 // bearer (forwarded to Convex for reserve/wake + authz).
 web.use("/skills/*", bearerAuthMiddleware, guestRateLimitMiddleware);
