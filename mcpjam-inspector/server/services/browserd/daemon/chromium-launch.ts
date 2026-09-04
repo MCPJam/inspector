@@ -18,6 +18,7 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
+import { PAGE_TEXT_FN } from "./page-text";
 import { parseAriaSnapshot } from "./aria-snapshot";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
@@ -273,6 +274,10 @@ export function wrapPage(page: AnyPage): DriverPage {
         // unmatched ROOT selector into an error rather than an empty tree.
         return null;
       }
+    },
+    async pageText() {
+      const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+      return typeof text === "string" ? text : "";
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since: number) => {

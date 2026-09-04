@@ -29,12 +29,17 @@ import { computeStateToken } from "./state-token";
 import {
   capA11yTree,
   capConsole,
+  capText,
   capToolOutput,
   DEFAULT_A11Y_BUDGET,
   DEFAULT_CONSOLE_BUDGET,
   type A11yBudget,
   type ConsoleBudget,
 } from "./observation-budget";
+import {
+  DEFAULT_PAGE_TEXT_MAX_BYTES,
+  PAGE_TEXT_RETRIEVAL_HINT,
+} from "./page-text";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -91,6 +96,8 @@ export interface ChromiumDriverOptions {
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
+  /** Byte budget for one `observe {mode:"text"}` (L9). */
+  pageTextBytes?: number;
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -140,6 +147,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly pageTextMaxBytes: number;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -184,6 +192,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -608,6 +617,28 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        // Prose is CUT, not omitted. The a11y budget can drop a whole subtree
+        // because a tree has boundaries to drop at; running text has none, and
+        // a cut string with a counted marker is honest about exactly that.
+        const text = await entry.page.pageText();
+        const frame = await this.snapshot(entry.page);
+        const capped = capText(
+          text,
+          this.pageTextMaxBytes,
+          PAGE_TEXT_RETRIEVAL_HINT,
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            text: capped,
+            ...(capped !== text ? { truncated: true } : {}),
+          },
+          frame,
+          permit,
+        );
+      }
       case "a11y": {
         // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
         // a marker naming the retrieval verb), never by cutting one open.

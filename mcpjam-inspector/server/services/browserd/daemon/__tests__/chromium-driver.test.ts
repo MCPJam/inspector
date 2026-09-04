@@ -58,6 +58,62 @@ describe("ChromiumDriver — navigation (W1 subset)", () => {
   });
 });
 
+describe("ChromiumDriver — observe {mode:\"text\"}", () => {
+  it("returns the page's readable text with a state token", async () => {
+    const page = fakePage({ url: "https://x.test/", text: "# Title\n\nHello" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.ok).toBe(true);
+    expect(res.output).toEqual({ text: "# Title\n\nHello", url: "https://x.test/" });
+    expect(res.stateToken).toMatchObject({ tabId: "@session" });
+  });
+
+  it("CUTS over-budget prose and says how much it kept", async () => {
+    // Prose has no subtree boundary to omit at, so it is cut — and the marker
+    // is what stops a model reading a third of a page as the whole of it.
+    const page = fakePage({ url: "https://x.test/", text: "z".repeat(5_000) });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { pageTextBytes: 500 });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    const output = res.output as { text: string; truncated?: boolean };
+    expect(output.truncated).toBe(true);
+    expect(output.text).toContain("showing");
+    expect(output.text).toContain("of 5000 bytes");
+    expect(new TextEncoder().encode(output.text).byteLength).toBeLessThanOrEqual(500);
+  });
+
+  it("does not flag text that fit", async () => {
+    const page = fakePage({ text: "short" });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.output).not.toHaveProperty("truncated");
+  });
+
+  it("refuses to hand over text captured while a person holds the browser", async () => {
+    // Same rule as every other capture: a read in flight when someone takes
+    // control must not return what they are looking at.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      text: "secret",
+      onText: () => {
+        lease.acquire("person-1", 60_000);
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const res = await driver.execute(cmd({ kind: "observe", mode: "text" }));
+    expect(res.ok).toBe(false);
+    expect(res.leaseBlocked).toBe(true);
+    expect(JSON.stringify(res)).not.toContain("secret");
+  });
+});
+
 describe("ChromiumDriver — observe", () => {
   it("returns a screenshot / url / dom each with a fresh token", async () => {
     const page = fakePage({ url: "https://x.test/", dom: "0BODY>1DIV" });

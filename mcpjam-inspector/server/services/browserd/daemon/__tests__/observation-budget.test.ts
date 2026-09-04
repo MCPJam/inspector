@@ -10,7 +10,7 @@ import {
   capConsole,
   capText,
   capToolOutput,
-  TRUNCATION_SUFFIX,
+  truncationMarker,
   type A11yNode,
 } from "../observation-budget";
 
@@ -102,7 +102,7 @@ describe("capText", () => {
 
   it("cuts to the byte budget and says it cut", () => {
     const capped = capText("x".repeat(500), 100);
-    expect(capped.endsWith(TRUNCATION_SUFFIX)).toBe(true);
+    expect(capped).toContain("truncated");
     expect(new TextEncoder().encode(capped).byteLength).toBeLessThanOrEqual(100);
   });
 
@@ -112,7 +112,39 @@ describe("capText", () => {
     const capped = capText(emoji, 40);
     expect(capped).not.toContain("�");
     expect(new TextEncoder().encode(capped).byteLength).toBeLessThanOrEqual(40);
-    expect(capped.endsWith(TRUNCATION_SUFFIX)).toBe(true);
+  });
+});
+
+describe("capText — the marker states both sizes", () => {
+  it("reports how much was shown and how much there was", () => {
+    const capped = capText("x".repeat(500), 100);
+    const match = /showing (\d+) of (\d+) bytes/.exec(capped);
+    expect(match, capped).not.toBeNull();
+    const [, shown, total] = match!;
+    expect(Number(total)).toBe(500);
+    // The reader can tell a cosmetic cut from one that dropped the page.
+    expect(Number(shown)).toBe(
+      new TextEncoder().encode(capped.slice(0, capped.indexOf("\n…["))).byteLength,
+    );
+  });
+
+  it("names the retrieval verb when the caller supplies one", () => {
+    const capped = capText("x".repeat(500), 200, "re-observe with a narrower root");
+    expect(capped).toContain("re-observe with a narrower root");
+  });
+
+  it("stays within budget even when the marker's digits grow", () => {
+    // The reserve is computed from the LONGEST marker the call can produce, so
+    // one extra digit can never push the result past the cap the CALLER is
+    // doing its own arithmetic against.
+    const encoder = new TextEncoder();
+    for (const maxBytes of [60, 61, 99, 100, 101, 999, 1_000, 1_001]) {
+      const capped = capText("y".repeat(20_000), maxBytes, "narrow the root");
+      expect(
+        encoder.encode(capped).byteLength,
+        `budget ${maxBytes}`,
+      ).toBeLessThanOrEqual(maxBytes);
+    }
   });
 });
 
@@ -136,7 +168,7 @@ describe("capConsole", () => {
       [{ type: "error", text: "y".repeat(5_000), at: 1 }],
       { maxEntries: 10, maxEntryBytes: 100 },
     );
-    expect(result.entries[0].text.endsWith(TRUNCATION_SUFFIX)).toBe(true);
+    expect(result.entries[0].text).toContain("truncated");
   });
 
   it("handles an empty console", () => {
@@ -163,7 +195,7 @@ describe("capToolOutput", () => {
   it("byte-truncates a string output, where the cut is unambiguous", () => {
     const result = capToolOutput("z".repeat(1_000), 100);
     expect(result.omitted).toBe(true);
-    expect((result.output as string).endsWith(TRUNCATION_SUFFIX)).toBe(true);
+    expect(result.output as string).toContain("truncated");
   });
 
   it("survives an unserializable output", () => {
@@ -201,7 +233,7 @@ describe("observation budgets — pathological inputs (review follow-up)", () =>
     // A per-entry cap sits inside a total cap; a `capText` that overshot its
     // own budget would break the caller's arithmetic, not just its own.
     const encoder = new TextEncoder();
-    const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
+    const suffixBytes = encoder.encode(truncationMarker(999, 999)).byteLength;
     for (const maxBytes of [0, 1, 2, suffixBytes - 1, suffixBytes, suffixBytes + 1]) {
       const capped = capText("hello world, this is a long line", maxBytes);
       expect(encoder.encode(capped).byteLength).toBeLessThanOrEqual(maxBytes);

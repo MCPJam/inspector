@@ -29,6 +29,7 @@ import type { A11yNode, ConsoleEntry } from "../daemon/observation-budget";
 import type { ActPoint, DriverPage } from "../daemon/browser-page";
 import type { CdpLike, WebMcpBridge } from "../daemon/webmcp-bridge";
 import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
+import { PAGE_TEXT_FN } from "../daemon/page-text";
 import { PAGE_API_PROBE } from "../../webmcp-inspector/launch-args";
 import { DebuggerCdpAdapter } from "./debugger-cdp";
 import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
@@ -614,6 +615,10 @@ export function createElectronPage(
       // it decides that by whether it asked for one.
       if (backendNodeId === null) return null;
       return readAxTree(cdp, backendNodeId);
+    },
+    async pageText() {
+      const text = await wc.executeJavaScript(`(${PAGE_TEXT_FN})()`);
+      return typeof text === "string" ? text : "";
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince(since: number) {

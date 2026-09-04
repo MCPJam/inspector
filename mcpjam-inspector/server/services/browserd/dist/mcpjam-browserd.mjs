@@ -1335,16 +1335,22 @@ function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
   };
   return { tree: visit(root, 0), omittedSubtrees, totalNodes };
 }
-var TRUNCATION_SUFFIX = "\n\u2026[truncated]";
-function capText(text, maxBytes) {
+function truncationMarker(shownBytes, totalBytes, retrieval) {
+  return `
+\u2026[truncated: showing ${shownBytes} of ${totalBytes} bytes` + (retrieval ? `; ${retrieval}` : "") + "]";
+}
+function capText(text, maxBytes, retrieval) {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(text);
   if (bytes.byteLength <= maxBytes) return text;
-  const suffixBytes = encoder.encode(TRUNCATION_SUFFIX).byteLength;
-  if (maxBytes < suffixBytes) {
+  const reserve = encoder.encode(
+    truncationMarker(maxBytes, bytes.byteLength, retrieval)
+  ).byteLength;
+  if (maxBytes < reserve) {
     return decodeUpTo(bytes, maxBytes);
   }
-  return decodeUpTo(bytes, maxBytes - suffixBytes) + TRUNCATION_SUFFIX;
+  const head = decodeUpTo(bytes, maxBytes - reserve);
+  return head + truncationMarker(encoder.encode(head).byteLength, bytes.byteLength, retrieval);
 }
 function decodeUpTo(bytes, limit) {
   let end = Math.max(0, Math.min(limit, bytes.byteLength));
@@ -1387,6 +1393,95 @@ function capToolOutput(output, maxBytes) {
     omitted: true
   };
 }
+
+// server/services/browserd/daemon/page-text.ts
+var PAGE_TEXT_FN = `() => {
+  const SKIP = new Set(["SCRIPT","STYLE","NOSCRIPT","SVG","HEAD","TEMPLATE","CANVAS","OBJECT","EMBED","IFRAME","FRAME","MAP","AREA","LINK","META"]);
+  const DROP = new Set(["IMG","PICTURE","VIDEO","AUDIO","SOURCE","TRACK","INPUT","SELECT","TEXTAREA","BUTTON"]);
+  const BLOCK = new Set(["P","DIV","SECTION","ARTICLE","MAIN","HEADER","FOOTER","NAV","BLOCKQUOTE","TABLE","TR","UL","OL","DL","DT","DD","FORM","FIELDSET","FIGURE","FIGCAPTION","ASIDE","HR","ADDRESS","DETAILS","SUMMARY"]);
+  const chunks = [];
+  let pre = 0;
+  const hidden = (el) => {
+    if (el.getAttribute && el.getAttribute("aria-hidden") === "true") return true;
+    if (el.hidden) return true;
+    if (typeof el.checkVisibility === "function") {
+      return !el.checkVisibility({ checkVisibilityCSS: true, contentVisibilityAuto: true });
+    }
+    const style = window.getComputedStyle(el);
+    return style.display === "none" || style.visibility === "hidden";
+  };
+  const absolute = (href) => {
+    try { return new URL(href, document.baseURI).href; } catch (e) { return href; }
+  };
+  const walk = (node) => {
+    if (node.nodeType === 3) {
+      const raw = node.nodeValue || "";
+      chunks.push(pre > 0 ? raw : raw.replace(/\\s+/g, " "));
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName;
+    if (SKIP.has(tag) || DROP.has(tag)) return;
+    if (hidden(node)) return;
+    if (tag === "BR") { chunks.push("\\n"); return; }
+    if (tag === "A") {
+      // Collected first, then re-emitted as one unit: a link's text may be
+      // several nodes deep, and the markdown form needs it whole.
+      const start = chunks.length;
+      for (const child of node.childNodes) walk(child);
+      const text = chunks.splice(start).join("").trim();
+      if (!text) return;
+      const href = node.getAttribute("href");
+      chunks.push(href ? "[" + text + "](" + absolute(href) + ")" : text);
+      return;
+    }
+    if (/^H[1-6]$/.test(tag)) {
+      chunks.push("\\n\\n" + "#".repeat(Number(tag[1])) + " ");
+      for (const child of node.childNodes) walk(child);
+      chunks.push("\\n\\n");
+      return;
+    }
+    if (tag === "LI") {
+      chunks.push("\\n- ");
+      for (const child of node.childNodes) walk(child);
+      chunks.push("\\n");
+      return;
+    }
+    if (tag === "PRE") {
+      chunks.push("\\n\\n\\u0060\\u0060\\u0060\\n");
+      pre += 1;
+      for (const child of node.childNodes) walk(child);
+      pre -= 1;
+      chunks.push("\\n\\u0060\\u0060\\u0060\\n\\n");
+      return;
+    }
+    if (tag === "TD" || tag === "TH") {
+      for (const child of node.childNodes) walk(child);
+      chunks.push(" | ");
+      return;
+    }
+    if (BLOCK.has(tag)) {
+      chunks.push("\\n\\n");
+      for (const child of node.childNodes) walk(child);
+      chunks.push("\\n\\n");
+      return;
+    }
+    for (const child of node.childNodes) walk(child);
+  };
+  if (document.body) walk(document.body);
+  // Collapse only OUTSIDE fences: a fence's whitespace is its content. Odd
+  // segments of the split are the fenced runs, so only even ones are squeezed.
+  const parts = chunks.join("").split("\\u0060\\u0060\\u0060");
+  for (let i = 0; i < parts.length; i += 2) {
+    parts[i] = parts[i]
+      .replace(/[ \\t]+/g, " ")
+      .replace(/ ?\\n ?/g, "\\n")
+      .replace(/\\n{3,}/g, "\\n\\n");
+  }
+  return parts.join("\\u0060\\u0060\\u0060").trim();
+}`;
+var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
+var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
 
 // server/services/browserd/daemon/webmcp-bridge.ts
 var WebMcpBridgeError = class extends Error {
@@ -2122,6 +2217,7 @@ var ChromiumDriver = class {
   a11yBudget;
   consoleBudget;
   webmcpOutputBudgetBytes;
+  pageTextMaxBytes;
   lease;
   tabs = /* @__PURE__ */ new Map();
   /**
@@ -2156,6 +2252,7 @@ var ChromiumDriver = class {
     this.a11yBudget = options.a11y ?? DEFAULT_A11Y_BUDGET;
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes = options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
   async execute(command) {
@@ -2475,6 +2572,25 @@ var ChromiumDriver = class {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        const text = await entry.page.pageText();
+        const frame = await this.snapshot(entry.page);
+        const capped = capText(
+          text,
+          this.pageTextMaxBytes,
+          PAGE_TEXT_RETRIEVAL_HINT
+        );
+        return this.observation(
+          tabId,
+          entry,
+          {
+            text: capped,
+            ...capped !== text ? { truncated: true } : {}
+          },
+          frame,
+          permit
+        );
+      }
       case "a11y": {
         const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
         if (action.rootSelector && snapshot === null) {
@@ -3223,6 +3339,10 @@ function wrapPage(page) {
       } catch {
         return null;
       }
+    },
+    async pageText() {
+      const text = await page.evaluate(`(${PAGE_TEXT_FN})()`);
+      return typeof text === "string" ? text : "";
     },
     consoleEntries: () => consoleRing,
     dropConsoleSince: (since) => {
