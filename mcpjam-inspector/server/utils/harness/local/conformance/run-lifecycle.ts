@@ -95,7 +95,7 @@ function assert(condition: boolean, message: string): void {
  *  `pgrep`, and the MSYS `ps` Git Bash ships cannot see native processes. */
 const WIN = process.platform === "win32";
 const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { windowsHide: true });
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], { windowsHide: true });
 
 async function running(pid: number): Promise<boolean> {
   if (WIN) {

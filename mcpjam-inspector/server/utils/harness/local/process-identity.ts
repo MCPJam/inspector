@@ -24,7 +24,7 @@
  * liveness stands in for the group's, and `supportsOwnershipProof('win32')`
  * answers true only once runtime resolution has verified that launcher.
  */
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -245,31 +245,6 @@ function win32PowerShellPath(): string {
   );
 }
 
-/** What PowerShell needs to start at all, and nothing from the user's session
- *  beyond that: the probe reads the process table, not configuration. */
-function win32ProbeEnv(): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = {};
-  for (const name of [
-    "SYSTEMROOT",
-    "SYSTEMDRIVE",
-    "WINDIR",
-    "TEMP",
-    "TMP",
-    "PATHEXT",
-    "COMSPEC",
-  ]) {
-    const value = process.env[name];
-    if (value) env[name] = value;
-  }
-  const root = win32SystemRoot();
-  env.PATH = [
-    root,
-    join(root, "System32"),
-    join(root, "System32", "WindowsPowerShell", "v1.0"),
-  ].join(";");
-  return env;
-}
-
 /** Parse the one line the probe script prints: `<filetime>|<process name>`. */
 export function parseWin32ProbeLine(
   raw: string,
@@ -304,45 +279,76 @@ async function probeWin32(pid: number): Promise<ProcessProbe> {
     "try { $t = $p.StartTime.ToFileTimeUtc() } catch { exit 3 }",
     "Write-Output ('{0}|{1}' -f $t, $p.ProcessName)",
   ].join("; ");
-  const result = await new Promise<
+  type ProbeResult =
     | { ok: true; stdout: string }
-    | { ok: false; exitCode: number | null; reason: string }
-  >((resolve) => {
-    execFile(
-      win32PowerShellPath(),
-      [
-        "-NoProfile",
-        "-NonInteractive",
-        "-ExecutionPolicy",
-        "Bypass",
-        "-Command",
-        script,
-      ],
-      {
-        timeout: WIN32_PROBE_TIMEOUT_MS,
-        maxBuffer: 16 * 1024,
-        encoding: "utf8",
-        env: win32ProbeEnv(),
-        windowsHide: true,
-      },
-      (error, out) => {
-        if (!error) {
-          resolve({ ok: true, stdout: typeof out === "string" ? out : "" });
-          return;
-        }
-        const err = error as NodeJS.ErrnoException & {
-          code?: number | string;
-          killed?: boolean;
-        };
-        resolve({
-          ok: false,
-          exitCode: typeof err.code === "number" ? err.code : null,
-          reason: err.killed
-            ? "Get-Process timed out"
-            : `Get-Process failed (${String(err.code ?? "unknown")})`,
-        });
-      },
+    | { ok: false; exitCode: number | null; reason: string };
+  const result = await new Promise<ProbeResult>((resolve) => {
+    let settled = false;
+    let timer: NodeJS.Timeout | undefined;
+    const done = (value: ProbeResult) => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(value);
+    };
+    // The PARENT's environment, on purpose. The `ps`/`/proc` probes pass an
+    // empty one because they need nothing; PowerShell is different — started
+    // without `USERPROFILE`, `LOCALAPPDATA` and friends it stalls on its own
+    // startup for longer than this probe's timeout. Nothing here reaches a
+    // vendor process: this is the Inspector reading its own OS's process
+    // table. Stdin is closed rather than piped, which is the other documented
+    // way `powershell -Command` waits forever.
+    let child: ReturnType<typeof spawn>;
+    try {
+      child = spawn(
+        win32PowerShellPath(),
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-InputFormat",
+          "None",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-Command",
+          script,
+        ],
+        { stdio: ["ignore", "pipe", "pipe"], env: process.env, windowsHide: true },
+      );
+    } catch (error) {
+      done({
+        ok: false,
+        exitCode: null,
+        reason: `PowerShell failed to start (${String(
+          (error as NodeJS.ErrnoException).code ?? "unknown",
+        )})`,
+      });
+      return;
+    }
+    let stdout = "";
+    child.stdout?.setEncoding("utf8");
+    child.stdout?.on("data", (chunk: string) => {
+      if (stdout.length < 16 * 1024) stdout += chunk;
+    });
+    child.stderr?.resume();
+    timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* already gone */
+      }
+      done({ ok: false, exitCode: null, reason: "Get-Process timed out" });
+    }, WIN32_PROBE_TIMEOUT_MS);
+    child.on("error", (error: NodeJS.ErrnoException) =>
+      done({
+        ok: false,
+        exitCode: null,
+        reason: `PowerShell failed (${String(error.code ?? "unknown")})`,
+      }),
     );
+    child.on("close", (code) => {
+      if (code === 0) done({ ok: true, stdout });
+      else done({ ok: false, exitCode: code, reason: `Get-Process exited ${code}` });
+    });
   });
   if (!result.ok) {
     if (result.exitCode === 1) return { state: "gone" };

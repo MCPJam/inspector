@@ -295,7 +295,7 @@ const freePort = () =>
  */
 const WIN = process.platform === "win32";
 const powershell = (script: string) =>
-  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], {
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
     windowsHide: true,
   });
 
@@ -587,7 +587,11 @@ async function main() {
   const upstreamKeyInEnv = envDump.includes(UPSTREAM_KEY_CANARY);
   note(`upstream key in any child env: ${upstreamKeyInEnv ? "LEAKED" : "absent (good)"}`);
   note(`session capability in child env: ${envDump.includes(CAPABILITY) ? "present (env delivery fallback, as designed)" : "absent"}`);
-  const bridgeListeners = await listeners(bridgePid);
+  // The whole supervised tree, not the root alone. On Windows the root is the
+  // Job Object launcher and the socket belongs to the node process under it;
+  // on POSIX the union is a superset of the old check and stricter for it —
+  // any listener anywhere in the tree that is off loopback fails the run.
+  const bridgeListeners = (await Promise.all([bridgePid, ...kids].map(listeners))).flat();
   note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
   const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
   note(`child HOME values: ${JSON.stringify(homeLeak)}`);
