@@ -859,6 +859,9 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
     const f = makeFakes({
       lookups: [
         { reachable: true, session: null },
+        // The ownership lookup, before the kill: still nothing here, so this
+        // case exercises the RECORD race rather than the pre-kill one.
+        { reachable: true, session: null },
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       recordResult: { status: "conflict" },
@@ -876,6 +879,7 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
     const f = makeFakes({
       lookups: [
         { reachable: true, session: null },
+        { reachable: true, session: null },
         liveLookup({ bootId: "boot-winner" }),
       ],
       recordResult: { status: "conflict" },
@@ -891,6 +895,7 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
     const f = makeFakes({
       lookups: [
         { reachable: true, session: null },
+        { reachable: true, session: null },
         liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
       ],
       bootError: new Error("port already in use"),
@@ -903,6 +908,51 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
     // the fence takes before killing, and the post-boot-failure retry.
     expect(f.lookup).toHaveBeenCalledTimes(3);
     expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("adopts a winner that recorded while we were connecting, instead of reaping it", async () => {
+    // Resuming a paused sandbox takes seconds, and a replica that lost none of
+    // them can boot and record inside that window. Our lookup is from before
+    // all that, so the daemon it names is dead — and `killBrowserd` is a
+    // `pkill` on the box, which would reap the winner's BRAND NEW daemon and
+    // leave their row pointing at nothing. The record CAS cannot help: it
+    // fires after the kill.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        // The ownership lookup is fresh, and by now the winner is recorded.
+        liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
+      ],
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands the fence back before adopting that winner", async () => {
+    // The fence was taken against whatever row the ownership lookup named —
+    // which in this case IS the winner's daemon. Returning a session whose
+    // lease we are still holding would block the agent out of the browser we
+    // just handed it.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveLookup({ bootId: "boot-winner", browserdToken: "token-winner" }),
+      ],
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+      leaseAction: leaseBackedBy(lease),
+    });
+
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(lease.state()).toEqual({ state: "free" });
   });
 
   it("rethrows the boot failure when no winner appears", async () => {

@@ -180,16 +180,33 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
     // OPENED SYNCHRONOUSLY, inside the click. A `window.open` that happens
     // after an await has lost the user gesture, and every popup blocker
     // refuses it — so the tab is claimed now, parked on `about:blank`, and
-    // pointed at the ticket once the POST answers. `noopener` cannot be used
+    // pointed at the desktop once the POST answers. `noopener` cannot be used
     // for that, because it makes `window.open` return null and there would be
     // no tab to redirect; clearing `opener` by hand is the same guarantee.
     const tab = window.open("about:blank", "_blank");
     if (tab) tab.opener = null;
     try {
-      const res = await authorized("/open-desktop", { method: "POST" });
+      if (!tab) {
+        // NO SAME-TAB FALLBACK. Navigating this tab away would take the lease
+        // heartbeat with it — the desktop has none of its own — so the hold
+        // would park a couple of minutes into an active session and the agent
+        // would find the browser blocked by somebody who had "left".
+        setError(
+          "Allow pop-ups for this site to open the full desktop in a new tab.",
+        );
+        return;
+      }
+      // One token for both hops: the POST takes the lease, and the navigation
+      // presents the same ~60s token in `?t=` because a top-level navigation
+      // cannot carry a header.
+      const { token } = await mintBrowserToken({ projectId });
+      const res = await fetch("/api/web/computers/browser/open-desktop", {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}` },
+      });
       const body = await res.json();
       if (!res.ok) {
-        tab?.close();
+        tab.close();
         setError(
           body?.error === "lease_held"
             ? "Someone else is using this browser right now."
@@ -199,19 +216,21 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
       }
       setHolding(true);
       setError(null);
-      // The ticket is single-use and expires in a minute, so it is navigated
-      // to immediately and never stored. `replace`, so the blank page does not
-      // sit in that tab's history with the ticket after it.
-      if (tab) tab.location.replace(String(body.url));
-      else window.location.assign(String(body.url));
+      // `replace`, so the blank page does not sit in that tab's history with
+      // the token after it.
+      tab.location.replace(
+        `/api/web/computers/browser/desktop?t=${encodeURIComponent(token)}`,
+      );
       await refresh();
     } catch (cause) {
+      // Never rethrow: the caller is `void openDesktop()`, so a throw here is
+      // an unhandled rejection and the primary action appears to do nothing.
       tab?.close();
-      throw cause;
+      setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
       setBusy(false);
     }
-  }, [authorized, refresh]);
+  }, [mintBrowserToken, projectId, refresh]);
 
   if (error && !session) {
     return (
@@ -296,7 +315,10 @@ export function BrowserPanel({ projectId, ensure = false }: BrowserPanelProps) {
         </p>
         <button
           type="button"
-          disabled={busy || heldByOther}
+          // `parked` too, not just `held`: a hold that ran out is still
+          // somebody's, and the server refuses the acquire behind this button.
+          // "Take control" stays the explicit way to ask for it.
+          disabled={busy || heldByOther || parked}
           onClick={() => void openDesktop()}
           className="rounded border px-3 py-1.5"
         >

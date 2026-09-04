@@ -350,6 +350,13 @@ interface RelaunchFence {
   release(): Promise<void>;
 }
 
+interface RelaunchGate {
+  /** The lease we took, or null when there was nothing to fence. */
+  fence: RelaunchFence | null;
+  /** The row the ownership lookup saw, which may be a WINNER'S. */
+  owner: BrowserSessionLookup | null;
+}
+
 /**
  * TAKE the lease before killing the daemon, so nobody can take it after we
  * looked.
@@ -385,7 +392,7 @@ async function fenceForRelaunch(
   computerId: string,
   bundleHash: string,
   signal?: AbortSignal,
-): Promise<RelaunchFence | null> {
+): Promise<RelaunchGate> {
   // `"any"`, because OWNERSHIP IS NOT MODE-SCOPED. The reuse lookup above asks
   // "is there a daemon I may run in?", and the backend answers `null` for a row
   // in the other profile mode — correctly, since an eval must never inherit a
@@ -409,7 +416,7 @@ async function fenceForRelaunch(
   // stale row's credentials for an ownership read, which is a backend change
   // and belongs in the backend PR, not smuggled into this one.
   const session = owner?.session;
-  if (!session) return null;
+  if (!session) return { fence: null, owner: owner ?? null };
   const client = deps.createClient(session.publicOrigin, session.browserdToken);
   const holder = `${RELAUNCH_HOLDER_PREFIX}${randomUUID()}`;
   const taken = await client
@@ -422,13 +429,16 @@ async function fenceForRelaunch(
       kind: "script",
     })
     .catch(() => null);
-  if (!taken) return null;
+  if (!taken) return { fence: null, owner: owner ?? null };
   if (taken.took) {
     return {
-      async release() {
-        await client
-          .leaseAction?.({ action: "resume", holder })
-          .catch(() => {});
+      owner: owner ?? null,
+      fence: {
+        async release() {
+          await client
+            .leaseAction?.({ action: "resume", holder })
+            .catch(() => {});
+        },
       },
     };
   }
@@ -436,7 +446,7 @@ async function fenceForRelaunch(
   if (state.state !== "held" && state.state !== "parked") {
     // Refused without anybody holding it — not an answer we can act on, and
     // not one that says a person is there.
-    return null;
+    return { fence: null, owner: owner ?? null };
   }
   if (state.holder.startsWith(RELAUNCH_HOLDER_PREFIX)) {
     // Another relaunch minted this hold, and WHICH STATE IT IS IN decides
@@ -452,7 +462,7 @@ async function fenceForRelaunch(
     // only now between two of us instead of a person and an agent. Refuse and
     // let their boot finish; the row they record is the one the next ensure
     // reuses.
-    if (state.state === "parked") return null;
+    if (state.state === "parked") return { fence: null, owner: owner ?? null };
     throw new BrowserSessionInUseError(
       "another replica is restarting this browser right now; try again in a moment",
     );
@@ -613,12 +623,35 @@ async function ensureOnComputer(
     // vanishing mid-login. The lease is the whole reason we can know that, so
     // take it — refusing if somebody else has it — rather than read it and
     // hope nobody acts in the gap.
-    const fence = await fenceForRelaunch(
+    const { fence, owner } = await fenceForRelaunch(
       deps,
       computerId,
       bundleHash,
       args.signal,
     );
+
+    // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
+    //
+    // Resuming a paused sandbox takes seconds, and another replica that lost
+    // no time can boot and record inside them. Our own lookup is from before
+    // all that, so the daemon it names is the dead one — and `killBrowserd`
+    // is a `pkill` on the box, which would reap the WINNER'S new daemon and
+    // leave their row pointing at nothing. The record CAS cannot save that:
+    // it fires after the kill.
+    //
+    // The ownership lookup above is fresh and costs nothing extra, so ask it:
+    // a different `bootId` means somebody else booted, and if that daemon
+    // verifies it is the one to use. The fence goes back first — we may be
+    // holding a lease on the very daemon we are about to hand over, and
+    // returning a session the agent is blocked out of would be worse than the
+    // relaunch.
+    if (owner?.session && owner.session.bootId !== lookup.session?.bootId) {
+      const winner = await tryReuse(deps, owner, contextMode, args.signal);
+      if (winner) {
+        await fence?.release();
+        return winner;
+      }
+    }
 
     try {
       await sandbox.killBrowserd();

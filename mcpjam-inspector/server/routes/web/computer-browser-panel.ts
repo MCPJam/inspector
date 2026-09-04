@@ -7,8 +7,8 @@
  *   GET  /session?ensure=1   → where to watch, and who holds the browser
  *   POST /lease              → take control / keep it / hand it back
  *   POST /keepalive          → "this panel is still open"
- *   POST /open-desktop       → take the lease, get a one-shot ticket
- *   GET  /desktop/:ticket    → redirect into the full desktop, password added
+ *   POST /open-desktop       → take the lease before the desktop opens
+ *   GET  /desktop?t=<token>  → redirect into the full desktop, password added
  *                              server-side
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
@@ -30,15 +30,30 @@
  * that authenticates the whole desktop (keyboard, clipboard, every open
  * window) sat in a JSON body, in React state, and in a URL, for everyone who
  * merely wanted to WATCH. It is now handed to the stream by the redirect at
- * `GET /desktop/:ticket`, and the ticket that unlocks that redirect is minted
- * only by `POST /open-desktop`, which takes the lease first: the full desktop
- * drives the page OUTSIDE the daemon, so a person on it is invisible to the
- * lease unless taking it is what opens the door.
+ * `GET /desktop`, which gives it out only to whoever the daemon currently says
+ * holds the lease — and `POST /open-desktop` is what takes that lease: the
+ * full desktop drives the page OUTSIDE the daemon, so a person on it is
+ * invisible to the lease unless taking it is what opens the door.
+ *
+ * The redirect authenticates from `?t=`, the SAME ~60s Convex browser token
+ * every other route here takes as a bearer, because a top-level navigation
+ * cannot carry a header. It was briefly a bespoke single-use ticket held in a
+ * module-level Map, which was wrong on a horizontally scaled deployment: the
+ * POST mints on one replica and the navigation lands on another, whose map is
+ * empty. Verifying a signature (RS256 against the published JWKS) needs no
+ * shared state at all, so every replica answers identically. True single use
+ * would need shared durable state — a Convex row — which is a backend change,
+ * and what it buys over "expires in a minute AND you must still hold the
+ * lease" is small.
  *
  * Residual, stated rather than claimed away: noVNC authenticates from its
- * query string, so the password does land in the new tab's address bar. What
- * this removes is every copy of it that a watcher never needed — the API body,
- * the client's memory, and any log or bug report that captured either.
+ * query string, so the password does land in the new tab's address bar, and
+ * the token above lands in this server's access log for one request. What this
+ * removes is every copy of the PASSWORD that a watcher never needed — the API
+ * body, the client's memory, and any log or bug report that captured either —
+ * and the two credentials are not comparable: the token is scoped to one
+ * user, one computer and one minute, while the password authenticates the
+ * whole desktop for as long as the stream lives.
  *
  * The panel PERSISTS NOTHING. It is a live view: no frames, no DOM, no
  * recording. In particular it does not write `browserInteractionSteps` — that
@@ -46,7 +61,6 @@
  * poking at a browser is not a replayable agent step. If durable panel history
  * is ever wanted it needs its own table, not a borrowed one.
  */
-import { randomBytes } from "node:crypto";
 import type { Context } from "hono";
 import { Hono } from "hono";
 import { verifyComputerBrowserToken } from "../../utils/computers/browser-token.js";
@@ -80,56 +94,7 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const LEASE_TTL_MS = 2 * 60_000;
 /** Don't touch computer activity more than once a minute per panel. */
 const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
-/**
- * How long a full-desktop ticket is worth anything, and how many may be
- * outstanding at once.
- *
- * The ticket IS the credential for the redirect: a top-level navigation cannot
- * carry a bearer header, so `GET /desktop/:ticket` has nothing else to go on.
- * It is therefore 32 random bytes, single use, and short-lived — the same
- * shape, and for the same reason, as the local terminal's connect nonce.
- */
-const DESKTOP_TICKET_TTL_MS = 60_000;
-const MAX_OUTSTANDING_DESKTOP_TICKETS = 64;
 
-interface DesktopTicket {
-  computerId: string;
-  /** Who took the lease. The redirect refuses if the browser changed hands. */
-  userId: string;
-  expiresAt: number;
-}
-
-const desktopTickets = new Map<string, DesktopTicket>();
-
-function issueDesktopTicket(claim: Omit<DesktopTicket, "expiresAt">): string {
-  const now = Date.now();
-  for (const [token, ticket] of desktopTickets) {
-    if (ticket.expiresAt <= now) desktopTickets.delete(token);
-  }
-  // A bounded map, so a caller minting tickets it never uses cannot grow this
-  // without limit. Oldest first: the newest ticket is the one somebody is
-  // about to click.
-  while (desktopTickets.size >= MAX_OUTSTANDING_DESKTOP_TICKETS) {
-    const oldest = desktopTickets.keys().next();
-    if (oldest.done) break;
-    desktopTickets.delete(oldest.value);
-  }
-  const token = randomBytes(32).toString("base64url");
-  desktopTickets.set(token, { ...claim, expiresAt: now + DESKTOP_TICKET_TTL_MS });
-  return token;
-}
-
-/** Redeem a ticket. Single use: a replayed link is worth nothing. */
-function consumeDesktopTicket(token: string): DesktopTicket | null {
-  const ticket = desktopTickets.get(token);
-  if (!ticket) return null;
-  desktopTickets.delete(token);
-  return ticket.expiresAt > Date.now() ? ticket : null;
-}
-
-export function resetDesktopTicketsForTests(): void {
-  desktopTickets.clear();
-}
 
 type Claims = { userId: string; computerId: string; projectId: string };
 
@@ -173,6 +138,17 @@ function bearerFrom(c: Context): string {
     : "";
 }
 
+/**
+ * The desktop redirect's credential, which cannot be a header.
+ *
+ * A top-level navigation sends no `Authorization`, so the one route a person
+ * NAVIGATES to takes the same token in `?t=`. Same token, same verification,
+ * same claims — only the envelope differs.
+ */
+function queryTokenFrom(c: Context): string {
+  return (c.req.query("t") ?? "").trim();
+}
+
 export function createComputerBrowserPanelRoutes(
   deps: BrowserPanelDeps = {},
 ): Hono {
@@ -200,7 +176,10 @@ export function createComputerBrowserPanelRoutes(
       }));
 
   /** Verify the token and re-check live ownership of the named computer. */
-  async function authorize(c: Context): Promise<AuthResult> {
+  async function authorize(
+    c: Context,
+    tokenFrom: (c: Context) => string = bearerFrom,
+  ): Promise<AuthResult> {
     if (!configured()) {
       return {
         ok: false,
@@ -208,7 +187,7 @@ export function createComputerBrowserPanelRoutes(
         error: "Computers are not configured on this server.",
       };
     }
-    const claims = await verifyToken(bearerFrom(c));
+    const claims = await verifyToken(tokenFrom(c));
     // One message for every rejection below: a caller learning WHICH check
     // failed learns whether a computer id exists and who owns it.
     const unauthorized = {
@@ -384,8 +363,7 @@ export function createComputerBrowserPanelRoutes(
   });
 
   /**
-   * "Open full desktop": take the lease, then mint the one-shot ticket that
-   * unlocks the redirect.
+   * "Open full desktop": take the lease. The navigation follows separately.
    *
    * THE LEASE IS TAKEN HERE, not offered as a courtesy. The desktop view drives
    * the page through the stream, entirely outside the daemon — no command, no
@@ -393,6 +371,11 @@ export function createComputerBrowserPanelRoutes(
    * while the browser read as `free` would be typing into a page the agent was
    * simultaneously screenshotting, which is the exact situation the lease
    * exists to make impossible. Taking it is what makes their presence visible.
+   *
+   * Two calls rather than one because a redirect cannot take the lease for
+   * somebody: a GET that mutates is the wrong shape, and browsers prefetch and
+   * re-issue GETs freely. The redirect below therefore only ever READS a lease
+   * this call already took.
    */
   app.post("/open-desktop", async (c) => {
     const auth = await authorize(c);
@@ -417,18 +400,10 @@ export function createComputerBrowserPanelRoutes(
           409,
         );
       }
-      const ticket = issueDesktopTicket({ computerId, userId });
       logger.info("[computers] browser panel opened the full desktop", {
         computerId,
       });
-      return c.json({
-        ok: true,
-        // Relative, and on this origin: the client navigates to it and never
-        // learns where the stream actually is until the redirect happens.
-        url: `/api/web/computers/browser/desktop/${ticket}`,
-        expiresInMs: DESKTOP_TICKET_TTL_MS,
-        lease: outcome.lease,
-      });
+      return c.json({ ok: true, lease: outcome.lease });
     } catch (error) {
       if (error instanceof BrowserdClientError) {
         return c.json(
@@ -446,40 +421,51 @@ export function createComputerBrowserPanelRoutes(
   });
 
   /**
-   * Redeem a ticket and redirect into the stream with the password attached.
+   * Redirect into the stream with the password attached server-side.
    *
-   * Unauthenticated by header ON PURPOSE — this is a top-level navigation, so
-   * there is nowhere to put a bearer. The ticket is the credential, and it is
-   * random, single-use and short-lived for exactly that reason.
+   * The credential is `?t=`, not a header, because this is the one route a
+   * person NAVIGATES to and a navigation carries no `Authorization`. It is
+   * verified exactly like every bearer here — RS256 against the published
+   * JWKS, then the row's current owner and project re-checked — so any replica
+   * can answer it, which a module-local ticket map could not.
    *
-   * The lease is re-checked at redemption rather than trusted from mint time:
-   * a ticket that sat in a tab while somebody else took control must not hand
-   * out the password. The session is re-read for the same reason — a relaunch
-   * in between rotates the stream password, and the stale one would fail at
-   * the stream with a message nobody can act on.
+   * HOLDING THE LEASE IS THE SECOND GATE, and it is the one that matters: the
+   * password is handed out only to the person the daemon currently says has
+   * the browser. A token that sat in a tab while somebody else took control is
+   * worth nothing, and neither is one whose hold was handed back. Re-read, not
+   * remembered — including the session row, because a relaunch in between
+   * rotates the password and the stale one would fail at the stream with a
+   * message nobody can act on.
    */
-  app.get("/desktop/:ticket", async (c) => {
-    if (!configured()) {
-      return c.text("Computers are not configured on this server.", 503);
+  app.get("/desktop", async (c) => {
+    const auth = await authorize(c, queryTokenFrom);
+    if (!auth.ok) {
+      // Plain text, not JSON: a person is looking at this in a tab.
+      return c.text(
+        auth.status === 503
+          ? "Computers are not configured on this server."
+          : "This desktop link has expired. Open the desktop again.",
+        auth.status,
+      );
     }
-    const ticket = consumeDesktopTicket(c.req.param("ticket"));
-    // One message for both, so a caller cannot tell a wrong ticket from an
-    // expired one, or learn that a given ticket ever existed.
-    const refused = () =>
-      c.text("This desktop link has expired. Open the desktop again.", 404);
-    if (!ticket) return refused();
+    const { computerId, userId } = auth.claims;
 
     try {
-      const session = await currentSession(ticket.computerId);
-      if (!session) return refused();
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.text(
+          "No browser is running on this computer any more.",
+          409,
+        );
+      }
       const lease = await readLease(session);
       if (
         (lease.state !== "held" && lease.state !== "parked") ||
-        lease.holder !== ticket.userId
+        lease.holder !== userId
       ) {
-        // Either nobody holds it (the hold expired into `free`, or was handed
-        // back) or somebody else does. Either way this ticket no longer
-        // describes the browser.
+        // Either nobody holds it (handed back, or never taken) or somebody
+        // else does. `unknown` lands here too: a lease we could not read is
+        // not one we may act on.
         return c.text(
           "Somebody else is using this browser now. Open the desktop again to take control.",
           409,
@@ -490,13 +476,15 @@ export function createComputerBrowserPanelRoutes(
       target.searchParams.set("resize", "scale");
       target.searchParams.set("password", session.streamPassword);
       c.header("Cache-Control", "no-store");
+      // So the stream's origin never receives this server's URL — and the
+      // token in it — as a Referer.
       c.header("Referrer-Policy", "no-referrer");
       return c.redirect(target.toString(), 302);
     } catch (error) {
       reportRouteFailure("browser panel desktop redirect failed", error, {
         source: "computer-browser-panel.desktop",
         hop: "mcpjam_internal",
-        context: { computerId: ticket.computerId },
+        context: { computerId },
       });
       return c.text("Failed to open the desktop.", 502);
     }
