@@ -4,7 +4,7 @@ import { shortHash } from "../state-token";
 import type { BrowserCommand } from "../../protocol";
 import type { DriverContext } from "../browser-page";
 import { HandoffLease, RESUMED_AFTER_HANDOFF_NOTE } from "../lease";
-import { fakeContext, fakePage, type FakePage } from "./fake-page";
+import { axTree, fakeContext, fakePage, type FakePage } from "./fake-page";
 
 function cmd(action: BrowserCommand["action"], tabId?: string): BrowserCommand {
   return { commandId: `c-${Math.random()}`, tabId, source: "chat", action };
@@ -180,16 +180,70 @@ describe("ChromiumDriver — observe", () => {
     expect(res).toMatchObject({ ok: false, error: "unknown_tab: ghost" });
   });
 
-  it("returns a budgeted a11y tree, omitting whole subtrees (L9)", async () => {
-    const deep = {
-      role: "main",
-      children: Array.from({ length: 30 }, (_, i) => ({
-        role: "group",
-        name: `g${i}`,
-        children: [{ role: "button", name: `b${i}` }],
-      })),
-    };
-    const page = fakePage({ url: "https://x.test/", a11y: deep });
+  it("renders the tree as indented text with refs, not as JSON", async () => {
+    // JSON cost roughly twice the tokens and carried no way to NAME an
+    // element: the model could read about a button and then had to describe it
+    // back as a coordinate or a guessed selector.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            {
+              role: "navigation",
+              name: "Primary",
+              children: [
+                { role: "link", name: "Docs", id: 11, props: { url: "https://x.test/docs" } },
+                { role: "button", name: "Sign in", id: 12, props: { disabled: true } },
+              ],
+            },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    expect(res.ok).toBe(true);
+    const output = res.output as { a11y: string; refs: Record<string, unknown> };
+    // The named landmark earns a ref of its own: it is what `rootRef` zooms
+    // into, and an anonymous one would not have.
+    expect(output.a11y).toBe(
+      [
+        '- navigation "Primary" [ref=e1]',
+        '  - link "Docs" [ref=e2 url=https://x.test/docs]',
+        '  - button "Sign in" [disabled ref=e3]',
+      ].join("\n"),
+    );
+    expect(output.refs).toEqual({
+      e1: { role: "navigation", name: "Primary" },
+      e2: { role: "link", name: "Docs" },
+      e3: { role: "button", name: "Sign in" },
+    });
+  });
+
+  it("defaults to the interactive view, and spends no budget on prose", async () => {
+    // Filtering AFTER the budget would let a page of text report its buttons
+    // as omitted — the one thing the interactive view exists to show.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            ...Array.from({ length: 40 }, (_, i) => ({
+              role: "StaticText",
+              name: `paragraph ${i}`,
+            })),
+            { role: "button", name: "Buried", id: 99 },
+          ],
+        }),
+      },
+    });
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context, {
       a11y: { maxNodes: 10, maxDepth: 5 },
@@ -197,23 +251,172 @@ describe("ChromiumDriver — observe", () => {
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
 
     const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
-    expect(res.ok).toBe(true);
-    const output = res.output as { a11y: unknown; omittedSubtrees?: number };
-    expect(output.omittedSubtrees).toBeGreaterThan(0);
-    // A model must never receive a half-serialized node.
-    expect(() => JSON.parse(JSON.stringify(output.a11y))).not.toThrow();
-    expect(res.stateToken).toBeDefined();
+
+    const output = res.output as { a11y: string; refs: Record<string, unknown> };
+    expect(output.a11y).toContain('button "Buried" [ref=e1]');
+    expect(output.a11y).not.toContain("paragraph");
   });
 
-  it("scopes the tree to rootSelector — the retrieval verb the omission marker names", async () => {
-    // The marker tells the caller to re-observe an omitted subtree with
-    // {mode:"a11y", rootSelector:"…"}. If that does not reach the page, the
-    // marker sends the model somewhere it cannot go and the subtree is lost.
+  it('shows the prose when asked for filter:"all"', async () => {
     const page = fakePage({
       url: "https://x.test/",
-      a11y: { role: "main" },
-      a11yBySelector: {
-        "#panel": { role: "region", children: [{ role: "button", name: "Go" }] },
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            { role: "StaticText", name: "Some words." },
+            { role: "button", name: "Go", id: 7 },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", filter: "all" }),
+    );
+
+    const output = res.output as { a11y: string };
+    expect(output.a11y).toContain('- text "Some words."');
+    expect(output.a11y).toContain('- button "Go" [ref=e1]');
+  });
+
+  it("renders an omitted subtree with the ref that retrieves it", async () => {
+    // "There is more here" without "and this is how you get it" only teaches a
+    // model to guess. The marker used to name a `<selector for this element>`
+    // placeholder nobody could type.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            {
+              role: "region",
+              name: "Results",
+              id: 5,
+              children: Array.from({ length: 30 }, (_, i) => ({
+                role: "button",
+                name: `b${i}`,
+              })),
+            },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, {
+      a11y: { maxNodes: 4, maxDepth: 5 },
+    });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    const output = res.output as { a11y: string; omittedSubtrees?: number };
+    expect(output.omittedSubtrees).toBeGreaterThan(0);
+    expect(output.a11y).toMatch(
+      /- … \[\d+ node\(s\) omitted; observe \{mode:"a11y", rootRef:"e1"\} to read it\]/,
+    );
+  });
+
+  it("numbers a duplicate role+name so an act can tell them apart", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            { role: "button", name: "Delete", id: 21 },
+            { role: "button", name: "Delete", id: 22 },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+    const output = res.output as { a11y: string };
+    // Two distinct refs for two identical labels — the whole point of a ref.
+    expect(output.a11y).toContain('- button "Delete" [ref=e1]');
+    expect(output.a11y).toContain('- button "Delete" [ref=e2]');
+  });
+
+  it("re-roots at a rootRef from the last observation", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            {
+              role: "region",
+              name: "Panel",
+              id: 31,
+              children: [{ role: "button", name: "Go", id: 32 }],
+            },
+          ],
+        }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e1" }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect((res.output as { a11y: string }).a11y).toContain('button "Go"');
+  });
+
+  it("REFUSES a rootRef it never issued, rather than reading the whole page", async () => {
+    // Silently widening to the whole page would answer a question the model
+    // did not ask, and it would never learn its ref was stale.
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({ role: "RootWebArea" }),
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({ kind: "observe", mode: "a11y", rootRef: "e99" }),
+    );
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/unknown_ref/);
+  });
+
+  it("scopes the tree to rootSelector, which the marker still names", async () => {
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "DOM.getDocument": { root: { nodeId: 1 } },
+        "DOM.querySelector": (params?: Record<string, unknown>) =>
+          (params as { selector: string }).selector === "#panel"
+            ? { nodeId: 2 }
+            : { nodeId: 0 },
+        "DOM.describeNode": { node: { backendNodeId: 41 } },
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [
+            {
+              role: "region",
+              name: "Panel",
+              id: 41,
+              children: [{ role: "button", name: "Go", id: 42 }],
+            },
+          ],
+        }),
       },
     });
     const { context } = fakeContext({ pages: [page] });
@@ -224,18 +427,20 @@ describe("ChromiumDriver — observe", () => {
       cmd({ kind: "observe", mode: "a11y", rootSelector: "#panel" }),
     );
 
-    expect(page.calls.a11yRoots).toContain("#panel");
     expect(res.ok).toBe(true);
-    expect((res.output as { a11y: unknown }).a11y).toEqual({
-      role: "region",
-      children: [{ role: "button", name: "Go" }],
-    });
+    expect((res.output as { a11y: string }).a11y).toContain('button "Go"');
   });
 
   it("REFUSES a rootSelector that matches nothing, instead of answering an empty tree", async () => {
     // An empty tree reads as "that subtree is empty" — the model believes the
     // page and moves on. The error is the only version it can act on.
-    const page = fakePage({ url: "https://x.test/", a11y: { role: "main" } });
+    const page = fakePage({
+      url: "https://x.test/",
+      cdpReplies: {
+        "DOM.getDocument": { root: { nodeId: 1 } },
+        "DOM.querySelector": { nodeId: 0 },
+      },
+    });
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
@@ -249,16 +454,20 @@ describe("ChromiumDriver — observe", () => {
     expect(res.error).toContain("#gone");
   });
 
-  it("still answers a whole-page a11y observation when the page has no tree", async () => {
-    // Unmatched-selector is an error; an empty PAGE is not. Only the request
-    // that named a root gets the stricter reading.
+  it("says the tree is unavailable when the page cannot answer one", async () => {
+    // Distinct from "your selector was wrong": telling a model its selector
+    // missed, when the page has no tree at all, sends it hunting a bug that is
+    // not there.
     const page = fakePage({ url: "https://x.test/" });
+    page.cdpSession = null;
     const { context } = fakeContext({ pages: [page] });
     const driver = new ChromiumDriver(context);
     await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
 
     const res = await driver.execute(cmd({ kind: "observe", mode: "a11y" }));
-    expect(res.ok).toBe(true);
+
+    expect(res.ok).toBe(false);
+    expect(res.error).toMatch(/a11y_unavailable/);
   });
 
   it("returns the console tail, newest last, byte-capped", async () => {
@@ -1009,7 +1218,12 @@ describe("ChromiumDriver — a handoff that lands DURING the read", () => {
     const lease = new HandoffLease();
     const page = fakePage({
       url: "https://example.com/",
-      a11y: { role: "WebArea", name: "private", children: [] },
+      cdpReplies: {
+        "Accessibility.getFullAXTree": axTree({
+          role: "RootWebArea",
+          children: [{ role: "button", name: "private" }],
+        }),
+      },
       // The person clicks "Take control" while the tree is being walked.
       onA11y: () => lease.acquire("rail-1", 60_000),
     });

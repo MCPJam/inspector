@@ -1,25 +1,21 @@
 /**
- * The accessibility tree over raw CDP.
+ * The accessibility tree over raw CDP — the ONE reader, for every engine.
  *
- * The Playwright engine gets its tree from `ariaSnapshot`, which returns YAML
- * that `parseAriaSnapshot` rebuilds. Electron has no Playwright, so it reads
- * the same tree from `Accessibility.getFullAXTree` — the domain `ariaSnapshot`
- * is itself built on — and shapes it into the `A11yNode` the L9 budget already
- * knows how to trim.
- *
- * WHY IT LIVES HERE AND NOT IN `daemon/`. I-2b replaces `ariaSnapshot` for
- * every engine and moves this next to the driver, gated on a golden fixture
- * proving the CDP tree reads at least as well as today's YAML. That gate
- * matters for the Playwright engine, which has output a model already depends
- * on. It does not apply to Electron, which has no a11y output at all today —
- * so this ships here, serving the one engine that would otherwise have none,
- * and moves when the fixture says the other engine may follow.
+ * It used to live under `electron/` because Playwright had its own path:
+ * `locator.ariaSnapshot()` returned YAML that a hand-written parser rebuilt
+ * into a tree. That parser is gone and both engines read
+ * `Accessibility.getFullAXTree` — the domain `ariaSnapshot` is itself built on
+ * — through `DriverPage.cdp()`. Two consequences, and both are the point:
+ * a tree observed on one engine now reads identically on the other, and every
+ * node keeps its `backendDOMNodeId`, which is what an act can be aimed at. YAML
+ * had no node identity in it at all, so no amount of parsing could have
+ * produced a ref that survived the trip back.
  *
  * Pure CDP and dependency-free: unit-testable against a fake `CdpLike`.
  */
 
-import type { A11yNode } from "../daemon/observation-budget";
-import type { CdpLike } from "../daemon/webmcp-bridge";
+import type { A11yNode } from "./observation-budget";
+import type { CdpLike } from "./webmcp-bridge";
 
 /**
  * Roles that carry no meaning of their own.
@@ -186,6 +182,12 @@ function build(
 
   const built: A11yNode = {};
   if (typeof role === "string") built.role = role;
+  // Carried so an act can be aimed at what an observation named. This is the
+  // whole reason the tree is read over CDP rather than parsed out of YAML:
+  // without a node identity, a ref could only ever be a guess at a coordinate.
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
   if (name !== undefined) built.name = String(name);
   const value = scalar(node.value);
   if (value !== undefined) built.value = value;

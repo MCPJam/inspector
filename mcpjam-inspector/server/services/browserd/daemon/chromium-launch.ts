@@ -19,7 +19,6 @@ import {
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
 import { PAGE_TEXT_FN } from "./page-text";
-import { parseAriaSnapshot } from "./aria-snapshot";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -257,24 +256,6 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector?: string) {
-      // `page.accessibility` NO LONGER EXISTS in the pinned Playwright (1.62.1
-      // removed it), so the tree-shaped API this used to call resolved
-      // `undefined` for every page. `ariaSnapshot` is its successor: it answers
-      // YAML, which `parseAriaSnapshot` rebuilds into the tree the L9 budget
-      // needs, and it takes a selector root — which is what makes the omission
-      // marker's `rootSelector` retrieval verb real.
-      const target = rootSelector ? page.locator(rootSelector).first() : page;
-      try {
-        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
-        return parseAriaSnapshot(yaml);
-      } catch {
-        // A selector that matches nothing, a detached element, or a page too
-        // busy to answer. `null` is the honest result; the driver turns an
-        // unmatched ROOT selector into an error rather than an empty tree.
-        return null;
-      }
-    },
     async pageText() {
       // Degrades rather than throwing, like every other read on this page: a
       // navigation mid-read destroys the execution context and rejects, and a

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readAxTree, resolveBackendNodeId } from "../cdp-a11y";
-import type { CdpLike } from "../../daemon/webmcp-bridge";
+import type { CdpLike } from "../webmcp-bridge";
 
 /** A `CdpLike` that answers from a table and records what it was asked. */
 function fakeCdp(replies: Record<string, unknown>) {

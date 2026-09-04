@@ -26,6 +26,7 @@ import {
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
 import { computeStateToken } from "./state-token";
+import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
   capConsole,
@@ -40,6 +41,14 @@ import {
   DEFAULT_PAGE_TEXT_MAX_BYTES,
   PAGE_TEXT_RETRIEVAL_HINT,
 } from "./page-text";
+import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
+import {
+  assignRefs,
+  filterInteractive,
+  parseRef,
+  type RefMap,
+} from "./a11y-refs";
+import { renderA11yTree } from "./a11y-render";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -165,6 +174,15 @@ export class ChromiumDriver implements BrowserDriver {
    * encoding JPEGs for a tab nobody is looking at is work done for nobody.
    */
   private readonly viewports = new Map<string, Promise<TabViewport | null>>();
+  /**
+   * The refs the LAST a11y observation of each tab handed out.
+   *
+   * One map per tab, replaced whole on every observation. It is state the
+   * driver must own rather than the model: a ref the model made up, or one it
+   * kept from two observations ago, has to be refusable — and only the side
+   * that minted them can tell the difference.
+   */
+  private readonly refs = new Map<string, RefMap>();
   /**
    * Tab creations already under way, by tabId.
    *
@@ -621,37 +639,57 @@ export class ChromiumDriver implements BrowserDriver {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
-        // a marker naming the retrieval verb), never by cutting one open.
-        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
-        if (action.rootSelector && snapshot === null) {
-          // The retrieval verb the omission marker names must fail LOUDLY when
-          // its selector finds nothing. Returning an empty tree would read as
-          // "that subtree is empty" — the opposite of "your selector was
-          // wrong" — and the caller would believe the page, not retry.
-          return {
-            ok: false,
-            error:
-              `unknown_selector: nothing on this page matches ` +
-              `"${action.rootSelector}"; re-observe the page and pick a ` +
-              `selector from what it shows`,
-          };
-        }
+        // filter → cap → number → render, in that order, and the order is
+        // load-bearing. Filtering first keeps the budget from being spent on
+        // prose the interactive view will not show; numbering after the cap
+        // keeps every ref in the map reachable in the text (a ref stamped on a
+        // node the budget then dropped would be a name for something the model
+        // cannot see); rendering last means the map and the text were built
+        // from one pass over one tree.
+        const raw = await this.readA11y(tabId, entry, action);
+        if (!raw.ok) return raw.error;
+        const filtered =
+          raw.filter === "interactive" && raw.tree
+            ? filterInteractive(raw.tree)
+            : raw.tree;
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          snapshot,
+          filtered,
           this.a11yBudget,
         );
-        return this.observation(
+        const refs = assignRefs(tree);
+        const rendered = renderA11yTree(tree, {
+          interactiveOnly: raw.filter === "interactive",
+        });
+        // Replaces the per-tab map wholesale: refs are valid for exactly one
+        // observation, and leaving an older map merged underneath is how `e7`
+        // comes to mean two things at once.
+        this.refs.set(tabId, {
+          stateToken: undefined,
+          entries: refs,
+        });
+        const result = this.observation(
           tabId,
           entry,
           {
-            a11y: tree,
+            a11y: rendered,
+            refs: Object.fromEntries(
+              [...refs].map(([ref, entryValue]) => [
+                ref,
+                { role: entryValue.role, name: entryValue.name },
+              ]),
+            ),
             ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
           },
           frame,
           permit,
         );
+        // Bound to the token the observation actually carries, so an act with
+        // a ref minted against a different page is refused rather than
+        // resolved by name against whatever is there now.
+        const map = this.refs.get(tabId);
+        if (map) map.stateToken = result.stateToken;
+        return result;
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -1062,9 +1100,83 @@ export class ChromiumDriver implements BrowserDriver {
     }
   }
 
+  /**
+   * Read the tree for an a11y observation, rooted where the caller asked.
+   *
+   * Three ways to be rooted and they fail differently, which is the reason
+   * this is not inline: a `rootRef` the driver never issued is the model's
+   * mistake and must say so; a `rootSelector` that matches nothing is the
+   * page's answer and must not read as "that subtree is empty"; a page that
+   * cannot produce a tree at all is neither, and telling a model its selector
+   * was wrong in that case sends it hunting for a bug that is not there.
+   */
+  private async readA11y(
+    tabId: string,
+    entry: TabEntry,
+    action: { rootSelector?: string; rootRef?: string; filter?: "interactive" | "all" },
+  ): Promise<
+    | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
+    | { ok: false; error: BrowserCommandResult }
+  > {
+    const filter = action.filter ?? "interactive";
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page cannot answer an accessibility tree; " +
+            'observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    let rootBackendNodeId: number | undefined;
+    if (action.rootRef !== undefined) {
+      const parsed = parseRef(action.rootRef);
+      const known = parsed ? this.refs.get(tabId)?.entries.get(parsed) : undefined;
+      if (!known?.backendDOMNodeId) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_ref: ${action.rootRef} is not a ref from this tab's last ` +
+              "observation; re-observe and use a ref it names",
+          },
+        };
+      }
+      rootBackendNodeId = known.backendDOMNodeId;
+    } else if (action.rootSelector !== undefined) {
+      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      if (resolved === null) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_selector: nothing on this page matches ` +
+              `"${action.rootSelector}"; re-observe the page and pick a ` +
+              `selector from what it shows`,
+          },
+        };
+      }
+      rootBackendNodeId = resolved;
+    }
+    return {
+      ok: true,
+      tree: await readAxTree(cdp, rootBackendNodeId),
+      filter,
+    };
+  }
+
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
     this.tabs.delete(tabId);
+    // Refs name nodes in a page that is going away. Left behind, they would be
+    // handed to a recreated tab of the same name and resolve — by role and
+    // name — against a document that never issued them.
+    this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
 

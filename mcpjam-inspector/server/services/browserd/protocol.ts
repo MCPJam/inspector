@@ -132,15 +132,28 @@ export type BrowserAction =
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
-       *
-       * This is the retrieval verb the L9 omission marker names. When the
-       * budget drops a subtree it tells the caller to re-observe with
-       * `{mode:"a11y", rootSelector:"<selector>"}`; without this field that
-       * instruction would point at a parameter that does not exist, and an
-       * omitted subtree would be unrecoverable — which is worse than
-       * truncating, because the marker promises otherwise.
        */
       rootSelector?: string;
+      /**
+       * `a11y` only: scope the tree to a ref from THIS tab's last observation.
+       *
+       * The retrieval verb the L9 omission marker names. It used to name
+       * `rootSelector` and a placeholder selector, which an AX node cannot
+       * supply — so the instruction pointed at something the caller could not
+       * type and an omitted subtree was, in practice, unrecoverable. A ref is
+       * the one handle on this tree the caller provably has, because the same
+       * observation handed it out.
+       */
+      rootRef?: string;
+      /**
+       * `a11y` only: `interactive` (default) keeps what can be acted on and the
+       * structure leading to it; `all` keeps the prose too.
+       *
+       * Interactive by default because that is what a tree is FOR here — the
+       * model reads a page's words with `{mode:"text"}`, and a budget spent on
+       * paragraphs is a budget not spent on the controls.
+       */
+      filter?: "interactive" | "all";
     }
   | {
       kind: "webmcp_invoke";

@@ -153,53 +153,29 @@ describe("adaptContext — ephemeral ownership (review follow-up)", () => {
   });
 });
 
-describe("wrapPage.a11ySnapshot", () => {
-  it("reads the tree from ariaSnapshot, NOT the removed page.accessibility API", async () => {
-    // Playwright 1.62 (our pin) has no `page.accessibility`; the adapter must
-    // go through `ariaSnapshot`, or every a11y observation is an empty page.
-    const ariaSnapshot = vi.fn(async () => '- heading "Welcome" [level=1]');
-    const page = wrapPage(fakeAnyPage({ ariaSnapshot }));
-    await expect(page.a11ySnapshot()).resolves.toEqual({
-      role: "heading",
-      name: "Welcome",
-      level: 1,
-    });
-    expect(ariaSnapshot).toHaveBeenCalledOnce();
+describe("wrapPage.pageText", () => {
+  it("evaluates the shared extraction function, self-invoked", async () => {
+    // A bare function literal evaluates to the UNCALLED function, which
+    // serializes to undefined — the mistake every in-page constant here is
+    // wrapped to prevent.
+    const evaluate = vi.fn(async (expression: string) => {
+      expect(expression.startsWith("(() => {")).toBe(true);
+      expect(expression.endsWith("})()")).toBe(true);
+      return "Hello";
+    }) as unknown as <R>(fn: string) => Promise<R>;
+    const page = wrapPage(fakeAnyPage({ evaluate }));
+    await expect(page.pageText()).resolves.toBe("Hello");
   });
 
-  it("scopes to the rootSelector's FIRST match when one is given", async () => {
-    const scoped = vi.fn(async () => "- list:\n  - listitem \"One\"");
-    const locator = vi.fn((_selector: string) => {
-      const self = { first: () => self, ariaSnapshot: scoped };
-      return self;
-    });
-    const pageAria = vi.fn(async () => "- document");
-    const page = wrapPage(fakeAnyPage({ locator, ariaSnapshot: pageAria }));
-
-    const tree = await page.a11ySnapshot("#results");
-
-    expect(locator).toHaveBeenCalledWith("#results");
-    expect(pageAria).not.toHaveBeenCalled(); // scoped, not whole-page
-    expect(tree).toEqual({
-      role: "list",
-      children: [{ role: "listitem", name: "One" }],
-    });
-  });
-
-  it("answers null when the selector matches nothing, rather than throwing", async () => {
-    // Playwright rejects on an unmatched locator; the driver turns this null
-    // into `unknown_selector`, so the adapter must not propagate the throw.
-    const locator = () => {
-      const self = {
-        first: () => self,
-        ariaSnapshot: async () => {
-          throw new Error("locator.ariaSnapshot: Timeout exceeded");
-        },
-      };
-      return self;
-    };
-    const page = wrapPage(fakeAnyPage({ locator }));
-    await expect(page.a11ySnapshot("#missing")).resolves.toBeNull();
+  it("answers an empty string when the page returns something else", async () => {
+    const page = wrapPage(
+      fakeAnyPage({
+        evaluate: (async () => undefined) as unknown as <R>(
+          fn: string,
+        ) => Promise<R>,
+      }),
+    );
+    await expect(page.pageText()).resolves.toBe("");
   });
 });
 
