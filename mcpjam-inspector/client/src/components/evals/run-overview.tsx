@@ -61,6 +61,7 @@ type RunResultBadgeKind =
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
   | "inconclusive"
@@ -84,6 +85,10 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`: the run is still happening. Green or red would
+      // claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }

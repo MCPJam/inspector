@@ -1857,7 +1857,7 @@
         "operationId": "getEvalRun",
         "tags": ["Eval runs"],
         "summary": "Get run status",
-        "description": "Run status, result, and summary. Poll until `status` is terminal (`completed`, `failed`, or `cancelled`).",
+        "description": "Run status, result, and summary. Poll until `status` is terminal (`completed`, `failed`, `cancelled` or `timed_out`). `grading` is not terminal — every trial has finished and the run is held for its gating judge, with `result` still `pending` — so keep polling.",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -2223,7 +2223,7 @@
         "operationId": "cancelEvalRun",
         "tags": ["Eval runs"],
         "summary": "Cancel a run",
-        "description": "Request cancellation of an in-flight run; marks the run and its pending/running iterations `cancelled`. A no-op success when the run is already cancelled; returns `409` when the run already reached a terminal status (`completed`/`failed`/`timed_out`).",
+        "description": "Request cancellation of an in-flight run; marks the run and its pending/running iterations `cancelled`. A run held in `grading` for its gating judge CAN be cancelled — it lands `cancelled` with no verdict, which is the honest outcome for a run nobody waited out. A no-op success when the run is already cancelled; returns `409` when the run already reached a terminal status (`completed`/`failed`/`timed_out`).",
         "parameters": [
           {
             "$ref": "#/components/parameters/projectId"
@@ -14190,8 +14190,16 @@
           },
           "status": {
             "type": "string",
-            "description": "Poll until terminal: `completed`, `failed`, or `cancelled`.",
-            "enum": ["pending", "running", "completed", "failed", "cancelled"]
+            "description": "Poll until TERMINAL. The four terminal statuses are `completed`, `failed`, `cancelled` and `timed_out`. `grading` is NOT terminal: every trial has finished and the run is being held for its gating judge — up to 30 minutes — with `result` still `pending`. A poller that stops at `grading` reports a run with no verdict as though it had one.",
+            "enum": [
+              "pending",
+              "running",
+              "grading",
+              "completed",
+              "failed",
+              "cancelled",
+              "timed_out"
+            ]
           },
           "result": {
             "type": ["string", "null"],
@@ -24011,7 +24019,7 @@
               "runResultNotAVerdict",
               "verdictSummaryUnavailable"
             ],
-            "description": "`runNotTerminal` — still pending or running; poll it. `runStatusNotAVerdict` — a LEGACY run that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a policy-v2 run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided under policy v2 with no readable decision; there is no legacy fallback, because re-deciding a v2 run under percent-threshold semantics would answer a question nobody asked."
+            "description": "`runNotTerminal` — still pending, running, or held in `grading` for its gating judge; poll it. A held run's stored `verdictSummary` predates the judge's rows, so it is never read as that run's verdict. `runStatusNotAVerdict` — a LEGACY run that stopped at cancelled/timed_out/failed, so its stored counts describe the iterations it happened to record and gating on them is fail-open (a policy-v2 run is deliberately not resolved this way: its validity phase is where lifecycle enters the verdict). `runResultNotAVerdict` — completed with no recognizable result. `verdictSummaryUnavailable` — decided under policy v2 with no readable decision; there is no legacy fallback, because re-deciding a v2 run under percent-threshold semantics would answer a question nobody asked."
           },
           "detail": {
             "type": "string",

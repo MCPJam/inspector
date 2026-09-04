@@ -788,6 +788,13 @@ export type EvalSuiteRun = {
   status:
     | "pending"
     | "running"
+    /**
+     * Every trial finished; the run is HELD for its gating judge, up to 30
+     * minutes. NOT terminal, and `result` is still `"pending"` — only the
+     * backend's `finalizeAfterJudge` moves it on. Anything that treats this as
+     * done reports a run with no verdict as though it had one.
+     */
+    | "grading"
     | "completed"
     | "failed"
     | "cancelled"

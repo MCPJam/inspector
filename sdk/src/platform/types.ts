@@ -666,7 +666,16 @@ export interface PlatformEvalRun {
   id: string;
   suiteId: string;
   runNumber: number | null;
-  /** Poll until terminal: "completed" | "failed" | "cancelled". */
+  /**
+   * Poll until TERMINAL. The four terminal statuses are `"completed"`,
+   * `"failed"`, `"cancelled"` and `"timed_out"`.
+   *
+   * `"grading"` is NOT terminal. Every trial has finished and the run is being
+   * held for its gating judge — up to 30 minutes — with `result` still
+   * `"pending"`. A poller that stops there reports a run with no verdict as
+   * though it had one; keep polling until the status is one of the four above.
+   * Absent on API deployments that predate the hold.
+   */
   status: string;
   /**
    * Verdict once terminal: `"passed" | "failed" | "inconclusive" | null`.
@@ -1096,7 +1105,8 @@ export interface PlatformEvalRunCreated {
   suiteId: string;
   /**
    * The run's status. `running` on a fresh launch; on a replay (see
-   * `deduped`), the existing run's own status — which may already be terminal.
+   * `deduped`), the existing run's own status — which may already be terminal,
+   * or `"grading"` if that run is being held for its gating judge.
    */
   status: string;
   /**
