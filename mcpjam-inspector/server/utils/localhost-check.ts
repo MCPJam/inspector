@@ -218,9 +218,14 @@ export function mayServeSessionToken(options: {
  *
  * UNLIKE the session token (localhost-only), the guest bearer is meant to be
  * served to the hosted app host(s) (e.g. `app.mcpjam.com`). It therefore
- * shares the `isAllowedHost` allowlist — in hosted mode that includes the
- * configured `MCPJAM_ALLOWED_HOSTS`, which the hosted deployment sets to its
- * canonical app host(s).
+ * shares the `isAllowedHost` allowlist, which honors `MCPJAM_ALLOWED_HOSTS`.
+ *
+ * NOTE: `isAllowedHost` no longer gates that allowlist on hosted mode (see its
+ * doc), so this function alone would also return true for an allowlisted
+ * self-hosted LAN host. Guest-bootstrap injection stays hosted-only because
+ * every call site pre-checks `process.env.NODE_ENV === "production" &&
+ * HOSTED_MODE` before calling this. That gate lives at the call sites, not
+ * here — do not drop it on the assumption this function owns the hosted rule.
  */
 export function mayServeGuestBootstrap(options: {
   host: string | undefined;

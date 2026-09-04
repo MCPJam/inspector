@@ -669,7 +669,8 @@ app.get("/health", (c) => {
 });
 
 // Session token endpoint (for dev mode where HTML isn't served by this server)
-// Token is only served to localhost or allowed hosts (in hosted mode) to prevent leakage
+// Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
+// in BOTH hosted and self-hosted mode) to prevent leakage; tunnels always vetoed
 app.get("/api/session-token", (c) => {
   if (HOSTED_MODE) {
     return strictModeResponse(c, "/api/session-token");
@@ -790,7 +791,8 @@ if (process.env.NODE_ENV === "production") {
         );
       }
 
-      // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
+      // SECURITY: Only inject token for localhost or hosts in
+      // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
       // This prevents token leakage when bound to 0.0.0.0. Tunnel hosts
       // NEVER receive the token, even if a tunnel domain is ever
       // allowlisted — see mayServeSessionToken.

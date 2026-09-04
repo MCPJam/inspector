@@ -392,7 +392,11 @@ describe("originValidationMiddleware", () => {
       expect(res.status).toBe(403);
     });
 
-    it("supports a *.domain allowlist entry", async () => {
+    it("supports a *.domain allowlist entry (with the wildcard opt-in)", async () => {
+      // Wildcard Origin acceptance requires MCPJAM_ALLOW_WILDCARD_ORIGINS, the
+      // same gate ALLOWED_ORIGINS wildcards go through (see the two dedicated
+      // wildcard cases below).
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
       process.env.MCPJAM_ALLOWED_HOSTS = "*.internal.example.com";
       app = createTestApp();
 
@@ -430,6 +434,45 @@ describe("originValidationMiddleware", () => {
         const res = await app.request("/api/test", { headers: { Origin: origin } });
         expect(res.status).toBe(403);
       }
+    });
+
+    it("vetoes a tunnel Origin even when its domain is allowlisted", async () => {
+      // Same invariant the token gate enforces: a tunnel host must never pass
+      // the allowlist, even misconfigured into MCPJAM_ALLOWED_HOSTS.
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.tunnels.mcpjam.com";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://abc123.tunnels.mcpjam.com" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("ignores a wildcard allowlist entry for Origins without the opt-in", async () => {
+      // Production (no MCPJAM_ALLOW_WILDCARD_ORIGINS): a platform wildcard must
+      // not make every co-tenant an accepted Origin.
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.up.railway.app";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://someone-elses-app.up.railway.app" },
+      });
+
+      expect(res.status).toBe(403);
+    });
+
+    it("honors a wildcard allowlist entry when MCPJAM_ALLOW_WILDCARD_ORIGINS=true", async () => {
+      process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS = "true";
+      process.env.MCPJAM_ALLOWED_HOSTS = "*.up.railway.app";
+      app = createTestApp();
+
+      const res = await app.request("/api/test", {
+        headers: { Origin: "https://my-app.up.railway.app" },
+      });
+
+      expect(res.status).toBe(200);
     });
   });
 

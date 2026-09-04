@@ -10,7 +10,11 @@
 
 import type { Context, Next } from "hono";
 import { SERVER_PORT } from "../config.js";
-import { hostnameMatchesAllowlist } from "../utils/localhost-check.js";
+import {
+  hostnameMatchesAllowlist,
+  isTunnelHost,
+} from "../utils/localhost-check.js";
+import { getActiveTunnelDomains } from "../services/tunnel-registry.js";
 import { logger as appLogger } from "../utils/logger.js";
 
 /**
@@ -68,6 +72,33 @@ function getConfiguredAllowedHosts(): string[] {
 }
 
 /**
+ * The allowlist entries eligible for ORIGIN matching. Wildcard (`*`) entries
+ * are stripped here unless `MCPJAM_ALLOW_WILDCARD_ORIGINS=true`, mirroring the
+ * exact same production guard `getAllowedOrigins` applies to `ALLOWED_ORIGINS`.
+ *
+ * Why the origin gate is stricter than the token gate here: a platform wildcard
+ * (e.g. `*.up.railway.app`) names every co-tenant on a shared platform domain.
+ * Accepting all of them as request Origins in production is a CSRF surface the
+ * wildcard-origin opt-in exists to gate. The TOKEN gate keeps honoring wildcard
+ * `MCPJAM_ALLOWED_HOSTS` unchanged (it has its own established behavior/tests);
+ * this narrowing applies only to Origin acceptance.
+ */
+function getWildcardGatedAllowedHosts(): string[] {
+  const hosts = getConfiguredAllowedHosts();
+  if (process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS === "true") {
+    return hosts;
+  }
+  const wildcards = hosts.filter((h) => h.includes("*"));
+  if (wildcards.length > 0) {
+    appLogger.warn(
+      `[Security] Wildcard MCPJAM_ALLOWED_HOSTS entries ignored for Origin validation without MCPJAM_ALLOW_WILDCARD_ORIGINS=true: ${wildcards.join(", ")}`,
+    );
+    return hosts.filter((h) => !h.includes("*"));
+  }
+  return hosts;
+}
+
+/**
  * Is the request Origin's host on the `MCPJAM_ALLOWED_HOSTS` allowlist?
  *
  * This is what closes the gap where an operator sets `MCPJAM_ALLOWED_HOSTS`
@@ -88,9 +119,17 @@ function getConfiguredAllowedHosts(): string[] {
  * is also accepted as an Origin. That is the operator's trust decision when they
  * allowlist a host; an operator who wants a narrower origin surface can use the
  * exact-origin `ALLOWED_ORIGINS` instead.
+ *
+ * Two guards keep this from widening past that intent, matching the token gate's
+ * discipline (`mayServeSessionToken`):
+ * - A tunnel/relay host is vetoed BEFORE the allowlist, so even a
+ *   `MCPJAM_ALLOWED_HOSTS` that names a tunnel domain can't make a tunnel Origin
+ *   pass (this gate also fronts the local shell / browser routes).
+ * - Wildcard entries are honored only under `MCPJAM_ALLOW_WILDCARD_ORIGINS`
+ *   (see `getWildcardGatedAllowedHosts`).
  */
 function originHostIsAllowlisted(origin: string): boolean {
-  const allowedHosts = getConfiguredAllowedHosts();
+  const allowedHosts = getWildcardGatedAllowedHosts();
   if (allowedHosts.length === 0) return false;
   let parsed: URL;
   try {
@@ -103,7 +142,12 @@ function originHostIsAllowlisted(origin: string): boolean {
   // `http://192.168.1.50:6274/evil` or `http://user@192.168.1.50:6274` can't
   // smuggle an allowlisted host past the check via `hostname` extraction.
   if (parsed.origin !== origin) return false;
-  return hostnameMatchesAllowlist(parsed.hostname.toLowerCase(), allowedHosts);
+  const hostname = parsed.hostname.toLowerCase();
+  // Tunnel veto first — the same invariant the token gate enforces
+  // (localhost-check.ts `mayServeSessionToken`): a tunnel host must never be
+  // reachable through the allowlist, even if one is misconfigured into it.
+  if (isTunnelHost(hostname, getActiveTunnelDomains())) return false;
+  return hostnameMatchesAllowlist(hostname, allowedHosts);
 }
 
 /**
