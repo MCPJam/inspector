@@ -42,6 +42,11 @@ describe("HostCompareSelector", () => {
     expect(
       screen.getByTestId("host-compare-chip-h_custom").querySelector("img")
     ).not.toBeInTheDocument();
+    expect(
+      screen
+        .getByTestId("host-compare-chip-h_custom")
+        .querySelector('[aria-hidden="true"]')
+    ).toHaveTextContent("My");
   });
 
   it("renders a chip per host and toggles selection on click", async () => {
@@ -126,6 +131,35 @@ describe("HostCompareSelector", () => {
     expect(
       screen.queryByTestId("host-compare-chip-h_6")
     ).not.toBeInTheDocument();
+  });
+
+  it("shows initials instead of an empty dot in the More menu", async () => {
+    const user = userEvent.setup();
+    const hosts = Array.from({ length: 7 }, (_, index) =>
+      makeHost(`h_${index}`, index === 6 ? "Custom seventh" : `Host ${index}`)
+    );
+
+    render(
+      <HostCompareSelector
+        hosts={hosts}
+        selectedHostIds={[]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByTestId("host-compare-overflow-trigger"));
+    expect(
+      screen
+        .getByTestId("host-compare-overflow-h_6")
+        .querySelector('[aria-hidden="true"]')
+    ).toHaveTextContent("Cu");
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {

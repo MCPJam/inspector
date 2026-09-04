@@ -24,6 +24,7 @@ import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
 import type { SupportFilterMode } from "./support-level";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 const INITIAL_INLINE_CHIP_LIMIT = 6;
 
@@ -354,15 +355,11 @@ function HostCompareChip({
       transition={{ type: "spring", stiffness: 480, damping: 28, mass: 0.5 }}
       onClick={onToggle}
     >
-      {logoSrc ? (
-        <img
-          src={logoSrc}
-          alt=""
-          className="size-3.5 shrink-0 object-contain"
-        />
-      ) : (
-        <span aria-hidden className="size-3.5 shrink-0 rounded-full bg-muted" />
-      )}
+      <HostChipLogo
+        logoSrc={logoSrc}
+        name={clientDisplayName(host)}
+        size="sm"
+      />
       <span className="truncate">{clientDisplayName(host)}</span>
     </motion.button>
   );
@@ -434,18 +431,11 @@ function HostCompareOverflowMenu({
                   data-testid={`host-compare-overflow-${host.hostId}`}
                 >
                   <span className="flex min-w-0 flex-1 items-center gap-2">
-                    {logoSrc ? (
-                      <img
-                        src={logoSrc}
-                        alt=""
-                        className="size-3.5 shrink-0 object-contain"
-                      />
-                    ) : (
-                      <span
-                        aria-hidden
-                        className="size-3.5 shrink-0 rounded-full bg-muted"
-                      />
-                    )}
+                    <HostChipLogo
+                      logoSrc={logoSrc}
+                      name={clientDisplayName(host)}
+                      size="sm"
+                    />
                     <span className="truncate">{clientDisplayName(host)}</span>
                   </span>
                   <span

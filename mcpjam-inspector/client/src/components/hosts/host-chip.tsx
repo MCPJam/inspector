@@ -7,14 +7,14 @@ const hostChipLogoClass = {
   stack: "size-5",
 } as const;
 
-function HostChipLogo({
+export function HostChipLogo({
   logoSrc,
   name,
   size,
 }: {
   logoSrc: string | null;
   name: string;
-  size: keyof typeof hostChipLogoClass;
+  size: "default" | "sm" | "stack";
 }) {
   if (logoSrc) {
     return (
