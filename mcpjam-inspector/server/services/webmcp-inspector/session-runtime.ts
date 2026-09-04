@@ -239,7 +239,7 @@ export class WebMcpSessionRuntime {
     string,
     {
       /**
-       * When it SETTLED, not when it was queued.
+       * When it SETTLED, not when it was queued — and `Infinity` until it does.
        *
        * Anchoring at enqueue made the window expire as a slow tool finished —
        * a fifteen-minute invocation had no replay window left at the moment a
@@ -247,12 +247,23 @@ export class WebMcpSessionRuntime {
        * IT finishes, would still have answered. The two are matched (15 min /
        * 512) so they expire together; they only do if both start counting from
        * the same event.
+       *
+       * `Infinity` while it is still running is what makes that true rather
+       * than merely intended: a re-stamp at settle cannot save an entry the
+       * TTL sweep already deleted, and a still-running invocation is exactly
+       * the one whose id a retry must not be allowed to re-run.
        */
       at: number;
       settled: Promise<WebMcpSettledOutput>;
-      /** What this id was minted for, so a reused one cannot be answered. */
-      toolKey: string;
-      input: string;
+      /**
+       * What this id was minted for, so a reused one cannot be answered.
+       *
+       * The IDENTITY STRING, not the raw pair: `invocationIdentity` is the
+       * only serializer that survives cyclic input, and computing it once here
+       * means the replay comparison is a string compare rather than a
+       * `JSON.parse` of something that had to be stringified first.
+       */
+      identity: string;
     }
   >();
   /**
@@ -548,12 +559,16 @@ export class WebMcpSessionRuntime {
     invokeId: string;
     settled: Promise<WebMcpSettledOutput>;
   } {
+    // What this id stands for. An id identifies ONE call, so a caller that
+    // reuses one for a different tool or different arguments is not retrying
+    // — and answering it from the first call would hand back a result for
+    // something it never asked to run, while never running what it did.
+    //
+    // Computed for EVERY invocation, reused id or not, because the replay
+    // record needs it too — and computing it here means the one serializer
+    // that tolerates cyclic input is the only one that ever sees the input.
+    const identity = invocationIdentity(toolKey, input);
     if (requestedInvokeId) {
-      // What this id stands for. An id identifies ONE call, so a caller that
-      // reuses one for a different tool or different arguments is not retrying
-      // — and answering it from the first call would hand back a result for
-      // something it never asked to run, while never running what it did.
-      const identity = invocationIdentity(toolKey, input);
       // Already running or queued: hand back the SAME promise, so both callers
       // watch one execution.
       const live =
@@ -579,10 +594,7 @@ export class WebMcpSessionRuntime {
       const done = this.settledByInvokeId.get(requestedInvokeId);
       if (done) {
         if (this.now() - done.at < INVOKE_REPLAY_TTL_MS) {
-          if (
-            invocationIdentity(done.toolKey, JSON.parse(done.input)) !==
-            identity
-          ) {
+          if (done.identity !== identity) {
             throw new WebMcpInvokeIdReusedError(requestedInvokeId);
           }
           return { invokeId: requestedInvokeId, settled: done.settled };
@@ -615,7 +627,10 @@ export class WebMcpSessionRuntime {
       reject,
       settled,
     });
-    this.rememberOutcome(invokeId, settled, toolKey, input);
+    // The identity is computed by the same guarded serializer the reuse check
+    // uses, so cyclic input degrades to "not equal" — refusing a later reuse —
+    // rather than throwing here, AFTER the item is already on the queue.
+    this.rememberOutcome(invokeId, settled, identity);
     this.draining_ = this.drain();
     void this.draining_;
     return { invokeId, settled };
@@ -634,17 +649,17 @@ export class WebMcpSessionRuntime {
   private rememberOutcome(
     invokeId: string,
     settled: Promise<WebMcpSettledOutput>,
-    toolKey: string,
-    input: Record<string, unknown>,
+    identity: string,
   ): void {
-    const entry = {
-      at: this.now(),
-      settled,
-      toolKey,
-      input: JSON.stringify(input ?? {}),
-    };
+    // `Infinity`, not `now()`: an entry is exempt from the TTL sweep until it
+    // settles. Stamping the enqueue time made a tool that runs longer than the
+    // window get swept WHILE RUNNING, and the re-stamp below then found
+    // nothing to re-stamp — so a retry of the id sailed past the replay check
+    // and enqueued a second execution of a side-effecting page tool. Which is
+    // the one thing the id exists to prevent.
+    const entry = { at: Number.POSITIVE_INFINITY, settled, identity };
     this.settledByInvokeId.set(invokeId, entry);
-    // RE-STAMPED when it settles. The window has to start where the daemon's
+    // STAMPED when it settles. The window has to start where the daemon's
     // does — at completion — or a slow invocation's replay expires exactly
     // when a retry is most likely, and re-runs a tool the daemon would still
     // have de-duplicated.

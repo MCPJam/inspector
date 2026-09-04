@@ -15,13 +15,18 @@ import { WebMcpToolGoneError } from "../provider";
 import { FakeBrowserSession, fakeTool } from "./fake-provider";
 
 function makeRuntime(
-  options: { invokeTimeoutMs?: number; queueLimit?: number } = {},
+  options: {
+    invokeTimeoutMs?: number;
+    queueLimit?: number;
+    now?: () => number;
+  } = {},
 ) {
   const onActivity = vi.fn();
   const runtime = new WebMcpSessionRuntime("https://example.test/", {
     sessionId: "session-1",
     invokeTimeoutMs: options.invokeTimeoutMs ?? 60_000,
     queueLimit: options.queueLimit,
+    ...(options.now ? { now: options.now } : {}),
     onActivity,
   });
   const session = new FakeBrowserSession(
@@ -429,6 +434,73 @@ describe("an invokeId identifies ONE call", () => {
     );
     expect(retry.settled).toBe(first.settled);
     expect(session.invocations).toHaveLength(1);
+  });
+
+  it("does not let the replay sweep evict a call that is still running", async () => {
+    // The window is anchored at SETTLE, and an entry stamped at enqueue was
+    // swept out from under a tool that ran longer than the window. The
+    // re-stamp then had nothing to re-stamp, so a retry arriving after the
+    // slow call finally finished found no record and ran it a second time —
+    // which is the one outcome the id exists to prevent, in the one case
+    // (a long call) where a retry is most likely.
+    let clock = 0;
+    const { runtime, session } = makeRuntime({ now: () => clock });
+    session.emitTools([fakeTool({ name: "slow" }), fakeTool({ name: "quick" })]);
+    session.hangOnInvoke = true;
+
+    const slow = runtime.invoke(
+      "https://example.test::slow",
+      { q: 1 },
+      "manual",
+      "inv-slow",
+    );
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+
+    // Past the replay TTL, and another invocation runs the sweep.
+    clock = 16 * 60_000;
+    session.hangOnInvoke = false;
+    const settleSlow = session.pending!;
+    runtime.invoke("https://example.test::quick", {}, "manual", "inv-quick");
+
+    settleSlow.resolve({ output: { ok: true } });
+    await expect(slow.settled).resolves.toBeDefined();
+
+    const retry = runtime.invoke(
+      "https://example.test::slow",
+      { q: 1 },
+      "manual",
+      "inv-slow",
+    );
+    expect(retry.settled).toBe(slow.settled);
+    expect(
+      session.invocations.filter((i) => i.toolName === "slow"),
+    ).toHaveLength(1);
+  });
+
+  it("queues an unserializable input instead of throwing after it is queued", async () => {
+    // The replay record used to stringify the input itself, AFTER the item was
+    // already on the queue — so cyclic input threw out of `invoke` while its
+    // invocation sat queued, and the caller got an error for a call that was
+    // about to run. The identity serializer tolerates it, and degrades to
+    // refusing a later reuse of the id rather than answering it wrongly.
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    const first = runtime.invoke(
+      "https://example.test::a",
+      cyclic,
+      "manual",
+      "inv-cyclic",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(session.invocations).toHaveLength(1);
+    // Not replayable: two unserializable inputs cannot be shown to be equal,
+    // so the id is refused rather than answered from a call that may differ.
+    expect(() =>
+      runtime.invoke("https://example.test::a", cyclic, "manual", "inv-cyclic"),
+    ).toThrow(WebMcpInvokeIdReusedError);
   });
 });
 

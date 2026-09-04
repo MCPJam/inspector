@@ -12,6 +12,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ACCESS_RECHECK_MS,
   HostedDesktopUnavailableError,
+  MAX_TRACKED_ACCESS_SESSIONS,
+  noteAccessProved,
+  trackedAccessCountForTests,
   resetAccessRecheckForTests,
   resolveHostedSession,
 } from "../hosted-session-resolver";
@@ -407,5 +410,44 @@ describe("hosted session ids", () => {
     ]) {
       expect(parseHostedSessionId(bad)).toBeNull();
     }
+  });
+});
+
+describe("what the replica remembers checking is bounded", () => {
+  it("does not let a proved access grow the map past its cap", () => {
+    // `noteAccessProved` records a session the CREATING replica already
+    // authorized, so it fires once per hosted start — the one write path that
+    // produces an entry for a session id never seen before. Writing the key
+    // directly made it the way around the cap the recheck path respects, so
+    // the bound held for the reader and not for the writer that grows it.
+    const now = 10_000;
+    for (let i = 0; i < MAX_TRACKED_ACCESS_SESSIONS + 500; i += 1) {
+      noteAccessProved(hostedSessionId("p", `comp-${i}`), now);
+    }
+    expect(trackedAccessCountForTests()).toBe(MAX_TRACKED_ACCESS_SESSIONS);
+  });
+
+  it("evicts only entries already past their window", () => {
+    // Everything inside its window is a check that has not been made yet.
+    // Dropping one to make room is how a rotating set of ids skips the check
+    // entirely — so a full map declines to record instead, and that session is
+    // rechecked next command. More round trips, never fewer checks.
+    const early = 10_000;
+    for (let i = 0; i < MAX_TRACKED_ACCESS_SESSIONS; i += 1) {
+      noteAccessProved(hostedSessionId("p", `comp-${i}`), early);
+    }
+    // A newcomer while every entry is still live: refused a slot, nothing
+    // evicted to make one.
+    noteAccessProved(hostedSessionId("p", "newcomer"), early + 1);
+    expect(trackedAccessCountForTests()).toBe(MAX_TRACKED_ACCESS_SESSIONS);
+
+    // Once the incumbents expire, the same newcomer is admitted.
+    noteAccessProved(
+      hostedSessionId("p", "newcomer"),
+      early + ACCESS_RECHECK_MS * 2,
+    );
+    expect(trackedAccessCountForTests()).toBeLessThan(
+      MAX_TRACKED_ACCESS_SESSIONS,
+    );
   });
 });

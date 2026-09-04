@@ -201,6 +201,81 @@ describe("hosted store — where it talks", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(useWebmcpInspectorStore.getState().activity).toEqual([]);
   });
+
+  it("retries a BODYLESS 5xx rather than treating it as terminal", async () => {
+    // A proxy with no upstream and a replica shutting down both answer with a
+    // status and nothing else. Requiring a body before retrying excluded
+    // exactly those, so the deploy this retry loop exists for killed the
+    // stream for the life of the tab.
+    let attempts = 0;
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/events"),
+      respond: () => {
+        attempts += 1;
+        return attempts === 1
+          ? new Response(null, { status: 502 })
+          : openStream();
+      },
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    useWebmcpInspectorStore.getState().reconnect();
+
+    await vi.waitFor(() => expect(attempts).toBeGreaterThan(1), {
+      timeout: 3_000,
+    });
+    // Retried, not reported: a 5xx is the replica, not the session.
+    expect(useWebmcpInspectorStore.getState().error).toBeUndefined();
+  });
+});
+
+describe("hosted store — replacing a session settles what was waiting on it", () => {
+  beforeEach(() => {
+    fetches.calls.length = 0;
+    fetches.handlers.length = 0;
+    useWebmcpInspectorStore.getState().disconnect();
+  });
+
+  it("does not leave the old session's caller waiting out the timeout", async () => {
+    // `startSession` advanced the generation but settled nothing, so a tool
+    // still in flight on the page being replaced parked for the full 90-second
+    // invocation timeout — with no page left that could ever answer it.
+    fetches.handlers.push(
+      {
+        // No inline `outcome`, so the caller parks on the settle event.
+        match: (url) => url.includes("/command"),
+        respond: () => json({ ok: true, invokeId: "inv-parked" }),
+      },
+      {
+        match: (url) => url.includes("/events"),
+        respond: () => openStream(),
+      },
+      {
+        match: (url) => url.endsWith("/sessions"),
+        respond: () => json({ ...SESSION, sessionId: "hosted:proj-1:comp-2" }),
+      },
+    );
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    const parked = useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    // The caller has to be PARKED ON ITS WAITER before the replacement, not
+    // merely to have sent the POST: a replacement landing mid-flight is caught
+    // by the generation guard instead, which is a different branch and was
+    // never the broken one.
+    await vi.waitFor(() =>
+      expect(fetches.calls.some((c) => c.url.includes("/command"))).toBe(true),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    await useWebmcpInspectorStore
+      .getState()
+      .startSession("https://other.test/");
+
+    const result = await parked;
+    expect(result.state).toBe("failed");
+    expect(result.errorMessage).toMatch(/replaced/i);
+  });
 });
 
 describe("hosted store — one identity per invocation", () => {

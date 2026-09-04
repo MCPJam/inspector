@@ -148,6 +148,31 @@ const accessInFlight = new Map<string, Promise<void>>();
  */
 const MAX_TRACKED_SESSIONS = 4_096;
 
+/**
+ * Stamp `sessionId` as checked at `now`, under the cap.
+ *
+ * The ONE writer, so nothing can grow the map behind the bound — a second
+ * write path that set the key directly is exactly how a cap stops being one.
+ * Refreshing a key already present is always allowed: it does not grow
+ * anything, and refusing it would make a busy session recheck every command.
+ */
+function rememberAccessCheck(sessionId: string, now: number): void {
+  if (
+    accessCheckedAt.size >= MAX_TRACKED_SESSIONS &&
+    !accessCheckedAt.has(sessionId)
+  ) {
+    for (const [id, at] of accessCheckedAt) {
+      if (Math.abs(now - at) >= ACCESS_RECHECK_MS) accessCheckedAt.delete(id);
+    }
+    // Still full: every entry is inside its own window, so there is nothing to
+    // drop that would not skip somebody's check. Declining to record costs
+    // this session a round trip on its next command; evicting a live entry
+    // would cost a check, and those are not the same kind of cost.
+    if (accessCheckedAt.size >= MAX_TRACKED_SESSIONS) return;
+  }
+  accessCheckedAt.set(sessionId, now);
+}
+
 function shouldRecheckAccess(sessionId: string, now: number): boolean {
   const previous = accessCheckedAt.get(sessionId);
   // `undefined` kept distinct from a recorded 0, as in `activity-touch`: a
@@ -157,13 +182,7 @@ function shouldRecheckAccess(sessionId: string, now: number): boolean {
   if (previous !== undefined && Math.abs(now - previous) < ACCESS_RECHECK_MS) {
     return false;
   }
-  if (accessCheckedAt.size >= MAX_TRACKED_SESSIONS) {
-    for (const [id, at] of accessCheckedAt) {
-      if (Math.abs(now - at) >= ACCESS_RECHECK_MS) accessCheckedAt.delete(id);
-    }
-    if (accessCheckedAt.size >= MAX_TRACKED_SESSIONS) return true;
-  }
-  accessCheckedAt.set(sessionId, now);
+  rememberAccessCheck(sessionId, now);
   return true;
 }
 
@@ -175,6 +194,14 @@ export function resetAccessRecheckForTests(): void {
   accessCheckedAt.clear();
   accessInFlight.clear();
 }
+
+/** How many sessions this replica currently remembers checking. Tests only. */
+export function trackedAccessCountForTests(): number {
+  return accessCheckedAt.size;
+}
+
+/** The cap `trackedAccessCountForTests` is asserted against. Tests only. */
+export const MAX_TRACKED_ACCESS_SESSIONS = MAX_TRACKED_SESSIONS;
 
 /**
  * Record that access to this session was just proved by other means.
@@ -188,7 +215,11 @@ export function noteAccessProved(
   sessionId: string,
   now: number = Date.now(),
 ): void {
-  accessCheckedAt.set(sessionId, now);
+  // Through the SAME bounded writer as the recheck path. Setting the key
+  // directly made this a way around the cap: every hosted start added an entry
+  // whether or not the map had room, so the bound held for one caller and not
+  // for the one that produces an entry per new session.
+  rememberAccessCheck(sessionId, now);
 }
 
 export interface HostedResolveDeps {

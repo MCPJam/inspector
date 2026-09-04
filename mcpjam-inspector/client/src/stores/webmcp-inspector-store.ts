@@ -856,7 +856,12 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
               // fine. Treated as terminal it killed the stream for good — in
               // exactly the scenario the retry loop below exists for. Retried
               // on the same backoff as a thrown network error.
-              if (response.status >= 500 && response.body) {
+              //
+              // On the STATUS alone. Also requiring a body excluded precisely
+              // the shapes a broken hop produces — a bodyless 502 from a proxy
+              // with no upstream, a 503 from a replica shutting down — and
+              // those were then read as terminal and killed the stream.
+              if (response.status >= 500) {
                 throw new Error(`hosted event stream: ${response.status}`);
               }
               // A 409 here is the interesting one: the computer is asleep, and
@@ -1186,17 +1191,19 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
       },
 
       async startSession(url, options) {
-        // A REPLACEMENT is as much a session change as a closure, and the
-        // generation is what every in-flight caller checks across its await.
-        // Bumped only by `failOutstandingWaiters` before this, so a reattach
-        // or an inline outcome belonging to the OLD session still passed its
-        // guard and overwrote the new one — the guards read as covering this
-        // and did not.
-        sessionGeneration += 1;
+        // A REPLACEMENT is as much a session change as a closure, so it goes
+        // through the same door. This ran as a bare `sessionGeneration += 1`,
+        // which was two things short of that: waiters parked on the OLD
+        // session were left pending for the full 90-second timeout even though
+        // the page they were waiting on had just been replaced, and before the
+        // bump a reattach or an inline outcome belonging to that session still
+        // passed its generation guard and overwrote the new one.
+        failOutstandingWaiters(
+          "The browser session was replaced before this tool finished.",
+        );
         // A new session starts a new timeline, so the dedup set starts over
         // with it — otherwise it grows for the life of the tab.
         seenActivityIds = new Set();
-        settledResults.clear();
         // Full teardown BEFORE the request, not after it: a start that fails
         // would otherwise leave the previous session's socket, retry ladder
         // and stream running with nothing left in the UI that refers to them.
