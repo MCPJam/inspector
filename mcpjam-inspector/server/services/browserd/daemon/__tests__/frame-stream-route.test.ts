@@ -1,0 +1,362 @@
+/**
+ * `GET /v1/frames` over a real socket.
+ *
+ * Loopback rather than a fake `ServerResponse`, because almost everything that
+ * can go wrong with a streamed body is a property of the socket: whether the
+ * headers flush before the first record, whether `server.close()` can complete
+ * while a stream is open, whether a hangup unsubscribes. A hand-written double
+ * would answer all of those the way the author expected.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { AddressInfo } from "node:net";
+import type { Server } from "node:http";
+import { buildBrowserdStack, type BrowserdStack } from "../server";
+import type { BrowserDriver } from "../browser-driver";
+import type { BrowserCommandResult } from "../../protocol";
+import type { TabViewport, ViewportFrame, ViewportListener } from "../viewport";
+import { HandoffLease } from "../lease";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+  type FrameStreamRecord,
+} from "../../frame-stream";
+
+const TOKEN = "frames-token";
+
+function jpegFrame(over: Partial<ViewportFrame> = {}): ViewportFrame {
+  return {
+    data: Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64"),
+    deviceWidth: 1024,
+    deviceHeight: 768,
+    scale: 1,
+    ts: 1_700_000_000_000,
+    seq: 1,
+    ...over,
+  };
+}
+
+/** A viewport whose frames the test publishes by hand. */
+function fakeViewport() {
+  const listeners = new Set<ViewportListener>();
+  const viewport: TabViewport = {
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    subscriberCount: () => listeners.size,
+    dispatchInput: async () => {},
+    dispose: async () => {
+      listeners.clear();
+    },
+  };
+  return {
+    viewport,
+    publish: (frame: ViewportFrame) => {
+      for (const listener of [...listeners]) listener(frame);
+    },
+    subscriberCount: () => listeners.size,
+  };
+}
+
+function stubDriver(
+  viewport: TabViewport | null | (() => TabViewport | null),
+): BrowserDriver {
+  const resolve = typeof viewport === "function" ? viewport : () => viewport;
+  return {
+    execute: async (): Promise<BrowserCommandResult> => ({
+      ok: true,
+      output: "ok",
+      settled: true,
+    }),
+    currentStateToken: async () => undefined,
+    health: async () => ({ ok: true }),
+    close: async () => {},
+    viewport: async () => resolve(),
+  };
+}
+
+/**
+ * A cursor over a live response.
+ *
+ * Reading and CLOSING are separate on purpose: several cases below need the
+ * stream still open after they have read from it (the watcher cap, the hangup
+ * test), and a helper that cancelled on its way out would quietly close the
+ * very connections they are about. Nothing here reads to completion either —
+ * these bodies do not end on their own, so awaiting the end would hang instead
+ * of failing.
+ */
+function openCursor(res: Response) {
+  const decoder = createFrameStreamDecoder();
+  const reader = res.body!.getReader();
+  const ready: FrameStreamRecord[] = [];
+
+  async function next(timeoutMs = 4_000): Promise<FrameStreamRecord> {
+    const deadline = Date.now() + timeoutMs;
+    while (ready.length === 0) {
+      if (Date.now() > deadline) throw new Error("timed out waiting for a record");
+      const { done, value } = await reader.read();
+      if (done) throw new Error("stream ended before a record arrived");
+      const result = decoder.push(value);
+      if (!result.ok) throw new Error(`decode failed: ${result.error}`);
+      ready.push(...result.records);
+    }
+    return ready.shift()!;
+  }
+
+  return {
+    next,
+    async take(count: number, timeoutMs?: number) {
+      const records: FrameStreamRecord[] = [];
+      for (let i = 0; i < count; i += 1) records.push(await next(timeoutMs));
+      return records;
+    },
+    /** Hang up, as a pane that was closed would. */
+    cancel: () => reader.cancel().catch(() => {}),
+  };
+}
+
+describe("GET /v1/frames", () => {
+  let stack: BrowserdStack;
+  let server: Server;
+  let base: string;
+  let vp: ReturnType<typeof fakeViewport>;
+  let lease: HandoffLease;
+
+  beforeEach(async () => {
+    vp = fakeViewport();
+    lease = new HandoffLease();
+    stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN, lease });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    // Streams first, or this never resolves — which is the point of
+    // `closeStreams` existing at all.
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const open = (query = "") =>
+    fetch(`${base}/v1/frames${query}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+  it("refuses without the bearer, and refuses a browser outright", async () => {
+    expect((await fetch(`${base}/v1/frames`)).status).toBe(401);
+    // Any Origin at all is a browser talking to a daemon that only ever serves
+    // servers — the rebinding defence, shared with every other route.
+    const crossOrigin = await fetch(`${base}/v1/frames`, {
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        origin: "https://evil.test",
+      },
+    });
+    expect(crossOrigin.status).toBe(403);
+  });
+
+  it("answers 405 for a non-GET itself, rather than leaking a 404", async () => {
+    // The route owns its own method contract; falling through to the handler's
+    // catch-all would report "no such route" for a route that plainly exists.
+    const res = await fetch(`${base}/v1/frames`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET");
+  });
+
+  it("sends a heartbeat before anything has painted", async () => {
+    // Until a record arrives, "the socket connected" and "the daemon
+    // authorized me and subscribed" are indistinguishable — and on a static
+    // page they stay that way indefinitely.
+    const res = await open();
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/octet-stream");
+    expect(res.headers.get("content-length")).toBeNull();
+    expect(res.headers.get("cache-control")).toContain("no-transform");
+    expect(res.headers.get("x-accel-buffering")).toBe("no");
+
+    const cursor = openCursor(res);
+    expect(await cursor.next()).toEqual({ kind: FRAME_STREAM_KIND.heartbeat });
+    await cursor.cancel();
+  });
+
+  it("streams a painted frame with its geometry intact", async () => {
+    const cursor = openCursor(await open());
+    expect(await cursor.next()).toEqual({ kind: FRAME_STREAM_KIND.heartbeat });
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+    vp.publish(jpegFrame({ seq: 9, scale: 2, deviceWidth: 800 }));
+
+    expect(await cursor.next()).toMatchObject({
+      kind: FRAME_STREAM_KIND.frame,
+      seq: 9,
+      scale: 2,
+      deviceWidth: 800,
+      jpeg: new Uint8Array([0xff, 0xd8, 0xff, 0xd9]),
+    });
+    await cursor.cancel();
+  });
+
+  it("ends with a REASON when the lease moves, not just a dead socket", async () => {
+    // The status code was spent when the headers went out, so "somebody took
+    // control" has to arrive in-band. A pane that cannot tell this from a
+    // network drop either reconnects into a refusal loop or gives up on a
+    // browser that is fine.
+    const cursor = openCursor(await open());
+    await cursor.next(); // the opening heartbeat
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+
+    lease.acquire("somebody-else");
+    vp.publish(jpegFrame()); // the frame that trips the per-frame re-check
+
+    expect(await cursor.next()).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "lease_held",
+    });
+  });
+
+  it("refuses to start while somebody else holds the browser", async () => {
+    lease.acquire("somebody-else");
+    // Still a 200: the refusal is in the body, because by the time we know we
+    // have to ask the lease we have already committed to a stream.
+    const cursor = openCursor(await open());
+    await cursor.next();
+    expect(await cursor.next()).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "lease_held",
+    });
+  });
+
+  it("says unknown_tab rather than hanging on a tab that is not there", async () => {
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    stack = buildBrowserdStack(stubDriver(null), { token: TOKEN });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const cursor = openCursor(await open());
+    await cursor.next();
+    expect(await cursor.next()).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "unknown_tab",
+    });
+  });
+
+  it("unsubscribes when the reader hangs up", async () => {
+    // Otherwise the screencast — and a JPEG encoder — keep running on a box the
+    // agent is still using, for a pane nobody has open.
+    const cursor = openCursor(await open());
+    await cursor.next();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+    await cursor.cancel();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(0));
+  });
+
+  it("caps concurrent watchers", async () => {
+    const held = [];
+    for (let i = 0; i < 4; i += 1) {
+      const cursor = openCursor(await open());
+      await cursor.next(); // held open: the cap counts live streams
+      held.push(cursor);
+    }
+    const refused = await open();
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({ error: "too_many_watchers" });
+    await Promise.all(held.map((c) => c.cancel()));
+  });
+
+  it("closeStreams ends open streams so the server can actually close", async () => {
+    // Without it `server.close()` waits on the connection forever — the hang
+    // shows up first as a test suite that never finishes.
+    const cursor = openCursor(await open());
+    await cursor.next();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+
+    stack.closeStreams();
+    expect(await cursor.next()).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "shutting_down",
+    });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    // Re-listen so the shared afterEach has something to close.
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  });
+
+  it("evicts a watcher when the lease moves over a page that is NOT painting", async () => {
+    // The hole this closes, and the reason the heartbeat exists at all.
+    // `subscribeFrames` re-checks the lease on every FRAME, which is exactly
+    // the wrong clock for a still page — and a still page is precisely when
+    // somebody is reading it. With a one-way stream there is no client ping to
+    // borrow, so the daemon has to ask on its own schedule or never ask.
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    lease = new HandoffLease();
+    stack = buildBrowserdStack(stubDriver(vp.viewport), {
+      token: TOKEN,
+      lease,
+      frames: { heartbeatMs: 25 },
+    });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const cursor = openCursor(await open());
+    await cursor.next();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+
+    lease.acquire("somebody-else");
+    // NOT publishing a frame: that is the whole point.
+    let last;
+    for (let i = 0; i < 20; i += 1) {
+      last = await cursor.next();
+      if (last.kind === FRAME_STREAM_KIND.end) break;
+    }
+    expect(last).toEqual({ kind: FRAME_STREAM_KIND.end, reason: "lease_held" });
+  });
+
+  it("ends a stream whose tab went away, instead of looking merely quiet", async () => {
+    // `TabViewport.dispose()` clears its listeners silently — no callback, no
+    // terminal event — so a closed tab, a crashed renderer or a `driver.close()`
+    // leaves a subscriber holding something that will never fire again. Over a
+    // stream that is indistinguishable from a page nobody is touching.
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    let live: TabViewport | null = vp.viewport;
+    stack = buildBrowserdStack(
+      stubDriver(() => live),
+      { token: TOKEN, frames: { heartbeatMs: 25 } },
+    );
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const cursor = openCursor(await open());
+    await cursor.next();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+
+    // The tab is replaced by a different viewport, as a reopen would do.
+    live = fakeViewport().viewport;
+    let last;
+    for (let i = 0; i < 20; i += 1) {
+      last = await cursor.next();
+      if (last.kind === FRAME_STREAM_KIND.end) break;
+    }
+    expect(last).toEqual({ kind: FRAME_STREAM_KIND.end, reason: "tab_gone" });
+  });
+
+  it("probe mode answers without a lease, a tab or a browser", async () => {
+    // The one thing this repository cannot prove is whether the sandbox edge
+    // streams a chunked body or buffers it. This is how that gets answered on
+    // staging, with curl and nothing else.
+    const cursor = openCursor(await open("?probe=1"));
+    // One heartbeat on open, then the probe's own three, then the end.
+    const records = await cursor.take(5, 8_000);
+    expect(records.slice(0, 4).every((r) => r.kind === FRAME_STREAM_KIND.heartbeat)).toBe(true);
+    expect(records[4]).toMatchObject({ kind: FRAME_STREAM_KIND.end });
+    // Probe mode never touches the browser: no lease, no tab, no subscription.
+    expect(vp.subscriberCount()).toBe(0);
+  });
+});
