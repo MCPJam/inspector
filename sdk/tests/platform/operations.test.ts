@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { DECISION_LABEL_VOCABULARIES } from "../../src/contract/index.js";
 import {
   callServerToolOperation,
   closeTunnelOperation,
@@ -26,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
@@ -860,6 +862,59 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
+
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
+  });
+});
+
 describe("runEvalSuiteOperation", () => {
   it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
@@ -1253,9 +1308,9 @@ describe("createEvalSuiteOperation", () => {
     });
     expect(parsed.success).toBe(false);
     if (parsed.success) return;
-    expect(parsed.error.issues.some((issue) => /hostz/.test(issue.message))).toBe(
-      true
-    );
+    expect(
+      parsed.error.issues.some((issue) => /hostz/.test(issue.message))
+    ).toBe(true);
   });
 
   it("requires a name, at least one server, and at least one case", () => {
@@ -1284,6 +1339,43 @@ describe("createEvalSuiteOperation", () => {
 });
 
 describe("eval run polling operations", () => {
+  it("defines the chain vocabulary IN BAND, not by reference", () => {
+    // An MCP client sees the tool description and nothing else. The stage
+    // order, the three-way chain discriminant and the five states used to live
+    // only in the hosted agent's promptNotes, so every other MCP surface — the
+    // public worker included — handed a model ~36 bare enum members with no
+    // definitions and no way to look them up mid-turn.
+    const description = getEvalRunOperation.description;
+
+    // The order is normative: `notReached` is derived from position.
+    expect(description).toContain(
+      "connection → discovery → selection → call → response → userValue"
+    );
+    // The discriminant, and which of the three carries rows.
+    for (const status of ["verified", "unverified", "absent"]) {
+      expect(description).toContain(`\`${status}\``);
+    }
+    // Every state, each said as its own fact.
+    for (const state of DECISION_LABEL_VOCABULARIES.stageStates) {
+      expect(description).toContain(`\`${state}\``);
+    }
+    // THE claim this whole vocabulary exists to protect.
+    expect(description).toContain("A LOCATION, NOT A CAUSE");
+    expect(description).toContain(
+      "authorizes proposing a change to the server under test"
+    );
+    // The full 29-reason vocabulary does not belong in a tool description; it
+    // belongs where an agent already fetches reference material. Named here so
+    // the pointer cannot be dropped while the skill stays served.
+    expect(description).toContain("user-value-chain-glossary");
+    // And the phrase that would make a client render a spend warning on a
+    // read-only operation (mcp/tests/platformTools.test.ts ties it to
+    // `risk: "spend"`, which a read must never declare).
+    expect(description).not.toContain("COSTS MONEY");
+    expect(getEvalRunOperation.risk).toBeUndefined();
+    expect(getEvalRunOperation.readOnly).toBe(true);
+  });
+
   it("returns the run from the project the caller addressed", async () => {
     const { client, fetchMock } = makeClient();
 
@@ -1849,6 +1941,7 @@ describe("operation catalog consistency", () => {
     show_servers: {},
     connect_project_server: { url: "https://example.com/mcp" },
     get_project_server_connection_status: { connectionRequestId: "scr_abc" },
+    cancel_project_server_connection: { connectionRequestId: "scr_abc" },
     diagnose_server: { server: "s" },
     validate_server: { server: "s" },
     export_server: { server: "s" },
@@ -1874,6 +1967,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {
@@ -1907,6 +2001,8 @@ describe("operation catalog consistency", () => {
     delete_eval_case: { suite: "s", case: "c" },
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
+    get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
     compare_eval_run: { project: "p", runId: "r" },
@@ -1950,6 +2046,43 @@ describe("operation catalog consistency", () => {
     create_persona: { name: "Ada", role: "buyer" },
     update_persona: { persona: "pe", name: "Ada" },
     delete_persona: { persona: "pe" },
+    list_secrets: {},
+    get_secret: { secret: "sec" },
+    // `delivery` is REQUIRED with no default, which is the point: a caller who
+    // has not said whether the value ends up inside the sandbox has not made
+    // the decision this operation exists to make.
+    create_secret: {
+      name: "STRIPE_API_KEY",
+      value: "sk_live_example_value",
+      delivery: "materialized",
+    },
+    update_secret: { secret: "sec", value: "sk_live_rotated_value" },
+    delete_secret: { secret: "sec" },
+    list_trace_destinations: { organization: "org" },
+    get_trace_destination: { organization: "org", destination: "td" },
+    create_trace_destination: {
+      organization: "org",
+      name: "Coralogix",
+      endpointUrl: "https://ingress.eu2.coralogix.com:443",
+    },
+    update_trace_destination: {
+      organization: "org",
+      destination: "td",
+      name: "Coralogix (production)",
+    },
+    delete_trace_destination: { organization: "org", destination: "td" },
+    test_trace_destination: { organization: "org", destination: "td" },
+    pause_trace_destination: { organization: "org", destination: "td" },
+    resume_trace_destination: { organization: "org", destination: "td" },
+    backfill_trace_destination: {
+      organization: "org",
+      destination: "td",
+      days: 7,
+    },
+    list_trace_destination_backfills: {
+      organization: "org",
+      destination: "td",
+    },
     generate_personas: { environmentId: "e" },
     get_journey: { journey: "j" },
     create_journey: {
@@ -2143,6 +2276,8 @@ describe("operation catalog consistency", () => {
       "run_eval_suite",
       "run_eval_case",
       "cancel_eval_run",
+      // Stops a pending connection, releasing the slot it holds.
+      "cancel_project_server_connection",
       "request_eval_run_judge",
       "connect_eval_check_repo",
       "create_eval_suite",
@@ -2199,6 +2334,24 @@ describe("operation catalog consistency", () => {
       "create_persona",
       "update_persona",
       "delete_persona",
+      // Secret writes. `create_secret` and `update_secret` carry a credential
+      // in their INPUT (risk: exposure); `delete_secret` revokes one.
+      "create_secret",
+      "update_secret",
+      "delete_secret",
+      // Trace-destination writes. `create` and `update` carry vendor
+      // credentials in their INPUT and decide whether customer content leaves
+      // the platform (risk: exposure); `resume` is exposure too, because it
+      // restarts an export someone stopped. `test` and `pause` persist but
+      // expose nothing, and `backfill` is `spend` — it can queue a month of an
+      // organization's history at a vendor that bills on ingest.
+      "create_trace_destination",
+      "update_trace_destination",
+      "delete_trace_destination",
+      "test_trace_destination",
+      "pause_trace_destination",
+      "resume_trace_destination",
+      "backfill_trace_destination",
       "create_journey",
       "update_journey",
       "archive_journey",
@@ -2469,14 +2622,18 @@ describe("registry operations", () => {
       if (path === "/api/v1/projects") {
         return Response.json({ items: PROJECTS });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/registry\/directory-installs$/.test(path)
+      ) {
         return Response.json({
           serverId: "server-installed",
           serverName: "Installed",
           outcome: options?.outcome ?? "created",
         });
       }
-      if (/^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)) {
+      if (
+        /^\/api\/v1\/projects\/[^/]+\/servers\/server-installed$/.test(path)
+      ) {
         return Response.json({
           id: "server-installed",
           projectId: "project-new",
