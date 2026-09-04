@@ -69,6 +69,12 @@ import { buildEvalSharePath } from "@/lib/app-navigation";
 // removed render site). Import kept dropped to avoid an unused-symbol
 // lint and to make the removal obvious if someone reaches for it later.
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
+import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import {
+  DEPLOYMENT_REASON_COPY,
+  featureDisabledReason,
+  PERMISSION_REASON_COPY,
+} from "./capability-reasons";
 import type {
   EvalCase,
   EvalIteration,
@@ -147,6 +153,7 @@ function SettingsSection({
   layout = "stack",
   children,
   inlineSlot,
+  disabledReason,
 }: {
   settingKey: EvalSuiteSettingKey;
   label: string;
@@ -162,12 +169,39 @@ function SettingsSection({
   layout?: "stack" | "inline";
   inlineSlot?: React.ReactNode;
   children?: React.ReactNode;
+  /**
+   * Why this row cannot be used, or `undefined` when it can.
+   *
+   * S3 — a row that CANNOT be used still renders, saying why. Hiding it made a
+   * missing permission, a feature the organization does not have, and a flag
+   * service that timed out all look identical: the setting somebody was told to
+   * configure simply was not on the page.
+   */
+  disabledReason?: string;
 }) {
+  const isDisabled = disabledReason !== undefined;
+  // `fieldset[disabled]` rather than a per-control prop: the controls in these
+  // rows are a mix of native inputs and Radix triggers, and every one of them
+  // is a `button` or an `input` underneath, which native disabling reaches.
+  // `display: contents` keeps the fieldset out of the layout entirely.
+  const wrap = (node: React.ReactNode) =>
+    isDisabled ? (
+      <fieldset disabled className="contents">
+        {node}
+      </fieldset>
+    ) : (
+      node
+    );
+  const reasonLine = isDisabled ? (
+    <p className="mt-0.5 text-[11px] text-muted-foreground">{disabledReason}</p>
+  ) : null;
+
   if (layout === "inline") {
     return (
       <section
         className="py-5 first:pt-2 last:pb-2"
         data-setting-key={settingKey}
+        {...(isDisabled ? { "data-disabled-reason": disabledReason } : {})}
       >
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
@@ -180,10 +214,13 @@ function SettingsSection({
             {hint ? (
               <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
             ) : null}
+            {reasonLine}
           </div>
-          {inlineSlot}
+          {wrap(inlineSlot)}
         </div>
-        {children ? <div className="mt-3 space-y-2">{children}</div> : null}
+        {children ? (
+          <div className="mt-3 space-y-2">{wrap(children)}</div>
+        ) : null}
       </section>
     );
   }
@@ -191,16 +228,20 @@ function SettingsSection({
     <section
       className="py-6 first:pt-2 last:pb-2"
       data-setting-key={settingKey}
+      {...(isDisabled ? { "data-disabled-reason": disabledReason } : {})}
     >
       <div className="mb-3 flex items-baseline justify-between gap-3">
-        <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
-          {label}
-        </h2>
+        <div className="min-w-0">
+          <h2 className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
+            {label}
+          </h2>
+          {reasonLine}
+        </div>
         {hint ? (
           <p className="text-[11px] text-muted-foreground/60">{hint}</p>
         ) : null}
       </div>
-      <div className="space-y-3">{children}</div>
+      <div className="space-y-3">{wrap(children)}</div>
     </section>
   );
 }
@@ -525,6 +566,21 @@ export function SuiteIterationsView({
   // after they save it — the review dialog is where they confirm, and a page
   // that still shows the legacy percent while the draft says otherwise is
   // describing a suite nobody is about to have.
+  // S3 — what this person can do with this suite, and why not.
+  //
+  // Re-asked on the suite's revision number: a save that changes what someone
+  // may do next (acknowledging a judge gate, upgrading the verdict policy)
+  // should change the rows, not leave them describing the suite as it was when
+  // the page loaded.
+  const { state: capabilitiesState, capabilities } = useSuiteCapabilities(
+    isEditMode ? suite._id : null,
+    suite.revisionNumber,
+  );
+  // The ONE rule every row below shares: when capabilities could not be read,
+  // behave exactly as the page did before they existed. Capabilities make a
+  // page more honest; they must never make it less usable than the page that
+  // had none.
+  const capabilitiesReady = capabilitiesState === "ready" && capabilities;
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
   // The legacy policy restated in v2 terms. `minIterations` is the suite's
   // iteration floor and `minimumPassRate` its percent, so the upgrade proposes
@@ -543,8 +599,6 @@ export function SuiteIterationsView({
   // and a button whose only outcome is an error is worse than no button — so
   // until the per-suite capabilities read lands it stays disabled with the
   // honest reason rather than optimistically enabled.
-  const verdictPolicyUpgradeDisabledReason: string | undefined =
-    "Checking whether this deployment allows verdict policy v2…";
   // Discarding is what the person just agreed to when they confirmed the
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S opens the review dialog from the run list, and
@@ -906,6 +960,41 @@ export function SuiteIterationsView({
 
   const syntheticMonitorsEnabled =
     useFeatureFlagEnabled("synthetic-monitors") === true;
+
+  // ── The three rows that used to vanish ─────────────────────────────────
+  //
+  // Each keeps its ORIGINAL gate as an additional condition, so a deployment
+  // whose capabilities read fails behaves exactly as it did before this. What
+  // changes is what happens when capabilities ARE readable and say no: the row
+  // renders disabled with the reason instead of disappearing.
+  const computerEnvironmentRowVisible = capabilitiesReady
+    ? Boolean(projectId)
+    : computersEnabled && Boolean(projectId);
+  const computerEnvironmentDisabledReason = !capabilitiesReady
+    ? undefined
+    : (featureDisabledReason(capabilities.features?.computers) ??
+      (capabilities.permissions?.["suite.configure"] === false
+        ? PERMISSION_REASON_COPY
+        : undefined));
+  const scheduleDisabledReason = !capabilitiesReady
+    ? undefined
+    : capabilities.features?.scheduledEvals?.enabled === false
+      ? DEPLOYMENT_REASON_COPY
+      : capabilities.permissions?.["suite.schedule"] === false
+        ? PERMISSION_REASON_COPY
+        : undefined;
+  const deleteDisabledReason =
+    capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
+      ? PERMISSION_REASON_COPY
+      : undefined;
+  const verdictPolicyUpgradeDisabledReason: string | undefined =
+    !capabilitiesReady
+      ? "Checking whether this deployment allows verdict policy v2…"
+      : capabilities.verdictPolicyV2.canUpgrade
+        ? undefined
+        : capabilities.verdictPolicyV2.deploymentMode === "off"
+          ? DEPLOYMENT_REASON_COPY
+          : "This suite is already on verdict policy v2";
 
   const handleOpenSuiteExport = useCallback(() => {
     setExportState({
@@ -1862,10 +1951,11 @@ export function SuiteIterationsView({
                   Gated behind the computers feature flag. Pins a built Docker
                   environment so each eval iteration boots a fresh sandbox from
                   the same image — comparable results across runs/edits. */}
-              {computersEnabled && projectId ? (
+              {computerEnvironmentRowVisible ? (
                 <SettingsSection
                   settingKey="computerEnvironment"
                   label="Computer environment"
+                  disabledReason={computerEnvironmentDisabledReason}
                   labelAccessory={
                     <CloudRunBadge
                       tooltip="Eval iterations run their computer commands in disposable MCPJam cloud sandboxes — never on the machine running this inspector."
@@ -2011,6 +2101,7 @@ export function SuiteIterationsView({
                   settingKey="schedule"
                   label="Schedule"
                   hint="Run this suite automatically on a fixed interval."
+                  disabledReason={scheduleDisabledReason}
                 >
                   <ScheduleEditor
                     suiteId={suite._id}
@@ -2030,7 +2121,18 @@ export function SuiteIterationsView({
               <ErrorBoundary
                 key={organizationId ?? "no-organization"}
                 name="suite_github_checks"
-                fallback={null}
+                // A row that says why beats a page that quietly drops it. The
+                // availability read refuses rather than answers for a caller
+                // the backend will not confirm an organization to, and the old
+                // `null` fallback made that indistinguishable from a suite
+                // whose organization simply has no GitHub Checks.
+                fallback={
+                  <SettingsSection
+                    settingKey="githubChecks"
+                    label="GitHub Checks"
+                    disabledReason="GitHub Checks could not be loaded for this organization"
+                  />
+                }
               >
                 <SuiteGithubChecksSettingsSection
                   suiteId={suite._id}
@@ -2048,13 +2150,17 @@ export function SuiteIterationsView({
                 <div
                   className="flex items-center justify-between gap-4 py-5"
                   data-setting-key="deleteSuite"
+                  {...(deleteDisabledReason
+                    ? { "data-disabled-reason": deleteDisabledReason }
+                    : {})}
                 >
                   <div className="min-w-0">
                     <div className="text-[11px] font-medium uppercase tracking-[0.08em] text-muted-foreground/80">
                       Delete suite
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground/70">
-                      Runs and cases can&apos;t be recovered.
+                      {deleteDisabledReason ??
+                        "Runs and cases can't be recovered."}
                     </p>
                   </div>
                   <Button
@@ -2063,7 +2169,10 @@ export function SuiteIterationsView({
                     size="sm"
                     className="h-8 gap-1.5 text-destructive hover:bg-destructive/10 hover:text-destructive"
                     onClick={() => onDelete(suite)}
-                    disabled={deletingSuiteId === suite._id}
+                    disabled={
+                      deletingSuiteId === suite._id ||
+                      deleteDisabledReason !== undefined
+                    }
                   >
                     {deletingSuiteId === suite._id ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />

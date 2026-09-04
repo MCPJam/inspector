@@ -32,6 +32,14 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
+// S3 — the settings sheet reads per-suite capabilities. `unavailable` is the
+// pre-capabilities behaviour, which is what every assertion in this file was
+// written against; a real read here would also need `useConvex` on the mock
+// above, which this file deliberately does not provide.
+vi.mock("@/hooks/use-suite-capabilities", () => ({
+  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
+}));
+
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
