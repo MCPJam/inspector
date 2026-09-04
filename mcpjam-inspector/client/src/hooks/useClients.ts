@@ -5,16 +5,7 @@ import type { HostConfigDtoV2, HostConfigInputV2 } from "@/lib/client-config-v2"
 import type { ScenarioMode } from "./useScenarios";
 import { shouldQueryProjectId } from "./useProjects";
 import { withoutPrivateScenarioBackingHosts } from "@/lib/host-owner-scope";
-import {
-  bundledHostCompatCatalog,
-  getCatalogHosts,
-} from "@mcpjam/sdk/host-compat";
 import { resolveClientDisplayNames } from "@/lib/client-display-name";
-import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-
-const BUNDLED_PRESET_CLIENT_NAMES = getCatalogHosts(
-  bundledHostCompatCatalog(),
-).map((host) => host.label);
 
 /**
  * Product ownership of a host. Defined in `@/lib/host-owner-scope` alongside
@@ -77,17 +68,6 @@ export function useHostList({
   isLoading: boolean;
 } {
   const isUserReady = useDbUserReady();
-  const catalogState = useHostCatalog();
-  const presetClientNames = useMemo(
-    () => {
-      if (!catalogState.catalog) return BUNDLED_PRESET_CLIENT_NAMES;
-      return [
-        ...BUNDLED_PRESET_CLIENT_NAMES,
-        ...getCatalogHosts(catalogState.catalog).map((host) => host.label),
-      ];
-    },
-    [catalogState.catalog],
-  );
   const queryProjectId = projectId?.trim() ?? "";
   const hasQueryableProjectId = shouldQueryProjectId(queryProjectId);
   const shouldQuery =
@@ -106,10 +86,7 @@ export function useHostList({
   const hosts = useMemo(() => {
     const all = result ?? [];
     const visible = withoutPrivateScenarioBackingHosts(all);
-    const displayNames = resolveClientDisplayNames(
-      visible,
-      presetClientNames,
-    );
+    const displayNames = resolveClientDisplayNames(visible);
     const decorated = all.map((host) => ({
       ...host,
       displayName: displayNames.get(host.hostId) ?? host.name,
@@ -117,7 +94,7 @@ export function useHostList({
     return includePrivateBacking
       ? decorated
       : withoutPrivateScenarioBackingHosts(decorated);
-  }, [result, includePrivateBacking, presetClientNames]);
+  }, [result, includePrivateBacking]);
 
   return {
     hosts,
