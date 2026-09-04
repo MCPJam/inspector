@@ -285,6 +285,12 @@ describe("the hosted pane — the socket", () => {
     renderBody();
     await vi.waitFor(() => expect(api.sockets.length).toBe(1));
     for (let i = 0; i < 8; i += 1) {
+      // A REFUSED socket opens first. The server accepts the upgrade and only
+      // then closes, because after an upgrade there is no status left to send
+      // — so `open` genuinely fires before `close(4401)` in a browser, and a
+      // cap reset there could never bind. Without this line the double was
+      // kinder than the network and the loop below stayed bounded on its own.
+      act(() => socket().onopen?.());
       act(() => socket().onclose?.({ code: 4401 }));
       await act(async () => {
         await vi.advanceTimersByTimeAsync(5_000);
@@ -293,6 +299,63 @@ describe("the hosted pane — the socket", () => {
     expect(api.sockets.length).toBeLessThanOrEqual(6);
     expect(screen.getByText(/no longer authorized/)).toBeTruthy();
     vi.useRealTimers();
+  });
+
+  it("forgives past refusals once a frame actually arrives", async () => {
+    // The counter is CONSECUTIVE. A watch that runs for hours crosses several
+    // token expiries, and each one is a refusal followed by a working
+    // reconnect — so evidence the stream works has to clear the count, or a
+    // long, healthy session eventually locks itself out.
+    vi.useFakeTimers();
+    renderBody();
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+
+    for (let i = 0; i < 4; i += 1) {
+      act(() => socket().onopen?.());
+      act(() => socket().onclose?.({ code: 4401 }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      // The reconnect works: a frame is the only proof of that.
+      act(() =>
+        socket().onmessage?.({
+          data: JSON.stringify({
+            type: "frame",
+            frame: {
+              data: "AAAA",
+              deviceWidth: 1024,
+              deviceHeight: 768,
+              scale: 1,
+              ts: 1,
+              seq: i,
+            },
+          }),
+        }),
+      );
+    }
+
+    expect(screen.queryByText(/no longer authorized/)).toBeNull();
+    vi.useRealTimers();
+  });
+
+  it("does not wipe the take-control message with a background re-read", async () => {
+    // A 4409 close re-reads the session, and that read's success path clears
+    // `error`. Sharing one field, the message set a tick earlier vanished
+    // before anyone could read it: a dark pane, no explanation, and a fresh
+    // flicker of it every three seconds.
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    act(() => socket().onclose?.({ code: 4409 }));
+
+    await waitFor(() =>
+      expect(screen.getByText(/Somebody else has taken control/)).toBeTruthy(),
+    );
+    // Still there after the re-read this close kicked off has settled.
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/Somebody else has taken control/)).toBeTruthy();
   });
 });
 

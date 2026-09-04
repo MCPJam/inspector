@@ -90,6 +90,17 @@ export function HostedBrowserBody({
   const [holding, setHolding] = useState(false);
   const [frame, setFrame] = useState<PaneFrame | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * What the SOCKET last said, kept apart from `error`.
+   *
+   * The two have different owners and different lifetimes. `refresh()` clears
+   * `error` on every successful session read — and a 4409 close triggers
+   * exactly such a read, so the "somebody else has control" message set a tick
+   * earlier was wiped before anyone saw it. The viewer got a dark pane, no
+   * explanation, and a fresh flicker of it every three seconds. This one is
+   * cleared by the thing that actually disproves it: a frame arriving.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [unavailable, setUnavailable] = useState<string | null>(null);
   /** Bumped to re-open the frame socket after it was refused. */
@@ -99,9 +110,10 @@ export function HostedBrowserBody({
    *
    * Every reconnect re-runs the socket effect, so a counter declared inside it
    * resets on each attempt and the cap never binds: the pane would mint
-   * tokens against the same refusal forever. Cleared on a socket that opens,
-   * because a connection that succeeded proves the last failure was not the
-   * kind this cap is for.
+   * tokens against the same refusal forever. Cleared when a FRAME arrives,
+   * which is the only evidence an attempt actually worked — a socket that
+   * merely opened proves nothing, because this server accepts the upgrade and
+   * refuses inside it.
    */
   const tokenRetriesRef = useRef(0);
 
@@ -136,6 +148,7 @@ export function HostedBrowserBody({
     setHolding(false);
     setFrame(null);
     setError(null);
+    setNotice(null);
     setUnavailable(null);
     tokenRetriesRef.current = 0;
   }, [projectId]);
@@ -231,16 +244,32 @@ export function HostedBrowserBody({
             type?: string;
             frame?: PaneFrame;
           };
-          if (parsed.type === "frame" && parsed.frame) setFrame(parsed.frame);
+          if (parsed.type === "frame" && parsed.frame) {
+            setFrame(parsed.frame);
+            // The attempt worked: forgive the refusals that came before it,
+            // and clear whatever the last close told the viewer, since the
+            // picture is back and the message is no longer true.
+            tokenRetriesRef.current = 0;
+            setNotice(null);
+          }
         } catch {
           // Not our protocol.
         }
       };
-      opened.socket.onopen = () => {
-        // Whatever refused the last attempt is over.
-        tokenRetriesRef.current = 0;
-        setError(null);
-      };
+      // NOT reset on `onopen`, which is the trap this route lays. The server
+      // accepts the upgrade and only then closes — it has to, because once an
+      // upgrade is requested there is no HTTP status left to send — so a
+      // REFUSED socket still fires `open` before its `close(4401)`. Resetting
+      // there zeroed the counter on every refusal, the cap below could never
+      // bind, and a token rejected for anything other than expiry (ownership
+      // moved, the row's project changed) put the pane in a permanent
+      // three-second loop of Convex mints and sandbox lookups for as long as
+      // the tab stayed open. The unit test missed it because its socket double
+      // never calls `onopen` at all.
+      //
+      // A FRAME is the evidence: it means the token was accepted, the lease
+      // let us watch, and the daemon is streaming. Nothing else proves the
+      // attempt worked.
       opened.socket.onclose = (event) => {
         if (closed) return;
         setFrame(null);
@@ -249,7 +278,7 @@ export function HostedBrowserBody({
           // while this socket was open — the daemon revokes mid-stream. NOT
           // terminal: the view has to come back when they hand it back, so
           // keep asking rather than latching an error nothing will clear.
-          setError(
+          setNotice(
             "Somebody else has taken control of this browser. The view will resume when they hand it back.",
           );
           void refresh();
@@ -270,7 +299,7 @@ export function HostedBrowserBody({
             }, RETRY_MS);
             return;
           }
-          setError(
+          setNotice(
             "This view is no longer authorized. Reopen the pane to watch again.",
           );
           return;
@@ -450,7 +479,7 @@ export function HostedBrowserBody({
       }
       onInput={send}
       placeholder={placeholder}
-      error={error}
+      error={notice ?? error}
       active={active}
     />
   );
