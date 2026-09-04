@@ -582,7 +582,7 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
       )
     ).toBeVisible();
     expect(screen.getByTestId("user-testing-create-back")).toHaveTextContent(
-      "Acceptance Testing"
+      "User Testing"
     );
     expect(screen.getByLabelText(/^study name/i)).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-create-save")).toHaveTextContent(
