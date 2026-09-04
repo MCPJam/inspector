@@ -131,7 +131,30 @@ export function RunContextChip({
   // screen (mislabelled as a host) with the flag off.
   const name = runHostLabel(run, hostNamesById) ?? fallbackName;
   if (!name) return null;
+  // Same model attribution as the environment branch: a host chip by itself
+  // only names the client, not which model actually ran.
   return (
-    <HostChip name={name} hostId={run.namedHostId} className={className} />
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <HostChip name={name} hostId={run.namedHostId} className={className} />
+      {resolvedModelLabel ? (
+        <span
+          className={cn(
+            "truncate text-[11px]",
+            modelSource === "override"
+              ? "text-foreground"
+              : "text-muted-foreground",
+          )}
+          title={
+            modelSource === "client_default"
+              ? `Client default · ${resolvedModelLabel}`
+              : modelSource === "override"
+                ? `Override · ${resolvedModelLabel}`
+                : resolvedModelLabel
+          }
+        >
+          {resolvedModelLabel}
+        </span>
+      ) : null}
+    </span>
   );
 }

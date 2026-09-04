@@ -49,6 +49,18 @@ export const SANDBOX_HOST_OPEN_PATHS = new Set<string>([
 ]);
 
 /**
+ * What a PER-SERVER view hostname (`<label>.<sandbox host>`) may answer.
+ *
+ * The proxy and nothing else — not `/health`. These names are minted per MCP
+ * server to hold one server's untrusted view; a health probe there would
+ * describe infrastructure the origin has no business knowing about, and there
+ * is no operator reason to probe a name derived from a server id.
+ */
+export const SANDBOX_VIEW_HOST_OPEN_PATHS = new Set<string>([
+  "/api/web/apps/mcp-apps/sandbox-proxy",
+]);
+
+/**
  * Host header without its port, lowercased.
  *
  * The same read the caniuse/score vanity-domain gates in server/index.ts use,
@@ -65,12 +77,43 @@ function requestHost(c: Context): string {
   return (c.req.header("Host") ?? "").toLowerCase().split(":")[0];
 }
 
+/** A per-server view label, as `view-origin-label.ts` derives them. */
+const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
+
+/**
+ * How a hostname relates to the sandbox.
+ *
+ *   "exact"  — a configured sandbox host. Serves the proxy and /health.
+ *   "view"   — a single per-server label under one. Serves ONLY the proxy:
+ *              these hostnames are minted per MCP server and exist to hold
+ *              that server's untrusted view, so there is nothing else for
+ *              them to answer — not even the health probe, which would
+ *              report on infrastructure the origin has no business
+ *              describing.
+ *   null     — not a sandbox host at all.
+ *
+ * One label only. A nested subdomain is not a name this service mints, and
+ * matching it would extend the partition to hostnames nobody derived.
+ */
+function sandboxHostKind(host: string): "exact" | "view" | null {
+  if (SANDBOX_HOSTS.has(host)) return "exact";
+  const dot = host.indexOf(".");
+  if (dot === -1) return null;
+  const label = host.slice(0, dot);
+  const parent = host.slice(dot + 1);
+  if (!VIEW_ORIGIN_LABEL.test(label)) return null;
+  return SANDBOX_HOSTS.has(parent) ? "view" : null;
+}
+
 const sandboxHostPartition: MiddlewareHandler = async (c, next) => {
-  if (!SANDBOX_HOSTS.has(requestHost(c))) {
+  const kind = sandboxHostKind(requestHost(c));
+  if (kind === null) {
     await next();
     return;
   }
-  if (SANDBOX_HOST_OPEN_PATHS.has(c.req.path)) {
+  const openPaths =
+    kind === "view" ? SANDBOX_VIEW_HOST_OPEN_PATHS : SANDBOX_HOST_OPEN_PATHS;
+  if (openPaths.has(c.req.path)) {
     await next();
     return;
   }
