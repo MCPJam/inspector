@@ -261,8 +261,7 @@ apps.post("/widget-content", async (c) => {
       domain: declaredDomain,
       metadataSources,
       metadataSource,
-    } =
-      resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
+    } = resolveUiResourceMeta({ contentMeta: resourceMeta, listingMeta });
 
     // Log CSP and permissions configuration for security review (SEP-1865)
     logger.debug("[MCP Apps] Security configuration", {
@@ -353,7 +352,7 @@ apps.post("/widget-content", async (c) => {
       // Optional-called: the route tests stand up managers that expose no
       // config accessor, and an absent label just means the default origin.
       viewOriginLabel: viewOriginLabelForConfig(
-        mcpClientManager.getServerConfig?.(serverId)
+        mcpClientManager.getServerConfig?.(serverId),
       ),
       // Echoed for trace clarity. The renderer's reload-key already
       // uses the flag it sent (not this echoed value), but persisting

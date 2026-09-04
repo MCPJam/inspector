@@ -39,7 +39,7 @@ describe("Sandbox proxy routes", () => {
     // pre-pinning behavior rather than render nothing). This assertion is what
     // keeps a real build from shipping that way.
     expect(body).not.toContain(
-      'const HOST_ORIGIN_PATTERNS = "__MCPJAM_HOST_ORIGINS__";'
+      'const HOST_ORIGIN_PATTERNS = "__MCPJAM_HOST_ORIGINS__";',
     );
     expect(body).toContain('"http://127.0.0.1:*"');
     expect(body).toContain("function hostOriginAllowed");

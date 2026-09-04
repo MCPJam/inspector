@@ -37,9 +37,9 @@ describe("canonicalServerKey", () => {
   });
 
   it("keys a STDIO server on its command and args", () => {
-    expect(
-      canonicalServerKey({ command: "npx", args: ["-y", "server"] }),
-    ).toBe("stdio:npx -y server");
+    expect(canonicalServerKey({ command: "npx", args: ["-y", "server"] })).toBe(
+      "stdio:npx -y server",
+    );
     expect(canonicalServerKey({ command: "npx" })).toBe("stdio:npx");
   });
 

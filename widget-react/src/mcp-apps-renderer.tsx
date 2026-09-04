@@ -1885,7 +1885,6 @@ export function MCPAppsRendererSurface({
         resolvedInjectedOpenAiCompatCapabilities
       );
 
-
       setViewOriginLabel(serverViewOriginLabel);
 
       // Update the widget debug store with CSP and permissions info. A

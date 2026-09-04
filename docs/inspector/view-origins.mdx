@@ -17,6 +17,7 @@ Your app's view runs in a sandboxed iframe at a **real URL**, on an origin separ
     http://localhost:*
     http://127.0.0.1:*
     ```
+
   </Tab>
   <Tab title="Hosted">
     ```
@@ -28,12 +29,15 @@ Your app's view runs in a sandboxed iframe at a **real URL**, on an origin separ
 To read the exact value rather than infer it, open a tool result, expand the CSP Workbench, and look at **Sandbox Stack → View origin**. It has a copy button.
 
 <Note>
-  Cross-origin requests carry the **origin**, not the full path — MCPJam sends `Referrer-Policy: strict-origin-when-cross-origin`. So a third party sees `http://127.0.0.1:6274/`, and an allowlist pattern keyed on the origin matches. A pattern keyed on a path will not.
+  Cross-origin requests carry the **origin**, not the full path — MCPJam sends
+  `Referrer-Policy: strict-origin-when-cross-origin`. So a third party sees
+  `http://127.0.0.1:6274/`, and an allowlist pattern keyed on the origin
+  matches. A pattern keyed on a path will not.
 </Note>
 
 ## CSP is a separate gate
 
-Allowlisting your origin tells the third party to *accept* your requests. It does not let your widget *make* them — MCPJam's default policy denies everything not declared. Both have to pass.
+Allowlisting your origin tells the third party to _accept_ your requests. It does not let your widget _make_ them — MCPJam's default policy denies everything not declared. Both have to pass.
 
 Declare what the API needs in the UI resource's `_meta.ui.csp`:
 
@@ -42,7 +46,10 @@ Declare what the API needs in the UI resource's `_meta.ui.csp`:
   "_meta": {
     "ui": {
       "csp": {
-        "resourceDomains": ["https://maps.googleapis.com", "https://*.gstatic.com"],
+        "resourceDomains": [
+          "https://maps.googleapis.com",
+          "https://*.gstatic.com"
+        ],
         "connectDomains": ["https://maps.googleapis.com"]
       }
     }

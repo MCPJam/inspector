@@ -717,7 +717,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         typeof HOST_ORIGIN_PATTERNS === "string" ? null : HOST_ORIGIN_PATTERNS;
       if (!hostOriginPatterns) {
         console.warn(
-          "[MCP Apps] sandbox proxy has no host-origin allowlist; accepting any parent."
+          "[MCP Apps] sandbox proxy has no host-origin allowlist; accepting any parent.",
         );
       }
       /** The host origin locked in at the first accepted message. */

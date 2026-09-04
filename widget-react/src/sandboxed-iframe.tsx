@@ -380,8 +380,7 @@ export const SandboxedIframe = forwardRef<
         location: window.location,
         viewOriginLabel,
         viewSubdomainsEnabled,
-        userAgent:
-          typeof navigator === "undefined" ? "" : navigator.userAgent,
+        userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [hostedMode, sandboxOrigin, viewOriginLabel, viewSubdomainsEnabled]
