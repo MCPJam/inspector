@@ -155,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -343,6 +344,12 @@ export const ANALYTICS_EVENTS = {
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
+  // Guest credit-wall A/B (BB-133): the treatment modal replaces the single
+  // "Sign in" CTA with a benefit-led create-account primary and a see-plans
+  // secondary. `variant` on the impression/click events lets PostHog compare
+  // sign-in vs create-account conversion across control and treatment.
+  plan_limit_create_account_clicked: { source: "client" },
+  plan_limit_see_plans_clicked: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },

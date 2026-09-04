@@ -206,12 +206,21 @@ describe("EvaluateRunContent", () => {
     expect(screen.getByTestId("run-verdict-sentence")).toHaveTextContent(
       "Draw and share a diagram broke at Selection: an expected tool call was never made.",
     );
-    // The expected/observed pair is the thing the old page never showed. Scoped
-    // to the hero: the open case row repeats both names in its own evidence
-    // block, which is intended, so a document-wide query would be ambiguous.
-    const hero = screen.getByTestId("run-verdict-hero");
-    expect(within(hero).getByText("export_to_excalidraw")).toBeInTheDocument();
-    expect(within(hero).getByText("create_view")).toBeInTheDocument();
+    // The expected/observed pair is a peek under the sentence, not the
+    // counting caveats and not the hero. The open case row repeats both names
+    // in its own evidence block, which is intended, so queries are scoped.
+    const peek = screen.getByTestId("run-grading-peek");
+    expect(peek).toHaveTextContent("Graded against");
+    expect(within(peek).getByText("create_view")).toBeInTheDocument();
+    expect(
+      within(peek).getByText("never called").closest("li"),
+    ).toHaveTextContent("export_to_excalidraw never called");
+    expect(screen.getByTestId("run-verdict-hero")).not.toHaveTextContent(
+      "Expected",
+    );
+    expect(screen.getByTestId("run-verdict-caveats")).not.toHaveTextContent(
+      "export_to_excalidraw",
+    );
   });
 
   it("folds the counting caveats instead of leading with them", () => {
@@ -258,6 +267,7 @@ describe("EvaluateRunContent", () => {
       /\b(Failed|Inconclusive)\b/,
     );
     expect(screen.queryByTestId("run-verdict-caveats")).toBeNull();
+    expect(screen.queryByTestId("run-grading-peek")).toBeNull();
   });
 
   it("says nothing about a verdict when the read failed", () => {

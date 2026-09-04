@@ -227,10 +227,11 @@ type ProtocolDoc = {
    * back as absence for the same hash reason as the mirroring knob above:
    * a host that never touches the control must keep hashing exactly as it
    * did before the field existed. Map onto `mcpProfile.paginationTraversal`
-   * / `mcpProfile.mrtrSupport`.
+   * / `mcpProfile.mrtrSupport` / `mcpProfile.toolCallCancellation`.
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   /**
    * How the client handles `notifications/tools/list_changed`. `listens` is
    * whether it opens the server→client channel at all; `refetches` is whether
@@ -311,6 +312,9 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
   if (draft.mcpProfile?.mrtrSupport !== undefined) {
     doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
+  }
+  if (draft.mcpProfile?.toolCallCancellation !== undefined) {
+    doc.toolCallCancellation = draft.mcpProfile.toolCallCancellation;
   }
 
   const toolListChanged = draft.mcpProfile?.toolListChanged;
@@ -561,6 +565,21 @@ export function applyJsonToDraft(
   const rawMrtr = parsed.mrtrSupport;
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+  // Same closed-shape collapse as `toolListChanged`: an unknown leaf or a
+  // non-boolean must not reach the canonicalizer, which throws and rejects the
+  // whole save.
+  const rawCancellation = parsed.toolCallCancellation;
+  let toolCallCancellation: HostConfigMcpProfileV1["toolCallCancellation"];
+  if (rawCancellation && typeof rawCancellation === "object") {
+    const parsedCancellation: { legacy?: boolean; modern?: boolean } = {};
+    for (const key of ["legacy", "modern"] as const) {
+      const value = (rawCancellation as Record<string, unknown>)[key];
+      if (typeof value === "boolean") parsedCancellation[key] = value;
+    }
+    if (Object.keys(parsedCancellation).length > 0) {
+      toolCallCancellation = parsedCancellation;
+    }
+  }
 
   let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
   if (isPlainObject(parsed.toolListChanged)) {
@@ -643,6 +662,7 @@ export function applyJsonToDraft(
       toolParamHeaderMirroring,
       paginationTraversal,
       mrtrSupport,
+      toolCallCancellation,
       toolListChanged: toolListChangedParsed,
       extensions: profileExtensions,
       // `apps` is owned by the Apps tab (including the widget tool-result
@@ -808,11 +828,39 @@ export function ProtocolTab({
     });
   };
 
-  // Client-conformance knobs (siblings of the mirroring control above). Both
+  // Client-conformance knobs (siblings of the mirroring control above). All
   // model how REAL hosts differ, so the default is written back as ABSENCE
   // and only the degraded value is stored.
   const storedPagination = draft.mcpProfile?.paginationTraversal;
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
+  const storedToolCallCancellation = draft.mcpProfile?.toolCallCancellation;
+  // Delete-on-default per leaf, exactly like `toolListChanged`: absent is the
+  // conforming answer (the client cancels), so re-enabling a switch must leave
+  // no trace rather than write `true`.
+  const setToolCallCancellationPart = (
+    key: "legacy" | "modern",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const toolCallCancellation = { ...(base.toolCallCancellation ?? {}) };
+      if (enabled) delete toolCallCancellation[key];
+      else toolCallCancellation[key] = false;
+      const updated: HostConfigMcpProfileV1 = { ...base };
+      if (Object.keys(toolCallCancellation).length > 0) {
+        updated.toolCallCancellation = toolCallCancellation;
+      } else {
+        delete updated.toolCallCancellation;
+      }
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
   const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined
@@ -1114,6 +1162,46 @@ export function ProtocolTab({
               <SelectItem value="none">Not supported</SelectItem>
             </SelectContent>
           </Select>
+        </div>
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">Tool cancellation</span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether stopping an in-flight tool call reaches the server, or
+              only ends the turn here while the server runs the tool to
+              completion. Measured per era because a client can be right on one
+              and wrong on the other; each connection reads only the era it
+              negotiated.
+            </p>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2025 (notifications/cancelled)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.legacy !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("legacy", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2025)"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2026 (closes the response stream)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.modern !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("modern", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2026)"
+              />
+            </div>
+          </div>
         </div>
         <div className="mt-2.5 border-t border-border/50 pt-2.5">
           <div className="min-w-0">

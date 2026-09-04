@@ -129,9 +129,22 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" \
             -o "$RUNNER_TEMP/SHASUMS256.txt"
           expected="$(grep " ${archive}\$" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
-          actual="$(sha256sum "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
+          # Hashed from STDIN rather than by filename. GNU coreutils escapes a
+          # filename containing a backslash, and signals that it escaped one
+          # with a leading `\` on the line — so on Windows, where RUNNER_TEMP
+          # is `D:\a\_temp`, this read back as `\6cac9ff…` and could never
+          # equal the SHASUMS256.txt hash however correct the download was.
+          # Redirecting makes the name `-`, which has nothing to escape.
+          actual="$(sha256sum < "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
           if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            # Both values, because the message alone cannot tell an empty
+            # lookup (the SHASUMS line did not match) from a genuine byte
+            # mismatch, and the two have nothing in common as bugs. The
+            # win32-x64 leg failed here on the 2026-09-02 release with no way
+            # to say which it was.
             echo "nodejs.org archive checksum mismatch for ${archive}" >&2
+            echo "  expected: ${expected:-<no SHASUMS256.txt line matched>}" >&2
+            echo "  actual:   ${actual:-<sha256sum produced nothing>}" >&2
             exit 1
           fi
           echo "NODE_ARCHIVE=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_ENV"

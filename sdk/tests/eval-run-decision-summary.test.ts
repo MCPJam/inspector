@@ -1017,3 +1017,52 @@ describe("the human renderer", () => {
     expect(text).toContain("Evidence at Tool call:");
   });
 });
+
+/**
+ * B10e — a run HELD for its gating judge has no verdict, and its stored
+ * summary is not one.
+ *
+ * `grading` means every trial finished and the run is waiting for the judge
+ * that may still take a green away. `finalizeAfterJudge` writes the verdict;
+ * until then the run carries `result: "pending"` and a `verdictSummary`
+ * computed BEFORE the judge's rows landed.
+ *
+ * That summary is the hazard. It parses, it is internally consistent, and it
+ * says "passed" — so any surface that treated `grading` as terminal would
+ * quote a number the gate exists to be able to withdraw. Leaving `grading` out
+ * of `TERMINAL_RUN_STATUSES` is what stops it, and this pins that.
+ */
+describe("a run held for its gating judge", () => {
+  const held: EvalRunDecisionAssemblyInput = {
+    ...byName("policyV2-passing").input,
+    run: {
+      ...byName("policyV2-passing").input.run,
+      status: "grading",
+      // What the backend actually holds: no verdict yet.
+      result: "pending",
+    },
+  };
+
+  it("is notEstablished, whatever its stored summary says", () => {
+    const summary = assembleEvalRunDecisionSummary(held);
+    expect(summary.verdict).toBe("notEstablished");
+    expect(summary.verdictSource).toBe("none");
+    expect(summary.undecided).toEqual({ reason: "runNotTerminal" });
+    // The stale summary is not read at all — not as a verdict, not as counts.
+    expect(summary.decision).toBeUndefined();
+    expect(summary.counts).toBeUndefined();
+  });
+
+  it("would report `passed` if `grading` were ever called terminal", () => {
+    // The control. The SAME input with a terminal status resolves the stored
+    // summary into a real verdict — which is exactly the reading the hold
+    // exists to prevent, and the thing that breaks if somebody adds `grading`
+    // to the terminal set.
+    const terminal = assembleEvalRunDecisionSummary({
+      ...held,
+      run: { ...held.run, status: "completed", result: "passed" },
+    });
+    expect(terminal.verdict).toBe("passed");
+    expect(terminal.verdictSource).toBe("policyV2");
+  });
+});

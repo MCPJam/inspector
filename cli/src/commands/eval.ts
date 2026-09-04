@@ -28,6 +28,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   projectResolutionError,
   resolveEnvironmentOperation,
@@ -1079,15 +1080,44 @@ function collectRepeatable(value: string, previous: string[]): string[] {
 const DEFAULT_RUN_WAIT_TIMEOUT_MS = 600_000;
 const RUN_POLL_INTERVAL_MS = 3000;
 
+/**
+ * How much longer a run held for its gating judge earns.
+ *
+ * The backend's hold has a 30-minute deadline and a sweep that ends it; one
+ * minute of slack covers the sweep landing after the deadline. Separate from
+ * the wait budget because the two bound different things: the budget bounds how
+ * long the TRIALS may take, and no author picked it with a judge in mind.
+ */
+const GRADING_WAIT_EXTENSION_MS = 31 * 60_000;
+
+/**
+ * Poll a run to a terminal status.
+ *
+ * The extension is granted ONCE, on first observing `grading`. A run held for
+ * its judge has finished every trial — the wait budget the caller chose bounded
+ * the trials, and letting it expire during the hold would report a run whose
+ * verdict is minutes away as a timeout, which is an infrastructure answer to a
+ * question the platform is about to answer properly.
+ *
+ * An EXPLICIT `--wait-timeout` is honoured strictly (`gradingExtensionMs: 0`):
+ * a caller who named a budget meant it, and silently spending 31 more minutes
+ * of a CI job's wall clock is not a favour.
+ */
 async function waitForEvalRun(
   client: Pick<PlatformApiClient, "getEvalRun">,
   signal: AbortSignal,
   projectId: string,
   runId: string,
-  deadline: number
+  deadline: number,
+  gradingExtensionMs = 0
 ) {
+  let extended = false;
   let run = await client.getEvalRun({ projectId, runId }, { signal });
   while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+    if (run.status === "grading" && !extended && gradingExtensionMs > 0) {
+      extended = true;
+      deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
+    }
     if (Date.now() >= deadline) {
       throw operationalError(
         `Eval run "${runId}" is still ${run.status} after waiting for completion.`
@@ -1251,6 +1281,9 @@ async function runEvalGate(
     options.waitTimeout !== undefined
       ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
       : DEFAULT_GATE_WAIT_TIMEOUT_MS;
+  // Zero when the caller named their own budget: they meant it.
+  const gradingExtensionMs =
+    options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
   const resolved = resolveCloudProjectArgs(options);
 
   let decisionSummary: EvalRunDecisionSummary | undefined;
@@ -1265,7 +1298,13 @@ async function runEvalGate(
   try {
     outcome = await runPlatformCommand(
       platformOptionsOf(command),
-      Math.max(globalOptions.timeout, options.wait ? waitTimeoutMs : 0),
+      // The extension rides in the OUTER budget too: that budget aborts the
+      // whole command, so an inner deadline pushed past it would never be
+      // reached.
+      Math.max(
+        globalOptions.timeout,
+        options.wait ? waitTimeoutMs + gradingExtensionMs : 0
+      ),
       async ({ client, signal }) => {
         const projects = await client.listProjects({}, { signal });
         const resolution = resolveProject(projects.items, resolved.project);
@@ -1275,13 +1314,23 @@ async function runEvalGate(
           );
         }
         const project = resolution.project;
-        const deadline = Date.now() + waitTimeoutMs;
+        let deadline = Date.now() + waitTimeoutMs;
+        let gradingExtended = false;
         let run = await client.getEvalRun(
           { projectId: project.id, runId },
           { signal }
         );
 
         while (!TERMINAL_RUN_STATUSES.has(run.status)) {
+          // Granted once, on first seeing the hold. See `waitForEvalRun`.
+          if (
+            run.status === "grading" &&
+            !gradingExtended &&
+            gradingExtensionMs > 0
+          ) {
+            gradingExtended = true;
+            deadline = Math.max(deadline, Date.now() + gradingExtensionMs);
+          }
           if (!options.wait) {
             // Without --wait, a still-running run would otherwise be gated on
             // its PARTIAL summary — a confident verdict about an unfinished
@@ -2911,6 +2960,40 @@ export function registerEvalCommands(program: Command): void {
   );
 
       evals
+      .command("revisions")
+      .description("List a suite's settings history, newest first")
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+      .option(
+        "--limit <n>",
+        "Maximum number of revisions to return (1-100)",
+        (value) => Number.parseInt(value, 10)
+      )
+      .option("--cursor <cursor>", "Pagination cursor from a previous page")
+      .action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        limit?: number;
+        cursor?: string;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalSuiteRevisionsOperation, {
+        suite: options.suite,
+        ...(options.project === undefined ? {} : { project: options.project }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      });
+      await executeOp(listEvalSuiteRevisionsOperation, input, options, command);
+    }
+  );
+
+      evals
       .command("run")
       .description(
         "Start an eval run of an existing suite, or upload a versioned suite file and run it"
@@ -2975,7 +3058,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--wait", "Wait for every started run to reach a terminal status")
       .option(
         "--wait-timeout <ms>",
-        "Maximum time to wait for completion (default: 600000)"
+        "Maximum time to wait for completion (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
       )
       .option(
         "--reporter <json-summary|junit-xml|html>",
@@ -3100,6 +3183,9 @@ export function registerEvalCommands(program: Command): void {
         options.waitTimeout !== undefined
           ? parsePositiveInteger(options.waitTimeout, "--wait-timeout")
           : DEFAULT_RUN_WAIT_TIMEOUT_MS;
+      // Zero when the caller named their own budget: they meant it.
+      const gradingExtensionMs =
+        options.waitTimeout !== undefined ? 0 : GRADING_WAIT_EXTENSION_MS;
       let webOrigin = DEFAULT_PLATFORM_ORIGIN;
       const resolved = resolveCloudProjectArgs(options);
       // Auth -> 3 is scoped to THIS action, and only under --wait: the shared
@@ -3304,7 +3390,11 @@ export function registerEvalCommands(program: Command): void {
       }
       const completion = await runPlatformCommand(
         platformOptionsOf(command),
-        Math.max(globalOptions.timeout, waitTimeoutMs),
+        // The extension has to be in the OUTER budget too. That budget aborts
+        // the whole command, so an inner deadline pushed past it would be
+        // killed before it could be reached — the extension would exist and
+        // never apply.
+        Math.max(globalOptions.timeout, waitTimeoutMs + gradingExtensionMs),
         async ({ client, signal }) => {
           const deadline = Date.now() + waitTimeoutMs;
           const waited = await Promise.all(
@@ -3319,7 +3409,8 @@ export function registerEvalCommands(program: Command): void {
                       signal,
                       result.project.id,
                       target.runId,
-                      deadline
+                      deadline,
+                      gradingExtensionMs
                     )
                   };
                 } catch (error) {
@@ -4059,7 +4150,7 @@ export function registerEvalCommands(program: Command): void {
       .option("--wait", "Poll until the run reaches a terminal status")
       .option(
         "--wait-timeout <ms>",
-        "Give up waiting after this many milliseconds (default 600000)"
+        "Give up waiting after this many milliseconds (default 600000; a run held for its judge gets up to 31 more minutes unless this flag is set)"
       )
       .option(
         "--reporter <json-summary|junit-xml|html>",

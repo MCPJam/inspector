@@ -691,6 +691,13 @@ function main() {
           // Belt and braces with `flattenHardLinks`: the tree has no shared
           // inodes left to record, and this says so to the one tar that would.
           "--hard-dereference",
+          // GNU tar reads a colon in the archive name as an rmt REMOTE HOST
+          // spec — `host:path` — so on Windows, where the out root is
+          // `D:\a\_temp\…`, it tried to reach a machine called `D` and died
+          // with "Cannot connect to D: resolve failed". Nothing to do with the
+          // archive or the tree. GNU-only, which is why it sits in this array;
+          // no other leg has a colon in the path to misread.
+          "--force-local",
         ]
       : [];
     if (!tar.gnu) {

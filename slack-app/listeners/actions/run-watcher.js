@@ -21,12 +21,24 @@ import { getEvalRun, getEvalRunDecisionSummary } from '../../agent/mcpjam-client
 
 const POLL_INTERVAL_MS = 10_000;
 const POLL_MAX_MS = 15 * 60 * 1000;
+/**
+ * The extra time a run HELD for its gating judge earns, once.
+ *
+ * The backend's hold has a 30-minute deadline and a sweep that ends it; one
+ * minute of slack covers the sweep landing after the deadline.
+ */
+const GRADING_MAX_MS = 31 * 60 * 1000;
 
 /**
  * Must match the backend's terminal set (`server/routes/v1/evals.ts`).
  * `timed_out` is emitted when the runner finalizes a run/iteration timeout;
  * omitting it would leave the poller spinning for the full watch window and the
  * Slack message stuck on "running…".
+ *
+ * `grading` is DELIBERATELY absent, for the opposite reason. A run held for its
+ * gating judge has run every trial but has no verdict yet, so stopping there
+ * would post a verdict the platform has not reached. The watcher keeps polling
+ * and earns a one-time extension for the hold (`gradingMaxMs`).
  */
 export const TERMINAL_STATUSES = new Set(['completed', 'failed', 'cancelled', 'timed_out']);
 
@@ -60,6 +72,15 @@ export function formatRunOutcome(run, url, userId, decisionSummary) {
   }
   if (run.status === 'timed_out') {
     return `:hourglass: Run timed out${counts} — started by <@${userId}>, <${url}|details>.${chain}`;
+  }
+  // A RUN STILL BEING GRADED HAS NOT FAILED. `grading` means every trial
+  // finished and the run is held for its gating judge, so there is no verdict
+  // yet — and the red branch below rendered it as ":red_circle: Run grading …
+  // see what broke", which is red for a run nothing has decided. No counts and
+  // no chain line: both describe a decided run, and the pass count quoted here
+  // is the number the judge may still overturn.
+  if (run.status === 'grading') {
+    return `:hourglass_flowing_sand: Run is being graded by its judge — started by <@${userId}>, <${url}|details>.`;
   }
   // A NO-VERDICT IS NOT A FAILURE. `inconclusive` is a decision the validity
   // phase reached — the run did not measure the server well enough to judge it
@@ -115,6 +136,11 @@ export async function watchRunUntilDone(client, args) {
     actorId: args.userId,
     pollIntervalMs: POLL_INTERVAL_MS,
     maxMs: POLL_MAX_MS,
+    // The one-time extension a run held for its gating judge earns. The watch
+    // window above bounds how long the TRIALS may take; nobody who picked it
+    // had a judge in mind, and letting it expire during the hold would leave
+    // the thread stuck on "running…" for a run minutes from a verdict.
+    gradingMaxMs: GRADING_MAX_MS,
     statusHandle: { id: args.statusTs, channelId: args.channelId },
     formatOutcome: (run, url, actorId, decisionSummary) => formatRunOutcome(run, url, actorId, decisionSummary),
     logger: args.logger,
