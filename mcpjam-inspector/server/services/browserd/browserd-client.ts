@@ -31,6 +31,12 @@ import {
   type BrowserdStatus,
 } from "./browserd-codec";
 
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+  type FrameStreamFrame,
+} from "./frame-stream.js";
+
 export {
   BrowserdClientError,
   type BrowserdCommandResponse,
@@ -63,6 +69,19 @@ export interface BrowserdClientConfig {
  * second, shorter deadline competing with the daemon's.
  */
 const DEFAULT_TIMEOUT_MS = 75_000;
+
+/**
+ * How long to wait for the frame stream's HEADERS. Bounded, unlike its body.
+ */
+const CONNECT_TIMEOUT_MS = 15_000;
+
+/**
+ * How long a frame stream may be completely silent before it is written off.
+ *
+ * Comfortably more than the daemon's 10s heartbeat: a stream that has gone
+ * quiet for this long is not slow, it is gone.
+ */
+const IDLE_TIMEOUT_MS = 30_000;
 
 export class BrowserdClient {
   private readonly baseUrl: string;
@@ -152,6 +171,147 @@ export class BrowserdClient {
       status: res.status,
       body: await this.json(res),
     });
+  }
+
+  /**
+   * Read `GET /v1/frames` until it ends.
+   *
+   * Resolves when the CONNECTION is established (or refused); frames then
+   * arrive by callback until `onEnd`. The caller owns the lifetime through
+   * `signal` — this never stops on its own while bytes keep coming.
+   *
+   * THE 75s TIMEOUT IS NOT USED HERE, and that is the whole reason this has its
+   * own path rather than going through `request()`. `AbortSignal.timeout` stays
+   * attached to a streamed body, so a stream routed through the ordinary helper
+   * would die at 75 seconds on the dot — forever, silently, and only under a
+   * real socket, which is to say never in a unit test. What it gets instead is
+   * a CONNECT-only deadline, cleared the instant the response resolves.
+   *
+   * The idle watchdog is the other half. A connection can be black-holed — an
+   * edge that went away, a box that hibernated — leaving a socket that is open
+   * and permanently silent. The daemon heartbeats, so silence past a couple of
+   * intervals means the link is gone, and saying so turns "the pane froze" into
+   * "the pane reconnected".
+   */
+  async streamFrames(args: {
+    tabId?: string;
+    holder?: string;
+    /** Caller's lifetime. Aborting is how a reader hangs up. */
+    signal: AbortSignal;
+    onFrame: (frame: FrameStreamFrame) => void;
+    /**
+     * How the stream ended. `undefined` means it stopped without saying —
+     * a drop, which a caller should retry, as opposed to a refusal it should
+     * respect.
+     */
+    onEnd: (reason: string | undefined) => void;
+    /** Give up after this long with no bytes at all. */
+    idleMs?: number;
+    connectMs?: number;
+  }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const query = new URLSearchParams();
+    if (args.tabId) query.set("tabId", args.tabId);
+    if (args.holder) query.set("holder", args.holder);
+    const suffix = query.toString() ? `?${query}` : "";
+
+    const connect = new AbortController();
+    const onCallerAbort = () => connect.abort();
+    args.signal.addEventListener("abort", onCallerAbort, { once: true });
+    const connectTimer = setTimeout(
+      () => connect.abort(),
+      args.connectMs ?? CONNECT_TIMEOUT_MS,
+    );
+
+    let res: Response;
+    try {
+      res = await this.fetchImpl(`${this.baseUrl}/v1/frames${suffix}`, {
+        headers: { authorization: `Bearer ${this.bearer}` },
+        signal: connect.signal,
+      });
+    } catch (error) {
+      args.signal.removeEventListener("abort", onCallerAbort);
+      return {
+        ok: false,
+        status: 0,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      // Cleared the moment headers are in: from here the body may take as long
+      // as it likes.
+      clearTimeout(connectTimer);
+    }
+
+    if (!res.ok || !res.body) {
+      args.signal.removeEventListener("abort", onCallerAbort);
+      // A refusal still arrives with a body, and an uncancelled one holds its
+      // socket until the garbage collector happens to notice. `503
+      // too_many_watchers` is a ROUTINE answer here — the daemon serves four
+      // streams — so this is the path a pane retries into, and every retry
+      // would strand a connection to a box the agent is also using.
+      void res.body?.cancel().catch(() => {});
+      return {
+        ok: false,
+        status: res.status,
+        error: res.ok ? "no_body" : `http_${res.status}`,
+      };
+    }
+
+    void this.pump(res.body, args).finally(() => {
+      args.signal.removeEventListener("abort", onCallerAbort);
+    });
+    return { ok: true };
+  }
+
+  private async pump(
+    body: ReadableStream<Uint8Array>,
+    args: {
+      signal: AbortSignal;
+      onFrame: (frame: FrameStreamFrame) => void;
+      onEnd: (reason: string | undefined) => void;
+      idleMs?: number;
+    },
+  ): Promise<void> {
+    const decoder = createFrameStreamDecoder();
+    const reader = body.getReader();
+    let reason: string | undefined;
+    let idleTimer: ReturnType<typeof setTimeout> | undefined;
+    const armIdle = () => {
+      clearTimeout(idleTimer);
+      idleTimer = setTimeout(
+        () => void reader.cancel().catch(() => {}),
+        args.idleMs ?? IDLE_TIMEOUT_MS,
+      );
+    };
+    const stop = () => void reader.cancel().catch(() => {});
+    args.signal.addEventListener("abort", stop, { once: true });
+
+    try {
+      armIdle();
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        armIdle();
+        const decoded = decoder.push(value);
+        if (!decoded.ok) {
+          // A reader that has lost its place in a byte stream can never find it
+          // again, so the connection goes rather than the record.
+          reason = undefined;
+          break;
+        }
+        for (const record of decoded.records) {
+          if (record.kind === FRAME_STREAM_KIND.frame) args.onFrame(record);
+          else if (record.kind === FRAME_STREAM_KIND.end) reason = record.reason;
+        }
+        if (reason !== undefined) break;
+      }
+    } catch {
+      reason = undefined; // aborted or dropped: unexplained, by definition
+    } finally {
+      clearTimeout(idleTimer);
+      args.signal.removeEventListener("abort", stop);
+      stop();
+      args.onEnd(reason);
+    }
   }
 
   private async request(

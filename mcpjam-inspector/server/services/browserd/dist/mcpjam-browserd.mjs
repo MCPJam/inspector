@@ -440,6 +440,7 @@ function handoffNoteFor(kind) {
 }
 
 // server/services/browserd/daemon/request-handler.ts
+var MAX_INPUT_EVENTS = 64;
 var BrowserdRequestHandler = class {
   queue;
   driver;
@@ -453,6 +454,26 @@ var BrowserdRequestHandler = class {
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
   }
+  /**
+   * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
+   * the refusal to write back.
+   *
+   * Extracted so the STREAMING route can share it. That route cannot go through
+   * `handle` — its response is a chunked body, not a `DaemonResponse` — and a
+   * second copy of an auth check is how one of them quietly stops matching the
+   * other. Order matters and is preserved: an unauthenticated request carrying
+   * an Origin gets 401, not 403, so a caller learns nothing about the second
+   * check from failing the first.
+   */
+  authorize(req) {
+    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
+      return { status: 401 };
+    }
+    if (req.origin !== void 0) {
+      return { status: 403, body: { error: "cross_origin_forbidden" } };
+    }
+    return void 0;
+  }
   async handle(req) {
     if (req.path === "/healthz") {
       if (req.method !== "GET" && req.method !== "HEAD") {
@@ -461,12 +482,8 @@ var BrowserdRequestHandler = class {
       const health = await this.driver.health();
       return health.ok ? { status: 200, body: { ok: true } } : { status: 503, body: { ok: false, detail: health.detail } };
     }
-    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
-      return { status: 401 };
-    }
-    if (req.origin !== void 0) {
-      return { status: 403, body: { error: "cross_origin_forbidden" } };
-    }
+    const refusal = this.authorize(req);
+    if (refusal) return refusal;
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -489,7 +506,53 @@ var BrowserdRequestHandler = class {
       }
       return this.handleLease(req);
     }
+    if (req.path === "/v1/input") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleInput(req);
+    }
     return { status: 404 };
+  }
+  async handleInput(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+    }
+    const { holder, tabId, events } = parsed;
+    if (typeof holder !== "string" || holder.length === 0) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
+    }
+    if (!Array.isArray(events)) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId }
+      };
+    }
+    if (events.length > MAX_INPUT_EVENTS) {
+      return {
+        status: 413,
+        body: { error: "too_many_events", bootId: this.bootId }
+      };
+    }
+    const outcome = await this.dispatchInput({
+      ...typeof tabId === "string" ? { tabId } : {},
+      holder,
+      events
+    });
+    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    return {
+      status: outcome.error === "unknown_tab" ? 404 : 423,
+      body: { error: outcome.error, bootId: this.bootId }
+    };
   }
   async handleCommand(req) {
     let parsed;
@@ -582,6 +645,26 @@ var BrowserdRequestHandler = class {
         if (!live) return;
         const lost = this.watcherRefusal(args.holder);
         if (lost) revoke(lost);
+      },
+      // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
+      // tab that was closed and reopened, so "something is there" would answer
+      // true while this subscription pointed at a dead object.
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return await this.driver.viewport?.(args.tabId) === viewport;
+        } catch {
+          return false;
+        }
       }
     };
   }
@@ -722,6 +805,301 @@ function isValidCommand(value) {
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
+// server/services/browserd/frame-stream.ts
+var FRAME_STREAM_VERSION = 1;
+var FRAME_STREAM_HEADER_BYTES = 24;
+var FRAME_STREAM_KIND = {
+  /** A painted JPEG. */
+  frame: 1,
+  /**
+   * Proof of life on a page that is not painting.
+   *
+   * Load-bearing in both directions: it is what lets a reader tell "connected
+   * and subscribed" from "connected", and on the daemon side the same tick
+   * drives the lease re-check that a one-way stream would otherwise never run.
+   */
+  heartbeat: 2,
+  /** The last record. Payload is a UTF-8 reason. */
+  end: 3
+};
+var FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
+function encodeFrameStreamRecord(record) {
+  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : new Uint8Array(0);
+  const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
+  const view = new DataView(bytes.buffer);
+  view.setUint8(0, FRAME_STREAM_VERSION);
+  view.setUint8(1, record.kind);
+  if (record.kind === FRAME_STREAM_KIND.frame) {
+    view.setUint16(2, clampU16(record.deviceWidth), true);
+    view.setUint16(4, clampU16(record.deviceHeight), true);
+    view.setUint16(6, clampU16(Math.round(record.scale * 1e3)), true);
+    view.setFloat64(8, record.ts, true);
+    view.setUint32(16, record.seq >>> 0, true);
+  }
+  view.setUint32(20, payload.byteLength, true);
+  bytes.set(payload, FRAME_STREAM_HEADER_BYTES);
+  return bytes;
+}
+function clampU16(value) {
+  if (!Number.isFinite(value) || value <= 0) return 0;
+  return Math.min(65535, Math.round(value));
+}
+
+// server/services/webmcp-inspector/frame-pacer.ts
+function createFramePacer(sink, onDrop) {
+  let inFlight = false;
+  let pending;
+  let closed = false;
+  const ship = (bytes) => {
+    inFlight = true;
+    sink.send(bytes, () => {
+      inFlight = false;
+      if (closed) return;
+      const next = pending;
+      pending = void 0;
+      if (next) ship(next);
+    });
+  };
+  return {
+    push(bytes) {
+      if (closed) return;
+      if (inFlight) {
+        if (pending !== void 0) onDrop?.();
+        pending = bytes;
+        return;
+      }
+      ship(bytes);
+    },
+    close() {
+      closed = true;
+      pending = void 0;
+    }
+  };
+}
+
+// server/services/browserd/daemon/frame-stream-route.ts
+var HEARTBEAT_MS = 1e4;
+var WRITE_STALL_MS = 15e3;
+var MAX_CONCURRENT_STREAMS = 4;
+var PROBE_BEATS = 3;
+var PROBE_INTERVAL_MS = 1e3;
+function createFrameStreamHost(handler, options = {}) {
+  const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
+  const stallMs = options.stallMs ?? WRITE_STALL_MS;
+  const maxStreams = options.maxStreams ?? MAX_CONCURRENT_STREAMS;
+  const timers = options.timers ?? {
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (h) => clearTimeout(h)
+  };
+  const open = /* @__PURE__ */ new Set();
+  function handle(args) {
+    const { req, res, daemonRequest } = args;
+    const refusal = handler.authorize(daemonRequest);
+    if (refusal) {
+      writeJson(res, refusal.status, refusal.body);
+      return true;
+    }
+    if (daemonRequest.method !== "GET") {
+      res.writeHead(405, { allow: "GET" });
+      res.end();
+      return true;
+    }
+    if (open.size >= maxStreams) {
+      writeJson(res, 503, { error: "too_many_watchers" });
+      return true;
+    }
+    req.resume();
+    const query = daemonRequest.query;
+    const tabId = query?.get("tabId") ?? void 0;
+    const holder = query?.get("holder") ?? void 0;
+    const probe = query?.get("probe") === "1";
+    beginStream(res);
+    if (probe) {
+      runProbe(res);
+      return true;
+    }
+    void startSubscription({ res, tabId, holder }).catch(() => {
+      writeEndAndClose(res, "tab_gone");
+    });
+    return true;
+  }
+  function writeEndAndClose(res, reason) {
+    try {
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.end();
+    } catch {
+    }
+  }
+  function beginStream(res) {
+    res.writeHead(200, {
+      "content-type": "application/octet-stream",
+      // No content-length: this body has no length. `no-transform` matters as
+      // much as `no-store` — an intermediary that "helpfully" buffers or
+      // re-encodes turns a live stream into a download that arrives at the end.
+      "cache-control": "no-store, no-transform",
+      // nginx and friends buffer proxied responses by default.
+      "x-accel-buffering": "no"
+    });
+    res.flushHeaders();
+    res.socket?.setNoDelay(true);
+    res.setTimeout(0);
+    res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+  }
+  function runProbe(res) {
+    let sent = 0;
+    const entry = { end: (reason) => finish(reason) };
+    open.add(entry);
+    let timer;
+    const finish = (reason) => {
+      timers.clearTimer(timer);
+      if (!open.delete(entry)) return;
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+      );
+      res.end();
+    };
+    const beat = () => {
+      if (sent >= PROBE_BEATS) {
+        finish("probe_complete");
+        return;
+      }
+      sent += 1;
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+    };
+    res.on("close", () => {
+      timers.clearTimer(timer);
+      open.delete(entry);
+    });
+    timer = timers.setTimer(beat, PROBE_INTERVAL_MS);
+  }
+  async function startSubscription(args) {
+    const { res, tabId, holder } = args;
+    let ended = false;
+    let stallTimer;
+    let beatTimer;
+    let unsubscribe;
+    const entry = {
+      end: (reason) => end(reason)
+    };
+    const end = (reason) => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+        );
+        res.end();
+      } catch {
+      }
+    };
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? void 0);
+        });
+      }
+    });
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      open.delete(entry);
+      pacer.close();
+    });
+    const subscription = await handler.subscribeFrames({
+      ...tabId ? { tabId } : {},
+      ...holder ? { holder } : {},
+      listener: (frame) => {
+        pacer.push(
+          encodeFrameStreamRecord({
+            kind: FRAME_STREAM_KIND.frame,
+            deviceWidth: frame.deviceWidth,
+            deviceHeight: frame.deviceHeight,
+            scale: frame.scale,
+            ts: frame.ts,
+            seq: frame.seq,
+            // The viewport hands out base64; the wire carries the bytes.
+            jpeg: new Uint8Array(Buffer.from(frame.data, "base64"))
+          })
+        );
+      },
+      onRevoked: (reason) => {
+        end(reason === "lease_parked" ? "lease_parked" : "lease_held");
+      }
+    });
+    if (!subscription.ok) {
+      end(subscription.error === "unknown_tab" ? "unknown_tab" : "lease_held");
+      return;
+    }
+    if (ended) {
+      subscription.unsubscribe();
+      return;
+    }
+    unsubscribe = subscription.unsubscribe;
+    const beat = () => {
+      if (ended) return;
+      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
+      subscription.revalidate();
+      if (ended) return;
+      void subscription.stillCurrent().then(
+        (current) => {
+          if (!current && !ended) end("tab_gone");
+          else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
+        },
+        // A REJECTION IS NOT A NON-ANSWER YOU CAN IGNORE. `stillCurrent` asks
+        // the driver for the tab's viewport, and that throws on ordinary
+        // paths — a context that is closing answers "this browser is shutting
+        // down" rather than a value. Left unhandled it did two things, and
+        // the quieter one is worse: the tick never rescheduled, so the lease
+        // stopped being re-asked for the life of the stream, which is exactly
+        // the privacy hole the heartbeat exists to close on a page that does
+        // not paint. And an unhandled rejection ends a Node process, so the
+        // one that died was the daemon, taking every hosted session on the
+        // box with it. Unable to prove the tab is still ours, we say so and
+        // stop.
+        () => {
+          if (!ended) end("tab_gone");
+        }
+      );
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
+  }
+  function writeJson(res, status, body) {
+    const payload = body === void 0 ? void 0 : JSON.stringify(body);
+    res.writeHead(status, {
+      "content-type": "application/json",
+      "content-length": payload === void 0 ? 0 : Buffer.byteLength(payload)
+    });
+    res.end(payload);
+  }
+  return {
+    handle,
+    closeAll(reason) {
+      for (const entry of [...open]) entry.end(reason);
+    },
+    count: () => open.size
+  };
+}
+
 // server/services/browserd/daemon/browser-driver.ts
 function stateTokensMatch(a, b) {
   return a.tabId === b.tabId && a.navCounter === b.navCounter && a.urlHash === b.urlHash && a.domHash === b.domHash;
@@ -807,15 +1185,34 @@ function writeResponse(res, response) {
 }
 function createDaemonServer(handler, options = {}) {
   const bodyLimit = options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES;
-  return createServer((req, res) => {
+  const frames = createFrameStreamHost(handler, options.frames ?? {});
+  const server = createServer((req, res) => {
+    let path;
+    let query;
+    try {
+      const url = new URL(req.url ?? "/", "http://browserd.invalid");
+      path = url.pathname;
+      query = url.searchParams;
+    } catch {
+      writeResponse(res, { status: 404 });
+      return;
+    }
+    if (path === "/v1/frames") {
+      frames.handle({
+        req,
+        res,
+        daemonRequest: {
+          method: req.method ?? "GET",
+          path,
+          origin: headerValue(req.headers.origin),
+          authorization: headerValue(req.headers.authorization),
+          body: "",
+          query
+        }
+      });
+      return;
+    }
     void (async () => {
-      let path;
-      try {
-        path = new URL(req.url ?? "/", "http://browserd.invalid").pathname;
-      } catch {
-        writeResponse(res, { status: 404 });
-        return;
-      }
       let body = "";
       if (req.method === "POST" || req.method === "PUT") {
         try {
@@ -832,7 +1229,8 @@ function createDaemonServer(handler, options = {}) {
         path,
         origin: headerValue(req.headers.origin),
         authorization: headerValue(req.headers.authorization),
-        body
+        body,
+        query
       });
       writeResponse(res, response);
     })().catch(() => {
@@ -840,6 +1238,7 @@ function createDaemonServer(handler, options = {}) {
       else res.end();
     });
   });
+  return { server, frames };
 }
 function headerValue(value) {
   return Array.isArray(value) ? value[0] : value;
@@ -858,10 +1257,18 @@ function buildBrowserdStack(driver, config) {
     token: config.token,
     lease
   });
-  const server = createDaemonServer(handler, {
-    bodyLimitBytes: config.bodyLimitBytes
+  const { server, frames } = createDaemonServer(handler, {
+    bodyLimitBytes: config.bodyLimitBytes,
+    ...config.frames ? { frames: config.frames } : {}
   });
-  return { server, handler, queue, bootId, lease };
+  return {
+    server,
+    handler,
+    queue,
+    bootId,
+    lease,
+    closeStreams: (reason = "shutting_down") => frames.closeAll(reason)
+  };
 }
 
 // server/services/browserd/daemon/state-token.ts
@@ -2984,6 +3391,7 @@ async function main() {
   const shutdown = async (signal) => {
     if (shuttingDown) return;
     shuttingDown = true;
+    stack.closeStreams();
     stack.server.close();
     await driver.close().catch(() => {
     });
