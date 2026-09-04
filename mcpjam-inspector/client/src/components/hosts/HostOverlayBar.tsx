@@ -21,6 +21,7 @@ import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { resolveHostLogoByName } from "@/lib/host-logo";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 const QUICK_ADD_TEMPLATES = ["claude", "chatgpt", "copilot"] as const;
 
@@ -198,7 +199,7 @@ export function HostOverlayBar({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Client "${host.name}" deleted`);
+      toast.success(`Client "${clientDisplayName(host)}" deleted`);
       // Telemetry is best-effort: a posthog throw must not bubble into the
       // shared catch and surface a delete-failure toast after the client
       // has already been removed.
@@ -278,7 +279,9 @@ export function HostOverlayBar({
                   "focus-visible:ring-2 focus-visible:ring-ring/45"
                 )}
               >
-                <span className="truncate">{effectiveHost.name}</span>
+                <span className="truncate">
+                  {clientDisplayName(effectiveHost)}
+                </span>
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent
@@ -308,12 +311,12 @@ export function HostOverlayBar({
                         className="flex-1 truncate"
                         data-testid={`host-overlay-label-${host.hostId}`}
                       >
-                        {host.name}
+                        {clientDisplayName(host)}
                       </span>
                       <span className="ml-2 flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
                         <button
                           type="button"
-                          aria-label={`Edit ${host.name}`}
+                          aria-label={`Edit ${clientDisplayName(host)}`}
                           data-testid={`host-overlay-edit-${host.hostId}`}
                           className="inline-flex size-6 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground"
                           onPointerDown={(e) => e.stopPropagation()}
@@ -328,7 +331,7 @@ export function HostOverlayBar({
                         </button>
                         <button
                           type="button"
-                          aria-label={`Delete ${host.name}`}
+                          aria-label={`Delete ${clientDisplayName(host)}`}
                           data-testid={`host-overlay-delete-${host.hostId}`}
                           disabled={isDeleting || !canDelete}
                           title={

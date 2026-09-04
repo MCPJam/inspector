@@ -10,7 +10,7 @@ import { LocalComputerView } from "./LocalComputerView";
  *
  *  - Hosted, a guest/non-member, or no synced project ⇒ the existing cloud
  *    `ComputerView`, byte-identical to before (it also owns the sign-in /
- *    no-project empty states).
+ *    no-project empty states, and the "not resolved yet" one).
  *  - A signed-in member on a non-hosted inspector ⇒ a Local⇄Cloud face chosen
  *    by the user's SELECTED engine, with a toggle when both engines exist.
  *
@@ -23,13 +23,18 @@ export function ComputerTabView({
   isSignedInMember,
 }: {
   projectId: string | null;
-  isSignedInMember: boolean;
+  /**
+   * Tri-state — `undefined` is "Convex has not said yet"; see `ComputerView`.
+   * The local face is member-only too, so the unresolved window takes the
+   * cloud branch below and the engine toggle appears once the actor lands.
+   */
+  isSignedInMember: boolean | undefined;
 }) {
   // Called unconditionally (hooks rule); returns cloud defaults when there's
   // no project or in hosted mode.
   const engine = useComputerEngine(projectId);
 
-  if (HOSTED_MODE || !isSignedInMember || !projectId) {
+  if (HOSTED_MODE || isSignedInMember !== true || !projectId) {
     return (
       <ComputerView projectId={projectId} isSignedInMember={isSignedInMember} />
     );

@@ -34,6 +34,7 @@ import {
   connectProjectServerOperation,
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -45,6 +46,8 @@ import {
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
   listScenariosOperation,
@@ -52,6 +55,7 @@ import {
   searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
   createProjectServerOperation,
@@ -83,6 +87,8 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -133,6 +139,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // opens in the same browser they are already signed into.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -155,6 +162,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // The suite's settings HISTORY. In-product because it answers the first
+  // question after an unexplained change in results — who edited this suite,
+  // and when — and because its `revisionNumber` is what turns an
+  // `update_eval_suite` into a compare-and-set rather than a last-write-wins.
+  listEvalSuiteRevisionsOperation,
   // Read-only, checked BEFORE a launch decision — placed ahead of the two run
   // operations it exists to inform. `run_eval_suite` already fetches and
   // returns its own disclosure on the receipt, so this is for when a caller
@@ -163,6 +175,10 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
+  // The measured description beside the decision: how much of the run was
+  // measured at all, per stage. Reads, so they ride with the run read.
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   waiveEvalGateOperation,
   getEvalGateWaiverOperation,
@@ -199,6 +215,24 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+
+  // ── Project secrets: the METADATA READS only ────────────────────────────
+  //
+  // This list has no drift test — it is hand-maintained — so the omission is
+  // stated rather than left to be noticed. `list_secrets` and `get_secret` are
+  // here because a workspace chat needs to answer "does this project already
+  // have a STRIPE_API_KEY, and is it brokered?"; both return metadata and are
+  // structurally incapable of returning a value.
+  //
+  // The three WRITES are deliberately absent. `create_secret` and
+  // `update_secret` carry the plaintext as an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it; `delete_secret` hard-revokes a credential and belongs on
+  // a surface where the person meant it. All three stay on REST, the SDK and
+  // the CLI.
+  listSecretsOperation,
+  getSecretOperation,
+
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -266,6 +300,47 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // looking at them.
   delete_persona:
     "Takes a persona off the roster; the Swarms tab shows what still references it before you do.",
+  // PROJECT SECRET WRITES. The first two are excluded for a reason unrelated to
+  // reversibility: the plaintext credential is an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it. An approval that fires after the value is already logged
+  // is not an approval, so no gate fixes this — only keeping them off the chat
+  // surface does. `delete_secret` is the ordinary destructive case: the
+  // Secrets section names the environments that stop working before you revoke.
+  create_secret:
+    "The plaintext value is an argument, so it would reach model context and this chat's transcript before anything could approve it. Create secrets in project settings, or through the API/CLI where you choose where the value comes from.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument, with the same exposure before any approval.",
+  delete_secret:
+    "Revokes a credential permanently; the Secrets section names the environments that stop delivering it before you do.",
+  // TRACE DESTINATIONS. All ten, and the reason is one sentence with two
+  // halves. The two credential writes carry vendor headers as ARGUMENTS, with
+  // exactly the exposure `create_secret` above describes. The other eight are
+  // organization observability wiring, whose consequences land in a THIRD
+  // PARTY'S system and cannot be retracted from there — the Observability
+  // section in organization settings shows the endpoint, what it subscribes
+  // to, whether content is redacted and how delivery is going, which is the
+  // context every one of these decisions needs.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would reach model context and this chat's transcript before anything could approve them. Create destinations in organization settings, or through the API/CLI where you choose where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same exposure before any approval.",
+  delete_trace_destination:
+    "Discards a live export and its stored credentials. The Observability section shows what is still streaming before you remove it — and says what a delete cannot do, which is retract the traces already delivered.",
+  pause_trace_destination:
+    "Nothing is queued while a destination is paused, so pausing creates a gap rather than a backlog. The section says so next to the button.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something was wrong. The section shows the pause reason and the remediation next to Resume; a chat tool would resume by id with neither.",
+  test_trace_destination:
+    "Sends to a third party's intake on the organization's credentials, and the outcome lands on the destination rather than in the reply. The section shows the result inline, where the destination it belongs to is on screen.",
+  backfill_trace_destination:
+    "Can queue a month of history at a vendor that bills on ingest. The section offers exactly the window a pause dropped, which is the sizing a chat tool cannot do.",
+  list_trace_destinations:
+    "Organization observability configuration, which the Observability section shows in full — including delivery health, which is what someone asking is usually after. Available on the API and CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: the section is the better view of it. Available on the API and CLI.",
+  list_trace_destination_backfills:
+    "Backfill history is operational detail an admin reads while diagnosing an export. Available on the API and CLI.",
   archive_journey:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:

@@ -49,3 +49,28 @@ export const LOCAL_COMPUTER_FEATURE_FLAG = "local-computer-enabled";
 export function useLocalComputerEnabled(): boolean {
   return useFeatureFlagEnabled(LOCAL_COMPUTER_FEATURE_FLAG) === true;
 }
+
+/**
+ * Dark-launch gate for the LOCAL HARNESS target ("Native on this machine") —
+ * running the real Claude Code agent as a supervised process on the user's own
+ * hardware rather than in an E2B computer.
+ *
+ * A separate flag from `local-computer-enabled`, not a reuse of it, because
+ * they gate different capabilities with different blast radii: that one lets
+ * the user's machine run BASH COMMANDS the model asks for, this one lets it run
+ * a whole vendor agent with its own tool loop. A deployment should be able to
+ * have either without the other.
+ *
+ * Gates every UI surface: the target selector, the consent sheet, the runtime
+ * installer, and the "ran natively" attribution. The server keeps its own
+ * capability — `MCPJAM_LOCAL_HARNESS_ENABLED` is the emergency stop — so
+ * flagging a user in needs no env var and launching needs no release.
+ *
+ * `undefined` while flags load ⇒ off (`=== true`): fail-closed, so the UI never
+ * flickers the feature on before PostHog resolves.
+ */
+export const LOCAL_HARNESS_FEATURE_FLAG = "local-harness-enabled";
+
+export function useLocalHarnessEnabled(): boolean {
+  return useFeatureFlagEnabled(LOCAL_HARNESS_FEATURE_FLAG) === true;
+}
