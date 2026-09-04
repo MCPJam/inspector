@@ -235,11 +235,22 @@ export const MCPJAM_HOSTED_ORIGIN =
 // host receives the session token via production HTML injection rather than the
 // endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
 // hosts use the `/api/session-token` endpoint. Both paths gate on this list.
-export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
-  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-      h.trim().toLowerCase()
-    )
-  : [];
+/**
+ * Parse a raw `MCPJAM_ALLOWED_HOSTS` value into normalized entries. Exported so
+ * the token gate (`ALLOWED_HOSTS` below, a module-load snapshot) and the origin
+ * gate (which re-reads `process.env` per request) share ONE parser and can't
+ * silently diverge on how entries are split/normalized.
+ */
+export function parseAllowedHosts(raw: string | undefined): string[] {
+  return raw
+    ? raw
+        .split(",")
+        .map((h) => h.trim().toLowerCase())
+        .filter((h) => h.length > 0)
+    : [];
+}
+
+export const ALLOWED_HOSTS = parseAllowedHosts(process.env.MCPJAM_ALLOWED_HOSTS);
 
 // Vanity domains whose root path ("/") should land on the host-compare
 // showcase ("Can I use" for MCP hosts). Override via env if more are added.

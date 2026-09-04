@@ -489,7 +489,8 @@ if (isInIframe) {
               Failed to establish secure session.
             </p>
             <p style={{ color: "#666", fontSize: "0.875rem" }}>
-              If accessing via network, use localhost instead.
+              This is usually temporary. Retry below, and check the console if it
+              persists.
             </p>
             <button
               onClick={() => location.reload()}

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * Shown when the session-token bootstrap is denied with a 403 because the
@@ -23,9 +23,20 @@ export function NetworkAccessError() {
   const envValue = `MCPJAM_ALLOWED_HOSTS=${hostname}`;
 
   const [copied, setCopied] = useState(false);
+  // Hold the reset timer so a rapid re-click doesn't let an earlier timer flip
+  // the label back to "Copy" mid-confirmation. Cleared before each schedule and
+  // on unmount (which also avoids a stale-state update after teardown).
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    },
+    []
+  );
   const flashCopied = () => {
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    copyResetTimer.current = setTimeout(() => setCopied(false), 2000);
   };
   const copyEnvValue = async () => {
     // `navigator.clipboard` is secure-context only — and this screen's whole

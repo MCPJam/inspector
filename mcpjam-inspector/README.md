@@ -89,9 +89,15 @@ interface (drop the `127.0.0.1:` prefix from `-p`):
 docker run -p 6274:6274 -e MCPJAM_ALLOWED_HOSTS=192.168.1.50 mcpjam/mcp-inspector:local
 ```
 
-Only add hosts you trust — any client that can reach an allowlisted host can
-obtain the session token. Tunnel/relay domains are never allowed, even if
-listed.
+For an IPv6 host, bracket the entry: `MCPJAM_ALLOWED_HOSTS=[fd00::50]`.
+
+Only add hosts you trust. Allowlisting a host does more than expose the session
+token: the same host is accepted as a request Origin, which also reaches the
+local shell and agent-browser tools that are enabled by default in self-hosted
+mode. Any client that can reach an allowlisted host can obtain the session token
+and drive those tools. Set `MCPJAM_LOCAL_COMPUTER_ENABLED=false` and
+`MCPJAM_LOCAL_BROWSER_ENABLED=false` if you don't want that. Tunnel/relay domains
+are never allowed, even if listed.
 
 # Key features
 

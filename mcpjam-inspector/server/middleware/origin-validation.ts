@@ -9,7 +9,7 @@
  */
 
 import type { Context, Next } from "hono";
-import { SERVER_PORT } from "../config.js";
+import { SERVER_PORT, parseAllowedHosts } from "../config.js";
 import {
   hostnameMatchesAllowlist,
   isTunnelHost,
@@ -63,12 +63,20 @@ function getAllowedOrigins(): string[] {
  * `getAllowedOrigins` reads `ALLOWED_ORIGINS` lazily. Parsed identically to
  * `ALLOWED_HOSTS` in `config.ts` (the token gate's source).
  */
+// Memoized on the raw env string: this runs on every /api/* request in the
+// self-hosted LAN case (the browser Origin never matches getAllowedOrigins, so
+// every request falls through to the allowlist check). Re-reading process.env
+// each call keeps the lazy semantics tests rely on; the cache avoids re-parsing
+// when the value hasn't changed.
+let cachedAllowedHostsRaw: string | undefined;
+let cachedAllowedHosts: string[] = [];
 function getConfiguredAllowedHosts(): string[] {
-  return process.env.MCPJAM_ALLOWED_HOSTS
-    ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-        h.trim().toLowerCase()
-      )
-    : [];
+  const raw = process.env.MCPJAM_ALLOWED_HOSTS;
+  if (raw !== cachedAllowedHostsRaw) {
+    cachedAllowedHostsRaw = raw;
+    cachedAllowedHosts = parseAllowedHosts(raw);
+  }
+  return cachedAllowedHosts;
 }
 
 /**
