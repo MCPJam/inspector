@@ -6,6 +6,7 @@ import type { ContentBlock } from "@modelcontextprotocol/client";
 import { Button } from "@mcpjam/design-system/button";
 import { CopyMessageAction } from "@/components/chat-v2/shared/copy-message-action";
 import { EditMessageAction } from "@/components/chat-v2/shared/edit-message-action";
+import { MessageTimestamp, getMessageTimestampMs } from "@mcpjam/chat-ui";
 import { UserMessageBubble } from "./user-message-bubble";
 import { PartSwitch } from "./part-switch";
 import type { RecorderProps } from "./recorder-types";
@@ -49,7 +50,7 @@ interface MessageViewProps {
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
@@ -108,7 +109,7 @@ interface MessageViewProps {
    */
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   /** Blocks the edit affordance while a response is streaming. */
   editDisabled?: boolean;
@@ -131,7 +132,8 @@ function shouldRerenderMessage(prevMessage: UIMessage, nextMessage: UIMessage) {
     prevMessage === nextMessage ||
     (prevMessage.id === nextMessage.id &&
       prevMessage.role === nextMessage.role &&
-      prevMessage.parts === nextMessage.parts)
+      prevMessage.parts === nextMessage.parts &&
+      getMessageTimestampMs(prevMessage) === getMessageTimestampMs(nextMessage))
   );
 }
 
@@ -173,7 +175,7 @@ function getPartKey(part: MessagePart, stepIndex: number, partIndex: number) {
 
 function isSameSenderAvatar(
   prev: ProjectThreadOwnerAvatar | undefined,
-  next: ProjectThreadOwnerAvatar | undefined
+  next: ProjectThreadOwnerAvatar | undefined,
 ) {
   if (prev === next) return true;
   if (!prev || !next) return false;
@@ -188,7 +190,7 @@ function isSameSenderAvatar(
 
 function areMessageViewPropsEqual(
   prev: Readonly<MessageViewProps>,
-  next: Readonly<MessageViewProps>
+  next: Readonly<MessageViewProps>,
 ) {
   return (
     !shouldRerenderMessage(prev.message, next.message) &&
@@ -257,7 +259,7 @@ function extractEditableUserMessageText(message: UIMessage): string {
   return parts
     .filter(
       (part): part is { type: string; text: string } =>
-        part.type === "text" && typeof part.text === "string"
+        part.type === "text" && typeof part.text === "string",
     )
     .map((part) => part.text)
     .join("\n\n");
@@ -285,7 +287,7 @@ function UserMessageRow({
   actions: React.ReactNode;
   onEditUserMessage?: (
     message: UIMessage,
-    text: string
+    text: string,
   ) => void | boolean | Promise<void | boolean>;
   editDisabled: boolean;
   senderAvatar?: ProjectThreadOwnerAvatar;
@@ -412,6 +414,7 @@ function UserMessageRow({
           {bubble}
           {showActionRow ? (
             <div className="flex max-w-[min(100%,48rem)] justify-end gap-1 opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+              <MessageTimestamp message={message} />
               <CopyMessageAction getText={() => originalText} />
               {onEditUserMessage ? (
                 <EditMessageAction
@@ -587,8 +590,9 @@ function MessageViewImpl({
     (part) =>
       part.type === "text" &&
       typeof part.text === "string" &&
-      part.text.length > 0
+      part.text.length > 0,
   );
+  const hasTimestamp = getMessageTimestampMs(message) !== undefined;
   return (
     <article
       className={
@@ -680,11 +684,14 @@ function MessageViewImpl({
             <ClaudeLoadingIndicator mode={claudeFooterMode} />
           </div>
         ) : null}
-        {hasAssistantText ? (
+        {hasAssistantText || hasTimestamp ? (
           <div className="flex gap-1 pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
-            <CopyMessageAction
-              getText={() => extractEditableUserMessageText(message)}
-            />
+            <MessageTimestamp message={message} />
+            {hasAssistantText ? (
+              <CopyMessageAction
+                getText={() => extractEditableUserMessageText(message)}
+              />
+            ) : null}
           </div>
         ) : null}
         {renderAssistantTurnFooter?.(message)}

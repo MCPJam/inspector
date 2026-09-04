@@ -3,6 +3,7 @@ import { MessageCircle } from "lucide-react";
 import type { UIMessage } from "@ai-sdk/react";
 
 import { PartSwitch } from "./part-switch";
+import { MessageTimestamp, getMessageTimestampMs } from "./message-timestamp";
 import {
   type AnyPart,
   groupAssistantPartsIntoSteps,
@@ -102,7 +103,7 @@ function MessageViewImpl({
     const otherParts = parts.filter((part) => part.type !== "file");
 
     return (
-      <div className="mcpjam-chat-message mcpjam-chat-message-user flex w-full min-w-0 flex-col items-end gap-2">
+      <div className="mcpjam-chat-message mcpjam-chat-message-user group/user-message flex w-full min-w-0 flex-col items-end gap-2">
         {fileParts.length > 0 ? (
           <div className="flex max-w-[min(100%,48rem)] flex-wrap justify-end gap-2">
             {fileParts.map((part, i) => (
@@ -115,6 +116,11 @@ function MessageViewImpl({
             {otherParts.map((part, i) => (
               <PartSwitch key={i} part={part} {...partProps} />
             ))}
+          </div>
+        ) : null}
+        {getMessageTimestampMs(message) !== undefined ? (
+          <div className="opacity-0 transition-opacity duration-150 group-hover/user-message:opacity-100 focus-within:opacity-100">
+            <MessageTimestamp message={message} />
           </div>
         ) : null}
       </div>
@@ -138,8 +144,8 @@ function MessageViewImpl({
     <article
       className={
         showAssistantAvatar
-          ? "mcpjam-chat-message mcpjam-chat-message-assistant flex w-full min-w-0 gap-4"
-          : "mcpjam-chat-message mcpjam-chat-message-assistant w-full min-w-0"
+          ? "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message flex w-full min-w-0 gap-4"
+          : "mcpjam-chat-message mcpjam-chat-message-assistant group/assistant-message w-full min-w-0"
       }
     >
       {showAssistantAvatar ? avatar : null}
@@ -157,6 +163,11 @@ function MessageViewImpl({
             </div>
           ))}
         </div>
+        {getMessageTimestampMs(message) !== undefined ? (
+          <div className="pt-2 opacity-0 transition-opacity duration-150 group-hover/assistant-message:opacity-100 focus-within:opacity-100">
+            <MessageTimestamp message={message} />
+          </div>
+        ) : null}
         {renderTurnFooter?.(message, turnIndex)}
       </div>
     </article>
