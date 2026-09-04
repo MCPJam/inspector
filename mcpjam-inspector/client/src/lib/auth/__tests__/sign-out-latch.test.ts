@@ -60,4 +60,28 @@ describe("sign-out latch", () => {
 
     expect(isSignOutInProgress(afterExpiry)).toBe(true);
   });
+
+  it("stays expired once the window has lapsed, even if time is re-read", () => {
+    // Expiry must be permanent, not a per-call verdict: a later reading back
+    // inside the window would revive a latch already declared dead and hide a
+    // genuine session failure.
+    const start = 1_000_000;
+    markSignOutInProgress(start);
+
+    expect(
+      isSignOutInProgress(start + SIGN_OUT_SUPPRESSION_WINDOW_MS + 1),
+    ).toBe(false);
+    expect(isSignOutInProgress(start + 1_000)).toBe(false);
+  });
+
+  it("stays off after a backward clock jump, even once the clock catches up", () => {
+    // An NTP correction mid-sign-out reads as "elapsed is negative". Once that
+    // has ended suppression, the clock returning to real time must not put the
+    // latch back on.
+    const start = 1_000_000;
+    markSignOutInProgress(start);
+
+    expect(isSignOutInProgress(start - 60_000)).toBe(false);
+    expect(isSignOutInProgress(start + 1_000)).toBe(false);
+  });
 });

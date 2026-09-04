@@ -59,7 +59,16 @@ export function isSignOutInProgress(now: number = Date.now()): boolean {
   const elapsed = now - signOutStartedAt;
   // A clock that moved backwards is not a reason to keep suppressing, any more
   // than one that moved forward past the window is.
-  if (elapsed < 0 || elapsed > SIGN_OUT_SUPPRESSION_WINDOW_MS) return false;
+  //
+  // The timestamp is CLEARED here, not merely reported as expired: leaving it
+  // in place lets a clock that later catches up revive a latch this call has
+  // already declared dead — and a revived latch hides exactly the genuine
+  // session failure the expiry exists to let through. Once suppression ends it
+  // stays ended, until a new sign-out arms it again.
+  if (elapsed < 0 || elapsed > SIGN_OUT_SUPPRESSION_WINDOW_MS) {
+    signOutStartedAt = null;
+    return false;
+  }
   return true;
 }
 
