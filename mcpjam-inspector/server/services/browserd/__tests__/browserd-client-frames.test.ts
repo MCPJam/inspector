@@ -79,9 +79,16 @@ describe("streamFrames", () => {
       signal: new AbortController().signal,
       ...sink,
     });
-    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
-    expect(url).toBe("https://box.example/v1/frames?tabId=tab-2&holder=users_1");
-    expect(new Headers(init.headers).get("authorization")).toBe("Bearer secret");
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [
+      string,
+      RequestInit,
+    ];
+    expect(url).toBe(
+      "https://box.example/v1/frames?tabId=tab-2&holder=users_1",
+    );
+    expect(new Headers(init.headers).get("authorization")).toBe(
+      "Bearer secret",
+    );
   });
 
   it("hands back frames as they arrive", async () => {
@@ -159,6 +166,26 @@ describe("streamFrames", () => {
     expect(await sink.ended).toBeUndefined();
   });
 
+  it("opens NOTHING for a caller that has already given up", async () => {
+    // `addEventListener("abort")` does not replay an abort that already
+    // happened, so a signal aborted before this call left the connect
+    // controller live: the request went out anyway and frames were delivered
+    // into a reader that had gone. The real case is a pane closed while its
+    // token was still being minted.
+    const fetchImpl = vi.fn(async () => pushableResponse().response);
+    const sink = collector();
+    const abort = new AbortController();
+    abort.abort();
+
+    expect(
+      await clientFor(fetchImpl as unknown as typeof fetch).streamFrames({
+        signal: abort.signal,
+        ...sink,
+      }),
+    ).toMatchObject({ ok: false });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
   it("stops when the caller aborts", async () => {
     const body = pushableResponse();
     const sink = collector();
@@ -172,7 +199,8 @@ describe("streamFrames", () => {
 
   it("surfaces a refusal instead of pretending to stream", async () => {
     const refused = clientFor(
-      (async () => new Response("no", { status: 423 })) as unknown as typeof fetch,
+      (async () =>
+        new Response("no", { status: 423 })) as unknown as typeof fetch,
     );
     const sink = collector();
     expect(
@@ -199,7 +227,10 @@ describe("streamFrames", () => {
       }) as unknown as typeof fetch,
       { timeoutMs: 40 },
     );
-    await client.streamFrames({ signal: new AbortController().signal, ...sink });
+    await client.streamFrames({
+      signal: new AbortController().signal,
+      ...sink,
+    });
 
     await new Promise((resolve) => setTimeout(resolve, 250));
     body.push(frameBytes({ seq: 99 }));
@@ -238,9 +269,7 @@ describe("streamFrames", () => {
     });
     for (let i = 0; i < 4; i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 60));
-      body.push(
-        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }),
-      );
+      body.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
     }
     body.push(frameBytes({ seq: 5 }));
     await vi.waitFor(() => expect(sink.frames).toHaveLength(1));

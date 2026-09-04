@@ -93,6 +93,18 @@ export class BrowserdClient {
   constructor(config: BrowserdClientConfig) {
     // Normalise so `${baseUrl}/path` never doubles a slash.
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    // HTTPS OR NOTHING. Every request below attaches the per-boot bearer, and
+    // that bearer is full control of somebody's browser — commands, input, and
+    // a live stream of whatever is on the page. The origin comes from a
+    // control-plane row that is validated as a non-empty string and nothing
+    // more, so the one place that can insist on the scheme is here, before a
+    // single request goes out. Refused loudly rather than downgraded: a client
+    // that quietly spoke cleartext would leak the credential on every call.
+    if (!/^https:\/\//i.test(this.baseUrl)) {
+      throw new Error(
+        `browserd origin must be https (got ${new URL(this.baseUrl).protocol})`,
+      );
+    }
     this.bearer = config.bearer;
     this.fetchImpl = config.fetchImpl ?? fetch;
     this.timeoutMs = config.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -257,6 +269,15 @@ export class BrowserdClient {
     if (args.tabId) query.set("tabId", args.tabId);
     if (args.holder) query.set("holder", args.holder);
     const suffix = query.toString() ? `?${query}` : "";
+
+    // Checked BEFORE anything is opened. `addEventListener("abort")` does not
+    // replay an abort that already happened, so a caller who cancelled before
+    // this call — a pane closed while the token was still being minted — would
+    // otherwise have a connection opened on its behalf and frames delivered
+    // into a reader that has gone.
+    if (args.signal.aborted) {
+      return { ok: false, status: 0, error: "aborted" };
+    }
 
     const connect = new AbortController();
     const onCallerAbort = () => connect.abort();

@@ -220,3 +220,31 @@ describe("BrowserdClient.sendInput", () => {
     });
   });
 });
+
+describe("BrowserdClient — what it refuses to do at all", () => {
+  it("will not put the boot bearer on a cleartext hop", async () => {
+    // The bearer is full control of somebody's browser: commands, input, and a
+    // live stream of whatever is on the page. The origin comes from a
+    // control-plane row validated as a non-empty string and nothing more, so
+    // this is the one place that can insist on the scheme — and it has to
+    // refuse rather than downgrade, since a client that quietly spoke
+    // cleartext would leak the credential on every single call.
+    expect(
+      () =>
+        new BrowserdClient({
+          baseUrl: "http://box-8791.e2b.dev",
+          bearer: "boot-bearer",
+        }),
+    ).toThrow(/https/i);
+    // Not even loopback: nothing constructs this against a local daemon — the
+    // local engine speaks to an in-process client — so an exemption would be a
+    // hole with no caller behind it.
+    expect(
+      () =>
+        new BrowserdClient({ baseUrl: "http://127.0.0.1:8791", bearer: "b" }),
+    ).toThrow(/https/i);
+    expect(
+      () => new BrowserdClient({ baseUrl: "https://box.example", bearer: "b" }),
+    ).not.toThrow();
+  });
+});
