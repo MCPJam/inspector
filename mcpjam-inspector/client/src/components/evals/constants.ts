@@ -60,6 +60,14 @@ export type ResultStatus = (typeof RESULT_STATUS)[keyof typeof RESULT_STATUS];
 export const RUN_STATUS = {
   PENDING: "pending",
   RUNNING: "running",
+  /**
+   * Every trial finished; the run is HELD for its gating judge.
+   *
+   * Not terminal, and `result` is still `pending` — the backend's
+   * `finalizeAfterJudge` is what will decide it, within 30 minutes. Anything
+   * that reads this as done reports a run with no verdict as though it had one.
+   */
+  GRADING: "grading",
   COMPLETED: "completed",
   CANCELLED: "cancelled",
   TIMED_OUT: "timed_out",
