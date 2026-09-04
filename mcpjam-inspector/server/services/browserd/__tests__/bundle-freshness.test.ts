@@ -144,17 +144,22 @@ describe("browserd bundle freshness", () => {
       "the daemon bundle now imports the Electron engine; it is uploaded to a " +
         "box with no Electron, so every hosted session would fail to boot",
     ).toEqual([]);
-    // Nothing from `node_modules` either — but that is the BUNDLER's job, not
-    // this test's, and saying so here is the honest version of a check that
-    // used to be a lie. `bundle-browserd.mjs` builds this list by removing
-    // every `node_modules/` path, so asserting the list has none of them
-    // passes forever, whatever gets bundled. The refusal lives against the raw
-    // metafile, in the script, where the evidence still exists; all this
-    // assertion can add is that the recorded list is the local tree.
+    // Nothing from `node_modules` either. This is a real assertion now: the
+    // bundler records the RAW metafile inputs, so a package inlined into the
+    // artifact appears in this list. It was NOT real when the list was built by
+    // removing every `node_modules/` path first — that made the check a
+    // tautology which passed whatever got bundled, and it sat here passing.
+    //
+    // The build still refuses first, where the failure names the import that
+    // pulled the package in. This is the second line: it fails on a committed
+    // artifact even if someone bundles by other means.
     expect(
-      MCPJAM_BROWSERD_SOURCE_FILES.every((file) => file.endsWith(".ts")),
-      "the recorded input list should be this repo's TypeScript sources",
-    ).toBe(true);
+      MCPJAM_BROWSERD_SOURCE_FILES.filter((file) =>
+        file.includes("node_modules/"),
+      ),
+      "a dependency was inlined into the daemon; it runs on a box with only " +
+        "what this artifact ships, so it must be external or vendored",
+    ).toEqual([]);
     // Belt and braces on the artifact itself, because the input list above
     // cannot see everything: esbuild keeps an EXTERNAL specifier as a literal
     // import rather than following it, so a stray `import("electron")` would

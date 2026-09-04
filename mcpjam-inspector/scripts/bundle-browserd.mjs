@@ -11,7 +11,7 @@
 import { build } from "esbuild";
 import { fileURLToPath } from "url";
 import { dirname, resolve } from "path";
-import { readFileSync, writeFileSync } from "fs";
+import { mkdirSync, readFileSync, writeFileSync } from "fs";
 import { createHash } from "crypto";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -56,6 +56,14 @@ const result = await build({
   entryPoints: [entry],
   outfile,
   bundle: true,
+  // NOTHING IS WRITTEN UNTIL THE GUARD BELOW HAS PASSED. esbuild writes its
+  // output before this script gets to look at the metafile, so a build that
+  // the dependency check then REFUSES used to leave the rejected bundle in
+  // `dist/mcpjam-browserd.mjs` while `.generated.ts` kept the old base64 and
+  // hash. The two dist files then disagree, the freshness test fails for a
+  // reason unrelated to the actual mistake, and `git checkout` is the only way
+  // back. Holding the bytes in memory makes the refusal a genuine no-op.
+  write: false,
   platform: "node",
   format: "esm",
   target: "node20",
@@ -82,16 +90,17 @@ const metafileInputs = Object.keys(result.metafile.inputs)
   .map((input) => input.replaceAll("\\", "/"))
   .sort();
 
-// REFUSED HERE, not asserted downstream. A dependency that gets bundled has to
-// be caught against the RAW metafile, because the only other place that could
-// notice is the source list below — and that list is built by removing exactly
-// these paths, so a test asserting "no node_modules in the source list" is a
-// tautology that passes forever. (It was one, briefly.)
+// REFUSED HERE, where the cause is on screen. The bundle is uploaded to an E2B
+// box that has nothing but these bytes, so a package quietly inlined here is a
+// runtime failure one upload away from the commit that caused it — and the
+// build is the last place that still knows WHICH import pulled it in.
 //
-// The bundle is uploaded to an E2B box that has nothing but these bytes, so a
-// package quietly inlined here is a runtime failure one upload away from the
-// commit that caused it. Better to fail the build, where the cause is on
-// screen.
+// The source list below is the raw metafile, so `bundle-freshness.test.ts` can
+// assert the same property honestly as a second line of defence. That was not
+// always true: the list used to be built by REMOVING exactly these paths, which
+// made "no node_modules in the source list" a tautology that passed whatever
+// got bundled. It is a real assertion now, and it is still not a substitute for
+// refusing to emit the artifact in the first place.
 //
 // `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
 // the workspace root, so a bundled package arrives as `../node_modules/<name>/…`
@@ -113,6 +122,16 @@ if (bundledDependencies.length > 0) {
 // specifier would be an external (`playwright`, `electron`), resolved inside
 // the sandbox at runtime with no bytes to hash.
 const sourceFiles = metafileInputs;
+
+// The guard passed, so the artifact may land. esbuild wrote nothing (`write:
+// false`), and a single entry point yields a single output file.
+mkdirSync(distDir, { recursive: true });
+const [output] = result.outputFiles ?? [];
+if (!output) {
+  console.error("browserd bundle: esbuild produced no output file.");
+  process.exit(1);
+}
+writeFileSync(outfile, output.contents);
 
 // Also emit the bundle base64-encoded as a TS const. The inspector server reads
 // this at runtime to UPLOAD the daemon into a sandbox; embedding it in the
