@@ -2003,6 +2003,13 @@ describe("operation catalog consistency", () => {
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
     get_eval_run_route_facts: { project: "p", runId: "r" },
+    propose_eval_description_rewrite: {
+      project: "p",
+      runId: "r",
+      toolName: "t",
+    },
+    start_eval_description_experiment: { project: "p", experiment: "e" },
+    get_eval_description_experiment: { project: "p", experiment: "e" },
     list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
@@ -2280,6 +2287,12 @@ describe("operation catalog consistency", () => {
       // Stops a pending connection, releasing the slot it holds.
       "cancel_project_server_connection",
       "request_eval_run_judge",
+      // Description-rewrite experiment. Propose spends a small model budget
+      // to draft the rewrite; start launches two replay arms and spends
+      // eval-iteration credits. `get_eval_description_experiment` stays a
+      // read — it only polls the receipt.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",

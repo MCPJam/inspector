@@ -79,6 +79,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
@@ -6764,6 +6765,193 @@ export const getEvalRunRouteFactsOperation: PlatformOperation<
       }
       throw error;
     }
+  },
+};
+
+const proposeEvalDescriptionRewriteInput = evalRunScopedInput.extend({
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Tool whose description should be rewritten. Must appear in the source run's tool snapshot."
+    ),
+  caseIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict the proposal's evidence to these case ids. Omit to use every case that expected the tool and failed at least once."
+    ),
+});
+
+export type ProposeEvalDescriptionRewriteInput = z.infer<
+  typeof proposeEvalDescriptionRewriteInput
+>;
+
+export type ProposeEvalDescriptionRewriteResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
+  ProposeEvalDescriptionRewriteInput,
+  ProposeEvalDescriptionRewriteResult
+> = {
+  name: "propose_eval_description_rewrite",
+  title: "Propose an eval description rewrite",
+  description:
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: proposeEvalDescriptionRewriteInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.proposeEvalDescriptionRewrite(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        toolName: input.toolName,
+        ...(input.caseIds ? { caseIds: input.caseIds } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const startEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Description-experiment id, as returned by propose_eval_description_rewrite."),
+  caseScope: z
+    .enum(["all", "affected"])
+    .optional()
+    .describe(
+      "Which cases to replay. Default all, so the regression check is contemporaneous. affected skips non-matching cases and the report says checked: false."
+    ),
+  iterationOverride: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe("Repetitions per case per arm (1–10). Default is the source run's."),
+  maxTrials: z
+    .number()
+    .int()
+    .min(1)
+    .max(400)
+    .optional()
+    .describe(
+      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+    ),
+});
+
+export type StartEvalDescriptionExperimentInput = z.infer<
+  typeof startEvalDescriptionExperimentInput
+>;
+
+export type StartEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const startEvalDescriptionExperimentOperation: PlatformOperation<
+  StartEvalDescriptionExperimentInput,
+  StartEvalDescriptionExperimentResult
+> = {
+  name: "start_eval_description_experiment",
+  title: "Start an eval description experiment",
+  description:
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: startEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.startEvalDescriptionExperiment(
+      {
+        projectId: project.id,
+        experimentId: input.experiment,
+        ...(input.caseScope !== undefined ? { caseScope: input.caseScope } : {}),
+        ...(input.iterationOverride !== undefined
+          ? { iterationOverride: input.iterationOverride }
+          : {}),
+        ...(input.maxTrials !== undefined ? { maxTrials: input.maxTrials } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const getEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe("Description-experiment id."),
+});
+
+export type GetEvalDescriptionExperimentInput = z.infer<
+  typeof getEvalDescriptionExperimentInput
+>;
+
+export type GetEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const getEvalDescriptionExperimentOperation: PlatformOperation<
+  GetEvalDescriptionExperimentInput,
+  GetEvalDescriptionExperimentResult
+> = {
+  name: "get_eval_description_experiment",
+  title: "Get an eval description experiment",
+  description:
+    "Read one description-experiment document: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison (Newcombe interval in points, per-case bars, regression line, evidence label) once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(
+      result.experiment.sourceRunId,
+      result.experiment.suiteId,
+      result.project?.id
+    ),
+  ]),
+  inputSchema: getEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.getEvalDescriptionExperiment(
+      { projectId: project.id, experimentId: input.experiment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
   },
 };
 
@@ -15108,6 +15296,9 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   listEvalRunIterationsOperation,

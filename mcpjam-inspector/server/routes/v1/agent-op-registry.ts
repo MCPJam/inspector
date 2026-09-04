@@ -2574,6 +2574,12 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
   uninstall_registry_server:
     "Agent proposes authoring, never destruction — same rule as delete_project_server.",
+  propose_eval_description_rewrite:
+    "Proposal generation spends a model budget and the HTTP route is not wired yet; an approval card would confirm a call that 404s.",
+  start_eval_description_experiment:
+    "Launching the two-arm replay is a spend with a trial cap, and the public start route lands in a follow-up. The agent should not offer a launch it cannot complete.",
+  get_eval_description_experiment:
+    "The experiment document has no agent renderer yet; the run-page card is the first consumer. Available on the SDK client for the inspector half.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

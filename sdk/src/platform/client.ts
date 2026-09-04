@@ -13,6 +13,7 @@ import type {
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
   PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
@@ -2015,6 +2016,98 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft a rewritten tool description from a finished run's failed
+   * trials. SPENDS a small model budget; poll
+   * {@link getEvalDescriptionExperiment} rather than re-proposing.
+   *
+   * HTTP route lands in a follow-up. This client method is the typed
+   * half so a later inspector can call it.
+   */
+  proposeEvalDescriptionRewrite(
+    params: {
+      projectId: string;
+      runId: string;
+      toolName: string;
+      caseIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {
+        body: {
+          toolName: params.toolName,
+          ...(params.caseIds ? { caseIds: params.caseIds } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Launch the two-arm description experiment (original + rewrite).
+   * SPENDS eval-iteration credits: planned trials = cases × R × 2,
+   * refused over the cap (default 200, hard 400).
+   */
+  startEvalDescriptionExperiment(
+    params: {
+      projectId: string;
+      experimentId: string;
+      caseScope?: "all" | "affected";
+      iterationOverride?: number;
+      maxTrials?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}/start`,
+      {
+        body: {
+          ...(params.caseScope !== undefined
+            ? { caseScope: params.caseScope }
+            : {}),
+          ...(params.iterationOverride !== undefined
+            ? { iterationOverride: params.iterationOverride }
+            : {}),
+          ...(params.maxTrials !== undefined
+            ? { maxTrials: params.maxTrials }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * One description-experiment document, including its report when
+   * materialised. `404` means the experiment is not visible to this
+   * caller.
+   */
+  getEvalDescriptionExperiment(
+    params: { projectId: string; experimentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}`,
       {},
       options
     );

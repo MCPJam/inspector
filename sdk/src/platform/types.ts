@@ -14,6 +14,7 @@ import type {
   ScoreResult,
 } from "../contract/types.js";
 import type {
+  DescriptionExperimentReport,
   EvalRunDecisionSummary,
   EvalRunRouteFacts,
   EvalStageAnalyticsV1,
@@ -66,6 +67,68 @@ export type PlatformEvalStageAnalytics = EvalStageAnalyticsV1;
  * field is added.
  */
 export type PlatformEvalRouteFacts = EvalRunRouteFacts;
+
+/**
+ * Response of the description-experiment routes:
+ * `POST /projects/{p}/eval-runs/{r}/description-experiments`,
+ * `POST /projects/{p}/eval-description-experiments/{e}/start`,
+ * `GET  /projects/{p}/eval-description-experiments/{e}`.
+ *
+ * The optional `report` is the SDK contract
+ * (`descriptionExperimentReportSchema`). HTTP routes land in PR-E3; this
+ * DTO is the client half so a later inspector can call them.
+ */
+export type PlatformEvalDescriptionExperimentStatus =
+  | "proposing"
+  | "proposed"
+  | "launching"
+  | "running"
+  | "reporting"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface PlatformEvalDescriptionExperimentProposal {
+  description: string;
+  proposalHash: string;
+  modelUsed?: string;
+  generatedAt?: number;
+  promptVersion?: number;
+  evidence?: {
+    failedIterationIds?: string[];
+    trialsRead?: number;
+  };
+}
+
+export interface PlatformEvalDescriptionExperimentPlan {
+  caseScope: "all" | "affected";
+  repetitions?: number;
+  plannedTrials?: number;
+  maxTrials?: number;
+  judgeAutoRun?: boolean;
+  proposalUsdMicros?: number;
+}
+
+export interface PlatformEvalDescriptionExperiment {
+  id: string;
+  suiteId: string;
+  sourceRunId: string;
+  toolName: string;
+  serverId?: string;
+  originalDescription?: string;
+  originalDescriptionHash?: string;
+  affectedCaseIds?: string[];
+  executionEngine?: string;
+  status: PlatformEvalDescriptionExperimentStatus;
+  errorCode?: string;
+  proposal?: PlatformEvalDescriptionExperimentProposal;
+  plan?: PlatformEvalDescriptionExperimentPlan;
+  runGroupId?: string;
+  arms?: { original?: string; rewrite?: string };
+  reportVersion?: number;
+  report?: DescriptionExperimentReport;
+  reportSourceMaxUpdatedAt?: number;
+}
 
 /** Collection envelope: `nextCursor` is omitted on the last page. */
 export type PlatformPage<TItem> = {

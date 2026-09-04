@@ -1894,6 +1894,20 @@ describe("tier derives from operation.risk", () => {
         "approves the start. confirmSeverity is none so the prompt does not " +
         "warn about money.",
     },
+    propose_eval_description_rewrite: {
+      tier: "excluded",
+      reason:
+        "Spend would derive gated, but the HTTP route is not wired yet. " +
+        "An approval card would confirm a call that 404s. Offered once " +
+        "the inspector can actually draft the rewrite.",
+    },
+    start_eval_description_experiment: {
+      tier: "excluded",
+      reason:
+        "Spend would derive gated, but launching the two-arm replay has " +
+        "no public start route yet. The agent should not offer a launch " +
+        "it cannot complete.",
+    },
   };
 
   const placementOf = (name: string): Placement | "unregistered" => {

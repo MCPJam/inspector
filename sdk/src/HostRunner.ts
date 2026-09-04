@@ -48,6 +48,7 @@ import type { HostSource } from "./host-config/host.js";
 import type { ModelVisibleMcpToolResults } from "./host-config/types.js";
 import type { HostJson } from "./host-config/public-types.js";
 import {
+  applyToolDescriptionOverrides,
   extractHostExecutionPolicy,
   resolveOpenAiCompatCapabilitiesForHostConfig,
   resolveOpenAiCompatForHostConfig,
@@ -89,6 +90,12 @@ interface HostRunnerBaseConfig {
    * host would have produced.
    */
   injectOpenAiCompat?: boolean;
+  /**
+   * Rewrite `description` on named tools after visibility filtering.
+   * Description ONLY — name, input schema, and `_meta` stay byte-identical.
+   * Re-applied by `withOptions` unless the clone supplies a new map.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -250,6 +257,13 @@ export class HostRunner implements HostExecutor {
    * when no host was supplied (legacy explicit-model path).
    */
   private readonly hostPolicy: HostExecutionPolicy | undefined;
+  /**
+   * Description rewrites applied after visibility filtering. Stored so
+   * `withOptions` re-runs them against the raw `Tool[]` under a new host.
+   */
+  private readonly toolDescriptionOverrides:
+    | Readonly<Record<string, string>>
+    | undefined;
 
   /** Normalized provider name parsed from the model string */
   private readonly _parsedProvider: string;
@@ -301,10 +315,14 @@ export class HostRunner implements HostExecutor {
     // host policy into that flag, so by the time tools land here they have
     // already been gated correctly — re-filtering would be a double-gate.
     const respectVisibility = this.hostPolicy?.respectToolVisibility !== false;
+    this.toolDescriptionOverrides = config.toolDescriptionOverrides;
     const preparedTools = isToolArray(config.tools)
-      ? respectVisibility
-        ? dropAppOnlyTools(config.tools)
-        : config.tools
+      ? applyToolDescriptionOverrides(
+          respectVisibility
+            ? dropAppOnlyTools(config.tools)
+            : config.tools,
+          config.toolDescriptionOverrides
+        ).tools
       : config.tools;
 
     this.tools = isToolArray(preparedTools)
@@ -963,6 +981,8 @@ export class HostRunner implements HostExecutor {
       systemPrompt: nextSystemPrompt,
       temperature: nextTemperature,
       injectOpenAiCompat: nextInjectOpenAiCompat,
+      toolDescriptionOverrides:
+        options.toolDescriptionOverrides ?? this.toolDescriptionOverrides,
     };
 
     if (nextHost) {
