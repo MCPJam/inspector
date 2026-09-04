@@ -111,6 +111,12 @@ export interface SupervisedProcessHandle {
    * died cannot read it again, and this is what it reads instead.
    */
   stderrHead: () => string;
+  /** Likewise for stdout, where some bridges put their startup complaints. */
+  stdoutHead: () => string;
+  /** The recorded exit, or null while the process is still running. Read it
+   *  BEFORE stopping the process: a stop on Windows is `TerminateProcess`,
+   *  which reports exit code 1 and would be mistaken for the process's own. */
+  exited: () => { exitCode: number } | null;
 }
 
 export class SupervisorError extends Error {}
@@ -464,9 +470,17 @@ export class LocalHarnessSupervisor {
     // slot that the promise, built later, reads or subscribes to.
     const out = bufferedStream(this.limits.maxOutputBytesPerStream);
     const err = bufferedStream(this.limits.maxOutputBytesPerStream);
-    child.stdout?.on("data", (chunk: Buffer) =>
-      out.push(new Uint8Array(chunk)),
-    );
+    let stdoutHead = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdoutHead.length < 1024) {
+        stdoutHead += chunk.toString(
+          "utf8",
+          0,
+          Math.min(chunk.length, 1024 - stdoutHead.length),
+        );
+      }
+      out.push(new Uint8Array(chunk));
+    });
     // The first bytes of stderr, kept aside for the one error below that most
     // needs them: a root that cannot be identified is usually a root that
     // died at once, and its own last words are the diagnosis. Without this,
@@ -748,6 +762,8 @@ export class LocalHarnessSupervisor {
         await exited;
       },
       stderrHead: () => stderrHead,
+      stdoutHead: () => stdoutHead,
+      exited: () => exitResult,
     };
   }
 

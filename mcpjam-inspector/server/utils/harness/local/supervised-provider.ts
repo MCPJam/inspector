@@ -438,25 +438,31 @@ async function readHead(
  * bridge that crashed on import and one that hung before binding looked
  * identical from the outside, thirty seconds apart from nothing.
  */
-async function describeFailedBridge(handle: {
-  stdout: ReadableStream<Uint8Array>;
-  stderr: ReadableStream<Uint8Array>;
-  wait: () => Promise<{ exitCode: number }>;
-  stderrHead?: () => string;
-}): Promise<string> {
-  const exit = await Promise.race([
-    handle.wait().then((r) => `exit code ${r.exitCode}`),
-    new Promise<string>((resolveRace) =>
-      setTimeout(() => resolveRace("still running"), 500),
-    ),
-  ]);
-  // The supervisor's own copy first: the adapter holds the stream's reader
-  // lock from the moment it is handed the process, so a read here finds
+async function describeFailedBridge(
+  handle: {
+    stdout: ReadableStream<Uint8Array>;
+    stderr: ReadableStream<Uint8Array>;
+    stderrHead?: () => string;
+    stdoutHead?: () => string;
+  },
+  /** The exit recorded BEFORE the session was stopped, or null if it was
+   *  still running then. A stop on Windows is `TerminateProcess`, which
+   *  reports exit code 1 — indistinguishable from the process's own, so it
+   *  is not read afterwards. */
+  exitBeforeStop: { exitCode: number } | null,
+): Promise<string> {
+  const exit =
+    exitBeforeStop !== null
+      ? `exited on its own with code ${exitBeforeStop.exitCode}`
+      : "was still running when the session was stopped";
+  // The supervisor's own copies first: the adapter holds the streams' reader
+  // locks from the moment it is handed the process, so a read here finds
   // nothing even when the bridge died with a full stack trace on stderr.
-  const kept = handle.stderrHead?.() ?? "";
+  const keptErr = handle.stderrHead?.() ?? "";
+  const keptOut = handle.stdoutHead?.() ?? "";
   const [out, err] = await Promise.all([
-    readHead(handle.stdout, 1024, 500),
-    kept.length > 0 ? Promise.resolve(kept) : readHead(handle.stderr, 2048, 500),
+    keptOut.length > 0 ? Promise.resolve(keptOut) : readHead(handle.stdout, 1024, 500),
+    keptErr.length > 0 ? Promise.resolve(keptErr) : readHead(handle.stderr, 2048, 500),
   ]);
   const parts = [exit];
   if (err.trim().length > 0) parts.push(`stderr: ${JSON.stringify(err.trim())}`);
@@ -1052,14 +1058,17 @@ export function createSupervisedLocalHarnessProvider(
             // caller has no handle to it, so nothing else would stop it. And
             // release the claim, so a retry is checked as a bridge again.
             releaseBridgeClaim();
+            // Whether it was alive is only knowable BEFORE the stop.
+            const exitBeforeStop = handle.exited?.() ?? null;
             await opts.supervisor.stopSession(sessionId).catch(() => {});
             // Then, with the process dead and its streams closed, say what it
             // said. The message is amended in place so the error's TYPE — what
             // callers and tests distinguish on — survives.
             if (error instanceof Error) {
-              const said = await describeFailedBridge(handle).catch(
-                () => "no diagnosis could be read",
-              );
+              const said = await describeFailedBridge(
+                handle,
+                exitBeforeStop,
+              ).catch(() => "no diagnosis could be read");
               error.message = `${error.message} (bridge: ${said})`;
             }
             throw error;

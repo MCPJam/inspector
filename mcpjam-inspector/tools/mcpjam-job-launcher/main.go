@@ -91,6 +91,20 @@ func run(exe string, args []string) int {
 	// Stdio is inherited rather than piped. The supervisor already captures and
 	// bounds the streams on its side; relaying them here would add a buffer
 	// that can fill and a copy loop that can deadlock, for nothing.
+	// The child's stdin is NUL, not this process's. Stdin here is the
+	// supervisor's LIFELINE — a pipe it holds open and never writes to, whose
+	// EOF means the supervisor is gone — and it belongs to this launcher
+	// alone. Handed to the bridge as well, two readers block on one silent
+	// pipe: the bridge never sees the EOF a `/dev/null` stdin gives it on
+	// POSIX, and a bridge that reads stdin before it listens hangs until the
+	// readiness timeout kills it, saying nothing.
+	nul, err := os.OpenFile("NUL", os.O_RDONLY, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "mcpjam-job-launcher: open NUL: %v\n", err)
+		return 1
+	}
+	defer nul.Close()
+
 	attr := &syscall.ProcAttr{
 		// Explicit, because this is the low-level `syscall.StartProcess`, not
 		// `os.StartProcess`: here a nil Env is an EMPTY environment block, not
@@ -100,7 +114,7 @@ func run(exe string, args []string) int {
 		// supervisor built this environment for the child; pass it through.
 		Env: os.Environ(),
 		Files: []uintptr{
-			os.Stdin.Fd(),
+			nul.Fd(),
 			os.Stdout.Fd(),
 			os.Stderr.Fd(),
 		},
