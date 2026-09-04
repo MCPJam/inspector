@@ -139,6 +139,22 @@ describe("OAuth debugger step-failure reporting", () => {
     expect(updateState).toHaveBeenCalledWith(serverFault);
   });
 
+  it("ignores an authenticated request failure from the server under test", () => {
+    const { wrapped, updateState } = wrappedUpdateState(
+      vi.fn(),
+      "authenticated_request",
+    );
+    const serverFailure = {
+      error:
+        "Authenticated request failed: 503 Service Temporarily Unavailable: <html>temporarily unavailable</html>",
+    };
+
+    wrapped(serverFailure);
+
+    expect(reportCaught).not.toHaveBeenCalled();
+    expect(updateState).toHaveBeenCalledWith(serverFailure);
+  });
+
   it("still reports a real failure that follows a warning", () => {
     const { wrapped } = wrappedUpdateState();
 
@@ -171,6 +187,8 @@ describe("OAuth debugger step-failure reporting", () => {
 
     expect(updateState).toHaveBeenCalledTimes(2);
     expect(updateState).toHaveBeenNthCalledWith(1, { error: "boom" });
-    expect(updateState).toHaveBeenNthCalledWith(2, { authorizationCode: "abc" });
+    expect(updateState).toHaveBeenNthCalledWith(2, {
+      authorizationCode: "abc",
+    });
   });
 });

@@ -1,113 +1,667 @@
-diff --git a/.changeset/evals-d5b-d5c-inspector.md b/.changeset/evals-d5b-d5c-inspector.md
+diff --git a/.changeset/bb-133-guest-credit-wall.md b/.changeset/bb-133-guest-credit-wall.md
 deleted file mode 100644
-index 19cd1c22d..000000000
---- a/.changeset/evals-d5b-d5c-inspector.md
+index 9d75eee35..000000000
+--- a/.changeset/bb-133-guest-credit-wall.md
 +++ /dev/null
-@@ -1,6 +0,0 @@
+@@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Add the eval-suite stage-analytics route and the /evaluate stage-analytics
--panel, rendering backend-materialized per-run stage analytics.
-diff --git a/.changeset/evals-d5b-sdk.md b/.changeset/evals-d5b-sdk.md
+-Add a benefit-led A/B variant of the guest credit-limit modal (BB-133). Behind the PostHog flag `guest-credit-wall-copy`, the treatment replaces the single "Sign in" wall with a headline, value copy, a hero illustration, and two CTAs — "Create free account" (sign-up) and "See paid plans" (pricing page). The `plan_limit_*` events now carry a `variant` tag so sign-in vs create-account conversion can be compared across control and treatment. Defaults to the existing control modal when the flag is off.
+diff --git a/.changeset/connection-error-toast-copy.md b/.changeset/connection-error-toast-copy.md
 deleted file mode 100644
-index c4d2c6868..000000000
---- a/.changeset/evals-d5b-sdk.md
+index 04df2ffc0..000000000
+--- a/.changeset/connection-error-toast-copy.md
 +++ /dev/null
-@@ -1,7 +0,0 @@
+@@ -1,35 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A failed connection reads as a title and a failure, and copies as both
+-
+-The toast said `Excalidraw (App): Request failed (500)` — the server and the
+-failure spliced into one run-on line by a colon, with sonner's error icon
+-aligned against the middle of it rather than a title. It now uses the two
+-fields sonner renders: the server name as the title, the failure as the muted
+-description below it. The single-line form is kept for the message that already
+-names the server, where a title would print the name twice.
+-
+-One failure also produced two differently-worded toasts. `ServerDetailModal`,
+-`ServerConnectionCard` and `RecommendedServers` each caught the throw and built
+-their own sentence around it ("Failed to connect to X: …") while the connection
+-layer was already reporting the same failure in its own words. All three now
+-raise it through one helper, so the wording matches wherever it comes from. The
+-duplicate report itself is untouched and still open.
+-
+-The error toast's copy button copied only the line it sits on, which after the
+-split is a server name and nothing else. It now takes the description with it.
+-
+-Error-toast action buttons no longer claim a full centered row of their own.
+-The Toaster forced that because a sentence-long CTA squeezed the message beside
+-it, but it also stranded short labels — "Retry", "Reconnect" — under a one-line
+-error at four times their width. The toast content grows instead, so the label
+-decides: a short button rides the title row at the trailing edge, and one that
+-no longer fits wraps to its own line.
+-
+-Two layout fixes come with it. The toast aligns its icon and action to the
+-first line rather than the middle of a paragraph, and a paragraph no longer
+-forces its own row and strands the icon alone above it. And the copy button no
+-longer overflows the message box it sits in: at 20px against a 19.5px line it
+-raised a native scrollbar — arrows and all — over a one-line error.
+diff --git a/.changeset/error-cards-copy-and-select.md b/.changeset/error-cards-copy-and-select.md
+deleted file mode 100644
+index 3a6432ee4..000000000
+--- a/.changeset/error-cards-copy-and-select.md
++++ /dev/null
+@@ -1,20 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Error cards can be copied, and their text selected
+-
+-Highlighting the text on an error card was impossible wherever the card sits in
+-a surface that owns the drag gesture. On the servers grid, dnd-kit spreads its
+-sortable listeners over the whole card, and once the 8px activation distance is
+-crossed the sensor wipes the selection on every `selectionchange` — dragging
+-across the message reordered the card instead of selecting a word of it. In the
+-OAuth flow the card renders inside a ReactFlow node, and `.react-flow__node`
+-sets `user-select: none`, so there was nothing to drag for in the first place.
+-
+-The card now stops the pointerdown from reaching those surfaces and carries
+-`select-text nodrag nopan`. A Copy button beside "Show details" puts the whole
+-failure on the clipboard as plain text — title, one-liner, likely causes, next
+-steps, raw error and cause — including the details while they are still
+-collapsed, since expanding them first to copy them defeats the point. A
+-clipboard that refuses the write says "Copy failed" instead of claiming success.
+diff --git a/.changeset/grader-stage-contract-map.md b/.changeset/grader-stage-contract-map.md
+deleted file mode 100644
+index 2ac4aa73f..000000000
+--- a/.changeset/grader-stage-contract-map.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-The contract now says which stage of the chain each grader measures
+-
+-The six-stage user-value chain has always been able to answer "where did this run stop being good?" for a single trial. What nothing could answer was the same question about a suite's SETTINGS: given this configuration, which stages does it actually measure, and which does it leave unchecked? The routing existed, but it lived inside the stage analyzer, reachable only by running a trial through it.
+-
+-`PREDICATE_STAGE`, `GRADER_STAGE` and `PREDICATE_KINDS` export that routing directly, so a settings surface can group graders by what they measure instead of by how they happen to be implemented.
+-
+-- **The analyzer's own routing is now derived from the map, not restated beside it.** That is the point of the change rather than a tidy-up. Two hand-kept copies of the same fact are one edit away from a suite that renders a grader under "selection" while the analyzer files its failures under "user value" — a disagreement neither copy is wrong enough to fail a test for. A new test asserts the analyzer routes exactly the three predicate kinds it routed before, so the derivation cannot quietly widen or narrow.
+-- **`PREDICATE_KINDS` is derived from the authoring schema.** A hand-written list is a list that misses the next predicate someone adds, and a predicate missing from the map is a grader a settings page cannot place — which renders as a stage that looks unmeasured when it is not. Totality is tested in both directions.
+-- **`toolCalledWith` is mapped to `selection` and is still matcher-graded.** The map records what an author was measuring; the analyzer still routes the kind through `expectedToolCalls`, because re-reading its point-in-time predicate row would let a raw residual contradict the adjudicated verdict. `isSelectionStagePredicateKind` (the map's question) and `isSelectionPredicateKind` (the analyzer's) deliberately disagree on this one kind, and a test pins that.
+-- **`GRADER_PRESENTATION_GROUP` carries no analytical weight.** Token and turn ceilings read better beside each other than beside "did the answer contain the right thing", but they are still filed where the analyzer files them. A test pins that the grouping never redefines a stage.
+-
+-`STAGE_ANALYZER_VERSION` stays at 8. Nothing about where a failure is attributed has changed, so this is a refactor rather than a re-derivation. The docblock names the kinds that are future bump candidates — `noToolErrors` toward `call` or `response`, the three `widget*` kinds toward `response` — so that moving one is a deliberate versioned change rather than a fix someone applies to the table in isolation.
+diff --git a/.changeset/local-harness-pack-signing-key.md b/.changeset/local-harness-pack-signing-key.md
+deleted file mode 100644
+index 22b85c066..000000000
+--- a/.changeset/local-harness-pack-signing-key.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Trust the local-harness runtime pack release key. `PACK_SIGNING_KEYS` shipped
+-empty, which refused every network-sourced pack — the correct default before a
+-key existed, and a hard blocker on publishing packs at all. The public half of
+-the Ed25519 release key is now committed; the private half lives only in CI.
+diff --git a/.changeset/local-inspector-reaches-private-networks.md b/.changeset/local-inspector-reaches-private-networks.md
+deleted file mode 100644
+index e67c9434a..000000000
+--- a/.changeset/local-inspector-reaches-private-networks.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": patch
+----
+-
+-The local inspector reaches OAuth servers on your own network
+-
+-Testing a fully local OAuth setup failed with `OAuth proxy target resolves to
+-a private/reserved IP address (127.0.0.1)` whenever the authorization server
+-had a hostname of its own — `auth.local`, or anything else answering
+-loopback. The address guard could not tell a developer's laptop from our
+-hosted infrastructure, so it applied the policy written for the second to
+-both, and the official MCP Inspector, which has no guard at all, worked where
+-we did not.
+-
+-**What changed.** The guard now distinguishes two questions instead of
+-answering one. "Is this private?" still governs the hosted app, which fetches
+-from our nodes where a private address means our own network. "Is this ever
+-dialable?" governs the local inspector and the CLI, and refuses only what is
+-never a real OAuth endpoint: link-local and every cloud metadata service,
+-including the two that hide inside ranges corporate networks legitimately use
+-(Alibaba's inside CGNAT, AWS's inside the unique-local range), plus the
+-unspecified address, multicast and reserved space.
+-
+-So `npx @mcpjam/inspector` and `mcpjam oauth …` now reach loopback, LAN,
+-CGNAT and unique-local targets, and hostnames that resolve to them, with no
+-flag to set. The hosted app is unchanged. The CLI's three OAuth proxy
+-commands, which hardcoded the hosted policy and could not be talked out of
+-it, gain `--https-only` for reproducing what the hosted app would do.
+-
+-**For SDK consumers.** `allowPrivateNetwork` (and `allowPrivateMetadataFetch`
+-on the state-machine surfaces) is additive and defaults to false, so existing
+-callers keep today's behaviour without changing a line, and `httpsOnly` still
+-overrides it. The one visible difference for an unchanged caller is wording:
+-a link-local or metadata destination now says so, instead of being reported
+-as "private/reserved".
+-
+-**What is still refused locally.** The allowance belongs to the chain, and
+-the chain's character is decided by where its first hop actually landed
+-rather than by how the hostname looked — a name that looks public and answers
+-`127.0.0.1` is the case this exists to serve, so a name-based test would
+-refuse the thing it permits. A public server that answers `302 Location:
+-http://192.168.1.1/…` therefore cannot make your inspector fetch it. DNS is
+-still resolved once and pinned into the socket, so rebinding is closed, and
+-cross-origin redirects still drop credentials.
+diff --git a/.changeset/modern-cancellation-aborts-the-stream.md b/.changeset/modern-cancellation-aborts-the-stream.md
+deleted file mode 100644
+index 6ded1ba2f..000000000
+--- a/.changeset/modern-cancellation-aborts-the-stream.md
++++ /dev/null
+@@ -1,43 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 ----
 -
--Add listEvalSuiteStageAnalytics to the Platform client. Requires the deployed
--backend stage-analytics query (backend D5a); a missing backend surfaces as a
--service error, never an empty result.
-diff --git a/.changeset/skills-catalog-in-the-prompt.md b/.changeset/skills-catalog-in-the-prompt.md
+-Modern-era cancellation aborts the per-request stream instead of POSTing `notifications/cancelled`
+-
+-MCP `2026-07-28` moved cancellation onto the transport for Streamable HTTP:
+-
+-> Closing the SSE response stream is the cancellation signal. The server MUST treat a client disconnect as cancellation of that request. No `notifications/cancelled` message is required or expected.
+-
+-The client package already forks on exactly this. Its protocol layer aborts the
+-per-request stream when the negotiated era is modern **and** the transport
+-reports `hasPerRequestStream === true`, and only falls back to POSTing
+-`notifications/cancelled` — the 2025-era and stdio signal — when it does not.
+-`StreamableHTTPClientTransport` sets the flag; the fork was never reaching it.
+-
+-Every transport we hand to a client is wrapped first, and the wrappers forwarded
+-`sessionId` and `setProtocolVersion` but not `hasPerRequestStream`. The flag read
+-`undefined`, so the fork took the legacy branch on *every* connection. This was
+-not limited to debug configurations: `wrapTransportForTaskResults` is applied
+-unconditionally at every HTTP transport site, so a plain 2026-07-28 connection
+-with no logger and no simulated-client options was already downgraded.
+-
+-Both halves of the resulting behavior were wrong. We sent a `notifications/cancelled`
+-a modern server neither requires nor expects, and — because that notification is
+-its own POST while the cancelled call is a *different* in-flight request — the
+-server holding the tool call never learned anything. It kept running the tool
+-until it finished, on a stateless transport where the abandoned response stream
+-was the only signal that would have reached it.
+-
+-All five wrappers now forward the flag: the four in `transport-utils`
+-(`LoggingTransport`, `DroppedListChangedTransport`, `TaskResultTransport`,
+-`FirstPageOnlyTransport`) and the widget runtime's `LoggingTransport`. It is
+-forwarded, never defaulted — a wrapper around a stdio transport must keep
+-reporting no per-request stream, because there the notification IS the spec
+-signal.
+-
+-The suite already had a test asserting no `notifications/cancelled` on a modern
+-abort, and it passed throughout. The legacy branch POSTs fire-and-forget, so
+-asserting the instant the call rejects reads `exchanges` before the notification
+-lands. The test now waits for that window to settle and additionally asserts the
+-positive half — that the aborted `tools/call` exchange actually terminates, which
+-a client that only rejects locally never does.
+diff --git a/.changeset/pass-criteria-enter-commits-once.md b/.changeset/pass-criteria-enter-commits-once.md
 deleted file mode 100644
-index 8c5c3e468..000000000
---- a/.changeset/skills-catalog-in-the-prompt.md
+index 3fc882bbd..000000000
+--- a/.changeset/pass-criteria-enter-commits-once.md
 +++ /dev/null
-@@ -1,17 +0,0 @@
+@@ -1,10 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Server-served skills are named in the prompt, so the model can actually choose one
+-Pressing Enter in the accuracy field reports one edit, not two
 -
--Progressive disclosure has three levels: every skill's **name and description** are always in context, the `SKILL.md` body loads when the model judges it relevant, and supporting files load after that. Level 1 is never lazy — a model cannot choose a skill whose description it has never read.
+-Enter leaves the field by blurring it, and blurring is what commits — so
+-committing before the blur as well filed the same edit twice. The test that
+-covered Enter only checked the value it reported, which is why the duplicate
+-went unnoticed; it now pins the call count too.
+diff --git a/.changeset/retire-client-verdict-rederivation.md b/.changeset/retire-client-verdict-rederivation.md
+deleted file mode 100644
+index ed37123af..000000000
+--- a/.changeset/retire-client-verdict-rederivation.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
 -
--The server-skills stanza skipped it. It said *"call `listSkills` to see those"* and named nothing, so picking a skill meant guessing that a relevant one might exist and spending a tool call to find out. Most turns never did. Asked how to import a corpus of promptfoo tests — with `mcpjam-eval-import` connected and its description matching almost word for word — the model never called `listSkills` and improvised a conversion process instead.
+-Stop re-grading eval iterations in the browser.
 -
--That is the irony of the old shape: `skills/list` **is** the progressive-disclosure mechanism. SEP-2640 returns frontmatter separately from content precisely so a host can put the catalog in front of the model without fetching a single body. We implemented that wire correctly and then called it lazily, discarding the thing it was designed for.
+-The run-detail view used to re-run the tool-call matcher over an iteration's
+-`actualToolCalls` and compute its own pass/fail — a second grader, in a second
+-implementation, over evidence the server had already graded. It only deferred
+-to the stored verdict when `resultSource` was exactly `"reported"`; a `derived`
+-row was re-derived client-side every time.
 -
--The catalog is now rendered into the system prompt, budgeted and formatted with the same helpers the Cloud Skills catalog uses — so the two halves of one feature cannot drift on wording, sort order, or what happens when metadata outgrows its share of the context. Each line keeps its origin (`MCP server "…"`), because these descriptions are third-party text and one that reads like an instruction should still show who wrote it. Unloadable skills stay listed and marked rather than hidden, so the model stops retrying them and a server author can see MCPJam declined.
+-A stored terminal `result` is now the only source for a row that has one.
 -
--The stanza also leads with what to do and follows with how to distrust it. The trust wording is unchanged and still unconditional — a digest match shows the bytes are consistent with what the server advertised, which is not the same as the content being trustworthy — but it no longer buries the only actionable sentence under three warnings.
+-This matters more than it used to. Under the versioned score contract at
+-grading mode `enforce`, an iteration's verdict comes from its gating score rows
+-— predicates, gates, tool errors, the whole set — and the browser can see none
+-of that. It sees the tool calls. Re-deriving from them is not a check on the
+-server; it is a different answer to the same question, reached with less
+-information, and the two silently disagreeing is exactly the failure this
+-removes.
 -
--Cost is one `skills/list` per turn per declaring server, shared with any `loadSkill` in the same turn, and the same per-turn catalog fetch Cloud Skills already pay. Caching it against the `ttlMs` servers already send — the worker serves an hour, and we currently surface that TTL and ignore it — would remove even that, and is worth doing for both paths at once.
+-The matcher itself is untouched and still runs where there is nothing stored to
+-defer to: legacy rows that never persisted a result (falling back to "failed"
+-would silently re-grade years of history), and the live-grading preview, whose
+-synthetic per-turn rows were never persisted at all. What retires is the
+-unverified re-derivation of an iteration that has already been graded — not the
+-matcher, and not the evaluation.
+-
+-This one is not behind a flag. Restoring the old behaviour means reverting this
+-change.
+diff --git a/.changeset/suite-settings-draft-and-commit.md b/.changeset/suite-settings-draft-and-commit.md
+deleted file mode 100644
+index 11699729e..000000000
+--- a/.changeset/suite-settings-draft-and-commit.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval suite settings are a draft you save, not a form that saves as you read it
+-
+-Every control in the settings sheet used to write the moment you touched it. A dropdown, a toggle, a text field: each fired its own mutation and its own toast. Three things followed, and all three were reported rather than predicted.
+-
+-- **There was no way to not save.** No Cancel, because there was nothing uncommitted to cancel. Opening the sheet to check a setting meant risking changing it, and the only way to find out whether you had was to close it and look again.
+-- **There was no unit of change.** Adjusting four related settings produced four writes and four toasts, none of which was the change you made. Anyone reading the suite later saw four unrelated events.
+-- **Two people editing one suite silently overwrote each other.** Each write succeeded, last one won, and neither person was told.
+-
+-The sheet now holds a draft. Edits accumulate, a bar appears with a count, and Review and save shows what will change — before and after, per setting — with an optional note that lands on the suite's revision so the next reader gets a reason instead of a diff to interpret. ⌘S opens the review rather than saving, because in a sheet with a review step the honest response to "commit what I did" is to show you what that is.
+-
+-- **One write, carrying only what changed.** A save that resent every field would clobber a colleague's edit to a row you never opened. The clearing semantics each control had are preserved exactly — the backend distinguishes an omitted field from a cleared one, and getting that wrong means a setting you cleared is still there on reload.
+-- **A concurrent save is refused, and your draft survives.** The save carries the revision you loaded. If someone saved first, the sheet keeps your edits, marks the settings you both changed, and asks you to look — rather than discarding your work, which is the outcome the check exists to prevent.
+-- **Renaming moved into the sheet.** It was an inline header edit that committed on blur, so a stray click saved a half-typed name to a suite other people watch.
+-- **Leaving with unsaved changes now asks.** In-app navigation and closing the tab are separately handled, because either alone leaves a whole class of exits silent.
+-
+-The debounced default-checks committer is gone, along with the pass-criteria localStorage mirror. Both were machinery for saving on every keystroke — a debounce that had to serialize its own writes so an out-of-order response could not persist stale text, and a local mirror so a value the server had not accepted yet survived a reload. Neither has anything to do now.
+-
+-Environments, the schedule and client attachments still save immediately and say so in their hint. Each has cross-field validation a batched save would have to re-implement, and re-implementing a validation is how the two copies come to disagree.
+-
+-On a deployment whose backend predates the composite save, the sheet detects the missing function once and falls back to the previous mutation. Everything still batches into one write; only the revision history is absent.
+diff --git a/.changeset/suite-settings-draft-follow-ups.md b/.changeset/suite-settings-draft-follow-ups.md
+deleted file mode 100644
+index 105a294e7..000000000
+--- a/.changeset/suite-settings-draft-follow-ups.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A settings draft belongs to one suite, and its concurrency check now runs
+-
+-Five follow-ups from review of the draft-and-commit sheet. The first two are
+-the ones that mattered.
+-
+-**Unsaved edits followed you to another suite.** The draft lived in a
+-component that is not remounted between suites, and the effect that used to
+-reset it per suite went away with the per-control writers. Rebasing keeps
+-every key the person edited — that is the whole point of it — so opening
+-suite A, typing a name, confirming "leave without saving" and clicking suite
+-B left A's name proposed as an unsaved change on B, and saving wrote it
+-there. A draft now carries the suite it belongs to, and a rebase across
+-identities starts a new one instead of reconciling.
+-
+-**Confirming the prompt now actually discards.** The guard only paused the
+-navigation; nothing threw the draft away, so the edits survived, every later
+-navigation re-prompted, and ⌘S opened the review dialog from pages that have
+-no settings sheet.
+-
+-**A conflict marker survived only until the next unrelated change.**
+-Conflicts were recomputed from the new base each time, so a colleague
+-renaming the suite cleared the warning about the threshold you had both
+-changed, and the next save overwrote theirs silently. A conflict is now
+-resolved by the person, by editing the key or discarding.
+-
+-**Renaming had two writers.** The header's inline editor still committed on
+-blur — no review, no note, no precondition — while the sheet drafted the
+-same field. Using it marked the sheet as "changed elsewhere" for the
+-person's own action, and the next save overwrote the rename. The header
+-title is read-only in the sheet; the overview keeps its own editor.
+-
+-**The accuracy input kept showing a discarded number.** It held its own text
+-state and never followed the prop, so Discard reverted the draft while the
+-field still displayed the old value — a settings control saying one thing
+-while a different thing gets saved.
+-
+-Also: pass criteria is omitted rather than sent as `null` (the mutation's
+-validator has no null member, so a clear would have failed the whole batched
+-save), an absent judge config reads as "Not configured" rather than "Off"
+-(absent resolves to an enabled advisory judge), and on a deployment without
+-the composite mutation the fallback drops fields that backend does not
+-declare and names them in the toast, rather than failing every save in the
+-draft.
+diff --git a/.changeset/suite-settings-draft-review-fixes.md b/.changeset/suite-settings-draft-review-fixes.md
+deleted file mode 100644
+index 46a114879..000000000
+--- a/.changeset/suite-settings-draft-review-fixes.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A save reports what it actually wrote, and typing survives an edit landing elsewhere
+-
+-Three follow-ups from review of the draft-and-commit settings sheet. The
+-first two lose an edit.
+-
+-**A field the save could not carry was marked saved anyway.** On a
+-deployment that predates the composite mutation, the fallback drops settings
+-the older mutation does not declare — a judge rubric today — and its toast
+-says so. But the commit still reported a clean save, so the draft rebased
+-every dirty key, including the one that never travelled. The rubric stopped
+-being an unsaved change and there was nothing left to retry. The commit now
+-names the keys it dropped and the draft keeps them dirty, which is what the
+-toast was already promising.
+-
+-**An in-flight save landed on the suite you switched to.** Rebasing a live
+-suite already ignores a result that belongs to a different suite; the
+-matching commit path did not check, so a mutation started on suite A and
+-resolved after the person opened suite B wrote A's values into B's draft.
+-Both paths now carry the suite the save was started for.
+-
+-**The accuracy field was pulled out from under someone typing.** Following
+-the prop is what stops the input from displaying a number the draft no
+-longer holds, but the guard could not tell a live edit from a settled one,
+-so a colleague's save or a discard elsewhere replaced half-typed text.
+-Typing now wins until it is committed or abandoned — and Escape genuinely
+-abandons it, where before the blur it triggered committed the value it was
+-meant to throw away.
+diff --git a/.changeset/tool-cancellation-host-knob.md b/.changeset/tool-cancellation-host-knob.md
+deleted file mode 100644
+index fbd2ae707..000000000
+--- a/.changeset/tool-cancellation-host-knob.md
++++ /dev/null
+@@ -1,90 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+-"@mcpjam/inspector": patch
+----
+-
+-Model tool cancellation per era: two Protocol-tab switches and two caniuse rows
+-
+-A server author has no way to answer the question that decides whether a stopped
+-turn costs them anything: **when the user hits stop, does the host tell me?** If
+-it does not, the tool runs to completion server-side — side effects, tokens and
+-all — while the host has already moved on.
+-
+-`mcpProfile.toolCallCancellation` now answers it, as
+-`{ legacy?: boolean; modern?: boolean }` — one leaf per era.
+-
+-**Two leaves, not one boolean.** A host can be right on one era and wrong on the
+-other, and the proof is this package's own history: MCPJam sent
+-`notifications/cancelled` correctly on 2025 while never aborting the stream on
+-2026. Through the 2026 migration that split is common, and collapsing it hides
+-exactly the defect the prober exists to find. `legacy` covers every 2025 revision
+-(they are identical here; `2025-11-25` differs only in routing task-augmented
+-requests through `tasks/cancel`); `modern` covers `2026-07-28`.
+-
+-The era selects the leaf, not the transport: a 2026 stdio connection reads
+-`modern` even though its mechanism is `notifications/cancelled`. What is modeled
+-is whether the host cancels on that era's connections, not which message carries
+-it. Users never see `legacy`/`modern` — the UI and caniuse say "Tool cancellation
+-(2025)" and "(2026)".
+-
+-Absent per leaf is the conforming answer, so a fully cancelling client writes
+-nothing and keeps its canonical hash; only an explicit `false` is stored. The
+-field is validated by the same `canonicalBooleanCapabilityRecord` its sibling
+-`toolListChanged` already uses, on both sides of the wire.
+-
+-Both leaves travel to the connection, and the leaf that governs is resolved
+-AFTER the handshake from `getNegotiatedProtocolVersion()` — the same value the
+-UI reports — falling back to the configured pin before the handshake lands.
+-Resolving at config-build time cannot work for an unpinned (`"auto"`) host: the
+-era does not exist yet, so picking one there makes the other era's toggle
+-unreachable.
+-
+-A `false` leaf is enforced by withholding the caller's abort signal from the
+-request and racing the caller against it locally instead. The signal is the only
+-thing that reaches the wire, so withholding it withholds whichever mechanism that
+-era would have used, while the turn still ends promptly for the user. It is
+-deliberately not implemented by hiding the transport's `hasPerRequestStream`:
+-that would make a modern connection fall back to POSTing
+-`notifications/cancelled`, a message no conforming client sends on `2026-07-28`.
+-The simulated host must be silent, not wrong.
+-
+-Two fixes fall out of wiring it up:
+-
+-- `toolCallCancellation` was missing from `CONFORMANCE_PROFILE_KEYS`, so the
+-  public `HostMcp` ⇄ `mcpProfile` round-trip silently dropped it in both
+-  directions.
+-- `isMcpProfileEmpty` did not know the field, so turning an era off on a host
+-  with nothing else configured collapsed the profile and wrote nothing at all.
+-
+-**Public rows appear with their data.** caniuse.dev hides any field no published
+-host has been measured for, rather than showing a column of "Not yet tested" — a
+-question dressed as an answer. The two eras gate independently, so a 2025-only
+-measurement never publishes a 2026 row nobody has probed. No host values ship
+-here, so neither row is visible yet.
+-
+-The saved value has to reach a connection that is already up, and it does so
+-twice over:
+-
+-- **Per turn.** The chat routes (local and hosted) resolve the host config
+-  server-side on every turn and pass its cancellation record to
+-  `getToolsForAiSdk` as a per-turn override that takes precedence over the
+-  connection's connect-time copy. It is authoritative whenever a host config
+-  resolved: a host that cancels normally sends an *empty* record, not nothing,
+-  because `undefined` would fall through to the stale connection copy and a
+-  toggle switched back on would keep suppressing.
+-- **On save.** The host's connected servers are reconnected so the connection's
+-  own copy is refreshed too — the same reason the per-server protocol pin
+-  reconnects after its save. The reconnect is deferred until the app's view of
+-  the host shows the just-saved config: it builds its connection defaults from
+-  the active host's profile, and right after the mutation resolves that
+-  subscription still holds the previous config, so an immediate reconnect
+-  applied the value the user had just replaced — one save behind, every time.
+-  Narrow by construction: only when the setting actually changed, only for
+-  servers already connected, never interactive, and a failed reconnect warns
+-  rather than failing the save.
+-
+-A suppressed call also outlives the default request timeout. The protocol layer
+-runs the same cancellation on a timeout as on an abort — closing the stream on a
+-modern connection — so with the 60s timer left in place a host configured never
+-to cancel still cancelled, a minute later, which read as the knob being flaky
+-rather than off. Suppressed requests now carry a long bounded timeout instead.
+diff --git a/.changeset/tool-list-changed-reaches-hosted-connections.md b/.changeset/tool-list-changed-reaches-hosted-connections.md
+deleted file mode 100644
+index 3d02dd916..000000000
+--- a/.changeset/tool-list-changed-reaches-hosted-connections.md
++++ /dev/null
+@@ -1,79 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-The two "Tool list changed" switches now reach the connection, hosted and local
+-
+-`mcpProfile.toolListChanged` models a host that never opens the listen channel
+-(`listens: false`) or that ignores `notifications/tools/list_changed` when it
+-arrives (`refetches: false`) — the two ways a real client can leave a server's
+-tool list stale. **Neither switch reached a connection.** Every connection
+-listened and refetched no matter how the host was configured, so the debugger
+-reported conforming behavior the host does not have.
+-
+-The values were computed correctly and then never handed over — at four
+-separate hand-offs, all of them silent.
+-
+-**Hosted.** `App.tsx` resolved both leaves into `hostedMcpProfilePins` and
+-stopped there, without passing them to `useApiContext`. Even had it passed
+-them, `projectServerSchema` declared neither field, so Zod would have stripped
+-them off the request body; two hops further,
+-`extractMcpInitializeOptions` did not read them and `toHttpConfig` had nowhere
+-to put them. The sibling knobs (`firstPageOnly`, `supportsMrtr`,
+-`toolCallCancellation`) travel every one of those hops; these two never did.
+-
+-Hosted **chat** turns were right by accident: a turn with a backing host config
+-re-derives every conformance knob server-side (`applyHostConformanceKnobs`),
+-overwriting whatever the body carried. Every other hosted surface — Tools,
+-Resources, Prompts, tasks, evals, bench, apps, export, MRTR continuation, and
+-ad-hoc chat turns with no host config — builds its connection straight from the
+-request body, and so ran as a fully conforming client.
+-
+-**Local.** The same pair died one hop earlier and for the same reason. The
+-client put both leaves on `connectionDefaults` and `/api/mcp/connect` received
+-them, but `parseConnectionDefaults` — the shape gate that must name every field
+-it keeps — did not read them, and `toMCPServerConfig` had no field to set. A
+-local connect was as conforming as a hosted one, whatever the host asked for.
+-
+-Both switches now travel the same path their siblings do on both surfaces: only
+-the non-conforming value reaches the wire, the boundary declares it, the
+-extractor or parser reads it, and it lands on the SDK config. An absent field
+-still means the conforming behavior, so a host with no `toolListChanged`
+-opinion sends nothing and behaves exactly as before.
+-
+-**The wire declaration is now written once.** Chasing this bug turned up two
+-more instances of it, both the same shape and neither about `toolListChanged`:
+-`projectServerSchema` had never declared `toolCallCancellation`, so that knob
+-was stripped on every hosted surface except chat (which extracts from the
+-pre-parse raw body) since the day it shipped; and `hostedBatchSchema` — the
+-schema every hosted **eval** body is parsed through — declared none of the
+-conformance knobs at all. Three knobs, three schemas, one failure mode: Zod
+-strips what a schema does not name, and the result is not an error but a
+-silently conforming session. The six fields now live in one exported
+-`conformanceKnobWireShape` that both schemas spread, so a new knob reaches
+-every body-built surface by being added in one place.
+-
+-The hosted local-runtime **stdio** divert was dropping `toolCallCancellation`
+-for the same reason at a different hop: it forwarded the sibling knobs to
+-`resolveLocalStdioServerConfig`, which has always accepted cancellation and
+-writes it onto the child config, but the hand-off never passed it. Cancellation
+-is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
+-
+-`/api/web/evals/stream-test-case` needed one more fix of the same family. It is
+-the only eval route that builds its own manager instead of going through the
+-wrappers that extract the body's `mcpProfile` pins, so it accepted every pin its
+-schema declares — `clientInfo`, `supportedProtocolVersions`, the per-server
+-version map, and now the conformance knobs — and connected as though none had
+-been sent. It extracts them now, from the pre-parse raw body for the same reason
+-`xaaPolicy` there does.
+-
+-One thing this does **not** change: on the body-built surfaces a server-side
+-host config is not re-derived over the request body. Only chat turns do that
+-(`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
+-as it already was for the sibling knobs.
+-
+-One asymmetry is deliberate. `dropToolListChanged` edits an inbound JSON-RPC
+-frame, so it is forwarded on stdio as well as HTTP; `suppressListenChannel`
+-refuses a server→client GET stream that only Streamable HTTP has, so — like
+-`mirrorToolParamHeaders` — it is not written onto a stdio config, where it
+-could never act.
+diff --git a/cli/package.json b/cli/package.json
+index d1b3ea28f..f5f08ad10 100644
+--- a/cli/package.json
++++ b/cli/package.json
+@@ -1,6 +1,6 @@
+ {
+   "name": "@mcpjam/cli",
+-  "version": "5.5.2",
++  "version": "5.6.0",
+   "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
+   "type": "module",
+   "main": "dist/index.js",
+@@ -19,7 +19,7 @@
+     "prepublishOnly": "npm run build"
+   },
+   "dependencies": {
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
+     "@modelcontextprotocol/server": "2.0.0",
+     "commander": "^14.0.3",
+     "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index 3b506c2e9..09b331f69 100644
+index bbdd10137..daaaf0c8c 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "3.3.0",
-+  "version": "3.3.1",
+-  "version": "3.3.5",
++  "version": "3.3.6",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -133,7 +133,7 @@
+@@ -137,7 +137,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^8.3.0",
-+    "@mcpjam/sdk": "^8.3.1",
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 2a69474f3..e093dab5b 100644
+index fccd59c0f..f82bfc78d 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -399,7 +399,7 @@
+@@ -62,9 +62,9 @@
+     },
+     "cli": {
+       "name": "@mcpjam/cli",
+-      "version": "5.5.2",
++      "version": "5.6.0",
+       "dependencies": {
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
+         "@modelcontextprotocol/server": "2.0.0",
+         "commander": "^14.0.3",
+         "posthog-node": "^5.24.10",
+@@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "3.3.0",
-+      "version": "3.3.1",
+-      "version": "3.3.5",
++      "version": "3.3.6",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -432,7 +432,7 @@
+@@ -435,7 +435,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^8.3.0",
-+        "@mcpjam/sdk": "^8.3.1",
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -37869,7 +37869,7 @@
+@@ -39236,7 +39236,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "8.3.0",
-+      "version": "8.3.1",
+-      "version": "8.5.2",
++      "version": "8.6.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index 23cb75f32..70d451835 100644
+index 57f8709b6..7a84b33bf 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "8.3.0",
-+  "version": "8.3.1",
+-  "version": "8.5.2",
++  "version": "8.6.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

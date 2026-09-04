@@ -305,6 +305,13 @@ export type McpAppsCapabilities = {
   downloadFile?: boolean;
   requestTeardown?: boolean;
   /**
+   * Whether the host sends `hostContext.safeAreaInsets` at all. Optional
+   * under SEP-1865, and hosts split: Claude reports 12px on every edge,
+   * while Slackbot, Cursor, VS Code, Codex and Le Chat omit the key, so a
+   * widget reading `insets.top` gets `undefined` rather than a zero.
+   */
+  safeAreaInsets?: boolean;
+  /**
    * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
    * calls. Shares storage with the app bridge overrides but is not an
    * `app.*` capability — it shapes the VALUE a live handler returns rather
@@ -370,6 +377,7 @@ export type ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
+  safeAreaInsets: boolean;
   widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
   /**
    * Optional like the CSP subtype records above: absent means the host

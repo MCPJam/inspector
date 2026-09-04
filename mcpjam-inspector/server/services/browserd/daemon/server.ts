@@ -13,7 +13,13 @@ import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { CommandQueue } from "./command-queue";
 import { BrowserdRequestHandler, type DaemonResponse } from "./request-handler";
-import { guardStaleness, type BrowserDriver } from "./browser-driver";
+import {
+  createFrameStreamHost,
+  type FrameStreamHost,
+  type FrameStreamOptions,
+} from "./frame-stream-route";
+import { guardLease, guardStaleness, type BrowserDriver } from "./browser-driver";
+import { HandoffLease } from "./lease";
 
 /** Requests bigger than this are refused with 413 before they reach the queue. */
 const DEFAULT_BODY_LIMIT_BYTES = 1024 * 1024;
@@ -70,23 +76,59 @@ function writeResponse(
 
 export interface DaemonServerOptions {
   bodyLimitBytes?: number;
+  /** Frame-stream tunables. Test seam, like `bodyLimitBytes`. */
+  frames?: FrameStreamOptions;
 }
 
-/** Bind a request handler to a Node http server. Does not call `listen`. */
+/**
+ * Bind a request handler to a Node http server. Does not call `listen`.
+ *
+ * Returns the frame-stream host alongside the server because open streams are
+ * state the server does not know about: `server.close()` stops accepting and
+ * then waits for existing connections, so a live stream makes it hang forever.
+ * The caller ends the streams first.
+ */
 export function createDaemonServer(
   handler: BrowserdRequestHandler,
   options: DaemonServerOptions = {},
-): Server {
+): { server: Server; frames: FrameStreamHost } {
   const bodyLimit = options.bodyLimitBytes ?? DEFAULT_BODY_LIMIT_BYTES;
-  return createServer((req, res) => {
+  const frames = createFrameStreamHost(handler, options.frames ?? {});
+  const server = createServer((req, res) => {
+    let path: string;
+    let query: URLSearchParams | undefined;
+    try {
+      const url = new URL(req.url ?? "/", "http://browserd.invalid");
+      path = url.pathname;
+      query = url.searchParams;
+    } catch {
+      writeResponse(res, { status: 404 });
+      return;
+    }
+
+    // BEFORE the async block below, and deliberately so: that block's catch
+    // ends the response, which for a stream that is already flowing would cut
+    // it off mid-record for a reason that has nothing to do with it.
+    //
+    // Matched on PATH, not on method — the 405 belongs to this route, not to
+    // the handler's catch-all 404.
+    if (path === "/v1/frames") {
+      frames.handle({
+        req,
+        res,
+        daemonRequest: {
+          method: req.method ?? "GET",
+          path,
+          origin: headerValue(req.headers.origin),
+          authorization: headerValue(req.headers.authorization),
+          body: "",
+          query,
+        },
+      });
+      return;
+    }
+
     void (async () => {
-      let path: string;
-      try {
-        path = new URL(req.url ?? "/", "http://browserd.invalid").pathname;
-      } catch {
-        writeResponse(res, { status: 404 });
-        return;
-      }
       let body = "";
       if (req.method === "POST" || req.method === "PUT") {
         try {
@@ -104,6 +146,7 @@ export function createDaemonServer(
         origin: headerValue(req.headers.origin),
         authorization: headerValue(req.headers.authorization),
         body,
+        query,
       });
       writeResponse(res, response);
     })().catch(() => {
@@ -111,6 +154,7 @@ export function createDaemonServer(
       else res.end();
     });
   });
+  return { server, frames };
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -122,6 +166,17 @@ export interface BrowserdStack {
   handler: BrowserdRequestHandler;
   queue: CommandQueue;
   bootId: string;
+  /** The human-handoff lease this stack's handler and driver share. */
+  lease: HandoffLease;
+  /**
+   * End every open frame stream, saying why.
+   *
+   * Must run BEFORE `server.close()`, which waits on existing connections and
+   * would otherwise never resolve. Saying why is the point: a reader that gets
+   * a final record knows the daemon went down, rather than guessing at a
+   * connection that simply stopped.
+   */
+  closeStreams(reason?: "shutting_down"): void;
 }
 
 /**
@@ -132,18 +187,44 @@ export interface BrowserdStack {
  */
 export function buildBrowserdStack(
   driver: BrowserDriver,
-  config: { token: string; bootId?: string } & DaemonServerOptions,
+  config: {
+    token: string;
+    bootId?: string;
+    lease?: HandoffLease;
+  } & DaemonServerOptions,
 ): BrowserdStack {
   const bootId = config.bootId ?? randomUUID();
-  const queue = new CommandQueue(guardStaleness(driver), bootId);
+  // ONE lease instance, shared THREE ways: the handler refuses commands that
+  // arrive while it is held, the queue's executor re-refuses the ones already
+  // admitted when it is taken, and the driver reads it both to refuse a
+  // capture mid-command and to make the first post-handoff observation loud
+  // (L6). Two instances would let those disagree — which, for a gate whose
+  // whole job is privacy, means a screenshot of someone's password field.
+  const lease = config.lease ?? new HandoffLease();
+  // The lease check wraps the staleness guard rather than the other way round:
+  // reading a tab's current state token to compare it IS an observation of the
+  // page, so it must not happen for a command the lease is about to refuse.
+  const queue = new CommandQueue(
+    guardLease(lease, guardStaleness(driver, lease)),
+    bootId,
+  );
   const handler = new BrowserdRequestHandler({
     queue,
     driver,
     bootId,
     token: config.token,
+    lease,
   });
-  const server = createDaemonServer(handler, {
+  const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
+    ...(config.frames ? { frames: config.frames } : {}),
   });
-  return { server, handler, queue, bootId };
+  return {
+    server,
+    handler,
+    queue,
+    bootId,
+    lease,
+    closeStreams: (reason = "shutting_down") => frames.closeAll(reason),
+  };
 }

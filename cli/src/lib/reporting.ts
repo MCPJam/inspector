@@ -1,6 +1,7 @@
 import path from "node:path";
 import {
   formatEvalRunDecisionSummary,
+  type FormatEvalRunDecisionSummaryOptions,
   renderStructuredRunHtml,
   renderStructuredRunJson,
   renderStructuredRunJUnitXml,
@@ -57,9 +58,10 @@ export function writeEvalDecisionSummary(
   format: string,
   summary: Parameters<typeof formatEvalRunDecisionSummary>[0] | undefined,
   destination: Pick<NodeJS.WriteStream, "write"> = process.stdout,
+  options: FormatEvalRunDecisionSummaryOptions = {},
 ): void {
   if (format !== "human" || !summary) return;
-  destination.write(`${formatEvalRunDecisionSummary(summary)}\n`);
+  destination.write(`${formatEvalRunDecisionSummary(summary, options)}\n`);
 }
 
 /**
