@@ -41,6 +41,29 @@
  */
 export const SIGN_OUT_SUPPRESSION_WINDOW_MS = 10_000;
 
+/**
+ * How long the Electron sign-out waits for its logout request before it
+ * navigates anyway.
+ *
+ * INVARIANT: must stay BELOW `SIGN_OUT_SUPPRESSION_WINDOW_MS`.
+ *
+ * The Electron path cannot let authkit navigate for it — WorkOS only redirects
+ * to a URI its dashboard allowlists — so it calls `signOut({navigate: false})`,
+ * waits for the promise, and navigates itself. That promise settles when the
+ * logout `fetch` does, and NOTHING else moves the page. A request that hangs
+ * past the suppression window therefore leaves the latch expired while the
+ * logout is still in flight, the refresh timer fires unlatched, and the user
+ * lands on the hosted login page — the exact hijack this module exists to
+ * stop, reappearing on a slow network.
+ *
+ * Bounding the wait is the fix rather than widening the window, because the
+ * response is opaque (`mode: "no-cors"`) and unreadable: waiting longer buys
+ * the caller nothing a timeout does not. Five seconds is generous for a
+ * request whose only job is to reach WorkOS, and half the window, so the
+ * navigation always happens with the latch still held.
+ */
+export const SIGN_OUT_REQUEST_TIMEOUT_MS = 5_000;
+
 let signOutStartedAt: number | null = null;
 
 /**
