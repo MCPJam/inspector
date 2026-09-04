@@ -121,9 +121,20 @@ describe("HostConfigCompareView public mode", () => {
         />
       </MemoryRouter>,
     );
+    // Both are ranked, so they render as inline chips rather than in the More
+    // menu. Asserted by test id: a bare `getByText("Claude Code")` would be
+    // satisfied by the chip and would keep passing even if the gate started
+    // hiding them, which is the whole thing this test exists to catch.
+    expect(
+      screen.getByTestId("host-compare-chip-preset:claude-code"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("host-compare-chip-preset:codex"),
+    ).toBeInTheDocument();
+    // The menu still has to open and list the unranked presets, so the
+    // signed-in absences below read as the gate rather than a dead menu.
     fireEvent.click(screen.getByTestId("host-compare-overflow-trigger"));
-    expect(await screen.findByText("Claude Code")).toBeInTheDocument();
-    expect(screen.getByText("Codex")).toBeInTheDocument();
+    expect(await screen.findByText("Notion")).toBeInTheDocument();
     unmount();
 
     // Signed in with a project, so the matrix actually renders hosts. With

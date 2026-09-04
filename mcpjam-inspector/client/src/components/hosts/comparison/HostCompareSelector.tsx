@@ -23,12 +23,21 @@ import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
 import type { SupportFilterMode } from "./support-level";
+import { PUBLIC_CAN_I_USE_INLINE_PRESET_IDS } from "./caniuse-capability-catalog";
 
-// Sized to the public caniuse ranked list (PUBLIC_CAN_I_USE_INLINE_PRESET_IDS),
-// which is nine. Below that count the tail of the ranking is silently dropped
-// from the row rather than overflowing, so the two pinned rightmost entries —
-// VS Code and Slackbot — would never render.
-const INITIAL_INLINE_CHIP_LIMIT = 9;
+// The ranked caniuse row has to fit inline in full. Past this limit the tail is
+// dropped rather than overflowed, so a ranking longer than the limit would
+// silently hide its own pinned-rightmost entries — which is exactly what
+// happened when the list grew from six to nine.
+//
+// DERIVED, not typed out: the two were equal by coincidence at six, drifted the
+// moment the list grew, and a comment tying them together is not enforcement.
+// The floor keeps the signed-in matrix — which renders live hosts and applies
+// no ranking — at the density it has always had.
+const INITIAL_INLINE_CHIP_LIMIT = Math.max(
+  6,
+  PUBLIC_CAN_I_USE_INLINE_PRESET_IDS.length,
+);
 
 const SUPPORT_FILTERS: ReadonlyArray<{
   value: SupportFilterMode;
