@@ -36,7 +36,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
   it("toggling on writes the policy under mcpProfile.extensions", () => {
     const { getDraft } = renderTab(emptyHostConfigInputV2());
     const toggle = screen.getByRole("switch", {
-      name: /enterprise-managed authorization/i,
+      name: /default all project servers to enterprise managed auth/i,
     });
     expect(toggle).toHaveAttribute("aria-checked", "false");
 
@@ -53,7 +53,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
     };
     const { getDraft } = renderTab(draft);
     const toggle = screen.getByRole("switch", {
-      name: /enterprise-managed authorization/i,
+      name: /default all project servers to enterprise managed auth/i,
     });
     expect(toggle).toHaveAttribute("aria-checked", "true");
 
@@ -72,7 +72,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
     const { getDraft, rerender, onDraftChange } = renderTab(draft);
     const toggle = () =>
       screen.getByRole("switch", {
-        name: /enterprise-managed authorization/i,
+        name: /default all project servers to enterprise managed auth/i,
       });
     fireEvent.click(toggle()); // on
     // Re-render with the updated draft (the parent does this in production)
@@ -100,7 +100,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
     };
     renderTab(draft);
     const toggle = screen.getByRole("switch", {
-      name: /enterprise-managed authorization/i,
+      name: /default all project servers to enterprise managed auth/i,
     });
     expect(toggle).toHaveAttribute("aria-checked", "false");
     expect(
@@ -128,7 +128,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
       renderTab(emptyHostConfigInputV2());
       expect(
         screen.queryByRole("switch", {
-          name: /enterprise-managed authorization/i,
+          name: /default all project servers to enterprise managed auth/i,
         })
       ).toBeNull();
     } finally {
@@ -147,7 +147,7 @@ describe("ProtocolTab — enterprise-managed authorization policy switch", () =>
       renderTab(draft);
       expect(
         screen.getByRole("switch", {
-          name: /enterprise-managed authorization/i,
+          name: /default all project servers to enterprise managed auth/i,
         })
       ).toHaveAttribute("aria-checked", "true");
     } finally {

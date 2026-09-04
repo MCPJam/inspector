@@ -1,6 +1,6 @@
 {
   "id": "hosted-0006",
-  "note": "connect failed — a setup abort measures nothing",
+  "note": "connect failed \u2014 a setup abort measures nothing",
   "origin": "synthetic",
   "authored": {
     "mode": "model_driven",
@@ -65,6 +65,6 @@
     ],
     "firstFailedStage": "connection",
     "failureCategory": "setup",
-    "stageAnalyzerVersion": 5
+    "stageAnalyzerVersion": 8
   }
 }

@@ -213,6 +213,7 @@ export type {
   ServerSkillsLogger,
   VerifiedServerSkill,
 } from "./server-skills.js";
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -467,6 +468,7 @@ export {
   NEXT_ACTION_BY_FAILURE_CATEGORY,
   readEvalRunDecisionSummary,
 } from "./eval-decision-summary.js";
+export type { FormatEvalRunDecisionSummaryOptions } from "./eval-decision-summary.js";
 /**
  * The canonical run decision contract, re-exported from `@mcpjam/sdk/contract`.
  *

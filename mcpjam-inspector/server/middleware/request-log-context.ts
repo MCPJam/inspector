@@ -230,6 +230,10 @@ export async function requestLogContextMiddleware(c: Context, next: Next) {
         // it — see the field docs in `log-events.ts`.
         ...(webErrorMeta?.origin ? { origin: webErrorMeta.origin } : {}),
         ...(webErrorMeta?.slug ? { slug: webErrorMeta.slug } : {}),
+        // Omitted when undeclared rather than defaulted. A row with no `hop`
+        // is one nobody has attributed yet, which is not the same claim as
+        // "the user's hop" — see the field docs in `log-events.ts`.
+        ...(webErrorMeta?.hop ? { hop: webErrorMeta.hop } : {}),
       },
       { error: thrown instanceof Error ? thrown : undefined },
     );
