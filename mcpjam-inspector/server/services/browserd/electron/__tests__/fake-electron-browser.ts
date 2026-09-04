@@ -105,11 +105,37 @@ export class FakeBrowserWebContents extends EventEmitter {
     this.stopped += 1;
   }
 
+  /**
+   * A frame this reload should report as having failed, before it commits.
+   *
+   * `[url, isMainFrame]`, mirroring Electron's own argument order, so a test
+   * can model the routine case: a blocked ad iframe fails while the document
+   * behind it loads perfectly.
+   */
+  failFrameOnNextLoad?: { description: string; isMainFrame: boolean };
+
   reload(): void {
     this.navigations.push(`reload:${this.url}`);
     // Asynchronous, like the real one: the page commits after the caller has
     // already returned, which is exactly what the wait exists to catch.
-    queueMicrotask(() => this.emit("did-finish-load"));
+    queueMicrotask(() => {
+      const failure = this.failFrameOnNextLoad;
+      if (failure) {
+        this.failFrameOnNextLoad = undefined;
+        // Electron's signature: event, errorCode, errorDescription,
+        // validatedURL, isMainFrame.
+        this.emit(
+          "did-fail-load",
+          { preventDefault() {} },
+          -1,
+          failure.description,
+          "https://ads.test/pixel",
+          failure.isMainFrame,
+        );
+        if (failure.isMainFrame) return;
+      }
+      this.emit("did-finish-load");
+    });
   }
 
   readonly navigationHistory = {

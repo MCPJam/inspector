@@ -248,6 +248,33 @@ describe("electron page — navigation", () => {
     expect(contents.navigations).toContain("reload:https://example.test/");
   });
 
+  it("ignores a SUBFRAME that failed, because the document loaded", async () => {
+    // Blocked ad iframes and tracking pixels fail constantly on the open web
+    // this engine exists to drive. Electron reports every frame's failure
+    // through the same event, so without the main-frame check one of them
+    // rejected the whole navigation and `reload()` answered `not found` on a
+    // page that had loaded perfectly.
+    const { page, contents } = makePage();
+    await page.goto("https://example.test/");
+    contents.failFrameOnNextLoad = {
+      description: "ERR_BLOCKED_BY_CLIENT",
+      isMainFrame: false,
+    };
+
+    await expect(page.reload()).resolves.toBeUndefined();
+  });
+
+  it("still fails a reload whose MAIN frame failed", async () => {
+    const { page, contents } = makePage();
+    await page.goto("https://example.test/");
+    contents.failFrameOnNextLoad = {
+      description: "ERR_NAME_NOT_RESOLVED",
+      isMainFrame: true,
+    };
+
+    await expect(page.reload()).rejects.toThrow(/ERR_NAME_NOT_RESOLVED/);
+  });
+
   it("says there is nowhere to go back to, rather than hanging", async () => {
     const { page } = makePage();
     await expect(page.goBack()).rejects.toThrow(

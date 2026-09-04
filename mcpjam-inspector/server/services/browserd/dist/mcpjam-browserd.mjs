@@ -2495,14 +2495,16 @@ async function probeSingletonOwner(userDataDir, isAlive = defaultIsAlive, descri
   if (!Number.isInteger(pid) || pid <= 0) return { live: false };
   if (host !== hostname()) return { live: true, pid, host };
   if (!isAlive(pid)) return { live: false, pid };
-  const command = describeProcess(pid);
-  if (command !== void 0 && !looksLikeBrowser(command)) {
+  const command = describeProcess(pid)?.trim();
+  if (command && !looksLikeBrowser(command)) {
     return { live: false, pid };
   }
   return { live: true, pid };
 }
 function looksLikeBrowser(command) {
-  return /chrom|headless_shell/i.test(command);
+  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron|firefox|safari/i.test(
+    command
+  );
 }
 function defaultDescribeProcess(pid) {
   if (process.platform === "win32") return void 0;

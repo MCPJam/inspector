@@ -743,12 +743,25 @@ function navigationSettled(
       else resolve();
     };
     const onLoad = () => finish();
-    const onFail = (...args: unknown[]) =>
+    const onFail = (...args: unknown[]) => {
+      // SUBFRAMES FAIL ALL THE TIME. Electron reports every frame's failure
+      // through these events, and `isMainFrame` is the fifth argument
+      // (`event, errorCode, errorDescription, validatedURL, isMainFrame`).
+      // Without this check one blocked tracking pixel or ad iframe — routine
+      // on the open web this engine exists to drive — rejects the whole
+      // navigation, so `reload()` and `goBack()` report `not found` on a page
+      // whose document loaded perfectly.
+      //
+      // Only an explicit `false` is ignored: a caller that passes fewer
+      // arguments leaves this `undefined`, and treating THAT as a subframe
+      // would swallow real main-frame failures.
+      if (args[4] === false) return;
       // Worded so the driver reads a bad URL or a dead host as something the
       // model can act on, not as a daemon fault.
       finish(
         new Error(`not found: navigation failed (${String(args[2] ?? "")})`),
       );
+    };
     wc.on("did-finish-load", onLoad);
     wc.on("did-fail-load", onFail);
     // `wc.stop()` on a deadline CANCELS the load, and a cancelled load reports
