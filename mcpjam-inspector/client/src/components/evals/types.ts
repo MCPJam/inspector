@@ -292,6 +292,29 @@ export type EvalSuite = {
    * than "this suite has none".
    */
   revisionNumber?: number;
+  /**
+   * B9a — the verdict policy this suite's runs are decided under.
+   *
+   * `2` is the fraction-and-validity policy; ABSENT is legacy, decided by
+   * `defaultPassCriteria.minimumPassRate` (a PERCENT) over
+   * `max(case.iterations, minIterations)`. The two are not convertible, which
+   * is why absence is read rather than defaulted — reading a historical
+   * percent as a fraction silently moves every bar by a factor of a hundred.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * The v2 defaults a case inherits. FRACTIONS in [0,1], never percents;
+   * a percent exists only in front of a reader.
+   */
+  verdictPolicyDefaults?: {
+    repetitions: number;
+    passThreshold: number;
+    validity?: {
+      minEligibleTrials?: number;
+      minCompletionRate?: number;
+      maxEvaluatorErrorRate?: number;
+    };
+  };
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {

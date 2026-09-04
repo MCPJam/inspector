@@ -47,6 +47,35 @@ export type SuiteSettingsValues = {
   defaultPredicates: Predicate[];
   judgeConfig: EvalJudgeConfig | undefined;
   judgeRubric: EvalJudgeRubric | undefined;
+  /**
+   * The v2 verdict policy, drafted as a PAIR.
+   *
+   * `2` or absent — there is no other version and no way back, so this is the
+   * one-way upgrade switch rather than a number anyone picks. It moves only
+   * together with `verdictPolicyDefaults`, because a v2 suite with no defaults
+   * is a suite the backend refuses to store.
+   */
+  verdictPolicyVersion: 2 | undefined;
+  /**
+   * FRACTIONS, whole-object.
+   *
+   * Written wholesale rather than field-by-field for the same reason the
+   * backend stores it that way: `repetitions` without `passThreshold` cannot
+   * answer what a case is graded against, so a partial value is not a partial
+   * answer but an unanswerable one.
+   */
+  verdictPolicyDefaults: SuiteVerdictPolicyDefaults | undefined;
+};
+
+/** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
+export type SuiteVerdictPolicyDefaults = {
+  repetitions: number;
+  passThreshold: number;
+  validity?: {
+    minEligibleTrials?: number;
+    minCompletionRate?: number;
+    maxEvaluatorErrorRate?: number;
+  };
 };
 
 export type SuiteSettingsKey = keyof SuiteSettingsValues;
@@ -60,6 +89,8 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "defaultPredicates",
   "judgeConfig",
   "judgeRubric",
+  "verdictPolicyVersion",
+  "verdictPolicyDefaults",
 ];
 
 export type SuiteSettingsDraft = {
@@ -133,6 +164,8 @@ export function readSuiteSettingsValues(suite: {
   defaultPredicates?: Predicate[];
   judgeConfig?: EvalJudgeConfig;
   judgeRubric?: EvalJudgeRubric;
+  verdictPolicyVersion?: 2;
+  verdictPolicyDefaults?: SuiteVerdictPolicyDefaults;
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -149,6 +182,8 @@ export function readSuiteSettingsValues(suite: {
     defaultPredicates: suite.defaultPredicates ?? [],
     judgeConfig: suite.judgeConfig,
     judgeRubric: suite.judgeRubric,
+    verdictPolicyVersion: suite.verdictPolicyVersion,
+    verdictPolicyDefaults: suite.verdictPolicyDefaults,
   };
 }
 
@@ -396,6 +431,15 @@ export function toUpdateArgs(
       case "judgeRubric":
         args.judgeRubric = value ?? null;
         break;
+      case "verdictPolicyVersion":
+      case "verdictPolicyDefaults":
+        // OMITTED when absent, never `null`. The mutation's validators have no
+        // null member for either, and the backend refuses a v2 version without
+        // defaults — so there is no "clear the policy" to express here, and a
+        // null would fail the whole batched save including the settings beside
+        // it. There is no downgrade: v2 is one-way.
+        if (value !== undefined) args[key] = value;
+        break;
     }
   }
   return args;
@@ -538,7 +582,68 @@ export function describeChange(
         before: summarizeRubric(before.judgeRubric),
         after: summarizeRubric(after.judgeRubric),
       };
+    case "verdictPolicyVersion":
+      return {
+        key,
+        label: "Policy",
+        before: describePolicyVersion(before),
+        after: describePolicyVersion(after),
+      };
+    case "verdictPolicyDefaults":
+      return {
+        key,
+        label: "Validity",
+        before: describeValidity(before.verdictPolicyDefaults),
+        after: describeValidity(after.verdictPolicyDefaults),
+      };
   }
+}
+
+/**
+ * The policy row's sentence, which has to carry BOTH halves of an upgrade.
+ *
+ * A version bump on its own reads as "legacy → v2" and hides the numbers the
+ * suite will actually be graded against, which is the part a reviewer needs to
+ * check. So the defaults ride along in the same line.
+ */
+function describePolicyVersion(values: SuiteSettingsValues): string {
+  if (values.verdictPolicyVersion !== 2) {
+    const rate = values.defaultPassCriteria?.minimumPassRate;
+    return rate === undefined ? "Legacy" : `Legacy ${rate}%`;
+  }
+  const defaults = values.verdictPolicyDefaults;
+  if (!defaults) return "v2";
+  return `v2: ${defaults.repetitions} repetition${
+    defaults.repetitions === 1 ? "" : "s"
+  }, ${formatFraction(defaults.passThreshold)} threshold`;
+}
+
+/** The three validity ceilings, as percents where they are fractions. */
+function describeValidity(
+  defaults: SuiteVerdictPolicyDefaults | undefined,
+): string {
+  const validity = defaults?.validity;
+  if (!validity) return "Contract defaults";
+  const parts: string[] = [];
+  if (validity.minEligibleTrials !== undefined)
+    parts.push(`at least ${validity.minEligibleTrials} trials`);
+  if (validity.minCompletionRate !== undefined)
+    parts.push(`${formatFraction(validity.minCompletionRate)} completed`);
+  if (validity.maxEvaluatorErrorRate !== undefined)
+    parts.push(
+      `at most ${formatFraction(validity.maxEvaluatorErrorRate)} grader errors`,
+    );
+  return parts.length > 0 ? parts.join(", ") : "Contract defaults";
+}
+
+/**
+ * A stored FRACTION as the percent a person reads.
+ *
+ * Rendering only — `0.8` is what is stored and what goes on the wire, and the
+ * one place a percent may exist is in front of a reader.
+ */
+export function formatFraction(value: number): string {
+  return `${Math.round(value * 100)}%`;
 }
 
 function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {

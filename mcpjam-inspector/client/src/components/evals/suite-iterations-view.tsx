@@ -35,18 +35,19 @@ import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
-import { ValidatorsSection } from "./validators-section";
-import { JudgesSection } from "./judges-section";
 import {
-  AddCheckMenu,
-  ChecksSection,
-  areAllChecksValid,
-  blankPredicate,
-} from "./checks-section";
-import { GlobalGatesSectionInfoHint } from "./global-gates-info";
+  PASS_OR_FAIL_HINT,
+  SuiteBudgetsList,
+  SuitePassOrFailSection,
+} from "./suite-pass-or-fail-section";
+import {
+  VerdictPolicyUpgradeButton,
+  VerdictPolicyV2Controls,
+  VerdictValidityControls,
+} from "./suite-policy-controls";
+import { areAllChecksValid } from "./checks-section";
 import { splitPredicatesForMigration } from "@/shared/predicate-migration";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
-import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import { TestCasesOverview } from "./test-cases-overview";
 import { TestCaseDetailView } from "./test-case-detail-view";
 import { SuiteDashboard } from "./suite-dashboard";
@@ -519,6 +520,31 @@ export function SuiteIterationsView({
     [draft],
   );
   const hasUnsavedSettings = draftChanges.length > 0;
+  // Which POLICY the sheet is editing. Read from the DRAFT, not the suite, so
+  // the v2 rows appear the moment someone drafts the upgrade rather than only
+  // after they save it — the review dialog is where they confirm, and a page
+  // that still shows the legacy percent while the draft says otherwise is
+  // describing a suite nobody is about to have.
+  const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
+  // The legacy policy restated in v2 terms. `minIterations` is the suite's
+  // iteration floor and `minimumPassRate` its percent, so the upgrade proposes
+  // the same bar rather than a new one — a migration that silently moved the
+  // threshold would be a policy change wearing a version bump's clothes.
+  const verdictPolicyUpgradeProposal = useMemo(
+    () => ({
+      repetitions: draft.current.minIterations ?? 1,
+      passThreshold:
+        (draft.current.defaultPassCriteria?.minimumPassRate ?? 100) / 100,
+    }),
+    [draft.current.minIterations, draft.current.defaultPassCriteria],
+  );
+  // Offered only when the deployment and the caller can actually perform the
+  // upgrade. The backend refuses otherwise (`EVAL_VERDICT_POLICY_UNAVAILABLE`),
+  // and a button whose only outcome is an error is worse than no button — so
+  // until the per-suite capabilities read lands it stays disabled with the
+  // honest reason rather than optimistically enabled.
+  const verdictPolicyUpgradeDisabledReason: string | undefined =
+    "Checking whether this deployment allows verdict policy v2…";
   // Discarding is what the person just agreed to when they confirmed the
   // prompt. Without it the draft outlives the sheet: the guard re-prompts on
   // every later navigation, ⌘S opens the review dialog from the run list, and
@@ -1707,59 +1733,130 @@ export function SuiteIterationsView({
                 }
               />
 
-              {/* ── Minimum accuracy (one row) ───────────────────────── */}
+              {/* ── Policy ───────────────────────────────────────────────
+                  ONE row, TWO policies, and never both on screen. A legacy
+                  suite is decided by a suite-wide percent over a per-case
+                  iteration floor; a v2 suite by a per-case fraction over that
+                  case's own repetitions. Showing both would ask a reader to
+                  work out which one their runs are actually decided by. */}
               <SettingsSection
-                settingKey="minimumAccuracy"
-                label="Minimum accuracy"
-                layout="inline"
-                inlineSlot={
-                  <PassCriteriaSelector
-                    hideLabel
-                    minimumPassRate={defaultMinimumPassRate}
-                    onMinimumPassRateChange={(rate) =>
+                settingKey="policy"
+                label="Policy"
+                hint={
+                  isVerdictPolicyV2
+                    ? "How each case is decided."
+                    : "Legacy policy — a suite-wide percent."
+                }
+              >
+                {isVerdictPolicyV2 ? (
+                  <VerdictPolicyV2Controls
+                    defaults={draft.current.verdictPolicyDefaults}
+                    onChange={(next) =>
                       dispatchDraft({
                         type: "edit",
-                        key: "defaultPassCriteria",
-                        value: { minimumPassRate: rate },
+                        key: "verdictPolicyDefaults",
+                        value: next,
                       })
                     }
                   />
-                }
-              />
+                ) : (
+                  <>
+                    {/* Stamped by hand, nested inside the Policy row: these are
+                        the legacy policy's two fields, and each stays reachable
+                        from the API on its own. The parity ratchet reads the
+                        attribute, not the component. */}
+                    <div
+                      className="flex items-center justify-between gap-4"
+                      data-setting-key="minimumAccuracy"
+                    >
+                      <span className="text-xs text-muted-foreground">
+                        Minimum accuracy
+                      </span>
+                      <PassCriteriaSelector
+                        hideLabel
+                        minimumPassRate={defaultMinimumPassRate}
+                        onMinimumPassRateChange={(rate) =>
+                          dispatchDraft({
+                            type: "edit",
+                            key: "defaultPassCriteria",
+                            value: { minimumPassRate: rate },
+                          })
+                        }
+                      />
+                    </div>
+                    <div
+                      className="flex items-center justify-between gap-4"
+                      data-setting-key="minimumIterations"
+                    >
+                      <span className="text-xs text-muted-foreground">
+                        Minimum iterations
+                      </span>
+                      <select
+                        className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                        value={draft.current.minIterations ?? ""}
+                        aria-label="Minimum iterations per case for every run"
+                        onChange={(e) => {
+                          const raw = e.target.value;
+                          dispatchDraft({
+                            type: "edit",
+                            key: "minIterations",
+                            value: raw === "" ? undefined : Number(raw),
+                          });
+                        }}
+                      >
+                        <option value="">Off</option>
+                        {Array.from({ length: 10 }, (_, i) => i + 1).map(
+                          (n) => (
+                            <option key={n} value={n}>
+                              {n}
+                            </option>
+                          ),
+                        )}
+                      </select>
+                    </div>
+                    <p className="text-[11px] text-muted-foreground/60">
+                      Every case runs at least this many times per run. A case
+                      set higher keeps its count; a per-run override still wins.
+                    </p>
+                    <VerdictPolicyUpgradeButton
+                      disabledReason={verdictPolicyUpgradeDisabledReason}
+                      proposal={verdictPolicyUpgradeProposal}
+                      onUpgrade={(defaults) => {
+                        dispatchDraft({
+                          type: "edit",
+                          key: "verdictPolicyVersion",
+                          value: 2,
+                        });
+                        dispatchDraft({
+                          type: "edit",
+                          key: "verdictPolicyDefaults",
+                          value: defaults,
+                        });
+                      }}
+                    />
+                  </>
+                )}
+              </SettingsSection>
 
-              {/* ── Minimum iterations ───────────────────────────────── */}
-              <SettingsSection
-                settingKey="minimumIterations"
-                label="Minimum iterations"
-                layout="inline"
-                inlineSlot={
-                  <select
-                    className="h-8 rounded-md border border-input bg-background px-2 text-xs text-foreground"
-                    value={draft.current.minIterations ?? ""}
-                    aria-label="Minimum iterations per case for every run"
-                    onChange={(e) => {
-                      const raw = e.target.value;
+              {/* ── Validity (v2 only) ─────────────────────────────────── */}
+              {isVerdictPolicyV2 ? (
+                <SettingsSection
+                  settingKey="validity"
+                  label="Validity"
+                  hint="Mark the run inconclusive instead of failed when…"
+                >
+                  <VerdictValidityControls
+                    defaults={draft.current.verdictPolicyDefaults}
+                    onChange={(next) =>
                       dispatchDraft({
                         type: "edit",
-                        key: "minIterations",
-                        value: raw === "" ? undefined : Number(raw),
-                      });
-                    }}
-                  >
-                    <option value="">Off</option>
-                    {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                      <option key={n} value={n}>
-                        {n}
-                      </option>
-                    ))}
-                  </select>
-                }
-              >
-                <p className="text-[11px] text-muted-foreground/60">
-                  Every case runs at least this many times per run. A case set
-                  higher keeps its count; a per-run override still wins.
-                </p>
-              </SettingsSection>
+                        key: "verdictPolicyDefaults",
+                        value: next,
+                      })
+                    }
+                  />
+                </SettingsSection>
+              ) : null}
 
               {/* ── Computer environment (reproducible evals) ──────────
                   Gated behind the computers feature flag. Pins a built Docker
@@ -1852,64 +1949,60 @@ export function SuiteIterationsView({
                 ) : null}
               </SettingsSection>
 
-              {/* ── Tool calls ───────────────────────────────────────── */}
+              {/* ── Pass or fail ─────────────────────────────────────────
+                  The same three graders the sheet always had — the tool-call
+                  matcher, the authored checks, the judge — grouped under the
+                  chain stage each one MEASURES rather than listed in storage
+                  order. Nothing about what a save writes changes here; only
+                  where a reader finds it does. */}
               <SettingsSection
-                settingKey="toolCalls"
-                label="Tool calls"
-                hint="Cases and run overrides can change these."
+                settingKey="passOrFail"
+                label="Pass or fail"
+                hint={PASS_OR_FAIL_HINT}
               >
-                <ValidatorsSection
-                  title=""
-                  value={draft.current.defaultMatchOptions}
-                  inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                  onChange={(next: EvalMatchOptions | undefined) =>
+                <SuitePassOrFailSection
+                  matchOptions={draft.current.defaultMatchOptions}
+                  onMatchOptionsChange={(next: EvalMatchOptions | undefined) =>
                     dispatchDraft({
                       type: "edit",
                       key: "defaultMatchOptions",
                       value: next,
                     })
                   }
+                  predicates={draftDefaultPredicates}
+                  onPredicatesChange={setDraftDefaultPredicates}
+                  judgeConfig={draft.current.judgeConfig}
+                  onJudgeConfigChange={(next) =>
+                    dispatchDraft({
+                      type: "edit",
+                      key: "judgeConfig",
+                      value: next,
+                    })
+                  }
+                  availableModels={availableModels}
+                  scenarioMigrationNotice={
+                    suiteScenarioMigrationCount > 0 ? (
+                      <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                        {suiteScenarioMigrationCount} scenario check
+                        {suiteScenarioMigrationCount === 1 ? "" : "s"} in
+                        defaults — migrate per case in Steps.
+                      </p>
+                    ) : null
+                  }
                 />
               </SettingsSection>
 
-              {/* ── Checks ───────────────────────────────────────────── */}
+              {/* ── Budgets ──────────────────────────────────────────────
+                  Token and turn ceilings file at `userValue` analytically, but
+                  reading them beside "did the answer contain the right thing"
+                  makes neither legible. Lifted out for READING; they are
+                  authored in the one Checks editor with everything else. */}
               <SettingsSection
-                settingKey="defaultChecks"
-                label="Default checks"
-                labelAccessory={<GlobalGatesSectionInfoHint />}
-                layout="inline"
-                inlineSlot={
-                  <AddCheckMenu
-                    globalGatesMenu
-                    onAdd={(kind) =>
-                      setDraftDefaultPredicates((prev) => [
-                        ...prev,
-                        blankPredicate(kind),
-                      ])
-                    }
-                  />
-                }
+                settingKey="budgets"
+                label="Budgets"
+                hint="Ceilings on what a trial may spend."
               >
-                {suiteScenarioMigrationCount > 0 ? (
-                  <p className="mb-2 text-[11px] text-amber-700 dark:text-amber-400">
-                    {suiteScenarioMigrationCount} scenario check
-                    {suiteScenarioMigrationCount === 1 ? "" : "s"} in defaults —
-                    migrate per case in Steps.
-                  </p>
-                ) : null}
-                {/* The list (when non-empty) renders under the eyebrow row.
-                    Empty state copy + the inner AddCheckMenu are both
-                    suppressed — the eyebrow row's AddCheckMenu is the only
-                    affordance, so "no checks" reads as a clean section
-                    with just the eyebrow + add button. */}
-                <ChecksSection
-                  title=""
-                  hideAddButton
-                  hideEmptyState
-                  globalGatesMenu
-                  value={draftDefaultPredicates}
-                  onChange={setDraftDefaultPredicates}
-                />
+                <SuiteBudgetsList predicates={draftDefaultPredicates} />
               </SettingsSection>
 
               {/* ── Schedule (synthetic monitors, flag-gated) ────────── */}
@@ -1945,26 +2038,6 @@ export function SuiteIterationsView({
                   organizationId={organizationId}
                 />
               </ErrorBoundary>
-
-              {/* ── LLM as Judge ─────────────────────────────────────── */}
-              <SettingsSection
-                settingKey="llmAsJudge"
-                label="LLM as Judge"
-                hint="Advisory scorer — grades each run automatically against its objective, inline next to pass/fail. Never changes pass/fail."
-              >
-                <JudgesSection
-                  chrome="bare"
-                  value={draft.current.judgeConfig}
-                  availableModels={availableModels}
-                  onChange={(next) =>
-                    dispatchDraft({
-                      type: "edit",
-                      key: "judgeConfig",
-                      value: next,
-                    })
-                  }
-                />
-              </SettingsSection>
 
               {/* ── Delete ───────────────────────────────────────────── */}
               {canDeleteSuite ? (
