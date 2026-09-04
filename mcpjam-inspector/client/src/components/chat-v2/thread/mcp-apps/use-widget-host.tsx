@@ -16,7 +16,12 @@
 // pre-resolving them into `WidgetHost.resolveEnvironment` is the Phase-3 target.
 
 import { useMemo, useRef, type ReactNode } from "react";
-import { HOSTED_MODE, SANDBOX_ORIGIN } from "@/lib/config";
+import {
+  HOSTED_MODE,
+  SANDBOX_ORIGIN,
+  VIEW_MOUNT_MODE,
+  VIEW_SUBDOMAINS_ENABLED,
+} from "@/lib/config";
 import { authFetch } from "@/lib/session-token";
 import { useIsScenarioSurface } from "@/contexts/scenario-surface-context";
 import { useWebManagedServers } from "@/contexts/web-managed-servers-context";
@@ -189,6 +194,8 @@ export function useWidgetHost(): WidgetHostImpl {
       webManagedServers,
       hostedMode: HOSTED_MODE,
       sandboxOrigin: SANDBOX_ORIGIN ?? "",
+      viewMountMode: VIEW_MOUNT_MODE,
+      viewSubdomainsEnabled: VIEW_SUBDOMAINS_ENABLED,
       playgroundCspMode,
     }),
     [kind, persistentSurfaceHost, webManagedServers, playgroundCspMode],

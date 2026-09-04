@@ -1,10 +1,22 @@
 /**
  * Per-session event fan-out with bounded replay.
  *
- * Modelled on `sessionSimulation/swarm-stream-hub.ts`, minus its coalesced
- * frame channel: V1 streams no video. Tool events are full snapshots, so only
- * the latest one is retained; keeping 200 copies of a page-authored schema is
- * both redundant and an avoidable memory multiplier.
+ * Modelled on `sessionSimulation/swarm-stream-hub.ts`, including its coalesced
+ * frame channel. Three retention policies, one per kind of thing:
+ *
+ *   - Activity goes into a bounded ring, replayed in order to a late joiner.
+ *   - Tool events are full snapshots, so only the latest is retained; keeping
+ *     200 copies of a page-authored schema is both redundant and an avoidable
+ *     memory multiplier.
+ *   - Viewport frames go into a single COALESCED slot and never touch the ring.
+ *     A page animating at 10fps would otherwise flush every tool registration
+ *     and invocation out of a 200-entry ring within twenty seconds, so the
+ *     timeline — the thing the session exists to produce — would be destroyed
+ *     by the picture beside it. One slot rather than a map because a WebMCP
+ *     session inspects exactly one page: there is nothing to key or evict.
+ *
+ * Replay therefore hands a reconnecting client exactly one frame: the current
+ * one. That is the whole repaint story — no gap reasoning, no catch-up.
  */
 import {
   WEBMCP_ACTIVITY_RING_SIZE,
@@ -16,6 +28,8 @@ export type WebMcpEventListener = (event: WebMcpEvent) => void;
 export class WebMcpStreamHub {
   private readonly ring: WebMcpEvent[] = [];
   private latestTools: Extract<WebMcpEvent, { type: "tools" }> | undefined;
+  /** The current paint. Replaced, never queued — see the class comment. */
+  private latestFrame: Extract<WebMcpEvent, { type: "frame" }> | undefined;
   private readonly listeners = new Set<WebMcpEventListener>();
   private closed = false;
 
@@ -29,6 +43,8 @@ export class WebMcpStreamHub {
     if (this.closed) return;
     if (event.type === "tools") {
       this.latestTools = event;
+    } else if (event.type === "frame") {
+      this.latestFrame = event;
     } else {
       this.ring.push(event);
       if (this.ring.length > this.ringSize) {
@@ -51,6 +67,7 @@ export class WebMcpStreamHub {
     if (replay > 0) {
       const replayEvents = this.ring.slice(-replay);
       if (this.latestTools) replayEvents.push(this.latestTools);
+      if (this.latestFrame) replayEvents.push(this.latestFrame);
       replayEvents.sort((a, b) => a.seq - b.seq);
       for (const event of replayEvents) {
         try {
@@ -70,7 +87,21 @@ export class WebMcpStreamHub {
   buffered(): readonly WebMcpEvent[] {
     const events = [...this.ring];
     if (this.latestTools) events.push(this.latestTools);
+    if (this.latestFrame) events.push(this.latestFrame);
     return events.sort((a, b) => a.seq - b.seq);
+  }
+
+  /**
+   * Forget the retained frame.
+   *
+   * Called when the stream stops and when the page navigates away. Replay
+   * promises a reconnecting client "exactly one frame: the current one", and a
+   * frame of a page that has been left — or of a stream nobody is running any
+   * more — is not that. Nothing is published: a connected client already knows,
+   * and this only governs what a RECONNECT is handed.
+   */
+  clearFrame(): void {
+    this.latestFrame = undefined;
   }
 
   close(): void {

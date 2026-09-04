@@ -63,11 +63,11 @@ export function JourneyRubricEditor({
           onChange(reconcileRubricEntries(value, next))
         }
         title="Checks"
-        // "Measure", never "gate": a failing check is a finding on the
-        // scorecard, and nothing downstream blocks or fails because of it.
+        // "Measure", never "gate": a failing check is a finding in Insights,
+        // and nothing downstream blocks or fails because of it.
         // One line on purpose — this doubles as card-header copy on the
         // swarm confirm step.
-        description="Each check becomes a pass-rate column on the scorecard and a filter in Insights."
+        description="Each check is reported in the run scorecard and can surface as a finding in Insights."
         emptyStateText="No checks yet — add one to start measuring."
         allowedKinds={allowedKinds}
         // `hideAddButton`, NOT `readOnly`: `readOnly` disables per-row edit AND

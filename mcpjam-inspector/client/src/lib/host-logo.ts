@@ -24,9 +24,18 @@ export { UNKNOWN_HOST_LOGO };
 const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/mcpjam/i, "mcpjam"],
   [/claude[ -]?code/i, "claude-code"],
+  // BEFORE the bare /claude/i below, same ordering trap as claude-code: a host
+  // named "Claude Desktop" would otherwise resolve to the web app's mark.
+  [/claude[ -]?desktop/i, "claude-desktop"],
   [/claude/i, "claude"],
   [/chatgpt|openai/i, "chatgpt"],
   [/copilot/i, "copilot"],
+  // BEFORE the bare /cursor/i, same ordering trap as claude-code above: a host
+  // named "Cursor CLI" must resolve to the `cursor-cli` id, not to `cursor`.
+  // The two happen to share a logo file today, so this is about the resolved ID
+  // being right (theme-keyed lookups and anything else that keys off it), not
+  // about the pixels.
+  [/cursor[ -]?cli/i, "cursor-cli"],
   [/cursor/i, "cursor"],
   [/vs ?code/i, "vscode"],
   [/goose/i, "goose"],
@@ -39,7 +48,7 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
 
 export function resolveHostLogoByName(
   name: string,
-  themeMode?: HostThemeMode | null
+  themeMode?: HostThemeMode | null,
 ): string {
   for (const [pattern, hostId] of LOGO_NAME_HINTS) {
     if (pattern.test(name)) return getHostLogoSrc(hostId, themeMode);
