@@ -8,7 +8,9 @@ import {
   PRESET_HOST_ID_PREFIX,
   buildPresetCompareEntries,
   demoteMcpjamHosts,
+  dropPresetsShadowedByLiveHosts,
   isPresetHostId,
+  resolveCompareHostStyle,
 } from "../host-compare-presets";
 
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -211,5 +213,81 @@ describe("demoteMcpjamHosts", () => {
     const out = demoteMcpjamHosts(hosts);
     expect(out).not.toBe(hosts);
     expect(hosts.map((h) => h.hostId)).toEqual(["h_a", "h_b"]);
+  });
+});
+
+describe("resolveCompareHostStyle", () => {
+  it("reads a preset's style straight off its id", () => {
+    expect(
+      resolveCompareHostStyle({ hostId: `${PRESET_HOST_ID_PREFIX}claude` }),
+    ).toBe("claude");
+  });
+
+  it("prefers a loaded subject's style over the name", () => {
+    // A host named "Claude" running the cursor style is the case where the
+    // name lies; the subject is authoritative once it exists.
+    expect(
+      resolveCompareHostStyle(
+        { hostId: "h_a", name: "Claude" },
+        { h_a: { hostStyle: "cursor" } },
+      ),
+    ).toBe("cursor");
+  });
+
+  it("falls back to the name when no subject has loaded", () => {
+    expect(resolveCompareHostStyle({ hostId: "h_a", name: "MCPJam" })).toBe(
+      "mcpjam",
+    );
+  });
+
+  it("returns null when nothing identifies the host", () => {
+    expect(
+      resolveCompareHostStyle({ hostId: "h_a", name: "Untitled thing" }),
+    ).toBeNull();
+  });
+});
+
+describe("dropPresetsShadowedByLiveHosts", () => {
+  // The two lists are built independently and then concatenated, so nothing
+  // reconciled them: a project with an MCPJam client showed both it and
+  // `preset:mcpjam`, same name and same logo.
+  it("drops the preset a live host already covers", () => {
+    const live = [{ hostId: "h_mine", name: "MCPJam" }];
+    const presets = [
+      { hostId: `${PRESET_HOST_ID_PREFIX}mcpjam`, name: "MCPJam" },
+      { hostId: `${PRESET_HOST_ID_PREFIX}claude`, name: "Claude" },
+    ];
+    expect(
+      dropPresetsShadowedByLiveHosts(live, presets).map((h) => h.hostId),
+    ).toEqual([`${PRESET_HOST_ID_PREFIX}claude`]);
+  });
+
+  it("keeps every preset when the user owns none of them", () => {
+    const presets = [
+      { hostId: `${PRESET_HOST_ID_PREFIX}mcpjam`, name: "MCPJam" },
+      { hostId: `${PRESET_HOST_ID_PREFIX}claude`, name: "Claude" },
+    ];
+    expect(dropPresetsShadowedByLiveHosts([], presets)).toHaveLength(2);
+  });
+
+  it("matches on the live host's STYLE, not its name", () => {
+    // A client named "My Editor" running the cursor style still shadows the
+    // Cursor preset. The name would never have matched.
+    const live = [{ hostId: "h_a", name: "My Editor" }];
+    const presets = [
+      { hostId: `${PRESET_HOST_ID_PREFIX}cursor`, name: "Cursor" },
+      { hostId: `${PRESET_HOST_ID_PREFIX}claude`, name: "Claude" },
+    ];
+    expect(
+      dropPresetsShadowedByLiveHosts(live, presets, {
+        h_a: { hostStyle: "cursor" },
+      }).map((h) => h.hostId),
+    ).toEqual([`${PRESET_HOST_ID_PREFIX}claude`]);
+  });
+
+  it("leaves presets alone when a live host identifies as nothing", () => {
+    const live = [{ hostId: "h_a", name: "Untitled thing" }];
+    const presets = [{ hostId: `${PRESET_HOST_ID_PREFIX}claude`, name: "C" }];
+    expect(dropPresetsShadowedByLiveHosts(live, presets)).toHaveLength(1);
   });
 });

@@ -75,7 +75,10 @@ import {
 import {
   buildPresetCompareEntries,
   demoteMcpjamHosts,
+  dropPresetsShadowedByLiveHosts,
+  isPresetHostId,
 } from "./host-compare-presets";
+import { resolveClientDisplayNames } from "@/lib/client-display-name";
 import {
   clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
@@ -295,10 +298,41 @@ export function HostConfigCompareView({
   // land is what let it back in once live hosts joined the list.
   const hosts = useMemo(() => {
     const orderedPresets = sortCaniusePresetHosts(presets.hosts);
-    const ordered = presetOnly
-      ? orderedPresets
-      : [...liveHosts, ...orderedPresets];
-    return demoteMcpjamHosts(ordered, subjectsByHost);
+    if (presetOnly) return demoteMcpjamHosts(orderedPresets, subjectsByHost);
+
+    // A preset is a read-only stand-in for a client you do NOT have, so drop
+    // the ones the user already owns before combining. Without this a project
+    // with an MCPJam client showed it twice, same name and logo both times.
+    const ordered = demoteMcpjamHosts(
+      [
+        ...liveHosts,
+        ...dropPresetsShadowedByLiveHosts(
+          liveHosts,
+          orderedPresets,
+          subjectsByHost,
+        ),
+      ],
+      subjectsByHost,
+    );
+
+    // Number whatever collisions survive. `useHostList` already does this for
+    // live hosts, but it cannot see presets, so a live host colliding with a
+    // preset by NAME rather than by style used to render as two identical
+    // rows. Presets sort last here so the user's own client keeps the
+    // unsuffixed name and the stand-in takes the "#2".
+    const displayNames = resolveClientDisplayNames(
+      ordered.map((host) => ({
+        hostId: host.hostId,
+        name: host.name,
+        createdAt: isPresetHostId(host.hostId)
+          ? Number.MAX_SAFE_INTEGER
+          : host.createdAt,
+      })),
+    );
+    return ordered.map((host) => ({
+      ...host,
+      displayName: displayNames.get(host.hostId) ?? host.displayName,
+    }));
   }, [liveHosts, presetOnly, presets.hosts, subjectsByHost]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
