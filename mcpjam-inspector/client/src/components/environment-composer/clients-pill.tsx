@@ -21,9 +21,10 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useHostList } from "@/hooks/useClients";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { cn } from "@/lib/utils";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 export function ClientsPill({
   projectId,
@@ -70,7 +71,7 @@ export function ClientsPill({
   const extra = selected.length > 1 ? selected.length - 1 : 0;
   const logo =
     selected.length > 0
-      ? resolveHostLogoByDisplayName(selectedHost?.name ?? triggerLabel)
+      ? resolveHostLogoByName(selectedHost?.name ?? triggerLabel)
       : null;
 
   const toggle = (hostId: string, checked: boolean) => {
@@ -111,12 +112,8 @@ export function ClientsPill({
             disabled && "cursor-not-allowed opacity-60"
           )}
         >
-          {logo ? (
-            <img
-              src={logo}
-              alt=""
-              className="size-3.5 shrink-0 rounded-sm object-contain"
-            />
+          {selected.length > 0 ? (
+            <HostChipLogo logoSrc={logo} name={triggerLabel} size="sm" />
           ) : (
             <Users className="size-3.5 shrink-0 text-muted-foreground" />
           )}
@@ -150,6 +147,8 @@ export function ClientsPill({
           <div className="max-h-64 space-y-0.5 overflow-y-auto">
             {hosts.map((host) => {
               const checked = selected.includes(host.hostId);
+              const hostName = clientDisplayName(host);
+              const hostLogo = resolveHostLogoByName(host.name);
               const productBlocked =
                 !single &&
                 !checked &&
@@ -184,10 +183,15 @@ export function ClientsPill({
                       toggle(host.hostId, next === true)
                     }
                     disabled={capBlocked || disabled}
-                    aria-label={clientDisplayName(host)}
+                    aria-label={hostName}
+                  />
+                  <HostChipLogo
+                    logoSrc={hostLogo}
+                    name={hostName}
+                    size="sm"
                   />
                   <span className="min-w-0 flex-1 truncate font-normal">
-                    {clientDisplayName(host)}
+                    {hostName}
                   </span>
                 </Label>
               );

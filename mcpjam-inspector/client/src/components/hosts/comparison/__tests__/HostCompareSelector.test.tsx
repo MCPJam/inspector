@@ -41,12 +41,7 @@ describe("HostCompareSelector", () => {
     ).toHaveAttribute("src", "/openai_logo.png");
     expect(
       screen.getByTestId("host-compare-chip-h_custom").querySelector("img")
-    ).not.toBeInTheDocument();
-    expect(
-      screen
-        .getByTestId("host-compare-chip-h_custom")
-        .querySelector('[aria-hidden="true"]')
-    ).toHaveTextContent("My");
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("renders a chip per host and toggles selection on click", async () => {
@@ -133,7 +128,7 @@ describe("HostCompareSelector", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows initials instead of an empty dot in the More menu", async () => {
+  it("shows a fallback badge instead of an empty dot in the More menu", async () => {
     const user = userEvent.setup();
     const hosts = Array.from({ length: 7 }, (_, index) =>
       makeHost(`h_${index}`, index === 6 ? "Custom seventh" : `Host ${index}`)
@@ -156,10 +151,8 @@ describe("HostCompareSelector", () => {
 
     await user.click(screen.getByTestId("host-compare-overflow-trigger"));
     expect(
-      screen
-        .getByTestId("host-compare-overflow-h_6")
-        .querySelector('[aria-hidden="true"]')
-    ).toHaveTextContent("Cu");
+      screen.getByTestId("host-compare-overflow-h_6").querySelector("img")
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {

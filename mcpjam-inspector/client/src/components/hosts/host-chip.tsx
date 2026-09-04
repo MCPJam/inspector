@@ -1,9 +1,11 @@
 import { cn } from "@/lib/utils";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 
 const hostChipLogoClass = {
+  xs: "size-3",
   default: "size-3.5",
   sm: "size-3.5",
+  md: "size-4",
   stack: "size-5",
 } as const;
 
@@ -11,17 +13,23 @@ export function HostChipLogo({
   logoSrc,
   name,
   size,
+  className,
 }: {
   logoSrc: string | null;
   name: string;
-  size: "default" | "sm" | "stack";
+  size: keyof typeof hostChipLogoClass;
+  className?: string;
 }) {
   if (logoSrc) {
     return (
       <img
         src={logoSrc}
         alt=""
-        className={cn("shrink-0 object-contain", hostChipLogoClass[size])}
+        className={cn(
+          "shrink-0 object-contain",
+          hostChipLogoClass[size],
+          className,
+        )}
       />
     );
   }
@@ -31,7 +39,15 @@ export function HostChipLogo({
       aria-hidden
       className={cn(
         "flex shrink-0 items-center justify-center rounded-md bg-muted font-semibold uppercase text-muted-foreground",
-        size === "stack" ? "size-5 text-[9px]" : "size-3.5 text-[8px]",
+        size === "stack"
+          ? "text-[9px]"
+          : size === "md"
+            ? "text-[9px]"
+            : size === "xs"
+              ? "text-[7px]"
+              : "text-[8px]",
+        hostChipLogoClass[size],
+        className,
       )}
     >
       {name.slice(0, 2)}
@@ -55,7 +71,7 @@ export function HostChip({
   layout?: "inline" | "stack";
   className?: string;
 }) {
-  const resolvedLogo = logoSrc ?? resolveHostLogoByDisplayName(name);
+  const resolvedLogo = logoSrc ?? resolveHostLogoByName(name);
   const title = hostId ?? name;
   const logoSize = layout === "stack" ? "stack" : size;
 

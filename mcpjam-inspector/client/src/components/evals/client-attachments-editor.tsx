@@ -5,9 +5,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { HostPicker } from "@/components/hosts/HostPicker";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { useHostList, type HostListItem } from "@/hooks/useClients";
 import { clientDisplayName } from "@/lib/client-display-name";
+import { HostChipLogo } from "@/components/hosts/host-chip";
 
 export type HostAttachmentDraft = {
   namedHostId: string;
@@ -154,24 +155,13 @@ function HostAttachmentRow({
   disabled,
 }: HostAttachmentRowProps) {
   const displayName = hostName ?? attachment.namedHostId;
-  const logoSrc = resolveHostLogoByDisplayName(hostRawName ?? displayName);
+  const logoSrc = resolveHostLogoByName(hostRawName ?? displayName);
 
   return (
     <div className="rounded-xl border bg-card/60">
       <div className="flex items-center justify-between gap-2 p-3">
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {logoSrc ? (
-            <img
-              src={logoSrc}
-              alt=""
-              className="size-3.5 shrink-0 object-contain"
-            />
-          ) : (
-            <span
-              aria-hidden
-              className="size-3.5 shrink-0 rounded-full bg-muted"
-            />
-          )}
+          <HostChipLogo logoSrc={logoSrc} name={displayName} size="sm" />
           <span className="truncate text-sm font-medium text-foreground">
             {displayName}
           </span>

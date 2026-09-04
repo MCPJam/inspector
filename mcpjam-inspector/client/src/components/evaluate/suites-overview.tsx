@@ -3,7 +3,7 @@ import { formatDistanceToNow } from "date-fns";
 import { AlertTriangle, Loader2, Trash2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
 import { getEffectiveSuiteServers } from "../evals/helpers";
@@ -304,7 +304,7 @@ function ClientCell({
 
   const name = attachments[0].hostName?.trim() || attachments[0].namedHostId;
   const extra = attachments.length - 1;
-  const logoSrc = resolveHostLogoByDisplayName(name, themeMode);
+  const logoSrc = resolveHostLogoByName(name, themeMode);
 
   return (
     <span className="flex min-w-0 items-center gap-2">

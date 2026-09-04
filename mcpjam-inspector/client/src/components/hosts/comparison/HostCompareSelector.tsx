@@ -17,8 +17,8 @@ import {
 import { cn } from "@/lib/utils";
 import {
   getScenarioHostLogo,
-  resolveHostLogoByDisplayName,
 } from "@/lib/scenario-client-style";
+import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
@@ -330,7 +330,7 @@ function HostCompareChip({
           subject.config.chatUiOverride,
           themeMode
         )
-      : resolveHostLogoByDisplayName(host.name, themeMode);
+      : resolveHostLogoByName(host.name, themeMode);
   const reduceMotion = useReducedMotion();
 
   return (
@@ -419,7 +419,7 @@ function HostCompareOverflowMenu({
                       subject.config.chatUiOverride,
                       themeMode
                     )
-                  : resolveHostLogoByDisplayName(host.name, themeMode);
+                  : resolveHostLogoByName(host.name, themeMode);
 
               return (
                 <CommandItem
