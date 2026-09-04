@@ -38,7 +38,7 @@ vi.mock("../../../services/guest-token.js", () => ({
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js"
+    "../../shared/evals.js",
   );
   return {
     ...actual,
@@ -47,9 +47,10 @@ vi.mock("../../shared/evals.js", async () => {
 });
 
 vi.mock("../../web/auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../../web/auth.js")>(
+      "../../web/auth.js",
+    );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
 
@@ -76,7 +77,9 @@ const FIXTURES = JSON.parse(
   ),
 ) as { accept: Array<Record<string, unknown>> };
 
-function stripFixtureMeta(row: Record<string, unknown>): Record<string, unknown> {
+function stripFixtureMeta(
+  row: Record<string, unknown>,
+): Record<string, unknown> {
   return Object.fromEntries(
     Object.entries(row).filter(([key]) => !key.startsWith("__")),
   );
@@ -145,7 +148,9 @@ function request(
   );
 }
 
-function mockConvex(handlers: Record<string, (args: any) => unknown> = {}): void {
+function mockConvex(
+  handlers: Record<string, (args: any) => unknown> = {},
+): void {
   convexQueryMock.mockImplementation(async (fn: string, args: any) => {
     if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
       return handlers[fn]!(args);
@@ -298,7 +303,7 @@ describe("eval description experiments", () => {
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
     });
 
-    it("refuses when no slots remain and marks the experiment failed", async () => {
+    it("refuses when no slots remain and leaves the experiment proposed", async () => {
       const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
       createAuthorizedManagerMock.mockResolvedValue({
         manager: { disconnectAllServers },
@@ -345,17 +350,43 @@ describe("eval description experiments", () => {
         details: { reason: "CONCURRENT_RUN_LIMIT" },
       });
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
-      expect(convexMutationMock).toHaveBeenCalledWith(
+      // A rate limit is a retry, not a dead experiment: the slot is taken
+      // before the experiment leaves `proposed`, so nothing was marked.
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markLaunching",
+        expect.anything(),
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
         "descriptionExperiments:markFailed",
-        expect.objectContaining({
-          experimentId: EXPERIMENT_ID,
-          errorCode: "RATE_LIMITED",
-        }),
+        expect.anything(),
       );
 
       for (const release of releaseGates.splice(0)) release();
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(2),
+      );
+    });
+
+    it("refuses a harness source before taking a slot or moving state", async () => {
+      mockConvex({
+        "descriptionExperiments:getDescriptionExperiment": () => ({
+          ...EXPERIMENT_DOC,
+          executionEngine: "harness:claude-code",
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markLaunching",
+        expect.anything(),
       );
     });
 
