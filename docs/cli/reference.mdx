@@ -1567,6 +1567,10 @@ run before evaluating it.
 | `--min-scorer-pass-rate <scorerId=percent>` | No | Minimum pass rate for one scorer; repeatable |
 | `--min-mean-score <scorerId=0..1>` | No | Minimum mean score for one scorer; repeatable |
 | `--baseline <runId>` | No | Baseline run ID to gate a regression delta against, in addition to any threshold flags above. Mutually exclusive with `--baseline-sha` |
+
+<Note>
+A scorer id named by `--min-scorer-pass-rate` or `--min-mean-score` must resolve to a single definition across all cases in the run. If the same id was configured with different settings in different cases (for example, different thresholds or rubrics), the gate returns `usage_error` (exit 2). Fix it by giving each variant a distinct explicit id, or by making the configuration identical across every case that uses it.
+</Note>
 | `--baseline-sha <sha>` | No | Baseline **source commit SHA**, resolved server-side to the completed run in this suite recorded against it. Mutually exclusive with `--baseline` |
 | `--min-sample-size <n>` | No | Iterations required on **each** side before a pass-rate regression is decidable (default 5); requires `--baseline` or `--baseline-sha` |
 | `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
