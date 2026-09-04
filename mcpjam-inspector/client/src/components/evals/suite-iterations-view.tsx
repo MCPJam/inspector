@@ -74,6 +74,7 @@ import { buildEvalSharePath } from "@/lib/app-navigation";
 import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import {
+  CAPABILITY_REASON_COPY,
   DEPLOYMENT_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -1029,7 +1030,12 @@ export function SuiteIterationsView({
       : undefined;
   const verdictPolicyUpgradeDisabledReason: string | undefined =
     !capabilitiesReady
-      ? "Checking whether this deployment allows verdict policy v2…"
+      ? // A read that FAILED is not one still in flight; "Checking…" after the
+        // answer came back as "could not ask" described a wait that would
+        // never end.
+        capabilitiesState === "unavailable"
+        ? CAPABILITY_REASON_COPY.flag_unavailable
+        : "Checking whether this deployment allows verdict policy v2…"
       : capabilities.verdictPolicyV2.canUpgrade
         ? undefined
         : capabilities.verdictPolicyV2.deploymentMode === "off"
@@ -2115,6 +2121,11 @@ export function SuiteIterationsView({
                     <JudgeGatePanel
                       suiteId={suite._id}
                       judge={capabilitiesReady ? capabilities.judge : undefined}
+                      unavailableReason={
+                        capabilitiesState === "unavailable"
+                          ? CAPABILITY_REASON_COPY.flag_unavailable
+                          : undefined
+                      }
                       judgeConfig={draft.current.judgeConfig}
                       onJudgeConfigChange={(next) =>
                         dispatchDraft({

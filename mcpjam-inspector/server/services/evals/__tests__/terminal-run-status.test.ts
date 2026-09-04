@@ -63,7 +63,9 @@ describe("shouldSkipExecution", () => {
     // The double-spend this guard exists for, in a status that is deliberately
     // not terminal: every trial already ran, so executing would run the whole
     // suite again and bill for it.
-    expect(shouldSkipExecution({ deduped: true, status: "grading" })).toBe(true);
+    expect(shouldSkipExecution({ deduped: true, status: "grading" })).toBe(
+      true,
+    );
   });
 
   it("still executes a replay of a run genuinely in flight", () => {

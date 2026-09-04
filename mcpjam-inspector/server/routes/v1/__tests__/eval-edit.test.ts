@@ -3334,6 +3334,53 @@ describe("v1 eval-edit routes", () => {
       }
     });
 
+    it("checks the precondition even when no settings write carries it", async () => {
+      // `{ environmentIds }` alone never calls updateTestSuite, the only
+      // mutation that accepts expectedRevisionNumber — so the stale number
+      // used to be dropped and the write went through with a 200.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 5 })
+          : defaultQueryImpl(name)
+      );
+      const stale = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 3 }
+      );
+      expect(stale.status).toBe(409);
+      const body = (await stale.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("CONFLICT");
+      expect(body.message).toContain("current revision 5");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+
+      const current = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 5 }
+      );
+      expect(current.status).toBe(200);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(true);
+    });
+
+    it("rides the precondition on the hosts write when that is the first one", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { hosts: [], expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(200);
+      const writes = convexMutationMock.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      );
+      expect(writes.length).toBe(1);
+      expect(writes[0][1].expectedRevisionNumber).toBe(7);
+    });
+
     it("stamps one revision group across every write in the request", async () => {
       const res = await request(
         "PATCH",

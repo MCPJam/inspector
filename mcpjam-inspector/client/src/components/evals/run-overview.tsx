@@ -738,19 +738,25 @@ export function RunOverview({
                       ? formatDuration(Date.now() - run.createdAt)
                       : "—";
 
+                  // Status FIRST for a held run: its `result` is the truthy
+                  // "pending", which would otherwise win the `||` below and
+                  // the "grading" badge arm would never be reached.
                   const runResult =
-                    run.result ||
-                    (run.status === "completed" && passRate !== null
-                      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-                        ? "passed"
-                        : "failed"
-                      : run.status === "cancelled"
-                        ? "cancelled"
-                        : run.status === "timed_out"
-                          ? "timed_out"
-                          : run.status === "running"
-                            ? "running"
-                            : "pending");
+                    run.status === "grading"
+                      ? "grading"
+                      : run.result ||
+                        (run.status === "completed" && passRate !== null
+                          ? passRate >=
+                            (run.passCriteria?.minimumPassRate ?? 100)
+                            ? "passed"
+                            : "failed"
+                          : run.status === "cancelled"
+                            ? "cancelled"
+                            : run.status === "timed_out"
+                              ? "timed_out"
+                              : run.status === "running"
+                                ? "running"
+                                : "pending");
                   const badge = runResultBadge(runResult);
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 

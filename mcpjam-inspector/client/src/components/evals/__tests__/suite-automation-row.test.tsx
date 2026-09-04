@@ -234,3 +234,42 @@ describe("formatNextDue", () => {
     expect(formatNextDue(now + 48 * 3_600_000, now)).toBe("in 2d");
   });
 });
+
+describe("SuiteAutomationRow — a schedule that paused itself", () => {
+  it.each(["paused_quota", "paused_failures"] as const)(
+    "offers Resume, not Pause, for %s",
+    async (state) => {
+      const user = userEvent.setup();
+      mocks.setSuiteSchedule.mockResolvedValue(undefined);
+      renderRow({
+        schedule: {
+          intervalMinutes: 30,
+          // STILL enabled: the schedule stopped itself, the switch did not.
+          enabled: true,
+          state,
+          createdByUserId: "user-1",
+        },
+      });
+      expect(screen.queryByRole("button", { name: "Pause" })).toBeNull();
+      await user.click(screen.getByRole("button", { name: "Resume" }));
+      expect(mocks.setSuiteSchedule).toHaveBeenCalledWith({
+        suiteId: "suite-1",
+        enabled: true,
+        intervalMinutes: 30,
+      });
+    },
+  );
+
+  it("does not offer Resume for a lost-authorization pause — only Take over can fix that", () => {
+    renderRow({
+      schedule: {
+        intervalMinutes: 30,
+        enabled: true,
+        state: "paused_auth",
+        createdByUserId: "user-1",
+      },
+    });
+    expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Pause" })).toBeTruthy();
+  });
+});

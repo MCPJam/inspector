@@ -241,3 +241,15 @@ describe("JudgeGatePanel", () => {
     ).toBeTruthy();
   });
 });
+
+describe("gateSwitchDisabledReason — when the capabilities read failed", () => {
+  it("says the read failed instead of claiming to still be checking", () => {
+    expect(gateSwitchDisabledReason(undefined)).toMatch(/^Checking/);
+    expect(
+      gateSwitchDisabledReason(
+        undefined,
+        "Could not check availability right now",
+      ),
+    ).toBe("Could not check availability right now");
+  });
+});

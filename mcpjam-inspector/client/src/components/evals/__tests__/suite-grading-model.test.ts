@@ -32,7 +32,11 @@ import {
 function samplePredicate(kind: string): Predicate {
   const base = { type: kind } as Record<string, unknown>;
   // Only the fields the label formatter reads; the model never validates.
-  if (kind.startsWith("tool") || kind.startsWith("first") || kind.startsWith("widget"))
+  if (
+    kind.startsWith("tool") ||
+    kind.startsWith("first") ||
+    kind.startsWith("widget")
+  )
     base.toolName = "search";
   if (kind === "responseContains") base.needle = "hi";
   if (kind === "responseMatches") base.pattern = "hi";
@@ -191,7 +195,11 @@ describe("STAGE_EMPTY_COPY", () => {
   });
 
   it("distinguishes a runner-measured stage from an ungraded one", () => {
-    const runnerMeasured: UserValueStage[] = ["connection", "discovery", "call"];
+    const runnerMeasured: UserValueStage[] = [
+      "connection",
+      "discovery",
+      "call",
+    ];
     for (const stage of runnerMeasured) {
       expect(stageEmptyIsGap(stage), stage).toBe(false);
       expect(STAGE_EMPTY_COPY[stage]).toContain("Measured by the runner");

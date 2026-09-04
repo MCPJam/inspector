@@ -590,11 +590,15 @@ export function describeChange(
         after: describePolicyVersion(after),
       };
     case "verdictPolicyDefaults":
+      // The whole object, not just `.validity`: an edit to repetitions or
+      // the threshold used to review as "Validity: Contract defaults →
+      // Contract defaults", a row that named the wrong setting and showed
+      // no change.
       return {
         key,
-        label: "Validity",
-        before: describeValidity(before.verdictPolicyDefaults),
-        after: describeValidity(after.verdictPolicyDefaults),
+        label: "Policy defaults",
+        before: describePolicyDefaults(before.verdictPolicyDefaults),
+        after: describePolicyDefaults(after.verdictPolicyDefaults),
       };
   }
 }
@@ -616,6 +620,19 @@ function describePolicyVersion(values: SuiteSettingsValues): string {
   return `v2: ${defaults.repetitions} repetition${
     defaults.repetitions === 1 ? "" : "s"
   }, ${formatFraction(defaults.passThreshold)} threshold`;
+}
+
+/** Repetitions, threshold, and the validity ceilings when any are set. */
+function describePolicyDefaults(
+  defaults: SuiteVerdictPolicyDefaults | undefined,
+): string {
+  if (!defaults) return "None";
+  const parts = [
+    `${defaults.repetitions} repetition${defaults.repetitions === 1 ? "" : "s"}`,
+    `${formatFraction(defaults.passThreshold)} threshold`,
+  ];
+  if (defaults.validity) parts.push(`validity: ${describeValidity(defaults)}`);
+  return parts.join(", ");
 }
 
 /** The three validity ceilings, as percents where they are fractions. */

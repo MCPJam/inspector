@@ -167,6 +167,14 @@ export function SuiteAutomationRow({
 
   const enabled = schedule?.enabled === true;
   const pausedForAuth = enabled && schedule?.state === "paused_auth";
+  // A schedule that paused ITSELF keeps `enabled: true` — the state, not the
+  // switch, says it stopped. Offering "Pause" beside a "Paused" chip gave the
+  // reader nothing to do; the way forward is Resume (an enabled write resets
+  // the failure counter and the clock), except for `paused_auth`, where only
+  // Take over can mint the missing delegation.
+  const pausedByItself =
+    enabled && schedule?.state !== undefined && schedule.state !== "active";
+  const offersResume = !enabled || (pausedByItself && !pausedForAuth);
 
   return (
     <div className="space-y-3">
@@ -192,7 +200,7 @@ export function SuiteAutomationRow({
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {enabled ? (
+          {!offersResume ? (
             <Button
               type="button"
               size="sm"

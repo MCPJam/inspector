@@ -67,8 +67,15 @@ export function describeAgreement(
  */
 export function gateSwitchDisabledReason(
   judge: SuiteCapabilities["judge"] | undefined,
+  /** Set once the capabilities read has FAILED, so "checking" is not a lie. */
+  unavailableReason?: string,
 ): string | undefined {
-  if (!judge) return "Checking whether this deployment allows judge gating…";
+  if (!judge) {
+    return (
+      unavailableReason ??
+      "Checking whether this deployment allows judge gating…"
+    );
+  }
   if (!judge.gating.enabled) return DEPLOYMENT_REASON_COPY;
   if (judge.agreement.eligible || judge.acknowledgement?.current) {
     return undefined;
@@ -81,6 +88,7 @@ export function gateSwitchDisabledReason(
 export function JudgeGatePanel({
   suiteId,
   judge,
+  unavailableReason,
   judgeConfig,
   onJudgeConfigChange,
   onAcknowledged,
@@ -88,6 +96,8 @@ export function JudgeGatePanel({
   suiteId: string;
   /** From `useSuiteCapabilities`; absent while it loads or is unavailable. */
   judge: SuiteCapabilities["judge"] | undefined;
+  /** Why `judge` is absent when the read FAILED rather than being in flight. */
+  unavailableReason?: string;
   judgeConfig: EvalJudgeConfig | undefined;
   onJudgeConfigChange: (next: EvalJudgeConfig | undefined) => void;
   /** Re-read capabilities after an acknowledgement lands. */
@@ -104,7 +114,7 @@ export function JudgeGatePanel({
     reason: string;
   }) => Promise<unknown>;
 
-  const disabledReason = gateSwitchDisabledReason(judge);
+  const disabledReason = gateSwitchDisabledReason(judge, unavailableReason);
   // From the DRAFT, so the switch reflects what a save would write rather than
   // what the server currently holds — the same rule every other control here
   // follows.
