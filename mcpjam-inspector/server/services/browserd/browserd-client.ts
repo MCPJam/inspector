@@ -243,6 +243,12 @@ export class BrowserdClient {
 
     if (!res.ok || !res.body) {
       args.signal.removeEventListener("abort", onCallerAbort);
+      // A refusal still arrives with a body, and an uncancelled one holds its
+      // socket until the garbage collector happens to notice. `503
+      // too_many_watchers` is a ROUTINE answer here — the daemon serves four
+      // streams — so this is the path a pane retries into, and every retry
+      // would strand a connection to a box the agent is also using.
+      void res.body?.cancel().catch(() => {});
       return {
         ok: false,
         status: res.status,
