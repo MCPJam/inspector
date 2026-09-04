@@ -454,9 +454,22 @@ export class LocalHarnessSupervisor {
     child.stdout?.on("data", (chunk: Buffer) =>
       out.push(new Uint8Array(chunk)),
     );
-    child.stderr?.on("data", (chunk: Buffer) =>
-      err.push(new Uint8Array(chunk)),
-    );
+    // The first bytes of stderr, kept aside for the one error below that most
+    // needs them: a root that cannot be identified is usually a root that
+    // died at once, and its own last words are the diagnosis. Without this,
+    // every early bridge crash on a platform whose identity probe takes a few
+    // seconds reads as "could not read the birth identity".
+    let stderrHead = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderrHead.length < 2048) {
+        stderrHead += chunk.toString(
+          "utf8",
+          0,
+          Math.min(chunk.length, 2048 - stderrHead.length),
+        );
+      }
+      err.push(new Uint8Array(chunk));
+    });
 
     let exitResult: { exitCode: number } | null = null;
     let notifyExit: ((result: { exitCode: number }) => void) | null = null;
@@ -554,15 +567,34 @@ export class LocalHarnessSupervisor {
     // Read the birth identity immediately: this is the value that later proves
     // a pid still belongs to us. Reading it after any further await would race
     // a fast exit and a pid reuse.
-    const birthIdentity = await readProcessBirthIdentity(pid, this.platform);
+    const probe = await probeProcess(pid, this.platform);
+    const birthIdentity = probe.state === "alive" ? probe.identity : null;
     entry.birthIdentity = birthIdentity;
     if (request.role === "root" && birthIdentity === null) {
       // Started, but unidentifiable — we could not guarantee cleanup, so we
-      // refuse rather than run a tree we cannot prove we own.
+      // refuse rather than run a tree we cannot prove we own. Say WHY: "gone"
+      // and "could not look" are different failures with different fixes,
+      // and a root that exited before it could be identified has usually
+      // said something on stderr.
       await abandon();
+      const recordedExit = (): { exitCode: number } | null => exitResult;
+      const exit = recordedExit();
+      const why =
+        probe.state === "gone"
+          ? "the process had already exited"
+          : probe.state === "unknown"
+            ? `the probe could not look (${probe.reason})`
+            : "the process could not be identified";
+      const exited =
+        exit !== null ? `exit code ${exit.exitCode}` : "no exit recorded yet";
+      const said =
+        stderrHead.trim().length > 0
+          ? `; stderr: ${JSON.stringify(stderrHead.trim().slice(0, 1024))}`
+          : "";
       throw new SupervisorError(
-        "could not read the process birth identity for the harness root; " +
-          "refusing to run a tree this Inspector cannot prove it owns",
+        `could not read the process birth identity for the harness root — ` +
+          `${why} (${exited})${said}; refusing to run a tree this Inspector ` +
+          `cannot prove it owns`,
       );
     }
 
