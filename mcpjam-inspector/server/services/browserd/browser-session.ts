@@ -24,6 +24,7 @@
  * unit-testable without E2B or the network. The live construction lives in
  * `live-session-deps.ts` (VALIDATE-ON-STAGING).
  */
+import { randomUUID } from "node:crypto";
 import type {
   BootBrowserdOptions,
   BrowserdHandle,
@@ -296,26 +297,108 @@ async function tryReuse(
 }
 
 /**
- * Throw when somebody holds this box's browser.
+ * The holder a relaunch fences with, and the ceiling on how long it may last.
  *
- * Cheap and best-effort: a daemon that cannot answer is not one anybody is
- * driving, and an older daemon without the endpoint answers nothing. Only a
- * clear "held" or "parked" stops the relaunch — both mean a person's session
- * is on that screen, and `parked` especially so, since parking is what an
- * expired hold becomes when a pane stops its heartbeat rather than evidence
- * that the private moment is over.
+ * The prefix is load-bearing, not cosmetic: it is how a later relaunch tells
+ * ITS OWN debris from a person. See `fenceForRelaunch`.
  */
-async function refuseIfHeld(
+const RELAUNCH_HOLDER_PREFIX = "relaunch:";
+const RELAUNCH_FENCE_TTL_MS = 30_000;
+
+/** A lease this relaunch is holding, to be given back if the kill fails. */
+interface RelaunchFence {
+  release(): Promise<void>;
+}
+
+/**
+ * TAKE the lease before killing the daemon, so nobody can take it after we
+ * looked.
+ *
+ * Reading the lease and then killing is a check-then-act with an HTTP round
+ * trip in the middle: a person can press "Take control" inside that window and
+ * have the page pulled away a moment later — the exact failure the check
+ * exists to prevent, merely made rarer. The daemon's `acquire` is already an
+ * atomic take-or-fail (`{took:false}` when somebody else holds it, evaluated
+ * on the daemon's own event loop), so the honest version of this check is to
+ * take the lease rather than to read it. Whoever loses the race loses it at
+ * the daemon, once, and the winner is unambiguous.
+ *
+ * A `took` becomes a fence: while we hold it no pane can acquire, and the kill
+ * below discards it along with the process. If the kill fails we hand it back,
+ * because a lease left on a LIVE daemon blocks the agent and every person.
+ *
+ * OUR OWN DEBRIS IS NOT A PERSON. A fence outlives its relaunch if this
+ * process dies between the take and the kill; on expiry it parks, and a parked
+ * lease never auto-frees, so a naive refusal would then brick the box forever —
+ * and brick it precisely because of the guard meant to protect it. Only this
+ * function mints holders with `RELAUNCH_HOLDER_PREFIX`, so a hold under that
+ * prefix can only be an interrupted relaunch, and stepping over it is the same
+ * judgement `profile-lock.ts` makes about a stale `SingletonLock`.
+ *
+ * Best-effort about REACHING the daemon, never about the answer: a transport
+ * failure or a client too old to have the endpoint means nobody could be
+ * driving it through us either, so the relaunch proceeds — but a daemon that
+ * answers "somebody else has it" always stops it.
+ */
+async function fenceForRelaunch(
   deps: BrowserSessionDeps,
-  lookup: BrowserSessionLookup,
-  contextMode: BrowserContextMode,
-): Promise<void> {
-  const session = lookup.session;
-  if (!session || session.contextMode !== contextMode) return;
+  computerId: string,
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchFence | null> {
+  // `"any"`, because OWNERSHIP IS NOT MODE-SCOPED. The reuse lookup above asks
+  // "is there a daemon I may run in?", and the backend answers `null` for a row
+  // in the other profile mode — correctly, since an eval must never inherit a
+  // signed-in profile. But this asks a different question: "is anyone holding
+  // this box's browser?", and a persistent daemon with a person on it is the
+  // most emphatic possible yes. Reusing the mode-filtered answer here read that
+  // yes as "no row, nothing to protect" and killed them.
+  const owner = await deps.store
+    .lookup({
+      computerId,
+      expectedBundleHash: bundleHash,
+      expectedContextMode: "any",
+      ...(signal ? { signal } : {}),
+    })
+    .catch(() => null);
+  // RESIDUAL, and named rather than papered over: the backend checks the bundle
+  // hash BEFORE the mode, so a daemon booted from a previous bundle answers
+  // `null` here too and its holder is not protected. That is not a corner —
+  // every daemon change rotates the hash, so the first relaunch after a deploy
+  // is exactly this case. Closing it needs the control plane to hand back a
+  // stale row's credentials for an ownership read, which is a backend change
+  // and belongs in the backend PR, not smuggled into this one.
+  const session = owner?.session;
+  if (!session) return null;
   const client = deps.createClient(session.publicOrigin, session.browserdToken);
-  const state = await client.lease?.().catch(() => null);
-  if (!state) return;
-  if (state.state !== "held" && state.state !== "parked") return;
+  const holder = `${RELAUNCH_HOLDER_PREFIX}${randomUUID()}`;
+  const taken = await client
+    .leaseAction?.({
+      action: "acquire",
+      holder,
+      ttlMs: RELAUNCH_FENCE_TTL_MS,
+      // A relaunch is not a person at a keyboard, and the resume note that
+      // names the kind would be a lie if it said otherwise.
+      kind: "script",
+    })
+    .catch(() => null);
+  if (!taken) return null;
+  if (taken.took) {
+    return {
+      async release() {
+        await client
+          .leaseAction?.({ action: "resume", holder })
+          .catch(() => {});
+      },
+    };
+  }
+  const state = taken.lease;
+  if (state.state !== "held" && state.state !== "parked") {
+    // Refused without anybody holding it — not an answer we can act on, and
+    // not one that says a person is there.
+    return null;
+  }
+  if (state.holder.startsWith(RELAUNCH_HOLDER_PREFIX)) return null;
   throw new BrowserSessionInUseError(
     state.state === "held"
       ? "somebody is using this browser right now; restarting it would take the page out from under them"
@@ -402,13 +485,27 @@ async function ensureOnComputer(
     const awake = await tryReuse(deps, lookup, contextMode, args.signal);
     if (awake) return awake;
 
-    // A person is DRIVING this browser. The relaunch below pkills their
+    // A person may be DRIVING this browser. The relaunch below pkills their
     // Chromium and rotates the boot, which from their side is the page
     // vanishing mid-login. The lease is the whole reason we can know that, so
-    // refuse rather than take the browser out from under them.
-    await refuseIfHeld(deps, lookup, contextMode);
+    // take it — refusing if somebody else has it — rather than read it and
+    // hope nobody acts in the gap.
+    const fence = await fenceForRelaunch(
+      deps,
+      computerId,
+      bundleHash,
+      args.signal,
+    );
 
-    await sandbox.killBrowserd();
+    try {
+      await sandbox.killBrowserd();
+    } catch (killError) {
+      // The daemon is still alive and we are holding its lease. Left there it
+      // would block the agent AND every person until it parked, which never
+      // frees on its own.
+      await fence?.release();
+      throw killError;
+    }
     await sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
     try {
       handle = await deps.boot(sandbox.browserd, {

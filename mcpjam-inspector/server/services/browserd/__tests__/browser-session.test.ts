@@ -15,7 +15,8 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { BrowserdHandle } from "../boot-browserd";
-import type { BrowserdStatus } from "../browserd-client";
+import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
+import { HandoffLease } from "../daemon/lease";
 import type {
   BrowserSessionLookup,
   BrowserSessionRecord,
@@ -56,6 +57,43 @@ function liveLookup(
   };
 }
 
+type LeaseActionFn = (args: {
+  action: "acquire" | "heartbeat" | "resume";
+  holder: string;
+  ttlMs?: number;
+  kind?: "human" | "script";
+}) => Promise<{ took: boolean; lease: BrowserdLeaseState }>;
+
+/**
+ * A `leaseAction` backed by the REAL `HandoffLease`, not by a hand-written
+ * answer.
+ *
+ * The whole claim under test is that taking the lease is atomic — that a pane
+ * pressing "Take control" while a relaunch is deciding LOSES. A fake that just
+ * returns `{took:false}` when a test says so proves nothing about that; the
+ * daemon's own class, wired to the same `took` rule the request handler uses,
+ * is what makes a competing acquire in these tests fail for the production
+ * reason.
+ */
+function leaseBackedBy(lease: HandoffLease): LeaseActionFn {
+  return async (args) => {
+    const state =
+      args.action === "acquire"
+        ? lease.acquire(args.holder, args.ttlMs, args.kind)
+        : args.action === "heartbeat"
+          ? lease.heartbeat(args.holder, args.ttlMs)
+          : lease.resume(args.holder);
+    // Mirrors request-handler.ts: only an acquire can fail to take.
+    const took =
+      args.action !== "acquire" ||
+      (state.state === "held" && state.holder === args.holder);
+    return {
+      took,
+      lease: { ...state, bootId: ROW.bootId } as BrowserdLeaseState,
+    };
+  };
+}
+
 interface Fakes {
   deps: BrowserSessionDeps;
   sandbox: SessionSandbox & {
@@ -76,8 +114,11 @@ interface Fakes {
 function makeFakes(over?: {
   lookups?: BrowserSessionLookup[];
   status?: () => Promise<BrowserdStatus>;
-  /** The daemon's lease, when a test needs the relaunch to see one. */
-  lease?: () => Promise<{ state: "free" | "held" | "parked"; holder?: string }>;
+  /**
+   * The daemon's lease ENDPOINT, when a test needs the relaunch to reach one.
+   * Omitted ⇒ a client that predates it, which must not block recovery.
+   */
+  leaseAction?: LeaseActionFn;
   recordResult?: BrowserSessionRecordResult;
   bootError?: Error;
   streamError?: Error;
@@ -146,7 +187,7 @@ function makeFakes(over?: {
       sendCommand: vi.fn(async () => {
         throw new Error("not under test");
       }),
-      ...(over?.lease ? { lease: over.lease } : {}),
+      ...(over?.leaseAction ? { leaseAction: over.leaseAction } : {}),
     })),
     store: { lookup, record, touch },
     bundle: () => new Uint8Array([1, 2, 3]),
@@ -266,10 +307,12 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     // The relaunch pkills their Chromium and rotates the boot, which from
     // their side is the page vanishing mid-login. The lease is the whole
     // reason we can know that.
+    const lease = new HandoffLease();
+    lease.acquire("panel-1");
     const f = makeFakes({
       lookups: [liveLookup()],
       status: async () => ({ kind: "unreachable", detail: "no answer" }),
-      lease: async () => ({ state: "held", holder: "panel-1" }),
+      leaseAction: leaseBackedBy(lease),
     });
 
     await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
@@ -278,16 +321,24 @@ describe("ensureBrowserSession — relaunch triggers", () => {
     expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
     expect(f.boot).not.toHaveBeenCalled();
     expect(f.sandbox.disconnect).toHaveBeenCalledTimes(1);
+    // And their hold is untouched: a refusal must not cost them the lease.
+    expect(lease.state()).toMatchObject({ state: "held", holder: "panel-1" });
   });
 
   it("refuses for a PARKED lease too, which is a hold nobody let go of", async () => {
     // Parking is what an expired hold becomes when a pane stops its
     // heartbeat — the tab was closed, or the machine slept. It is not
     // evidence the private moment is over.
+    let clock = 1_000;
+    const lease = new HandoffLease({ now: () => clock });
+    lease.acquire("panel-1", 1_000);
+    clock += 60_000; // their pane went quiet; the hold ran out
+    expect(lease.state().state).toBe("parked");
+
     const f = makeFakes({
       lookups: [liveLookup()],
       status: async () => ({ kind: "unreachable", detail: "no answer" }),
-      lease: async () => ({ state: "parked", holder: "panel-1" }),
+      leaseAction: leaseBackedBy(lease),
     });
 
     await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
@@ -304,18 +355,151 @@ describe("ensureBrowserSession — relaunch triggers", () => {
       makeFakes({
         lookups: [liveLookup()],
         status: async () => ({ kind: "unreachable", detail: "no answer" }),
-        lease: async () => ({ state: "free" }),
+        leaseAction: leaseBackedBy(new HandoffLease()),
       }),
     );
     await expectRelaunch(
       makeFakes({
         lookups: [liveLookup()],
         status: async () => ({ kind: "unreachable", detail: "no answer" }),
-        lease: async () => {
+        leaseAction: async () => {
           throw new Error("this daemon predates the endpoint");
         },
       }),
     );
+    // A client with no lease endpoint at all — the optional-call path.
+    await expectRelaunch(
+      makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      }),
+    );
+  });
+
+  it("TAKES the lease before killing, so a pane cannot slip into the gap", async () => {
+    // Reading the lease and then killing is a check-then-act with an HTTP
+    // round trip in the middle: "Take control" pressed inside that window used
+    // to be honoured and then annihilated a moment later. The relaunch now
+    // takes the lease, so the pane's acquire is the one that loses — at the
+    // daemon, once.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      leaseAction: leaseBackedBy(lease),
+    });
+    // The moment the relaunch reaches the kill, a person presses the button.
+    let paneTook: boolean | undefined;
+    f.sandbox.killBrowserd.mockImplementation(async () => {
+      const state = lease.acquire("panel-1");
+      paneTook = state.state === "held" && state.holder === "panel-1";
+    });
+
+    await ensureBrowserSession(f.deps, ARGS);
+
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+    expect(paneTook, "the pane took a lease the relaunch was holding").toBe(
+      false,
+    );
+  });
+
+  it("hands the lease back when the kill fails, rather than wedging a live daemon", async () => {
+    // The daemon is still alive and we are holding its lease. Left there it
+    // blocks the agent AND every person, and on expiry it PARKS, which never
+    // frees on its own.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [liveLookup()],
+      status: async () => ({ kind: "unreachable", detail: "no answer" }),
+      leaseAction: leaseBackedBy(lease),
+    });
+    f.sandbox.killBrowserd.mockRejectedValue(new Error("sandbox exec failed"));
+
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      "sandbox exec failed",
+    );
+    expect(lease.state()).toEqual({ state: "free" });
+  });
+
+  it("steps over its OWN debris instead of bricking the box forever", async () => {
+    // A fence outlives its relaunch if this process dies between the take and
+    // the kill. It then parks, and a parked lease never auto-frees — so a
+    // refusal that could not tell that hold from a person's would refuse every
+    // future relaunch, with no way back. Only the relaunch mints holders under
+    // this prefix, so such a hold can only be an interrupted relaunch.
+    let clock = 1_000;
+    const lease = new HandoffLease({ now: () => clock });
+    lease.acquire("relaunch:11111111-2222-3333-4444-555555555555", 1_000, "script");
+    clock += 60_000;
+    expect(lease.state().state).toBe("parked");
+
+    await expectRelaunch(
+      makeFakes({
+        lookups: [liveLookup()],
+        status: async () => ({ kind: "unreachable", detail: "no answer" }),
+        leaseAction: leaseBackedBy(lease),
+      }),
+    );
+  });
+
+  it("asks about ownership across BOTH profile modes, not just its own", async () => {
+    // The reuse lookup is mode-scoped, and rightly so: an eval must never
+    // inherit a signed-in profile, so the backend answers `null` for a row in
+    // the other mode. Ownership is a different question. Reusing that filtered
+    // answer read "somebody is on this box" as "no row, nothing to protect",
+    // and an ephemeral turn killed the persistent browser a person was
+    // logging in on.
+    const lease = new HandoffLease();
+    lease.acquire("panel-1");
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "context_mode_changed",
+          observedSessionId: ROW.sessionId,
+        },
+        liveLookup(),
+      ],
+      leaseAction: leaseBackedBy(lease),
+    });
+
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toThrow(/lease_held/);
+    expect(f.lookup).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ expectedContextMode: "ephemeral" }),
+    );
+    expect(f.lookup).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ expectedContextMode: "any" }),
+    );
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+  });
+
+  it("protects an EPHEMERAL holder from a persistent turn just the same", async () => {
+    // The mirror case, because the asymmetry would be invisible otherwise: an
+    // eval's box is somebody's too while a person is driving it.
+    const lease = new HandoffLease();
+    lease.acquire("panel-1");
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "context_mode_changed",
+          observedSessionId: ROW.sessionId,
+        },
+        liveLookup({ contextMode: "ephemeral" }),
+      ],
+      leaseAction: leaseBackedBy(lease),
+    });
+
+    await expect(ensureBrowserSession(f.deps, ARGS)).rejects.toThrow(
+      /lease_held/,
+    );
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
   });
 
   it("relaunches on an unhealthy daemon", async () => {
@@ -516,7 +700,9 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
     const handle = await ensureBrowserSession(f.deps, ARGS);
     expect(handle.reused).toBe(true);
     expect(handle.bootId).toBe("boot-winner");
-    expect(f.lookup).toHaveBeenCalledTimes(2);
+    // Three: the mode-scoped reuse lookup, the mode-agnostic ownership lookup
+    // the fence takes before killing, and the post-boot-failure retry.
+    expect(f.lookup).toHaveBeenCalledTimes(3);
     expect(f.sandbox.disconnect).toHaveBeenCalled();
   });
 
