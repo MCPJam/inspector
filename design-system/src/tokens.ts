@@ -46,11 +46,14 @@ export const tokensCss: string = `@theme {
   --chrome-control: oklch(0.8995 0.0191 83.0632);
   --chrome-control-border: oklch(0.856 0.0218 85.9495);
   --chrome-hover: oklch(0.8957 0.0187 86.151);
-  /* #D6CDBE. The hover for a control that is ALREADY filled — the filled
-     nav buttons and the client selector. --chrome-hover above is for things
-     with no fill at rest (idle tabs, ghost buttons); on top of
-     --chrome-control (#E4DDD0) it is a 0.4% step and reads as nothing. */
-  --chrome-control-hover: oklch(0.8515 0.0227 80.6762);
+  /* The hover for a control that is ALREADY filled — the filled nav buttons
+     and the client selector. --chrome-hover above is for things with no fill
+     at rest (idle tabs, ghost buttons); on top of --chrome-control (#E4DDD0)
+     it is a 0.4% step and reads as nothing.
+     It must also clear --chrome-control-border (L 0.856): at the old 0.8515
+     the hover fill and the hairline were 0.0045 L apart, so hovering a
+     secondary button erased its own outline. */
+  --chrome-control-hover: oklch(0.83 0.0235 80.6762);
   --divider: oklch(0.8829 0.0171 88.0071);
   --input: oklch(0.7621 0.0156 98.3528);
   --ring: oklch(0.6171 0.1375 39.0427);
@@ -198,9 +201,11 @@ export const tokensCss: string = `@theme {
   --chrome-control-border: oklch(0.3618 0.0101 106.8928);
   --chrome-hover: oklch(0.213 0.0078 95.4245);
   /* Lighter than the fill, not darker: on a dark ground a raised control
-     brightens under the pointer. Reuses --border's dark value, like the
-     other chrome tokens here. */
-  --chrome-control-hover: oklch(0.3618 0.0101 106.8928);
+     brightens under the pointer. This is the one chrome token here that does
+     NOT reuse --border: --chrome-control-border already is --border's dark
+     value, so sharing it filled a hovered control with exactly its own
+     hairline colour and the outline vanished. A step past it instead. */
+  --chrome-control-hover: oklch(0.3951 0.0106 106.8928);
   --divider: oklch(0.3618 0.0101 106.8928);
   --input: oklch(0.4336 0.0113 100.2195);
   --ring: oklch(0.6724 0.1308 38.7559);
