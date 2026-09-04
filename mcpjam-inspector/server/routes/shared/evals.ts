@@ -24,7 +24,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isTerminalRunStatus } from "../../services/evals/run-status.js";
+import { isRunPastExecution } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -1122,12 +1122,19 @@ export type PreparedEvalRun = {
  *
  * FALSE against a backend with no `deduped` field, for the same reason: unknown
  * is not a licence to change behaviour.
+ *
+ * TRUE for a replay of a run held in `grading`, which is why this reads
+ * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
+ * every trial and is waiting only for its judge; a redelivered claim that
+ * executed it would run the whole suite a second time and bill for it, against
+ * a run whose trials are already recorded — the exact double-spend above, in a
+ * status that is deliberately not terminal.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
+  return prepared.deduped === true && isRunPastExecution(prepared.status);
 }
 
 /**
@@ -2571,6 +2578,18 @@ export async function prepareEvalRun(
       // `selectedServerIds`) via `resolveExecutionContext`. `hostPolicy`
       // is the POLICY subset extracted upstream; this is the rest.
       suiteHostConfig,
+      // The run's PROJECT ENVIRONMENT — the same id echoed to
+      // `startSuiteRunWithRecorder` above, so it is exactly what the run's
+      // `configSnapshot.environmentRef` records and therefore exactly what
+      // `resolveGrantForSandbox` will derive for each iteration's box.
+      //
+      // Threaded for the HARNESS path's external-account credential check: a
+      // BROKERED project secret is composed onto an iteration's box only when
+      // THIS environment selects it, so a project-wide answer would start an
+      // iteration that provisions a box and then fails vendor auth against a
+      // placeholder. Absent for a legacy (non-environment) run, which grants
+      // no secrets at all.
+      ...(environmentId ? { projectEnvironmentId: environmentId } : {}),
       ...(pinnedSkillSource ? { pinnedSkillSource } : {}),
       // Presence is meaningful (empty ⇒ "no skills", absent ⇒ live fetch), so
       // this checks for undefined rather than truthiness.
