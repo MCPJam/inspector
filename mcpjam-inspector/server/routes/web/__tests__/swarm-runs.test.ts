@@ -89,7 +89,13 @@ describe("web routes — swarm single-host launch", () => {
     createJourneyRunMock.mockReset();
     startJourneyRunMock.mockReset().mockResolvedValue(undefined);
     createAuthorizedManagerMock.mockReset().mockResolvedValue({
-      manager: { disconnectAllServers: async () => {} },
+      // `listTools` is the readiness barrier the journey launcher awaits
+      // before handing the manager to a session, so the stub has to answer it
+      // (see launch-journey-run.ts).
+      manager: {
+        listTools: async () => [],
+        disconnectAllServers: async () => {},
+      },
     });
   });
 

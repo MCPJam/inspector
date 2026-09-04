@@ -20,7 +20,7 @@
  *          grant's rotated capability), unconditional otherwise.
  */
 import { Hono } from "hono";
-import { LOCAL_COMPUTER_ENABLED } from "../../config.js";
+import { LOCAL_BROWSER_ENABLED, LOCAL_COMPUTER_ENABLED } from "../../config.js";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { requireVerifiedAuth } from "../../middleware/require-verified-auth.js";
 import {
@@ -31,9 +31,35 @@ import {
   verifyLocalComputerConsent,
 } from "../../utils/computers/local-consent.js";
 import { getLocalTerminalAvailability } from "../../utils/computers/local-pty.js";
-import { issueLocalTerminalNonce } from "../../utils/computers/local-terminal-auth.js";
+import {
+  issueLocalNonce,
+  issueLocalTerminalNonce,
+} from "../../utils/computers/local-terminal-auth.js";
+import {
+  getChromiumInstallState,
+  isChromiumInstalled,
+  startChromiumInstall,
+} from "../../utils/browser-rendering-setup.js";
+import {
+  ensureLocalBrowserSession,
+  findLocalBrowserSession,
+  listLocalBrowserSessions,
+  LocalBrowserUnavailableError,
+  resolveLocalBrowserRuntime,
+  touchLocalBrowserSession,
+} from "../../services/browserd/local/local-browser-session.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 
 const computers = new Hono();
+
+/**
+ * Cap on one input batch.
+ *
+ * Pointer movement is the flooding vector, and the client already coalesces
+ * moves; this is the server's own bound so a hostile or broken caller cannot
+ * hand the browser an unbounded array to replay.
+ */
+const INPUT_BATCH_LIMIT = 64;
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -56,7 +82,7 @@ computers.use("/local-consent/*", async (c, next) => {
 computers.use(
   "/local-terminal-token",
   bearerAuthMiddleware,
-  requireVerifiedAuth()
+  requireVerifiedAuth(),
 );
 computers.use("/local-terminal-token", async (c, next) => {
   if (!LOCAL_COMPUTER_ENABLED) {
@@ -117,7 +143,7 @@ computers.post("/local-terminal-token", async (c) => {
   // still open a shell. The WS handler re-checks the fingerprint against the
   // live capability, so revoke AND rotation both invalidate outstanding nonces.
   const consentFingerprint = await verifyAndFingerprintLocalConsent(
-    c.req.header(LOCAL_CONSENT_HEADER)
+    c.req.header(LOCAL_CONSENT_HEADER),
   );
   if (!consentFingerprint) {
     return c.json({ error: "Local computer consent is required" }, 403);
@@ -131,12 +157,266 @@ computers.post("/local-terminal-token", async (c) => {
     // segment) — an invalid key never reaches the WS handler.
     const { nonce, expiresAtMs } = issueLocalTerminalNonce(
       projectId,
-      consentFingerprint
+      consentFingerprint,
     );
     return c.json({ nonce, expiresAtMs });
   } catch {
     return c.json({ error: "Invalid project for the local terminal" }, 400);
   }
+});
+
+/**
+ * The agent browser's own gates, identical in shape to the terminal mint's and
+ * separate in substance: `MCPJAM_LOCAL_BROWSER_ENABLED` is its own switch, so
+ * an operator can allow a browser without a shell or the reverse.
+ */
+computers.use("/local-browser/*", bearerAuthMiddleware, requireVerifiedAuth());
+computers.use("/local-browser/*", async (c, next) => {
+  if (!LOCAL_BROWSER_ENABLED) {
+    return c.json({ error: "Not found" }, 404);
+  }
+  if (c.get("guestId")) {
+    return c.json({ error: "Guests cannot use the local browser" }, 403);
+  }
+  return next();
+});
+
+/**
+ * Is there a Chromium on this machine for the agent to drive, and is one
+ * running?
+ *
+ * Consent is NOT required to read this: the consent screen itself needs to
+ * know whether it should offer an install, and a screen that cannot describe
+ * the machine until you have already authorized it is a screen that cannot
+ * explain what it is asking for. Nothing here is machine-identifying — no
+ * paths, no profile directories, no process ids.
+ */
+computers.get("/local-browser/status", async (c) => {
+  const runtime = resolveLocalBrowserRuntime();
+  // The desktop app IS a Chromium. Probing for a downloaded one would report
+  // `installed: false` on a machine that has a browser open, and the consent
+  // screen would offer a hundreds-of-megabyte download for nothing.
+  const electron = runtime === "electron";
+  const install = electron
+    ? ({ status: "ready" } as const)
+    : getChromiumInstallState();
+  const sessions = listLocalBrowserSessions();
+  return c.json({
+    runtime,
+    installed: electron ? true : await isChromiumInstalled(),
+    install,
+    running: sessions.length > 0,
+    // Whether a person currently holds any local browser. The rail shows this
+    // so a second tab cannot silently believe it has control.
+    leaseHeld: sessions.some((session) => session.leaseHeld),
+  });
+});
+
+/**
+ * Download Chromium, with progress, from the consent screen.
+ *
+ * This is the ONE place the install may start, and the reason it exists as a
+ * route at all: the download is hundreds of megabytes, and doing it lazily
+ * inside a chat turn means a model sitting in a tool call for minutes with no
+ * way to say why. Requires consent — it is a large, unprompted download onto
+ * someone's machine, which is exactly the class of thing consent is for.
+ *
+ * Idempotent: two clicks join one install rather than racing two `playwright
+ * install` runs over the same browser cache.
+ */
+computers.post("/local-browser/install", async (c) => {
+  const consent = await verifyLocalComputerConsent(
+    c.req.header(LOCAL_CONSENT_HEADER),
+  );
+  if (!consent) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  // Electron BRINGS its Chromium, and the packaged app has no `node_modules`
+  // for the Playwright CLI to live in — so starting an install here does not
+  // merely waste a download, it fails. The status route already answers
+  // `ready` for this runtime; say the same thing rather than contradicting it.
+  if (resolveLocalBrowserRuntime() === "electron") {
+    return c.json({ install: { status: "ready" as const } });
+  }
+  return c.json({ install: await startChromiumInstall() });
+});
+
+/**
+ * Consent, once, for every route below that touches the browser itself.
+ *
+ * `status` and `install` do their own checks (one needs none, the other needs
+ * consent); everything from here on drives or watches a real browser, so the
+ * check is uniform. It returns the fingerprint as well as the verdict because
+ * the frames nonce is bound to it — a nonce must not outlive the consent that
+ * authorized it.
+ */
+async function requireConsent(c: {
+  req: { header(name: string): string | undefined };
+}): Promise<string | null> {
+  return verifyAndFingerprintLocalConsent(c.req.header(LOCAL_CONSENT_HEADER));
+}
+
+/**
+ * Start (or find) this project's browser and report how to reach it.
+ *
+ * The rail calls this when its tab opens. It is separate from the chat turn's
+ * own ensure so a person can watch a browser before the agent has asked for
+ * one — and so the FIRST thing that happens on a slow machine is a spinner in
+ * the pane rather than a stalled tool call.
+ */
+computers.post("/local-browser/ensure", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  try {
+    const handle = await ensureLocalBrowserSession({ projectId });
+    const lease = await handle.client.lease?.();
+    return c.json({
+      bootId: handle.bootId,
+      contextMode: handle.contextMode,
+      lease: lease ?? { state: "free" },
+    });
+  } catch (error) {
+    if (error instanceof LocalBrowserUnavailableError) {
+      // A typed refusal the pane can act on: "install Chromium", "another
+      // process has this profile" — never a stack trace.
+      return c.json({ error: error.message, code: error.code }, 409);
+    }
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+});
+
+/**
+ * Mint the single-use nonce that opens the frames socket.
+ *
+ * Same shape as the terminal's, for the same reason: a WebSocket cannot carry
+ * an Authorization header from a browser, so the credential rides the
+ * subprotocol — and a credential in a URL or a long-lived one in a header is
+ * exactly what this avoids. Bound to the consent capability, so revoking
+ * consent invalidates nonces already handed out.
+ */
+computers.post("/local-browser/token", async (c) => {
+  const consentFingerprint = await requireConsent(c);
+  if (!consentFingerprint) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    projectId?: unknown;
+  } | null;
+  const projectId = typeof body?.projectId === "string" ? body.projectId : "";
+  try {
+    return c.json(
+      issueLocalNonce({
+        kind: "browser-frames",
+        projectId,
+        consentFingerprint,
+      }),
+    );
+  } catch {
+    return c.json({ error: "Invalid project for the local browser" }, 400);
+  }
+});
+
+/**
+ * Take the browser, keep it, or hand it back.
+ *
+ * The `holder` is supplied by the client, and on a single-user device that is
+ * honest: consent plus the session token already prove this is the machine's
+ * owner, and the holder id only has to distinguish one PANE from another so
+ * two tabs cannot each believe they have control. It is not an identity claim,
+ * and nothing downstream treats it as one.
+ */
+computers.post("/local-browser/lease", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    action?: unknown;
+    holder?: unknown;
+    ttlMs?: unknown;
+    kind?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const holder = typeof body?.holder === "string" ? body.holder : "";
+  const action = body?.action;
+  if (
+    !holder ||
+    (action !== "acquire" && action !== "heartbeat" && action !== "resume")
+  ) {
+    return c.json({ error: "A holder and a valid action are required" }, 400);
+  }
+  const session = findLocalBrowserSession(bootId);
+  if (!session?.client.leaseAction) {
+    return c.json({ error: "No such local browser" }, 404);
+  }
+  const result = await session.client.leaseAction({
+    action,
+    holder,
+    ...(typeof body?.ttlMs === "number" ? { ttlMs: body.ttlMs } : {}),
+    ...(body?.kind === "script" ? { kind: "script" as const } : {}),
+  });
+  // Holding the browser IS using it — otherwise the idle reap would close the
+  // window on someone who is mid-login and has simply not clicked for a while.
+  touchLocalBrowserSession(session.handle);
+  // An acquire that did not take is a 409, not a silent no-op: a pane that
+  // thinks it has control would show a person a live view while the agent kept
+  // driving underneath them.
+  return c.json({ lease: result.lease }, result.took ? 200 : 409);
+});
+
+/**
+ * Forward the person's pointer and keys.
+ *
+ * Deliberately NOT a browser command: input arrives as batches at up to twenty
+ * a second while someone drags a scrollbar, and every command spends an
+ * idempotency slot from a ledger that refuses new ids once exhausted. The
+ * daemon's handler still gates it on the lease — this is the one path that
+ * puts keystrokes into a page without a per-action approval, so "who is
+ * typing" has to have an answer.
+ */
+computers.post("/local-browser/input", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+    holder?: unknown;
+    tabId?: unknown;
+    events?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const holder = typeof body?.holder === "string" ? body.holder : "";
+  const events = Array.isArray(body?.events)
+    ? (body.events as ViewportInputEvent[]).slice(0, INPUT_BATCH_LIMIT)
+    : [];
+  if (!holder || events.length === 0) {
+    return c.json(
+      { error: "A holder and at least one event are required" },
+      400,
+    );
+  }
+  const session = findLocalBrowserSession(bootId);
+  if (!session) return c.json({ error: "No such local browser" }, 404);
+  const result = await session.handler.dispatchInput({
+    holder,
+    ...(typeof body?.tabId === "string" ? { tabId: body.tabId } : {}),
+    events,
+  });
+  if (!result.ok) {
+    // 423, matching the daemon's own refusal for the same reason: somebody
+    // else has the browser, or nobody has taken it yet.
+    return c.json(
+      { error: result.error },
+      result.error === "unknown_tab" ? 404 : 423,
+    );
+  }
+  touchLocalBrowserSession(session.handle);
+  return c.json({ ok: true });
 });
 
 export default computers;

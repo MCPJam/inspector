@@ -14,7 +14,10 @@ import { isAbortError } from "./abort-errors";
 import { isMrtrSuspendSignalShape } from "./mrtr-continuation";
 import { SCOPE_STEP_UP_SUSPEND_CODE } from "./scope-step-up";
 import { isClientFulfilledToolName } from "./client-fulfilled-tools";
-import { mergeMcpToolOriginMetadata } from "./mcp-tool-origin-metadata";
+import {
+  buildMcpToolErrorResultMessage,
+  buildMcpToolResultMessage,
+} from "./mcp-tool-result-message";
 
 type ToolsMap = Record<string, any>;
 type Toolsets = Record<string, ToolsMap>;
@@ -424,10 +427,6 @@ export async function executeToolCallsFromMessages(
         // instead of emitting an output-less tool result (which becomes `{}`
         // on the wire and can leave the resumed model turn with no answer).
         if (mappedOutput !== undefined) {
-          const providerOptions = mergeMcpToolOriginMetadata(
-            undefined,
-            serverId
-          );
           // MCP App tools scrub structuredContent from the model-facing copy
           // (`mappedOutput`), but their widgets read structuredContent from
           // the raw result. Preserve the raw result for UI hydration whenever
@@ -440,24 +439,19 @@ export async function executeToolCallsFromMessages(
             typeof result === "object" &&
             "structuredContent" in (result as Record<string, unknown>);
           const preserveRawResultForUi = shouldPreserveRawResultForUi(tool);
-          return {
-            role: "tool" as const,
-            content: [
-              {
-                type: "tool-result",
-                toolCallId: content.toolCallId,
-                toolName: toolName,
-                output: mappedOutput,
-                // UI-only raw result for app-tool widgets (stripped from the
-                // model copy via `output`/toModelOutput above).
-                ...(rawHasStructuredContent || preserveRawResultForUi
-                  ? { result }
-                  : {}),
-                serverId,
-                ...(providerOptions ? { providerOptions } : {}),
-              },
-            ],
-          } as any;
+          return buildMcpToolResultMessage({
+            toolCallId: content.toolCallId,
+            toolName,
+            serverId,
+            output: mappedOutput,
+            rawResult: result,
+            // UI-only raw result for app-tool widgets (stripped from the model
+            // copy via `output`/toModelOutput above). Withheld unless the tool
+            // opts in — hence the explicit flag rather than "attach whatever
+            // was passed".
+            includeRawResult:
+              rawHasStructuredContent || preserveRawResultForUi,
+          }) as any;
         }
       }
 
@@ -529,29 +523,18 @@ export async function executeToolCallsFromMessages(
 
       throwIfAborted(signal);
 
-      return {
-        role: "tool" as const,
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: content.toolCallId,
-            toolName: toolName,
-            output: llmOutput,
-            // Preserve full result including _meta for UI hydration
-            result: result,
-            // Add serverId for OpenAI component resolution
-            serverId,
-            ...(serverId
-              ? {
-                  providerOptions: mergeMcpToolOriginMetadata(
-                    undefined,
-                    serverId
-                  ),
-                }
-              : {}),
-          },
-        ],
-      } as any;
+      // The shared builder, so the harness engine's evidence-projected
+      // transcript and this one cannot drift into grading the same tool result
+      // differently. `result` is preserved in full (including `_meta`) for UI
+      // hydration; `serverId` drives OpenAI component resolution.
+      return buildMcpToolResultMessage({
+        toolCallId: content.toolCallId,
+        toolName,
+        serverId,
+        output: llmOutput,
+        rawResult: result,
+        includeRawResult: true,
+      }) as any;
     } catch (error: any) {
       // Abort errors must propagate — they represent user/client
       // cancellation, NOT a tool failure. Capturing them as an
@@ -585,17 +568,14 @@ export async function executeToolCallsFromMessages(
             ? error.message
             : String(error),
       } as any;
-      return {
-        role: "tool" as const,
-        content: [
-          {
-            type: "tool-result",
-            toolCallId: content.toolCallId,
-            toolName: content.toolName,
-            output: errorOutput,
-          },
-        ],
-      } as any;
+      // No `result` and no `serverId` on this path: there is no server result
+      // to preserve, and attaching an origin to a call that never returned one
+      // would make a failure read as a reply.
+      return buildMcpToolErrorResultMessage({
+        toolCallId: content.toolCallId,
+        toolName: content.toolName,
+        output: errorOutput,
+      }) as any;
     }
   };
 
