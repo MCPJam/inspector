@@ -1,4 +1,8 @@
 /**
+ * @vitest-environment jsdom
+ * @vitest-environment-options { "url": "https://example.test/docs/" }
+ */
+/**
  * `PAGE_TEXT_FN` — the extraction rules, run against a real DOM.
  *
  * The function is a STRING evaluated inside the page, so nothing else in the
@@ -11,21 +15,20 @@
  * when a regression here would land. jsdom also has no `checkVisibility`, so
  * this exercises the `getComputedStyle` fallback, the path an older engine
  * takes.
+ *
+ * Through the ENVIRONMENT rather than `new JSDOM(...)`: jsdom ships no types,
+ * and adding `@types/jsdom` to the package to satisfy one import is a bigger
+ * change than the test is worth.
  */
 import { describe, expect, it } from "vitest";
-import { JSDOM } from "jsdom";
 import { PAGE_TEXT_FN } from "../page-text";
 
 function extract(body: string): string {
-  const dom = new JSDOM(`<!doctype html><html><body>${body}</body></html>`, {
-    url: "https://example.test/docs/",
-    runScripts: "dangerously",
-  });
-  try {
-    return dom.window.eval(`(${PAGE_TEXT_FN})()`) as string;
-  } finally {
-    dom.window.close();
-  }
+  document.body.innerHTML = body;
+  // Evaluated the same way the engines evaluate it: as an expression, wrapped
+  // and self-invoked. A bare function literal would return the uncalled
+  // function, which is exactly the mistake this shape exists to prevent.
+  return new Function(`return (${PAGE_TEXT_FN})()`)() as string;
 }
 
 describe("PAGE_TEXT_FN — structure", () => {
