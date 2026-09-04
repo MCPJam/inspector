@@ -39,7 +39,8 @@ import {
   httpStatus,
 } from "../../services/browserd/hosted-reserve-refusal.js";
 import {
-  HostedDesktopAsleepError,
+  HostedDesktopUnavailableError,
+  noteAccessProved,
   resolveHostedSession,
 } from "../../services/webmcp-inspector/hosted-session-resolver.js";
 import type {
@@ -282,11 +283,13 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   if (error instanceof HostedIdentityError) {
     return error.response;
   }
-  if (error instanceof HostedDesktopAsleepError) {
+  if (error instanceof HostedDesktopUnavailableError) {
     // 409, and deliberately NOT a wake. Re-hydration is reached from reads —
     // a page refresh, a reconnecting event stream — and provisioning from
     // those would resurrect a computer its owner let sleep, and bill for it.
-    return c.json({ error: error.message, code: "hosted-desktop-asleep" }, 409);
+    // The code says WHICH kind of unreachable, so the tab can tell somebody to
+    // wait rather than to start a machine that is already starting.
+    return c.json({ error: error.message, code: error.code }, 409);
   }
   if (error instanceof WebMcpSessionNotFoundError) {
     return c.json({ error: error.message, code: "session-not-found" }, 404);
@@ -670,6 +673,10 @@ webmcpInspector.post("/sessions", async (c) => {
     // request happened to land on is not something a session's behaviour
     // should depend on.
     const derivedId = hostedSessionId(projectId, handle.computerId);
+    // The reserve above authorized this caller against this project with their
+    // own bearer — a stronger check than the resolver's periodic one. Recorded
+    // so the first command after a start is not made to prove it again.
+    noteAccessProved(derivedId);
     provider = createBrowserdWebMcpProvider({
       handle,
       onCommand: hostedKeepAwake,

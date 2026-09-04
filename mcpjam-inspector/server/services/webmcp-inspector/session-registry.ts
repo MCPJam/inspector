@@ -261,7 +261,12 @@ export class WebMcpSessionRegistry {
       this.sessions.delete(runtime.sessionId);
       this.disposingCount[displacedKind] += 1;
       void displaced
-        .close()
+        // `detached`, not `closed`, for a hosted id — the same distinction the
+        // sweep and the shutdown path make. The browser this handle pointed at
+        // is still running; a replacement handle to it is being registered
+        // right now. Telling the client `closed` would make it tear the
+        // session down at the exact moment it came back.
+        .close(closeReasonFor(runtime.sessionId))
         .catch(() => {})
         .finally(() => {
           this.disposingCount[displacedKind] -= 1;

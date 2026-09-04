@@ -229,6 +229,35 @@ describe("hosted store — one identity per invocation", () => {
     expect(result.state).toBe("unknown");
   });
 
+  it("does not hand a closed session's caller an inline outcome", async () => {
+    // The inline arm returns BEFORE the generation check further down, so a
+    // session torn down while the tool was running would answer its caller
+    // with a result from a page that no longer exists — and chat would hand
+    // that to the model as the answer.
+    fetches.handlers.unshift({
+      match: (url) => url.includes("/command"),
+      respond: () => {
+        // The session goes away while the POST is in flight — the person hit
+        // "Close browser", or the stream reported it gone.
+        void useWebmcpInspectorStore.getState().closeSession();
+        return json({
+          ok: true,
+          invokeId: "inv-3",
+          outcome: { state: "succeeded", output: { charged: true } },
+        });
+      },
+    });
+    useWebmcpInspectorStore.setState({ session: SESSION });
+    const result = await useWebmcpInspectorStore
+      .getState()
+      .invokeToolForResult("origin::pay", {});
+    // `unknown`, not `failed`: it may well have run, and the id is kept so the
+    // caller can ask again rather than paying twice to find out.
+    expect(result.state).toBe("unknown");
+    expect(result.invokeId).toBeDefined();
+    expect(result.output).toBeUndefined();
+  });
+
   it("reuses the SAME id when the caller retries the same invocation", async () => {
     const seen: string[] = [];
     fetches.handlers.unshift({

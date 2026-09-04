@@ -1081,10 +1081,16 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
      * continuing, not a new one.
      */
     async function reattach(sessionId: string) {
+      const generation = sessionGeneration;
       const result = await request<{
         session: WebMcpSessionPublic;
         tools: WebMcpToolDescriptor[];
       }>(`/sessions/${sessionId}`);
+      // The round trip is not instant, and the person can close this session
+      // or open another one inside it. Applying either arm then resurrects a
+      // session they have moved on from, or attaches its tools to a page it
+      // has nothing to do with.
+      if (generation !== sessionGeneration) return;
       if (result.ok) {
         set({ session: result.data.session, tools: result.data.tools });
         return;
@@ -1316,9 +1322,20 @@ export const useWebmcpInspectorStore = create<WebMcpInspectorState>(
 
         // HOSTED answers inline, because the event stream carrying the settle
         // may be attached to a different replica than the one that ran the
-        // tool. Taken as authoritative when present.
+        // tool. Taken as authoritative when present — but only for the session
+        // that asked. This return is BEFORE the generation check further down,
+        // so without one here a session closed mid-flight would hand its
+        // caller an outcome belonging to a page that is gone.
         if (response?.outcome) {
           settledResults.delete(invokeId);
+          if (generation !== sessionGeneration) {
+            return {
+              state: "unknown",
+              invokeId,
+              errorMessage:
+                "The browser session went away while this tool was running.",
+            };
+          }
           return response.outcome;
         }
 

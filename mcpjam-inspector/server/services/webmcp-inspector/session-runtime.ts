@@ -510,8 +510,19 @@ export class WebMcpSessionRuntime {
       // de-duplicate this, but only the execution — a second trip through the
       // queue would still write a second `invocation_started`/`settled` pair
       // and a second pair of screenshots into the timeline for one call.
+      // The TTL is enforced HERE as well as in `rememberOutcome`'s sweep,
+      // because that sweep only runs when another invocation settles. A
+      // session that ran one tool and then went quiet keeps its last outcome
+      // forever, and would answer a retry hours later with a stale result for
+      // an id the daemon has long since forgotten — the two are matched (15
+      // min / 512) precisely so they expire together.
       const done = this.settledByInvokeId.get(requestedInvokeId);
-      if (done) return { invokeId: requestedInvokeId, settled: done.settled };
+      if (done) {
+        if (this.now() - done.at < INVOKE_REPLAY_TTL_MS) {
+          return { invokeId: requestedInvokeId, settled: done.settled };
+        }
+        this.settledByInvokeId.delete(requestedInvokeId);
+      }
     }
     if (this.inFlight >= this.queueLimit + 1) {
       throw new WebMcpQueueFullError(

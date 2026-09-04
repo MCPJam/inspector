@@ -49,13 +49,64 @@ import {
   type WebMcpSessionRegistry,
 } from "./session-registry.js";
 
-/** The computer is there, but not awake. Distinct from "not yours". */
-export class HostedDesktopAsleepError extends Error {
+/**
+ * The computer exists and is theirs, but there is no daemon to talk to.
+ *
+ * Distinct from "not yours", which is a 404. What it says depends on WHY, and
+ * that distinction is the whole point of the type: a machine that is asleep
+ * needs the person to start it, one that is still provisioning needs them to
+ * wait, and one that has been deleted needs them to make a new one. Telling
+ * somebody to "open the browser again to wake it" about a computer that is
+ * mid-deletion sends them to do something that cannot work.
+ */
+export class HostedDesktopUnavailableError extends Error {
+  readonly code: string;
+
   constructor(readonly status: string) {
-    super(
-      "Your computer is asleep. Open the browser again to wake it — this page will not wake it for you, because waking starts billing.",
-    );
-    this.name = "HostedDesktopAsleepError";
+    const { code, message } = describeUnavailable(status);
+    super(message);
+    this.code = code;
+    this.name = "HostedDesktopUnavailableError";
+  }
+}
+
+function describeUnavailable(status: string): {
+  code: string;
+  message: string;
+} {
+  switch (status) {
+    case "provisioning":
+    case "starting":
+      return {
+        code: "hosted-desktop-starting",
+        message:
+          "Your computer is still starting. Give it a moment and open the browser again.",
+      };
+    case "deleting":
+    case "deleted":
+      return {
+        code: "hosted-desktop-deleted",
+        message:
+          "That computer has been deleted. Open the browser again to get a new one.",
+      };
+    case "error":
+    case "errored":
+    case "failed":
+      return {
+        code: "hosted-desktop-errored",
+        message:
+          "Your computer stopped with an error and cannot be reached. Open the browser again to start a new one.",
+      };
+    default:
+      // Hibernating, stopped, paused — and anything a newer control plane
+      // invents. All of them mean the same thing to the person, and the
+      // default is the one that is safe to be wrong about: it asks them to
+      // start it, rather than telling them it is gone.
+      return {
+        code: "hosted-desktop-asleep",
+        message:
+          "Your computer is asleep. Open the browser again to wake it — this page will not wake it for you, because waking starts billing.",
+      };
   }
 }
 
@@ -67,8 +118,55 @@ export class HostedDesktopAsleepError extends Error {
  */
 const LIVE_STATUSES = new Set(["ready", "waking"]);
 
+/**
+ * How long a proved access claim is trusted before it is proved again.
+ *
+ * A ceiling on how long somebody keeps a browser they have lost access to, and
+ * a floor under how often this path costs a control-plane round trip. One
+ * minute, the same figure and the same reasoning as the activity touch.
+ */
+export const ACCESS_RECHECK_MS = 60_000;
+
+const accessCheckedAt = new Map<string, number>();
+
+function shouldRecheckAccess(sessionId: string, now: number): boolean {
+  const previous = accessCheckedAt.get(sessionId);
+  // `undefined` kept distinct from a recorded 0, as in `activity-touch`: a
+  // session nobody has checked must always be checked, and coalescing to 0
+  // makes that false for any `now` inside the window of the epoch.
+  if (previous !== undefined && now - previous < ACCESS_RECHECK_MS)
+    return false;
+  accessCheckedAt.set(sessionId, now);
+  return true;
+}
+
+function forgetAccess(sessionId: string): void {
+  accessCheckedAt.delete(sessionId);
+}
+
+export function resetAccessRecheckForTests(): void {
+  accessCheckedAt.clear();
+}
+
+/**
+ * Record that access to this session was just proved by other means.
+ *
+ * The replica that CREATES a session proved it by reserving the computer with
+ * the caller's own bearer, which is a stronger check than the one above. Saying
+ * so here stops the very next command paying for a round trip to establish what
+ * the request before it already established.
+ */
+export function noteAccessProved(
+  sessionId: string,
+  now: number = Date.now(),
+): void {
+  accessCheckedAt.set(sessionId, now);
+}
+
 export interface HostedResolveDeps {
   statusOf?: typeof convexGetDesktopComputerStatus;
+  /** Test seam for the re-check throttle. */
+  now?: () => number;
   attach?: (args: { computerId: string }) => Promise<BrowserSessionHandle>;
   /** Poll cadence for a re-hydrated runtime; 0 disables (tests). */
   toolPollMs?: number;
@@ -99,6 +197,16 @@ export async function resolveHostedSession(
   const { sessionId, bearer, ownerId, registry } = args;
   const deps = args.deps ?? {};
 
+  const parsed = parseHostedSessionId(sessionId);
+  if (!parsed) {
+    throw new WebMcpSessionNotFoundError(
+      "That WebMCP session no longer exists. Open the page again to start a new one.",
+    );
+  }
+
+  const statusOf = deps.statusOf ?? convexGetDesktopComputerStatus;
+  const now = deps.now ?? Date.now;
+
   const existing = registry.peek(sessionId);
   if (existing) {
     if (!existing.belongsTo(ownerId)) {
@@ -108,18 +216,42 @@ export async function resolveHostedSession(
         "That WebMCP session no longer exists. Open the page again to start a new one.",
       );
     }
+    // The owner check above is against the id recorded when the session was
+    // CREATED, and access can be taken away after that. Left at just the id, a
+    // person removed from a project keeps driving its browser until the
+    // runtime is evicted — up to an hour, on a machine they are no longer
+    // allowed near.
+    //
+    // Re-checked against the control plane, but THROTTLED: this path is every
+    // command, every reconnect and every poll, and a round trip on each would
+    // put a Convex query in front of a keystroke. Once a minute is the same
+    // trade the activity touch makes, and it bounds the window rather than
+    // leaving it open for the session's lifetime.
+    if (shouldRecheckAccess(sessionId, now())) {
+      // A THROWN lookup is not a refusal. The control plane being briefly
+      // unreachable would otherwise tear down every live session on this
+      // replica at once, which is a much worse failure than a minute of
+      // access somebody has just lost — and the throttle bounds that minute.
+      // A definite answer that the computer is not theirs IS a refusal.
+      const status = await statusOf(bearer, parsed.projectId).catch(
+        () => undefined,
+      );
+      if (status !== undefined && status?.computerId !== parsed.computerId) {
+        forgetAccess(sessionId);
+        // Their handle on it goes too. Leaving the runtime registered would
+        // keep its poll running against a machine this caller may no longer
+        // reach, and would let the next request inside the throttle window
+        // through on the strength of a check that has just failed.
+        void registry.close(sessionId, { reason: "detached" }).catch(() => {});
+        throw new WebMcpSessionNotFoundError(
+          "That WebMCP session no longer exists. Open the page again to start a new one.",
+        );
+      }
+    }
     registry.touch(existing);
     return existing;
   }
 
-  const parsed = parseHostedSessionId(sessionId);
-  if (!parsed) {
-    throw new WebMcpSessionNotFoundError(
-      "That WebMCP session no longer exists. Open the page again to start a new one.",
-    );
-  }
-
-  const statusOf = deps.statusOf ?? convexGetDesktopComputerStatus;
   const status = await statusOf(bearer, parsed.projectId);
   // A computer id that does not match the one the caller actually owns for
   // this project is the whole ownership check: the control plane resolved it
@@ -130,8 +262,12 @@ export async function resolveHostedSession(
     );
   }
   if (!LIVE_STATUSES.has(status.status)) {
-    throw new HostedDesktopAsleepError(status.status);
+    throw new HostedDesktopUnavailableError(status.status);
   }
+  // This IS an access check, and a fresh one. Recording it means the request
+  // that immediately follows a re-hydration — the client's own reconnect,
+  // typically — does not pay for a second round trip to prove the same thing.
+  shouldRecheckAccess(sessionId, now());
 
   const attach =
     deps.attach ??

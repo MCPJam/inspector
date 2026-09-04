@@ -2,14 +2,17 @@
  * Re-hydration: the property that makes a hosted session survive a fleet with
  * no request affinity.
  *
- * Every test here uses TWO registries standing in for two replicas, because
- * one registry cannot express the failure this code exists to prevent — a
- * session created on A and asked for on B. The old behaviour was a 404 for a
- * browser that was running perfectly well.
+ * The scenario is a session created on replica A and asked for on replica B.
+ * B is what these tests build: a registry that starts EMPTY, standing in for
+ * the replica that never saw the session. A does not need to be constructed at
+ * all — nothing of A's reaches B except the session id, which is the point.
+ * The old behaviour was a 404 for a browser that was running perfectly well.
  */
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  HostedDesktopAsleepError,
+  ACCESS_RECHECK_MS,
+  HostedDesktopUnavailableError,
+  resetAccessRecheckForTests,
   resolveHostedSession,
 } from "../hosted-session-resolver";
 import {
@@ -79,6 +82,9 @@ function deps(
     deps: { attach, statusOf, toolPollMs: 0, ...overrides },
   };
 }
+
+// The access-recheck throttle is module state, so it outlives a test.
+beforeEach(() => resetAccessRecheckForTests());
 
 describe("resolveHostedSession", () => {
   it("re-hydrates onto a replica that never saw the session", async () => {
@@ -235,7 +241,7 @@ describe("resolveHostedSession", () => {
         registry: replicaB,
         deps: d,
       }),
-    ).rejects.toBeInstanceOf(HostedDesktopAsleepError);
+    ).rejects.toBeInstanceOf(HostedDesktopUnavailableError);
     expect(attach).not.toHaveBeenCalled();
   });
 
@@ -260,8 +266,42 @@ describe("resolveHostedSession", () => {
 
     expect(second).toBe(first);
     expect(attach).toHaveBeenCalledTimes(1);
-    // Not even a status read on the hit path: it is a map lookup.
+    // No second status read either. The hit path DOES re-prove access, but on
+    // a throttle, and the re-hydration that just ran counts as the proof — so
+    // the reconnect that always follows it is a map lookup and nothing more.
     expect(statusOf).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-proves project access on the hit path, and stops serving when it fails", async () => {
+    // The owner id is recorded when the session is created, and access can be
+    // taken away afterwards. Checked against that id alone, somebody removed
+    // from a project keeps driving its browser until the runtime is evicted.
+    let clock = 1_000;
+    const replica = new WebMcpSessionRegistry({ sweepIntervalMs: 0 });
+    const { deps: d, statusOf } = deps();
+    const call = () =>
+      resolveHostedSession({
+        sessionId: SESSION_ID,
+        bearer: "bearer",
+        ownerId: OWNER,
+        registry: replica,
+        deps: { ...d, now: () => clock },
+      });
+
+    await call();
+    // Inside the throttle window nothing is re-asked.
+    clock += ACCESS_RECHECK_MS - 1;
+    await call();
+    expect(statusOf).toHaveBeenCalledTimes(1);
+
+    // Past it, access is re-proved — and this time the control plane does not
+    // return their computer, because it is not theirs any more.
+    clock += ACCESS_RECHECK_MS;
+    statusOf.mockResolvedValueOnce(null as never);
+    await expect(call()).rejects.toBeInstanceOf(WebMcpSessionNotFoundError);
+
+    // And the handle is gone, so the next request cannot ride the window.
+    expect(replica.peek(SESSION_ID)).toBeUndefined();
   });
 });
 
