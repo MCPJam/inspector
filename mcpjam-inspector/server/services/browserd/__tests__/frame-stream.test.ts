@@ -210,7 +210,12 @@ describe("frame-stream — a reader that has lost its place says so", () => {
     expect(result.ok === false && result.error).toMatch(/unknown record kind/);
   });
 
-  it("faults on the bad record, after handing back the good ones before it", () => {
+  it("drops the good records ahead of a bad one rather than salvaging them", () => {
+    // The name used to promise the opposite of what the code does, and the one
+    // assertion (`{ ok: false }`) could not tell the two apart — the error
+    // variant has no `records` field either way. What is actually being
+    // claimed: a caller that cannot trust the stream must drop it whole, so a
+    // valid record ahead of the fault is deliberately NOT handed back.
     const good = encodeFrameStreamRecord(frame({ seq: 1 }));
     const bad = encodeFrameStreamRecord(frame({ seq: 2 }));
     new DataView(bad.buffer).setUint8(0, 9);
@@ -218,9 +223,14 @@ describe("frame-stream — a reader that has lost its place says so", () => {
     chunk.set(good);
     chunk.set(bad, good.byteLength);
 
-    // The fault wins: a caller that cannot trust the stream must drop it, and
-    // salvaging a prefix would invite treating the connection as still usable.
-    expect(createFrameStreamDecoder().push(chunk)).toMatchObject({ ok: false });
+    // The prefix is genuinely decodable on its own: without this the test
+    // could pass because `good` was malformed too.
+    expect(decodeAll(good)).toMatchObject([{ seq: 1 }]);
+
+    const result = createFrameStreamDecoder().push(chunk);
+    expect(result.ok).toBe(false);
+    expect(result).not.toHaveProperty("records");
+    expect(result.ok === false && result.error).toMatch(/version/i);
   });
 
   it("accepts a payload exactly at the cap", () => {

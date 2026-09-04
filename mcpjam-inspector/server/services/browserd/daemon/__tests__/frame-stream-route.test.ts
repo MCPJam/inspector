@@ -347,6 +347,209 @@ describe("GET /v1/frames", () => {
     expect(last).toEqual({ kind: FRAME_STREAM_KIND.end, reason: "tab_gone" });
   });
 
+  it("survives a driver that THROWS when asked whether the tab is still ours", async () => {
+    // `stillCurrent()` asks the driver for the tab's viewport, and that throws
+    // on ordinary paths: a closing context answers "this browser is shutting
+    // down" rather than a value. Unhandled, the rejection did two things. The
+    // tick never rescheduled, so the lease stopped being re-asked for the rest
+    // of the stream — the privacy hole the heartbeat exists to close on a page
+    // that does not paint. And an unhandled rejection ends a Node process, so
+    // the thing that died was the daemon, with every hosted session on the box.
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+    let live: TabViewport | null = vp.viewport;
+    let throwOnResolve = false;
+    const driver = stubDriver(() => live);
+    stack = buildBrowserdStack(
+      {
+        ...driver,
+        viewport: async () => {
+          if (throwOnResolve) throw new Error("this browser is shutting down");
+          return live;
+        },
+      },
+      { token: TOKEN, frames: { heartbeatMs: 25 } },
+    );
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+
+    const cursor = openCursor(await open());
+    await cursor.next();
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(1));
+
+    throwOnResolve = true;
+    let last;
+    for (let i = 0; i < 20; i += 1) {
+      last = await cursor.next();
+      if (last.kind === FRAME_STREAM_KIND.end) break;
+    }
+    // Ended in band, saying why, rather than the process going down.
+    expect(last).toEqual({ kind: FRAME_STREAM_KIND.end, reason: "tab_gone" });
+    // And the subscription it held is released, not leaked behind a tick that
+    // will never run again.
+    await vi.waitFor(() => expect(vp.subscriberCount()).toBe(0));
+  });
+
+});
+
+/**
+ * `POST /v1/input` over the same socket.
+ *
+ * Its own describe because the gate being tested is the ROUTE, not the method
+ * behind it. Every existing case called `handler.dispatchInput()` directly, so
+ * the wiring between a public endpoint and the lease — the only part anyone
+ * reaching this daemon actually touches — was unpinned: the event cap could be
+ * deleted, or a 423 turned into a 200, and the suite stayed green.
+ */
+describe("POST /v1/input", () => {
+  let stack: BrowserdStack;
+  let server: Server;
+  let base: string;
+  let vp: ReturnType<typeof fakeViewport>;
+  let lease: HandoffLease;
+
+  beforeEach(async () => {
+    vp = fakeViewport();
+    lease = new HandoffLease();
+    stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN, lease });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const post = (body: unknown, headers: Record<string, string> = {}) =>
+    fetch(`${base}/v1/input`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${TOKEN}`,
+        "content-type": "application/json",
+        ...headers,
+      },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+
+  const move = { type: "mouse_move", x: 1, y: 1 };
+
+  it("refuses without the bearer, and refuses a browser outright", async () => {
+    const noToken = await fetch(`${base}/v1/input`, {
+      method: "POST",
+      body: JSON.stringify({ holder: "rail-1", events: [move] }),
+    });
+    expect(noToken.status).toBe(401);
+    // This route puts KEYSTROKES in the page. The rebinding defence matters
+    // here more than anywhere: a page in someone's browser must never be able
+    // to reach it.
+    const fromBrowser = await post(
+      { holder: "rail-1", events: [move] },
+      { origin: "https://evil.test" },
+    );
+    expect(fromBrowser.status).toBe(403);
+  });
+
+  it("refuses input from someone who does not hold the lease", async () => {
+    lease.acquire("rail-1", 60_000);
+    const res = await post({ holder: "rail-2", events: [move] });
+    expect(res.status).toBe(423);
+    expect(await res.json()).toMatchObject({ error: expect.any(String) });
+  });
+
+  it("refuses input when NOBODY holds the lease", async () => {
+    // Taking control is explicit. Input that arrives without it is the agent's
+    // page being typed into by a caller with no claim to it.
+    const res = await post({ holder: "rail-1", events: [move] });
+    expect(res.status).toBe(423);
+  });
+
+  it("accepts input from the holder", async () => {
+    lease.acquire("rail-1", 60_000);
+    const res = await post({ holder: "rail-1", events: [move] });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true });
+  });
+
+  it("caps the batch at the daemon, not only at the caller", async () => {
+    // The daemon is reachable on its own public host, so a cap that lives only
+    // in the inspector is a cap that is skipped by talking to the daemon.
+    lease.acquire("rail-1", 60_000);
+    const res = await post({
+      holder: "rail-1",
+      events: Array.from({ length: 65 }, () => move),
+    });
+    expect(res.status).toBe(413);
+    expect(await res.json()).toMatchObject({ error: "too_many_events" });
+  });
+
+  it("takes a batch exactly at the cap", async () => {
+    lease.acquire("rail-1", 60_000);
+    const res = await post({
+      holder: "rail-1",
+      events: Array.from({ length: 64 }, () => move),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("answers a malformed body rather than throwing", async () => {
+    lease.acquire("rail-1", 60_000);
+    expect((await post("{not json")).status).toBe(400);
+    expect((await post([1, 2, 3])).status).toBe(400);
+    expect((await post({ events: [move] })).status).toBe(400);
+    expect((await post({ holder: "rail-1" })).status).toBe(400);
+    expect((await post({ holder: "", events: [move] })).status).toBe(400);
+  });
+});
+
+describe("GET /v1/frames — the rest", () => {
+  let stack: BrowserdStack;
+  let server: Server;
+  let base: string;
+  let vp: ReturnType<typeof fakeViewport>;
+
+  beforeEach(async () => {
+    vp = fakeViewport();
+    stack = buildBrowserdStack(stubDriver(vp.viewport), { token: TOKEN });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+
+  afterEach(async () => {
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const open = (query = "") =>
+    fetch(`${base}/v1/frames${query}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+  it("frees a cap slot when a watcher leaves, rather than 503ing forever", async () => {
+    // The cap test next door opened four and asserted the fifth was refused,
+    // which passes just as well when the slot is never released — the failure
+    // that turns a full pane into a permanently dead endpoint. This reopens.
+    const cursors = [];
+    for (let i = 0; i < 4; i += 1) {
+      const res = await open();
+      expect(res.status).toBe(200);
+      cursors.push(openCursor(res));
+    }
+    expect((await open()).status).toBe(503);
+
+    await cursors[0]!.cancel();
+    await vi.waitFor(async () => {
+      const retry = await open();
+      expect(retry.status).toBe(200);
+      await retry.body?.cancel();
+    });
+
+    for (const cursor of cursors.slice(1)) await cursor.cancel();
+  });
+
   it("probe mode answers without a lease, a tab or a browser", async () => {
     // The one thing this repository cannot prove is whether the sandbox edge
     // streams a chunked body or buffers it. This is how that gets answered on
