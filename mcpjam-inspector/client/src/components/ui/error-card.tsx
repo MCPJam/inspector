@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowRight,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
+  Copy,
   ExternalLink,
   Info,
   RefreshCw,
@@ -17,6 +19,7 @@ import {
   type NormalizedError,
 } from "@mcpjam/sdk/browser";
 import { cn } from "@/lib/utils";
+import { copyToClipboard } from "@/lib/clipboard";
 import { WebApiError } from "@/lib/apis/web/base";
 
 const DOCS_BASE_URL = "https://docs.mcpjam.com";
@@ -98,12 +101,43 @@ function severityStyles(severity: NormalizedError["severity"]) {
     case "error":
     default:
       return {
-        container:
-          "border-destructive/20 bg-destructive/10 text-destructive",
+        container: "border-destructive/20 bg-destructive/10 text-destructive",
         icon: CircleAlert,
         iconClass: "text-destructive",
       };
   }
+}
+
+/**
+ * The card as plain text, for pasting into an agent or a bug report. Includes
+ * the collapsed details: needing to expand them first would defeat the point.
+ */
+function copyText(normalized: NormalizedError): string {
+  const lines = [normalized.title, normalized.oneLine];
+  if (normalized.likelyCauses.length > 0) {
+    lines.push(
+      "",
+      "Likely causes:",
+      ...normalized.likelyCauses.map((cause) => `- ${cause}`),
+    );
+  }
+  if (normalized.nextSteps.length > 0) {
+    lines.push(
+      "",
+      "Next steps:",
+      ...normalized.nextSteps.map((step) => `- ${step}`),
+    );
+  }
+  lines.push(
+    "",
+    `Raw error: ${normalized.rawMessage}${
+      normalized.rawCode !== undefined ? ` (code: ${normalized.rawCode})` : ""
+    }`,
+  );
+  if (normalized.cause) {
+    lines.push(`Cause: ${normalized.cause.name}: ${normalized.cause.message}`);
+  }
+  return lines.join("\n");
 }
 
 /**
@@ -138,14 +172,12 @@ function originBadge(
     case "user_config":
       return {
         label: "Not an MCPJam outage",
-        className:
-          "border-foreground/20 bg-foreground/5 text-foreground/70",
+        className: "border-foreground/20 bg-foreground/5 text-foreground/70",
       };
     case "mcpjam":
       return {
         label: "MCPJam issue",
-        className:
-          "border-destructive/30 bg-destructive/10 text-destructive",
+        className: "border-destructive/30 bg-destructive/10 text-destructive",
         // Says only what the origin establishes. An earlier draft claimed the
         // error "has been reported", which this component cannot know: it
         // renders whatever `NormalizedError` it is handed and reports nothing
@@ -181,6 +213,23 @@ export function ErrorCard({
     if (!isControlled) setUncontrolledOpen(next);
     onOpenChange?.(next);
   };
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    },
+    [],
+  );
+  const handleCopy = async () => {
+    // `copyToClipboard` reports failure by returning false, not by throwing.
+    const copied = await copyToClipboard(copyText(normalized));
+    setCopyState(copied ? "copied" : "failed");
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    copyResetTimer.current = setTimeout(() => setCopyState("idle"), 2000);
+  };
   const styles = severityStyles(normalized.severity);
   const Icon = styles.icon;
   const badge = originBadge(normalized);
@@ -192,15 +241,20 @@ export function ErrorCard({
   return (
     <div
       role="alert"
+      // dnd-kit server cards and ReactFlow nodes both eat the text selection
+      // unless the card claims the gesture and opts out of their styles.
+      onPointerDown={(event) => event.stopPropagation()}
       className={cn(
-        "rounded-md border p-3 text-xs",
+        "rounded-md border p-3 text-xs select-text nodrag nopan",
         styles.container,
         variant === "banner" ? "shadow-sm" : "",
         className,
       )}
     >
       <div className="flex items-start gap-2">
-        <Icon className={cn("mt-0.5 h-4 w-4 flex-shrink-0", styles.iconClass)} />
+        <Icon
+          className={cn("mt-0.5 h-4 w-4 flex-shrink-0", styles.iconClass)}
+        />
         <div className="flex-1 min-w-0 space-y-1">
           <div className="flex items-start justify-between gap-2">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
@@ -236,7 +290,7 @@ export function ErrorCard({
           {badge?.note ? (
             <div className="text-foreground/70 leading-snug">{badge.note}</div>
           ) : null}
-          <div className="flex items-center gap-3 pt-1">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 pt-1">
             <button
               type="button"
               onClick={handleToggle}
@@ -248,6 +302,23 @@ export function ErrorCard({
                 <ChevronRight className="h-3 w-3" />
               )}
               {isOpen ? "Hide details" : "Show details"}
+            </button>
+            <button
+              type="button"
+              onClick={handleCopy}
+              data-testid="error-card-copy"
+              className="inline-flex items-center gap-1 text-[11px] font-medium text-foreground/70 hover:text-foreground"
+            >
+              {copyState === "copied" ? (
+                <Check className="h-3 w-3" />
+              ) : (
+                <Copy className="h-3 w-3" />
+              )}
+              {copyState === "copied"
+                ? "Copied"
+                : copyState === "failed"
+                  ? "Copy failed"
+                  : "Copy"}
             </button>
             <a
               href={docsHref}

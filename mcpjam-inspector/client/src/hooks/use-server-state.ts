@@ -112,7 +112,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
-import { attributeToServer } from "@/lib/server-error-copy";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -1087,6 +1087,16 @@ export function useServerState({
         ...server,
         config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
+        // Why the last attempt failed. Convex server rows do not store it, so
+        // omitting it here left a hosted card reading "Failed" with an empty
+        // error area and an empty Overview: the toast was the only copy of the
+        // reason, and it vanished with the toast (BB-48). Sourced from runtime
+        // state ONLY — exactly like `connectionStatus` above — so a reload that
+        // drops the runtime drops the reason with it instead of showing a stale
+        // one next to a "disconnected" status.
+        lastError: runtimeState?.lastError,
+        lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
         lastConnectionTime:
@@ -1454,6 +1464,17 @@ export function useServerState({
       }
       if (mcpProfile?.toolListChanged?.refetches === false) {
         defaults.dropToolListChanged = true;
+      }
+      // Tool cancellation: forward the degraded leaves and let the SDK pick
+      // which one applies once the connection has negotiated. Resolving here
+      // cannot work for an unpinned host — the era does not exist yet.
+      const cancellationLeaves = Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => mcpProfile?.toolCallCancellation?.[key] === false)
+          .map((key) => [key, false])
+      );
+      if (Object.keys(cancellationLeaves).length > 0) {
+        defaults.toolCallCancellation = cancellationLeaves;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
@@ -4770,11 +4791,10 @@ export function useServerState({
         if (suppressErrors) return;
         // Reconnect is the path a user takes right AFTER changing the protocol
         // version, so it is the likeliest place to meet a pin the server
-        // doesn't offer — and its toast carries the bare message, with no
-        // action of its own. Matched on the message because that is all this
+        // doesn't offer. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          toast.error(errorMessage, {
+          toastServerConnectionFailure(serverName, errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
@@ -4790,15 +4810,10 @@ export function useServerState({
           });
           return;
         }
-        // Name the server for everything else. The route stopped prefixing its
-        // payload with "Connection failed for server X:" — that preamble
-        // buried the sentence and repeated the name against errors that
-        // already carry it — but a generic failure ("Connection refused") then
-        // says nothing about WHICH server, and several can fail at once.
-        //
-        // So it is added here, in the copy layer, and only when the message
-        // does not already name the server: attribution without the stutter.
-        toast.error(attributeToServer(serverName, errorMessage));
+        // Everything else names the server in the toast title: a generic
+        // failure ("Connection refused") says nothing about WHICH one, and
+        // several can fail at once.
+        toastServerConnectionFailure(serverName, errorMessage);
       };
 
       if (isClientConfigSyncPending) {

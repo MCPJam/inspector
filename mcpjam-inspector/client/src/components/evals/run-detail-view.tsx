@@ -45,7 +45,19 @@ import {
   type JudgeCase,
 } from "./goal-completion-presentation";
 import { RunInsightBand, type InsightSeverity } from "./run-insight-band";
-import { SuiteRunStageFunnelPanel } from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  SuiteRunStageFunnelAvailability,
+  SuiteRunStageFunnelPanel,
+} from "@/components/shared/user-value-chain/StageFunnelPanels";
+import {
+  RunUserValueChainSlot,
+  useRunUserValueChainChoice,
+} from "./run-user-value-chain-slot";
+import {
+  RunLevelFindingsLine,
+  StageFindingsCard,
+} from "@/components/evaluate/stage-findings-card";
+import { useStageFindings } from "@/components/evaluate/use-stage-findings";
 import { ExplanatoryFlowOptIn } from "@/components/shared/usage-insights/ExplanatoryFlowOptIn";
 import type { InsightsScope } from "@/hooks/useUsageInsights";
 import { useAvailableModels } from "@/hooks/use-available-models";
@@ -63,6 +75,7 @@ import { HostChip } from "@/components/hosts/host-chip";
 import {
   RunAccuracyHeroBand,
   RunInsightRail,
+  runHasInsightContent,
   shouldShowRunAccuracyHero,
   type RunTrendPoint,
 } from "./run-insight-rail";
@@ -200,6 +213,29 @@ interface RunDetailViewProps {
    */
   decisionSummarySlot?: React.ReactNode;
   /**
+   * Join D9's per-trial diagnostics onto the canonical stage document.
+   *
+   * A BOOLEAN rather than a slot, unlike `decisionSummarySlot` above, because
+   * the evidence hangs off individual stage cards this view mounts — there is
+   * no single node a caller could hand in. The zero-request guarantee is kept
+   * the same way `RunDecisionSummarySection` keeps it: off by default, and a
+   * disabled read issues no request at all, so `/evals` and the CI commit
+   * detail stay at exactly zero.
+   */
+  stageFindingsEnabled?: boolean;
+  /**
+   * Focus one trial's evidence through the app's own routing.
+   *
+   * Same shape and same contract as the decision card's `onViewTrace`: called
+   * only with identities verified against the run on screen, and with the CASE
+   * the iteration belongs to, because that is what the viewer can open to.
+   */
+  onViewStageTrace?: (target: {
+    runId: string;
+    iterationId: string;
+    testCaseId: string;
+  }) => void;
+  /**
    * The cohort the flow diagram would analyze, when this surface has one.
    *
    * A prop rather than something derived here, for the reason the funnel below
@@ -285,11 +321,17 @@ export function RunIterationsSidebar({
         }
       );
     }
+    // B3b W4: `computeIterationPassed` now reads a row's STORED result when it
+    // has one, so this override no longer re-runs the tool-call matcher in the
+    // browser to second-guess a verdict the server already reached — which at
+    // grading mode `enforce` was reached from gating evidence (predicates,
+    // gates, tool errors) the browser cannot see at all. The matcher survives
+    // inside that helper for rows with no stored result; see its docblock.
     const passed = caseGroupsForSelectedRun.filter((i) =>
-      computeIterationPassed(i),
+      computeIterationPassed(i)
     ).length;
     const failed = caseGroupsForSelectedRun.filter(
-      (i) => !computeIterationPassed(i),
+      (i) => !computeIterationPassed(i)
     ).length;
     const total = caseGroupsForSelectedRun.length;
     const passRate = total > 0 ? passed / total : 0;
@@ -300,7 +342,7 @@ export function RunIterationsSidebar({
     if (!runForOverview) return null;
     return getSidebarRunInsightsPassRateLabel(
       runForOverview,
-      overviewStatsOverride,
+      overviewStatsOverride
     );
   }, [runForOverview, overviewStatsOverride]);
 
@@ -308,7 +350,7 @@ export function RunIterationsSidebar({
     () =>
       groupRunIterationsByTestCase(caseGroupsForSelectedRun, runDetailSortBy)
         .length,
-    [caseGroupsForSelectedRun, runDetailSortBy],
+    [caseGroupsForSelectedRun, runDetailSortBy]
   );
 
   const sortHeaderControl = (
@@ -361,7 +403,7 @@ export function RunIterationsSidebar({
             <div
               className={cn(
                 showRunOverviewNav && runForOverview && "border-t",
-                "px-4 pb-2 pt-2",
+                "px-4 pb-2 pt-2"
               )}
             >
               {runOverviewExtra}
@@ -375,7 +417,7 @@ export function RunIterationsSidebar({
             flushChrome
               ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-card"
               : caseListCardClassName,
-            "min-h-0 min-w-0 flex-1 overflow-hidden",
+            "min-h-0 min-w-0 flex-1 overflow-hidden"
           )}
         >
           <div className="min-h-0 flex-1 overflow-y-auto bg-muted/10 dark:bg-muted/15">
@@ -430,6 +472,8 @@ export function RunDetailView({
   onExportTraces,
   onShare,
   decisionSummarySlot,
+  stageFindingsEnabled = false,
+  onViewStageTrace,
   flowScope = null,
 }: RunDetailViewProps) {
   const handleEditTestCase =
@@ -440,7 +484,7 @@ export function RunDetailView({
           type: "test-edit",
           suiteId: selectedRunDetails.suiteId,
           testId: testCaseId,
-        }),
+        })
       ));
   useRunInsights(selectedRunDetails, { autoRequest: true });
 
@@ -484,7 +528,7 @@ export function RunDetailView({
     selectedRunDetails.configSnapshot?.environment?.computerEnvironmentId ??
     null;
   const runEnvironments = useSandboxImages(
-    runComputerEnvId ? selectedRunDetails.projectId ?? null : null,
+    runComputerEnvId ? selectedRunDetails.projectId ?? null : null
   );
   // Friendly name when resolvable; otherwise the RAW id (never truncated — it's
   // the only durable identifier once the environment is deleted).
@@ -529,7 +573,7 @@ export function RunDetailView({
     const anchorEl = document.createElement("a");
     anchorEl.href = url;
     anchorEl.download = `openai-submission-${formatRunId(
-      selectedRunDetails._id,
+      selectedRunDetails._id
     )}.md`;
     anchorEl.click();
     URL.revokeObjectURL(url);
@@ -571,10 +615,86 @@ export function RunDetailView({
             source,
           })
         : [],
-    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source],
+    [kpiPlacement, selectedRunDetails, caseGroupsForSelectedRun, source]
   );
 
   const embeddedInResultsSplit = hideKpiStrip;
+
+  /**
+   * Whether this run has a stage funnel to draw, reported by the probe below.
+   *
+   * Stored WITH the run it describes, and read only when that run is the one
+   * on screen. This component is reused across runs by the run selector, so a
+   * bare boolean would survive a switch and a stale `true` would open an empty
+   * rail on the run you moved to. Starting empty also means a run without a
+   * funnel never flashes one on the way to finding out.
+   */
+  const [stageFunnelFor, setStageFunnelFor] = useState<{
+    suiteRunId: string | undefined;
+    hasFunnel: boolean;
+  }>({ suiteRunId: undefined, hasFunnel: false });
+
+  const handleStageFunnelAvailability = useCallback(
+    (suiteRunId: string | undefined, hasFunnel: boolean) =>
+      setStageFunnelFor({ suiteRunId, hasFunnel }),
+    [],
+  );
+
+  const legacyStageFunnel =
+    stageFunnelFor.suiteRunId === selectedRunDetails._id &&
+    stageFunnelFor.hasFunnel;
+
+  /**
+   * What the chain slot will actually draw — resolved HERE, once, and handed
+   * both to the rail's emptiness check and to the slot itself.
+   *
+   * One call, not two. The rail has to know whether to open before it mounts
+   * what it would open around, and the slot needs the same answer to render;
+   * but this hook wraps a plain `fetch` rather than a Convex subscription, so
+   * calling it in both places would issue two HTTP requests per run with
+   * nothing de-duplicating them.
+   */
+  const runChain = useRunUserValueChainChoice({
+    projectId: selectedRunDetails.projectId ?? null,
+    runId: selectedRunDetails._id,
+    // A run opened while it is still going has no document yet. Passing the
+    // status lets the read happen again once it finishes, instead of the
+    // too-early "no document" answer standing until this view remounts.
+    runStatus: selectedRunDetails.status,
+  });
+
+  /**
+   * The trial evidence behind the canonical document's stage failures.
+   *
+   * Called unconditionally — hooks must be — but INERT unless the caller opted
+   * in: `enabled: false` makes the underlying decision-summary read issue no
+   * request, so the non-Evaluate mounts of this shared view stay at zero. When
+   * it is on, the read shares the LRU store with `RunDecisionSummarySection`'s
+   * identical target, so the two callers are one request.
+   */
+  const stageFindings = useStageFindings({
+    projectId: selectedRunDetails.projectId ?? null,
+    analytics: runChain.document,
+    run: selectedRunDetails,
+    enabled: stageFindingsEnabled,
+    canOpenTrial: Boolean(onViewStageTrace),
+  });
+
+  /**
+   * Either reading counts as content — but only the one the slot will draw.
+   *
+   * The probe below answers only for the LEGACY rollup, so on a run with a
+   * canonical document and no rollup it reports "no funnel" and would close a
+   * rail over content that is there.
+   */
+  const hasStageFunnel =
+    runChain.choice === "canonical" ||
+    (runChain.choice === "legacy" && legacyStageFunnel) ||
+    // A canonical read that really FAILED is content too. Without this, a run
+    // with no legacy rollup and no other insight card closes the rail over the
+    // service note written specifically to report that failure — the one case
+    // where the message is the only thing there is to say.
+    runChain.serviceNote !== null;
 
   const serverQualityTriage =
     selectedRunDetails.status === "completed" && !serverQualityUnavailable ? (
@@ -588,6 +708,7 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+        hostNamesById={hostNamesById}
         embedded={embeddedInResultsSplit}
       />
     ) : null;
@@ -622,7 +743,7 @@ export function RunDetailView({
   // side card. Null when nothing is graded, which skips badge rendering.
   const judgeByCaseKey = useMemo(
     () => buildJudgeCaseMap(goalCompletionResult),
-    [goalCompletionResult],
+    [goalCompletionResult]
   );
 
   // Run-level judge headline for the collapsed insight band (the per-case detail
@@ -635,7 +756,7 @@ export function RunDetailView({
     const deterministicByCaseKey = new Map<string, boolean | null>();
     for (const group of groupRunIterationsByTestCase(
       caseGroupsForSelectedRun,
-      "test",
+      "test"
     )) {
       const key = caseKeyForGroup(group);
       if (key) deterministicByCaseKey.set(key, deterministicCasePassed(group));
@@ -643,8 +764,8 @@ export function RunDetailView({
     const disagreements = cases.filter((c) =>
       judgeDisagreesWithVerdict(
         deterministicByCaseKey.get(c.caseKey) ?? null,
-        c.passed,
-      ),
+        c.passed
+      )
     ).length;
     return { meet, total: cases.length, disagreements };
   }, [goalCompletionResult, caseGroupsForSelectedRun]);
@@ -708,7 +829,7 @@ export function RunDetailView({
             type: "run-detail",
             suiteId: selectedRunDetails.suiteId,
             runId,
-          }),
+          })
         );
       }}
       className="mb-4"
@@ -772,12 +893,41 @@ export function RunDetailView({
    */
   const userValueChainPanel = (
     <>
-      <SuiteRunStageFunnelPanel
-        suiteRunId={selectedRunDetails._id}
+      {/* Canonical document or legacy rollup, never both — the slot decides.
+          Flag-off is today's page exactly: the legacy panel, unlabelled. */}
+      <RunUserValueChainSlot
+        chain={runChain}
         className="m-3"
+        renderFindings={(stage) => (
+          <StageFindingsCard
+            state={stageFindings}
+            stage={stage}
+            {...(onViewStageTrace ? { onOpenTrial: onViewStageTrace } : {})}
+          />
+        )}
+        runLevelFindings={<RunLevelFindingsLine state={stageFindings} />}
+        legacy={
+          <SuiteRunStageFunnelPanel
+            suiteRunId={selectedRunDetails._id}
+            className="m-3"
+          />
+        }
       />
       <ExplanatoryFlowOptIn scope={flowScope} className="m-3" />
     </>
+  );
+
+  /**
+   * Mounted unconditionally, and deliberately NOT inside the rail or the band
+   * it informs — it answers whether those should open, so it has to exist
+   * before they do. Renders nothing; costs one query, which Convex shares with
+   * the panel's own subscription.
+   */
+  const stageFunnelProbe = (
+    <SuiteRunStageFunnelAvailability
+      suiteRunId={selectedRunDetails._id}
+      onChange={handleStageFunnelAvailability}
+    />
   );
 
   const insightRail = (
@@ -795,16 +945,30 @@ export function RunDetailView({
       goalCompletionCard={goalCompletionPanel}
       groundednessCard={groundednessPanel}
       userValueChainCard={userValueChainPanel}
+      userValueChainHasContent={hasStageFunnel}
       embedded={embeddedInResultsSplit}
     />
   );
 
-  const hasInsightContent = Boolean(
-    serverQualityTriage ||
-      goalCompletionPanel ||
-      groundednessPanel ||
-      actionableFindingsPanel,
-  );
+  /**
+   * The chain counts toward "is there anything to show" — but only when it
+   * actually has a funnel to draw.
+   *
+   * Both gates below read this ONE boolean, and it comes from a probe rather
+   * than from the panel, because the panel cannot answer: neither gate mounts
+   * it until they have already decided to open. Counting the card itself
+   * instead would keep a rail alive on every run with no insight content at
+   * all, since the node is truthy whether or not it renders anything — which
+   * is why it was excluded from these checks in the first place, and why the
+   * fix has to be data-driven rather than a matter of adding the node.
+   */
+  const hasInsightContent = runHasInsightContent({
+    serverQualityTriage,
+    goalCompletionPanel,
+    groundednessPanel,
+    actionableFindingsPanel,
+    hasStageFunnel,
+  });
 
   const triageFixCount = useMemo(
     () =>
@@ -812,7 +976,7 @@ export function RunDetailView({
         serverQuality: serverQualityResult ?? null,
         iterations: caseGroupsForSelectedRun,
       }).length,
-    [serverQualityResult, caseGroupsForSelectedRun],
+    [serverQualityResult, caseGroupsForSelectedRun]
   );
 
   const bandPassRatePercent = useMemo(() => {
@@ -853,11 +1017,11 @@ export function RunDetailView({
         secondaryParts.push(
           `${judgeHeadline.disagreements} judge disagreement${
             judgeHeadline.disagreements === 1 ? "" : "s"
-          }`,
+          }`
         );
       } else {
         secondaryParts.push(
-          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+          `Judge ${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
         );
       }
     } else if (
@@ -866,7 +1030,7 @@ export function RunDetailView({
       judgeHeadline.disagreements === 0
     ) {
       secondaryParts.push(
-        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`,
+        `${judgeHeadline.meet}/${judgeHeadline.total} meet goal`
       );
     }
 
@@ -1038,9 +1202,12 @@ export function RunDetailView({
         useTwoColumnLayout
           ? cn("overflow-hidden", embeddedInResultsSplit ? "p-0" : "p-4")
           : "overflow-y-auto p-4",
-        omitIterationList && "px-3 py-3",
+        omitIterationList && "px-3 py-3"
       )}
     >
+      {/* Renders nothing. Sits above every layout branch below because all of
+          them gate on the answer it reports. */}
+      {stageFunnelProbe}
       {onExportTraces || pluginSubmissionVersions.length > 0 || onShare ? (
         // Always-on run-level actions — placed here (not the accuracy hero) so
         // they survive the folded run-detail layout that hides the hero.
@@ -1130,7 +1297,7 @@ export function RunDetailView({
                 withHandle={!embeddedInResultsSplit}
                 className={cn(
                   embeddedInResultsSplit &&
-                    "w-px bg-border/60 after:w-0 [&>div]:hidden",
+                    "w-px bg-border/60 after:w-0 [&>div]:hidden"
                 )}
               />
               <ResizablePanel

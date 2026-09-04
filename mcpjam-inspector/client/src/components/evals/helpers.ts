@@ -12,6 +12,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -340,16 +341,28 @@ export function buildHostNamesById(
   attachments:
     | Array<{ namedHostId: string; hostName: string | null }>
     | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined
+  projectHosts:
+    | Array<{ hostId: string; name: string; displayName?: string }>
+    | undefined
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
+  const projectHostById = new Map(
+    (projectHosts ?? []).map((host) => [host.hostId, host]),
+  );
   for (const host of projectHosts ?? []) {
-    map.set(host.hostId, host.name);
+    map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
+    const projectHost = projectHostById.get(attachment.namedHostId);
+    const attachmentMatchesRawName =
+      projectHost !== undefined &&
+      attachment.hostName?.trim().toLowerCase() ===
+        projectHost.name.trim().toLowerCase();
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
+      projectHost && (attachment.hostName === null || attachmentMatchesRawName)
+        ? clientDisplayName(projectHost)
+        : attachment.hostName ?? map.get(attachment.namedHostId) ?? null
     );
   }
   return map;
@@ -680,6 +693,7 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "border-l-warning/50";
     case RESULT_STATUS.CANCELLED:
       return "border-l-muted";
@@ -705,6 +719,7 @@ export function evalStatusMiniBarClasses(result: string): string {
       return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/50";
@@ -1040,7 +1055,14 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
