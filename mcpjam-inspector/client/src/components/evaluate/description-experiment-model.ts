@@ -4,7 +4,11 @@
  * No fetching, no DOM. The card and the propose button both read these so
  * a header line and an engine gate cannot drift apart.
  */
-import type { DescriptionExperimentInterval } from "@mcpjam/sdk/contract";
+import type {
+  DescriptionExperimentEvidenceLabel,
+  DescriptionExperimentFrozen,
+  DescriptionExperimentPooled,
+} from "@mcpjam/sdk/contract";
 
 import type { EvalDescriptionExperiment } from "@/lib/apis/eval-description-experiment-api";
 import type { EvalSuiteRun } from "../evals/types";
@@ -57,20 +61,47 @@ export function caseLabelFromAggregationKey(key: string): string {
 }
 
 /**
- * The bound that matters, in points. Never a number when `interval` is
- * null — that is the card's one hard rule.
+ * The bound that matters, in points. Branches on the report's VERDICT, not
+ * on the sign of the point estimate: an interval that straddles zero, or a
+ * delta under the effect floor, is `no_difference` however the delta leans,
+ * and phrasing a bound off it would claim a direction the report did not.
+ * Never a number when `interval` is null — that is the card's one hard rule.
  */
 export function intervalBoundPhrase(
-  interval: DescriptionExperimentInterval | null,
+  pooled: Pick<DescriptionExperimentPooled, "verdict" | "interval">,
 ): string {
-  if (interval === null) return "not enough trials to say";
-  if (interval.deltaPoints > 0) {
-    return `at least ${signedPoints(interval.lowerPoints)} points`;
+  const { verdict, interval } = pooled;
+  if (verdict === "insufficient_data" || interval === null) {
+    return "not enough trials to say";
   }
-  if (interval.deltaPoints < 0) {
-    return `at most ${signedPoints(interval.upperPoints)} points`;
+  switch (verdict) {
+    case "improved":
+      return `at least ${signedPoints(interval.lowerPoints)} points`;
+    case "regressed":
+      return `at most ${signedPoints(interval.upperPoints)} points`;
+    case "no_difference":
+      return "no difference at this sample size";
   }
-  return "no difference in points";
+}
+
+/** The report's own label, worded. Never derived from `frozen` here. */
+export function evidenceLabelText(
+  label: DescriptionExperimentEvidenceLabel,
+): string {
+  return label === "controlled" ? "Controlled" : "Reproducible";
+}
+
+/**
+ * "arms differ: toolSnapshotHash, hostConfigId", or null when the report
+ * found the arms equal. Order is the report's.
+ */
+export function frozenDifferencesLabel(
+  frozen: Pick<DescriptionExperimentFrozen, "equal" | "differences">,
+): string | null {
+  if (frozen.equal || !frozen.differences || frozen.differences.length === 0) {
+    return null;
+  }
+  return `arms differ: ${frozen.differences.join(", ")}`;
 }
 
 function signedPoints(value: number): string {
@@ -110,14 +141,12 @@ export function descriptionExperimentHeader(
   ];
   const report = experiment.report;
   if (report) {
-    const { original, rewrite, interval } = report.primary.pooled;
+    const { original, rewrite } = report.primary.pooled;
     parts.push(
       `rewrite passed ${rewrite.passed} of ${rewrite.eligible}, original ${original.passed} of ${original.eligible}`,
     );
-    parts.push(intervalBoundPhrase(interval));
-    parts.push(
-      report.evidenceLabel === "controlled" ? "Controlled" : "Reproducible",
-    );
+    parts.push(intervalBoundPhrase(report.primary.pooled));
+    parts.push(evidenceLabelText(report.evidenceLabel));
     parts.push("report-only");
     return parts.join(" · ");
   }
@@ -173,11 +202,24 @@ export function regressionLine(
   return "No other case flipped.";
 }
 
+/**
+ * Why the report gave the label it gave. Reads the label and the frozen
+ * block as the report wrote them; the label is never recomputed here.
+ */
 export function evidenceCaveat(
-  label: "controlled" | "reproducible",
+  label: DescriptionExperimentEvidenceLabel,
+  frozen?: Pick<DescriptionExperimentFrozen, "equal" | "differences">,
 ): string {
+  const unverified = "The upstream server's state was not verified.";
   if (label === "controlled") {
-    return "Every eligible trial had a fresh computer. The upstream server's state was not verified.";
+    return `Every eligible trial had a fresh computer and the two arms matched on every frozen variable. ${unverified}`;
   }
-  return "The two arms ran in the same window with frozen model, engine, host, and catalog. The upstream server's state was not verified.";
+  const differed = frozen ? frozenDifferencesLabel(frozen) : null;
+  if (differed) {
+    return `The two arms ran in the same window, but ${differed.replace(
+      "arms differ: ",
+      "they differed on ",
+    )} — the report calls this reproducible, not controlled. ${unverified}`;
+  }
+  return `The two arms ran in the same window with frozen model, engine, host, and catalog. ${unverified}`;
 }

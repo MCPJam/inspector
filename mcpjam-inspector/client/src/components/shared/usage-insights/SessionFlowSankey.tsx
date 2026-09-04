@@ -321,6 +321,10 @@ export function SessionFlowSankey({
           const next = selectionForLink(source, target);
           if (next) onSelectLink(next);
         }}
+        isSelectable={(node) => selectionForNode(node) !== null}
+        isLinkSelectable={(source, target) =>
+          selectionForLink(source, target) !== null
+        }
         ariaLabel="Session flow from goal through behavior and outcome to sentiment"
         fillHeight={fillHeight}
       />

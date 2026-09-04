@@ -31,6 +31,7 @@ import type {
 import { buildStageFixPrompt } from "./stage-fix-prompt";
 import { remedyForReason, type StageRemedy } from "./stage-remedy";
 import { EvaluateToolList } from "./evaluate-tool-list";
+import { variantLabel } from "./route-facts-model";
 import { RouteFactsSection } from "./route-facts-section";
 
 function groupHeading(group: CaseFailureGroup, count: number): string {
@@ -239,7 +240,8 @@ export function RunCaseRowBody({
 }: {
   row: EvaluateCaseRow;
   iterations: readonly EvalIteration[];
-  routeFacts?: EvalRunRouteFactsCase | null;
+  /** One entry per execution variant the row holds; empty renders nothing. */
+  routeFacts?: readonly EvalRunRouteFactsCase[];
   catalogState?: EvalRunRouteFacts["catalogState"];
   computedHere?: boolean;
   descriptionExperiment?: DescriptionExperimentProposeProps;
@@ -289,13 +291,18 @@ export function RunCaseRowBody({
           ))
         )}
 
-      {routeFacts ? (
-        <RouteFactsSection
-          facts={routeFacts}
-          catalogState={catalogState ?? "notLoaded"}
-          {...(computedHere ? { computedHere: true } : {})}
-        />
-      ) : null}
+      {routeFacts?.map((facts) => {
+        const label = routeFacts.length > 1 ? variantLabel(facts) : null;
+        return (
+          <RouteFactsSection
+            key={facts.caseVariantKey}
+            facts={facts}
+            catalogState={catalogState ?? "notLoaded"}
+            {...(computedHere ? { computedHere: true } : {})}
+            {...(label ? { variantLabel: label } : {})}
+          />
+        );
+      })}
 
       {nudges.map((nudge) => (
         <p key={nudge} className="text-[12px] text-muted-foreground">

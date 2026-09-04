@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import type { InsightsSankey } from "@/hooks/useUsageInsights";
 import { FlowSankeyDiagram } from "../flow-sankey-diagram";
+import { SANKEY_UNLABELED } from "../insights-sankey";
 
 const STAGES = ["case", "route", "reason"] as const;
 type Stage = (typeof STAGES)[number];
@@ -107,5 +108,56 @@ describe("FlowSankeyDiagram", () => {
         name: /outcome and sentiment disagree/,
       }),
     ).toBeNull();
+  });
+
+  it("lets the caller refuse a clickable sentinel, which is then not a button", () => {
+    const withSentinel: InsightsSankey<Stage> = {
+      ...SANKEY,
+      nodes: [
+        ...SANKEY.nodes,
+        {
+          id: `reason:${SANKEY_UNLABELED}`,
+          stage: "reason",
+          key: SANKEY_UNLABELED,
+          label: "Not judged",
+          count: 1,
+          clickable: true,
+        },
+      ],
+      links: [
+        ...SANKEY.links,
+        {
+          source: "route:search",
+          target: `reason:${SANKEY_UNLABELED}`,
+          count: 1,
+        },
+      ],
+    };
+    render(
+      <FlowSankeyDiagram
+        sankey={withSentinel}
+        stages={STAGES}
+        stageTitles={TITLES}
+        stageColors={COLORS}
+        unitNoun="trials"
+        ariaLabel="Failed trials from case through route to reason"
+        onSelectNode={() => {}}
+        onSelectLink={() => {}}
+        labelForNode={(node) => node.label}
+        isSelectable={(node) => node.clickable && node.key !== SANKEY_UNLABELED}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /^Not judged,/ })).toBeNull();
+    expect(
+      screen.getByRole("img", { name: /^Not judged,.*not selectable/ }),
+    ).toBeInTheDocument();
+    // The link into it is refused too, by the default link rule.
+    expect(
+      screen.queryByRole("button", { name: /search to Not judged/ }),
+    ).toBeNull();
+    // A selectable node is still a button.
+    expect(
+      screen.getByRole("button", { name: /^Look up a user,/ }),
+    ).toBeInTheDocument();
   });
 });

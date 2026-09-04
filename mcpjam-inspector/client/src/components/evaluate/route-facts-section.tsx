@@ -19,11 +19,17 @@ export function RouteFactsSection({
   facts,
   catalogState,
   computedHere,
+  variantLabel,
 }: {
   facts: EvalRunRouteFactsCase;
   catalogState: EvalRunRouteFacts["catalogState"];
   /** True when the section is using the page-local producer, not the persisted row. */
   computedHere?: boolean;
+  /**
+   * Which execution variant this section describes. Set only when the row
+   * holds more than one, so a single-variant row reads as before.
+   */
+  variantLabel?: string;
 }) {
   const mismatch = facts.mismatch;
   const lines = mismatchLines(facts, catalogState);
@@ -41,6 +47,14 @@ export function RouteFactsSection({
 
   return (
     <div className="flex flex-col gap-2" data-testid="route-facts-section">
+      {variantLabel ? (
+        <p
+          className="font-mono text-[12px] text-foreground"
+          data-testid="route-facts-variant"
+        >
+          {variantLabel}
+        </p>
+      ) : null}
       {computedHere ? (
         <p className="text-[12px] text-muted-foreground">computed here</p>
       ) : null}
@@ -73,6 +87,10 @@ export function RouteFactsSection({
           <summary className="cursor-pointer list-none text-[12.5px] text-muted-foreground marker:content-none hover:text-foreground">
             Expected vs observed
           </summary>
+          <p className="mt-2 text-[12px] text-muted-foreground">
+            counted by tool name — a call with the wrong arguments counts as
+            called
+          </p>
           <div className="mt-2 grid gap-4 sm:grid-cols-2">
             <EvaluateToolList
               label="Expected"

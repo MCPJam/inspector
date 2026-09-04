@@ -81,6 +81,8 @@ export type SuiteFailureGroupsRow = {
   novelty: "measured" | "notMeasured";
   groups: FailureGroup[];
   members: FailureGroupMember[];
+  /** Present when the row could not carry every member; `dropped` were not drawn. */
+  memberTruncation?: { dropped: number };
 };
 
 export type SuiteFailureGroupsQueryResult = {
@@ -263,9 +265,22 @@ export function novelMemberCount(row: SuiteFailureGroupsRow): number {
   return row.members.filter((member) => member.novel === true).length;
 }
 
+/**
+ * The reason nodes a reader will actually see. A grouped row draws one node
+ * per group PLUS the "Not judged" node when any member lacks a group, so the
+ * header's count matches the diagram rather than the clustering's k.
+ */
 export function reasonCount(row: SuiteFailureGroupsRow): number {
-  if (row.grouped) return row.groups.length;
-  return flatReasonList(row).length;
+  if (!row.grouped) return flatReasonList(row).length;
+  const unjudged = row.members.some(
+    (member) => member.groupIndex === undefined,
+  );
+  return row.groups.length + (unjudged ? 1 : 0);
+}
+
+export function droppedMemberCount(row: SuiteFailureGroupsRow): number {
+  const dropped = row.memberTruncation?.dropped;
+  return typeof dropped === "number" && dropped > 0 ? dropped : 0;
 }
 
 /**
@@ -280,9 +295,11 @@ export function failureGroupsHeader(row: SuiteFailureGroupsRow | null): {
     return { summary: "Failure groups", noveltyLabel: null };
   }
   const reasons = reasonCount(row);
-  const summary = `${row.failedTrials} failed trial${
-    row.failedTrials === 1 ? "" : "s"
-  }, ${reasons} reason${reasons === 1 ? "" : "s"}`;
+  const dropped = droppedMemberCount(row);
+  const summary =
+    `${row.failedTrials} failed trial${row.failedTrials === 1 ? "" : "s"}, ` +
+    `${reasons} reason${reasons === 1 ? "" : "s"}` +
+    (dropped > 0 ? ` · ${dropped} more not drawn` : "");
   if (row.novelty !== "measured") {
     return { summary, noveltyLabel: null };
   }

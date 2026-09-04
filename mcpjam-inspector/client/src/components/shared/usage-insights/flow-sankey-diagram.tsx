@@ -84,6 +84,8 @@ export function FlowSankeyDiagram<S extends string>({
   ariaLabel,
   fillHeight = false,
   labelForNode,
+  isSelectable,
+  isLinkSelectable,
 }: {
   sankey: InsightsSankey<S>;
   stages: readonly S[];
@@ -105,11 +107,32 @@ export function FlowSankeyDiagram<S extends string>({
   fillHeight?: boolean;
   /** Defaults to {@link stageValueLabel} ("Not analyzed" for unlabeled). */
   labelForNode?: (node: InsightsSankeyNode<S>) => string;
+  /**
+   * Whether a click on this node would select anything. Defaults to
+   * `node.clickable`; a caller whose selection model refuses some clickable
+   * nodes (the unlabeled / other sentinels) passes its own answer so those
+   * are not announced as buttons that do nothing.
+   */
+  isSelectable?: (node: InsightsSankeyNode<S>) => boolean;
+  /** Same for a link. Defaults to both endpoints being selectable. */
+  isLinkSelectable?: (
+    source: InsightsSankeyNode<S>,
+    target: InsightsSankeyNode<S>,
+  ) => boolean;
 }) {
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
   const valueLabel = labelForNode ?? stageValueLabel;
+  const nodeSelectable = (node: InsightsSankeyNode<S>): boolean =>
+    isSelectable ? isSelectable(node) : node.clickable;
+  const linkSelectable = (
+    source: InsightsSankeyNode<S>,
+    target: InsightsSankeyNode<S>,
+  ): boolean =>
+    isLinkSelectable
+      ? isLinkSelectable(source, target)
+      : nodeSelectable(source) && nodeSelectable(target);
 
   const contentHeight = useMemo(() => {
     const widest = Math.max(
@@ -225,9 +248,7 @@ export function FlowSankeyDiagram<S extends string>({
             {layout.links.map((link) => {
               const id = `${link.source.id}→${link.target.id}`;
               const selectable =
-                !!onSelectLink &&
-                link.source.clickable &&
-                link.target.clickable;
+                !!onSelectLink && linkSelectable(link.source, link.target);
               const flagged = discordantHighlight && link.discordant;
               const base = flagged ? 0.44 : 0.26;
               const label = `${valueLabel(link.source)} to ${valueLabel(
@@ -274,7 +295,7 @@ export function FlowSankeyDiagram<S extends string>({
 
           <g transform={`translate(0, ${HEADER_HEIGHT})`}>
             {layout.nodes.map((node) => {
-              const selectable = !!onSelectNode && node.clickable;
+              const selectable = !!onSelectNode && nodeSelectable(node);
               const emphasized =
                 selectedKeys?.has(`${node.stage}:${node.key}`) ?? false;
               return (

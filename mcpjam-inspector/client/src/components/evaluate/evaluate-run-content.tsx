@@ -15,7 +15,9 @@
  *
  * `fallbackBody` is the migration seam. Until the case rows land, the old
  * run-detail pane still renders beneath the verdict, so no information is
- * removed from the page in the commit that adds the headline.
+ * removed from the page in the commit that adds the headline. That pane is
+ * also where the rewrite-arm description disclosure lives (via
+ * `RunPluginSnapshot`); this component does not render a second one.
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
@@ -59,7 +61,6 @@ import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
-import { RunDescriptionOverrideDisclosure } from "./run-description-override-disclosure";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
 import {
   buildRunRouteFacts,
@@ -178,9 +179,6 @@ export function EvaluateRunContent({
   const engineSupported = isEmulatedDescriptionExperimentEngine(
     readRunExecutionEngine(run),
   );
-  const descriptionOverride =
-    run.configSnapshot?.toolDescriptionOverride ?? null;
-
   const failureGroupsEnabled = useFailureGroupsEnabled();
   const routeFactsEnabled = useRouteFactsEnabled();
   const persistedRouteFacts = useEvalRunRouteFacts({
@@ -189,16 +187,36 @@ export function EvaluateRunContent({
     runStatus: run.status,
     enabled: routeFactsEnabled && active,
   });
+  // The page-local producer stands in for a document that is NOT THERE —
+  // `absent`, or a deployment that does not serve the route yet. It must not
+  // stand in for one that is still loading, and it must not paper over a
+  // document the contract rejected: that is a bug report, and local numbers
+  // in its place would hide it.
+  const routeFactsFallback =
+    persistedRouteFacts.status === "absent" ||
+    (persistedRouteFacts.status === "error" &&
+      persistedRouteFacts.error?.kind === "routeUnavailable");
   const routeFactsDoc = useMemo(() => {
     if (!routeFactsEnabled) return null;
-    return (
-      persistedRouteFacts.document ?? buildRunRouteFacts(run, iterations)
-    );
-  }, [routeFactsEnabled, persistedRouteFacts.document, run, iterations]);
+    if (persistedRouteFacts.status === "ready") {
+      return persistedRouteFacts.document;
+    }
+    if (!routeFactsFallback) return null;
+    return buildRunRouteFacts(run, iterations);
+  }, [
+    routeFactsEnabled,
+    persistedRouteFacts.status,
+    persistedRouteFacts.document,
+    routeFactsFallback,
+    run,
+    iterations,
+  ]);
   const routeFactsComputedHere =
+    routeFactsEnabled && routeFactsFallback && routeFactsDoc !== null;
+  const routeFactsContractError =
     routeFactsEnabled &&
-    (persistedRouteFacts.status === "absent" ||
-      persistedRouteFacts.document === null);
+    persistedRouteFacts.status === "error" &&
+    persistedRouteFacts.error?.kind === "invalidContract";
   const routeLines = useMemo(
     () =>
       routeFactsDoc
@@ -425,14 +443,6 @@ export function EvaluateRunContent({
         </p>
       ) : null}
 
-      {descriptionOverride ? (
-        <div className="px-5">
-          <RunDescriptionOverrideDisclosure
-            toolName={descriptionOverride.toolName}
-          />
-        </div>
-      ) : null}
-
       <div className="flex flex-col gap-3 px-5 pb-4">
         {view.sentence.kind === "brokeAt" ? (
           <RunGradingPeek
@@ -456,6 +466,16 @@ export function EvaluateRunContent({
           onSelectStage={setStageFilter}
         />
       </div>
+
+      {routeFactsContractError ? (
+        <p
+          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+          data-testid="route-facts-error"
+        >
+          routes not shown — the run&apos;s route facts did not match the
+          contract
+        </p>
+      ) : null}
 
       <div className="border-t border-border/40">
         <RunCaseRows

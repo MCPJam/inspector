@@ -29,6 +29,7 @@ function report(
         interval: { deltaPoints: 50, lowerPoints: 12.4, upperPoints: 72 },
         verdict: "improved",
         minSampleSize: 5,
+        minEffectSize: 0.05,
       },
       perCase: [
         {
@@ -38,6 +39,7 @@ function report(
           interval: { deltaPoints: 50, lowerPoints: 12.4, upperPoints: 72 },
           verdict: "improved",
           minSampleSize: 5,
+          minEffectSize: 0.05,
         },
       ],
     },
@@ -55,6 +57,7 @@ function report(
       toolSnapshotHash: "cataloghashvalue",
       judgeConfigHash: "judgehashvalue",
       environmentReset: "none",
+      equal: true,
     },
     assignment: { method: "concurrent_two_run", overlapVerified: true },
     evidenceLabel: "reproducible",
@@ -136,6 +139,7 @@ describe("RunDescriptionExperimentCard", () => {
               interval: null,
               verdict: "insufficient_data",
               minSampleSize: 5,
+              minEffectSize: 0.05,
             },
             perCase: [],
           },
@@ -191,6 +195,7 @@ describe("RunDescriptionExperimentCard", () => {
               interval: { deltaPoints: -50, lowerPoints: -72, upperPoints: -12.2 },
               verdict: "regressed",
               minSampleSize: 5,
+              minEffectSize: 0.05,
             },
             perCase: [],
           },
@@ -221,6 +226,7 @@ describe("RunDescriptionExperimentCard", () => {
             model: ["anthropic/claude-haiku-4.5"],
             engine: "emulated",
             environmentReset: "per_trial_sandbox",
+            equal: true,
           },
         }),
       }),
@@ -233,6 +239,59 @@ describe("RunDescriptionExperimentCard", () => {
     expect(
       screen.getByText(/upstream server's state was not verified/),
     ).toBeInTheDocument();
+  });
+
+  it("names the arms' differences as the report found them, and keeps the report's label", async () => {
+    const user = userEvent.setup();
+    renderCard(
+      experiment({
+        status: "completed",
+        report: report({
+          evidenceLabel: "reproducible",
+          frozen: {
+            model: ["anthropic/claude-haiku-4.5"],
+            engine: "emulated",
+            environmentReset: "per_trial_sandbox",
+            equal: false,
+            differences: ["hostConfigId", "toolSnapshotHash"],
+          },
+        }),
+      }),
+    );
+    const card = screen.getByTestId("description-experiment-card");
+    // One line collapsed, and the label is the report's.
+    expect(card.textContent).not.toContain("\n");
+    expect(card).toHaveTextContent("Reproducible");
+    expect(card).not.toHaveTextContent("Controlled");
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
+    expect(
+      screen.getByTestId("description-experiment-arms-differ"),
+    ).toHaveTextContent("arms differ: hostConfigId, toolSnapshotHash");
+    // Fresh computers per trial would earn Controlled if recomputed here;
+    // the pill must still say what the report said.
+    expect(
+      screen.getByTestId("description-experiment-evidence-label"),
+    ).toHaveTextContent("Reproducible (as reported)");
+    expect(screen.queryByText("catalog catalogh")).toBeNull();
+    expect(
+      screen.getByText(/they differed on hostConfigId, toolSnapshotHash/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows no differences pill when the report found the arms equal", async () => {
+    const user = userEvent.setup();
+    renderCard(experiment({ status: "completed", report: report() }));
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
+    expect(
+      screen.queryByTestId("description-experiment-arms-differ"),
+    ).toBeNull();
+    expect(
+      screen.getByTestId("description-experiment-evidence-label"),
+    ).toHaveTextContent("Reproducible (as reported)");
   });
 
   it("confirms a launch with planned trials, judge notice, and the cap", async () => {

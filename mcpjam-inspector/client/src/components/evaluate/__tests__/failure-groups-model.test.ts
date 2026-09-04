@@ -13,6 +13,7 @@ import {
   buildFailureSankey,
   failureGroupsHeader,
   flatReasonList,
+  reasonCount,
   type FailureGroupMember,
   type SuiteFailureGroupsRow,
 } from "../failure-groups-model";
@@ -212,7 +213,87 @@ describe("flatReasonList", () => {
   });
 });
 
+describe("reasonCount", () => {
+  it("counts the Not judged node when any member lacks a group", () => {
+    const grouped = row({
+      groups: [
+        { index: 0, label: "A", memberCount: 1 },
+        { index: 1, label: "B", memberCount: 1 },
+      ],
+      members: [
+        member({
+          gradingKey: "a#1",
+          caseKey: "a",
+          pathKey: "search",
+          groupIndex: 0,
+        }),
+        member({
+          gradingKey: "b#1",
+          caseKey: "b",
+          pathKey: "search",
+          groupIndex: 1,
+        }),
+        member({ gradingKey: "c#1", caseKey: "c", pathKey: "search" }),
+      ],
+    });
+    const sankey = buildFailureSankey(grouped);
+    const drawn = sankey.nodes.filter((node) => node.stage === "reason").length;
+    expect(reasonCount(grouped)).toBe(3);
+    expect(reasonCount(grouped)).toBe(drawn);
+  });
+
+  it("matches the groups when every member was judged", () => {
+    expect(
+      reasonCount(
+        row({
+          members: [
+            member({
+              gradingKey: "a#1",
+              caseKey: "a",
+              pathKey: "s",
+              groupIndex: 0,
+            }),
+            member({
+              gradingKey: "b#1",
+              caseKey: "b",
+              pathKey: "s",
+              groupIndex: 1,
+            }),
+          ],
+        }),
+      ),
+    ).toBe(2);
+  });
+});
+
 describe("failureGroupsHeader", () => {
+  it("says how many members were not drawn when the row was truncated", () => {
+    const header = failureGroupsHeader(
+      row({
+        failedTrials: 60,
+        memberTruncation: { dropped: 10 },
+        members: [
+          member({
+            gradingKey: "a#1",
+            caseKey: "a",
+            pathKey: "s",
+            groupIndex: 0,
+          }),
+          member({
+            gradingKey: "b#1",
+            caseKey: "b",
+            pathKey: "s",
+            groupIndex: 1,
+          }),
+        ],
+      }),
+    );
+    expect(header.summary).toBe(
+      "60 failed trials, 2 reasons · 10 more not drawn",
+    );
+    expect(header.summary).not.toContain("\n");
+  });
+
   it("omits the novelty chip when novelty was not measured", () => {
     const header = failureGroupsHeader(
       row({

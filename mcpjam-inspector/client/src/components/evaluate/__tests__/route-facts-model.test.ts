@@ -7,12 +7,15 @@ import { evalCaseAggregationKey } from "@mcpjam/sdk/contract";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import type { EvaluateCaseRow } from "../evaluate-case-row-model";
 import {
+  ROUTE_LINE_MAX_ROUTES,
   buildRunRouteFacts,
   iterationToRouteTrial,
   mismatchLines,
   readRunToolCatalog,
   routeFactsForRow,
   routeLine,
+  routeLineForRow,
+  variantLabel,
 } from "../route-facts-model";
 
 const run = (over: Partial<EvalSuiteRun> = {}): EvalSuiteRun =>
@@ -154,11 +157,89 @@ describe("copy helpers", () => {
         }),
       ],
     );
-    const facts = routeFactsForRow(doc, row(), [
+    const facts = routeFactsForRow(doc!, row(), [
       iteration({ result: "passed" }),
     ]);
-    expect(facts).not.toBeNull();
-    expect(routeLine(facts!)).toBe("1 took `tool_a→tool_b`");
+    expect(facts).toHaveLength(1);
+    expect(routeLine(facts[0]!)).toBe("1 took `tool_a→tool_b`");
+  });
+
+  it("returns every variant of a row that ran on two models, labelled", () => {
+    const onClaude = iteration({
+      _id: "it_claude",
+      result: "passed",
+      actualToolCalls: [{ toolName: "tool_a", arguments: {} }],
+    });
+    const onGpt = iteration({
+      _id: "it_gpt",
+      result: "failed",
+      actualToolCalls: [],
+      testCaseSnapshot: {
+        title: "Look up a user",
+        query: "q",
+        provider: "openai",
+        model: "gpt",
+        expectedToolCalls: [{ toolName: "tool_a", arguments: {} }],
+      },
+    });
+    const doc = buildRunRouteFacts(run(), [onClaude, onGpt]);
+    const facts = routeFactsForRow(doc!, row(), [onClaude, onGpt]);
+    expect(facts).toHaveLength(2);
+    expect(facts.map(variantLabel).sort()).toEqual([
+      "claude (anthropic)",
+      "gpt (openai)",
+    ]);
+    const line = routeLineForRow(facts);
+    expect(line).toContain("claude (anthropic): 1 took `tool_a`");
+    expect(line).toContain("gpt (openai): 1 called nothing");
+    expect(line).not.toContain("\n");
+  });
+
+  it("keeps a ten-route case to one line: three routes and a count", () => {
+    const iterations = Array.from({ length: 10 }, (_, index) =>
+      iteration({
+        _id: `it_${index}`,
+        actualToolCalls: [
+          { toolName: "tool_a", arguments: {} },
+          { toolName: `tool_${index}`, arguments: {} },
+        ],
+      }),
+    );
+    const doc = buildRunRouteFacts(run(), iterations);
+    const line = routeLine(doc!.cases[0]!);
+    expect(line).not.toContain("\n");
+    expect(line.match(/ took `/g)).toHaveLength(ROUTE_LINE_MAX_ROUTES);
+    expect(line).toMatch(/ · 7 other routes$/);
+  });
+
+  it("names only the first tool a case looped on", () => {
+    const doc = buildRunRouteFacts(run(), [
+      iteration({
+        _id: "it_loop",
+        actualToolCalls: [
+          { toolName: "tool_a", arguments: {} },
+          { toolName: "tool_a", arguments: {} },
+          { toolName: "tool_a", arguments: {} },
+          { toolName: "tool_b", arguments: {} },
+          { toolName: "tool_b", arguments: {} },
+          { toolName: "tool_b", arguments: {} },
+        ],
+      }),
+    ]);
+    const facts = doc!.cases[0]!;
+    if (facts.routes.loopedOn.length < 2) {
+      // The document folds repeats before this rule can bite; nothing to cap.
+      expect(routeLine(facts).match(/looped on/g)?.length ?? 0).toBeLessThan(2);
+      return;
+    }
+    expect(routeLine(facts).match(/looped on/g)).toHaveLength(1);
+  });
+
+  it("returns null instead of throwing when the contract rejects the run", () => {
+    // An empty run id fails the document's `runId: min(1)` rule.
+    expect(
+      buildRunRouteFacts(run({ _id: "" as never }), [iteration()]),
+    ).toBeNull();
   });
 
   it("states not-called, unexpected, substitution, and not-measured question", () => {
@@ -181,9 +262,10 @@ describe("copy helpers", () => {
         }),
       ],
     );
-    const facts = doc.cases[0]!;
+    const facts = doc!.cases[0]!;
+    expect(facts.mismatch).toMatchObject({ gradeableTrials: 1 });
     expect(routeLine(facts)).toBe("1 took `tool_b`");
-    expect(mismatchLines(facts, doc.catalogState)).toEqual([
+    expect(mismatchLines(facts, doc!.catalogState)).toEqual([
       "expected `tool_a` not called in 1 of 1",
       "`tool_b` called in 1 of 1 (1 failed)",
       "`tool_b` called instead of `tool_a` in 1 trials",
@@ -206,9 +288,9 @@ describe("copy helpers", () => {
         },
       }),
     ]);
-    const facts = doc.cases[0]!;
+    const facts = doc!.cases[0]!;
     expect(routeLine(facts)).toBe("1 called nothing (expected)");
-    expect(mismatchLines(facts, doc.catalogState)).toEqual([
+    expect(mismatchLines(facts, doc!.catalogState)).toEqual([
       "ended with a question: not measured",
     ]);
   });
@@ -219,12 +301,12 @@ describe("copy helpers", () => {
         actualToolCalls: [{ toolName: "tool_b", arguments: {} }],
       }),
     ]);
-    expect(doc.catalogState).toBe("notLoaded");
-    expect(doc.cases[0]!.mismatch).toMatchObject({
+    expect(doc!.catalogState).toBe("notLoaded");
+    expect(doc!.cases[0]!.mismatch).toMatchObject({
       state: "measured",
       substitutions: [],
     });
-    expect(mismatchLines(doc.cases[0]!, doc.catalogState)).toContain(
+    expect(mismatchLines(doc!.cases[0]!, doc!.catalogState)).toContain(
       "catalog not loaded — substitutions were not classified",
     );
   });

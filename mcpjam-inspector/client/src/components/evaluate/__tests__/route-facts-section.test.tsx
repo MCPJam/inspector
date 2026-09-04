@@ -55,6 +55,7 @@ const facts = (
     },
     mismatch: {
       state: "measured",
+      gradeableTrials: 3,
       expected: [
         {
           tool: "tool_a",
@@ -80,6 +81,55 @@ describe("RouteFactsSection", () => {
     expect(mismatch).not.toHaveAttribute("open");
     expect(section).toHaveTextContent("expected `tool_a` not called in 1 of 3");
     expect(section).toHaveTextContent("ended with a question: not measured");
+    expect(section).toHaveTextContent(
+      "counted by tool name — a call with the wrong arguments counts as called",
+    );
+    expect(screen.queryByTestId("route-facts-variant")).toBeNull();
+  });
+
+  it("counts a called-in line over gradeable trials, not included trials", () => {
+    render(
+      <RouteFactsSection
+        facts={facts({
+          routes: {
+            ...facts().routes,
+            includedTrials: 5,
+            totalTrials: 5,
+          },
+          mismatch: {
+            state: "measured",
+            gradeableTrials: 3,
+            expected: [],
+            unexpected: [
+              {
+                tool: "tool_c",
+                calledIn: 2,
+                calledInFailed: 0,
+                catalog: "inCatalog",
+              },
+            ],
+            substitutions: [],
+          },
+        })}
+        catalogState="loaded"
+      />,
+    );
+    expect(screen.getByTestId("route-facts-section")).toHaveTextContent(
+      "`tool_c` called in 2 of 3",
+    );
+  });
+
+  it("names the variant when the row holds more than one", () => {
+    render(
+      <RouteFactsSection
+        facts={facts()}
+        catalogState="loaded"
+        variantLabel="claude (anthropic)"
+      />,
+    );
+    expect(screen.getByTestId("route-facts-variant")).toHaveTextContent(
+      "claude (anthropic)",
+    );
   });
 
   it("notes when the facts were computed on the page", () => {

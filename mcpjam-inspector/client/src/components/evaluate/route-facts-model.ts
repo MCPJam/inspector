@@ -124,25 +124,34 @@ export function iterationToRouteTrial(
   };
 }
 
+/**
+ * The page-local producer. Returns `null` when the contract rejects what the
+ * page holds: the section is optional, and a row the builder refuses must
+ * not take the whole run page down with it.
+ */
 export function buildRunRouteFacts(
   run: EvalSuiteRun,
   iterations: readonly EvalIteration[],
-): EvalRunRouteFacts {
-  return buildEvalRunRouteFacts({
-    run: {
-      runId: String(run._id),
-      suiteId: String(run.suiteId),
-      ...(run.runGroupId ? { runGroupId: run.runGroupId } : {}),
-      ...(run.configRevision ? { configRevision: run.configRevision } : {}),
-      ...(typeof run.completedAt === "number"
-        ? { runCompletedAt: run.completedAt }
-        : {}),
-      materializationState: "final",
-      now: 0,
-    },
-    trials: iterations.map(iterationToRouteTrial),
-    catalog: readRunToolCatalog(run),
-  });
+): EvalRunRouteFacts | null {
+  try {
+    return buildEvalRunRouteFacts({
+      run: {
+        runId: String(run._id),
+        suiteId: String(run.suiteId),
+        ...(run.runGroupId ? { runGroupId: run.runGroupId } : {}),
+        ...(run.configRevision ? { configRevision: run.configRevision } : {}),
+        ...(typeof run.completedAt === "number"
+          ? { runCompletedAt: run.completedAt }
+          : {}),
+        materializationState: "final",
+        now: 0,
+      },
+      trials: iterations.map(iterationToRouteTrial),
+      catalog: readRunToolCatalog(run),
+    });
+  } catch {
+    return null;
+  }
 }
 
 function iterationsForRow(
@@ -158,23 +167,41 @@ function iterationsForRow(
   );
 }
 
+/**
+ * Every case-variant document that belongs to one row.
+ *
+ * Rows come from `groupRunIterationsByTestCase`, which keys on the test case
+ * and NOT on the execution variant, so a row that ran on two models holds two
+ * variants and each has its own routes. Returned in document order; empty
+ * when the document knows nothing about the row.
+ */
 export function routeFactsForRow(
   doc: EvalRunRouteFacts,
   row: EvaluateCaseRow,
   iterations: readonly EvalIteration[],
-): EvalRunRouteFactsCase | null {
+): EvalRunRouteFactsCase[] {
   const keys = new Set(
     iterationsForRow(row, iterations).map(
       (iteration) => iterationToRouteTrial(iteration).caseVariantKey,
     ),
   );
   if (row.caseKey) {
-    const byCaseKey = doc.cases.find(
-      (entry) => entry.caseKey === row.caseKey && keys.has(entry.caseVariantKey),
+    const byCaseKey = doc.cases.filter(
+      (entry) =>
+        entry.caseKey === row.caseKey && keys.has(entry.caseVariantKey),
     );
-    if (byCaseKey) return byCaseKey;
+    if (byCaseKey.length > 0) return byCaseKey;
   }
-  return doc.cases.find((entry) => keys.has(entry.caseVariantKey)) ?? null;
+  return doc.cases.filter((entry) => keys.has(entry.caseVariantKey));
+}
+
+/** `claude (anthropic)` · `claude` · null when the case has no variant. */
+export function variantLabel(facts: EvalRunRouteFactsCase): string | null {
+  const variant = facts.executionVariant;
+  if (!variant) return null;
+  return variant.provider
+    ? `${variant.model} (${variant.provider})`
+    : variant.model;
 }
 
 /**
@@ -182,12 +209,17 @@ export function routeFactsForRow(
  *
  * Examples: `12 took \`search→get\`` · `7 took \`search→get\` · 2 called nothing · 1 looped on \`search\`` · `10 called nothing (expected)`.
  */
+/** Routes named on the header line; the rest fold into "N other routes". */
+export const ROUTE_LINE_MAX_ROUTES = 3;
+
 export function routeLine(facts: EvalRunRouteFactsCase): string {
   const { routes, mismatch } = facts;
   if (routes.includedTrials === 0) return "";
   const negative = mismatch.state === "excludedNegativeTest";
   const parts: string[] = [];
-  for (const route of routes.routes) {
+  // The document sorts routes count-desc, so the first three are the ones
+  // most trials took.
+  for (const route of routes.routes.slice(0, ROUTE_LINE_MAX_ROUTES)) {
     if (route.pathKey === NO_TOOL_PATH_KEY) {
       parts.push(
         negative
@@ -198,10 +230,41 @@ export function routeLine(facts: EvalRunRouteFactsCase): string {
     }
     parts.push(`${route.trials} took \`${route.pathKey}\``);
   }
-  for (const loop of routes.loopedOn) {
+  const rest = routes.routes.length - ROUTE_LINE_MAX_ROUTES;
+  if (rest > 0) {
+    // `otherRoutes` is the document's own fold past its cap; its distinct
+    // count is not carried, so the line can only say "and more".
+    parts.push(`${rest}${routes.otherRoutes ? "+" : ""} other routes`);
+  } else if (routes.otherRoutes) {
+    parts.push(`${routes.otherRoutes.trials} took other routes`);
+  }
+  const loop = routes.loopedOn[0];
+  if (loop) {
     parts.push(`${loop.trials} looped on \`${loop.tool}\``);
   }
   return parts.join(" · ");
+}
+
+/**
+ * The header line for a row. One variant reads as before; several are
+ * prefixed with the model so a reader knows which arm took which route.
+ */
+export function routeLineForRow(
+  cases: readonly EvalRunRouteFactsCase[],
+): string {
+  if (cases.length <= 1) {
+    const only = cases[0];
+    return only ? routeLine(only) : "";
+  }
+  return cases
+    .map((facts) => {
+      const line = routeLine(facts);
+      if (!line) return "";
+      const label = variantLabel(facts);
+      return label ? `${label}: ${line}` : line;
+    })
+    .filter((line) => line.length > 0)
+    .join("; ");
 }
 
 /**
@@ -215,13 +278,16 @@ export function mismatchLines(
 ): string[] {
   const lines: string[] = [];
   if (facts.mismatch.state === "measured") {
+    // The mismatch rows are counted over gradeable trials — included and not
+    // a negative test — which the document carries so no line borrows the
+    // route rollup's `includedTrials`.
+    const opportunity = facts.mismatch.gradeableTrials;
     for (const expected of facts.mismatch.expected) {
       if (expected.notCalledIn === 0) continue;
       lines.push(
-        `expected \`${expected.tool}\` not called in ${expected.notCalledIn} of ${expected.expectedIn}`,
+        `expected \`${expected.tool}\` not called in ${expected.notCalledIn} of ${opportunity}`,
       );
     }
-    const opportunity = facts.routes.includedTrials;
     for (const unexpected of facts.mismatch.unexpected) {
       const failed =
         unexpected.calledInFailed > 0
@@ -260,9 +326,7 @@ export function routeLinesByRowKey(
 ): ReadonlyMap<string, string> {
   const map = new Map<string, string>();
   for (const row of rows) {
-    const facts = routeFactsForRow(doc, row, iterations);
-    if (!facts) continue;
-    const line = routeLine(facts);
+    const line = routeLineForRow(routeFactsForRow(doc, row, iterations));
     if (line) map.set(row.key, line);
   }
   return map;

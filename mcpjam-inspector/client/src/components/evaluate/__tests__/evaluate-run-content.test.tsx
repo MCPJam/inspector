@@ -23,6 +23,7 @@ import {
 import { GOLDEN_STAGE_ANALYTICS } from "@/test/stage-analytics-fixtures";
 import { PASS_WORDS } from "./pass-words";
 import { EvaluateRunContent } from "../evaluate-run-content";
+import { RunDescriptionOverrideDisclosure } from "../run-description-override-disclosure";
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 
 const detailState = vi.hoisted(() => ({
@@ -54,10 +55,11 @@ const stageAnalytics = vi.hoisted(() => ({
   },
 }));
 const routeFacts = vi.hoisted(() => ({
+  calls: [] as Array<Record<string, unknown>>,
   current: {
     status: "absent" as string,
     document: null as unknown,
-    error: null,
+    error: null as { kind: string; message: string } | null,
   },
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
@@ -127,10 +129,13 @@ vi.mock("@/hooks/use-eval-run-stage-analytics", () => ({
   }),
 }));
 vi.mock("@/hooks/use-eval-run-route-facts", () => ({
-  useEvalRunRouteFacts: () => ({
-    ...routeFacts.current,
-    refetch: () => {},
-  }),
+  useEvalRunRouteFacts: (args: Record<string, unknown>) => {
+    routeFacts.calls.push(args);
+    return {
+      ...routeFacts.current,
+      refetch: () => {},
+    };
+  },
 }));
 
 // Server quality reaches Convex through `useMutation`, which needs a provider
@@ -242,6 +247,7 @@ afterEach(() => {
     document: null,
     error: null,
   };
+  routeFacts.calls = [];
   routeFacts.current = {
     status: "absent",
     document: null,
@@ -619,13 +625,15 @@ describe("EvaluateRunContent", () => {
     }
   });
 
-  it("discloses a rewritten description on the rewrite-arm run", () => {
+  it("discloses a rewritten description exactly once, through the fallback body", () => {
     detailState.current = {
       ...detailState.current,
       status: "ready",
       summary: summary(),
       diagnostics: [DIAGNOSTIC],
     };
+    // The legacy run-detail pane (RunPluginSnapshot) is what carries the
+    // rewrite-arm disclosure; this page must not render a second one above it.
     renderContent({
       run: {
         ...RUN,
@@ -641,10 +649,33 @@ describe("EvaluateRunContent", () => {
           },
         },
       } as EvalSuiteRun,
+      fallbackBody: <RunDescriptionOverrideDisclosure toolName="get_user" />,
     });
     expect(
-      screen.getByText(/this run deliberately rewrote the description of/),
-    ).toBeInTheDocument();
+      screen.getAllByText(/this run deliberately rewrote the description of/),
+    ).toHaveLength(1);
+    expect(
+      screen.getAllByTestId("description-override-disclosure"),
+    ).toHaveLength(1);
+  });
+
+  it("asks the route-facts hook with enabled: false when the flag is off", () => {
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent();
+    expect(routeFacts.calls.length).toBeGreaterThan(0);
+    for (const call of routeFacts.calls) {
+      expect(call).toMatchObject({
+        projectId: "proj_1",
+        runId: "run_1",
+        runStatus: "completed",
+        enabled: false,
+      });
+    }
   });
 
   it("does not compute or render route facts when the flag is off", () => {
@@ -822,5 +853,144 @@ describe("EvaluateRunContent", () => {
     expect(section).toHaveTextContent("create_view");
     expect(section).not.toHaveTextContent("persisted_search→persisted_get");
     expect(screen.getByText("computed here")).toBeInTheDocument();
+  });
+
+  it("shows no route facts, local or otherwise, while the persisted read is loading", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "loading",
+      document: null,
+      error: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: ROUTE_FACTS_ITERATIONS,
+    });
+
+    expect(screen.queryByTestId("route-facts-section")).toBeNull();
+    expect(screen.queryByTestId("route-line-case_1")).toBeNull();
+    expect(screen.queryByText("computed here")).toBeNull();
+    expect(screen.queryByTestId("route-facts-error")).toBeNull();
+  });
+
+  it("says the document did not match the contract instead of substituting local numbers", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "invalidContract", message: "bad row" },
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: ROUTE_FACTS_ITERATIONS,
+    });
+
+    expect(screen.getByTestId("route-facts-error")).toHaveTextContent(
+      /did not match the contract/,
+    );
+    expect(screen.queryByTestId("route-facts-section")).toBeNull();
+    expect(screen.queryByText("computed here")).toBeNull();
+  });
+
+  it("falls back to local route facts when the deployment does not serve the route", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "error",
+      document: null,
+      error: { kind: "routeUnavailable", message: "404 route" },
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: ROUTE_FACTS_ITERATIONS,
+    });
+
+    expect(screen.getByTestId("route-facts-section")).toHaveTextContent(
+      "create_view",
+    );
+    expect(screen.getByText("computed here")).toBeInTheDocument();
+    expect(screen.queryByTestId("route-facts-error")).toBeNull();
+  });
+
+  it("renders the page when the local producer's document is one the contract rejects", () => {
+    routeFactsFlag.current = true;
+    routeFacts.current = {
+      status: "absent",
+      document: null,
+      error: null,
+    };
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    // An empty run id fails the document's `runId: min(1)` rule inside the
+    // SDK builder; the section is optional, so the page must still render.
+    expect(() =>
+      renderContent({
+        run: { ...ROUTE_FACTS_RUN, _id: "" } as unknown as EvalSuiteRun,
+        iterations: ROUTE_FACTS_ITERATIONS,
+      }),
+    ).not.toThrow();
+    expect(screen.getByTestId("evaluate-run-content")).toBeInTheDocument();
+    expect(screen.queryByTestId("route-facts-section")).toBeNull();
+  });
+
+  it("renders one route-facts section per execution variant on a two-model row", () => {
+    routeFactsFlag.current = true;
+    detailState.current = {
+      ...detailState.current,
+      status: "ready",
+      summary: summary(),
+      diagnostics: [DIAGNOSTIC],
+    };
+    const onGpt = {
+      ...ROUTE_FACTS_ITERATIONS[0],
+      _id: "it_1b",
+      actualToolCalls: [],
+      testCaseSnapshot: {
+        ...ROUTE_FACTS_ITERATIONS[0]!.testCaseSnapshot,
+        provider: "openai",
+        model: "gpt",
+      },
+    } as EvalIteration;
+    renderContent({
+      run: ROUTE_FACTS_RUN,
+      iterations: [
+        ROUTE_FACTS_ITERATIONS[0]!,
+        onGpt,
+        ROUTE_FACTS_ITERATIONS[1]!,
+      ],
+    });
+
+    const sections = screen.getAllByTestId("route-facts-section");
+    expect(sections).toHaveLength(2);
+    const labels = screen
+      .getAllByTestId("route-facts-variant")
+      .map((node) => node.textContent);
+    expect(labels).toEqual(
+      expect.arrayContaining(["claude (anthropic)", "gpt (openai)"]),
+    );
+    const line = screen.getByTestId("route-line-case_1").textContent ?? "";
+    expect(line).toContain("claude (anthropic)");
+    expect(line).toContain("gpt (openai)");
   });
 });

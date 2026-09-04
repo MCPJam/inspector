@@ -27,6 +27,8 @@ import {
   caseLabelFromAggregationKey,
   descriptionExperimentHeader,
   evidenceCaveat,
+  evidenceLabelText,
+  frozenDifferencesLabel,
   hash8,
   intervalBoundPhrase,
   maxTrialsCapOf,
@@ -62,9 +64,28 @@ function PassBar({
   );
 }
 
-function FrozenPill({ children }: { children: string }) {
+function FrozenPill({
+  children,
+  title,
+  tone = "muted",
+  testId,
+}: {
+  children: string;
+  title?: string;
+  tone?: "muted" | "warning";
+  testId?: string;
+}) {
   return (
-    <span className="inline-flex items-center rounded-md border border-border/60 px-2 py-0.5 text-[11px] text-muted-foreground">
+    <span
+      className={cn(
+        "inline-flex items-center rounded-md border px-2 py-0.5 text-[11px]",
+        tone === "warning"
+          ? "border-warning/50 text-foreground"
+          : "border-border/60 text-muted-foreground",
+      )}
+      {...(title ? { title } : {})}
+      {...(testId ? { "data-testid": testId } : {})}
+    >
       {children}
     </span>
   );
@@ -92,6 +113,10 @@ export function RunDescriptionExperimentCard({
       ? diffDescriptionWords(originalText, rewriteText)
       : null;
   const regression = regressionLine(experiment);
+  const armsDiffer = report ? frozenDifferencesLabel(report.frozen) : null;
+  const hostHash = hash8(report?.frozen.hostConfigId);
+  const catalogHash = hash8(report?.frozen.toolSnapshotHash);
+  const judgeHash = hash8(report?.frozen.judgeConfigHash);
   const canStart = experiment.status === "proposed" && !starting;
 
   async function copyRewrite() {
@@ -207,7 +232,7 @@ export function RunDescriptionExperimentCard({
               ) : null}
 
               <p className="text-[12.5px] text-foreground">
-                {intervalBoundPhrase(report.primary.pooled.interval)}
+                {intervalBoundPhrase(report.primary.pooled)}
               </p>
 
               {regression ? (
@@ -218,35 +243,41 @@ export function RunDescriptionExperimentCard({
                 {report.frozen.model.map((model) => (
                   <FrozenPill key={model}>{model}</FrozenPill>
                 ))}
-                <FrozenPill>{report.frozen.engine}</FrozenPill>
-                {report.frozen.hostConfigId ? (
-                  <FrozenPill>
-                    host {hash8(report.frozen.hostConfigId) ?? report.frozen.hostConfigId}
-                  </FrozenPill>
+                {report.frozen.engine ? (
+                  <FrozenPill>{report.frozen.engine}</FrozenPill>
                 ) : null}
-                {hash8(report.frozen.toolSnapshotHash) ? (
-                  <FrozenPill>
-                    catalog {hash8(report.frozen.toolSnapshotHash)}
-                  </FrozenPill>
+                {hostHash ? (
+                  <FrozenPill>{`host ${hostHash}`}</FrozenPill>
                 ) : null}
-                {hash8(report.frozen.judgeConfigHash) ? (
-                  <FrozenPill>
-                    judge {hash8(report.frozen.judgeConfigHash)}
-                  </FrozenPill>
+                {catalogHash ? (
+                  <FrozenPill>{`catalog ${catalogHash}`}</FrozenPill>
+                ) : null}
+                {judgeHash ? (
+                  <FrozenPill>{`judge ${judgeHash}`}</FrozenPill>
                 ) : null}
                 <FrozenPill>
                   {report.frozen.environmentReset === "per_trial_sandbox"
                     ? "fresh computer per trial"
                     : "no reset"}
                 </FrozenPill>
-                <FrozenPill>
-                  {report.evidenceLabel === "controlled"
-                    ? "Controlled"
-                    : "Reproducible"}
+                {armsDiffer ? (
+                  <FrozenPill
+                    tone="warning"
+                    title="The report found these frozen variables unequal between the two arms."
+                    testId="description-experiment-arms-differ"
+                  >
+                    {armsDiffer}
+                  </FrozenPill>
+                ) : null}
+                <FrozenPill
+                  title="The report's own label. It is read from the report, never recomputed here."
+                  testId="description-experiment-evidence-label"
+                >
+                  {`${evidenceLabelText(report.evidenceLabel)} (as reported)`}
                 </FrozenPill>
               </div>
               <p className="text-[12px] text-muted-foreground">
-                {evidenceCaveat(report.evidenceLabel)}
+                {evidenceCaveat(report.evidenceLabel, report.frozen)}
               </p>
             </>
           ) : null}
