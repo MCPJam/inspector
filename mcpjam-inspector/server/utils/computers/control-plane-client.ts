@@ -56,7 +56,19 @@ export interface ComputerSandboxInfo {
 
 export type ControlPlaneResult<T> =
   | { ok: true; value: T }
-  | { ok: false; status: number; error: string };
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      /**
+       * The control plane's own machine code, when it sent one
+       * (`billing_limit_reached`, `at_capacity`, `FEATURE_UNAVAILABLE`, …).
+       * Absent for statuses that carry no code and for failures minted on this
+       * side. Callers that need to tell two refusals with the same status apart
+       * branch on this rather than on the message prose.
+       */
+      code?: string;
+    };
 
 export function getConvexHttpUrl(): string | null {
   return process.env.CONVEX_HTTP_URL?.trim() || null;
@@ -140,11 +152,21 @@ async function postJson<T>(
     // fall through with null payload
   }
   if (!response.ok) {
+    const body =
+      payload && typeof payload === "object"
+        ? (payload as Record<string, unknown>)
+        : undefined;
     const error =
-      payload && typeof payload === "object" && "error" in payload
-        ? String((payload as { error: unknown }).error)
+      body && "error" in body
+        ? String(body.error)
         : `request failed (${response.status})`;
-    return { ok: false, status: response.status, error };
+    const code = typeof body?.code === "string" ? body.code : undefined;
+    return {
+      ok: false,
+      status: response.status,
+      error,
+      ...(code ? { code } : {}),
+    };
   }
   return { ok: true, value: payload as T };
 }

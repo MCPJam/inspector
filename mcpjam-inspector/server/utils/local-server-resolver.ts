@@ -478,6 +478,22 @@ export function parseConnectionDefaults(
   if (input.supportsMrtr === false) {
     out.supportsMrtr = false;
   }
+  if (input.suppressListenChannel === true) {
+    out.suppressListenChannel = true;
+  }
+  if (input.dropToolListChanged === true) {
+    out.dropToolListChanged = true;
+  }
+  if (input.toolCallCancellation && typeof input.toolCallCancellation === "object") {
+    const raw = input.toolCallCancellation as {
+      legacy?: unknown;
+      modern?: unknown;
+    };
+    const leaves: { legacy?: boolean; modern?: boolean } = {};
+    if (raw.legacy === false) leaves.legacy = false;
+    if (raw.modern === false) leaves.modern = false;
+    if (Object.keys(leaves).length > 0) out.toolCallCancellation = leaves;
+  }
 
   // Enterprise-managed authorization policy. UNLIKE every field above, this
   // one is enforcement, not advisory: silently dropping a malformed value
@@ -619,6 +635,16 @@ export function toMCPServerConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+    /**
+     * `mcpProfile.toolListChanged`. Split by transport, unlike the pair above:
+     * `suppressListenChannel` refuses the server→client GET stream, which
+     * only exists on Streamable HTTP, so it is HTTP-only like the mirroring
+     * flag; `dropToolListChanged` edits an inbound JSON-RPC frame and is
+     * forwarded on stdio too.
+     */
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
     /**
      * The host's enterprise-managed authorization policy (validated `on`
      * value). Present ⇒ the EMA extension is advertised on EVERY server of
@@ -694,6 +720,13 @@ export function toMCPServerConfig(
     // unlike the mirroring flag they are forwarded here as well as on HTTP.
     if (options?.firstPageOnly === true) stdio.firstPageOnly = true;
     if (options?.supportsMrtr === false) stdio.supportsMrtr = false;
+    // Only the drop half: a stdio connection has no GET listen stream to
+    // refuse, so `suppressListenChannel` is inert here (see the options
+    // docblock) and writing it would put a field on a config that can never
+    // act on it.
+    if (options?.dropToolListChanged === true) stdio.dropToolListChanged = true;
+    if (options?.toolCallCancellation)
+      stdio.toolCallCancellation = options.toolCallCancellation;
     return stdio as MCPServerConfig;
   }
 
@@ -773,6 +806,11 @@ export function toMCPServerConfig(
     http.mirrorToolParamHeaders = false;
   if (options?.firstPageOnly === true) http.firstPageOnly = true;
   if (options?.supportsMrtr === false) http.supportsMrtr = false;
+  if (options?.suppressListenChannel === true)
+    http.suppressListenChannel = true;
+  if (options?.dropToolListChanged === true) http.dropToolListChanged = true;
+  if (options?.toolCallCancellation)
+    http.toolCallCancellation = options.toolCallCancellation;
 
   // Attach the SDK's 401-recovery hook only when this is a hosted-OAuth
   // server (we have a token from `authorize-batch-local`) AND the caller
@@ -1068,6 +1106,13 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions?: string[];
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    /**
+     * The drop half of `mcpProfile.toolListChanged` only: this helper
+     * resolves stdio rows exclusively (it 409s on anything else), and there
+     * is no listen channel on stdio for `suppressListenChannel` to refuse.
+     */
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     xaaPolicy?: XaaEnterprisePolicy;
     /**
      * Secret-reveal scope + delegated identity, threaded from
@@ -1127,6 +1172,8 @@ export async function resolveLocalStdioServerConfig(
     supportedProtocolVersions: options?.supportedProtocolVersions,
     firstPageOnly: options?.firstPageOnly,
     supportsMrtr: options?.supportsMrtr,
+    dropToolListChanged: options?.dropToolListChanged,
+    toolCallCancellation: options?.toolCallCancellation,
     // Advertises the EMA extension host-wide on stdio too, matching the
     // /api/mcp path; stdio never gets OAuth/XAA hooks, so no
     // refreshContext / xaaUnauthorizedHandler here.
@@ -1409,6 +1456,9 @@ export async function resolveLocalServerForConnect(
     // Same path again for the sibling conformance knobs.
     firstPageOnly: options?.defaults?.firstPageOnly,
     supportsMrtr: options?.defaults?.supportsMrtr,
+    suppressListenChannel: options?.defaults?.suppressListenChannel,
+    dropToolListChanged: options?.defaults?.dropToolListChanged,
+    toolCallCancellation: options?.defaults?.toolCallCancellation,
     oauthAccessToken: resolvedOauthAccessToken,
     refreshContext: {
       bearerToken,

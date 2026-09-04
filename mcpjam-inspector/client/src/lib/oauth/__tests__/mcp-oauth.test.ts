@@ -669,7 +669,7 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("rejects a proxied metadata response whose real upstream URL redirected to loopback", async () => {
+    it("rejects a proxied metadata response whose real upstream URL redirected to cloud metadata", async () => {
       const metadataResponse = new Response(
         JSON.stringify({
           authorization_servers: ["https://auth.example.com"],
@@ -678,7 +678,7 @@ describe("mcp-oauth", () => {
           status: 200,
           headers: {
             "X-MCPJam-OAuth-Upstream-URL":
-              "http://127.0.0.1:8787/private-metadata",
+              "http://169.254.169.254/latest/meta-data/",
           },
         }
       );
@@ -711,11 +711,11 @@ describe("mcp-oauth", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+        'Refusing OAuth response from link-local or cloud-metadata host "169.254.169.254"'
       );
     });
 
-    it("rejects a proxied OAuth endpoint response whose real upstream URL redirected to loopback", async () => {
+    it("rejects a proxied OAuth endpoint response whose real upstream URL redirected to cloud metadata", async () => {
       authFetch.mockImplementation(
         async () =>
           new Response(
@@ -724,14 +724,14 @@ describe("mcp-oauth", () => {
               statusText: "OK",
               headers: { "content-type": "application/json" },
               body: { access_token: "should-not-be-consumed" },
-              finalUrl: "http://127.0.0.1:8787/private-token",
+              finalUrl: "http://169.254.169.254/latest/meta-data/",
             }),
             {
               status: 200,
               headers: {
                 "Content-Type": "application/json",
                 "X-MCPJam-OAuth-Upstream-URL":
-                  "http://127.0.0.1:8787/private-token",
+                  "http://169.254.169.254/latest/meta-data/",
               },
             }
           )
@@ -753,7 +753,7 @@ describe("mcp-oauth", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+        'Refusing OAuth response from link-local or cloud-metadata host "169.254.169.254"'
       );
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/mcp\/oauth\/proxy$/),
