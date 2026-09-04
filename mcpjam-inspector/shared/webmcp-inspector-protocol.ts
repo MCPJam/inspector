@@ -76,6 +76,17 @@ export type WebMcpSessionStatus =
   /** The browser has no WebMCP support; the page loaded but nothing can be inspected. */
   | "unsupported"
   | "error"
+  /**
+   * This server let go of a REMOTE browser that is still running.
+   *
+   * Only hosted sessions reach this. The browser lives on the member's own
+   * computer, so a replica dropping its handle — idle eviction, a deploy, a
+   * request routed elsewhere — ends nothing; the session can be picked up
+   * again by asking for it. Distinct from `closed` precisely because `closed`
+   * is terminal, and telling someone their live browser had ended when it had
+   * not is the failure this exists to prevent. The client re-fetches.
+   */
+  | "detached"
   | "closed";
 
 /**
@@ -247,6 +258,17 @@ export type WebMcpCommand =
   | { type: "go_back" }
   | {
       type: "invoke_tool";
+      /**
+       * The CALLER's id for this invocation, making the call idempotent.
+       *
+       * Optional so every existing client keeps working — omitted, the server
+       * issues one, exactly as before. A client that can be retried sends it:
+       * a hosted request may be dropped in flight or land on a different
+       * replica, and the id is what lets the second attempt be recognised as
+       * the same invocation instead of running a side-effecting page tool
+       * twice.
+       */
+      invokeId?: string;
       toolKey: string;
       input: Record<string, unknown>;
       source: WebMcpInvocationSource;
@@ -280,7 +302,75 @@ export type WebMcpCommandResult =
 
 /** Terminal state of an invocation, ours rather than CDP's. */
 export type WebMcpInvocationState =
-  "succeeded" | "failed" | "cancelled" | "timeout";
+  | "succeeded"
+  | "failed"
+  | "cancelled"
+  | "timeout"
+  /**
+   * It ran, and what it did cannot be established.
+   *
+   * Reachable only for a REMOTE browser, and it is the honest answer rather
+   * than a hedge. A hosted invocation is sent to a daemon that executes it
+   * synchronously; if our wait for the answer ends first — the request was
+   * aborted, the replica went away — the tool keeps running and its outcome
+   * lands in the daemon's result cache, addressed by the invocation's id.
+   * Until someone asks again with that id, "succeeded" and "failed" are both
+   * guesses, and a page tool that may have charged a card is not something to
+   * guess about or to re-run to find out.
+   */
+  | "unknown";
+
+/**
+ * A hosted session's id is DERIVED, not issued.
+ *
+ * `hosted:<projectId>:<computerId>` — because there is exactly one persistent
+ * browser per desktop computer, so there is exactly one inspector session for
+ * it, and any replica can name it without having been the one to create it.
+ * That is the whole mechanism behind surviving a hosted deploy: a request that
+ * lands on a replica which has never seen this session can still work out what
+ * it refers to and re-establish it, rather than 404ing because the process
+ * that held the map is not the one that got the request.
+ *
+ * Shared rather than server-only because the CLIENT reads it too: the browser
+ * panel embedded in the inspector must authorize against the project the
+ * SESSION is running on, and the session id is the only place that says so.
+ */
+export function hostedSessionId(projectId: string, computerId: string): string {
+  return `hosted:${projectId}:${computerId}`;
+}
+
+export function parseHostedSessionId(
+  sessionId: string | undefined,
+): { projectId: string; computerId: string } | null {
+  if (!sessionId?.startsWith("hosted:")) return null;
+  const [, projectId, computerId, ...rest] = sessionId.split(":");
+  if (!projectId || !computerId || rest.length > 0) return null;
+  return { projectId, computerId };
+}
+
+/**
+ * How an invocation finished, as one value.
+ *
+ * There are TWO ways a caller learns an invocation's fate and they must agree
+ * field for field. Locally the settle arrives on the activity stream, as an
+ * `invocation_settled` entry. Hosted it comes back INLINE on the invoke
+ * response, because the subscriber watching that stream may be attached to a
+ * different replica than the one that ran the tool.
+ *
+ * Naming them separately is how they drift: the inline arm shipped carrying
+ * `error` where the stream arm carries `errorMessage`, and carrying no output
+ * at all — so a hosted page tool answered a model with `null` and a hosted
+ * failure answered it with nothing. One type, used by both.
+ */
+export interface WebMcpInvocationOutcome {
+  state: WebMcpInvocationState;
+  /** Only on `succeeded`, and only up to the result cap. */
+  output?: unknown;
+  outputTruncated?: boolean;
+  /** Total bytes before truncation, so the UI can say what was dropped. */
+  outputBytes?: number;
+  errorMessage?: string;
+}
 
 export type WebMcpActivityEntry =
   | { id: string; ts: number; kind: "session_started"; url: string }
@@ -739,7 +829,8 @@ function cutToCap(serialized: string, cap: number, totalBytes: number): string {
 export function capResult(value: unknown): {
   value: unknown;
   truncated: boolean;
-  bytes: number;
+  /** Absent when there is no serialized form to measure — see below. */
+  bytes: number | undefined;
 } {
   let serialized: string;
   try {
@@ -749,7 +840,10 @@ export function capResult(value: unknown): {
     return {
       value: "[unserializable tool output]",
       truncated: true,
-      bytes: 0,
+      // NOT a size. There is no serialized form to measure, so any number here
+      // is a fabrication — and `outputBytes` is read as "how much was dropped".
+      // Zero said the result was truncated from nothing.
+      bytes: undefined,
     };
   }
   const bytes = Buffer.byteLength(serialized, "utf8");

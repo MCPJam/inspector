@@ -3,8 +3,11 @@
  *
  *   - the panel is reachable ONLY with a valid browser token whose claims still
  *     match the row's live owner and project;
- *   - watching does not require holding the lease (L10) — the stream URL comes
- *     back whoever has the browser;
+ *   - watching does not require holding the lease (L10) — the session comes
+ *     back whoever has the browser. The STREAM no longer comes back with it:
+ *     the noVNC password is a full desktop-control credential, so the route
+ *     stopped returning `streamUrl`/`streamPassword` and the pixels are served
+ *     out of band by the RFB proxy, which authenticates upstream itself;
  *   - the lease holder is the authenticated user, never a client-supplied
  *     string;
  *   - the panel ATTACHES, it never reserves — someone opening a panel cannot
@@ -41,7 +44,10 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     took: true,
     lease: { state: "held" as const, holder: CLAIMS.userId, bootId: "boot-1" },
   }));
-  const lease = vi.fn(async () => ({ state: "free" as const, bootId: "boot-1" }));
+  const lease = vi.fn(async () => ({
+    state: "free" as const,
+    bootId: "boot-1",
+  }));
   const attachSession = vi.fn(async () => {});
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
@@ -61,7 +67,8 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
         providerComputerId: "sbx_1",
       },
     })) as unknown as BrowserPanelDeps["sandboxInfo"],
-    lookupSession: lookupSession as unknown as BrowserPanelDeps["lookupSession"],
+    lookupSession:
+      lookupSession as unknown as BrowserPanelDeps["lookupSession"],
     touchSession: touchSession as unknown as BrowserPanelDeps["touchSession"],
     touchActivity:
       touchActivity as unknown as BrowserPanelDeps["touchActivity"],
@@ -105,7 +112,10 @@ describe("browser panel — auth", () => {
     for (const path of ["/session", "/lease", "/keepalive"]) {
       const res = await call(path, {
         method: path === "/session" ? "GET" : "POST",
-        body: path === "/session" ? undefined : JSON.stringify({ action: "acquire" }),
+        body:
+          path === "/session"
+            ? undefined
+            : JSON.stringify({ action: "acquire" }),
       });
       expect(res.status).toBe(401);
       expect(await res.json()).toMatchObject({
@@ -151,20 +161,31 @@ describe("browser panel — auth", () => {
 });
 
 describe("browser panel — GET /session", () => {
-  it("returns where to watch, plus who holds the browser", async () => {
+  it("returns the session and who holds the browser", async () => {
     const { call } = build();
     const res = await call("/session");
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       ok: true,
       bootId: "boot-1",
-      streamUrl: SESSION.streamUrl,
-      streamPassword: SESSION.streamPassword,
       lease: { state: "free" },
     });
   });
 
-  it("still returns the stream while someone else HOLDS the lease (L10)", async () => {
+  it("NEVER returns the stream credentials", async () => {
+    // They used to be here, and the panel put them straight into an iframe
+    // `src`. The VNC password is full keyboard and mouse on the member's
+    // desktop — the daemon's lease gates model commands, not VNC input — so
+    // in the DOM it was a control credential readable by anything on the page.
+    // The browser now watches through the server-side RFB proxy instead.
+    const { call } = build();
+    const body = await (await call("/session")).json();
+    expect(body).not.toHaveProperty("streamUrl");
+    expect(body).not.toHaveProperty("streamPassword");
+    expect(JSON.stringify(body)).not.toContain(SESSION.streamPassword);
+  });
+
+  it("still serves the session while someone else HOLDS the lease (L10)", async () => {
     // View by default. Gating the view behind "take control" would make people
     // take control just to look, which is the disruptive action.
     const { call } = build({
@@ -179,7 +200,7 @@ describe("browser panel — GET /session", () => {
         }) as never,
     });
     const body = await (await call("/session")).json();
-    expect(body.streamUrl).toBe(SESSION.streamUrl);
+    expect(body.ok).toBe(true);
     expect(body.lease).toMatchObject({ state: "held", holder: "users_other" });
   });
 
@@ -218,7 +239,8 @@ describe("browser panel — GET /session", () => {
       session = SESSION;
     });
     const { call } = build({
-      lookupSession: lookupSession as unknown as BrowserPanelDeps["lookupSession"],
+      lookupSession:
+        lookupSession as unknown as BrowserPanelDeps["lookupSession"],
       attachSession,
     });
     const res = await call("/session?ensure=1");
@@ -325,10 +347,12 @@ describe("browser panel — POST /keepalive", () => {
         counted: false,
       })) as unknown as BrowserPanelDeps["touchSession"],
     });
-    expect(await (await call("/keepalive", { method: "POST" })).json()).toEqual({
-      ok: true,
-      counted: false,
-    });
+    expect(await (await call("/keepalive", { method: "POST" })).json()).toEqual(
+      {
+        ok: true,
+        counted: false,
+      },
+    );
     expect(touchActivity).not.toHaveBeenCalled();
   });
 

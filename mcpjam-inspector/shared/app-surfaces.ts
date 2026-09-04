@@ -782,10 +782,12 @@ export const APP_SURFACES = [
       "Invoke a page tool with structured input and read its result",
       "Review the activity timeline across navigations, with screenshots",
     ],
-    // The browser runs on the machine running this inspector, so a hosted
-    // replica has nothing to open. The routes are local-only for the same
-    // reason; this keeps the tab from appearing where it cannot work.
-    hostedBlocked: true,
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
     agentTools: {
       kind: "none",
       reason:
