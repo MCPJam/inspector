@@ -12,10 +12,14 @@ import { useWidgetHost } from "../use-widget-host";
 
 // Pin HOSTED_MODE off so the listResourceTemplates guard is exercised purely via
 // the web-managed-servers context (the security-sensitive boundary concern).
+// Every config export the hook reads has to appear here: vitest throws on a
+// missing one rather than returning undefined, so a new read is a hard break
+// in this suite. (VIEW_MOUNT_MODE was added without it and landed red.)
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: false,
   SANDBOX_ORIGIN: "",
   VIEW_MOUNT_MODE: "write",
+  VIEW_SUBDOMAINS_ENABLED: false,
 }));
 
 // Isolate the hook from the api/network layer.
