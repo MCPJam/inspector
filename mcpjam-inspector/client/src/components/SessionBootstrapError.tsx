@@ -14,47 +14,58 @@ export function GenericBootstrapError() {
   return (
     <div
       style={{
+        boxSizing: "border-box",
         padding: "2rem",
-        textAlign: "center",
         fontFamily: "system-ui",
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
-        justifyContent: "center",
+        // Bound to the viewport and scroll internally: #root is overflow:hidden
+        // and this renders before app layout, so an unbounded minHeight:100vh
+        // element would grow past the clipped root and strand the Restart button
+        // on short/mobile viewports. Mirrors NetworkAccessError.
         minHeight: "100vh",
+        maxHeight: "100vh",
+        overflowY: "auto",
+        // Explicit light surface so it stays legible under a dark page theme
+        // (renders before the app applies the stored theme).
+        backgroundColor: "#ffffff",
+        color: "#18181b",
       }}
     >
-      <img
-        src="/mcp_jam.svg"
-        alt="MCPJam Logo"
-        style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
-      />
-      <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-        Authentication Error
-      </h1>
-      <p style={{ marginBottom: "0.25rem" }}>
-        Failed to establish secure session.
-      </p>
-      <p style={{ color: "#666", fontSize: "0.875rem" }}>
-        This is usually temporary. Retry below, and check the console if it
-        persists.
-      </p>
-      <button
-        onClick={() => location.reload()}
-        style={{
-          marginTop: "1.5rem",
-          padding: "0.75rem 1.5rem",
-          cursor: "pointer",
-          backgroundColor: "#18181b",
-          color: "#fff",
-          border: "none",
-          borderRadius: "0.5rem",
-          fontSize: "1rem",
-          fontWeight: 500,
-        }}
-      >
-        Restart App
-      </button>
+      <div style={{ margin: "auto 0", textAlign: "center" }}>
+        <img
+          src="/mcp_jam.svg"
+          alt="MCPJam Logo"
+          style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
+        />
+        <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
+          Authentication Error
+        </h1>
+        <p style={{ marginBottom: "0.25rem" }}>
+          Failed to establish secure session.
+        </p>
+        <p style={{ color: "#666", fontSize: "0.875rem" }}>
+          This is usually temporary. Retry below, and check the console if it
+          persists.
+        </p>
+        <button
+          onClick={() => location.reload()}
+          style={{
+            marginTop: "1.5rem",
+            padding: "0.75rem 1.5rem",
+            cursor: "pointer",
+            backgroundColor: "#18181b",
+            color: "#fff",
+            border: "none",
+            borderRadius: "0.5rem",
+            fontSize: "1rem",
+            fontWeight: 500,
+          }}
+        >
+          Restart App
+        </button>
+      </div>
     </div>
   );
 }
