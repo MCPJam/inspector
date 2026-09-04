@@ -85,13 +85,52 @@ describe("sortSupportersForPill", () => {
     expect(order).toEqual(["claude", "cursor"]);
   });
 
-  it("keeps the incoming order for hosts outside the leading set", () => {
+  it("keeps the incoming order for hosts outside the leading/trailing set", () => {
     const order = sortSupportersForPill([
       makeReport("vscode"),
       makeReport("cursor"),
       makeReport("goose"),
     ]).map((r) => r.hostId);
     expect(order).toEqual(["vscode", "cursor", "goose"]);
+  });
+
+  it("trails mcpjam so our own client never costs a visible slot", () => {
+    // MCPJam leads the host catalog, so with no trailing rule it lands first
+    // among the non-leaders and eats one of the three marks on show. Ordering
+    // is the only thing keeping it out, which is why this is asserted against
+    // the truncation and not just the full list.
+    const order = sortSupportersForPill([
+      makeReport("mcpjam"),
+      makeReport("vscode"),
+      makeReport("cursor"),
+      makeReport("claude"),
+    ]).map((r) => r.hostId);
+    expect(order).toEqual(["claude", "vscode", "cursor", "mcpjam"]);
+    expect(order.slice(0, PILL_MAX_LOGOS)).not.toContain("mcpjam");
+  });
+
+  it("still shows mcpjam when it is the only supporter", () => {
+    // Trailing must not read as hidden: with nothing else green, our own mark
+    // is the honest answer rather than an empty stack.
+    const order = sortSupportersForPill([makeReport("mcpjam")]).map(
+      (r) => r.hostId,
+    );
+    expect(order).toEqual(["mcpjam"]);
+  });
+
+  it("produces the full documented order end to end", () => {
+    // Both leaders, two middles and the trailer in one assertion — the shape
+    // the strip's own end-to-end test pinned before it was deleted. The
+    // trailing test above uses a single leader, so without this nothing
+    // asserts the whole chain at once.
+    const order = sortSupportersForPill([
+      makeReport("mcpjam"),
+      makeReport("vscode"),
+      makeReport("claude"),
+      makeReport("cursor"),
+      makeReport("chatgpt"),
+    ]).map((r) => r.hostId);
+    expect(order).toEqual(["chatgpt", "claude", "vscode", "cursor", "mcpjam"]);
   });
 
   it("puts both leaders in front of the first three shown logos", () => {

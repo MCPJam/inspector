@@ -16,9 +16,17 @@ import { getCompatDisplayStatus } from "@/components/compat/verdict-meta";
 export const PILL_MAX_LOGOS = 3;
 
 // The two hosts most people are checking for lead the stack whenever they
-// support the server; everything else keeps the catalog's own order behind
-// them.
+// support the server; everything between them and the trailing rule below is
+// placed in between, keeping the catalog's own order.
 const PILL_ORDER_LEADING = ["chatgpt", "claude"];
+
+// MCPJam — our own reference client — always trails, as it did in the host
+// strip this pill replaced. It sits first in the catalog, so without this it
+// takes the first slot behind the leaders, and with only PILL_MAX_LOGOS marks
+// on show that costs a third-party client the reader actually came to check
+// for. Our own client supporting the server is the least informative mark we
+// could spend a slot on.
+const PILL_ORDER_TRAILING = "mcpjam";
 
 /**
  * Clients that explicitly support this server. `green` is the existing
@@ -38,10 +46,15 @@ export function sortSupportersForPill(
   const leading = PILL_ORDER_LEADING.map((hostId) =>
     reports.find((report) => report.hostId === hostId),
   ).filter((report): report is HostCompatReport => report !== undefined);
-  const rest = reports.filter(
-    (report) => !PILL_ORDER_LEADING.includes(report.hostId),
+  const trailing = reports.filter(
+    (report) => report.hostId === PILL_ORDER_TRAILING,
   );
-  return [...leading, ...rest];
+  const middle = reports.filter(
+    (report) =>
+      !PILL_ORDER_LEADING.includes(report.hostId) &&
+      report.hostId !== PILL_ORDER_TRAILING,
+  );
+  return [...leading, ...middle, ...trailing];
 }
 
 export function summarizeReports(reports: HostCompatReport[]): string {
