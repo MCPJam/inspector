@@ -11,16 +11,23 @@ import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
+  // Ranked order for the caniuse chip row. Grouped by vendor — the two
+  // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
+  // Slackbot pinned rightmost in that order.
+  //
+  // `claude-code` and `codex` appear here but carry no "Verify against your
+  // server" link: that is driven separately by FLAG_GATED_HOST_IDS, because
+  // the link auto-creates a host and the app refuses while the rollout flag is
+  // off. Listing them here changes their position, not their verify state.
   "preset:claude",
-  // `claude-desktop` is deliberately NOT here. This list is the preferred top
-  // chip row and it renders a fixed six — adding a seventh pushes VS Code out.
-  // The host still appears on the comparison page (the columns are built from
-  // the catalog, not from this list); it just sorts after the ranked six.
+  "preset:claude-desktop",
+  "preset:claude-code",
   "preset:chatgpt",
+  "preset:codex",
   "preset:copilot",
   "preset:cursor",
-  "preset:slack",
   "preset:vscode",
+  "preset:slack",
 ] as const;
 
 const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([

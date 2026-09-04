@@ -33,14 +33,14 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByTestId("host-compare-chip-h_chatgpt").querySelector("img")
+      screen.getByTestId("host-compare-chip-h_chatgpt").querySelector("img"),
     ).toHaveAttribute("src", "/openai_logo.png");
     expect(
-      screen.getByTestId("host-compare-chip-h_custom").querySelector("img")
+      screen.getByTestId("host-compare-chip-h_custom").querySelector("img"),
     ).not.toBeInTheDocument();
   });
 
@@ -60,25 +60,28 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
     expect(screen.getByTestId("host-compare-chip-h_a")).toHaveAttribute(
       "data-selected",
-      "true"
+      "true",
     );
     expect(screen.getByTestId("host-compare-chip-h_b")).toHaveAttribute(
       "data-selected",
-      "false"
+      "false",
     );
 
     await user.click(screen.getByTestId("host-compare-chip-h_b"));
     expect(onToggleHost).toHaveBeenCalledWith("h_b");
   });
 
-  it("shows a More menu initially when there are more than six hosts", () => {
-    const hosts = Array.from({ length: 7 }, (_, index) =>
-      makeHost(`h_${index}`, `Host ${index}`)
+  it("shows a More menu once there are more hosts than fit inline", () => {
+    // One past INITIAL_INLINE_CHIP_LIMIT (9, sized to the ranked caniuse list).
+    // Deliberately not a bare `7`: this asserts the overflow rule, not a
+    // particular limit, and the count has to move with the constant.
+    const hosts = Array.from({ length: 10 }, (_, index) =>
+      makeHost(`h_${index}`, `Host ${index}`),
     );
 
     render(
@@ -93,20 +96,22 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
     expect(
-      screen.getByTestId("host-compare-overflow-trigger")
+      screen.getByTestId("host-compare-overflow-trigger"),
     ).toBeInTheDocument();
+    // The last host inline is h_8; the tenth spills into the More menu.
+    expect(screen.getByTestId("host-compare-chip-h_8")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("host-compare-chip-h_6")
+      screen.queryByTestId("host-compare-chip-h_9"),
     ).not.toBeInTheDocument();
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {
-    const hosts = Array.from({ length: 8 }, (_, index) =>
-      makeHost(`h_${index}`, `Host ${index}`)
+    const hosts = Array.from({ length: 11 }, (_, index) =>
+      makeHost(`h_${index}`, `Host ${index}`),
     );
 
     render(
@@ -121,12 +126,12 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={vi.fn()}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
-    expect(screen.getByTestId("host-compare-chip-h_7")).toBeInTheDocument();
+    expect(screen.getByTestId("host-compare-chip-h_10")).toBeInTheDocument();
     expect(
-      screen.queryByTestId("host-compare-overflow-trigger")
+      screen.queryByTestId("host-compare-overflow-trigger"),
     ).not.toBeInTheDocument();
   });
 
@@ -146,7 +151,7 @@ describe("HostCompareSelector", () => {
         onSupportFilterChange={onSupportFilterChange}
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
     await user.click(screen.getByTestId("support-filter-missing"));
@@ -170,7 +175,7 @@ describe("HostCompareSelector", () => {
         supportFiltersDisabled
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
-      />
+      />,
     );
 
     const missingFilter = screen.getByTestId("support-filter-missing");
@@ -194,7 +199,7 @@ describe("HostCompareSelector", () => {
         showDescriptions={false}
         onShowDescriptionsChange={vi.fn()}
         disabled
-      />
+      />,
     );
 
     expect(screen.getByLabelText("Show only diverging fields")).toBeDisabled();
