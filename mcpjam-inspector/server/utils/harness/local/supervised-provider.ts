@@ -392,6 +392,73 @@ async function resolveGitBashPath(
   return undefined;
 }
 
+/**
+ * Up to `maxBytes` from the front of a stream, giving up after `budgetMs`.
+ *
+ * For a process that has already been stopped: its streams hold whatever it
+ * said before it died and close behind it, so this drains quickly. The
+ * budget is for the other case, where nothing is coming.
+ */
+async function readHead(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  budgetMs: number,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let head = "";
+  const deadline = Date.now() + budgetMs;
+  const reader = stream.getReader();
+  try {
+    while (head.length < maxBytes) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value?: undefined }>((resolveRace) =>
+          setTimeout(() => resolveRace({ done: true }), remaining),
+        ),
+      ]);
+      if (next.done || next.value === undefined) break;
+      head += decoder.decode(next.value, { stream: true });
+    }
+  } catch {
+    /* nothing more to say */
+  } finally {
+    reader.releaseLock();
+  }
+  return head.slice(0, maxBytes);
+}
+
+/**
+ * What a bridge that never came up has to say for itself.
+ *
+ * Called AFTER the session was stopped, so the process is dead and its
+ * streams are closed: `wait()` resolves at once and the heads drain. A
+ * readiness timeout with no diagnosis was every early Windows failure — a
+ * bridge that crashed on import and one that hung before binding looked
+ * identical from the outside, thirty seconds apart from nothing.
+ */
+async function describeFailedBridge(handle: {
+  stdout: ReadableStream<Uint8Array>;
+  stderr: ReadableStream<Uint8Array>;
+  wait: () => Promise<{ exitCode: number }>;
+}): Promise<string> {
+  const exit = await Promise.race([
+    handle.wait().then((r) => `exit code ${r.exitCode}`),
+    new Promise<string>((resolveRace) =>
+      setTimeout(() => resolveRace("still running"), 500),
+    ),
+  ]);
+  const [out, err] = await Promise.all([
+    readHead(handle.stdout, 1024, 500),
+    readHead(handle.stderr, 2048, 500),
+  ]);
+  const parts = [exit];
+  if (err.trim().length > 0) parts.push(`stderr: ${JSON.stringify(err.trim())}`);
+  if (out.trim().length > 0) parts.push(`stdout: ${JSON.stringify(out.trim())}`);
+  return parts.join("; ");
+}
+
 /** Text view of a byte stream — for process output, never for file content. */
 async function collectStream(
   stream: ReadableStream<Uint8Array>,
@@ -981,6 +1048,15 @@ export function createSupervisedLocalHarnessProvider(
             // release the claim, so a retry is checked as a bridge again.
             releaseBridgeClaim();
             await opts.supervisor.stopSession(sessionId).catch(() => {});
+            // Then, with the process dead and its streams closed, say what it
+            // said. The message is amended in place so the error's TYPE — what
+            // callers and tests distinguish on — survives.
+            if (error instanceof Error) {
+              const said = await describeFailedBridge(handle).catch(
+                () => "no diagnosis could be read",
+              );
+              error.message = `${error.message} (bridge: ${said})`;
+            }
             throw error;
           }
         }
