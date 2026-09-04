@@ -51,6 +51,7 @@ import {
   liveBrowserSessionDeps,
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
@@ -59,8 +60,6 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
  *  short enough that a closed laptop parks the lease rather than holding the
  *  browser hostage. */
 const LEASE_TTL_MS = 2 * 60_000;
-/** Don't touch computer activity more than once a minute per panel. */
-const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
 
 type Claims = { userId: string; computerId: string; projectId: string };
 
@@ -222,12 +221,17 @@ export function createComputerBrowserPanelRoutes(
           409,
         );
       }
+      // NEITHER `streamUrl` NOR `streamPassword`. They used to be here, and
+      // the panel put them straight into an iframe `src` — which made a
+      // full desktop-control credential readable from the DOM, from
+      // `document.referrer`, and from anything that logs iframe sources. The
+      // browser now watches through `/computers/browser/stream`, which
+      // authenticates upstream on the server with a password that never
+      // leaves it.
       return c.json({
         ok: true,
         computerId,
         bootId: session.bootId,
-        streamUrl: session.streamUrl,
-        streamPassword: session.streamPassword,
         contextMode: session.contextMode,
         lease: await readLease(session),
       });
@@ -346,19 +350,6 @@ export function createComputerBrowserPanelRoutes(
   return app;
 }
 
-/** Per-computer throttle for the activity touch. */
-const lastActivityTouchAt = new Map<string, number>();
-
-function shouldTouchActivity(computerId: string): boolean {
-  const now = Date.now();
-  const previous = lastActivityTouchAt.get(computerId) ?? 0;
-  if (now - previous < ACTIVITY_TOUCH_THROTTLE_MS) return false;
-  lastActivityTouchAt.set(computerId, now);
-  return true;
-}
-
-export function resetPanelActivityThrottleForTests(): void {
-  lastActivityTouchAt.clear();
-}
+export { resetActivityThrottleForTests as resetPanelActivityThrottleForTests } from "../../utils/computers/activity-touch.js";
 
 export default createComputerBrowserPanelRoutes();

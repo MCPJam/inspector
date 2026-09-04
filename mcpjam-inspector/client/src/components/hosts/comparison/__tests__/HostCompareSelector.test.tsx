@@ -41,7 +41,7 @@ describe("HostCompareSelector", () => {
     ).toHaveAttribute("src", "/openai_logo.png");
     expect(
       screen.getByTestId("host-compare-chip-h_custom").querySelector("img")
-    ).not.toBeInTheDocument();
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("renders a chip per host and toggles selection on click", async () => {
@@ -76,6 +76,30 @@ describe("HostCompareSelector", () => {
     expect(onToggleHost).toHaveBeenCalledWith("h_b");
   });
 
+  it("shows a saved client's derived display name", () => {
+    const savedCursor = {
+      ...makeHost("h_cursor", "Cursor"),
+      displayName: "Cursor #2",
+    };
+
+    render(
+      <HostCompareSelector
+        hosts={[savedCursor]}
+        selectedHostIds={[savedCursor.hostId]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Cursor #2")).toBeInTheDocument();
+  });
+
   it("shows a More menu initially when there are more than six hosts", () => {
     const hosts = Array.from({ length: 7 }, (_, index) =>
       makeHost(`h_${index}`, `Host ${index}`)
@@ -102,6 +126,33 @@ describe("HostCompareSelector", () => {
     expect(
       screen.queryByTestId("host-compare-chip-h_6")
     ).not.toBeInTheDocument();
+  });
+
+  it("shows a fallback badge instead of an empty dot in the More menu", async () => {
+    const user = userEvent.setup();
+    const hosts = Array.from({ length: 7 }, (_, index) =>
+      makeHost(`h_${index}`, index === 6 ? "Custom seventh" : `Host ${index}`)
+    );
+
+    render(
+      <HostCompareSelector
+        hosts={hosts}
+        selectedHostIds={[]}
+        subjectsByHost={{}}
+        onToggleHost={vi.fn()}
+        divergingOnly={false}
+        onDivergingOnlyChange={vi.fn()}
+        supportFilter="all"
+        onSupportFilterChange={vi.fn()}
+        showDescriptions={false}
+        onShowDescriptionsChange={vi.fn()}
+      />
+    );
+
+    await user.click(screen.getByTestId("host-compare-overflow-trigger"));
+    expect(
+      screen.getByTestId("host-compare-overflow-h_6").querySelector("img")
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("shows selected hosts inline even past the initial compact limit", () => {

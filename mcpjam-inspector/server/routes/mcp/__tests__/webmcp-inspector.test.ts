@@ -5,12 +5,17 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
-const configState = vi.hoisted(() => ({ enabled: true, hostedBrowser: false }));
+const configState = vi.hoisted(() => ({
+  enabled: true,
+  hostedBrowser: false,
+  webmcpHosted: false,
+}));
 vi.mock("../../../config", () => ({
   get WEBMCP_INSPECTOR_ENABLED() {
     return configState.enabled;
   },
   hostedBrowserEnabled: () => configState.hostedBrowser,
+  webmcpInspectorHostedEnabled: () => configState.webmcpHosted,
   HOSTED_MODE: false,
 }));
 

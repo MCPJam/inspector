@@ -80,6 +80,7 @@ export function buildPresetCompareEntries(
     hosts.push({
       hostId,
       name: host.label,
+      displayName: host.label,
       hostConfigId: hostId,
       modelId: config.modelId,
       serverCount: 0,

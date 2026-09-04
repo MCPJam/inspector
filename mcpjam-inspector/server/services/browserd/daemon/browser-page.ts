@@ -33,7 +33,10 @@ export interface DriverPage {
    * driver turns that into a typed `target_not_found` result rather than
    * letting a Playwright timeout message reach the model.
    */
-  clickAt(point: ActPoint, options?: { button?: "left" | "right" }): Promise<void>;
+  clickAt(
+    point: ActPoint,
+    options?: { button?: "left" | "right" },
+  ): Promise<void>;
   clickSelector(selector: string): Promise<void>;
   hoverAt(point: ActPoint): Promise<void>;
   hoverSelector(selector: string): Promise<void>;
@@ -92,7 +95,17 @@ export interface DriverPage {
   requestAnimationFrame(signal: AbortSignal): Promise<void>;
   /** A structural signal of the current DOM, for the L3 state token. */
   domStructureSignal(): Promise<string>;
-  /** A PNG screenshot at the canonical observation viewport, base64-encoded. */
+  /**
+   * A screenshot at the canonical observation viewport, base64-encoded.
+   *
+   * JPEG on every engine. This comment said PNG for a while and no engine ever
+   * produced one: every act and navigate result carries a capture, and a
+   * full-viewport PNG of a real page runs 100-400 KB, which becomes tens of
+   * thousands of tokens once it reaches the model as image content. Consumers
+   * sniff the format from the bytes, so the format is not part of the
+   * contract — but a comment that names the wrong one invites a "fix" that
+   * makes two engines disagree.
+   */
   screenshotBase64(): Promise<string>;
   url(): string;
   close(): Promise<void>;

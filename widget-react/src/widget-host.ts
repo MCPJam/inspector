@@ -217,6 +217,12 @@ export interface WidgetSurfaceInfo {
    */
   viewMountMode?: "write" | "srcdoc";
   /**
+   * VIEW_SUBDOMAINS_ENABLED (VITE_MCPJAM_VIEW_SUBDOMAINS) — serve each
+   * server's views from their own origin. Requires wildcard DNS and a
+   * certificate for the sandbox apex, so it is off unless a deploy has them.
+   */
+  viewSubdomainsEnabled?: boolean;
+  /**
    * Playground CSP-mode selection (useUIPlaygroundStore.mcpAppsCspMode) — an
    * INPUT, not the effective mode. The renderer derives the effective sandbox
    * CSP mode from `kind` + this + the per-widget `minimalMode` prop (kept as an
@@ -324,6 +330,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -611,6 +624,19 @@ export interface FetchWidgetContentResponse {
   mimeTypeWarning?: string;
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
+  /**
+   * `_meta.ui.domain` — the dedicated origin the server ASKED for. Advisory:
+   * MCPJam derives the origin it serves the view from, and reports this only
+   * so the Workbench can say whether the declaration matches.
+   */
+  declaredDomain?: string;
+  /**
+   * Subdomain label for this server's dedicated view origin
+   * (`<label>.sandbox.mcpjam.com`), derived from the server's identity. Absent
+   * when the server identifies nothing to derive from; the view then renders
+   * on the default sandbox origin.
+   */
+  viewOriginLabel?: string;
   injectedOpenAiCompat?: boolean;
   injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
 }

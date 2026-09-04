@@ -126,6 +126,65 @@ describe("browserd bundle freshness", () => {
     ).toEqual([]);
   });
 
+  it("the bundle never reaches the Electron engine", () => {
+    // `browserd/electron/**` drives hidden `BrowserWindow`s through
+    // `webContents.debugger`. This bundle is UPLOADED TO AN E2B BOX, which has
+    // no Electron: one import edge from the daemon into that directory and
+    // every hosted session fails to boot, with a module-resolution error
+    // hundreds of megabytes and one upload away from where it was introduced.
+    //
+    // The edge would be easy to add by accident — the two engines share the
+    // CDP adapter, the viewport and the driver — so the graph is asserted
+    // rather than trusted.
+    const leaked = MCPJAM_BROWSERD_SOURCE_FILES.filter((file) =>
+      file.includes("services/browserd/electron/"),
+    );
+    expect(
+      leaked,
+      "the daemon bundle now imports the Electron engine; it is uploaded to a " +
+        "box with no Electron, so every hosted session would fail to boot",
+    ).toEqual([]);
+    // Nothing from `node_modules` either, whatever its name. The filter that
+    // builds this list keys on the path, and a hoisted dependency arrives as
+    // `../node_modules/…`, so a package that got bundled would be recorded
+    // here rather than skipped — this is the assertion that notices.
+    expect(
+      MCPJAM_BROWSERD_SOURCE_FILES.filter((file) =>
+        file.includes("node_modules/"),
+      ),
+      "a dependency was bundled into the daemon; it runs on a box with only " +
+        "what this file ships, so it must be external or vendored deliberately",
+    ).toEqual([]);
+    // Belt and braces on the artifact itself, because the input list above
+    // cannot see everything: esbuild keeps an EXTERNAL specifier as a literal
+    // import rather than following it, so a stray `import("electron")` would
+    // leave no trace in the graph and fail only at runtime, on the box.
+    //
+    // That premise is load-bearing, and it is only true because `electron` is
+    // in the bundler's `external` list. Left out of it, esbuild resolves the
+    // import and INLINES the npm shim — an artifact with no bare specifier for
+    // the regex below to find, which then passes on a bundle whose first act
+    // on the box is `spawnSync`ing Electron's `install.js`. The assertion
+    // above is the one that survives that mistake being made again.
+    //
+    // Matched as an import edge rather than as the bare word: the daemon may
+    // one day legitimately mention "electron" in a user-agent string, an
+    // engine name or a flag, and a test that trips on prose is a test people
+    // learn to edit rather than to read.
+    const artifact = readFileSync(bundleFile, "utf8");
+    // Every specifier form, each behind the same non-word guard so a
+    // legitimate mention in prose ("switched from \"electron\" runtime") does
+    // not trip it: `import("electron")`, `require("electron")`,
+    // `from "electron"`, and the side-effect `import "electron"` — which has
+    // neither parentheses nor a `from` and slipped past the first version.
+    const importEdge =
+      /(?:^|[^\w$])(?:(?:import|require)\s*\(\s*["']electron["']\s*\)|from\s*["']electron["']|import\s+["']electron["'])/;
+    expect(
+      importEdge.test(artifact),
+      "the daemon bundle imports `electron` directly",
+    ).toBe(false);
+  });
+
   it("the embedded base64 is byte-identical to the checked-in .mjs", () => {
     const embedded = Buffer.from(MCPJAM_BROWSERD_BUNDLE_BASE64, "base64");
     const artifact = readFileSync(bundleFile);

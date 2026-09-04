@@ -3,11 +3,10 @@
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
  * into operations on a persistent, multi-tab browser context.
  *
- * W1 scope is deliberately the navigation + observation subset the wave's exit
- * criteria need ("browserd navigates + screenshots"): navigate / back / reload /
- * observe. The `act` verbs and the `webmcp_*` invocations arrive in W3 with the
- * six `browser_*` model tools; until then they return an explicit
- * `unimplemented` result rather than silently doing nothing.
+ * Every verb in the protocol is implemented here: navigate / back / reload /
+ * observe, the `act` verbs, and the `webmcp_*` invocations. (This header used
+ * to say the last two returned `unimplemented` "until W3" — they have been real
+ * since W3 landed, and the word survived only in this comment.)
  *
  * It is written entirely against the `DriverContext` / `DriverPage` boundary, so
  * every path here is unit-testable with fakes; the live Playwright context is
@@ -371,9 +370,10 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
   ): Promise<void> {
     const target = action.target;
-    const point = target && "coordinates" in target
-      ? { x: target.coordinates[0], y: target.coordinates[1] }
-      : null;
+    const point =
+      target && "coordinates" in target
+        ? { x: target.coordinates[0], y: target.coordinates[1] }
+        : null;
     if (point && !isPointInViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
@@ -483,6 +483,11 @@ export class ChromiumDriver implements BrowserDriver {
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...(action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
       });
       const { output: capped, omitted } = capToolOutput(

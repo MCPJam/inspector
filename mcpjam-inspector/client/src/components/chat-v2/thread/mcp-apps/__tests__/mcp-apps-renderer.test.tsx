@@ -2662,6 +2662,39 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("publishes a declared ui.domain into the debug store", async () => {
+    // The Workbench's origin card is the only place a developer learns their
+    // `_meta.ui.domain` will not match what MCPJam serves, so the declaration
+    // has to survive the trip from the widget-content response into the store.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          permissive: true,
+          mimeTypeValid: true,
+          declaredDomain: "abc123.claudemcpcontent.com",
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(<HostedRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setWidgetCsp).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          declaredDomain: "abc123.claudemcpcontent.com",
+          // Permissive, no csp, no permissions: without the declared domain
+          // widening the guard, this record would never be written and the
+          // panel would not render at all.
+          mode: "permissive",
+        }),
+      );
+    });
+  });
+
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(
