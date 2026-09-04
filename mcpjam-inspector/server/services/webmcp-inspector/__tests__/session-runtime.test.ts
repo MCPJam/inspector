@@ -7,6 +7,7 @@ import {
 } from "@/shared/webmcp-inspector-protocol";
 import {
   assignToolKeys,
+  WebMcpInvokeIdReusedError,
   WebMcpQueueFullError,
   WebMcpSessionRuntime,
 } from "../session-runtime";
@@ -14,12 +15,19 @@ import { WebMcpToolGoneError } from "../provider";
 import { FakeBrowserSession, fakeTool } from "./fake-provider";
 
 function makeRuntime(
-  options: { invokeTimeoutMs?: number; queueLimit?: number } = {},
+  options: {
+    invokeTimeoutMs?: number;
+    queueLimit?: number;
+    now?: () => number;
+  } = {},
 ) {
+  const onActivity = vi.fn();
   const runtime = new WebMcpSessionRuntime("https://example.test/", {
     sessionId: "session-1",
     invokeTimeoutMs: options.invokeTimeoutMs ?? 60_000,
     queueLimit: options.queueLimit,
+    ...(options.now ? { now: options.now } : {}),
+    onActivity,
   });
   const session = new FakeBrowserSession(
     runtime.callbacks(),
@@ -35,7 +43,7 @@ function makeRuntime(
           e.type === "activity",
       )
       .map((e) => e.entry);
-  return { runtime, session, events, activity };
+  return { runtime, session, events, activity, onActivity };
 }
 
 function entryOfKind<K extends WebMcpActivityEntry["kind"]>(
@@ -374,11 +382,146 @@ describe("invocation", () => {
   });
 });
 
+describe("an invokeId identifies ONE call", () => {
+  it("refuses a reused id for a different tool", async () => {
+    // An id is the retry key. Answering a different call from the first one
+    // hands back a result for something this caller never asked to run, and
+    // never runs what it did.
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" }), fakeTool({ name: "b" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      {},
+      "manual",
+      "inv-1",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(() =>
+      runtime.invoke("https://example.test::b", {}, "manual", "inv-1"),
+    ).toThrow(WebMcpInvokeIdReusedError);
+  });
+
+  it("refuses a reused id for different input", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-2",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(() =>
+      runtime.invoke("https://example.test::a", { q: 2 }, "manual", "inv-2"),
+    ).toThrow(WebMcpInvokeIdReusedError);
+  });
+
+  it("still replays the SAME call, which is the point of the id", async () => {
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const first = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-3",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    const retry = runtime.invoke(
+      "https://example.test::a",
+      { q: 1 },
+      "manual",
+      "inv-3",
+    );
+    expect(retry.settled).toBe(first.settled);
+    expect(session.invocations).toHaveLength(1);
+  });
+
+  it("does not let the replay sweep evict a call that is still running", async () => {
+    // The window is anchored at SETTLE, and an entry stamped at enqueue was
+    // swept out from under a tool that ran longer than the window. The
+    // re-stamp then had nothing to re-stamp, so a retry arriving after the
+    // slow call finally finished found no record and ran it a second time —
+    // which is the one outcome the id exists to prevent, in the one case
+    // (a long call) where a retry is most likely.
+    let clock = 0;
+    const { runtime, session } = makeRuntime({ now: () => clock });
+    session.emitTools([fakeTool({ name: "slow" }), fakeTool({ name: "quick" })]);
+    session.hangOnInvoke = true;
+
+    const slow = runtime.invoke(
+      "https://example.test::slow",
+      { q: 1 },
+      "manual",
+      "inv-slow",
+    );
+    await vi.waitFor(() => expect(session.pending).toBeDefined());
+
+    // Past the replay TTL, and another invocation runs the sweep.
+    clock = 16 * 60_000;
+    session.hangOnInvoke = false;
+    const settleSlow = session.pending!;
+    runtime.invoke("https://example.test::quick", {}, "manual", "inv-quick");
+
+    settleSlow.resolve({ output: { ok: true } });
+    await expect(slow.settled).resolves.toBeDefined();
+
+    const retry = runtime.invoke(
+      "https://example.test::slow",
+      { q: 1 },
+      "manual",
+      "inv-slow",
+    );
+    expect(retry.settled).toBe(slow.settled);
+    expect(
+      session.invocations.filter((i) => i.toolName === "slow"),
+    ).toHaveLength(1);
+  });
+
+  it("queues an unserializable input instead of throwing after it is queued", async () => {
+    // The replay record used to stringify the input itself, AFTER the item was
+    // already on the queue — so cyclic input threw out of `invoke` while its
+    // invocation sat queued, and the caller got an error for a call that was
+    // about to run. The identity serializer tolerates it, and degrades to
+    // refusing a later reuse of the id rather than answering it wrongly.
+    const { runtime, session } = makeRuntime();
+    session.emitTools([fakeTool({ name: "a" })]);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+
+    const first = runtime.invoke(
+      "https://example.test::a",
+      cyclic,
+      "manual",
+      "inv-cyclic",
+    );
+    await expect(first.settled).resolves.toBeDefined();
+    expect(session.invocations).toHaveLength(1);
+    // Not replayable: two unserializable inputs cannot be shown to be equal,
+    // so the id is refused rather than answered from a call that may differ.
+    expect(() =>
+      runtime.invoke("https://example.test::a", cyclic, "manual", "inv-cyclic"),
+    ).toThrow(WebMcpInvokeIdReusedError);
+  });
+});
+
 describe("result capping", () => {
   it("leaves a small result untouched", () => {
     const capped = capResult({ content: "small" });
     expect(capped).toMatchObject({ truncated: false });
     expect(capped.value).toEqual({ content: "small" });
+  });
+
+  it("reports NO size for output that cannot be serialized at all", () => {
+    // `outputBytes` is read as "how much was dropped". There is no serialized
+    // form to measure here, so any number is a fabrication — and zero says the
+    // result was truncated from nothing, which is the one reading that is
+    // certainly false.
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    const capped = capResult(cyclic);
+    expect(capped.truncated).toBe(true);
+    expect(capped.bytes).toBeUndefined();
+    expect(capped.value).toBe("[unserializable tool output]");
   });
 
   it("truncates an oversized result and says how big it really was", () => {
@@ -470,5 +613,241 @@ describe("session lifecycle events", () => {
     // A dead browser can never settle this; leaving it pending would hang the
     // caller forever.
     await expect(settled).rejects.toThrow();
+  });
+});
+
+describe("viewport frames", () => {
+  it("publishes a frame event with the session's own seq", () => {
+    const { session, events } = makeRuntime();
+    session.emitFrame({ data: "paint-1", deviceWidth: 800, deviceHeight: 600 });
+
+    const frames = events.filter(
+      (e): e is Extract<WebMcpEvent, { type: "frame" }> => e.type === "frame",
+    );
+    expect(frames).toHaveLength(1);
+    expect(frames[0].frame).toMatchObject({
+      data: "paint-1",
+      deviceWidth: 800,
+      deviceHeight: 600,
+    });
+    // Stamped from the same counter as everything else, so a replayed frame
+    // sorts into place beside the events around it rather than to one end.
+    expect(frames[0].seq).toBeGreaterThan(0);
+    expect(events.every((e, i) => i === 0 || e.seq > events[i - 1].seq)).toBe(
+      true,
+    );
+  });
+
+  it("writes no timeline entry for a frame", () => {
+    const { session, activity } = makeRuntime();
+    const before = activity().length;
+    for (let i = 0; i < 10; i++) session.emitFrame();
+    // Frames are transient. The timeline is the record the session exists to
+    // produce, and it must not be a filmstrip.
+    expect(activity()).toHaveLength(before);
+  });
+
+  it("does not tick the idle clock for a frame", () => {
+    const { session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+    for (let i = 0; i < 10; i++) session.emitFrame();
+    // A page with a CSS spinner paints forever. Ticking the idle clock from a
+    // paint would make every abandoned animated page unreapable.
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+
+  it("ticks the idle clock when asked for frames, but not when they stop", async () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+
+    expect(await runtime.setScreencast(true)).toBe(true);
+    // Asking for frames is a person opening the pane — interest worth
+    // postponing a reap for, unlike the frames themselves.
+    expect(onActivity).toHaveBeenCalledTimes(1);
+
+    expect(await runtime.setScreencast(false)).toBe(false);
+    expect(session.screencastCalls).toEqual([true, false]);
+    // Withdrawing them is the opposite, and the client withdraws on EVERY
+    // visibility change: ticking here would let a flapping background tab keep
+    // an abandoned session alive indefinitely.
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports a browser that cannot screencast, so the caller can fall back", async () => {
+    const { runtime, session } = makeRuntime();
+    session.screencastAvailable = false;
+    // A 200 with `streaming: false`, not an error: the request was fine and
+    // this browser simply cannot do it. The client polls screenshots instead of
+    // waiting forever for frames that will never come.
+    expect(await runtime.setScreencast(true)).toBe(false);
+  });
+
+  it("forgets the retained frame once the stream stops", async () => {
+    const { runtime, session } = makeRuntime();
+    await runtime.setScreencast(true);
+    session.emitFrame({ data: "paint" });
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+
+    await runtime.setScreencast(false);
+    // Replay promises a reconnecting client the CURRENT paint. A frame from a
+    // stream nobody is running any more is not that.
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
+  });
+
+  it("forgets the retained frame when the page navigates away", () => {
+    const { runtime, session } = makeRuntime();
+    session.emitFrame({ data: "old-page" });
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(true);
+
+    session.callbacks.onNavigated(
+      "https://elsewhere.test/",
+      "https://elsewhere.test",
+    );
+
+    // Same class of lie as serving the previous page's tools: the retained
+    // picture depicts a page that is gone, and replay would hand it to a
+    // reconnecting client as the current one.
+    expect(runtime.hub.buffered().some((e) => e.type === "frame")).toBe(false);
+  });
+
+  it("refuses setScreencast before a browser is attached", async () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    await expect(runtime.setScreencast(true)).rejects.toThrow(/not ready/i);
+  });
+
+  it("forwards a transport's dropped frame to the browser", () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    runtime.noteFramePressure();
+    runtime.noteFramePressure();
+
+    // The provider owns the quality ladder; the transports are the only thing
+    // that can see a frame fail to land. This is the whole funnel.
+    expect(session.pressureEvents).toBe(2);
+    // NOT activity: a struggling link is not somebody using the session, and
+    // ticking the idle clock from it would hold an abandoned tab open for as
+    // long as its network stayed bad.
+    expect(onActivity).not.toHaveBeenCalled();
+  });
+
+  it("says nothing to a browser that is not there, or cannot listen", () => {
+    // Between `reserve` and `attach`, and for every provider that has no
+    // adaptive stream to steer. A hot-path diagnostic must never be the thing
+    // that throws.
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    expect(() => runtime.noteFramePressure()).not.toThrow();
+
+    const { runtime: attached, session } = makeRuntime();
+    (session as { noteFramePressure?: () => void }).noteFramePressure =
+      undefined;
+    expect(() => attached.noteFramePressure()).not.toThrow();
+  });
+
+  it("republishes the session when the stream's quality changes", () => {
+    const { session, events } = makeRuntime();
+    session.emitStreamQuality(60);
+
+    const published = events.filter(
+      (e): e is Extract<WebMcpEvent, { type: "session" }> =>
+        e.type === "session",
+    );
+    // The picture getting worse is a FACT the UI can show; without it, "the
+    // link is struggling" and "the page is broken" look identical.
+    expect(published.at(-1)?.session.streamQuality).toBe(60);
+
+    // Re-reporting the same rung — which a restart does — is not news.
+    const before = published.length;
+    session.emitStreamQuality(60);
+    expect(events.filter((e) => e.type === "session").length - before).toBe(0);
+
+    session.emitStreamQuality(45);
+    expect(
+      events
+        .filter(
+          (e): e is Extract<WebMcpEvent, { type: "session" }> =>
+            e.type === "session",
+        )
+        .at(-1)?.session.streamQuality,
+    ).toBe(45);
+  });
+
+  it("does not publish a quality change before a browser is attached", () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/", {
+      sessionId: "session-1",
+    });
+    const events: WebMcpEvent[] = [];
+    runtime.hub.subscribe((event) => events.push(event), 0);
+
+    // An embedded session starts its screencast inside the provider's own
+    // `start()` — before this runtime has a browser and before the registry
+    // has adopted it. A session event published here would sit in the replay
+    // ring advertising `native-window` and an expiry at the epoch.
+    runtime.callbacks().onStreamQualityChanged?.(60);
+    expect(events.filter((event) => event.type === "session")).toHaveLength(0);
+
+    // Remembered all the same, so it rides the first session event that IS
+    // published rather than waiting for the next rung change.
+    const session = new FakeBrowserSession(runtime.callbacks());
+    runtime.attach(session);
+    expect(runtime.toPublic().streamQuality).toBe(60);
+
+    // And it really does ride one. `toPublic()` alone would prove only that
+    // the value was retained — a quality that never reaches the wire leaves
+    // every client believing the stream is still at its baseline.
+    runtime.publishSession();
+    expect(
+      events
+        .filter(
+          (event): event is Extract<WebMcpEvent, { type: "session" }> =>
+            event.type === "session",
+        )
+        .at(-1)?.session.streamQuality,
+    ).toBe(60);
+  });
+
+  it("omits the quality entirely for a provider that never reports one", () => {
+    const { runtime } = makeRuntime();
+    // Every provider but the local one: an absent field, not a guess at what
+    // their stream might be doing.
+    expect(runtime.toPublic()).not.toHaveProperty("streamQuality");
+  });
+});
+
+describe("input forwarding", () => {
+  it("hands the batch to the browser and ticks the idle clock", async () => {
+    const { runtime, session, onActivity } = makeRuntime();
+    onActivity.mockClear();
+
+    await runtime.dispatchInput([
+      { kind: "mouse_down", x: 5, y: 6, button: "left" },
+      { kind: "mouse_up", x: 5, y: 6, button: "left" },
+    ]);
+
+    expect(session.inputBatches[0].map((event) => event.kind)).toEqual([
+      "mouse_down",
+      "mouse_up",
+    ]);
+    // A human working the pane is the clearest possible signal that the session
+    // is in use; reaping it out from under them would be the worst version of
+    // this feature.
+    expect(onActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("writes no timeline entry for input", async () => {
+    const { runtime, activity } = makeRuntime();
+    const before = activity().length;
+    for (let i = 0; i < 20; i++) {
+      await runtime.dispatchInput([{ kind: "mouse_move", x: i, y: i }]);
+    }
+    // The timeline records protocol happenings. Input's CONSEQUENCES already
+    // produce entries — a click that navigates writes `navigated` — so logging
+    // the clicks themselves would bury those under a mouse trail.
+    expect(activity()).toHaveLength(before);
+  });
+
+  it("refuses input before a browser is attached", async () => {
+    const runtime = new WebMcpSessionRuntime("https://example.test/");
+    await expect(
+      runtime.dispatchInput([{ kind: "mouse_move", x: 1, y: 1 }]),
+    ).rejects.toThrow(/not ready/i);
   });
 });

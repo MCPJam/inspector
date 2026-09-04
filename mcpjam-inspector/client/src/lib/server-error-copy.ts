@@ -8,19 +8,24 @@
  * itself it repeated the name. But a generic failure — "Connection refused" —
  * then says nothing about WHICH server, and several can fail at once.
  *
- * So attribution moves to the copy layer, and applies only when the message
- * does not already carry the name. Callers that build their own sentence
- * around the server ("Failed to connect to X: …") do not need this.
+ * So attribution moves to the copy layer, split across the two fields a toast
+ * renders: the server name as the title, the failure as the description. It
+ * applies only when the message does not already carry the name — otherwise
+ * the title repeats what the sentence below it already says, and the caller
+ * shows the message as it stands.
  */
-export function attributeToServer(
+export function splitServerAttribution(
   serverName: string,
   message: string,
-): string {
+): { title: string; description?: string } {
   const trimmed = message.trim();
-  if (!serverName) return trimmed;
+  // An Error with an empty message would otherwise render a red toast saying
+  // the server name and nothing else, or nothing at all.
+  if (!trimmed) return { title: serverName || "Connection failed" };
+  if (!serverName) return { title: trimmed };
   // Substring, not an exact quoted form: the SDK quotes it
   // (`MCP server "champions"`) while other messages may not, and either way
   // the name is already on screen.
-  if (trimmed.includes(serverName)) return trimmed;
-  return `${serverName}: ${trimmed}`;
+  if (trimmed.includes(serverName)) return { title: trimmed };
+  return { title: serverName, description: trimmed };
 }

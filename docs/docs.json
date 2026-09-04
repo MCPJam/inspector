@@ -6,14 +6,14 @@
   },
   "name": "MCPJam Inspector",
   "colors": {
-    "primary": "#EF5B25",
-    "light": "#FF8B5C",
-    "dark": "#C94818"
+    "primary": "#e07856",
+    "light": "#f08c6b",
+    "dark": "#c96442"
   },
   "background": {
     "color": {
-      "light": "#FAF9F5",
-      "dark": "#2D2A23"
+      "light": "#faf9f5",
+      "dark": "#262624"
     }
   },
   "appearance": {
@@ -47,6 +47,7 @@
           "hosted/overview",
           "hosted/slack",
           "hosted/sso",
+          "github-checks",
           "troubleshooting/common-errors",
           "troubleshooting/error-codes",
           "changelog/overview"
@@ -77,6 +78,7 @@
               "inspector/evals",
               "inspector/user-testing",
               "inspector/compatibility",
+              "inspector/view-origins",
               "inspector/host-templates"
             ]
           },
