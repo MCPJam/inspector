@@ -1,4 +1,5 @@
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -300,6 +301,35 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
 // Capabilities reuse Claude's preset here, but the catalog host definition
 // overrides host app capabilities since the CLI renders no MCP Apps — the style
 // preset is just the fallback if a host ever clears that override.
+// Claude Desktop is the Electron app; CLAUDE_HOST_STYLE above is claude.ai in
+// a browser. They render the same surface — the style variables in
+// claude-desktop-client-context.ts were captured from Desktop in the first
+// place — so this borrows all of it and differs only in identity. The
+// behavioural differences (no fullscreen, no toolInfo) live in the catalog
+// row, not here.
+export const CLAUDE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-desktop",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    // Must match the catalog label byte-for-byte: `?template=claude-desktop`
+    // opens an existing host by `name === template.label`, and any drift mints
+    // a duplicate on every visit.
+    label: "Claude Desktop",
+    shortLabel: "Claude Desktop-style host",
+    pickerDescription: "Claude desktop app chrome",
+    logoSrc: claudeDesktopLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeMarkIndicator,
+  },
+};
+
 export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   id: "claude-code",
   mcp: {
@@ -884,6 +914,7 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,

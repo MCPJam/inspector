@@ -15,18 +15,29 @@ import {
   CommandList,
 } from "@mcpjam/design-system/command";
 import { cn } from "@/lib/utils";
-import {
-  getScenarioHostLogo,
-} from "@/lib/scenario-client-style";
+import { getScenarioHostLogo } from "@/lib/scenario-client-style";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import type { HostListItem } from "@/hooks/useClients";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import type { HostThemeMode } from "@/lib/client-styles";
 import type { SupportFilterMode } from "./support-level";
+import { PUBLIC_CAN_I_USE_INLINE_PRESET_IDS } from "./caniuse-capability-catalog";
 import { clientDisplayName } from "@/lib/client-display-name";
 import { HostChipLogo } from "@/components/hosts/host-chip";
 
-const INITIAL_INLINE_CHIP_LIMIT = 6;
+// The ranked caniuse row has to fit inline in full. Past this limit the tail is
+// dropped rather than overflowed, so a ranking longer than the limit would
+// silently hide its own pinned-rightmost entries — which is exactly what
+// happened when the list grew from six to nine.
+//
+// DERIVED, not typed out: the two were equal by coincidence at six, drifted the
+// moment the list grew, and a comment tying them together is not enforcement.
+// The floor keeps the signed-in matrix — which renders live hosts and applies
+// no ranking — at the density it has always had.
+const INITIAL_INLINE_CHIP_LIMIT = Math.max(
+  6,
+  PUBLIC_CAN_I_USE_INLINE_PRESET_IDS.length,
+);
 
 const SUPPORT_FILTERS: ReadonlyArray<{
   value: SupportFilterMode;
@@ -101,7 +112,7 @@ export function HostCompareSelector({
     <div
       className={cn(
         "mb-4 flex flex-wrap items-start gap-2",
-        mobileOptimized && "min-w-0"
+        mobileOptimized && "min-w-0",
       )}
     >
       <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
@@ -133,7 +144,7 @@ export function HostCompareSelector({
         className={cn(
           "ml-auto flex shrink-0 items-center gap-4",
           mobileOptimized &&
-            "ml-0 min-w-0 w-full flex-wrap justify-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap sm:justify-end sm:gap-3"
+            "ml-0 min-w-0 w-full flex-wrap justify-center gap-2 sm:ml-auto sm:w-auto sm:flex-nowrap sm:justify-end sm:gap-3",
         )}
       >
         {mobileOptimized &&
@@ -175,7 +186,7 @@ export function HostCompareSelector({
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
                     active
                       ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
+                      : "text-muted-foreground hover:text-foreground",
                   )}
                 >
                   {f.label}
@@ -189,7 +200,7 @@ export function HostCompareSelector({
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
             (disabled || descriptionsDisabled) &&
               "cursor-not-allowed opacity-40",
-            mobileOptimized && "shrink-0"
+            mobileOptimized && "shrink-0",
           )}
           title={
             descriptionsDisabled
@@ -209,7 +220,7 @@ export function HostCompareSelector({
           className={cn(
             "flex cursor-pointer items-center gap-2 text-[12px] text-muted-foreground",
             disabled && "cursor-not-allowed opacity-40",
-            mobileOptimized && "shrink-0"
+            mobileOptimized && "shrink-0",
           )}
         >
           <Switch
@@ -227,7 +238,7 @@ export function HostCompareSelector({
 
 function getInlineCompareHosts(
   hosts: ReadonlyArray<HostListItem>,
-  selectedSet: ReadonlySet<string>
+  selectedSet: ReadonlySet<string>,
 ): ReadonlyArray<HostListItem> {
   if (hosts.length <= INITIAL_INLINE_CHIP_LIMIT) return hosts;
 
@@ -238,17 +249,17 @@ function getInlineCompareHosts(
 
   const fillerCount = Math.max(
     0,
-    INITIAL_INLINE_CHIP_LIMIT - selectedHosts.length
+    INITIAL_INLINE_CHIP_LIMIT - selectedHosts.length,
   );
   const fillerIds = new Set(
     hosts
       .filter((host) => !selectedSet.has(host.hostId))
       .slice(0, fillerCount)
-      .map((host) => host.hostId)
+      .map((host) => host.hostId),
   );
 
   return hosts.filter(
-    (host) => selectedSet.has(host.hostId) || fillerIds.has(host.hostId)
+    (host) => selectedSet.has(host.hostId) || fillerIds.has(host.hostId),
   );
 }
 
@@ -297,7 +308,7 @@ function CompareViewModeToggle({
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
               active
                 ? "bg-primary/10 text-foreground"
-                : "text-muted-foreground hover:text-foreground"
+                : "text-muted-foreground hover:text-foreground",
             )}
           >
             {v.label}
@@ -328,7 +339,7 @@ function HostCompareChip({
       ? getScenarioHostLogo(
           subject.hostStyle,
           subject.config.chatUiOverride,
-          themeMode
+          themeMode,
         )
       : resolveHostLogoByName(host.name, themeMode);
   const reduceMotion = useReducedMotion();
@@ -347,7 +358,7 @@ function HostCompareChip({
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40",
         selected
           ? "border-primary/35 bg-primary/8 text-foreground shadow-xs"
-          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+          : "border-border bg-background text-muted-foreground hover:bg-muted/40 hover:text-foreground",
       )}
       whileHover={reduceMotion || disabled ? undefined : { scale: 1.04 }}
       whileTap={reduceMotion || disabled ? undefined : { scale: 0.94 }}
@@ -381,7 +392,7 @@ function HostCompareOverflowMenu({
   themeMode: HostThemeMode;
 }) {
   const selectedOverflowCount = hosts.filter((h) =>
-    selectedSet.has(h.hostId)
+    selectedSet.has(h.hostId),
   ).length;
 
   return (
@@ -417,7 +428,7 @@ function HostCompareOverflowMenu({
                   ? getScenarioHostLogo(
                       subject.hostStyle,
                       subject.config.chatUiOverride,
-                      themeMode
+                      themeMode,
                     )
                   : resolveHostLogoByName(host.name, themeMode);
 
@@ -441,7 +452,7 @@ function HostCompareOverflowMenu({
                   <span
                     className={cn(
                       "text-[11px]",
-                      selected ? "text-foreground" : "text-muted-foreground"
+                      selected ? "text-foreground" : "text-muted-foreground",
                     )}
                   >
                     {selected ? "Shown" : "Hidden"}

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { resolveHostLogoByName, UNKNOWN_HOST_LOGO } from "@/lib/host-logo";
+import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 
 // Hosts don't persist the catalog template they came from, so both single-select
 // client pickers infer the logo from the display name. They used to do it two
@@ -31,5 +32,23 @@ describe("resolveHostLogoByName", () => {
 
   it("places a plain known name", () => {
     expect(resolveHostLogoByName("Claude")).toContain("claude");
+  });
+
+  it("routes Claude Desktop through its own id, not the bare /claude/ hint", () => {
+    // The hint table is ordered, and `/claude/i` would swallow this name and
+    // hand back the web app's mark — the same trap claude-code and cursor-cli
+    // are ordered around. Asserted against `getHostLogoSrc("claude-desktop")`
+    // rather than a filename, so it survives the asset being renamed or
+    // repointed without turning into a spelling test.
+    expect(resolveHostLogoByName("Claude Desktop")).toBe(
+      getHostLogoSrc("claude-desktop"),
+    );
+    expect(resolveHostLogoByName("claude-desktop")).toBe(
+      getHostLogoSrc("claude-desktop"),
+    );
+    // Claude Code sits above it in the table and must be unaffected.
+    expect(resolveHostLogoByName("Claude Code")).toBe(
+      getHostLogoSrc("claude-code"),
+    );
   });
 });
