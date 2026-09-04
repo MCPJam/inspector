@@ -72,6 +72,9 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -1593,6 +1596,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     ],
   },
   {
+    operation: getEvalDescriptionExperimentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
+    ],
+  },
+  {
     operation: listEvalSuiteStageAnalyticsOperation,
     tier: "direct",
     promptNotes: [
@@ -1806,6 +1816,34 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+  {
+    operation: proposeEvalDescriptionRewriteOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+      buttonLabel: "Propose the rewrite",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+    ],
+  },
+  {
+    operation: startEvalDescriptionExperimentOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+      buttonLabel: "Start the experiment",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
     ],
   },
 
@@ -2574,12 +2612,6 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Other people's conversations are not the agent's to read. Available on REST/CLI/MCP.",
   uninstall_registry_server:
     "Agent proposes authoring, never destruction — same rule as delete_project_server.",
-  propose_eval_description_rewrite:
-    "Proposal generation spends a model budget and the HTTP route is not wired yet; an approval card would confirm a call that 404s.",
-  start_eval_description_experiment:
-    "Launching the two-arm replay is a spend with a trial cap, and the public start route lands in a follow-up. The agent should not offer a launch it cannot complete.",
-  get_eval_description_experiment:
-    "The experiment document has no agent renderer yet; the run-page card is the first consumer. Available on the SDK client for the inspector half.",
 };
 
 const DIRECT_ENTRIES = AGENT_OP_REGISTRY.filter(

@@ -560,12 +560,6 @@ export const EXCLUDED_FROM_CATALOG: Readonly<Record<string, string>> = {
     "Same as list_trace_destinations: admin configuration. Available on REST, the SDK and the CLI.",
   list_trace_destination_backfills:
     "Operational detail for an admin diagnosing an export. Available on REST, the SDK and the CLI.",
-  propose_eval_description_rewrite:
-    "Proposal generation spends a model budget and the HTTP route is not wired yet; advertising it here would invite a spend that 404s.",
-  start_eval_description_experiment:
-    "Launching the two-arm replay is a spend with a trial cap, and the public start route lands in a follow-up. Offered once the inspector can actually start the arms.",
-  get_eval_description_experiment:
-    "The experiment document has no MCP renderer yet; the run-page card is the first consumer. Available on the SDK client for the inspector half.",
 };
 
 const catalogOperationNames = new Set(

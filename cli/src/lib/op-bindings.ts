@@ -213,16 +213,13 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   },
   get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
   propose_eval_description_rewrite: {
-    excluded:
-      "The HTTP launch route is not wired yet (PR-E3). A CLI command now would spend a proposal budget against a 404.",
+    command: "cloud eval description-experiment propose --run --tool",
   },
   start_eval_description_experiment: {
-    excluded:
-      "Starting the two-arm replay is a spend with a trial cap, and the public start route lands in a follow-up; a command now would start nothing.",
+    command: "cloud eval description-experiment start --experiment",
   },
   get_eval_description_experiment: {
-    excluded:
-      "The experiment document has no CLI renderer yet; the run-page card is the first consumer, and a status command would print an unvalidated blob.",
+    command: "cloud eval description-experiment get --experiment",
   },
   list_eval_suite_stage_analytics: {
     command: "cloud eval stage-analytics --suite",

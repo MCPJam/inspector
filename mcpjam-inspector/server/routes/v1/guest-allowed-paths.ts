@@ -124,6 +124,17 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/route-facts$/,
     methods: ["GET"],
   },
+  // One description-experiment document. Same argument as route-facts: the
+  // Evaluate run page reads it, and a guest can already GET the source run.
+  // GET-only — propose and start spend.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-description-experiments\/[^/]+$/,
+    methods: ["GET"],
+  },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },

@@ -2114,6 +2114,24 @@ export class PlatformApiClient {
   }
 
   /**
+   * Experiments already attached to a source run. Empty list when none
+   * have been proposed — that is unmeasured, not an error.
+   */
+  listEvalDescriptionExperimentsForRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<{ items: PlatformEvalDescriptionExperiment[] }> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {},
+      options
+    );
+  }
+
+  /**
    * Request (or with `force`, regenerate) the eval run's insights —
    * serverQuality behind the common envelope. SPENDS the org's model budget;
    * poll `getEvalRun().insights` rather than re-requesting.

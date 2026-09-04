@@ -20,6 +20,9 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
@@ -3933,6 +3936,130 @@ export function registerEvalCommands(program: Command): void {
           unknown
         >,
         input,
+        options,
+        command
+      );
+    }
+  );
+
+  const descriptionExperiment = evals
+    .command("description-experiment")
+    .description(
+      "Propose, start, or read a two-arm tool-description rewrite experiment"
+    );
+
+  addProjectOption(
+    descriptionExperiment
+      .command("propose")
+      .description(
+        "Draft a rewritten tool description from a finished run's failed trials. Spends a small model budget; poll `description-experiment get` rather than re-proposing."
+      )
+      .requiredOption("--run <id>", "Source eval run ID")
+      .requiredOption("--tool <name>", "Catalog tool name to rewrite")
+      .option("--case <id...>", "Limit evidence to these case ids")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        run: string;
+        tool: string;
+        case?: string[];
+      },
+      command
+    ) => {
+      await executeOp(
+        proposeEvalDescriptionRewriteOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          runId: options.run,
+          toolName: options.tool,
+          ...(options.case ? { caseIds: options.case } : {}),
+          ...(options.project === undefined ? {} : { project: options.project }),
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addProjectOption(
+    descriptionExperiment
+      .command("start")
+      .description(
+        "Launch the two-arm experiment (original + rewrite). Spends eval-iteration credits; poll `description-experiment get`."
+      )
+      .requiredOption("--experiment <id>", "Description-experiment ID")
+      .option("--case-scope <scope>", "Which cases to replay: all or affected")
+      .option("--iterations <n>", "Repetitions per case per arm (1–10)")
+      .option("--max-trials <n>", "Refuse if plannedTrials exceeds this (max 400)")
+  ).action(
+    async (
+      options: PlatformOptions & {
+        project?: string;
+        experiment: string;
+        caseScope?: string;
+        iterations?: string;
+        maxTrials?: string;
+      },
+      command
+    ) => {
+      await executeOp(
+        startEvalDescriptionExperimentOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          experiment: options.experiment,
+          ...(options.caseScope !== undefined
+            ? { caseScope: options.caseScope }
+            : {}),
+          ...(options.iterations !== undefined
+            ? {
+                iterationOverride: parsePositiveInteger(
+                  options.iterations,
+                  "--iterations"
+                ),
+              }
+            : {}),
+          ...(options.maxTrials !== undefined
+            ? {
+                maxTrials: parsePositiveInteger(
+                  options.maxTrials,
+                  "--max-trials"
+                ),
+              }
+            : {}),
+          ...(options.project === undefined ? {} : { project: options.project }),
+        },
+        options,
+        command
+      );
+    }
+  );
+
+  addProjectOption(
+    descriptionExperiment
+      .command("get")
+      .description(
+        "Read one description-experiment document, including its report when materialised"
+      )
+      .requiredOption("--experiment <id>", "Description-experiment ID")
+  ).action(
+    async (
+      options: PlatformOptions & { project?: string; experiment: string },
+      command
+    ) => {
+      await executeOp(
+        getEvalDescriptionExperimentOperation as PlatformOperation<
+          Record<string, unknown>,
+          unknown
+        >,
+        {
+          experiment: options.experiment,
+          ...(options.project === undefined ? {} : { project: options.project }),
+        },
         options,
         command
       );

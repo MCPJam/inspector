@@ -31,6 +31,7 @@ import {
   type ModelVisibleMcpToolResults,
   type ToolExposureSignals,
 } from "@mcpjam/sdk/host-config/internal";
+import { harnessOfHostConfig } from "./evals/harness-admission.js";
 import {
   readTasksPolicy,
   type MCPClientManager,
@@ -572,6 +573,12 @@ export type RunEvalSuiteOptions = {
   testCaseId?: string; // For quick runs, associate iterations with a specific test case
   compareRunId?: string; // For quick compare runs, group related iterations in metadata
   /**
+   * The REWRITE-arm marker from `configSnapshot.toolDescriptionOverride`.
+   * Applied to every tool-prep path; stamped onto iteration metadata after
+   * prep so eligibility can read `metadata.descriptionExperiment.applied`.
+   */
+  toolDescriptionOverride?: ToolDescriptionOverrideMarker | Record<string, unknown>;
+  /**
    * Resolved compat-runtime flag for the suite's host config. When
    * true, widget snapshots captured during this run will have the
    * OpenAI Apps SDK `window.openai` shim injected before they're
@@ -775,6 +782,120 @@ function delay(ms: number): Promise<void> {
 }
 
 type ToolSet = Record<string, any>;
+
+/**
+ * The REWRITE-arm marker copied from `configSnapshot.toolDescriptionOverride`.
+ * Presence means this run is the rewrite arm; the ORIGINAL arm has none.
+ */
+type ToolDescriptionOverrideMarker = {
+  experimentId: string;
+  toolName: string;
+  description: string;
+  proposalHash: string;
+};
+
+type DescriptionExperimentIterationStamp = {
+  experimentId: string;
+  arm: "rewrite" | "original";
+  toolName: string;
+  proposalHash: string;
+  applied: boolean;
+};
+
+/**
+ * Iteration metadata is `v.any()` on the backend. Widen past scalars so a
+ * nested `descriptionExperiment` object can persist — E2 eligibility reads
+ * `metadata.descriptionExperiment.applied === true` and a JSON-stringified
+ * value would fail that check.
+ */
+type IterationMetadataValue =
+  | string
+  | number
+  | boolean
+  | DescriptionExperimentIterationStamp;
+
+type IterationMetadataBase = Record<string, IterationMetadataValue>;
+
+function readToolDescriptionOverrideMarker(
+  raw: unknown
+): ToolDescriptionOverrideMarker | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as Record<string, unknown>;
+  if (
+    typeof o.toolName !== "string" ||
+    typeof o.description !== "string" ||
+    typeof o.experimentId !== "string" ||
+    typeof o.proposalHash !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    toolName: o.toolName,
+    description: o.description,
+    experimentId: o.experimentId,
+    proposalHash: o.proposalHash,
+  };
+}
+
+function descriptionOverridesFromMarker(
+  marker: ToolDescriptionOverrideMarker | undefined
+): Record<string, string> | undefined {
+  if (!marker) return undefined;
+  return { [marker.toolName]: marker.description };
+}
+
+function applyDescriptionOverridesToToolSet(
+  tools: ToolSet,
+  overrides: Record<string, string> | undefined
+): void {
+  if (!overrides) return;
+  for (const [name, description] of Object.entries(overrides)) {
+    const tool = tools[name];
+    if (tool && typeof tool === "object") {
+      (tool as { description?: string }).description = description;
+    }
+  }
+}
+
+function descriptionExperimentStamp(
+  override: ToolDescriptionOverrideMarker,
+  applied: boolean
+): DescriptionExperimentIterationStamp {
+  return {
+    experimentId: override.experimentId,
+    arm: "rewrite",
+    toolName: override.toolName,
+    proposalHash: override.proposalHash,
+    applied,
+  };
+}
+
+function descriptionAppliedOnPreparedTools(
+  allTools: PrepareChatV2Result["allTools"] | undefined,
+  override: ToolDescriptionOverrideMarker
+): boolean {
+  const prepared = allTools?.[override.toolName];
+  return (
+    prepared != null &&
+    typeof prepared === "object" &&
+    "description" in prepared &&
+    (prepared as { description?: unknown }).description === override.description
+  );
+}
+
+function throwIfDescriptionOverrideOnHarness(
+  override: ToolDescriptionOverrideMarker | undefined,
+  harness: string | undefined
+): void {
+  if (!override || !harness) return;
+  throw new WebRouteError(
+    400,
+    ErrorCode.VALIDATION_ERROR,
+    "Description overrides are only supported on the emulated engine.",
+    { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" }
+  );
+}
+
 type ToolCall = {
   toolName: string;
   arguments: Record<string, any>;
@@ -883,6 +1004,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
   tasks?: ToolTaskSeamOptions;
   environment: RunEvalSuiteOptions["config"]["environment"] | undefined;
   setupObserver?: RunSetupObserver;
+  toolDescriptionOverrides?: Record<string, string>;
 }): Promise<ToolSet> {
   // `undefined` ⇒ the no-options overload, keeping a default run byte-identical.
   // `needsApproval` is deliberately not an input here: an eval run is auto-deny
@@ -891,6 +1013,7 @@ async function getEvalToolsForAiSdkOrThrow(args: {
     includeAppOnly: args.includeAppOnly,
     modelVisibleMcpToolResults: args.modelVisibleMcpToolResults,
     tasks: args.tasks,
+    toolDescriptionOverrides: args.toolDescriptionOverrides,
   });
 
   const now = () => Date.now();
@@ -1384,7 +1507,7 @@ async function persistSetupFailedIteration(args: {
   iterationId: string | undefined;
   runStartedAt: number;
   errorMessage: string;
-  iterationMetadataBase: Record<string, string | number | boolean>;
+  iterationMetadataBase: IterationMetadataBase;
   /**
    * The authored case's stage inputs (`buildStageAuthoredCase`).
    *
@@ -1607,6 +1730,8 @@ type RunIterationBaseParams = {
   runId: string | null; // For cancellation checks
   abortSignal?: AbortSignal; // For aborting in-flight requests
   compareRunId?: string;
+  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
+  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /**
    * If supplied, the runner skips the upfront `recordIterationStartWithoutRun`
    * call and reuses this id. Used by `streamTestCase` when `runs > 1` so all N
@@ -2050,6 +2175,8 @@ const executeTestCase = async (params: {
   /** Lifecycle abort hook: an iteration timeout aborts the whole run through it. */
   abortRun?: (error: EvalRunStoppedError) => void;
   compareRunId?: string;
+  /** Rewrite-arm marker — see {@link RunEvalSuiteOptions.toolDescriptionOverride}. */
+  toolDescriptionOverride?: ToolDescriptionOverrideMarker;
   /** Present ⇒ streaming mode: SSE events flow here and iterations run on the
    *  stream* runners. Absent ⇒ batch mode. */
   emit?: StreamEmit;
@@ -2111,6 +2238,7 @@ const executeTestCase = async (params: {
     abortSignal,
     abortRun,
     compareRunId,
+    toolDescriptionOverride,
     emit,
     injectOpenAiCompat,
     hostPolicy,
@@ -2207,6 +2335,7 @@ const executeTestCase = async (params: {
         abortSignal,
         convexAuthToken,
         ...(compareRunId ? { compareRunId } : {}),
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         injectOpenAiCompat,
         hostPolicy,
         gradingMode,
@@ -2355,6 +2484,7 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
@@ -2423,6 +2553,7 @@ const executeTestCase = async (params: {
         runId,
         abortSignal,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         precreatedIterationId,
         injectOpenAiCompat,
         hostPolicy,
@@ -2484,6 +2615,7 @@ const executeTestCase = async (params: {
       runId,
       abortSignal,
       compareRunId,
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
       precreatedIterationId,
       injectOpenAiCompat,
       hostPolicy,
@@ -2541,6 +2673,7 @@ export const runEvalSuiteWithAiSdk = async ({
   recorder: providedRecorder,
   testCaseId,
   compareRunId,
+  toolDescriptionOverride: toolDescriptionOverrideRaw,
   suiteInjectOpenAiCompat,
   hostExecutionPolicy,
   suiteHostConfig,
@@ -2552,6 +2685,16 @@ export const runEvalSuiteWithAiSdk = async ({
   benchmarkWriteGuard,
   extraHeaders,
 }: RunEvalSuiteOptions): Promise<RunEvalSuiteWithAiSdkResult | undefined> => {
+  const toolDescriptionOverride = readToolDescriptionOverrideMarker(
+    toolDescriptionOverrideRaw
+  );
+  const descriptionOverrides = descriptionOverridesFromMarker(
+    toolDescriptionOverride
+  );
+  throwIfDescriptionOverrideOnHarness(
+    toolDescriptionOverride,
+    harnessOfHostConfig(suiteHostConfig)
+  );
   const injectOpenAiCompat = suiteInjectOpenAiCompat === true;
   const tests = config.tests ?? [];
   const serverIds = resolveConfiguredServerIds({
@@ -2643,6 +2786,9 @@ export const runEvalSuiteWithAiSdk = async ({
       ...(evalTasksSeam ? { tasks: evalTasksSeam } : {}),
       environment: config.environment,
       setupObserver,
+      ...(descriptionOverrides
+        ? { toolDescriptionOverrides: descriptionOverrides }
+        : {}),
     });
     const toolAnnotations: ToolAnnotationsLookup = new Map();
     if (toolPolicy) {
@@ -2707,6 +2853,9 @@ export const runEvalSuiteWithAiSdk = async ({
           hostExecutionPolicy
         )
       : undefined;
+    if (descriptionOverrides) {
+      applyDescriptionOverridesToToolSet(tools, descriptionOverrides);
+    }
     const resolvedSetupSignals = setupObserver.buildSignals();
     const resolvedSetupSpans =
       setupObserver.buildSyntheticSpans(runSetupStartedAt);
@@ -2761,6 +2910,7 @@ export const runEvalSuiteWithAiSdk = async ({
         convexClient,
         testCaseId,
         compareRunId,
+        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
         suiteId,
         runId,
         abortSignal: abortController.signal,
@@ -3109,6 +3259,7 @@ const runLocalIteration = async ({
   abortSignal,
   emit,
   compareRunId,
+  toolDescriptionOverride,
   precreatedIterationId,
   injectOpenAiCompat,
   hostPolicy,
@@ -3264,7 +3415,7 @@ const runLocalIteration = async ({
     : null;
 
   const runStartedAt = Date.now();
-  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  const iterationMetadataBase: IterationMetadataBase = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
   }
@@ -3419,6 +3570,10 @@ const runLocalIteration = async ({
     let prepared: PrepareChatV2Result | null = null;
     let llmModel: ReturnType<typeof createLlmModel> | null = null;
     if (caseNeedsModel) {
+      throwIfDescriptionOverrideOnHarness(
+        toolDescriptionOverride,
+        resolvedExecution.harness
+      );
       resolveHostTools(
         { builtInToolIds: resolvedExecution.builtInToolIds },
         null
@@ -3433,6 +3588,12 @@ const runLocalIteration = async ({
         modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
         ...(resolvedExecution.harness
           ? { harness: resolvedExecution.harness }
+          : {}),
+        ...(descriptionOverridesFromMarker(toolDescriptionOverride)
+          ? {
+              toolDescriptionOverrides:
+                descriptionOverridesFromMarker(toolDescriptionOverride),
+            }
           : {}),
         skillsSource,
         // Host progressive-discovery toggle, same conversion as the chat-v2
@@ -3460,6 +3621,15 @@ const runLocalIteration = async ({
       // system-free, and persistence prepends the resolved value at write
       // time (mirroring the non-stream runner's PR 4d Codex P2 fix).
       streamEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+      if (toolDescriptionOverride) {
+        iterationMetadataBase.descriptionExperiment = descriptionExperimentStamp(
+          toolDescriptionOverride,
+          descriptionAppliedOnPreparedTools(
+            prepared.allTools,
+            toolDescriptionOverride
+          )
+        );
+      }
       selectionToolsForFinish = prepared.allTools;
       selectionDiscoveryForFinish = {
         progressivePlan: prepared.progressivePlan,
@@ -4207,6 +4377,7 @@ const runHostedIterationWithBrowser = async (
     abortSignal,
     emit,
     compareRunId,
+    toolDescriptionOverride,
     precreatedIterationId,
     injectOpenAiCompat,
     hostPolicy,
@@ -4344,7 +4515,7 @@ const runHostedIterationWithBrowser = async (
   const traceMessageHistory: ModelMessage[] = [];
   const toolsCalledByPrompt: ToolCall[][] = [];
   const runStartedAt = Date.now();
-  const iterationMetadataBase: Record<string, string | number | boolean> = {};
+  const iterationMetadataBase: IterationMetadataBase = {};
   if (promptTurns.length > 1) {
     iterationMetadataBase.multiTurn = true;
   }
@@ -4505,6 +4676,10 @@ const runHostedIterationWithBrowser = async (
   };
   let prepared: PrepareChatV2Result;
   try {
+    throwIfDescriptionOverrideOnHarness(
+      toolDescriptionOverride,
+      resolvedExecution.harness
+    );
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -4515,6 +4690,12 @@ const runHostedIterationWithBrowser = async (
       modelVisibleMcpToolResults: hostPolicy?.modelVisibleMcpToolResults,
       ...(resolvedExecution.harness
         ? { harness: resolvedExecution.harness }
+        : {}),
+      ...(descriptionOverridesFromMarker(toolDescriptionOverride)
+        ? {
+            toolDescriptionOverrides:
+              descriptionOverridesFromMarker(toolDescriptionOverride),
+          }
         : {}),
       // Host progressive-discovery toggle, same conversion as the chat-v2
       // routes and the session-sim runner. Only an explicit host value is
@@ -4537,6 +4718,15 @@ const runHostedIterationWithBrowser = async (
     // PR 4d review fix (Codex P2 / Cursor Medium): same persistence
     // prefix shape as the non-stream backend runner.
     backendEnhancedSystemPromptForPersist = prepared.enhancedSystemPrompt;
+    if (toolDescriptionOverride) {
+      iterationMetadataBase.descriptionExperiment = descriptionExperimentStamp(
+        toolDescriptionOverride,
+        descriptionAppliedOnPreparedTools(
+          prepared.allTools,
+          toolDescriptionOverride
+        )
+      );
+    }
     // Pinned env → boot a fresh ephemeral sandbox and add the `bash` tool to
     // prepared.allTools (the hosted path serializes those to toolDefs for the
     // backend agent, then executes tool calls inspector-side). A provision
@@ -4589,6 +4779,12 @@ const runHostedIterationWithBrowser = async (
     await releaseEvalSandboxIfAny();
     const errorMessage = error instanceof Error ? error.message : String(error);
     logger.error("[evals] iteration setup failed (prepareChatV2)", error);
+    if (toolDescriptionOverride) {
+      iterationMetadataBase.descriptionExperiment = descriptionExperimentStamp(
+        toolDescriptionOverride,
+        false
+      );
+    }
     await persistSetupFailedIteration({
       iterationId,
       runStartedAt,

@@ -167,6 +167,9 @@ describe("workspace tool catalog", () => {
       "get_eval_run",
       "get_eval_run_stage_analytics",
       "get_eval_run_route_facts",
+      "get_eval_description_experiment",
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
       "list_eval_suite_stage_analytics",
       "compare_eval_run",
       // The gate-waiver trio. The READ is advertised alongside the writes on

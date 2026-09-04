@@ -48,6 +48,9 @@ import {
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -180,6 +183,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // measured at all, per stage. Reads, so they ride with the run read.
   getEvalRunStageAnalyticsOperation,
   getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   waiveEvalGateOperation,
@@ -522,12 +528,6 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
   get_project_skill:
     "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
-  propose_eval_description_rewrite:
-    "Proposal generation spends a model budget and the HTTP route is not wired yet; a chat tool would confirm a call that 404s.",
-  start_eval_description_experiment:
-    "Launching the two-arm replay is a spend with a trial cap, and the public start route lands in a follow-up. The Evaluate card is where that launch belongs.",
-  get_eval_description_experiment:
-    "The experiment document has no chat renderer yet; the Evaluate run-page card is the first consumer.",
 };
 
 const OPERATIONS_BY_ID = new Map(

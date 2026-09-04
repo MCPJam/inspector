@@ -64,6 +64,9 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-runs/run_1/iterations",
     // What changed since the previous run.
     "/api/v1/projects/proj_1/eval-runs/run_1/compare",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1",
+    "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1/start",
   ]) {
     it(`attaches the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });
@@ -107,6 +110,8 @@ describe("authFetch bearer on the eval chain routes", () => {
     // history through Convex (`testSuites:listSuiteRevisions`), so allowlisting
     // this route would widen the UI bearer's reach for nothing the app uses.
     "/api/v1/projects/proj_1/eval-suites/suite_1/revisions",
+    "/api/v1/projects/proj_1/eval-description-experiments/exp_1/report",
+    "/api/v1/projects/proj_1/eval-runs/run_1/description-experiments/export",
   ]) {
     it(`does NOT attach the bearer to ${path}`, async () => {
       await sessionToken.authFetch(path, { method: "GET" });
