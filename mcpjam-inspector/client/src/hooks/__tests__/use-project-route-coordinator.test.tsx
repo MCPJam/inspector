@@ -168,6 +168,7 @@ describe("useProjectRouteCoordinator", () => {
     expect(result.current).toEqual({
       status: "inaccessible",
       requestedProjectId: B,
+      reason: "not-a-member",
     });
     expect(switchProject).not.toHaveBeenCalled();
   });
@@ -225,6 +226,7 @@ describe("useProjectRouteCoordinator", () => {
     expect(result.current).toEqual({
       status: "inaccessible",
       requestedProjectId: "none",
+      reason: "malformed",
     });
   });
 
@@ -323,7 +325,13 @@ describe("useProjectRouteCoordinator", () => {
     // without waiting out the 15s resolve budget first.
     const switchProject = vi.fn().mockRejectedValue(new Error("persistent"));
     const { result } = renderHook(
-      () => useProjectRouteCoordinator(inputFor({ switchProject })),
+      () =>
+        useProjectRouteCoordinator(
+          inputFor({
+            switchProject,
+            suppressInaccessibleTelemetryFor: B,
+          }),
+        ),
       { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(
@@ -331,8 +339,13 @@ describe("useProjectRouteCoordinator", () => {
         expect(result.current).toEqual({
           status: "inaccessible",
           requestedProjectId: B,
+          reason: "timed-out",
         }),
       RESOLUTION_TIMEOUT,
+    );
+    expect(vi.mocked(track)).toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.objectContaining({ reason: "timed-out" }),
     );
     // Bounded: the cap, not an unbounded retry loop.
     expect(switchProject.mock.calls.length).toBeLessThanOrEqual(4);

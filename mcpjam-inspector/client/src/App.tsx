@@ -4509,6 +4509,8 @@ export default function App() {
     [allMembershipProjects],
   );
   const pendingProjectReturnRecovery = pendingProjectReturnRecoveryRef.current;
+  const currentLocation = useCurrentLocationParts();
+  const currentProjectPath = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
   const confirmedStaleReturnProjectId =
     pendingProjectReturnRecovery &&
     isProjectIdShape(pendingProjectReturnRecovery.requestedProjectId) &&
@@ -4545,6 +4547,7 @@ export default function App() {
   const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
     intent: pendingProjectReturnRecovery,
     routeState: projectRouteState,
+    currentPath: currentProjectPath,
     membershipProjectIds: allMembershipProjectIds,
     fallbackProject: fallbackProjectForStaleReturn,
   });

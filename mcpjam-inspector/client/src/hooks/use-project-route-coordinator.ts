@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCurrentPathname } from "@/lib/app-navigation";
-import { isProjectIdShape, readProjectPathSegment } from "@/lib/project-route";
+import { readProjectPathSegment } from "@/lib/project-route";
 import {
   resolveProjectRouteState,
   type ProjectRouteState,
@@ -243,7 +243,10 @@ export function useProjectRouteCoordinator(
       return;
     }
     if (state.status === "inaccessible") {
-      if (suppressInaccessibleTelemetryFor === state.requestedProjectId) {
+      if (
+        state.reason === "not-a-member" &&
+        suppressInaccessibleTelemetryFor === state.requestedProjectId
+      ) {
         return;
       }
       if (
@@ -256,15 +259,9 @@ export function useProjectRouteCoordinator(
         projectId: state.requestedProjectId,
         outcome: "inaccessible",
       };
-      trackProjectRouteInaccessible(
-        !isProjectIdShape(state.requestedProjectId)
-          ? "malformed"
-          : budgetExceededFor === state.requestedProjectId
-            ? "timed-out"
-            : "not-a-member",
-      );
+      trackProjectRouteInaccessible(state.reason);
     }
-  }, [state, budgetExceededFor, suppressInaccessibleTelemetryFor]);
+  }, [state, suppressInaccessibleTelemetryFor]);
 
   return state;
 }

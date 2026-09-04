@@ -8,9 +8,11 @@ const STALE = "k5700000000000000000000000a";
 const CURRENT = "k5700000000000000000000000b";
 
 describe("project sign-in return recovery", () => {
-  it("preserves the page, query and hash when switching to the current project", () => {
-    const path = `/p/${STALE}/evals/suite/s1?view=runs#case-3`;
-    const intent = createProjectSignInReturnRecoveryIntent(path);
+  it("preserves the current page, query and hash when switching projects", () => {
+    const intent = createProjectSignInReturnRecoveryIntent(
+      `/p/${STALE}/evals/suite/s1?view=runs#case-3`,
+    );
+    const currentPath = `/p/${STALE}/servers?tab=tools#details`;
 
     expect(
       resolveProjectSignInReturnRecovery({
@@ -18,13 +20,15 @@ describe("project sign-in return recovery", () => {
         routeState: {
           status: "inaccessible",
           requestedProjectId: STALE,
+          reason: "not-a-member",
         },
+        currentPath,
         membershipProjectIds: new Set([CURRENT]),
         fallbackProject: { id: CURRENT, name: "Default Project" },
       }),
     ).toEqual({
       kind: "switch",
-      path: `/p/${CURRENT}/evals/suite/s1?view=runs#case-3`,
+      path: `/p/${CURRENT}/servers?tab=tools#details`,
       message: "Project not found. Switched to Default Project.",
     });
   });
@@ -36,7 +40,9 @@ describe("project sign-in return recovery", () => {
         routeState: {
           status: "inaccessible",
           requestedProjectId: STALE,
+          reason: "not-a-member",
         },
+        currentPath: `/p/${STALE}/servers`,
         membershipProjectIds: new Set([CURRENT]),
         fallbackProject: { id: CURRENT, name: "Default Project" },
       }),
@@ -53,7 +59,9 @@ describe("project sign-in return recovery", () => {
         routeState: {
           status: "inaccessible",
           requestedProjectId: "not-a-project",
+          reason: "malformed",
         },
+        currentPath: "/p/not-a-project/servers",
         membershipProjectIds: new Set([CURRENT]),
         fallbackProject: { id: CURRENT, name: "Default Project" },
       }),
@@ -68,11 +76,42 @@ describe("project sign-in return recovery", () => {
         routeState: {
           status: "inaccessible",
           requestedProjectId: STALE,
+          reason: "timed-out",
         },
-        membershipProjectIds: new Set([STALE, CURRENT]),
+        currentPath: `/p/${STALE}/servers`,
+        membershipProjectIds: new Set([CURRENT]),
         fallbackProject: { id: CURRENT, name: "Default Project" },
       }),
     ).toEqual({ kind: "clear" });
+  });
+
+  it("keeps the recovery intent until membership data has loaded", () => {
+    const intent = createProjectSignInReturnRecoveryIntent(
+      `/p/${STALE}/servers`,
+    );
+    const input = {
+      intent,
+      routeState: {
+        status: "inaccessible" as const,
+        requestedProjectId: STALE,
+        reason: "not-a-member" as const,
+      },
+      currentPath: `/p/${STALE}/servers`,
+      fallbackProject: { id: CURRENT, name: "Default Project" },
+    };
+
+    expect(
+      resolveProjectSignInReturnRecovery({
+        ...input,
+        membershipProjectIds: undefined,
+      }),
+    ).toEqual({ kind: "none" });
+    expect(
+      resolveProjectSignInReturnRecovery({
+        ...input,
+        membershipProjectIds: new Set([CURRENT]),
+      }).kind,
+    ).toBe("switch");
   });
 
   it("uses home when the account has no fallback project", () => {
@@ -85,7 +124,9 @@ describe("project sign-in return recovery", () => {
         routeState: {
           status: "inaccessible",
           requestedProjectId: STALE,
+          reason: "not-a-member",
         },
+        currentPath: `/p/${STALE}/playground`,
         membershipProjectIds: new Set(),
         fallbackProject: null,
       }),
@@ -100,6 +141,7 @@ describe("project sign-in return recovery", () => {
       resolveProjectSignInReturnRecovery({
         intent,
         routeState: { status: "ready", projectId: STALE },
+        currentPath: `/p/${STALE}/servers`,
         membershipProjectIds: new Set([STALE]),
         fallbackProject: { id: STALE, name: "Original" },
       }),
@@ -108,6 +150,7 @@ describe("project sign-in return recovery", () => {
       resolveProjectSignInReturnRecovery({
         intent,
         routeState: { status: "ready", projectId: CURRENT },
+        currentPath: `/p/${CURRENT}/servers`,
         membershipProjectIds: new Set([CURRENT]),
         fallbackProject: { id: CURRENT, name: "Current" },
       }),

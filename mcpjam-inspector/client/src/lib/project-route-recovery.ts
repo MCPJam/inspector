@@ -6,7 +6,6 @@ import {
 } from "./project-route";
 
 export interface ProjectSignInReturnRecoveryIntent {
-  path: string;
   requestedProjectId: string;
 }
 
@@ -21,7 +20,7 @@ export function createProjectSignInReturnRecoveryIntent(
   path: string,
 ): ProjectSignInReturnRecoveryIntent | null {
   const requestedProjectId = readProjectPathSegment(path);
-  return requestedProjectId ? { path, requestedProjectId } : null;
+  return requestedProjectId ? { requestedProjectId } : null;
 }
 
 /**
@@ -32,10 +31,17 @@ export function createProjectSignInReturnRecoveryIntent(
 export function resolveProjectSignInReturnRecovery(args: {
   intent: ProjectSignInReturnRecoveryIntent | null;
   routeState: ProjectRouteState;
+  currentPath: string;
   membershipProjectIds: ReadonlySet<string> | undefined;
   fallbackProject: { id: string; name: string } | null;
 }): ProjectSignInReturnRecoveryDecision {
-  const { intent, routeState, membershipProjectIds, fallbackProject } = args;
+  const {
+    intent,
+    routeState,
+    currentPath,
+    membershipProjectIds,
+    fallbackProject,
+  } = args;
   if (!intent) return { kind: "none" };
   if (routeState.status === "unscoped") return { kind: "clear" };
 
@@ -47,16 +53,19 @@ export function resolveProjectSignInReturnRecovery(args: {
   if (routeState.status === "resolving") return { kind: "none" };
   if (routeState.status === "ready") return { kind: "clear" };
 
-  const isConfirmedMissingMembership =
-    isProjectIdShape(intent.requestedProjectId) &&
-    membershipProjectIds !== undefined &&
-    !membershipProjectIds.has(intent.requestedProjectId);
-  if (!isConfirmedMissingMembership) return { kind: "clear" };
+  if (!isProjectIdShape(intent.requestedProjectId)) return { kind: "clear" };
+  if (membershipProjectIds === undefined) return { kind: "none" };
+  if (
+    routeState.reason !== "not-a-member" ||
+    membershipProjectIds.has(intent.requestedProjectId)
+  ) {
+    return { kind: "clear" };
+  }
   if (!fallbackProject) return { kind: "home" };
 
   return {
     kind: "switch",
-    path: replaceProjectInPath(intent.path, fallbackProject.id),
+    path: replaceProjectInPath(currentPath, fallbackProject.id),
     message: `Project not found. Switched to ${fallbackProject.name}.`,
   };
 }
