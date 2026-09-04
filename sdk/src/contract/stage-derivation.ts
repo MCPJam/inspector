@@ -1643,3 +1643,52 @@ export function stageDerivationToMetadata(
     stageAnalyzerVersion: derivation.stageAnalyzerVersion,
   };
 }
+
+/**
+ * Public projection of an iteration's stage evidence.
+ *
+ * `metadata` is an open record; only this whitelist may cross into a
+ * decision-chain assembly. Validated derivations pass through; invalid
+ * rows become `stageResultsUnverified`. Pre-D1 metadata (no
+ * `stageResults`) is omitted so those iterations stay byte-identical.
+ */
+export function projectStageDerivation(
+  metadata: unknown,
+): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const record = metadata as Record<string, unknown>;
+  if (!("stageResults" in record)) return {};
+
+  const derivation = stageDerivationSchema.safeParse({
+    stageResults: record.stageResults,
+    ...(record.firstFailedStage !== undefined
+      ? { firstFailedStage: record.firstFailedStage }
+      : {}),
+    ...(record.failureCategory !== undefined
+      ? { failureCategory: record.failureCategory }
+      : {}),
+    stageAnalyzerVersion: record.stageAnalyzerVersion,
+  });
+  if (derivation.success) {
+    return {
+      stageResults: derivation.data.stageResults,
+      ...(derivation.data.firstFailedStage
+        ? { firstFailedStage: derivation.data.firstFailedStage }
+        : {}),
+      ...(derivation.data.failureCategory
+        ? { failureCategory: derivation.data.failureCategory }
+        : {}),
+      stageAnalyzerVersion: derivation.data.stageAnalyzerVersion,
+    };
+  }
+
+  const version = record.stageAnalyzerVersion;
+  return {
+    stageResultsUnverified: true,
+    ...(typeof version === "number" &&
+    Number.isInteger(version) &&
+    version >= 0
+      ? { stageAnalyzerVersion: version }
+      : {}),
+  };
+}

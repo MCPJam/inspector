@@ -5,6 +5,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react";
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
@@ -220,6 +221,7 @@ import {
   SIMPLE_CASE_EDITOR_FLAG,
   isSimpleCaseShape,
 } from "./simple-case/simple-case-model";
+import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
 
 interface TestTemplate {
   title: string;
@@ -1273,25 +1275,33 @@ export function TestTemplateEditor({
     suiteRuns,
   ]);
 
+  const chainSlotEnabled = trialChainEnabled || simpleCaseEditorEnabled;
   const trialChains = useEvalRunIterationChains({
     projectId,
     run: openTrialRun,
-    enabled: trialChainEnabled,
+    enabled: chainSlotEnabled,
   });
 
   /**
    * The chain panel for one opened trial, or nothing.
    *
-   * Built here and passed DOWN as a node: `IterationDetails` has five hosts
-   * and only this one can answer which run the trial belongs to.
+   * Run-backed trials come from the run-id keyed hook. Quick runs have no
+   * run id, so the same projection + assembler runs locally on the doc
+   * the client already holds.
    */
   const trialChainSlotFor = (iteration: EvalIteration | null) => {
-    if (!iteration) return null;
-    const chain = trialChains.chains.get(iteration._id);
-    // An absent KEY is "not loaded", which is not "no chain" — a trial the
-    // walk has not reached renders nothing rather than a false absence.
-    if (!chain) return null;
-    return <TrialChainPanel chain={chain} resetKey={iteration._id} />;
+    if (!iteration || !chainSlotEnabled) return null;
+    if (iteration.suiteRunId) {
+      const chain = trialChains.chains.get(iteration._id);
+      if (!chain) return null;
+      return <TrialChainPanel chain={chain} resetKey={iteration._id} />;
+    }
+    return (
+      <TrialChainPanel
+        chain={chainForQuickRunIteration(iteration)}
+        resetKey={iteration._id}
+      />
+    );
   };
 
   // The host a replayed iteration actually ran on (its suite run's
@@ -3616,6 +3626,9 @@ export function TestTemplateEditor({
                         record={previewRecord}
                         testCase={currentTestCase}
                         authoredSteps={editForm?.steps ?? currentSteps}
+                        trialChainSlot={trialChainSlotFor(
+                          previewRecord.iteration ?? null,
+                        )}
                         serverNames={connectedServerList}
                         projectId={projectId}
                         onContinueInChat={onContinueInChat}
@@ -3934,6 +3947,7 @@ function RunColumn({
   recorder,
   authoredSteps,
   onRenderedWidgetTargets,
+  trialChainSlot,
 }: {
   record: CompareRunRecord;
   testCase: any;
@@ -3968,6 +3982,7 @@ function RunColumn({
    * override. May be undefined when the suite hostConfig hasn't loaded.
    */
   baselineHostStyle: string | undefined;
+  trialChainSlot?: ReactNode;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -4476,6 +4491,7 @@ function RunColumn({
       </PreviewHeaderSlot>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-1.5">
+        {trialChainSlot}
         {shouldRenderChatShell ? (
           <ScenarioHostStyleProvider value={hostStyle}>
             <ScenarioHostThemeProvider value={themeMode}>

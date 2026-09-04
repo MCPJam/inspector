@@ -168,6 +168,7 @@ export {
   deriveStageResults,
   isPositiveToolCallPredicateKind,
   isSelectionPredicateKind,
+  projectStageDerivation,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
