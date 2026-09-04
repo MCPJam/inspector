@@ -161,9 +161,10 @@ export function isHostedDesktopProvisionable(): boolean | null {
  * Should this process refuse to offer the hosted browser?
  *
  * The one place that decides what SILENCE means, because the two callers that
- * consult the verdict — the built-in tool registry, and the WebMCP Inspector
- * route — were reading it differently, and the whole reason the verdict exists
- * is that they must agree.
+ * consult a verdict — the built-in tool registry, and the WebMCP Inspector
+ * route — were reading silence differently. They ask different questions and
+ * read different verdicts, which is right; what they may not do is disagree
+ * about what an ANSWERLESS backend means. See `isHostedDesktopUnavailable`.
  *
  * `false` is always a refusal. `null` divides on deployment mode, and the
  * split is not a hedge:
@@ -182,7 +183,28 @@ export function isHostedDesktopProvisionable(): boolean | null {
  *     the gate does not cover.
  */
 export function isHostedBrowserRefused(): boolean {
-  const verdict = isHostedBrowserExposable();
+  return refusesOnVerdict(isHostedBrowserExposable());
+}
+
+/**
+ * The same question for the WebMCP Inspector, whose gate is the narrower one.
+ *
+ * A separate function because the VERDICTS are different questions —
+ * "may we advertise `browser_*`?" folds in the tool catalog, "would a desktop
+ * boot?" does not — but the rule for SILENCE has to be one rule. It was not:
+ * the registry refused on hosted silence while the inspector route read
+ * `isHostedDesktopProvisionable() === false` and took silence as permission.
+ * So a replica whose bootstrap fetch timed out suppressed the model tools and
+ * reserved a desktop for the inspector in the same breath — metering it at the
+ * terminal rate, which is the exact failure the gate was added to prevent,
+ * arriving through the one caller the gate did not cover.
+ */
+export function isHostedDesktopUnavailable(): boolean {
+  return refusesOnVerdict(isHostedDesktopProvisionable());
+}
+
+/** What a three-state verdict means to a caller, per the rule above. */
+function refusesOnVerdict(verdict: boolean | null): boolean {
   if (verdict === false) return true;
   return verdict === null && HOSTED_MODE;
 }

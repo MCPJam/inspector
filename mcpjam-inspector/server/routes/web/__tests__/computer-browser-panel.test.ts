@@ -3,8 +3,11 @@
  *
  *   - the panel is reachable ONLY with a valid browser token whose claims still
  *     match the row's live owner and project;
- *   - watching does not require holding the lease (L10) — the stream URL comes
- *     back whoever has the browser;
+ *   - watching does not require holding the lease (L10) — the session comes
+ *     back whoever has the browser. The STREAM no longer comes back with it:
+ *     the noVNC password is a full desktop-control credential, so the route
+ *     stopped returning `streamUrl`/`streamPassword` and the pixels are served
+ *     out of band by the RFB proxy, which authenticates upstream itself;
  *   - the lease holder is the authenticated user, never a client-supplied
  *     string;
  *   - the panel ATTACHES, it never reserves — someone opening a panel cannot
@@ -182,7 +185,7 @@ describe("browser panel — GET /session", () => {
     expect(JSON.stringify(body)).not.toContain(SESSION.streamPassword);
   });
 
-  it("still returns the stream while someone else HOLDS the lease (L10)", async () => {
+  it("still serves the session while someone else HOLDS the lease (L10)", async () => {
     // View by default. Gating the view behind "take control" would make people
     // take control just to look, which is the disruptive action.
     const { call } = build({

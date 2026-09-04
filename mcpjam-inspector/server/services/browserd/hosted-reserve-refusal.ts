@@ -23,6 +23,17 @@ import { HostedReserveError } from "./hosted-reserve-error.js";
 
 export interface HostedRefusal {
   /**
+   * The control plane's own machine code, when it sent one.
+   *
+   * NOT the same field as `code` below, and deliberately not merged into it:
+   * one 403 covers both "this plan does not include Computers" and "the
+   * feature is off for this organization", and the message says neither on
+   * purpose — naming which would leak the org's plan to anyone who can reach
+   * the route. But the two are different operational facts, so the upstream
+   * code is carried for the log rather than thrown away at the boundary.
+   */
+  upstreamCode?: string;
+  /**
    * Includes 499, which Hono's `ContentfulStatusCode` does not — deliberately,
    * because it is nginx's "client closed request" rather than an IANA status.
    * Kept because it is the honest label for the abort case in a log or a
@@ -41,6 +52,12 @@ export function classifyHostedReserveError(
 ): HostedRefusal | null {
   if (!(error instanceof HostedReserveError)) return null;
 
+  const refusal = classifyByStatus(error);
+  if (!refusal) return null;
+  return error.code ? { ...refusal, upstreamCode: error.code } : refusal;
+}
+
+function classifyByStatus(error: HostedReserveError): HostedRefusal | null {
   switch (error.status) {
     case 401:
       return {

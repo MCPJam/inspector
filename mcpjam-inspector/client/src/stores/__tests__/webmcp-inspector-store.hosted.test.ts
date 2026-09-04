@@ -258,7 +258,7 @@ describe("hosted store — one identity per invocation", () => {
     expect(result.output).toBeUndefined();
   });
 
-  it("reuses the SAME id when the caller retries the same invocation", async () => {
+  it("gives two distinct invocations two distinct ids", async () => {
     const seen: string[] = [];
     fetches.handlers.unshift({
       match: (url) => url.includes("/command"),

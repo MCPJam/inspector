@@ -37,6 +37,7 @@ import { ensureLiveBrowserSession } from "../../services/browserd/live-session-d
 import {
   classifyHostedReserveError,
   httpStatus,
+  type HostedRefusal,
 } from "../../services/browserd/hosted-reserve-refusal.js";
 import {
   HostedDesktopUnavailableError,
@@ -50,9 +51,10 @@ import type {
 import { touchBrowserSession } from "../../services/browserd/browser-sessions-client.js";
 import { touchComputerActivity } from "../../utils/computers/control-plane-client.js";
 import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
-import { isHostedDesktopProvisionable } from "../../utils/computers/runtime-config.js";
+import { isHostedDesktopUnavailable } from "../../utils/computers/runtime-config.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
+import { logger } from "../../utils/logger.js";
 import {
   WEBMCP_INPUT_BATCH_LIMIT,
   WEBMCP_INPUT_TEXT_MAX_CHARS,
@@ -330,6 +332,7 @@ function webMcpErrorResponse(c: Context, error: unknown, fallback: string) {
   // own handling — a re-hydration whose computer is gone, say.
   const hostedRefusal = classifyHostedReserveError(error);
   if (hostedRefusal) {
+    logHostedRefusal(hostedRefusal);
     return c.json(
       { error: hostedRefusal.error, code: hostedRefusal.code },
       httpStatus(hostedRefusal),
@@ -474,6 +477,24 @@ class HostedIdentityError extends Error {
  * awaiting one would put a control-plane round trip in front of every command
  * a person is waiting on.
  */
+/**
+ * Record a control-plane refusal where an operator can see WHICH one it was.
+ *
+ * The response cannot say: one 403 covers both "this plan does not include
+ * Computers" and "the feature is off for this organization", and naming which
+ * would leak the org's plan to anyone who can reach the route. The log has no
+ * such constraint, and without it the upstream code is carried three layers
+ * only to be dropped at the boundary — leaving "why are these members being
+ * refused?" answerable only by reading Convex.
+ */
+function logHostedRefusal(refusal: HostedRefusal): void {
+  logger.debug("[webmcp] hosted browser refused", {
+    code: refusal.code,
+    status: refusal.status,
+    ...(refusal.upstreamCode ? { upstreamCode: refusal.upstreamCode } : {}),
+  });
+}
+
 function hostedKeepAwake(info: {
   computerId: string;
   sessionId: string;
@@ -526,7 +547,14 @@ webmcpInspector.post("/sessions", async (c) => {
     // deliberately leaves off. Refused rather than attempted: without a rate
     // the machine boots and meters at the terminal price, which nobody
     // notices until the bill.
-    if (isHostedDesktopProvisionable() === false) {
+    //
+    // SILENCE counts as a refusal here, because this is a hosted replica: it
+    // has one backend, bootstrapped at boot, so no answer means that bootstrap
+    // failed rather than that there is nothing to say. The built-in tool
+    // registry reads its own verdict the same way; the two asking different
+    // questions is fine, the two disagreeing about an answerless backend is
+    // not — it reserves at the terminal rate while suppressing the tools.
+    if (isHostedDesktopUnavailable()) {
       return c.json(
         {
           error:
@@ -657,6 +685,7 @@ webmcpInspector.post("/sessions", async (c) => {
     } catch (error) {
       const refusal = classifyHostedReserveError(error);
       if (refusal) {
+        logHostedRefusal(refusal);
         return c.json(
           { error: refusal.error, code: refusal.code },
           httpStatus(refusal),

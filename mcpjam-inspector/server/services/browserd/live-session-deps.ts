@@ -254,6 +254,18 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
     resolveSandboxId: async (computerId) => {
       const info = await getComputerSandboxInfo({ computerId });
       if (!info.ok) {
+        // This call authenticates with the INSPECTOR SERVICE TOKEN, not the
+        // member's bearer — so an auth rejection here is our deployment being
+        // wrong, never theirs. Classified as a refusal it would reach them as
+        // `hosted-auth-required` ("sign in again"), asking them to fix
+        // something they cannot see, and would swallow the 500 that pages us
+        // about a token that has stopped working. Thrown bare so it lands on
+        // the 500-and-report path where it belongs.
+        if (info.status === 401 || info.status === 403) {
+          throw new Error(
+            `sandbox-info rejected the inspector service token (${info.status}): ${info.error}`,
+          );
+        }
         throw new HostedReserveError(info.error, info.status, info.code);
       }
       if (!info.value.providerComputerId) {

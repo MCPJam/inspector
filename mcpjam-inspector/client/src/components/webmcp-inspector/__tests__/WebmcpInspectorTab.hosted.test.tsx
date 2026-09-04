@@ -96,13 +96,17 @@ describe("hosted WebMCP tab — the browser runs elsewhere", () => {
     expect(screen.queryByText("Chrome window")).toBeNull();
   });
 
-  it("cannot start without a project, and says why", () => {
+  it("cannot start without a project, and names both things it needs", () => {
+    // A guest never has a project, so this state covers "signed out" as well
+    // as "has not picked one" — and the hosted route refuses a guest bearer
+    // outright. Saying only "pick a project" sends a signed-out viewer looking
+    // for a picker that is not there for them.
     contextState.activeProjectId = null;
     render(<WebmcpInspectorTab />);
     const button = screen.getByRole("button", { name: /open browser/i });
     expect(button).toBeDisabled();
     expect(
-      screen.getByText(/needs a project to run under/i),
+      screen.getByText(/signed-in account and a project to run under/i),
     ).toBeInTheDocument();
   });
 

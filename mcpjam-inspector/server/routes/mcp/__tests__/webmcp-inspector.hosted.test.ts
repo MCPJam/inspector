@@ -21,9 +21,12 @@ vi.mock("../../../config", () => ({
   HOSTED_MODE: true,
 }));
 
+// The gate as the ROUTE sees it, which is the three-state verdict collapsed by
+// the shared silence rule — on a hosted replica, no answer is a refusal.
 const gateState = vi.hoisted(() => ({ provisionable: true as boolean | null }));
 vi.mock("../../../utils/computers/runtime-config.js", () => ({
   isHostedDesktopProvisionable: () => gateState.provisionable,
+  isHostedDesktopUnavailable: () => gateState.provisionable !== true,
 }));
 
 const hostedState = vi.hoisted(() => ({
@@ -265,10 +268,21 @@ describe("hosted WebMCP inspector — the backend's desktop verdict", () => {
     expect(hostedState.ensureCalls).toHaveLength(0);
   });
 
-  it("proceeds on silence — an older backend is not a refusal", async () => {
+  it("refuses on SILENCE too, and reserves nothing", async () => {
+    // A hosted replica has one backend and bootstraps it at boot, so no answer
+    // means that bootstrap failed. Reading it as permission is how a
+    // deployment reserves desktops that meter at the terminal rate because a
+    // fetch timed out — and it is what the built-in tool registry, reading the
+    // same silence, refuses on. The two must not disagree.
     gateState.provisionable = null;
-    await post(appWith(VERIFIED), "/api/web/webmcp/sessions", START);
-    expect(hostedState.ensureCalls).toHaveLength(1);
+    const { status, body } = await post(
+      appWith(VERIFIED),
+      "/api/web/webmcp/sessions",
+      START,
+    );
+    expect(status).toBe(503);
+    expect(body.code).toBe("hosted-desktop-unconfigured");
+    expect(hostedState.ensureCalls).toHaveLength(0);
   });
 });
 

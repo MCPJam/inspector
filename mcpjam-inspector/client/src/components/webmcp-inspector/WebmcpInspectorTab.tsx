@@ -140,6 +140,18 @@ export function WebmcpInspectorTab() {
       typeof document === "undefined" || document.visibilityState !== "hidden",
   );
   const activeProjectId = useHostContextStore((state) => state.activeProjectId);
+  /**
+   * Whether this viewer can start a hosted session at all.
+   *
+   * `activeProjectId` is the observable half of it. A guest never has one — a
+   * project comes from a verified member session — so this also stands in for
+   * "signed in", which is the OTHER thing the hosted route requires
+   * (`requireVerifiedAuth` refuses a guest bearer outright). Deliberately not
+   * read from a Convex auth hook: this tab renders in surfaces that mount no
+   * Convex provider, and a hard dependency on one to decide a sentence of copy
+   * would trade a real crash for a cosmetic gain.
+   */
+  const hostedReady = Boolean(activeProjectId);
 
   /**
    * Whether the next session should attach to a surface this screen mounts.
@@ -467,7 +479,7 @@ export function WebmcpInspectorTab() {
     // through the button's `disabled`. Without this, hosted-with-no-project
     // sends a start the server can only refuse, and the person gets an error
     // banner where the tooltip and the empty state already said what to do.
-    if (HOSTED_MODE && !activeProjectId) return;
+    if (HOSTED_MODE && !hostedReady) return;
     if (!useEmbeddedSurface) {
       await startSession(url, startOptions());
       return;
@@ -753,11 +765,11 @@ export function WebmcpInspectorTab() {
             // machine belongs to one. Disabled rather than hidden, so the
             // reason can be read off the tooltip instead of guessed at.
             disabled={
-              starting || openingSurface || (HOSTED_MODE && !activeProjectId)
+              starting || openingSurface || (HOSTED_MODE && !hostedReady)
             }
             title={
-              HOSTED_MODE && !activeProjectId
-                ? "Pick a project first — the browser runs on that project's computer."
+              HOSTED_MODE && !hostedReady
+                ? "Sign in and pick a project first — the browser runs on that project's computer."
                 : undefined
             }
           >
@@ -797,11 +809,17 @@ export function WebmcpInspectorTab() {
         />
       ) : null}
 
-      {!live && HOSTED_MODE && !activeProjectId ? (
+      {!live && HOSTED_MODE && !hostedReady ? (
         <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-          A hosted browser runs on your MCPJam computer, so it needs a project
-          to run under. Pick one to get started — and note it cannot reach
-          anything on your own network, including localhost.
+          {/* Names BOTH reasons, because from here they are indistinguishable
+              and only one of them used to be mentioned. A signed-out viewer
+              told to "pick a project" goes looking for a picker that is not
+              there for them; the hosted route refuses their bearer outright,
+              so it is not a nicety. */}
+          A hosted browser runs on your own MCPJam computer, so it needs a
+          signed-in account and a project to run under. Pick a project to get
+          started — and note it cannot reach anything on your own network,
+          including localhost.
         </p>
       ) : null}
 
