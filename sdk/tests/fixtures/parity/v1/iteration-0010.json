@@ -77,6 +77,6 @@
         "reason": "observed"
       }
     ],
-    "stageAnalyzerVersion": 5
+    "stageAnalyzerVersion": 8
   }
 }

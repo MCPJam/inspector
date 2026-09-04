@@ -53,6 +53,7 @@ import {
 } from "@mcpjam/sdk/host-config/internal";
 import type {
   CspDomainSet,
+  Harness,
   HostConfigConnectionDefaults,
   HostConfigMcpProfileV1,
   McpToolResultImageRenderPlacement,
@@ -110,7 +111,7 @@ export type HostConfigComputerV2 = {
 
 /** True when this attachment is platform-minted and therefore not editable. */
 export function isReadOnlyHostComputer(
-  computer: HostConfigComputerV2 | undefined
+  computer: HostConfigComputerV2 | undefined,
 ): boolean {
   return computer !== undefined && computer.kind !== "personal";
 }
@@ -118,13 +119,19 @@ export function isReadOnlyHostComputer(
 export type McpToolResultImageRendering = McpToolResultImageRenderingPolicy;
 
 /**
- * Real agent harness for this host. `"claude-code"` / `"codex"` run the real CLI
- * runtime (the `@ai-sdk/harness-claude-code` / `@ai-sdk/harness-codex` adapter)
- * inside the attached personal computer instead of MCPJam's emulated engine.
- * Absent ⇒ emulated. Mirrors the SDK's `Harness` type; the backend enforces
- * `harness ⇒ computer`.
+ * Real agent harness for this host. `"claude-code"` / `"codex"` / `"cursor"` run
+ * the real CLI runtime (the `@ai-sdk/harness-claude-code` /
+ * `@ai-sdk/harness-codex` / `@ai-sdk/harness-cursor` adapter) inside the
+ * attached personal computer instead of MCPJam's emulated engine. Absent ⇒
+ * emulated. The backend enforces `harness ⇒ computer`.
+ *
+ * ALIASED, not re-listed. This was a hand-copied union that had to be edited
+ * in lockstep with `HARNESS_IDS`, and the dangerous direction is narrow drift:
+ * the editor would reject a harness the API and the backend validator both
+ * accept, which reads as "that host cannot be built" rather than as a stale
+ * type. The name stays because 60+ files import it from here.
  */
-export type HostConfigHarnessV2 = "claude-code" | "codex";
+export type HostConfigHarnessV2 = Harness;
 
 /**
  * Mutable input shape. All fields are required at write time so the editor
@@ -330,7 +337,7 @@ export const DEFAULT_SEEDED_HOST_MODEL_ID = "anthropic/claude-haiku-4.5";
 // CLI. Cast to the strict client aggregate — the runtime object is
 // field-identical (guarded by host-template-seed-parity.test.ts).
 export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
-  partial?: Partial<HostConfigInputV2>
+  partial?: Partial<HostConfigInputV2>,
 ) => HostConfigInputV2;
 
 /**
@@ -349,7 +356,7 @@ export const emptyHostConfigInputV2 = sdkEmptyHostConfigInputV2 as unknown as (
  * "attach one", instead of silently claiming a box the user never attached.
  */
 export function withoutReadOnlyComputer(
-  input: HostConfigInputV2
+  input: HostConfigInputV2,
 ): HostConfigInputV2 {
   if (!isReadOnlyHostComputer(input.computer)) return input;
   const { computer: _dropped, ...rest } = input;
@@ -358,7 +365,7 @@ export function withoutReadOnlyComputer(
 
 export function cloneHostTemplateInput(
   value: unknown,
-  options: { themeMode?: ThemeMode } = {}
+  options: { themeMode?: ThemeMode } = {},
 ): HostConfigInputV2 {
   const input = deepCloneJsonValue(value) as HostConfigInputV2;
   if (options.themeMode !== undefined) {
@@ -443,7 +450,7 @@ export function hostConfigDtoToInput(dto: HostConfigDtoV2): HostConfigInputV2 {
                 ? { mcpProtocolVersionOverride: v.mcpProtocolVersionOverride }
                 : {}),
             },
-          ])
+          ]),
         )
       : undefined,
   };
@@ -501,7 +508,7 @@ export function resolveEffectiveHostCapabilities(args: {
     return buildHostCapabilities(
       matrix,
       style?.hostCapabilitiesAugment,
-      style?.hostCapabilitiesReplacement
+      style?.hostCapabilitiesReplacement,
     );
   }
   // 2. Legacy override path — strip-then-return semantics preserved from
@@ -533,7 +540,7 @@ export function resolveEffectiveHostCapabilities(args: {
  * stays one-grep-able.
  */
 export function resolveClientInfo(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.initialize?.clientInfo;
 }
@@ -547,7 +554,7 @@ export function resolveClientInfo(
  * callers never see it here.
  */
 export function resolveSupportedProtocolVersions(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): string[] | undefined {
   return profile?.initialize?.supportedProtocolVersions;
 }
@@ -562,7 +569,7 @@ export function resolveSupportedProtocolVersions(
  * layer (base-protocol `initialize` vs. MCP Apps `ui/initialize`).
  */
 export function resolveHostInfo(
-  profile: HostConfigMcpProfileV1 | undefined
+  profile: HostConfigMcpProfileV1 | undefined,
 ): Record<string, unknown> | undefined {
   return profile?.apps?.uiInitialize?.hostInfo;
 }
@@ -616,7 +623,7 @@ export function resolveEffectiveCompatRuntime(args: {
     injected: true,
     capabilities: mergeOpenAiAppsCapabilities(
       baseCapabilities,
-      override?.openaiAppsOverrides
+      override?.openaiAppsOverrides,
     ),
   };
 }
@@ -633,7 +640,7 @@ export function resolveEffectiveCompatRuntime(args: {
  */
 export function mergeOpenAiAppsCapabilities(
   base: ResolvedOpenAiAppsCapabilities,
-  override: OpenAiAppsCapabilities | undefined
+  override: OpenAiAppsCapabilities | undefined,
 ): ResolvedOpenAiAppsCapabilities {
   if (!override) return base;
   return {
@@ -669,7 +676,7 @@ export function mergeOpenAiAppsCapabilities(
  */
 export function mergeMcpAppsCapabilities(
   base: ResolvedMcpAppsCapabilities,
-  override: McpAppsCapabilities | undefined
+  override: McpAppsCapabilities | undefined,
 ): ResolvedMcpAppsCapabilities {
   if (!override) return base;
   const modesOverride = override.availableDisplayModes;
@@ -727,6 +734,7 @@ export function mergeMcpAppsCapabilities(
       override.resourcePrefersBorder ?? base.resourcePrefersBorder,
     downloadFile: override.downloadFile ?? base.downloadFile,
     requestTeardown: override.requestTeardown ?? base.requestTeardown,
+    safeAreaInsets: override.safeAreaInsets ?? base.safeAreaInsets,
     widgetDisplayModeRequests:
       override.widgetDisplayModeRequests ?? base.widgetDisplayModeRequests,
   };
@@ -797,7 +805,7 @@ export function resolveEffectiveMcpAppsCapabilities(args: {
  * `resolveEffectiveHostCapabilities`.
  */
 export function hostCapabilitiesOverrideToMatrix(
-  legacy: Record<string, unknown> | undefined
+  legacy: Record<string, unknown> | undefined,
 ): McpAppsCapabilities | undefined {
   if (legacy === undefined) return undefined;
   return {
@@ -848,6 +856,13 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
     // canonicalizer drops it), but any boolean leaf is a real setting.
     (profile.toolListChanged === undefined ||
       Object.values(profile.toolListChanged).every(
+        (value) => value === undefined,
+      )) &&
+    // Same per-leaf emptiness as `toolListChanged`. Omitting this collapsed
+    // the whole profile the moment cancellation was the ONLY thing set, so
+    // turning an era off silently wrote nothing.
+    (profile.toolCallCancellation === undefined ||
+      Object.values(profile.toolCallCancellation).every(
         (value) => value === undefined
       )) &&
     !profile.apps &&
@@ -857,7 +872,7 @@ export function isMcpProfileEmpty(profile: HostConfigMcpProfileV1): boolean {
 
 export function setMcpAppsOverridesOnDraft(
   prev: HostConfigInputV2,
-  next: McpAppsCapabilities | undefined
+  next: McpAppsCapabilities | undefined,
 ): HostConfigInputV2 {
   const hasKeys = next !== undefined && Object.keys(next).length > 0;
   const prevProfile = prev.mcpProfile;
@@ -899,7 +914,7 @@ export function setMcpAppsOverridesOnDraft(
  * `HostConfigMcpProfileV1` type at the boundary.
  */
 function cloneMcpProfile(
-  profile: HostConfigMcpProfileV1
+  profile: HostConfigMcpProfileV1,
 ): HostConfigMcpProfileV1 {
   return deepCloneJsonValue(profile) as HostConfigMcpProfileV1;
 }
@@ -915,7 +930,7 @@ function cloneChatUiOverride(override: ChatUiOverride): ChatUiOverride {
 }
 
 function deepCloneJsonRecord(
-  value: Record<string, unknown>
+  value: Record<string, unknown>,
 ): Record<string, unknown> {
   return deepCloneJsonValue(value) as Record<string, unknown>;
 }
@@ -935,25 +950,25 @@ function deepCloneJsonValue(value: unknown): unknown {
 }
 
 export function cloneModelVisibleMcpToolResults(
-  value: ModelVisibleMcpToolResults
+  value: ModelVisibleMcpToolResults,
 ): ModelVisibleMcpToolResults {
   return deepCloneJsonValue(value) as ModelVisibleMcpToolResults;
 }
 
 export function cloneMcpToolResultImageRendering(
-  value: McpToolResultImageRenderingPolicy
+  value: McpToolResultImageRenderingPolicy,
 ): McpToolResultImageRenderingPolicy {
   return deepCloneJsonValue(value) as McpToolResultImageRenderingPolicy;
 }
 
 export function isMcpDirectContentImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return policy?.directContent?.image ?? true;
 }
 
 export function isMcpEmbeddedResourceBlobImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return (
     (policy?.embeddedResources?.blob?.enabled ?? true) &&
@@ -962,7 +977,7 @@ export function isMcpEmbeddedResourceBlobImageVisible(
 }
 
 export function isMcpLinkedResourceBlobImageVisible(
-  policy: ModelVisibleMcpToolResults | undefined
+  policy: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   return (
     (policy?.linkedResources?.blob?.enabled ?? true) &&
@@ -972,7 +987,7 @@ export function isMcpLinkedResourceBlobImageVisible(
 
 export function setMcpDirectContentImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -985,7 +1000,7 @@ export function setMcpDirectContentImageVisible(
 
 export function setMcpEmbeddedResourceBlobImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -1001,7 +1016,7 @@ export function setMcpEmbeddedResourceBlobImageVisible(
 
 export function setMcpLinkedResourceBlobImageVisible(
   policy: ModelVisibleMcpToolResults | undefined,
-  visible: boolean
+  visible: boolean,
 ): ModelVisibleMcpToolResults {
   return {
     ...policy,
@@ -1016,32 +1031,32 @@ export function setMcpLinkedResourceBlobImageVisible(
 }
 
 export function getMcpToolResultImageRenderPlacement(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): McpToolResultImageRenderPlacement {
   return policy?.placement ?? "inline";
 }
 
 export function isMcpDirectContentImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.directContent?.image ?? true;
 }
 
 export function isMcpEmbeddedResourceBlobImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.embeddedResources?.blob?.image ?? true;
 }
 
 export function isMcpLinkedResourceBlobImageRendered(
-  policy: McpToolResultImageRenderingPolicy | undefined
+  policy: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   return policy?.linkedResources?.blob?.image ?? true;
 }
 
 export function setMcpToolResultImageRenderPlacement(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  placement: McpToolResultImageRenderPlacement
+  placement: McpToolResultImageRenderPlacement,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -1051,7 +1066,7 @@ export function setMcpToolResultImageRenderPlacement(
 
 export function setMcpDirectContentImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -1064,7 +1079,7 @@ export function setMcpDirectContentImageRendered(
 
 export function setMcpEmbeddedResourceBlobImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -1080,7 +1095,7 @@ export function setMcpEmbeddedResourceBlobImageRendered(
 
 export function setMcpLinkedResourceBlobImageRendered(
   policy: McpToolResultImageRenderingPolicy | undefined,
-  rendered: boolean
+  rendered: boolean,
 ): McpToolResultImageRenderingPolicy {
   return {
     ...policy,
@@ -1096,7 +1111,7 @@ export function setMcpLinkedResourceBlobImageRendered(
 
 export function gateMcpToolResultImageRenderingByModelVisibility(
   renderingPolicy: McpToolResultImageRenderingPolicy | undefined,
-  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined
+  modelVisiblePolicy: ModelVisibleMcpToolResults | undefined,
 ): McpToolResultImageRenderingPolicy | undefined {
   const directVisible = isMcpDirectContentImageVisible(modelVisiblePolicy);
   const embeddedVisible =
@@ -1131,7 +1146,7 @@ export function gateMcpToolResultImageRenderingByModelVisibility(
  */
 export function hostConfigInputsEqual(
   a: HostConfigInputV2,
-  b: HostConfigInputV2
+  b: HostConfigInputV2,
 ): boolean {
   if (a.hostStyle !== b.hostStyle) return false;
   if (a.modelId !== b.modelId) return false;
@@ -1146,14 +1161,14 @@ export function hostConfigInputsEqual(
   if (
     !optionalModelVisibleMcpToolResultsEq(
       a.modelVisibleMcpToolResults,
-      b.modelVisibleMcpToolResults
+      b.modelVisibleMcpToolResults,
     )
   )
     return false;
   if (
     !optionalMcpToolResultImageRenderingEq(
       a.mcpToolResultImageRendering,
-      b.mcpToolResultImageRendering
+      b.mcpToolResultImageRendering,
     )
   ) {
     return false;
@@ -1187,7 +1202,7 @@ export function hostConfigInputsEqual(
   if (
     !optionalJsonRecordEq(
       a.hostCapabilitiesOverride,
-      b.hostCapabilitiesOverride
+      b.hostCapabilitiesOverride,
     )
   )
     return false;
@@ -1197,7 +1212,7 @@ export function hostConfigInputsEqual(
   if (
     !serverConnectionOverridesEqual(
       a.serverConnectionOverrides,
-      b.serverConnectionOverrides
+      b.serverConnectionOverrides,
     )
   )
     return false;
@@ -1211,10 +1226,10 @@ export function hostConfigInputsEqual(
  */
 export function serverConnectionOverridesEqual(
   a: HostConfigInputV2["serverConnectionOverrides"],
-  b: HostConfigInputV2["serverConnectionOverrides"]
+  b: HostConfigInputV2["serverConnectionOverrides"],
 ): boolean {
   const normalize = (
-    overrides: HostConfigInputV2["serverConnectionOverrides"]
+    overrides: HostConfigInputV2["serverConnectionOverrides"],
   ): Record<
     string,
     {
@@ -1260,7 +1275,7 @@ export function serverConnectionOverridesEqual(
 
 function optionalMcpProfileEq(
   a: HostConfigMcpProfileV1 | undefined,
-  b: HostConfigMcpProfileV1 | undefined
+  b: HostConfigMcpProfileV1 | undefined,
 ): boolean {
   // Same undefined-vs-empty rule as optionalJsonRecordEq: backend hashes
   // `undefined` and `{ profileVersion: 1 }` distinctly, so flipping
@@ -1276,7 +1291,7 @@ function optionalMcpProfileEq(
 
 function optionalModelVisibleMcpToolResultsEq(
   a: ModelVisibleMcpToolResults | undefined,
-  b: ModelVisibleMcpToolResults | undefined
+  b: ModelVisibleMcpToolResults | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1285,7 +1300,7 @@ function optionalModelVisibleMcpToolResultsEq(
 
 function optionalMcpToolResultImageRenderingEq(
   a: McpToolResultImageRenderingPolicy | undefined,
-  b: McpToolResultImageRenderingPolicy | undefined
+  b: McpToolResultImageRenderingPolicy | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1294,7 +1309,7 @@ function optionalMcpToolResultImageRenderingEq(
 
 function optionalJsonRecordEq(
   a: Record<string, unknown> | undefined,
-  b: Record<string, unknown> | undefined
+  b: Record<string, unknown> | undefined,
 ): boolean {
   // Treat `undefined` (use profile preset) and `{}` (explicit empty override)
   // as distinct values — flipping between them changes the resolved blob and
@@ -1312,7 +1327,7 @@ function optionalJsonRecordEq(
  */
 function optionalChatUiOverrideEq(
   a: ChatUiOverride | undefined,
-  b: ChatUiOverride | undefined
+  b: ChatUiOverride | undefined,
 ): boolean {
   if (a === undefined && b === undefined) return true;
   if (a === undefined || b === undefined) return false;
@@ -1331,7 +1346,7 @@ function stringArrayEq(a: string[], b: string[]): boolean {
 
 function jsonRecordEq(
   a: Record<string, unknown>,
-  b: Record<string, unknown>
+  b: Record<string, unknown>,
 ): boolean {
   // Use the shared canonicalizer so nested object key order doesn't make
   // semantically equal records compare unequal — e.g.
