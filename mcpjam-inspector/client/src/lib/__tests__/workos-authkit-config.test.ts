@@ -48,6 +48,56 @@ describe("workos authkit config", () => {
     });
   });
 
+  // The staging regression, as a test. AuthKit's initialize() makes NO network
+  // call unless the page's own cookies carry `workos-has-session`, and only a
+  // same-origin response can set it — so a hosted deployment without a
+  // same-site WorkOS domain has to proxy through itself or every reload reads
+  // as signed out and drops the user to a guest.
+  it("proxies AuthKit calls through its own origin on a hosted deployment", () => {
+    expect(
+      resolveWorkosClientOptions(
+        { DEV: false },
+        { hostname: "staging.mcpjam.com", port: "", protocol: "https:" },
+        true
+      )
+    ).toEqual({
+      apiHostname: "staging.mcpjam.com",
+      https: true,
+    });
+  });
+
+  // Every preview gets a different hostname, discovered only after deploy —
+  // so this can never come from a build-time variable.
+  it("proxies AuthKit calls through a preview's own origin", () => {
+    expect(
+      resolveWorkosClientOptions(
+        { DEV: false },
+        {
+          hostname: "mcp-inspector-pr-4501.up.railway.app",
+          port: "",
+          protocol: "https:",
+        },
+        true
+      )
+    ).toEqual({
+      apiHostname: "mcp-inspector-pr-4501.up.railway.app",
+      https: true,
+    });
+  });
+
+  // Prod pins `auth.mcpjam.com`, which is same-site with the app and needs no
+  // proxy. An explicit hostname must keep winning or this change would quietly
+  // reroute production sign-in through our own server.
+  it("keeps an explicit host override ahead of the hosted same-origin default", () => {
+    expect(
+      resolveWorkosClientOptions(
+        { DEV: false, VITE_WORKOS_API_HOSTNAME: "auth.mcpjam.com" },
+        { hostname: "app.mcpjam.com", port: "", protocol: "https:" },
+        true
+      )
+    ).toEqual({ apiHostname: "auth.mcpjam.com" });
+  });
+
   it("allows explicit WorkOS API host overrides", () => {
     expect(
       resolveWorkosClientOptions(

@@ -88,6 +88,7 @@ export const mcpAppsCapabilitiesSchema = z.object({
   resourcePrefersBorder: z.boolean().optional(),
   downloadFile: z.boolean().optional(),
   requestTeardown: z.boolean().optional(),
+  safeAreaInsets: z.boolean().optional(),
   widgetDisplayModeRequests: z
     .enum(["accept", "user-initiated-only", "decline"])
     .optional()
@@ -226,7 +227,7 @@ const hostConfigTemplateSchema = z.object({
       workdir: z.string().optional(),
     })
     .optional(),
-  harness: z.enum(["claude-code", "codex"]).optional(),
+  harness: z.enum(["claude-code", "codex", "cursor"]).optional(),
   connectionDefaults: z.object({
     headers: z.record(z.string(), z.string()),
     requestTimeout: z.number(),
