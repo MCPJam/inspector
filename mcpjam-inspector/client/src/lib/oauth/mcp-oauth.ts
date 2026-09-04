@@ -12,6 +12,7 @@ import {
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
   isPrivateHost,
   isStatelessProtocolVersion,
   projectOAuthTraceSnapshot,
@@ -617,6 +618,7 @@ async function executeRequestViaProxy(
     response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
     {
       allowLoopback: isLoopbackOAuthUrl(serverUrl),
+      allowPrivateNetwork: !HOSTED_MODE,
     }
   );
 
@@ -673,7 +675,7 @@ function createTraceResponseFromResult(
  */
 function assertFinalResponseUrlAllowed(
   finalUrl: string | undefined,
-  options: { allowLoopback?: boolean } = {}
+  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {}
 ): void {
   if (!finalUrl) return;
   if (options.allowLoopback && isLoopbackOAuthUrl(finalUrl)) {
@@ -685,6 +687,16 @@ function assertFinalResponseUrlAllowed(
   } catch {
     return;
   }
+  // The never-dialable floor is checked first and ignores every opt-in: a
+  // response that came back from cloud metadata is not one to consume, in any
+  // mode. (The proxy refuses to make that request at all; this is the
+  // browser-side half for a direct fetch.)
+  if (isNeverDialableHost(host)) {
+    throw new Error(
+      `Refusing OAuth response from link-local or cloud-metadata host "${host}" (possible SSRF via redirect)`
+    );
+  }
+  if (options.allowPrivateNetwork) return;
   if (isPrivateHost(host)) {
     throw new Error(
       `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
@@ -720,6 +732,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         : directResponse.url;
       assertFinalResponseUrlAllowed(finalUrl, {
         allowLoopback: isLoopbackOAuthUrl(serverUrl),
+        allowPrivateNetwork: !HOSTED_MODE,
       });
       response = {
         status: directResponse.status,
@@ -2760,6 +2773,10 @@ export async function initiateOAuth(
       // itself loopback does the SSRF guard permit loopback metadata fetches
       // (a public server can never steer one at the user's own 127.0.0.1).
       allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      // Outside hosted mode the fetch runs on the developer's own machine, so
+      // the wider private allowance applies: a server on their LAN, or an
+      // authorization server named for loopback, is the ordinary local case.
+      allowPrivateMetadataFetch: !HOSTED_MODE,
       allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
@@ -3588,6 +3605,8 @@ export async function handleOAuthCallback(
         // Exact-origin loopback allowance (see initiate path): opt in only for a
         // user-configured loopback server, never for a public/remote one.
         allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        // See the initiate path.
+        allowPrivateMetadataFetch: !HOSTED_MODE,
         allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
