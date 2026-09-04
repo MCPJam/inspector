@@ -22,7 +22,10 @@
  * Pure + browser-safe: no `convex/values`, no `ctx.db`, no Node-only APIs.
  */
 
-import type { McpProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
+import {
+  isStatelessProtocolVersion,
+  type McpProtocolVersion,
+} from "../mcp-client-manager/mcp-protocol-version.js";
 
 export type { McpProtocolVersion };
 
@@ -61,15 +64,16 @@ export const HOST_CONFIG_SCHEMA_VERSION_V2 = 2;
  * Adding a runtime is a one-line addition here + a registry adapter + tests —
  * never a schema migration (absent ⇒ emulated still hashes byte-identically).
  */
-export const HARNESS_IDS = ["claude-code", "codex"] as const;
+export const HARNESS_IDS = ["claude-code", "codex", "cursor"] as const;
 
 /**
  * Which real agent **harness** runs a host's turn. Absent ⇒ the MCPJam
  * **emulated** loop — the only historical behavior, so pre-feature rows hash
  * byte-identically (the key is simply never written). `"claude-code"` runs the
  * turn inside a real Claude Code runtime via the AI SDK harness; `"codex"` runs
- * OpenAI Codex. Extensible to additional runtimes (e.g. `"pi"`) later without a
- * schema migration.
+ * OpenAI Codex; `"cursor"` runs the Cursor CLI (`cursor-agent`) over ACP.
+ * Extensible to additional runtimes (e.g. `"pi"`) later without a schema
+ * migration.
  */
 export type Harness = (typeof HARNESS_IDS)[number];
 
@@ -242,6 +246,25 @@ export const MRTR_SUPPORT_MODES = [
 ] as const satisfies readonly MrtrSupport[];
 
 /**
+ * Which cancellation leaf a connection on `version` is governed by.
+ *
+ * The two leaves are measured per era, but a CONNECTION only ever speaks one,
+ * so the leaf is resolved once — where the version is already known — and the
+ * client is handed a single yes/no. It never has to ask the live connection
+ * what era it landed on.
+ *
+ * An unresolved version (`"auto"`, or absent) reads as `"modern"`: auto
+ * negotiates newest-first, so that is the era such a connection lands on
+ * against any server that supports it.
+ */
+export function cancellationLeafForVersion(
+  version: string | undefined
+): "legacy" | "modern" {
+  if (version === undefined || version === "auto") return "modern";
+  return isStatelessProtocolVersion(version) ? "modern" : "legacy";
+}
+
+/**
  * The conformance-knob keys shared verbatim between the public `HostMcp`
  * authoring shape and the internal `mcpProfile` (same names on both sides),
  * so the profile ⇄ HostMcp round-trip helpers can copy them in one loop
@@ -251,6 +274,7 @@ export const MRTR_SUPPORT_MODES = [
 export const CONFORMANCE_PROFILE_KEYS = [
   "paginationTraversal",
   "mrtrSupport",
+  "toolCallCancellation",
 ] as const;
 
 export type CspDomainSet = {
@@ -285,6 +309,28 @@ export type HostConfigMcpProfileV1 = {
   // Whether the client drives MRTR retry rounds at all. WHICH elicitation
   // modes it fulfills stays in `clientCapabilities.elicitation`.
   mrtrSupport?: MrtrSupport;
+  // Whether cancelling an in-flight tool call reaches the server, or only ends
+  // the turn locally while the server runs it to completion.
+  //
+  // Measured PER ERA, because a host really can be right on one and wrong on
+  // the other: MCPJam sent `notifications/cancelled` correctly on 2025 while
+  // never aborting the stream on 2026 (inspector#4474). Through the 2026
+  // migration that split is common, and one boolean cannot say it.
+  //
+  // A record of independently measured leaves, like `toolListChanged` — absent
+  // per leaf is the conforming answer, so a fully cancelling client writes
+  // nothing and only an explicit `false` is ever stored.
+  //
+  // The era selects the leaf, not the transport: a 2026 stdio connection is
+  // `modern` even though its mechanism is `notifications/cancelled`. What is
+  // modeled is whether the host cancels on that era's connections, not which
+  // message it sends.
+  toolCallCancellation?: {
+    /** Every 2025 revision. */
+    legacy?: boolean;
+    /** `2026-07-28`. */
+    modern?: boolean;
+  };
   // How the client handles `notifications/tools/list_changed` (probe-measured;
   // MCP spec "List Changed Notification" under server/tools, every revision
   // since 2024-11-05). Two independently-measured facts, not one flag:
@@ -474,6 +520,17 @@ export type McpAppsCapabilities = {
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
+  /**
+   * Whether the host sends `hostContext.safeAreaInsets` at all. SEP-1865
+   * makes the key optional and hosts split cleanly: Claude reports a real
+   * 12px inset on every edge, while Slackbot, Cursor, VS Code, Codex and
+   * Le Chat omit it, so a widget reading `insets.top` gets `undefined`
+   * rather than a zero.
+   *
+   * About the DECLARATION, not the value — a host reporting `{0,0,0,0}` is
+   * `true` here, because it answered.
+   */
+  safeAreaInsets?: boolean;
   // Host policy for `ui/request-display-mode` originating from the widget.
   //   "accept": grant the requested mode
   //   "user-initiated-only": grant only after the user moved off `inline`
