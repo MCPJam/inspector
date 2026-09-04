@@ -61,7 +61,50 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # First use of actions/cache in this repo, so the reasoning lives here and
+      # the other jobs point back at it.
+      #
+      # `npm ci` runs seven times per PR — six jobs in this workflow, one in
+      # lint.yml — at 49-306 s each against a 1316-package tree. Only esbuild
+      # has a postinstall, so that is raw extract-and-link I/O, 25-57 % of every
+      # job. setup-node's `cache: npm` is already on everywhere and does not
+      # help: it caches ~/.npm, not node_modules.
+      #
+      # Four decisions worth keeping:
+      #  - Skip `npm ci` on a hit rather than running it anyway. `npm ci`
+      #    deletes node_modules before installing, so an unconditional install
+      #    makes the cache a pure download tax.
+      #  - No restore-keys. A near-miss restore still reports cache-hit=false,
+      #    so `npm ci` would run and immediately delete the tree just
+      #    downloaded. Partial restores help an npm *download* cache; for
+      #    node_modules they are strictly waste.
+      #  - Explicit paths, not `**/node_modules`. The glob would walk the whole
+      #    tree and also match node_modules/x/node_modules, which the root entry
+      #    already covers.
+      #  - A separate key from lint.yml's bare runner. Both are linux-x64 so the
+      #    resolved optional deps match, but the tree carries prebuilt native
+      #    artifacts (node-pty, @biomejs/cli-*, @next/swc-*, @cloudflare/
+      #    workerd-*, esbuild, @oven/bun-*) and node-pty is the one that can
+      #    fall back to compiling. One extra cache entry removes the question.
+      #
+      # Every job attempts the save and the losers log a benign "Cache already
+      # exists". Be honest about the cold case: the first run after any
+      # package-lock.json change gets no benefit at all — every job misses and
+      # installs, and only then is the cache populated for later runs on that
+      # lockfile. With cancel-in-progress above, a cancelled job also skips its
+      # save.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Install ripgrep (repo-guard checks in `npm test`)
@@ -112,7 +155,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Build the SDK
@@ -148,7 +203,19 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
+      # Same node_modules cache as the `test` job — see the rationale there.
+      - name: Cache workspace node_modules
+        id: node-modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            */node_modules
+            mcpjam-inspector/*/node_modules
+          key: nm-playwright-v1.62.1-noble-node${{ env.NODE_VERSION }}-${{ hashFiles('package-lock.json') }}
+
       - name: Install workspace dependencies
+        if: steps.node-modules.outputs.cache-hit != 'true'
         run: npm ci --legacy-peer-deps
 
       - name: Build inspector
