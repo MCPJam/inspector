@@ -104,6 +104,13 @@ export interface SupervisedProcessHandle {
   stderr: ReadableStream<Uint8Array>;
   wait: () => Promise<{ exitCode: number }>;
   kill: () => Promise<void>;
+  /**
+   * The first bytes the process wrote to stderr, kept by the supervisor
+   * regardless of who is reading the stream. `stderr` above is handed to the
+   * adapter, which takes the reader lock; a provider diagnosing a bridge that
+   * died cannot read it again, and this is what it reads instead.
+   */
+  stderrHead: () => string;
 }
 
 export class SupervisorError extends Error {}
@@ -740,6 +747,7 @@ export class LocalHarnessSupervisor {
         await killTree();
         await exited;
       },
+      stderrHead: () => stderrHead,
     };
   }
 

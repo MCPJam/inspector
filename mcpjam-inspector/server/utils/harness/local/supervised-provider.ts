@@ -442,6 +442,7 @@ async function describeFailedBridge(handle: {
   stdout: ReadableStream<Uint8Array>;
   stderr: ReadableStream<Uint8Array>;
   wait: () => Promise<{ exitCode: number }>;
+  stderrHead?: () => string;
 }): Promise<string> {
   const exit = await Promise.race([
     handle.wait().then((r) => `exit code ${r.exitCode}`),
@@ -449,9 +450,13 @@ async function describeFailedBridge(handle: {
       setTimeout(() => resolveRace("still running"), 500),
     ),
   ]);
+  // The supervisor's own copy first: the adapter holds the stream's reader
+  // lock from the moment it is handed the process, so a read here finds
+  // nothing even when the bridge died with a full stack trace on stderr.
+  const kept = handle.stderrHead?.() ?? "";
   const [out, err] = await Promise.all([
     readHead(handle.stdout, 1024, 500),
-    readHead(handle.stderr, 2048, 500),
+    kept.length > 0 ? Promise.resolve(kept) : readHead(handle.stderr, 2048, 500),
   ]);
   const parts = [exit];
   if (err.trim().length > 0) parts.push(`stderr: ${JSON.stringify(err.trim())}`);
