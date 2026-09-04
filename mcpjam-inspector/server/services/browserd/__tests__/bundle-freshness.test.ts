@@ -93,8 +93,10 @@ const TYPE_ONLY_DAEMON_MODULES = new Set([
  */
 const REQUIRED_NON_DAEMON_INPUTS = [
   "server/services/browserd/protocol.ts",
+  "server/services/browserd/frame-stream.ts",
   "server/services/webmcp-inspector/launch-args.ts",
   "server/services/webmcp-inspector/frame-throttle.ts",
+  "server/services/webmcp-inspector/frame-pacer.ts",
   "shared/jpeg-dimensions.ts",
 ];
 

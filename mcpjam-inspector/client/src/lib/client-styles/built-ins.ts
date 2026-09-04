@@ -258,6 +258,9 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Slackbot omits `hostContext.safeAreaInsets` entirely — the
+  // 2026-09-03 captures carry no such key in either theme.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 };
 

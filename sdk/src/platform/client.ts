@@ -36,6 +36,7 @@ import type {
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalStepResult,
   PlatformComputerAttached,
   PlatformComputerReset,
@@ -2099,6 +2100,31 @@ export class PlatformApiClient {
           outagePolicy: params.outagePolicy,
         },
       },
+      options
+    );
+  }
+
+  /**
+   * One page of a suite's settings history, newest first.
+   *
+   * Rows carry no snapshots; this answers "what changed and when", not "what
+   * did the whole configuration look like".
+   */
+  listEvalSuiteRevisions(
+    params: {
+      projectId: string;
+      suiteId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalSuiteRevision>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/revisions`,
+      { query: { cursor: params.cursor, limit: params.limit } },
       options
     );
   }

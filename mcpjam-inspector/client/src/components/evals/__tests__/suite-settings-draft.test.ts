@@ -525,3 +525,22 @@ describe("a clear is spelled the way the mutation accepts", () => {
     expect("defaultPassCriteria" in args).toBe(false);
   });
 });
+
+describe("describeChange — verdict policy defaults", () => {
+  test("a repetitions edit reviews as the setting that moved, not as Validity", () => {
+    const before: SuiteSettingsValues = {
+      ...BASE,
+      verdictPolicyVersion: 2,
+      verdictPolicyDefaults: { repetitions: 3, passThreshold: 0.8 },
+    };
+    const after: SuiteSettingsValues = {
+      ...before,
+      verdictPolicyDefaults: { repetitions: 5, passThreshold: 0.8 },
+    };
+    const row = describeChange("verdictPolicyDefaults", before, after);
+    expect(row.label).not.toBe("Validity");
+    expect(row.before).toContain("3 repetitions");
+    expect(row.after).toContain("5 repetitions");
+    expect(row.before).not.toBe(row.after);
+  });
+});

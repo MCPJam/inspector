@@ -135,7 +135,9 @@ describe("the agent browser pane", () => {
       leaseHeld: false,
     };
     renderBody();
-    expect(await screen.findByTestId("rail-browser-needs-chromium")).toBeTruthy();
+    expect(
+      await screen.findByTestId("rail-browser-needs-chromium"),
+    ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /install/i }));
     await waitFor(() => expect(api.installs).toBe(1));
   });
@@ -158,7 +160,9 @@ describe("the agent browser pane", () => {
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
 
-    await userEvent.click(screen.getByRole("button", { name: /take control/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /take control/i }),
+    );
     expect(await screen.findByText(/you have control/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /hand back/i })).toBeTruthy();
   });
@@ -265,11 +269,7 @@ describe("the agent browser pane — driving it", () => {
     await deliverFrame();
 
     view.rerender(
-      <LocalBrowserBody
-        projectId="proj-2"
-        consentGranted
-        consentToken="tok"
-      />,
+      <LocalBrowserBody projectId="proj-2" consentGranted consentToken="tok" />,
     );
 
     await waitFor(() =>
@@ -313,6 +313,33 @@ describe("the agent browser pane — driving it", () => {
 
     expect(screen.getByText(/agent is driving/i)).toBeTruthy();
     expect(screen.queryByText(/you have control/i)).toBeNull();
+  });
+});
+
+describe("the agent browser pane — when the grant goes away", () => {
+  it("STOPS SHOWING the browser the moment consent is revoked", async () => {
+    // The picture is of somebody's signed-in browser. The pane's own
+    // placeholder cannot enforce this — the surface renders a frame whenever
+    // there is one — so before this the last captured frame stayed on screen
+    // after the grant was withdrawn. The socket does close on its own, its
+    // nonce carrying a consent fingerprint, but not before the next frame and
+    // never for the one already in state.
+    const view = renderBody();
+    // The socket only opens once a browser is running.
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await deliverFrame();
+
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted={false}
+        consentToken={null}
+      />,
+    );
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+    expect(screen.getByTestId("rail-browser-unconsented")).toBeTruthy();
   });
 });
 

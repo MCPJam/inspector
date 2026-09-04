@@ -121,7 +121,14 @@ export type BrowserAction =
     }
   | {
       kind: "observe";
-      mode: "screenshot" | "dom" | "a11y" | "console" | "url" | "webmcp_tools";
+      mode:
+        | "screenshot"
+        | "text"
+        | "dom"
+        | "a11y"
+        | "console"
+        | "url"
+        | "webmcp_tools";
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.

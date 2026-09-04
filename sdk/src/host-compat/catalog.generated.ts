@@ -390,6 +390,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: true,
+            safeAreaInsets: true,
             widgetDisplayModeRequests: "accept",
           },
           sandbox: {
@@ -698,6 +699,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: true,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: true,
@@ -1180,6 +1182,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -1793,6 +1796,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: false,
@@ -2440,6 +2444,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
@@ -2619,6 +2624,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
@@ -2759,6 +2765,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -3138,6 +3145,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             hostContextChanged: true,
@@ -4031,6 +4039,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             },
           },
           mcpAppsOverrides: {
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             toolInputPartial: true,
             toolCancelled: true,
@@ -4229,6 +4238,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -4317,6 +4327,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -4405,6 +4416,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
@@ -4493,6 +4505,7 @@ export const BUNDLED_HOST_COMPAT_CATALOG = {
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
+            safeAreaInsets: false,
             widgetDisplayModeRequests: "accept",
           },
         },
