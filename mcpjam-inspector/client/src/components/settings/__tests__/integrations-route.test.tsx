@@ -11,6 +11,7 @@ const {
   mockDiscordConnections,
   mockSurfaceSettingsCalls,
   mockDiscord,
+  mockObservability,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -22,13 +23,11 @@ const {
   mockOrgsLoading: { value: false },
   mockSlackConnections: {
     value: undefined as
-      | { workspaces: Array<{ installed: boolean }> }
-      | undefined,
+      { workspaces: Array<{ installed: boolean }> } | undefined,
   },
   mockDiscordConnections: {
     value: undefined as
-      | { workspaces: Array<{ installed: boolean }> }
-      | undefined,
+      { workspaces: Array<{ installed: boolean }> } | undefined,
   },
   mockSurfaceSettingsCalls: {
     value: [] as Array<{
@@ -36,12 +35,24 @@ const {
       surfaceKind?: string;
     }>,
   },
+  // Same recording as the Slack/Discord hook, for the same reason: the flag
+  // has to reach the QUERY. A flagged-off visitor must not fire the
+  // availability read at all.
+  mockObservability: {
+    enabled: false,
+    calls: [] as Array<string | null | undefined>,
+    listCalls: [] as Array<string | null | undefined>,
+    availability: undefined as
+      | { state: "enabled" | "disabled" | "unavailable"; canEdit: boolean }
+      | undefined,
+    destinations: undefined as
+      Array<{ enabled: boolean; paused: unknown }> | undefined,
+  },
   mockDiscord: {
     enabled: false,
     /** null models VITE_MCPJAM_DISCORD_CLIENT_ID being unset. */
     installUrl: "https://discord.com/oauth2/authorize?client_id=1" as
-      | string
-      | null,
+      string | null,
   },
 }));
 
@@ -66,7 +77,7 @@ vi.mock("@/hooks/useOrgSlackSettings", () => ({
   // `surfaceKind: "discord"` query at a backend that may reject it.
   useOrgSlackSettings: (
     organizationId: string | null,
-    surfaceKind?: string
+    surfaceKind?: string,
   ) => {
     mockSurfaceSettingsCalls.value.push({ organizationId, surfaceKind });
     return {
@@ -104,6 +115,30 @@ vi.mock("@/lib/config", () => ({
   discordInstallUrl: () => mockDiscord.installUrl,
 }));
 
+vi.mock("@/hooks/useTraceDestinationsEnabled", () => ({
+  useTraceDestinationsEnabled: () => mockObservability.enabled,
+}));
+
+vi.mock("@/hooks/useOrgTraceDestinations", () => ({
+  useTraceDestinationsAvailability: (organizationId: string | null) => {
+    mockObservability.calls.push(organizationId);
+    // MODELS THE SKIP. The real hook passes "skip" to `useQuery` when the org
+    // id is null and returns `undefined` — so a mock that answered anyway
+    // would let the card behave as if the server had spoken when no query was
+    // ever sent, which is the exact thing these tests exist to pin down.
+    return organizationId === null ? undefined : mockObservability.availability;
+  },
+  // The LIST read is recorded too, not just availability. It is equally
+  // org-scoped and signed-in, and equally throws on a backend that has not
+  // deployed it — so a regression that fired it while flagged off, or for an
+  // organization the server said no to, would otherwise pass every assertion
+  // below while producing exactly the ErrorCard this gating exists to prevent.
+  useOrgTraceDestinations: (organizationId: string | null) => {
+    mockObservability.listCalls.push(organizationId);
+    return { destinations: mockObservability.destinations };
+  },
+}));
+
 import { IntegrationsRoute } from "../IntegrationsRoute";
 
 function renderRoute({
@@ -126,6 +161,8 @@ function renderRoute({
   mockRepos.value = repos;
   mockSlackConnections.value = slackConnections;
   mockSurfaceSettingsCalls.value = [];
+  mockObservability.calls = [];
+  mockObservability.listCalls = [];
   mockNavigate.mockClear();
   return render(
     <MemoryRouter initialEntries={["/settings/integrations"]}>
@@ -248,7 +285,7 @@ describe("IntegrationsRoute", () => {
       // a user who should see no Discord entry whatsoever.
       renderRoute({ availability: { state: "enabled" }, repos: [] });
       const discordCalls = mockSurfaceSettingsCalls.value.filter(
-        (call) => call.surfaceKind === "discord"
+        (call) => call.surfaceKind === "discord",
       );
       expect(discordCalls.length).toBeGreaterThan(0);
       for (const call of discordCalls) {
@@ -334,9 +371,98 @@ describe("IntegrationsRoute", () => {
         // connected" for `repos: []`, so an unscoped query would pass for the
         // wrong reason and keep passing if Discord regressed.
         const card = screen.getByTestId("integration-card-discord");
-        expect(within(card).queryByText("Not connected")).not.toBeInTheDocument();
+        expect(
+          within(card).queryByText("Not connected"),
+        ).not.toBeInTheDocument();
       } finally {
         mockDiscord.enabled = false;
+      }
+    });
+  });
+
+  describe("the Observability card", () => {
+    it("renders nothing, and asks nothing, while the flag is off", () => {
+      mockObservability.enabled = false;
+      mockObservability.availability = { state: "enabled", canEdit: true };
+      renderRoute({ availability: { state: "enabled" }, repos: [] });
+
+      expect(
+        screen.queryByTestId("integration-card-observability"),
+      ).not.toBeInTheDocument();
+      // The flag has to reach the QUERIES, not just the render: a flagged-off
+      // visitor must fire NEITHER org-scoped signed-in read at a backend that
+      // may not have deployed them yet.
+      expect(mockObservability.calls).toEqual([null]);
+      expect(mockObservability.listCalls).toEqual([null]);
+    });
+
+    it("stays hidden when the flag is on but the server says no", () => {
+      mockObservability.enabled = true;
+      mockObservability.availability = { state: "disabled", canEdit: true };
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        expect(
+          screen.queryByTestId("integration-card-observability"),
+        ).not.toBeInTheDocument();
+        expect(mockObservability.calls).toEqual(["org-1"]);
+        // Availability was asked; the LIST was not. A "disabled" answer means
+        // this organization has no destinations surface, so reading its
+        // destinations would be a refusal waiting to happen.
+        expect(mockObservability.listCalls).toEqual([null]);
+      } finally {
+        mockObservability.enabled = false;
+      }
+    });
+
+    it("counts the destinations that are actually streaming", () => {
+      mockObservability.enabled = true;
+      mockObservability.availability = { state: "enabled", canEdit: true };
+      mockObservability.destinations = [
+        { enabled: true, paused: null },
+        { enabled: false, paused: null },
+      ];
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        const card = screen.getByTestId("integration-card-observability");
+        expect(
+          within(card).getByText("1 destination streaming"),
+        ).toBeInTheDocument();
+      } finally {
+        mockObservability.enabled = false;
+        mockObservability.destinations = undefined;
+      }
+    });
+
+    it("says a paused destination needs attention, ahead of any count", () => {
+      mockObservability.enabled = true;
+      mockObservability.availability = { state: "enabled", canEdit: true };
+      mockObservability.destinations = [
+        { enabled: true, paused: { at: 1, reason: "auth_failed" } },
+      ];
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        const card = screen.getByTestId("integration-card-observability");
+        expect(
+          within(card).getByText("Paused — needs attention"),
+        ).toBeInTheDocument();
+      } finally {
+        mockObservability.enabled = false;
+        mockObservability.destinations = undefined;
+      }
+    });
+
+    it("stays quiet while the read is in flight, rather than claiming none", () => {
+      mockObservability.enabled = true;
+      mockObservability.availability = { state: "enabled", canEdit: true };
+      mockObservability.destinations = undefined;
+      try {
+        renderRoute({ availability: { state: "enabled" }, repos: [] });
+        const card = screen.getByTestId("integration-card-observability");
+        expect(
+          within(card).queryByText("Not configured"),
+        ).not.toBeInTheDocument();
+      } finally {
+        mockObservability.enabled = false;
       }
     });
   });

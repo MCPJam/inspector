@@ -136,6 +136,7 @@ function renderStep() {
           },
         ]}
         onLeave={vi.fn()}
+        onOpenSession={vi.fn()}
       />
     </div>
   );

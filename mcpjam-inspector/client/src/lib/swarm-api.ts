@@ -12,6 +12,9 @@
  */
 
 import { authFetch } from "@/lib/session-token";
+import { WebApiError } from "@/lib/apis/web/base";
+import type { NormalizedError } from "@mcpjam/sdk/browser";
+import { isNormalizedError } from "@mcpjam/sdk/browser";
 import type { SharedChatThread } from "@/hooks/useSharedChatThreads";
 import type { SwarmStreamEvent } from "@/shared/swarm-stream-events";
 
@@ -79,6 +82,13 @@ export const SWARM_MUTATIONS = {
   /** Sentry-ignore a finding; survives the finding re-firing in later waves. */
   dismissFinding: "swarmWaveInsights:dismissFinding",
   undismissFinding: "swarmWaveInsights:undismissFinding",
+  /**
+   * Stop an in-flight run. Membership-gated backend-side; idempotent, and it
+   * throws `CONFLICT` for a run that already settled on its own. Shipped in the
+   * backend with no caller — the Swarms UI had no stop control at all, so a run
+   * launched by mistake could only be waited out.
+   */
+  cancelJourneyRun: "journeyRuns:cancelJourneyRun",
 } as const;
 
 // ── Convex action names (string-keyed calls) ────────────────────────────────
@@ -362,6 +372,12 @@ export interface SwarmOverviewRun {
    * only for runs without one, so legacy rows render exactly as before.
    */
   swarmRunGroupId?: string;
+  /**
+   * Authored swarm name, present once the backend carries it. Absent for runs
+   * launched outside a swarm and on older backends, so the wave title keeps its
+   * short-id fallback rather than rendering an empty heading.
+   */
+  swarmName?: string;
   status: string;
   summary: JourneyRunSummary;
   goalScoreSummary?: GoalScoreRollup;
@@ -937,20 +953,9 @@ export async function launchJourneyRun(
 
 // ── REST generation ─────────────────────────────────────────────────────────
 
-/**
- * A deterministic check generation suggests for this journey — predicate wire
- * shape, tool name already allowlisted against the grounding snapshot
- * backend-side. Only `toolCalledAtLeastOnce` is ever suggested.
- */
-export interface SwarmSuggestedCheck {
-  type: "toolCalledAtLeastOnce";
-  toolName: string;
-}
-
 export interface SwarmGeneratedJourney {
   name?: string;
   goal: string;
-  suggestedChecks?: SwarmSuggestedCheck[];
 }
 
 export interface SwarmGeneratedPersona {
@@ -990,14 +995,37 @@ async function postGenerate<T>(
     parsed = undefined;
   }
   if (!response.ok) {
-    const rawMessage =
+    const body =
       parsed && typeof parsed === "object"
-        ? (parsed as { message?: unknown }).message
-        : undefined;
+        ? (parsed as Record<string, unknown>)
+        : null;
+    const rawMessage = body?.message;
     const message =
       typeof rawMessage === "string" && rawMessage.length > 0
         ? rawMessage
         : `${fallbackMessage} (${response.status})`;
+    const code =
+      typeof body?.code === "string"
+        ? body.code
+        : typeof body?.error === "string"
+          ? body.error
+          : null;
+    const normalized = isNormalizedError(body?.normalized)
+      ? (body.normalized as NormalizedError)
+      : undefined;
+    const details =
+      body?.details && typeof body.details === "object"
+        ? (body.details as Record<string, unknown>)
+        : undefined;
+    if (normalized) {
+      throw new WebApiError(
+        response.status,
+        code,
+        message,
+        normalized,
+        details,
+      );
+    }
     throw new SwarmGenerateError(response.status, message);
   }
   return parsed as T;
