@@ -24,12 +24,8 @@ describe("ServerSelectionList", () => {
     expect(screen.getByText("Alpha")).toBeInTheDocument();
     expect(screen.getByText("Bravo")).toBeInTheDocument();
     expect(screen.getByText("Charlie")).toBeInTheDocument();
-    expect(
-      screen.getByText("https://alpha.example.com"),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText("https://charlie.example.com"),
-    ).toBeInTheDocument();
+    expect(screen.getByText("https://alpha.example.com")).toBeInTheDocument();
+    expect(screen.getByText("https://charlie.example.com")).toBeInTheDocument();
     // Bravo has no meta, so no second text node under it.
     expect(
       screen.queryByText("https://bravo.example.com"),
@@ -122,9 +118,44 @@ describe("ServerSelectionList", () => {
       />,
     );
     expect(screen.getByTestId("custom-empty")).toBeInTheDocument();
+    expect(screen.queryByText("No servers available.")).not.toBeInTheDocument();
+  });
+
+  /**
+   * BB-49. A failed server and a connected one used to render identically, so
+   * a scenario could be built against a dead server with no warning. The dot
+   * carries the colour; the checkbox's accessible name carries the words, so
+   * the mark is not colour-only.
+   */
+  it("marks a row whose server has a known connection status", () => {
+    render(
+      <ServerSelectionList
+        servers={[{ id: "s_bad", name: "test-bad-url", status: "failed" }]}
+        selectedIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+    const dot = screen.getByTestId("server-status-s_bad");
+    expect(dot).toHaveAttribute("title", "Failed");
+    // A role token, not a literal colour — the dot has to track the theme.
+    expect(dot).toHaveClass("bg-destructive");
+    expect(dot.getAttribute("style")).toBeNull();
     expect(
-      screen.queryByText("No servers available."),
-    ).not.toBeInTheDocument();
+      screen.getByRole("checkbox", { name: "test-bad-url (Failed)" }),
+    ).toBeInTheDocument();
+  });
+
+  // Unknown is not the same claim as disconnected, so the row says nothing.
+  it("leaves a row unmarked when the status is unknown", () => {
+    render(
+      <ServerSelectionList
+        servers={[{ id: "s_b", name: "Bravo" }]}
+        selectedIds={new Set()}
+        onToggle={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTestId("server-status-s_b")).not.toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Bravo" })).toBeInTheDocument();
   });
 
   it("uses the ariaLabel prop for the surrounding group", () => {
