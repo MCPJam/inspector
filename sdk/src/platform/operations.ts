@@ -90,6 +90,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
@@ -6373,6 +6374,82 @@ export const listEvalRunIterationsOperation: PlatformOperation<
     return {
       project: toSelectedProjectInfo(project),
       runId: input.runId,
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
+const evalSuiteRevisionsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque pagination cursor from a previous response."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum number of revisions to return per page (newest first)."),
+});
+
+export type ListEvalSuiteRevisionsInput = z.infer<
+  typeof evalSuiteRevisionsInput
+>;
+
+export type ListEvalSuiteRevisionsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  items: PlatformEvalSuiteRevision[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteRevisionsOperation: PlatformOperation<
+  ListEvalSuiteRevisionsInput,
+  ListEvalSuiteRevisionsResult
+> = {
+  name: "list_eval_suite_revisions",
+  title: "List MCPJam eval suite revisions",
+  description:
+    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Pass a revisionNumber back as expectedRevisionNumber on update_eval_suite to make an edit a compare-and-set.",
+  readOnly: true,
+  // The suite, not the revision: a revision has no page of its own, and the
+  // settings sheet's history panel is reached from the suite.
+  permalink: derivePermalinks((result) => [
+    {
+      type: "eval_suite" as const,
+      id: result.suite.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: evalSuiteRevisionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const page = await client.listEvalSuiteRevisions(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        cursor: input.cursor,
+        limit: input.limit,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
       items: page.items,
       ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
     };
@@ -14888,6 +14965,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalSuiteOperation,
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,

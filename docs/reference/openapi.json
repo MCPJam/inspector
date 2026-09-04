@@ -2319,6 +2319,73 @@
         }
       }
     },
+    "/projects/{projectId}/eval-suites/{suiteId}/revisions": {
+      "get": {
+        "operationId": "listEvalSuiteRevisions",
+        "tags": ["Eval suites"],
+        "summary": "List a suite's settings history",
+        "description": "One entry per committed edit to the suite's settings, newest first: who made it, which STORED fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Send a `revisionNumber` back as `expectedRevisionNumber` on `PATCH /eval-suites/{suiteId}` to make that edit a compare-and-set.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Maximum revisions to return, 1-100. Defaults to 25. Out of range is a 400 rather than a silent clamp.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "default": 25
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "Opaque pagination cursor from a previous response's `nextCursor`.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Committed settings edits, newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvalSuiteRevisionPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/ValidationError"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/stage-analytics": {
       "get": {
         "operationId": "listEvalSuiteStageAnalytics",
@@ -15023,6 +15090,91 @@
           "scoreContract",
           "cases"
         ]
+      },
+      "EvalSuiteRevision": {
+        "type": "object",
+        "required": [
+          "id",
+          "revisionNumber",
+          "source",
+          "createdAt",
+          "changedFields",
+          "pinnedRunCount",
+          "pinnedRunCountCapped"
+        ],
+        "description": "One committed edit to a suite's settings. Carries no configuration snapshot — this answers what changed and when.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "revisionNumber": {
+            "type": "integer",
+            "description": "Monotonic per suite. The suite's own `revisionNumber` is the newest."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "api",
+              "cli",
+              "file_sync",
+              "import",
+              "system",
+              "unattributed"
+            ],
+            "description": "Where the edit came from. `unattributed` is a write nothing claimed."
+          },
+          "createdBy": {
+            "type": ["string", "null"],
+            "description": "The user id, or null for a write with no human actor."
+          },
+          "createdByName": {
+            "type": ["string", "null"],
+            "description": "A display name when one is resolvable."
+          },
+          "createdAt": {
+            "type": "integer",
+            "description": "Epoch milliseconds."
+          },
+          "note": {
+            "type": ["string", "null"],
+            "description": "The reason the author gave, when they gave one."
+          },
+          "changedFields": {
+            "type": "array",
+            "description": "STORED field names, not public API paths.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "revisionGroupId": {
+            "type": ["string", "null"],
+            "description": "Shared by every revision one request produced, so a PATCH that edited the settings and re-attached the environments reads as one change."
+          },
+          "pinnedRunCount": {
+            "type": "integer",
+            "description": "Runs launched against this revision, CAPPED. The question is whether runs used this revision; the difference between 100 and 400 does not change the answer, and counting them all would make the list cost grow with the suite's history."
+          },
+          "pinnedRunCountCapped": {
+            "type": "boolean",
+            "description": "True when `pinnedRunCount` hit the cap and is a floor rather than a count."
+          }
+        }
+      },
+      "EvalSuiteRevisionPage": {
+        "type": "object",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EvalSuiteRevision"
+            }
+          },
+          "nextCursor": {
+            "type": ["string", "null"]
+          }
+        }
       },
       "EvalRunPage": {
         "type": "object",

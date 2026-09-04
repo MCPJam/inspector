@@ -3411,6 +3411,143 @@ describe("v1 eval-edit routes", () => {
   });
 
   /**
+   * S5b — the suite's settings history, for agents.
+   *
+   * The app reads the same history through Convex, so this route exists for
+   * the SDK, the CLI and MCP. Two things it must get right: the project scope
+   * (the revision list is addressed by suite id alone, so without the guard a
+   * caller could read another project's history by guessing one) and an
+   * out-of-range page size, which is a refusal rather than a silent clamp — a
+   * caller who asked for 500 and got 100 cannot tell a capped page from the
+   * end of the history.
+   */
+  describe("suite revisions route", () => {
+    const REVISION = {
+      _id: "rev_1",
+      revisionNumber: 7,
+      source: "api",
+      createdBy: "user_1",
+      createdByName: "Ada",
+      createdAt: 1750,
+      note: "tightened the threshold",
+      changedFields: ["defaultPassCriteria"],
+      revisionGroupId: "group-1",
+      configRevisionHashAfter: "hash",
+      pinnedRunCount: 100,
+      pinnedRunCountCapped: true,
+      // Never projected: the list carries no configuration snapshots.
+      beforeSnapshot: { name: "old" },
+      afterSnapshot: { name: "new" },
+    };
+
+    function withRevisions(page: {
+      page: unknown[];
+      isDone: boolean;
+      continueCursor: string;
+    }) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:listSuiteRevisions"
+          ? Promise.resolve(page)
+          : defaultQueryImpl(name)
+      );
+    }
+
+    it("projects a revision without its snapshots", async () => {
+      withRevisions({ page: [REVISION], isDone: true, continueCursor: "" });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]).toEqual({
+        id: "rev_1",
+        revisionNumber: 7,
+        source: "api",
+        createdBy: "user_1",
+        createdByName: "Ada",
+        createdAt: 1750,
+        note: "tightened the threshold",
+        changedFields: ["defaultPassCriteria"],
+        revisionGroupId: "group-1",
+        pinnedRunCount: 100,
+        // The flag is what stops a caller reading the cap as an exact count.
+        pinnedRunCountCapped: true,
+      });
+      expect(body.nextCursor).toBeUndefined();
+    });
+
+    it("forwards the cursor and reports the next one", async () => {
+      withRevisions({
+        page: [REVISION],
+        isDone: false,
+        continueCursor: "cursor-2",
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=5&cursor=cursor-1"
+      );
+      expect(res.status).toBe(200);
+      const call = convexQueryMock.mock.calls.find(
+        (c) => c[0] === "testSuites:listSuiteRevisions"
+      );
+      expect(call![1]).toEqual({
+        suiteId: "suite_1",
+        paginationOpts: { numItems: 5, cursor: "cursor-1" },
+      });
+      expect(((await res.json()) as any).nextCursor).toBe("cursor-2");
+    });
+
+    it("refuses an out-of-range limit rather than clamping it", async () => {
+      for (const limit of ["0", "101", "abc"]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "GET",
+          `/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=${limit}`
+        );
+        expect(res.status, limit).toBe(400);
+      }
+    });
+
+    it("treats an empty limit as unsupplied", async () => {
+      withRevisions({ page: [], isDone: true, continueCursor: "" });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=&cursor="
+      );
+      // `?limit=` would otherwise coerce to 0 and be refused for a request
+      // that asked for nothing in particular.
+      expect(res.status).toBe(200);
+      const call = convexQueryMock.mock.calls.find(
+        (c) => c[0] === "testSuites:listSuiteRevisions"
+      );
+      expect(call![1].paginationOpts).toEqual({ numItems: 25, cursor: null });
+    });
+
+    it("404s for a suite in another project, without listing anything", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, projectId: "p2" })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+      );
+      expect(res.status).toBe(404);
+      expect(
+        convexQueryMock.mock.calls.find(
+          (c) => c[0] === "testSuites:listSuiteRevisions"
+        )
+      ).toBeUndefined();
+    });
+  });
+
+  /**
    * B9b — the schedule reports a STATE, not just a boolean.
    */
   describe("schedule state on the suite detail", () => {

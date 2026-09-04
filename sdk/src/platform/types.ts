@@ -1460,6 +1460,46 @@ export interface PlatformEvalSuiteDetail {
 }
 
 /**
+ * One committed edit to a suite's settings.
+ *
+ * The suite's history is the answer to "who changed this, and when" — a
+ * question that was already recorded and had no reader. Rows carry NO
+ * SNAPSHOTS: a page of whole suite configurations is a large payload for a list
+ * nobody reads that way, and the before/after of one revision is a different
+ * question with a different cost.
+ */
+export interface PlatformEvalSuiteRevision {
+  id: string;
+  /** Monotonic per suite. `revisionNumber` on the suite is the newest. */
+  revisionNumber: number;
+  /** Where the edit came from. `unattributed` is a write nothing claimed. */
+  source:
+    "ui" | "api" | "cli" | "file_sync" | "import" | "system" | "unattributed";
+  /** The user id, or `null` for a write with no human actor. */
+  createdBy: string | null;
+  /** A display name when one is resolvable; `null` otherwise. */
+  createdByName: string | null;
+  createdAt: number;
+  /** The reason the author gave, when they gave one. */
+  note: string | null;
+  /** STORAGE field names, not public API paths. */
+  changedFields: string[];
+  /**
+   * Shared by every revision one request produced, so a PATCH that edited the
+   * settings and re-attached the environments reads as one change.
+   */
+  revisionGroupId: string | null;
+  /**
+   * Runs launched against this revision, CAPPED. The question is "did runs use
+   * this", and the difference between 100 and 400 does not change the answer,
+   * while counting them all would make the list cost grow with the history.
+   */
+  pinnedRunCount: number;
+  /** True when `pinnedRunCount` hit the cap and is a floor, not a count. */
+  pinnedRunCountCapped: boolean;
+}
+
+/**
  * `POST /eval-suites/from-file` — resolve or create a file-owned suite by
  * declared id. `created` is true on the first upload of that id in the
  * project; later uploads update the same suite.

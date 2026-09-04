@@ -28,6 +28,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   projectResolutionError,
   resolveEnvironmentOperation,
@@ -2907,6 +2908,40 @@ export function registerEvalCommands(program: Command): void {
         ...(options.limit === undefined ? {} : { limit: options.limit }),
       });
       await executeOp(listEvalSuiteRunsOperation, input, options, command);
+    }
+  );
+
+      evals
+      .command("revisions")
+      .description("List a suite's settings history, newest first")
+      .requiredOption("--suite <id-or-name>", "Eval suite name or ID")
+      .option(
+        "--project <id-or-name>",
+        "Project name or ID (defaults to the most recently updated project)"
+      )
+      .option(
+        "--limit <n>",
+        "Maximum number of revisions to return (1-100)",
+        (value) => Number.parseInt(value, 10)
+      )
+      .option("--cursor <cursor>", "Pagination cursor from a previous page")
+      .action(
+    async (
+      options: PlatformOptions & {
+        suite: string;
+        project?: string;
+        limit?: number;
+        cursor?: string;
+      },
+      command
+    ) => {
+      const input = validateOpInput(listEvalSuiteRevisionsOperation, {
+        suite: options.suite,
+        ...(options.project === undefined ? {} : { project: options.project }),
+        ...(options.limit === undefined ? {} : { limit: options.limit }),
+        ...(options.cursor === undefined ? {} : { cursor: options.cursor }),
+      });
+      await executeOp(listEvalSuiteRevisionsOperation, input, options, command);
     }
   );
 

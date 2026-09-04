@@ -4795,6 +4795,107 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
   return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
 
+/**
+ * Query for `GET …/eval-suites/{id}/revisions`.
+ *
+ * Coerced because query strings are strings, and `.int()` after coercion is
+ * what rejects `1.5` and `abc` (which coerce to NaN) rather than handing Convex
+ * a non-integer page size. An out-of-range `limit` is a 400 rather than a
+ * silent clamp: a caller who asked for 500 rows and got 100 has no way to know
+ * their page is short because of the cap rather than because the history ended.
+ */
+const suiteRevisionsQuerySchema = z.object({
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+/** One committed settings edit, as the public API reports it. */
+function toSuiteRevisionDto(row: Record<string, any>) {
+  return {
+    id: String(row._id),
+    revisionNumber: row.revisionNumber,
+    source: row.source,
+    createdBy: row.createdBy ? String(row.createdBy) : null,
+    createdByName: row.createdByName ?? null,
+    createdAt: row.createdAt,
+    note: row.note ?? null,
+    changedFields: Array.isArray(row.changedFields)
+      ? row.changedFields.map(String)
+      : [],
+    // Every write in ONE request shares this, so an edit that touched the
+    // settings and the environments reads as one change rather than several.
+    revisionGroupId: row.revisionGroupId ?? null,
+    // CAPPED by the backend: the question is "did runs use this", and the
+    // difference between 100 and 400 does not change the answer while counting
+    // them all would make the list cost grow with the suite's history. The flag
+    // is what stops a caller reading the cap as an exact count.
+    pinnedRunCount:
+      typeof row.pinnedRunCount === "number" ? row.pinnedRunCount : 0,
+    pinnedRunCountCapped: row.pinnedRunCountCapped === true,
+  };
+}
+
+// GET /v1/projects/:projectId/eval-suites/:suiteId/revisions?cursor=&limit=
+//
+// The suite's settings history, newest first: one entry per committed edit,
+// with who made it, which fields moved, the note they left and how many runs
+// were launched against it.
+//
+// NO SNAPSHOTS. A page of whole suite configurations is a large payload for a
+// list nobody reads that way; this answers "what changed and when", and the
+// before/after of one revision is a different question with a different cost.
+evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
+  const projectId = c.req.param("projectId");
+  const suiteId = c.req.param("suiteId");
+  const rawLimit = c.req.query("limit");
+  const rawCursor = c.req.query("cursor");
+  const query = parseWithSchema(suiteRevisionsQuerySchema, {
+    // An EMPTY query value means "not supplied", not "supplied as empty":
+    // `?limit=` would otherwise coerce to 0 and be refused as out of range
+    // for a request that asked for nothing in particular.
+    ...(rawLimit !== undefined && rawLimit.trim() !== ""
+      ? { limit: rawLimit }
+      : {}),
+    ...(rawCursor !== undefined && rawCursor.trim() !== ""
+      ? { cursor: rawCursor }
+      : {}),
+  });
+  const limit = query.limit ?? 25;
+  const cursor = query.cursor ?? null;
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let page: {
+    page: Array<Record<string, any>>;
+    isDone: boolean;
+    continueCursor: string;
+  };
+  try {
+    // Project scope first, on the SUITE — the revision list is scoped by the
+    // suite id alone, so without this a caller could read another project's
+    // history by guessing an id.
+    const suite: SuiteDoc | null = await convex.query(
+      "testSuites:getTestSuite" as any,
+      { suiteId },
+    );
+    requireProjectMatch(suite, projectId, "Eval suite");
+    page = await convex.query("testSuites:listSuiteRevisions" as any, {
+      suiteId,
+      paginationOpts: { numItems: limit, cursor },
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
+    }
+    throw error;
+  }
+
+  return v1PageJson(
+    c,
+    (page.page ?? []).map(toSuiteRevisionDto),
+    page.isDone ? undefined : page.continueCursor,
+  );
+});
+
 // GET /v1/projects/:projectId/eval-suites/:suiteId/stage-analytics
 //     ?from=&to=&runGroupId=&cursor=&limit=
 //
