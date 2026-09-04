@@ -355,12 +355,24 @@ export type EvalSuite = {
    * run start; the client never derives servers from these ids.
    */
   environmentIds?: string[];
+  /**
+   * Epoch ms of the schedule's next due firing, or absent when nothing is due.
+   * Denormalized on the suite by the scheduler; never computed client-side.
+   */
+  scheduleNextDueAt?: number;
   /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
   schedule?: {
     intervalMinutes: number;
     enabled: boolean;
     state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
     consecutiveFailures?: number;
+    /**
+     * The user a scheduled run executes AS. Its runs spend this person's
+     * access, and the schedule pauses itself (`paused_auth`) when they lose
+     * it — which is why the settings row names them rather than reporting a
+     * boolean.
+     */
+    createdByUserId?: string;
     /**
      * Multi-environment suites pin the schedule to ONE member environment
      * (required by `setSuiteSchedule`); single-env suites may omit it and

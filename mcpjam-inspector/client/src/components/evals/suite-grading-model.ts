@@ -47,7 +47,10 @@ import {
   resolveMatchOptions,
 } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
-import { formatCriterion, PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
+import {
+  formatCriterion,
+  PREDICATE_KIND_LABELS,
+} from "@/shared/predicate-kinds";
 import { ARGS_OPTIONS, ORDER_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig } from "./types";
 

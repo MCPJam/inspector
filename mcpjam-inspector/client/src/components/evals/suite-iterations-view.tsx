@@ -55,7 +55,7 @@ import { SuiteDetailOverview } from "../evaluate/suite-detail-overview";
 import { EvaluateRunPage } from "../evaluate/evaluate-run-page";
 import { EvaluateRunContent } from "../evaluate/evaluate-run-content";
 import { RunDecisionSummarySection } from "./run-decision-summary-section";
-import { ScheduleEditor } from "./schedule-editor";
+import { SuiteAutomationRow } from "./suite-automation-row";
 import { SuiteGithubChecksSection } from "./suite-github-checks-section";
 import { useGithubChecksAvailability } from "@/hooks/useGithubChecksSettings";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
@@ -2095,20 +2095,33 @@ export function SuiteIterationsView({
                 <SuiteBudgetsList predicates={draftDefaultPredicates} />
               </SettingsSection>
 
-              {/* ── Schedule (synthetic monitors, flag-gated) ────────── */}
+              {/* ── Automations (synthetic monitors, flag-gated) ──────
+                  A schedule is not a checkbox: it runs as a PERSON, it pauses
+                  itself and keeps `enabled: true` when it does, and it has a
+                  history. The row leads with all three and keeps the editor
+                  one click away. */}
               {syntheticMonitorsEnabled ? (
                 <SettingsSection
                   settingKey="schedule"
-                  label="Schedule"
-                  hint="Run this suite automatically on a fixed interval."
+                  label="Automations"
+                  hint="Saves immediately."
                   disabledReason={scheduleDisabledReason}
                 >
-                  <ScheduleEditor
+                  <SuiteAutomationRow
                     suiteId={suite._id}
                     schedule={suite.schedule}
+                    scheduleNextDueAt={suite.scheduleNextDueAt}
+                    runs={runs}
+                    userMap={userMap}
                     projectId={projectId}
                     environmentIds={suite.environmentIds}
+                    canTakeOver={scheduleDisabledReason === undefined}
                   />
+                  <p className="text-[11px] text-muted-foreground/60">
+                    Runs the whole suite on a fixed interval, as the person who
+                    enabled it. A paused schedule notifies that person and the
+                    organization&apos;s admins.
+                  </p>
                 </SettingsSection>
               ) : null}
 

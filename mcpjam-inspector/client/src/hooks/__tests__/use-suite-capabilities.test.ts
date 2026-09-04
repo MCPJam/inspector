@@ -37,7 +37,9 @@ describe("useSuiteCapabilities", () => {
 
   it("reports `unavailable` when the query throws, without re-throwing", async () => {
     queryMock.mockRejectedValue(
-      new Error("Could not find public function for 'testSuites:getSuiteCapabilities'"),
+      new Error(
+        "Could not find public function for 'testSuites:getSuiteCapabilities'",
+      ),
     );
     const { result } = renderHook(() => useSuiteCapabilities("suite-1"));
     await waitFor(() => expect(result.current.state).toBe("unavailable"));

@@ -134,7 +134,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "schedule",
-    label: "Schedule",
+    label: "Automations",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
     // environment — a validation the suite PATCH would have to grow a
