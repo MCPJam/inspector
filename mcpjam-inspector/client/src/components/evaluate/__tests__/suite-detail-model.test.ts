@@ -13,7 +13,6 @@ import {
   suiteIdentityCounts,
   suiteRunBlockedReason,
   summarizeTestCase,
-  topFailureSignature,
 } from "../suite-detail-model";
 
 function makeSuite(
@@ -171,56 +170,6 @@ describe("runPlatformLabel", () => {
   });
 });
 
-describe("topFailureSignature", () => {
-  it("prefers the most common error, then failed case title", () => {
-    expect(
-      topFailureSignature([
-        makeIteration({
-          _id: "i1",
-          result: "failed",
-          resultSource: "reported",
-          error: "timeout",
-        }),
-        makeIteration({
-          _id: "i2",
-          result: "failed",
-          resultSource: "reported",
-          error: "timeout",
-        }),
-        makeIteration({
-          _id: "i3",
-          result: "failed",
-          resultSource: "reported",
-          error: "other",
-        }),
-      ]),
-    ).toBe("timeout");
-
-    expect(
-      topFailureSignature([
-        makeIteration({
-          _id: "i1",
-          result: "failed",
-          resultSource: "reported",
-          testCaseSnapshot: {
-            title: "pay invoice",
-            query: "",
-            provider: "openai",
-            model: "gpt-5",
-            expectedToolCalls: [],
-          },
-        }),
-      ]),
-    ).toBe("pay invoice");
-
-    expect(
-      topFailureSignature([
-        makeIteration({ _id: "i1", result: "passed" }),
-      ]),
-    ).toBeNull();
-  });
-});
-
 describe("buildSuiteRunHistoryRows", () => {
   it("builds newest-first rows with real pass rate, platform, and models", () => {
     const rows = buildSuiteRunHistoryRows(
@@ -285,7 +234,6 @@ describe("buildSuiteRunHistoryRows", () => {
     expect(rows[0].runId).toBe("new");
     expect(rows[0].verdict).toBe("hold");
     expect(rows[0].passRate).toBe(0);
-    expect(rows[0].topFailureSignature).toBe("card declined");
     expect(rows[0].platform).toBe("SDK");
     expect(rows[0].models).toEqual(["claude-haiku"]);
     expect(rows[0].tokens).toBe(50);
@@ -346,7 +294,6 @@ describe("run history filters", () => {
         verdict: "ship",
         verdictLabel: "Ship",
         passRate: 100,
-        topFailureSignature: null,
         platform: "UI",
         source: "ui",
         client: "Claude",
@@ -362,7 +309,6 @@ describe("run history filters", () => {
         verdict: "hold",
         verdictLabel: "Hold",
         passRate: 50,
-        topFailureSignature: "x",
         platform: "SDK",
         source: "sdk",
         client: null,
@@ -386,7 +332,6 @@ describe("run history filters", () => {
         verdict: "ship" as const,
         verdictLabel: "Ship",
         passRate: 100,
-        topFailureSignature: null,
         platform: "UI",
         source: "ui" as const,
         client: "Claude",
@@ -402,7 +347,6 @@ describe("run history filters", () => {
         verdict: "hold" as const,
         verdictLabel: "Hold",
         passRate: 50,
-        topFailureSignature: "x",
         platform: "SDK",
         source: "sdk" as const,
         client: "Codex",
@@ -531,5 +475,26 @@ describe("suiteRunBlockedReason", () => {
 describe("SUITE_RUN_HISTORY_PAGE_SIZE", () => {
   it("caps the default table", () => {
     expect(SUITE_RUN_HISTORY_PAGE_SIZE).toBe(8);
+  });
+});
+
+describe("resolveRunHistoryVerdict — a run held for its judge", () => {
+  it("never reads Ship or Hold off a pre-judge pass rate", () => {
+    // Above threshold AND below threshold both land on the same answer: the
+    // verdict does not exist yet, whatever the rows say so far.
+    expect(
+      resolveRunHistoryVerdict(
+        makeRun({ _id: "r1", status: "grading", result: "pending" }),
+        95,
+        90,
+      ),
+    ).toEqual({ verdict: "running", label: "Grading" });
+    expect(
+      resolveRunHistoryVerdict(
+        makeRun({ _id: "r1", status: "grading", result: "pending" }),
+        40,
+        90,
+      ),
+    ).toEqual({ verdict: "running", label: "Grading" });
   });
 });
