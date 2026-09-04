@@ -1228,6 +1228,75 @@ describe("allowPrivateNetwork (local inspector)", () => {
     expect(httpRequestMock).toHaveBeenCalledTimes(2);
   });
 
+  it("refuses plaintext to a host that resolves publicly", async () => {
+    // `allowPrivateNetwork` is permission to reach a private network, not
+    // permission to shout a bearer token across a public one. The decision is
+    // made on the resolved address, after the name is looked up and before any
+    // socket opens, because the hostname alone cannot answer it.
+    resolveTo("93.184.216.34");
+
+    await expect(
+      executeOAuthProxy({
+        url: "http://auth.example.com/token",
+        allowPrivateNetwork: true,
+      })
+    ).rejects.toMatchObject({
+      status: 400,
+      message: expect.stringContaining("public host"),
+    });
+    expect(httpRequestMock).not.toHaveBeenCalled();
+  });
+
+  it("still allows https to a public host, and plaintext to a private one", async () => {
+    resolveTo("127.0.0.1");
+    queueMetadataResponses(httpRequestMock, [{ body: "{}" }]);
+
+    await expect(
+      executeOAuthProxy({
+        url: "http://auth.localtest.me:9400/token",
+        allowPrivateNetwork: true,
+      })
+    ).resolves.toMatchObject({ status: 200, targetIsPrivate: true });
+  });
+
+  it("reports a public landing so a caller driving its own redirects can narrow", async () => {
+    resolveTo("93.184.216.34");
+    queueMetadataResponses(httpsRequestMock, [{ body: "{}" }]);
+
+    const result = await executeOAuthProxy({
+      url: "https://auth.example.com/token",
+      allowPrivateNetwork: true,
+    });
+
+    expect(result).toMatchObject({ status: 200, targetIsPrivate: false });
+  });
+
+  it("treats a mixed public/private DNS answer as public for the chain rule", async () => {
+    // The socket picks from the pinned set, so "one of the answers was
+    // private" is not a promise that the connection landed there. Anything
+    // less than all-private has to read as public, or a chain that can reach
+    // the open internet keeps a permission meant for one that cannot.
+    dnsLookupMock.mockImplementation(
+      (
+        _hostname: string,
+        _options: unknown,
+        callback: (error: Error | null, addresses: unknown) => void
+      ) =>
+        callback(null, [
+          { address: "93.184.216.34", family: 4 },
+          { address: "10.0.0.5", family: 4 },
+        ])
+    );
+    queueMetadataResponses(httpsRequestMock, [{ body: "{}" }]);
+
+    const result = await executeOAuthProxy({
+      url: "https://mixed.example/token",
+      allowPrivateNetwork: true,
+    });
+
+    expect(result).toMatchObject({ targetIsPrivate: false });
+  });
+
   it("is overridden by httpsOnly, so hosted mode cannot be talked out of it", async () => {
     await expect(
       executeOAuthProxy({

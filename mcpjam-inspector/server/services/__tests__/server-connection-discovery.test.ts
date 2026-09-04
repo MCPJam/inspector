@@ -370,13 +370,17 @@ describe("runDiscoveryPreflight", () => {
     expect(probeServer).toHaveBeenCalledTimes(1);
   });
 
-  it("refuses cloud metadata even by default", async () => {
-    // The floor under the local allowance: no opt-in reaches it, and the
-    // probe must never run.
+  it("refuses cloud metadata even when the caller asks for private networks", async () => {
+    // The floor under the allowance, stated where it can actually be tested:
+    // the default case is already covered above, so this one names the opt-in
+    // explicitly and shows it does not reach the never-dialable set.
     const probeServer = vi.fn();
 
     const outcome = await runDiscoveryPreflight(
-      { serverUrl: "http://169.254.169.254/latest/meta-data/" },
+      {
+        serverUrl: "http://169.254.169.254/latest/meta-data/",
+        allowPrivateNetwork: true,
+      },
       { probeServer: probeServer as never },
     );
 

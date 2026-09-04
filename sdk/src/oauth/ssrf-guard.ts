@@ -20,6 +20,22 @@
 
 import { isLoopbackHost } from "./state-machines/shared/client-id-metadata.js";
 
+/**
+ * One spelling of a host, so every classifier below judges the same string.
+ *
+ * The trailing dot matters: `metadata.google.internal.` is the fully-qualified
+ * form of `metadata.google.internal` and resolves identically, so a set lookup
+ * that keeps the dot would let the absolute form walk past a floor the relative
+ * form is refused by. Brackets come off IPv6 literals for the same reason.
+ */
+function normalizeHost(value: string): string {
+  return value
+    .replace(/^\[|\]$/g, "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.+$/, "");
+}
+
 function isDisallowedIpv4(ip: string): boolean {
   const parts = ip.split(".").map((o) => parseInt(o, 10));
   if (
@@ -126,7 +142,7 @@ function isDisallowedIpv6(input: string): boolean {
  * false — the caller resolves it first.
  */
 export function isDisallowedIpAddress(ip: string): boolean {
-  const addr = ip.replace(/^\[|\]$/g, "").trim().toLowerCase();
+  const addr = normalizeHost(ip);
   if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isDisallowedIpv4(addr);
   if (addr.includes(":")) return isDisallowedIpv6(addr);
   return false;
@@ -138,7 +154,7 @@ export function isDisallowedIpAddress(ip: string): boolean {
  * DNS resolution is validated separately in the Node proxy path).
  */
 export function isPrivateHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const host = normalizeHost(hostname);
   if (host === "localhost" || host.endsWith(".localhost")) return true;
   return isDisallowedIpAddress(host);
 }
@@ -169,10 +185,7 @@ export function isPrivateHost(hostname: string): boolean {
  *   - multicast / reserved / discard — not unicast destinations at all.
  */
 export function isNeverDialableIpAddress(ip: string): boolean {
-  const addr = ip
-    .replace(/^\[|\]$/g, "")
-    .trim()
-    .toLowerCase();
+  const addr = normalizeHost(ip);
   if (/^\d+\.\d+\.\d+\.\d+$/.test(addr)) return isNeverDialableIpv4(addr);
   if (addr.includes(":")) return isNeverDialableIpv6(addr);
   return false;
@@ -254,7 +267,7 @@ const NEVER_DIALABLE_HOSTNAMES = new Set([
  * See {@link isNeverDialableIpAddress} for what qualifies and why.
  */
 export function isNeverDialableHost(hostname: string): boolean {
-  const host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const host = normalizeHost(hostname);
   if (NEVER_DIALABLE_HOSTNAMES.has(host)) return true;
   return isNeverDialableIpAddress(host);
 }

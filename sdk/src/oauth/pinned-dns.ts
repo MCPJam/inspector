@@ -196,13 +196,33 @@ export async function resolvePinnedAddresses(
     );
   }
 
-  let targetIsPrivate = isPrivateHost(targetUrl.hostname);
+  // EVERY answer must be private for the hop to count as private, not just one.
+  // A mixed `[public, private]` answer is pinned as a set and the socket may
+  // pick either, so "one of them was private" would hand a chain that can dial
+  // a public address the permission meant for one that cannot.
+  const landedPrivate = addresses.every(({ address }) =>
+    isDisallowedIpAddress(address),
+  );
+  const targetIsPrivate = isPrivateHost(targetUrl.hostname) || landedPrivate;
+
+  // PLAINTEXT IS FOR PRIVATE DESTINATIONS, and now the resolver knows which
+  // those are. `allowPrivateNetwork` exists so a local developer can reach
+  // their own http server; it is not a reason to put a request to a PUBLIC
+  // host on the wire in the clear, where anyone on the path can read a bearer
+  // token or rewrite a redirect. The scheme gate upstream cannot make this
+  // call — `auth.local` reads as public and answers loopback — so it defers
+  // to here, which is still before any socket opens.
+  if (
+    policy.allowPrivateNetwork &&
+    targetUrl.protocol === "http:" &&
+    !targetIsPrivate
+  ) {
+    throw new OAuthProxyError(
+      400,
+      `Refusing a plaintext connection to "${targetUrl.hostname}": it is a public host, so the target must be served over https.`,
+    );
+  }
   for (const { address } of addresses) {
-    if (isDisallowedIpAddress(address)) {
-      // Reported for the chain rule whatever the policy decides below: the
-      // question "may a later hop be private" is about where THIS one landed.
-      targetIsPrivate = true;
-    }
     if (isNeverDialableIpAddress(address)) {
       throw new OAuthProxyError(
         400,

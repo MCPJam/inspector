@@ -53,7 +53,12 @@ import { HOSTED_MODE } from "../config.js";
  * authorized is then refused.
  */
 function allowsPrivateNetwork(input: RunDiscoveryPreflightInput): boolean {
-  return input.allowPrivateNetwork ?? !HOSTED_MODE;
+  // `!HOSTED_MODE &&` rather than a default the caller can override: hosted is
+  // OUR network, and an argument arriving from a route body must not be able to
+  // open egress there. Locally the caller keeps both directions — the default
+  // is on, and an explicit `false` (registry derive, benchmark probes) is
+  // honoured.
+  return !HOSTED_MODE && (input.allowPrivateNetwork ?? true);
 }
 
 /** The three values the backend's `reportDiscovery` accepts. */
@@ -410,6 +415,14 @@ export async function probeThroughEgressGuard(
       !isLoopbackOAuthUrl(input.serverUrl) &&
       // Same exception one range wider in local mode: a LAN MCP server is
       // plaintext as routinely as a loopback one.
+      //
+      // LIMITED TO ADDRESS LITERALS, because this check runs before any
+      // resolution and `isPrivateHost` only judges the string: `http://10.0.0.5/mcp`
+      // is probed, `http://raspberrypi.local:3000/mcp` is still refused here.
+      // The transport behind this decides the same question on the resolved
+      // address, so it is stricter than the transport rather than looser —
+      // a refusal, never a hole. Widening it needs a resolution step this
+      // pre-flight does not have; see the plaintext rule in `pinned-dns.ts`.
       !(allowsPrivateNetwork(input) && isPrivateHost(url.hostname))
     ) {
       return {

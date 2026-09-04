@@ -40,6 +40,17 @@ export interface OAuthProxyResponse {
   headers: Record<string, string>;
   body: unknown;
   finalUrl: string;
+  /**
+   * Whether the hop this call dialed landed on a private address.
+   *
+   * Reported because a caller that drives redirects ITSELF — one
+   * `redirect: "manual"` call per hop, which is how the inspector's pinned
+   * fetch bounds each hop's scheme — cannot otherwise apply the chain rule.
+   * Every such call looks like a first hop from in here, so the caller has to
+   * carry "did this chain start private" across them, and the only honest
+   * answer comes from the resolver that already looked.
+   */
+  targetIsPrivate: boolean;
 }
 
 // SSRF IP classifier + host check moved to the browser-safe `oauth/ssrf-guard`
@@ -336,6 +347,9 @@ export async function fetchPinnedPublicDocument(
             headers,
             body,
             finalUrl: url.toString(),
+            // `fetchPinnedPublicDocument` refuses every private destination by
+            // construction, so the document it returns came from a public one.
+            targetIsPrivate: false,
           });
         });
         res.on("error", reject);
@@ -371,6 +385,7 @@ interface RawPinnedOAuthResponse {
   statusText: string;
   headers: Record<string, string>;
   finalUrl: string;
+  targetIsPrivate: boolean;
   stream?: IncomingMessage;
 }
 
@@ -514,6 +529,7 @@ async function requestPinnedOAuthHop(
           statusText: response.statusMessage ?? "",
           headers: normalizeResponseHeaders(response),
           finalUrl: targetUrl.toString(),
+          targetIsPrivate,
           stream: response,
         });
       }
@@ -794,6 +810,7 @@ export async function executeOAuthProxy(
       headers: response.headers,
       body: parseBufferedResponseBody(body),
       finalUrl: response.finalUrl,
+      targetIsPrivate: response.targetIsPrivate,
     };
   } catch (error) {
     if (signal?.aborted) {
@@ -859,6 +876,7 @@ export async function executeDebugOAuthProxy(
     headers: response.headers,
     body: responseBody,
     finalUrl: response.finalUrl,
+    targetIsPrivate: response.targetIsPrivate,
   };
 }
 

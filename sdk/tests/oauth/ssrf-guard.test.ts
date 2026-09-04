@@ -289,6 +289,16 @@ describe("isNeverDialableIpAddress / isNeverDialableHost", () => {
     expect(isNeverDialableHost("localhost")).toBe(false);
     expect(isNeverDialableHost("auth.local")).toBe(false);
   });
+
+  it("sees through the fully-qualified form of a name or address", () => {
+    // The trailing dot is the DNS root: `metadata.google.internal.` resolves
+    // exactly where `metadata.google.internal` does, so a floor that compares
+    // the string without normalising it lets the absolute form walk past.
+    expect(isNeverDialableHost("metadata.google.internal.")).toBe(true);
+    expect(isNeverDialableHost("169.254.169.254.")).toBe(true);
+    expect(isPrivateHost("localhost.")).toBe(true);
+    expect(isPrivateHost("127.0.0.1.")).toBe(true);
+  });
 });
 
 describe("assertOutboundOAuthUrlAllowed with allowPrivateNetwork", () => {
@@ -311,6 +321,7 @@ describe("assertOutboundOAuthUrlAllowed with allowPrivateNetwork", () => {
       "http://169.254.169.254/latest/meta-data",
       "http://100.100.100.200/latest",
       "http://metadata.google.internal/computeMetadata/v1/",
+      "http://metadata.google.internal./computeMetadata/v1/",
       "http://0.0.0.0:9000/oauth",
     ]) {
       expect(() =>

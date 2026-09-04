@@ -31,7 +31,6 @@ import {
   createPinnedStreamingFetch,
   executeOAuthProxy,
   isLoopbackOAuthUrl,
-  isPrivateHost,
   OAuthProxyError,
 } from "@mcpjam/sdk/oauth/node";
 import { HOSTED_MODE } from "../config.js";
@@ -227,9 +226,21 @@ function assertSchemeAllowed(
 ): void {
   if (isHttps(url)) return;
   if (allowLoopback && isLoopbackOAuthUrl(url)) return;
-  // A private hop on a private chain may be plaintext for the same reason a
-  // loopback hop may: the developer's own LAN server is routinely http.
-  if (allowPrivateNetwork && isPrivateHost(new URL(url).hostname)) return;
+  // A hop the caller is allowed to reach privately may be plaintext, for the
+  // same reason a loopback hop may: the developer's own LAN server is
+  // routinely http, and on their machine this request is one their shell could
+  // make anyway.
+  //
+  // Note what this does NOT test: whether the host is private. It cannot —
+  // `auth.local` reads as public and answers 127.0.0.1, which is exactly the
+  // case being served, so classifying the string here would refuse it. The
+  // address decision belongs to the resolver, which makes it once and pins it;
+  // this check is only about the scheme. The cost is that a LOCAL caller may
+  // also speak plaintext to a genuinely public host on the first hop. Callers
+  // that must not (the discovery preflight) refuse that by URL shape before
+  // reaching the transport, and after the first hop the chain rule has the
+  // resolver's answer and applies it.
+  if (allowPrivateNetwork) return;
   throw new BlockedEgressTargetError(
     `Refusing a plaintext connection to "${safeHost(url)}".`
   );
@@ -328,10 +339,15 @@ export function createPinnedFetch(
     // started public may not arrive there.
     const chainAllowsLoopback =
       options.allowLoopback === true && isLoopbackOAuthUrl(url);
-    // Same chain rule for the wider allowance: a chain that started public may
-    // not redirect onto the caller's LAN, even in local mode.
-    const chainAllowsPrivate =
-      allowPrivateNetwork && isPrivateHost(new URL(url).hostname);
+    // Same chain rule for the wider allowance, with one difference that
+    // matters: it CANNOT be decided from the hostname. `auth.local` and
+    // `auth.localtest.me` look public and answer 127.0.0.1 — the case this
+    // allowance exists to serve — so a name-based test refuses the very thing
+    // it is meant to permit. The first hop therefore carries the caller's
+    // permission, and the transport reports back where it actually landed;
+    // `chainAllowsPrivate` is fixed from that answer for every hop after it.
+    let chainAllowsPrivate = allowPrivateNetwork;
+    let chainCharacterKnown = false;
 
     try {
       // REDIRECTS ARE FOLLOWED HERE, ONE HOP AT A TIME, so every hop's scheme
@@ -368,9 +384,11 @@ export function createPinnedFetch(
         signal?.throwIfAborted();
         const hopAllowsLoopback =
           chainAllowsLoopback && isLoopbackOAuthUrl(currentUrl);
-        const hopAllowsPrivate =
-          chainAllowsPrivate && isPrivateHost(new URL(currentUrl).hostname);
-        assertSchemeAllowed(currentUrl, chainAllowsLoopback, chainAllowsPrivate);
+        // Before the chain's character is known (hop 0) the caller's
+        // permission stands, so a plaintext hostname that resolves privately
+        // is dialled rather than refused on the strength of how it reads.
+        const hopAllowsPrivate = chainAllowsPrivate;
+        assertSchemeAllowed(currentUrl, chainAllowsLoopback, hopAllowsPrivate);
 
         result = await executeOAuthProxy({
           url: currentUrl,
@@ -391,6 +409,14 @@ export function createPinnedFetch(
           timeoutMs: remainingTimeout(options.timeoutMs, startedAt),
           signal,
         });
+
+        // Fix the chain's character from the hop that actually dialled. After
+        // this, a chain that landed public may not redirect onto the caller's
+        // private network, and one that landed private may keep going there.
+        if (!chainCharacterKnown) {
+          chainAllowsPrivate = chainAllowsPrivate && result.targetIsPrivate;
+          chainCharacterKnown = true;
+        }
 
         const location = result.headers["location"] ?? result.headers["Location"];
         if (!isRedirectStatus(result.status) || !location) break;

@@ -180,9 +180,14 @@ describe("every hop's scheme is checked, not just the last one", () => {
     // The carve-out is for reaching `http://127.0.0.1:3000/mcp` in local
     // development. A dev-mode probe that leaves loopback for a public http host
     // is refused exactly like a hosted one would be.
+    //
+    // `example.com` rather than a `.example` name that cannot resolve: the
+    // refusal is now made on the RESOLVED address, so a host that never
+    // resolves fails as a resolution error — a different, retryable class —
+    // and would prove nothing about the plaintext rule.
     await expect(
-      createPinnedFetch({ allowLoopback: true, timeoutMs: 2_000 })(
-        "http://public.example/mcp"
+      createPinnedFetch({ allowLoopback: true, timeoutMs: 5_000 })(
+        "http://example.com/mcp"
       )
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
   });
@@ -497,10 +502,27 @@ describe("the private-network allowance follows the deployment", () => {
   });
 
   it("keeps refusing private targets when the caller opts out", async () => {
+    // HTTPS on purpose: over `http://` the scheme check refuses first and the
+    // address classifier never runs, so the assertion would pass for a reason
+    // that has nothing to do with the address and would survive a regression
+    // that let private targets through.
     await expect(
       createPinnedFetch({ allowPrivateNetwork: false, timeoutMs: 2_000 })(
-        "http://10.0.0.1/mcp"
+        "https://10.0.0.1/mcp"
       )
     ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+  });
+
+  it("dials a plaintext host that only DNS knows is private", async () => {
+    // The case the whole change exists for, and the one a hostname-based chain
+    // rule silently refused: a name that reads as public, answers loopback, and
+    // is served over http. Nothing about the string says "private" — only the
+    // resolver does — so this is the regression test for deciding the chain's
+    // character from where the first hop landed.
+    const outcome = await createPinnedFetch({ timeoutMs: 2_000 })(
+      "http://localtest.me:9/mcp"
+    ).catch((e: unknown) => e);
+
+    expect(outcome).not.toBeInstanceOf(BlockedEgressTargetError);
   });
 });
