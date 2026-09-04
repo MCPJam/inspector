@@ -63,6 +63,12 @@ export type ShareSectionProps<TEnvelope> = {
   onRotateLink?: () => Promise<TEnvelope>;
   onRevokeAll?: () => Promise<TEnvelope>;
   disabledReason?: string | null;
+  /**
+   * Render the "Has access" / "Invited" rosters. Off for surfaces that only
+   * hand out the link — the compact Share modal — where membership management
+   * stays on the settings page rather than being duplicated into a dialog.
+   */
+  showMembers?: boolean;
   footerSlot?: ReactNode;
   activeNote?: ReactNode;
   copy: ShareSectionCopy;
@@ -94,6 +100,7 @@ export function ShareSection<TEnvelope>({
   onRotateLink,
   onRevokeAll,
   disabledReason,
+  showMembers = true,
   footerSlot,
   activeNote,
   copy,
@@ -411,6 +418,7 @@ export function ShareSection<TEnvelope>({
         {activeNote}
       </div>
 
+      {showMembers ? (
       <div className="space-y-2">
         <label className="text-sm font-medium">
           {copy.hasAccessLabel ?? "Has access"}
@@ -494,8 +502,9 @@ export function ShareSection<TEnvelope>({
           ) : null}
         </div>
       </div>
+      ) : null}
 
-      {pendingInvitees.length > 0 ? (
+      {showMembers && pendingInvitees.length > 0 ? (
         <div className="space-y-2">
           <label className="text-sm font-medium">
             {copy.invitedLabel ?? "Invited"}

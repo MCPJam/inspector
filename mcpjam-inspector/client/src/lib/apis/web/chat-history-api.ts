@@ -57,12 +57,33 @@ export interface ResumeConfig {
   modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   selectedServers?: string[];
+  /**
+   * The environment this session is PINNED to, written only by the Agent
+   * Playground turn route (`origin: "api"`) and first-write-wins at the ingest
+   * boundary. Browser Playground turns persist no target field at all, so
+   * absence here does NOT mean "ran without an environment" — see
+   * `lib/conversation-execution-target.ts`.
+   */
+  environmentId?: string;
 }
 
+/**
+ * The `/direct-chat/detail` proxy returns the whole `chatSessions` document
+ * spread into `session`, so this interface is a hand-mirror of the fields we
+ * consume — narrower than what arrives. Adding a field here is a read, not a
+ * contract change.
+ */
 export interface ChatHistoryDetailSession extends ChatHistorySession {
   messagesBlobUrl: string | null;
   usedServerIds?: string[];
   resumeConfig?: ResumeConfig;
+  /**
+   * Host attribution stamped at ingest. Present for scenario- and swarm-sourced
+   * rows; the direct-chat read only ever serves `sourceType: "direct"` rows,
+   * which are not stamped today, so treat absence as "unrecorded" rather than
+   * "no host".
+   */
+  hostId?: string;
 }
 
 export interface ChatHistoryWidgetSnapshot {

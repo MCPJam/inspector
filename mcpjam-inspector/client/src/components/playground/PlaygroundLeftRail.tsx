@@ -2,8 +2,10 @@ import { useCallback, useState } from "react";
 import { Hammer, History } from "lucide-react";
 import { track } from "@/lib/analytics";
 import { ChatHistoryRail } from "@/components/chat-v2/history/ChatHistoryRail";
+import { AddServerModal } from "@/components/connection/AddServerModal";
 import { usePlaygroundStateContext } from "@/components/ui-playground/hooks/use-playground-state";
 import { PlaygroundLeft } from "@/components/ui-playground/PlaygroundLeft";
+import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { usePreviewedEnvironmentId } from "@/hooks/use-previewed-environment-id";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
@@ -181,28 +183,67 @@ function ToolsBody({
 
   // Zero-server → reuse the existing PlaygroundLeft (empty/onboarding state),
   // but suppress its inline LoggerView since the logger lives in the right rail.
+  return <ZeroServerToolsBody builtinTools={harnessBuiltinTools} />;
+}
+
+/**
+ * Zero-server Tools body. Owns the Add Server modal so the empty state's
+ * "Connect a server" button connects here instead of navigating to Servers and
+ * dropping the user out of the Playground mid-flow. Split out of `ToolsBody`
+ * because that function returns early above, and a hook declared past those
+ * returns would run conditionally.
+ */
+function ZeroServerToolsBody({
+  builtinTools,
+}: {
+  builtinTools: HarnessBuiltinToolInfo[];
+}) {
+  const state = usePlaygroundStateContext();
+  const [isAddServerOpen, setIsAddServerOpen] = useState(false);
+  const { onConnect } = state;
+
   return (
-    <PlaygroundLeft
-      tools={state.tools}
-      selectedToolName={state.selectedTool}
-      fetchingTools={state.fetchingTools}
-      onRefresh={state.fetchTools}
-      onSelectTool={state.setSelectedTool}
-      formFields={state.formFields}
-      onFieldChange={state.updateFormField}
-      onToggleField={state.updateFormFieldIsSet}
-      isExecuting={state.isExecuting}
-      onExecute={state.executeTool}
-      onSave={state.savedRequestsHook.openSaveDialog}
-      savedRequests={state.savedRequestsHook.savedRequests}
-      highlightedRequestId={state.savedRequestsHook.highlightedRequestId}
-      onLoadRequest={state.savedRequestsHook.handleLoadRequest}
-      onRenameRequest={state.savedRequestsHook.handleRenameRequest}
-      onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
-      onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
-      showLogger={false}
-      builtinTools={harnessBuiltinTools}
-      hasConnectedServer={false}
-    />
+    <>
+      <PlaygroundLeft
+        tools={state.tools}
+        selectedToolName={state.selectedTool}
+        fetchingTools={state.fetchingTools}
+        onRefresh={state.fetchTools}
+        onSelectTool={state.setSelectedTool}
+        formFields={state.formFields}
+        onFieldChange={state.updateFormField}
+        onToggleField={state.updateFormFieldIsSet}
+        isExecuting={state.isExecuting}
+        onExecute={state.executeTool}
+        onSave={state.savedRequestsHook.openSaveDialog}
+        savedRequests={state.savedRequestsHook.savedRequests}
+        highlightedRequestId={state.savedRequestsHook.highlightedRequestId}
+        onLoadRequest={state.savedRequestsHook.handleLoadRequest}
+        onRenameRequest={state.savedRequestsHook.handleRenameRequest}
+        onDuplicateRequest={state.savedRequestsHook.handleDuplicateRequest}
+        onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
+        showLogger={false}
+        builtinTools={builtinTools}
+        hasConnectedServer={false}
+        // The Evals embedded chat provides no connect handler; there the
+        // button keeps its Servers navigation.
+        onAddServerRequested={
+          onConnect ? () => setIsAddServerOpen(true) : undefined
+        }
+      />
+      {onConnect && (
+        <AddServerModal
+          isOpen={isAddServerOpen}
+          onClose={() => setIsAddServerOpen(false)}
+          onSubmit={(formData) => {
+            track("connecting_server", {
+              location: "playground_tools_rail",
+            });
+            onConnect(formData);
+            setIsAddServerOpen(false);
+          }}
+        />
+      )}
+    </>
   );
 }
