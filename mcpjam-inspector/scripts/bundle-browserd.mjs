@@ -78,17 +78,41 @@ const result = await build({
   },
 });
 
-// Local inputs only: a bare specifier here would be an external (`playwright`),
-// which is resolved inside the sandbox at runtime and has no bytes to hash.
-// `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
-// the workspace root, so a package that does get bundled arrives as
-// `../node_modules/<name>/…` and a prefix test walks straight past it — into
-// the hash, and past the leaked-file guard, which only recognises paths under
-// `services/browserd/electron/`.
-const sourceFiles = Object.keys(result.metafile.inputs)
+const metafileInputs = Object.keys(result.metafile.inputs)
   .map((input) => input.replaceAll("\\", "/"))
-  .filter((input) => !input.includes("node_modules/"))
   .sort();
+
+// REFUSED HERE, not asserted downstream. A dependency that gets bundled has to
+// be caught against the RAW metafile, because the only other place that could
+// notice is the source list below — and that list is built by removing exactly
+// these paths, so a test asserting "no node_modules in the source list" is a
+// tautology that passes forever. (It was one, briefly.)
+//
+// The bundle is uploaded to an E2B box that has nothing but these bytes, so a
+// package quietly inlined here is a runtime failure one upload away from the
+// commit that caused it. Better to fail the build, where the cause is on
+// screen.
+//
+// `includes` rather than `startsWith`: this repo's dependencies are HOISTED to
+// the workspace root, so a bundled package arrives as `../node_modules/<name>/…`
+// and a prefix test walks straight past it.
+const bundledDependencies = metafileInputs.filter((input) =>
+  input.includes("node_modules/"),
+);
+if (bundledDependencies.length > 0) {
+  console.error(
+    "browserd bundle: a dependency was inlined into the daemon.\n" +
+      "It runs on a box with only what this artifact ships, so it must be\n" +
+      "declared external in this script or vendored deliberately.\n\n" +
+      bundledDependencies.map((file) => `  ${file}`).join("\n"),
+  );
+  process.exit(1);
+}
+
+// Local inputs only, which after the refusal above is all of them: a bare
+// specifier would be an external (`playwright`, `electron`), resolved inside
+// the sandbox at runtime with no bytes to hash.
+const sourceFiles = metafileInputs;
 
 // Also emit the bundle base64-encoded as a TS const. The inspector server reads
 // this at runtime to UPLOAD the daemon into a sandbox; embedding it in the

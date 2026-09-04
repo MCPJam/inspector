@@ -57,8 +57,11 @@ export async function clearStaleSingletonLock(
   userDataDir: string,
   probe: (
     dir: string,
-  ) => Promise<{ live: boolean; pid?: number; host?: string }> =
-    probeSingletonOwner,
+  ) => Promise<{
+    live: boolean;
+    pid?: number;
+    host?: string;
+  }> = probeSingletonOwner,
 ): Promise<ClearedLock> {
   const owner = await probe(userDataDir);
   if (owner.live) {
@@ -172,9 +175,19 @@ export async function probeSingletonOwner(
  * Edge are Chromium, and a user who pointed either at this directory would
  * have had their lock cleared underneath them. Electron is here for the same
  * reason: the desktop app is a Chromium too.
+ *
+ * CHROMIUM-FAMILY ONLY, though. Firefox and Safari were briefly on this list,
+ * and they are the one case where generosity buys nothing: a `SingletonLock`
+ * is CHROMIUM'S file, so neither of them can ever be the process that wrote
+ * the one we are asking about. Matching them cannot prevent a corrupted
+ * profile — there is no profile of ours for them to be holding — and it can
+ * strand a project forever, because a recycled pid that happens to belong to
+ * the user's Firefox then refuses every relaunch with `profile_in_use` and no
+ * way out. Generous about which Chromium; not generous about what a Chromium
+ * is.
  */
 function looksLikeBrowser(command: string): boolean {
-  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron|firefox|safari/i.test(
+  return /chrom|headless_shell|brave|edge|msedge|opera|vivaldi|electron/i.test(
     command,
   );
 }

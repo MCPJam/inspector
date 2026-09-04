@@ -1,5 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtemp, rm, symlink, readlink, writeFile, readdir, mkdir } from "node:fs/promises";
+import {
+  mkdtemp,
+  rm,
+  symlink,
+  readlink,
+  writeFile,
+  readdir,
+  mkdir,
+} from "node:fs/promises";
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { clearStaleSingletonLock, probeSingletonOwner } from "../profile-lock";
@@ -197,7 +205,7 @@ describe("probeSingletonOwner — what counts as having ASKED", () => {
     // `""` is a reading we failed to take, not one that came back negative.
     // Treated as the latter it cleared the lock of a live process, which is
     // the exact confusion the rest of this probe is built to avoid.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     for (const answer of ["", "   ", "\n"]) {
@@ -215,14 +223,13 @@ describe("probeSingletonOwner — what counts as having ASKED", () => {
     // Saying "not a browser" about a real one deletes a running browser's
     // singleton files. Brave, Edge and the desktop app itself are all
     // Chromium, and none of them carries `chrom` in the name `ps` reports.
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     for (const command of [
       "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
       "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
       "/Applications/MCPJam.app/Contents/MacOS/Electron",
-      "firefox",
     ]) {
       expect(
         await probeSingletonOwner(
@@ -234,8 +241,32 @@ describe("probeSingletonOwner — what counts as having ASKED", () => {
     }
   });
 
+  it("does not let a browser that cannot own this lock strand the profile", async () => {
+    // A `SingletonLock` is CHROMIUM'S file, so Firefox can never be the
+    // process that wrote the one we are asking about. Matching it cannot
+    // prevent a corrupted profile — there is none of ours for it to hold —
+    // and it CAN strand a project forever, because a recycled pid belonging
+    // to the user's Firefox would refuse every relaunch with `profile_in_use`
+    // and no way out.
+    const dir = await lockDir();
+    await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
+
+    for (const command of [
+      "firefox",
+      "/Applications/Safari.app/Contents/MacOS/Safari",
+    ]) {
+      expect(
+        await probeSingletonOwner(
+          dir,
+          () => true,
+          () => command,
+        ),
+      ).toEqual({ live: false, pid: 4242 });
+    }
+  });
+
   it("still clears a lock a genuinely unrelated process holds", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "browserd-lock-"));
+    const dir = await lockDir();
     await symlink(`${hostname()}-4242`, join(dir, "SingletonLock"));
 
     expect(
