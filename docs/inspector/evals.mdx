@@ -38,6 +38,8 @@ Each case has four moving parts:
 - **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
 - **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
 
+When authoring cases via a suite file or the API, each case also accepts a `kind` field (`"capability"` or `"regression"`). When absent, the kind is derived from the case's `matchOptions`: `strict` order with zero extra calls is `regression`; everything else is `capability`. Setting it explicitly pins the label regardless of `matchOptions`. Send `null` on a PATCH to clear a previously set value.
+
 <Note>
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
