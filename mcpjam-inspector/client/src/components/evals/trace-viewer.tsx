@@ -486,6 +486,7 @@ export function TraceViewer({
         toolsMetadata,
         toolServerMap,
         connectedServerIds,
+        toolResultDisplay: "attached-to-tool",
       }),
     [trace, toolsMetadata, toolServerMap, connectedServerIds]
   );
@@ -973,7 +974,7 @@ export function TraceViewer({
                     toolRenderOverrides={toolRenderOverrides}
                     appToolInvocationsOverride={appToolInvocationsOverride}
                     showInlineEdit={false}
-                    minimalMode={true}
+                    minimalMode={false}
                     interactive={threadInteractive}
                     recorder={recorder}
                     reasoningDisplayMode="collapsed"

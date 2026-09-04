@@ -1225,16 +1225,31 @@ describe("TraceViewer", () => {
 
   // --- Props pass-through ---
 
-  it("passes minimalMode={true} and interactive={false} to MessageView", () => {
+  it("uses the full read-only tool card in non-interactive traces", () => {
     render(<TraceViewer trace={simpleTextTrace} />);
     openChatTab();
 
     expect(mockMessageView).toHaveBeenCalledWith(
       expect.objectContaining({
-        minimalMode: true,
+        minimalMode: false,
         interactive: false,
+        showInlineEdit: false,
       }),
     );
+  });
+
+  it("keeps the tool result inside the shared tool card", () => {
+    render(<TraceViewer trace={toolTrace} />);
+    openChatTab();
+
+    const message = mockMessageView.mock.calls[0][0].message as {
+      parts: Array<Record<string, unknown>>;
+    };
+    expect(message.parts).toHaveLength(1);
+    expect(message.parts[0]).toMatchObject({
+      type: "dynamic-tool",
+      traceDisplayMode: "json-markdown",
+    });
   });
 
   it("requests collapsed reasoning rendering in chat trace mode", () => {
@@ -1418,7 +1433,8 @@ describe("TraceViewer", () => {
 
     const lastCall = mockMessageView.mock.calls[0][0];
     expect(lastCall.interactive).toBe(false);
-    expect(lastCall.minimalMode).toBe(true);
+    expect(lastCall.minimalMode).toBe(false);
+    expect(lastCall.showInlineEdit).toBe(false);
   });
 
   it("keeps trace chat read-only when only onFullscreenChange is provided", () => {
@@ -1429,7 +1445,8 @@ describe("TraceViewer", () => {
 
     const lastCall = mockMessageView.mock.calls[0][0];
     expect(lastCall.interactive).toBe(false);
-    expect(lastCall.minimalMode).toBe(true);
+    expect(lastCall.minimalMode).toBe(false);
+    expect(lastCall.showInlineEdit).toBe(false);
   });
 });
 

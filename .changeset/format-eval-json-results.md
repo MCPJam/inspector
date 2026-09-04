@@ -3,4 +3,4 @@
 "@mcpjam/inspector": patch
 ---
 
-Render JSON tool results in eval transcripts with the structured JSON viewer instead of raw minified text.
+Render eval tool results inside the full shared tool card, including structured JSON and widget diagnostics, instead of raw sibling text.
