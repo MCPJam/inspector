@@ -28,7 +28,17 @@ interface StepGroup {
 
 interface StepCopyOptions {
   step?: OAuthFlowStep;
+  /** Copy a range/selection of steps at once; takes precedence over `step`. */
+  steps?: OAuthFlowStep[];
 }
+
+const resolveSelectedSteps = (
+  options?: StepCopyOptions
+): Set<OAuthFlowStep> | undefined => {
+  if (options?.steps) return new Set(options.steps);
+  if (options?.step) return new Set([options.step]);
+  return undefined;
+};
 
 const formatTimestamp = (timestamp: number) =>
   new Date(timestamp).toLocaleTimeString();
@@ -237,9 +247,10 @@ export function generateGuideText(
   }
 
   const currentStepIndex = getStepIndex(oauthFlowState.currentStep);
+  const selectedSteps = resolveSelectedSteps(options);
 
   groups.forEach((group, groupIndex) => {
-    if (options?.step && group.step !== options.step) return;
+    if (selectedSteps && !selectedSteps.has(group.step)) return;
 
     const info = getStepInfo(group.step);
     const stepNumber = groupIndex + 1;
@@ -392,11 +403,14 @@ export function generateRawText(
 ): string {
   let text = "=== OAuth Debugger - Raw Logs ===\n\n";
 
-  const entriesToCopy = options?.step
+  const selectedSteps = resolveSelectedSteps(options);
+  const entriesToCopy = selectedSteps
     ? timelineEntries.filter((entry) =>
-        entry.type === "info"
-          ? entry.log.step === options.step
-          : (entry.step ?? entry.entry.step) === options.step
+        selectedSteps.has(
+          entry.type === "info"
+            ? entry.log.step
+            : entry.step ?? entry.entry.step
+        )
       )
     : timelineEntries;
 

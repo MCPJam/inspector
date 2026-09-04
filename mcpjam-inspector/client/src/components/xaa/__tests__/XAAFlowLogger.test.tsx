@@ -149,7 +149,7 @@ describe("XAAFlowLogger run controls", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
 
     expect(copyToClipboard).toHaveBeenCalledTimes(1);
     const copied = copyToClipboard.mock.calls[0][0];
@@ -167,7 +167,7 @@ describe("XAAFlowLogger run controls", () => {
     const clearTimeoutSpy = vi.spyOn(window, "clearTimeout");
     const { unmount } = renderLogger();
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
     await user.click(screen.getByRole("button", { name: "Copied!" }));
 
     expect(clearTimeoutSpy).toHaveBeenCalledTimes(1);
@@ -180,7 +180,7 @@ describe("XAAFlowLogger run controls", () => {
     copyToClipboard.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     renderLogger();
 
-    await user.click(screen.getByRole("button", { name: "Copy" }));
+    await user.click(screen.getByRole("button", { name: "Copy all" }));
     expect(
       screen.getByRole("button", { name: "Copy failed" })
     ).toBeInTheDocument();
@@ -374,5 +374,65 @@ describe("XAAFlowLogger request/response cards", () => {
     await user.click(screen.getByText("400"));
     expect(screen.getByText("Request Body")).toBeInTheDocument();
     expect(screen.getByText("Response Body")).toBeInTheDocument();
+  });
+
+  it("copies a shift-selected range of steps together, in flow order, regardless of click order", async () => {
+    const user = userEvent.setup();
+    const INSPECT_EXCHANGE = {
+      step: "inspect_id_jag" as const,
+      timestamp: 0,
+      duration: 10,
+      request: {
+        method: "POST",
+        url: "https://auth.example.com/inspect",
+        headers: { "Content-Type": "application/json" },
+        body: { id_jag: "opaque-jag" },
+      },
+      response: {
+        status: 200,
+        statusText: "OK",
+        headers: { "content-type": "application/json" },
+        body: { valid: true },
+      },
+    };
+    renderWithExchange({
+      httpHistory: [INSPECT_EXCHANGE, JWT_BEARER_EXCHANGE],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Select step" }));
+
+    const checkboxes = screen.getAllByRole("checkbox");
+    expect(checkboxes).toHaveLength(3);
+
+    const firstCheckbox = screen.getByRole("checkbox", {
+      name: /Inspect the ID-JAG/i,
+    });
+    const middleCheckbox = screen.getByRole("checkbox", {
+      name: /Exchange the ID-JAG for an Access Token/i,
+    });
+    const lastCheckbox = screen.getByRole("checkbox", {
+      name: /Access Token Received/i,
+    });
+
+    // Click the last step first, then shift-click the first step: proves the
+    // middle step gets pulled into the range and the copy still comes out in
+    // flow order, regardless of the order the steps were clicked in.
+    await user.click(lastCheckbox);
+    await user.keyboard("{Shift>}");
+    await user.click(firstCheckbox);
+    await user.keyboard("{/Shift}");
+
+    expect(middleCheckbox).toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Copy 3 steps" }));
+
+    expect(copyToClipboard).toHaveBeenCalledTimes(1);
+    const copied = copyToClipboard.mock.calls[0][0];
+    const inspectIndex = copied.indexOf("[inspect_id_jag]");
+    const jwtIndex = copied.indexOf("[jwt_bearer_request]");
+    const receivedIndex = copied.indexOf("[received_access_token]");
+    expect(inspectIndex).toBeGreaterThan(-1);
+    expect(jwtIndex).toBeGreaterThan(inspectIndex);
+    expect(receivedIndex).toBeGreaterThan(jwtIndex);
   });
 });
