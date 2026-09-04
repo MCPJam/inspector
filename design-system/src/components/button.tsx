@@ -25,8 +25,13 @@ const buttonVariants = cva(
           "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-control-hover",
         // No fill at rest, chrome fill on hover. One token for both themes,
         // so this no longer needs a dark-mode override.
-        ghost:
-          "hover:bg-chrome-hover hover:text-accent-foreground",
+        //
+        // text-foreground, NOT text-accent-foreground: the pair that shipped
+        // on main (bg-accent + text-accent-foreground) was self-consistent,
+        // but --chrome-hover is not --accent. Presets redefine
+        // --accent-foreground and leave --chrome-hover alone — brutalist
+        // light sets it to white, which is unreadable on the linen fill.
+        ghost: "hover:bg-chrome-hover hover:text-foreground",
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {

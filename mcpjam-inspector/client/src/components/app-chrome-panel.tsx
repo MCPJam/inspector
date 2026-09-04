@@ -35,11 +35,10 @@ export function AppChromePanel({
         // rounded-t-2xl is 16px; it is not remapped by the theme's radius
         // scale (only sm/md/lg/xl are), so it tracks the design value.
         //
-        // The shadow is mostly hidden BEHIND the panel — only what the blur
-        // pushes past the top edge is ever visible. So depth here comes from
-        // the blur (3px → 10px), not the offset or the alpha, which barely
-        // moved (0x33 → 0x38).
-        headerVisible && "rounded-t-2xl shadow-[0_3px_10px_#00000038]"
+        // The lift is --shadow-chrome-panel rather than an arbitrary value:
+        // AGENTS.md forbids a literal hex in a component, and the tuning
+        // (why the depth is in the blur) belongs next to the other shadows.
+        headerVisible && "rounded-t-2xl shadow-chrome-panel"
       )}
     >
       {children}

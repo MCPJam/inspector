@@ -282,6 +282,13 @@ export function ActiveServerSelector({
                 }}
                 className={cn(
                   "group relative flex h-full items-center gap-3 px-4 border-r border-border transition-all duration-200 cursor-pointer outline-none",
+                  // The ring is on the BASE, not on one branch: `outline-none`
+                  // above kills the native indicator for every tab, so the
+                  // selected one would otherwise take keyboard focus with
+                  // nothing to show for it. Inset because the strip scrolls
+                  // horizontally (`overflow-x-auto`) and would clip an
+                  // outset ring on the first and last tab.
+                  "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/45",
                   // Only the ACTIVE tab carries the panel fill; the rest sit
                   // on the linen chrome with no fill at rest. This used to be
                   // the other way round, which is why the strip read as one

@@ -132,6 +132,11 @@ export const tokensCss: string = `@theme {
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* The chrome panel's lift. Mostly hidden BEHIND the panel — only what the
+     blur pushes past the top edge is ever visible — so the depth is in the
+     blur, not the offset. Like every other shadow here it is one value for
+     both themes. */
+  --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 }
@@ -245,5 +250,10 @@ export const tokensCss: string = `@theme {
   --shadow-xl:
     0 1px 3px 0px hsl(0 0% 0% / 0.1), 0 8px 10px -1px hsl(0 0% 0% / 0.1);
   --shadow-2xl: 0 1px 3px 0px hsl(0 0% 0% / 0.25);
+  /* The chrome panel's lift. Mostly hidden BEHIND the panel — only what the
+     blur pushes past the top edge is ever visible — so the depth is in the
+     blur, not the offset. Like every other shadow here it is one value for
+     both themes. */
+  --shadow-chrome-panel: 0 3px 10px hsl(0 0% 0% / 0.22);
 }
 `;

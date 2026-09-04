@@ -367,6 +367,33 @@ describe("ActiveServerSelector", () => {
       expect(addServer?.className).toContain("text-foreground");
       expect(addServer?.className).not.toContain("text-muted-foreground");
     });
+
+    it("keeps a focus indicator on the selected tab, not just the idle ones", () => {
+      // The strip sets `outline-none` on every tab, so without an explicit
+      // ring the selected tab takes keyboard focus with nothing to show for
+      // it — it already carries `bg-background` at rest, so the idle tabs'
+      // `focus-visible:bg-chrome-hover` has nothing to change.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      for (const name of ["server-1", "server-2"]) {
+        const tab = screen.getByText(name).closest("button");
+        expect(tab?.className).toContain("focus-visible:ring-2");
+        // Inset: the strip scrolls horizontally and would clip an outset ring
+        // on the first and last tab.
+        expect(tab?.className).toContain("focus-visible:ring-inset");
+      }
+    });
   });
 
   describe("multi-select mode", () => {

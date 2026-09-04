@@ -71,7 +71,14 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
           // The stroke is an inset shadow rather than a border so the pill keeps
           // its box: a real border would shift the label 1px against every
           // unselected sibling.
-          "[&[data-active=true]]:bg-background! cursor-pointer " +
+          // The label colour is pinned for the same reason the fill is.
+          // `sidebarMenuButtonVariants` sets
+          // `data-[active=true]:text-sidebar-accent-foreground`, which is a
+          // per-preset value: the brutalist light preset makes it white, and
+          // that preset's --background is white too, so the active label
+          // disappeared. --foreground is the pair for --background by
+          // definition, in every preset.
+          "[&[data-active=true]]:bg-background! [&[data-active=true]]:text-foreground! cursor-pointer " +
             "[&[data-active=true]]:shadow-[inset_0_0_0_1px_var(--divider)]"
         : "cursor-pointer"
     );
