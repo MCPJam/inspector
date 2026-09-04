@@ -423,8 +423,23 @@ export class BrowserdRequestHandler {
       // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
       // tab that was closed and reopened, so "something is there" would answer
       // true while this subscription pointed at a dead object.
-      stillCurrent: async () =>
-        live && (await this.driver.viewport?.(args.tabId)) === viewport,
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return (await this.driver.viewport?.(args.tabId)) === viewport;
+        } catch {
+          return false;
+        }
+      },
     };
   }
 

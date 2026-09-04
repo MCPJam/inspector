@@ -135,8 +135,37 @@ export function createFrameStreamHost(
       return true;
     }
 
-    void startSubscription({ res, tabId, holder });
+    // The SAME hazard as the heartbeat's, one await earlier: `subscribeFrames`
+    // resolves a viewport, and resolving one opens a tab and attaches a CDP
+    // session — either of which throws on a closing context or a crashed
+    // renderer, and `ChromiumDriver` caches the rejected promise so every
+    // later caller inherits it. Unhandled, that ends the daemon process. Left
+    // merely unfinished it is nearly as bad: the response never ends and its
+    // entry holds one of four cap slots until the client gives up.
+    void startSubscription({ res, tabId, holder }).catch(() => {
+      writeEndAndClose(res, "tab_gone");
+    });
     return true;
+  }
+
+  /**
+   * Last-resort close for a stream that failed before it had its own `end`.
+   *
+   * Writes the same in-band reason a healthy exit would, because by this point
+   * the headers are out and the status code is spent: silence and a hangup are
+   * the same thing to a reader, and the whole shape of this protocol is that
+   * they must not be.
+   */
+  function writeEndAndClose(
+    res: ServerResponse,
+    reason: FrameStreamEndReason,
+  ): void {
+    try {
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.end();
+    } catch {
+      // Already gone.
+    }
   }
 
   /**
@@ -248,8 +277,15 @@ export function createFrameStreamHost(
         stallTimer = timers.setTimer(() => {
           if (ended) return;
           ended = true;
+          timers.clearTimer(beatTimer);
           unsubscribe?.();
           open.delete(entry);
+          // Closed HERE as well as in `end()`, because this path does not go
+          // through it: setting `ended` makes the close handler return early,
+          // so without this the pacer keeps its held frame and ships it into a
+          // destroyed socket the moment the write callback fires — arming one
+          // more stall timer on the way.
+          pacer.close();
           // Destroy rather than end: a peer that is not reading will not read a
           // reason either, and a graceful close would wait on the same buffer.
           res.destroy();
@@ -315,10 +351,26 @@ export function createFrameStreamHost(
       pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
       subscription.revalidate();
       if (ended) return; // revalidate may have revoked us
-      void subscription.stillCurrent().then((current) => {
-        if (!current && !ended) end("tab_gone");
-        else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
-      });
+      void subscription.stillCurrent().then(
+        (current) => {
+          if (!current && !ended) end("tab_gone");
+          else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
+        },
+        // A REJECTION IS NOT A NON-ANSWER YOU CAN IGNORE. `stillCurrent` asks
+        // the driver for the tab's viewport, and that throws on ordinary
+        // paths — a context that is closing answers "this browser is shutting
+        // down" rather than a value. Left unhandled it did two things, and
+        // the quieter one is worse: the tick never rescheduled, so the lease
+        // stopped being re-asked for the life of the stream, which is exactly
+        // the privacy hole the heartbeat exists to close on a page that does
+        // not paint. And an unhandled rejection ends a Node process, so the
+        // one that died was the daemon, taking every hosted session on the
+        // box with it. Unable to prove the tab is still ours, we say so and
+        // stop.
+        () => {
+          if (!ended) end("tab_gone");
+        },
+      );
     };
     beatTimer = timers.setTimer(beat, heartbeatMs);
   }

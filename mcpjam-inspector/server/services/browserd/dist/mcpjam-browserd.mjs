@@ -649,7 +649,23 @@ var BrowserdRequestHandler = class {
       // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
       // tab that was closed and reopened, so "something is there" would answer
       // true while this subscription pointed at a dead object.
-      stillCurrent: async () => live && await this.driver.viewport?.(args.tabId) === viewport
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return await this.driver.viewport?.(args.tabId) === viewport;
+        } catch {
+          return false;
+        }
+      }
     };
   }
   /**
@@ -902,8 +918,17 @@ function createFrameStreamHost(handler, options = {}) {
       runProbe(res);
       return true;
     }
-    void startSubscription({ res, tabId, holder });
+    void startSubscription({ res, tabId, holder }).catch(() => {
+      writeEndAndClose(res, "tab_gone");
+    });
     return true;
+  }
+  function writeEndAndClose(res, reason) {
+    try {
+      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.end();
+    } catch {
+    }
   }
   function beginStream(res) {
     res.writeHead(200, {
@@ -978,8 +1003,10 @@ function createFrameStreamHost(handler, options = {}) {
         stallTimer = timers.setTimer(() => {
           if (ended) return;
           ended = true;
+          timers.clearTimer(beatTimer);
           unsubscribe?.();
           open.delete(entry);
+          pacer.close();
           res.destroy();
         }, stallMs);
         res.write(data, (error) => {
@@ -1033,10 +1060,26 @@ function createFrameStreamHost(handler, options = {}) {
       pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
       subscription.revalidate();
       if (ended) return;
-      void subscription.stillCurrent().then((current) => {
-        if (!current && !ended) end("tab_gone");
-        else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
-      });
+      void subscription.stillCurrent().then(
+        (current) => {
+          if (!current && !ended) end("tab_gone");
+          else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
+        },
+        // A REJECTION IS NOT A NON-ANSWER YOU CAN IGNORE. `stillCurrent` asks
+        // the driver for the tab's viewport, and that throws on ordinary
+        // paths — a context that is closing answers "this browser is shutting
+        // down" rather than a value. Left unhandled it did two things, and
+        // the quieter one is worse: the tick never rescheduled, so the lease
+        // stopped being re-asked for the life of the stream, which is exactly
+        // the privacy hole the heartbeat exists to close on a page that does
+        // not paint. And an unhandled rejection ends a Node process, so the
+        // one that died was the daemon, taking every hosted session on the
+        // box with it. Unable to prove the tab is still ours, we say so and
+        // stop.
+        () => {
+          if (!ended) end("tab_gone");
+        }
+      );
     };
     beatTimer = timers.setTimer(beat, heartbeatMs);
   }
