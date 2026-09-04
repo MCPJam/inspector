@@ -1086,20 +1086,24 @@ export function NewSwarmCreateFlow({
       // create environment rows, and until it settles the exits (Cancel and the
       // ← Swarms link) stay live — leaving there would fire the discard toast
       // while this launch keeps running. `disabled={launching}` only closes that
-      // window if the flag is set for the whole of it, preflight included. Each
-      // early return below releases the latch; the launch path's finally does
-      // the rest.
+      // window if the flag is held for the whole of it, preflight included.
       inFlightRef.current = true;
       setLaunching(true);
 
+      // The preflight has two bail-outs — a `resolveTargets` throw, and no
+      // resolvable host — and BOTH must release the latch or the exits stay
+      // disabled forever. `finally` releases it on every exit that doesn't set
+      // `readyToLaunch`, so no early return here (now or added later) can leak
+      // it. The launch path below carries its own finally.
       let envPayload: { environmentIds: string[]; hostIds: string[] } | null =
         null;
-      if (
-        proposed.length > 0 ||
-        composeMode ||
-        targetState.environmentIds.length > 0
-      ) {
-        try {
+      let readyToLaunch = false;
+      try {
+        if (
+          proposed.length > 0 ||
+          composeMode ||
+          targetState.environmentIds.length > 0
+        ) {
           const resolved = await resolveTargets();
           envPayload = resolved
             ? {
@@ -1107,29 +1111,28 @@ export function NewSwarmCreateFlow({
                 hostIds: resolved.hostIds,
               }
             : null;
-        } catch (err) {
+        }
+        if (!envPayload && proposed.length > 0) {
           setErrorMessage(
-            err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError
-              ? err.message
-              : errorMessageOf(
-                  err,
-                  "Could not resolve environments for launch.",
-                ),
+            "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
           );
+        } else {
+          readyToLaunch = true;
+        }
+      } catch (err) {
+        setErrorMessage(
+          err instanceof SwarmTargetMaterializeError ||
+            err instanceof ComposerResolveError
+            ? err.message
+            : errorMessageOf(err, "Could not resolve environments for launch."),
+        );
+      } finally {
+        if (!readyToLaunch) {
           inFlightRef.current = false;
           setLaunching(false);
-          return;
         }
       }
-      if (!envPayload && proposed.length > 0) {
-        setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
-        );
-        inFlightRef.current = false;
-        setLaunching(false);
-        return;
-      }
+      if (!readyToLaunch) return;
 
       setErrorMessage(null);
 
