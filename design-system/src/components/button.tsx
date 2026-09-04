@@ -18,8 +18,11 @@ const buttonVariants = cva(
         // The chrome's filled button. --secondary IS the linen ground, so a
         // secondary button in the nav used to be invisible against it; the
         // control fill plus its hairline is what separates the two.
+        // text-foreground, NOT text-secondary-foreground: in dark mode the
+        // latter is the same value as --chrome-control, which made the label
+        // vanish into the fill.
         secondary:
-          "bg-chrome-control text-secondary-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-hover",
+          "bg-chrome-control text-foreground border border-chrome-control-border shadow-xs hover:bg-chrome-hover",
         // No fill at rest, chrome fill on hover. One token for both themes,
         // so this no longer needs a dark-mode override.
         ghost:
