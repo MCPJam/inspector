@@ -109,24 +109,80 @@ function parseSandboxOrigin(value: string): string | null {
  * Same-origin fallback exists only as a soft-fail for misconfigured hosted
  * deploys; it emits a loud security warning.
  */
+/** A DNS label MCPJam derives for a server's dedicated view origin. */
+const VIEW_ORIGIN_LABEL = /^[a-f0-9]{16}$/;
+
+/**
+ * Prefix `origin`'s host with a per-server label, or return null when this
+ * browser would not resolve the result.
+ *
+ * Locally the label goes on `localhost`, which Chromium and Firefox resolve to
+ * loopback for any subdomain. Safari does not, and a page that simply fails to
+ * load is a worse outcome than sharing an origin, so it keeps the plain host.
+ */
+function labelledOrigin(
+  origin: string,
+  label: string,
+  userAgent: string
+): string | null {
+  let url: URL;
+  try {
+    url = new URL(origin);
+  } catch {
+    return null;
+  }
+  const isLoopback =
+    url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (isLoopback) {
+    const chromiumOrFirefox =
+      /Chrome\/|Chromium\/|Firefox\//.test(userAgent) &&
+      !/^((?!Chrome|Chromium).)*Safari/.test(userAgent);
+    if (!chromiumOrFirefox) return null;
+    // 127.0.0.1 has no subdomains; *.localhost does.
+    url.hostname = `${label}.localhost`;
+  } else {
+    url.hostname = `${label}.${url.hostname}`;
+  }
+  return url.origin;
+}
+
 export function resolveSandboxProxyUrl({
   hostedMode,
   sandboxOrigin,
   location,
+  viewOriginLabel,
+  viewSubdomainsEnabled,
+  userAgent,
 }: {
   hostedMode: boolean;
   sandboxOrigin: string;
   location: SandboxProxyLocation;
+  /** Per-server label; views share the sandbox origin without one. */
+  viewOriginLabel?: string;
+  viewSubdomainsEnabled?: boolean;
+  userAgent?: string;
 }): string {
   const proxyPath = hostedMode
     ? "/api/web/apps/mcp-apps/sandbox-proxy"
     : "/api/apps/mcp-apps/sandbox-proxy";
 
+  // Only a label this code derived. Anything else — including a string a
+  // server supplied — could name a host we do not control.
+  const label =
+    viewSubdomainsEnabled &&
+    typeof viewOriginLabel === "string" &&
+    VIEW_ORIGIN_LABEL.test(viewOriginLabel)
+      ? viewOriginLabel
+      : null;
+
   const configuredOrigin = hostedMode
     ? parseSandboxOrigin(sandboxOrigin)
     : null;
   if (configuredOrigin && configuredOrigin !== location.origin) {
-    return `${configuredOrigin}${proxyPath}?v=${Date.now()}`;
+    const perApp = label
+      ? labelledOrigin(configuredOrigin, label, userAgent ?? "")
+      : null;
+    return `${perApp ?? configuredOrigin}${proxyPath}?v=${Date.now()}`;
   }
 
   const currentHost = location.hostname;
@@ -158,7 +214,11 @@ export function resolveSandboxProxyUrl({
   }
 
   const portSuffix = currentPort ? `:${currentPort}` : "";
-  return `${protocol}//${sandboxHost}${portSuffix}${proxyPath}?v=${Date.now()}`;
+  const baseOrigin = `${protocol}//${sandboxHost}${portSuffix}`;
+  const perApp = label
+    ? labelledOrigin(baseOrigin, label, userAgent ?? "")
+    : null;
+  return `${perApp ?? baseOrigin}${proxyPath}?v=${Date.now()}`;
 }
 
 export interface SandboxedIframeHandle {
@@ -241,6 +301,22 @@ interface SandboxedIframeProps {
    * (`host.surface.sandboxOrigin`).
    */
   sandboxOrigin?: string;
+  /**
+   * How the proxy mounts the view: `"write"` (default) writes the HTML into a
+   * blank same-origin iframe so the view runs at the proxy's URL; `"srcdoc"`
+   * restores the legacy `iframe.srcdoc` mount, where the view has no URL of
+   * its own. Supplied by the host (`host.surface.viewMountMode`); build-time
+   * only, so it exists to exercise the srcdoc branch rather than to switch
+   * behaviour at runtime.
+   */
+  mountMode?: "write" | "srcdoc";
+  /**
+   * Per-server label for a dedicated view origin, and whether this deploy
+   * serves one. Supplied by the host; without both the view renders on the
+   * shared sandbox origin.
+   */
+  viewOriginLabel?: string;
+  viewSubdomainsEnabled?: boolean;
 }
 
 /**
@@ -275,6 +351,9 @@ export const SandboxedIframe = forwardRef<
     title = "Sandboxed Content",
     hostedMode = false,
     sandboxOrigin = "",
+    mountMode,
+    viewOriginLabel,
+    viewSubdomainsEnabled,
   },
   ref
 ) {
@@ -286,12 +365,25 @@ export const SandboxedIframe = forwardRef<
   onMessageRef.current = onMessage;
   onProxyReadyRef.current = onProxyReady;
 
-  const [sandboxProxyUrl] = useState(() =>
-    resolveSandboxProxyUrl({
-      hostedMode,
-      sandboxOrigin,
-      location: window.location,
-    })
+  // Recomputed only when an input that changes the ORIGIN changes. It cannot
+  // be a plain derivation: the URL carries a `?v=` cache-buster, so
+  // recomputing every render would hand the iframe a new `src` each time and
+  // reload the widget continuously. And it cannot be a one-shot initializer
+  // either: `viewOriginLabel` arrives with the widget-content response, after
+  // this component has already mounted, so a one-shot value would leave every
+  // view on the shared origin forever.
+  const sandboxProxyUrl = useMemo(
+    () =>
+      resolveSandboxProxyUrl({
+        hostedMode,
+        sandboxOrigin,
+        location: window.location,
+        viewOriginLabel,
+        viewSubdomainsEnabled,
+        userAgent: typeof navigator === "undefined" ? "" : navigator.userAgent,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [hostedMode, sandboxOrigin, viewOriginLabel, viewSubdomainsEnabled]
   );
 
   const sandboxProxyOrigin = useMemo(() => {
@@ -333,6 +425,14 @@ export const SandboxedIframe = forwardRef<
         event.data?.type === "openai:setWidgetState" ||
         event.data?.type === "openai:setOpenInAppUrl"
       ) {
+        onMessageRef.current(event);
+        return;
+      }
+
+      // Where the proxy mounted the view (not JSON-RPC) — carries the view's
+      // real document URL, which the Sandbox Stack panel surfaces so a
+      // developer can allowlist it with a referrer-restricted third party.
+      if (event.data?.type === "mcpjam:view-mode") {
         onMessageRef.current(event);
         return;
       }
@@ -431,6 +531,9 @@ export const SandboxedIframe = forwardRef<
         // Include recordMode so record-capable surfaces receive the recorder
         // shim, and stale/non-recordable surfaces reload without it.
         recordMode: recordMode ?? null,
+        // Part of the render recipe: it decides how the proxy mounts the HTML,
+        // so a change must re-send rather than leave the previous mount up.
+        mountMode: mountMode ?? null,
       }),
     [
       csp,
@@ -443,6 +546,7 @@ export const SandboxedIframe = forwardRef<
       sandbox,
       sandboxAttrs,
       recordMode,
+      mountMode,
     ]
   );
 
@@ -481,6 +585,7 @@ export const SandboxedIframe = forwardRef<
           colorScheme,
           recordMode,
           recorderDebug: isRecorderDebugEnabled(),
+          mountMode,
         },
       },
       sandboxProxyOrigin
@@ -545,11 +650,14 @@ export const SandboxedIframe = forwardRef<
   // to the new proxy).
   useEffect(() => {
     setProxyReady(false);
-  }, [outerSandboxAttribute]);
+  }, [outerSandboxAttribute, sandboxProxyOrigin]);
 
   return (
     <iframe
-      key={outerSandboxAttribute}
+      // Remount on a changed origin as well as changed sandbox flags: an
+      // <iframe> whose `src` changes navigates in place, and the proxy would
+      // keep the state of whichever origin it loaded first.
+      key={`${sandboxProxyOrigin}\u0000${outerSandboxAttribute}`}
       ref={outerRef}
       src={sandboxProxyUrl}
       sandbox={outerSandboxAttribute}

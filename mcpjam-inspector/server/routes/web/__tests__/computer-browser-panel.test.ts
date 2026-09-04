@@ -3,8 +3,11 @@
  *
  *   - the panel is reachable ONLY with a valid browser token whose claims still
  *     match the row's live owner and project;
- *   - watching does not require holding the lease (L10) — the stream URL comes
- *     back whoever has the browser;
+ *   - watching does not require holding the lease (L10) — the session comes
+ *     back whoever has the browser. The STREAM no longer comes back with it:
+ *     the noVNC password is a full desktop-control credential, so the route
+ *     stopped returning `streamUrl`/`streamPassword` and the pixels are served
+ *     out of band by the RFB proxy, which authenticates upstream itself;
  *   - the lease holder is the authenticated user, never a client-supplied
  *     string;
  *   - the panel ATTACHES, it never reserves — someone opening a panel cannot
@@ -41,8 +44,16 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     took: true,
     lease: { state: "held" as const, holder: CLAIMS.userId, bootId: "boot-1" },
   }));
-  const lease = vi.fn(async () => ({ state: "free" as const, bootId: "boot-1" }));
+  const lease = vi.fn(async () => ({
+    state: "free" as const,
+    bootId: "boot-1",
+  }));
   const attachSession = vi.fn(async () => {});
+  const sendInput = vi.fn(
+    async (_args: { holder: string; events: unknown[]; tabId?: string }) => ({
+      ok: true as const,
+    }),
+  );
   const touchSession = vi.fn(async () => ({ counted: true }));
   const touchActivity = vi.fn(async () => {});
   const lookupSession = vi.fn(async () => ({
@@ -61,13 +72,14 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
         providerComputerId: "sbx_1",
       },
     })) as unknown as BrowserPanelDeps["sandboxInfo"],
-    lookupSession: lookupSession as unknown as BrowserPanelDeps["lookupSession"],
+    lookupSession:
+      lookupSession as unknown as BrowserPanelDeps["lookupSession"],
     touchSession: touchSession as unknown as BrowserPanelDeps["touchSession"],
     touchActivity:
       touchActivity as unknown as BrowserPanelDeps["touchActivity"],
     bundleHash: () => "hash-1",
     attachSession,
-    createClient: () => ({ lease, leaseAction }) as never,
+    createClient: () => ({ lease, leaseAction, sendInput }) as never,
     ...over,
   });
 
@@ -86,12 +98,15 @@ function build(over: Partial<BrowserPanelDeps> = {}) {
     call,
     lease,
     leaseAction,
+    sendInput,
     attachSession,
     touchSession,
     touchActivity,
     lookupSession,
   };
 }
+
+type Panel = ReturnType<typeof build>;
 
 beforeEach(() => {
   resetPanelActivityThrottleForTests();
@@ -102,10 +117,16 @@ describe("browser panel — auth", () => {
     const { call } = build({
       verifyToken: (async () => null) as BrowserPanelDeps["verifyToken"],
     });
-    for (const path of ["/session", "/lease", "/keepalive"]) {
+    for (const path of ["/session", "/lease", "/input", "/keepalive"]) {
       const res = await call(path, {
         method: path === "/session" ? "GET" : "POST",
-        body: path === "/session" ? undefined : JSON.stringify({ action: "acquire" }),
+        body:
+          path === "/session"
+            ? undefined
+            : JSON.stringify({
+                action: "acquire",
+                events: [{ type: "text", text: "x" }],
+              }),
       });
       expect(res.status).toBe(401);
       expect(await res.json()).toMatchObject({
@@ -151,20 +172,31 @@ describe("browser panel — auth", () => {
 });
 
 describe("browser panel — GET /session", () => {
-  it("returns where to watch, plus who holds the browser", async () => {
+  it("returns the session and who holds the browser", async () => {
     const { call } = build();
     const res = await call("/session");
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({
       ok: true,
       bootId: "boot-1",
-      streamUrl: SESSION.streamUrl,
-      streamPassword: SESSION.streamPassword,
       lease: { state: "free" },
     });
   });
 
-  it("still returns the stream while someone else HOLDS the lease (L10)", async () => {
+  it("NEVER returns the stream credentials", async () => {
+    // They used to be here, and the panel put them straight into an iframe
+    // `src`. The VNC password is full keyboard and mouse on the member's
+    // desktop — the daemon's lease gates model commands, not VNC input — so
+    // in the DOM it was a control credential readable by anything on the page.
+    // The browser now watches through the server-side RFB proxy instead.
+    const { call } = build();
+    const body = await (await call("/session")).json();
+    expect(body).not.toHaveProperty("streamUrl");
+    expect(body).not.toHaveProperty("streamPassword");
+    expect(JSON.stringify(body)).not.toContain(SESSION.streamPassword);
+  });
+
+  it("still serves the session while someone else HOLDS the lease (L10)", async () => {
     // View by default. Gating the view behind "take control" would make people
     // take control just to look, which is the disruptive action.
     const { call } = build({
@@ -179,7 +211,7 @@ describe("browser panel — GET /session", () => {
         }) as never,
     });
     const body = await (await call("/session")).json();
-    expect(body.streamUrl).toBe(SESSION.streamUrl);
+    expect(body.ok).toBe(true);
     expect(body.lease).toMatchObject({ state: "held", holder: "users_other" });
   });
 
@@ -218,7 +250,8 @@ describe("browser panel — GET /session", () => {
       session = SESSION;
     });
     const { call } = build({
-      lookupSession: lookupSession as unknown as BrowserPanelDeps["lookupSession"],
+      lookupSession:
+        lookupSession as unknown as BrowserPanelDeps["lookupSession"],
       attachSession,
     });
     const res = await call("/session?ensure=1");
@@ -325,10 +358,12 @@ describe("browser panel — POST /keepalive", () => {
         counted: false,
       })) as unknown as BrowserPanelDeps["touchSession"],
     });
-    expect(await (await call("/keepalive", { method: "POST" })).json()).toEqual({
-      ok: true,
-      counted: false,
-    });
+    expect(await (await call("/keepalive", { method: "POST" })).json()).toEqual(
+      {
+        ok: true,
+        counted: false,
+      },
+    );
     expect(touchActivity).not.toHaveBeenCalled();
   });
 
@@ -348,5 +383,302 @@ describe("browser panel — POST /keepalive", () => {
       })) as unknown as BrowserPanelDeps["lookupSession"],
     });
     expect((await call("/keepalive", { method: "POST" })).status).toBe(409);
+  });
+});
+
+describe("browser panel — forwarding a person's input", () => {
+  const EVENTS = [{ type: "text", text: "hunter2" }];
+
+  const post = (panel: Panel, body: unknown) =>
+    panel.call("/input", { method: "POST", body: JSON.stringify(body) });
+
+  it("names the AUTHENTICATED user as the holder, never the caller", async () => {
+    // The daemon admits input when `holder === lease.holder`. A holder read
+    // off the body would let anyone who echoed the right id type into somebody
+    // else's held session — which is a password field, mid-login.
+    const f = build();
+    const res = await post(f, {
+      events: EVENTS,
+      holder: "users_VICTIM",
+      tabId: "tab-2",
+    });
+    expect(res.status).toBe(200);
+    expect(f.sendInput).toHaveBeenCalledWith(
+      expect.objectContaining({ holder: CLAIMS.userId, tabId: "tab-2" }),
+    );
+    expect(f.sendInput.mock.calls[0]?.[0]).not.toMatchObject({
+      holder: "users_VICTIM",
+    });
+  });
+
+  it("passes a lease refusal through as 423 rather than an error", async () => {
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(async () => ({
+            ok: false as const,
+            status: 423,
+            error: "lease_held",
+          })),
+        }) as never,
+    });
+    const res = await post(f, { events: EVENTS });
+    expect(res.status).toBe(423);
+    expect(await res.json()).toMatchObject({ error: "lease_held" });
+  });
+
+  it("keeps 404 for a tab that is gone", async () => {
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(async () => ({
+            ok: false as const,
+            status: 404,
+            error: "unknown_tab",
+          })),
+        }) as never,
+    });
+    expect((await post(f, { events: EVENTS, tabId: "gone" })).status).toBe(404);
+  });
+
+  it("does not dress a MALFORMED batch up as a lease refusal", async () => {
+    // 423 means somebody else has this browser. Answering it to a batch the
+    // daemon simply could not read sends a pane looking for a holder who does
+    // not exist — and, worse, tells it to wait for a hand-back that will never
+    // come.
+    for (const status of [400, 413] as const) {
+      const f = build({
+        createClient: () =>
+          ({
+            lease: vi.fn(),
+            leaseAction: vi.fn(),
+            sendInput: vi.fn(async () => ({
+              ok: false as const,
+              status,
+              error: "nope",
+            })),
+          }) as never,
+      });
+      expect((await post(f, { events: EVENTS })).status).toBe(status);
+    }
+  });
+
+  it("slices an oversized batch instead of failing the whole thing", async () => {
+    const f = build();
+    await post(f, {
+      events: Array.from({ length: 200 }, () => ({ type: "text", text: "a" })),
+    });
+    expect(f.sendInput.mock.calls[0]?.[0].events).toHaveLength(64);
+  });
+
+  it("400s a body with no events at all", async () => {
+    const f = build();
+    expect((await post(f, { events: [] })).status).toBe(400);
+    expect((await post(f, {})).status).toBe(400);
+    expect(f.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("refuses a batch that is not input, rather than counting it as use", async () => {
+    // The daemon's dispatcher ignores a type it does not know, so nonsense
+    // came back 200 having done nothing — and was counted as REAL USE, which
+    // is what defers the idle sweep. A caller with a valid token could hold a
+    // metered box awake forever without touching the browser.
+    for (const bad of [
+      [{ type: "nonsense" }],
+      [{ type: "mouse_move", x: "10", y: 4 }],
+      [{ type: "mouse_down", x: 1, y: 1, button: "elbow" }],
+      [{ type: "key_down", key: "" }],
+      [null],
+      // One good event does not launder the batch it arrived in.
+      [{ type: "text", text: "a" }, { type: "nope" }],
+    ]) {
+      const f = build();
+      const res = await post(f, { events: bad });
+      expect(res.status).toBe(400);
+      expect(f.sendInput).not.toHaveBeenCalled();
+      expect(f.touchActivity).not.toHaveBeenCalled();
+    }
+  });
+
+  it("400s a null body instead of falling over on it", async () => {
+    // `null` is valid JSON, so the parse resolved and the read of `.events`
+    // threw a TypeError past every try below — a 500 for what is plainly a bad
+    // request.
+    const f = build();
+    const res = await f.call("/input", { method: "POST", body: "null" });
+    expect(res.status).toBe(400);
+    expect(f.sendInput).not.toHaveBeenCalled();
+  });
+
+  it("does not dress an UPSTREAM failure up as a lease refusal", async () => {
+    // 423 tells a pane to wait for a hand-back. Answering it to a daemon that
+    // rejected our stored bearer sets the pane waiting on a holder who does
+    // not exist, forever.
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(async () => ({
+            ok: false as const,
+            status: 401,
+            error: "unauthorized",
+          })),
+        }) as never,
+    });
+    expect((await post(f, { events: EVENTS })).status).toBe(502);
+  });
+
+  it("409s when no browser is running on that computer", async () => {
+    const f = build({
+      lookupSession: (async () => ({
+        reachable: true,
+        session: null,
+      })) as unknown as BrowserPanelDeps["lookupSession"],
+    });
+    expect((await post(f, { events: EVENTS })).status).toBe(409);
+  });
+
+  it("counts a person typing as REAL USE, not as an open panel", async () => {
+    // The panel keepalive stops counting once the last real command is old
+    // enough — which is exactly this case, because somebody who took control
+    // to solve a CAPTCHA issues no agent commands at all. Touched as a panel,
+    // their box would hibernate while they were typing into it.
+    const f = build();
+    await post(f, { events: EVENTS });
+    expect(f.touchSession).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "command" }),
+    );
+    expect(f.touchActivity).toHaveBeenCalledWith({
+      computerId: CLAIMS.computerId,
+    });
+  });
+
+  it("touches once a minute, not once a keystroke", async () => {
+    // A touch is a control-plane write and a drag emits input twenty times a
+    // second.
+    const f = build();
+    for (let i = 0; i < 5; i += 1) await post(f, { events: EVENTS });
+    expect(f.touchSession).toHaveBeenCalledTimes(1);
+    expect(f.touchActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it("does NOT hold a machine awake with input the browser refused", async () => {
+    // Otherwise a caller with a valid token but no lease could keep somebody
+    // else's box out of hibernation forever, sending input that reaches no
+    // page at all.
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(async () => ({
+            ok: false as const,
+            status: 423,
+            error: "lease_held",
+          })),
+        }) as never,
+    });
+    await post(f, { events: EVENTS });
+    expect(f.touchSession).not.toHaveBeenCalled();
+    expect(f.touchActivity).not.toHaveBeenCalled();
+  });
+});
+
+describe("browser panel — is this lease mine?", () => {
+  /** A panel whose daemon reports the given lease. */
+  const withLease = (state: Record<string, unknown>) =>
+    build({
+      createClient: () =>
+        ({
+          lease: vi.fn(async () => state),
+          leaseAction: vi.fn(async () => ({ took: true, lease: state })),
+          sendInput: vi.fn(),
+        }) as never,
+    });
+
+  it("tells the pane the browser is theirs, so it need not guess", async () => {
+    // The holder is the authenticated user id, which the client never sees.
+    // Without this the pane would have to remember "I acquired it" in its own
+    // state — and forget across a reload.
+    const f = withLease({
+      state: "held",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: true,
+    });
+  });
+
+  it("says a PARKED lease is still theirs", async () => {
+    // The case that matters. A hold expires into `parked` rather than free —
+    // a timer running out is not evidence the private moment ended — and only
+    // its holder may hand it back. Reported as somebody else's, a reloading
+    // pane would be locked out of a browser it still holds, with nothing but
+    // a server restart to clear it.
+    const f = withLease({
+      state: "parked",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: true,
+    });
+  });
+
+  it("does not claim somebody else's browser", async () => {
+    const f = withLease({
+      state: "held",
+      holder: "users_someone_else",
+      bootId: "boot-1",
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: false,
+    });
+  });
+
+  it("is false while nobody holds it", async () => {
+    const f = withLease({ state: "free", bootId: "boot-1" });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      yours: false,
+    });
+  });
+
+  it("answers on the lease action too, so a take needs no second round trip", async () => {
+    const f = withLease({
+      state: "held",
+      holder: CLAIMS.userId,
+      bootId: "boot-1",
+    });
+    const res = await f.call("/lease", {
+      method: "POST",
+      body: JSON.stringify({ action: "acquire" }),
+    });
+    expect(await res.json()).toMatchObject({ ok: true, yours: true });
+  });
+
+  it("is false when the daemon could not be asked at all", async () => {
+    // `readLease` degrades to `unknown` rather than failing the request. A pane
+    // told "yours" on a lease nobody could read would offer a hand-back the
+    // daemon will refuse.
+    const f = build({
+      createClient: () =>
+        ({
+          lease: vi.fn(async () => {
+            throw new Error("unreachable");
+          }),
+          leaseAction: vi.fn(),
+          sendInput: vi.fn(),
+        }) as never,
+    });
+    expect(await (await f.call("/session")).json()).toMatchObject({
+      lease: { state: "unknown" },
+      yours: false,
+    });
   });
 });

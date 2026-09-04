@@ -27,14 +27,16 @@
  * counts. That is the whole reason `dual_write` is safe — a judge can move a
  * stage row and a score row, and nothing it does can move a verdict.
  *
- * THAT HOLDS AT `enforce` TOO, and it is the subtlest thing in this module. The
- * judge's row is ADVISORY, so it is structurally excluded from the gating
- * arithmetic that decides the result; the backend refuses lifecycle fields on
- * this route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`); and the
- * backend's own verify seam runs on the merged rows, so if a re-derivation ever
- * DID move the verdict, the run is marked non-gateable rather than quietly
- * re-graded. `enforce` therefore changes what this pass runs FOR (the same real
- * rows `dual_write` writes) and nothing about what it may touch.
+ * THAT HOLDS AT `enforce` TOO, AND IT HOLDS FOR A GATING JUDGE. The judge's row
+ * now carries the role the RUN froze — advisory by default, gating when the
+ * suite earned it — so on a gating run the row does enter the arithmetic that
+ * decides a verdict. What does not change is who applies it: this pass still
+ * posts rows and nothing else. The backend refuses lifecycle fields on this
+ * route outright (`JUDGE_DERIVATION_LIFECYCLE_FORBIDDEN`), and it is
+ * `finalizeAfterJudge` — not this module — that reads the judge's row,
+ * downgrades STRICTER-ONLY, quarantines an unanswered trial, and then decides
+ * the run once. `enforce` therefore changes what this pass runs FOR (the same
+ * real rows `dual_write` writes) and nothing about what it may touch.
  *
  * Idempotent and safe to re-run: the pass reads current state, derives, and
  * posts; the backend rejects a stale job id and refuses terminal iterations,
@@ -126,10 +128,147 @@ type JudgeVerdictMetadata = {
   judgeTemplateVersion?: unknown;
   judgeTemplateHash?: unknown;
   model?: unknown;
+  /** Present only in the `error` band — why the judge could not score. */
+  error?: unknown;
+  /**
+   * The judge's own rationale. NOT written today: the backend persists a
+   * scored case's `reason` nowhere, only the `error` band's. Read here anyway
+   * so that if it ever is persisted the evidence appears without a second
+   * change, and so this file names the gap rather than hiding it.
+   */
+  reason?: unknown;
+  reasons?: unknown;
+  /**
+   * Whether the run's frozen config let this judge DECIDE the trial.
+   *
+   * Forwarded to `hostedScoreDefinitionInputs` with the rest of the object,
+   * which reads the literal `"gating"` and treats everything else as advisory.
+   * Read here rather than resolved from the suite, because a role resolved at
+   * projection time could disagree with the one the run was actually held for.
+   */
+  role?: unknown;
 };
 
+/** A finite number, or `undefined` — judge scores arrive as `unknown`. */
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+/**
+ * What the judge can actually say for itself about this row.
+ *
+ * Two sources, in order of directness:
+ *
+ *   1. The judge's own rationale, if the backend ever persists one. Today it
+ *      does not for a scored case — `goalCompletion.ts` writes `score`,
+ *      `threshold`, `verdict` and (error band only) `error`, and drops the
+ *      per-case `reason`. Reading it here costs nothing and closes the gap the
+ *      moment the backend writes it.
+ *   2. Failing that, the NUMBERS the verdict was actually decided from. Not a
+ *      rationale, and not dressed up as one — but "scored 0.42 against a 0.70
+ *      threshold" tells a reader which side of the line the run fell and by
+ *      how much, where before the row carried nothing at all.
+ *
+ * Bounded downstream by `boundedJudgeReasons`, the same caps predicate
+ * reasons obey.
+ */
+function judgeReasonsFrom(verdict: JudgeVerdictMetadata): string[] {
+  const authored = [
+    ...(Array.isArray(verdict.reasons) ? verdict.reasons : []),
+    verdict.reason,
+    verdict.error,
+  ].filter((r): r is string => typeof r === "string" && r.trim().length > 0);
+  if (authored.length > 0) return authored;
+
+  const score = finiteNumber(verdict.score);
+  const threshold = finiteNumber(verdict.threshold);
+  if (score === undefined) return [];
+
+  // The BOUNDARIES that actually decided the band, not just the threshold.
+  //
+  // A `partial` or `fail` band is settled by the threshold AND the partial
+  // floor together, so a line naming only the threshold cannot explain itself:
+  // 0.5 against a 0.7 threshold reads as a plain miss, and says nothing about
+  // why it failed rather than landing in the partial band. The floor is
+  // included exactly when it is one of the numbers the decision turned on.
+  // The BAND is `verdict.verdict`; `verdict.status` is the outer state
+  // (scored / error / skipped / pending) and never carries a band.
+  const band = typeof verdict.verdict === "string" ? verdict.verdict : "";
+  const floor =
+    band === "partial" || band === "fail"
+      ? finiteNumber(verdict.partialFloor)
+      : undefined;
+
+  const bounds = [threshold, floor].filter(
+    (n): n is number => n !== undefined,
+  );
+  const show = showAgainst(score, bounds);
+
+  const parts = [`LLM judge scored ${show(score)}`];
+  if (threshold !== undefined) parts.push(`against a ${show(threshold)} threshold`);
+  if (floor !== undefined) parts.push(`and a ${show(floor)} partial floor`);
+  return [parts.join(" ")];
+}
+
+/**
+ * Pick a rendering precision that cannot contradict the band it explains.
+ *
+ * Two decimals is right for a person reading a score, and wrong when it erases
+ * the very comparison the line exists to show: a 0.699 score against a 0.7
+ * threshold rendered as "scored 0.7 against a 0.7 threshold" while the row
+ * says it fell short. The numbers then argue with the label, and the reader
+ * has no way to tell which is wrong.
+ *
+ * So precision grows only as far as it must: two places whenever the values
+ * are already distinguishable there, and the first deeper precision that keeps
+ * every DIFFERENT pair looking different. Equal values still render equal —
+ * a score exactly on its threshold should read that way.
+ *
+ * EVERY pair, not just each boundary against the score. The first version
+ * compared only score-to-boundary, so a threshold of 0.7001 and a floor of
+ * 0.6999 both rendered `0.7` while the score sat far from either — erasing the
+ * partial band's configured width in a line whose whole job is to show it.
+ *
+ * AND WHEN SIX IS NOT ENOUGH, the line says so rather than asserting a false
+ * equality. The cap used to fall through to the six-decimal rendering anyway,
+ * so two values differing past it printed identically — "scored 0.7 against a
+ * 0.7 threshold" for numbers that were never equal, which is the exact defect
+ * every paragraph above is about, reintroduced at the boundary. Values still
+ * colliding at the cap are marked approximate. Equal values are not: they ARE
+ * equal, and `≈` would make a true statement look uncertain.
+ */
+const APPROX = "\u2248";
+
+function showAgainst(
+  score: number,
+  bounds: readonly number[],
+): (n: number) => string {
+  const at = (n: number, digits: number) => String(Number(n.toFixed(digits)));
+  const values = [score, ...bounds];
+  const collidesAt = (digits: number) =>
+    values.some((a, i) =>
+      values.slice(i + 1).some((b) => a !== b && at(a, digits) === at(b, digits)),
+    );
+  // Six is the floor of usefulness, not an arbitrary cap: past it a judge
+  // score is float noise, and a line no one can read explains nothing.
+  for (let digits = 2; digits <= 6; digits += 1) {
+    if (!collidesAt(digits)) return (n: number) => at(n, digits);
+  }
+  // Past the cap the numbers cannot be told apart on screen, so the honest
+  // rendering admits the rounding instead of claiming two of them are the
+  // same. Marked per VALUE, not blanket: only one that shares its rendering
+  // with a DIFFERENT value is uncertain.
+  return (n: number) => {
+    const shown = at(n, 6);
+    const ambiguous = values.some((v) => v !== n && at(v, 6) === shown);
+    return ambiguous ? `${APPROX}${shown}` : shown;
+  };
+}
+
 function readJudgeVerdict(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
 ): JudgeVerdictMetadata | undefined {
   const verdict = metadata?.judgeVerdict;
   return typeof verdict === "object" && verdict !== null
@@ -147,19 +286,26 @@ function readJudgeVerdict(
  * case the judge was never asked about.
  */
 export function judgeEvidenceFromVerdict(
-  verdict: JudgeVerdictMetadata | undefined
+  verdict: JudgeVerdictMetadata | undefined,
 ): StageEvidence["judgeEvidence"] | undefined {
   if (!verdict) return undefined;
   const status = verdict.status;
+  const reasons = judgeReasonsFrom(verdict);
+  const withReasons = <T extends object>(evidence: T) =>
+    reasons.length > 0 ? { ...evidence, reasons } : evidence;
   if (status === "error") {
-    return { status: "error" };
+    return withReasons({ status: "error" as const });
   }
   if (status === "skipped") {
     return { status: "skipped" };
   }
   const band = verdict.verdict;
   if (band === "pass" || band === "partial" || band === "fail") {
-    return { status: "scored", verdict: band };
+    // Every scored row used to ship with no evidence at all: this function
+    // never populated `reasons`, so `boundedJudgeReasons` returned undefined
+    // on the judge path and `judgeObserved` / `judgePartial` / `judgeFailed`
+    // reached a reader as bare verdicts.
+    return withReasons({ status: "scored" as const, verdict: band });
   }
   // A verdict row with no band is a judge that was owed an answer and has not
   // produced one — `judgePending`, never a silent pass.
@@ -174,7 +320,7 @@ type MetadataAttributionVerdictMetadata = {
 };
 
 function readMetadataAttributionVerdict(
-  metadata: Record<string, unknown> | undefined
+  metadata: Record<string, unknown> | undefined,
 ): MetadataAttributionVerdictMetadata | undefined {
   const verdict = metadata?.metadataAttributionVerdict;
   return typeof verdict === "object" && verdict !== null
@@ -189,7 +335,7 @@ function readMetadataAttributionVerdict(
  * produced yet is `pending`, never a silent `attributed: false`.
  */
 export function metadataAttributionEvidenceFromVerdict(
-  verdict: MetadataAttributionVerdictMetadata | undefined
+  verdict: MetadataAttributionVerdictMetadata | undefined,
 ): StageEvidence["metadataAttribution"] | undefined {
   if (!verdict) return undefined;
   const status = verdict.status;
@@ -202,7 +348,7 @@ export function metadataAttributionEvidenceFromVerdict(
   if (status === "scored") {
     const reasons = Array.isArray(verdict.reasons)
       ? verdict.reasons.filter(
-          (r): r is string => typeof r === "string" && r.length > 0
+          (r): r is string => typeof r === "string" && r.length > 0,
         )
       : undefined;
     return {
@@ -270,23 +416,30 @@ function isPredicateRow(value: unknown): value is StoredPredicateRow {
 }
 
 /**
- * Recover the FIRST derivation's verdict about the model layer from the chain
- * it wrote.
+ * Recover the FIRST derivation's verdict about the model layer.
  *
- * `stepError` is transient runner state — an INPUT to that derivation, never
- * persisted — so the judge second pass re-derived without it and silently
- * dropped `providerError` and the `setup` category the moment a verdict
- * arrived. A run our own provider killed went back to being filed against the
- * server, which is exactly what that reason exists to prevent.
+ * `stepError` is transient runner state — an INPUT to that derivation — so a
+ * second pass that does not receive it derives from strictly less evidence
+ * than the first, and silently drops `providerError` and the `setup` category
+ * the moment a verdict arrives. A run our own provider killed goes back to
+ * being filed against the server, which is what that reason exists to prevent.
  *
- * Read from the stored chain rather than from a new persisted field, because
- * the chain already says it: `providerError` is written if and only if the
- * model layer was classified as the failure, so its presence is a faithful
- * witness of that input. Nothing is invented here.
+ * PREFERRED SOURCE: `metadata.stageStepErrorSource`, written beside the chain
+ * at finalize time. An earlier revision recovered it from the chain alone, on
+ * the stated grounds that "`providerError` is written if and only if the model
+ * layer was classified as the failure". THAT WAS NOT TRUE. `categoryFor`
+ * returns `setup` for a model-call failure where NOTHING failed — there was
+ * nothing to fail against — and on that shape no row is relabelled at all. The
+ * witness was empty exactly when the fact was true, and the category vanished
+ * with no missing row to show for it.
  *
- * `code` and `httpStatus` are not recoverable and are not recovered. They are
- * diagnostics for a reader and were explicitly never part of the
- * classification, so their absence changes no verdict.
+ * The chain scan REMAINS as a fallback, for iterations finalized before the
+ * marker shipped. It is still a faithful witness where it fires; it was only
+ * ever incomplete.
+ *
+ * `code` and `httpStatus` are not recovered by either route. They are
+ * diagnostics for a reader, were never part of the classification, and their
+ * absence changes no verdict.
  */
 export function stepErrorFromStoredChain(
   stageResults: unknown,
@@ -315,11 +468,10 @@ export function deriveIterationPayload(args: {
   const { iteration, judgeVerdict, attributionVerdict } = args;
   const metadata = iteration.metadata ?? {};
   const judgeEvidence = judgeEvidenceFromVerdict(judgeVerdict);
-  const metadataAttribution = metadataAttributionEvidenceFromVerdict(
-    attributionVerdict
-  );
+  const metadataAttribution =
+    metadataAttributionEvidenceFromVerdict(attributionVerdict);
   const predicateRows = (asArray(metadata.predicates) ?? []).filter(
-    isPredicateRow
+    isPredicateRow,
   );
   // Derived HERE from the run's own frozen case snapshot, through the SAME
   // function the runner used on the first pass, whenever the backend served
@@ -367,24 +519,31 @@ export function deriveIterationPayload(args: {
   // failed.
   const traceUsable = iteration.traceComplete !== false;
 
-  const recoveredStepError = stepErrorFromStoredChain(metadata.stageResults);
+  const recoveredStepError =
+    metadata.stageStepErrorSource === "model"
+      ? ({ source: "model" } as const)
+      : stepErrorFromStoredChain(metadata.stageResults);
 
   const stage = traceUsable
     ? buildStageMetadata({
-    ...(stageCase ? { stageCase } : {}),
-    ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
-    ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
-    ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
-    ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
-    ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
-    ...(iteration.toolSignals ? { toolSignals: iteration.toolSignals } : {}),
-    ...(iteration.setupSignals
-      ? { setupSignals: iteration.setupSignals }
-      : {}),
-    ...(judgeEvidence ? { judgeEvidence } : {}),
-    ...(metadataAttribution ? { metadataAttribution } : {}),
-    status: iteration.status === "failed" ? "failed" : "completed",
-    ...(iteration.error ? { error: iteration.error } : {}),
+        ...(stageCase ? { stageCase } : {}),
+        ...(iteration.spans?.length ? { spans: iteration.spans } : {}),
+        ...(iteration.prompts?.length ? { prompts: iteration.prompts } : {}),
+        ...(iteration.messages?.length ? { messages: iteration.messages } : {}),
+        ...(predicateRows.length ? { predicateResults: predicateRows } : {}),
+        // UVH-IN2: read back from the marker the first pass persisted, because
+        // `stepError` is transient runner state this pass never receives.
+        ...(recoveredStepError ? { stepError: recoveredStepError } : {}),
+        ...(iteration.toolSignals
+          ? { toolSignals: iteration.toolSignals }
+          : {}),
+        ...(iteration.setupSignals
+          ? { setupSignals: iteration.setupSignals }
+          : {}),
+        ...(judgeEvidence ? { judgeEvidence } : {}),
+        ...(metadataAttribution ? { metadataAttribution } : {}),
+        status: iteration.status === "failed" ? "failed" : "completed",
+        ...(iteration.error ? { error: iteration.error } : {}),
       })
     : // `stageAnalyzerVersion` is suppressed WITH the rest: stamping it beside
       // no `stageResults` would claim a derivation that did not happen, and
@@ -471,11 +630,11 @@ function stageFields(stage: Record<string, unknown>) {
  */
 export async function runJudgeSecondPass(
   runId: string,
-  ports: JudgeSecondPassPorts = defaultPorts
+  ports: JudgeSecondPassPorts = defaultPorts,
 ): Promise<JudgeSecondPassResult> {
   const emptyResult = (
     mode: GradingEngineMode,
-    reason: JudgeSecondPassResult["reason"]
+    reason: JudgeSecondPassResult["reason"],
   ): JudgeSecondPassResult => ({
     runId,
     mode,
@@ -510,7 +669,7 @@ export async function runJudgeSecondPass(
   // the REAL-WRITE second pass for a run whose frozen position was `off`,
   // contaminating the off and legacy cohorts with real score rows.
   const mode = resolveFrozenRunGradingMode(
-    run.configSnapshot?.gradingEngine ?? run.gradingEngine
+    run.configSnapshot?.gradingEngine ?? run.gradingEngine,
   );
   // `shadow` deliberately writes NOTHING here: a shadow row is produced
   // in-process by the first pass, and a second-pass write is by definition a
@@ -525,7 +684,10 @@ export async function runJudgeSecondPass(
 
   const goalCompletionJobId = run.goalCompletionJobId;
   const metadataAttributionJobId = run.metadataAttributionJobId;
-  if (goalCompletionJobId === undefined && metadataAttributionJobId === undefined) {
+  if (
+    goalCompletionJobId === undefined &&
+    metadataAttributionJobId === undefined
+  ) {
     // Without a job id the backend cannot tell this derivation from a stale
     // one, and a derivation it cannot date is one it should not accept.
     return emptyResult(mode, "no_job_id");
@@ -540,7 +702,7 @@ export async function runJudgeSecondPass(
   for (const iteration of run.iterations ?? []) {
     const judgeVerdict = readJudgeVerdict(iteration.metadata);
     const attributionVerdict = readMetadataAttributionVerdict(
-      iteration.metadata
+      iteration.metadata,
     );
     // No verdict of either kind ⇒ no advisory evidence ⇒ nothing this pass
     // could change. Send NOTHING, and do not report the iteration: it was
@@ -652,7 +814,7 @@ export async function runJudgeSecondPass(
             metadataAttributionJobId,
             judgeStageDerivedAt: derivedAt,
             ...fields,
-          }
+          },
         );
         metadataAttributionOutcomes.push({
           iterationId: iteration.iterationId,

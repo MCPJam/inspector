@@ -16,6 +16,7 @@ import { resolveHostModelDefinition } from "../../utils/org-model-config.js";
 import {
   ELICITATION_TIMEOUT_EXTENSION_MS,
   HOSTED_MODE,
+  LOCAL_HARNESS_ENABLED,
   WEB_STREAM_TIMEOUT_MS,
 } from "../../config.js";
 import {
@@ -64,9 +65,11 @@ import {
 } from "./auth.js";
 import { createHostedRpcLogCollector } from "./hosted-rpc-logs.js";
 import { getClientIp } from "../../utils/client-ip.js";
+import { getRequestLogger } from "../../utils/request-logger.js";
 import {
   fetchScenarioRuntimeConfig,
   planScenarioSandbox,
+  shouldWarnSecretsUndelivered,
   readScenarioEnvironment,
   readComputerSandboxMode,
   type ScenarioEnvironmentRuntime,
@@ -78,11 +81,21 @@ import {
   parseXaaPolicyValue,
   conformanceKnobsFromMcpProfile,
   mirrorToolParamHeadersFromMcpProfile,
+  toolCallCancellationFromMcpProfile,
   xaaPolicyFromMcpProfile,
 } from "../../utils/effective-auth.js";
 import { resolveXaaIssuer } from "../../services/xaa-mint.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
-import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import {
+  checkHarnessRuntimeAvailable,
+  externalAccountHostModelRefusalReason,
+} from "../../utils/harness/harness-availability.js";
+import { harnessUsesExternalAccount } from "../../utils/harness/registry.js";
+import {
+  LOCAL_HARNESS_GRANT_HEADER,
+  parseHarnessExecutionTarget,
+  type RawHarnessTargetInput,
+} from "../../utils/harness/local/request-target.js";
 import { harnessSupportsSkills } from "../../utils/harness/registry.js";
 import { normalizeExecutionTarget } from "@/shared/execution-target";
 import { createConvexClient } from "../../services/evals/route-helpers.js";
@@ -92,6 +105,8 @@ import {
   runtimeServerNames,
   runtimeServersAreOverridden,
   runtimeSkills as environmentRuntimeSkills,
+  turnSkillProvenance,
+  type EnvironmentSkillDelivery,
   type ResolvedEnvironmentRuntime,
 } from "../../services/environments/runtime.js";
 import {
@@ -126,6 +141,11 @@ import {
   maybeAppendEnvironmentContext,
 } from "../../utils/computers/environment-context.js";
 import { buildMcpjamPlatformClient } from "./mcpjam-platform-client.js";
+import {
+  fetchRuntimeSecrets,
+  markRuntimeSecretsDelivered,
+  toSecretEnv,
+} from "../../utils/harness/runtime-secrets.js";
 import { logger } from "../../utils/logger.js";
 import { resolveMrtrAuthPrincipal } from "../../utils/mrtr-hosted-collector.js";
 
@@ -270,7 +290,19 @@ chatV2.post("/", async (c) => {
     }
 
     let modelDefinition = model;
-    if (!modelDefinition) {
+    // The ID, not just the object. `model` arrives through an unvalidated body
+    // cast (`hostedChatSchema` does not describe it), and `ModelDefinition.id`
+    // being REQUIRED in TypeScript says nothing about what a browser posted.
+    //
+    // An id-less body used to reach the persist as `String(undefined)` /
+    // `String("")` — a session row that names a model nothing ran, or names
+    // nothing at all and reads blank in the sessions list. It survived that far
+    // only on the harness rail: every other path eventually derives an org
+    // provider key and 400s, while an external-account harness turn skips both
+    // the provider derivation AND the harness model gates by design. So the one
+    // rail with no downstream id check is exactly the one that persisted a
+    // blank. Check it once, here, for all of them.
+    if (!modelDefinition || !String(modelDefinition.id ?? "").trim()) {
       throw new WebRouteError(
         400,
         ErrorCode.VALIDATION_ERROR,
@@ -577,8 +609,8 @@ chatV2.post("/", async (c) => {
     const environmentSkills = environmentSpec
       ? environmentRuntimeSkills(environmentSpec)
       : scenarioEnvironment
-        ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
-        : undefined;
+      ? environmentRuntimeSkills({ skills: scenarioEnvironment.skills ?? [] })
+      : undefined;
 
     // Enterprise-managed authorization policy. Server-authoritative wherever
     // a backend host config exists (scenario / host-bound turns above — the
@@ -642,6 +674,40 @@ chatV2.post("/", async (c) => {
       // precedence can't leak them from the body).
       precedence: isScenarioSession ? "host-wins" : "override-wins",
     });
+    // What this turn will RECORD about the configuration it ran with. Computed
+    // from the POST-narrowing spec (plugin overrides filtered `environmentSpec`
+    // above), so it reflects what actually ran rather than what the environment
+    // would resolve on its own.
+    //
+    // Sits AFTER `resolvedExecution` because the record has to follow DELIVERY,
+    // and delivery depends on the resolved engine: the emulated engine mints a
+    // tool for every channel including captured MCP-server skills, the harness
+    // adapter receives only `runtimeSkills(spec)` (captures are not addressable
+    // there — their `<serverSlug>/<name>` ref fails `isValidSkillName`), and a
+    // skills-incapable harness delivers nothing at all. Recording the resolved
+    // set instead would make the trace claim a skill the model never saw.
+    //
+    // Still purely a recording concern: it feeds `persist`, never the engines,
+    // so what reaches the model is byte-identical either way. A turn with no
+    // environment records nothing — there is nothing to record.
+    const skillDeliveryMode: EnvironmentSkillDelivery =
+      !resolvedExecution.harness
+        ? "emulated"
+        : harnessSupportsSkills(resolvedExecution.harness)
+        ? "harness"
+        : "unsupported";
+    const turnProvenance = environmentSpec
+      ? turnSkillProvenance(environmentSpec, { delivery: skillDeliveryMode })
+      : scenarioEnvironment
+      ? turnSkillProvenance(
+          {
+            environmentRef: scenarioEnvironment.environmentRef,
+            skills: scenarioEnvironment.skills ?? [],
+          },
+          { delivery: skillDeliveryMode },
+        )
+      : undefined;
+
     for (const entry of resolvedExecution.drift) {
       if (entry.field === "requireToolApproval") {
         logger.warn(
@@ -691,8 +757,57 @@ chatV2.post("/", async (c) => {
     // never the body model: org-only ids (Bedrock, custom:NAME, OpenRouter
     // selections with vendor-prefixed ids) would otherwise inherit the
     // body's provider and route to the wrong runtime.
+    //
+    // Host-wins for a scenario (a share-link client must not re-route the
+    // session), and ALSO for an EXTERNAL-ACCOUNT harness on any surface —
+    // including a Playground preview, where the body normally wins.
+    //
+    // That exception is not a preference, it is honesty about what ran. The
+    // Cursor adapter passes NO model (`toNativeModel: () => undefined`); the
+    // runtime picks one on the customer's own account. So the body's model is
+    // not an override of anything — nothing consumes it — while the host's
+    // `cursor/auto` sentinel is the one value that describes the turn. The
+    // Playground picker cannot even hold that sentinel (it is not in
+    // `availableModels`, so the host-reseed effect skips it), which left the
+    // browser sending whatever unrelated model was last selected; that id is
+    // what the transcript, the trace and eval metadata then recorded — a model
+    // the turn never touched. Recording the sentinel is the whole reason it
+    // exists.
+    //
+    // UNCONDITIONAL for such a harness — deliberately NOT narrowed to a host
+    // that carries the sentinel. It does not need to be: by the time the
+    // promotion runs, the refusal directly below has already established that
+    // this host carries one. Narrowing it as well would only invite the reader
+    // to wonder which of the two decides, and would leave the BODY's model
+    // standing if the refusal were ever moved.
+    const externalAccountHarnessTurn = Boolean(
+      resolvedExecution.harness &&
+        harnessUsesExternalAccount(resolvedExecution.harness),
+    );
+    // FAIL FAST on a mis-configured external-account host, BEFORE the promotion
+    // below resolves anything. `resolveHostModelDefinition` asks the org's
+    // model config about an id it cannot possibly list, on a call carrying a
+    // 15 s timeout — and this host is going to be refused by the harness
+    // pre-flight further down regardless. Deciding it here keeps the same
+    // refusal (one shared sentence, one rule) and pays nothing for it.
+    //
+    // The pre-flight's own copy of the rule stays: it is the gate every surface
+    // shares, and this is a shortcut in front of it, not a replacement.
+    if (resolvedExecution.harness) {
+      const hostModelRefusal = externalAccountHostModelRefusalReason({
+        harnessId: resolvedExecution.harness,
+        modelId: resolvedExecution.modelId ?? String(modelDefinition.id),
+      });
+      if (hostModelRefusal) {
+        throw new WebRouteError(
+          503,
+          ErrorCode.INTERNAL_ERROR,
+          `This host runs the ${resolvedExecution.harness} harness, which isn't available: ${hostModelRefusal}.`,
+        );
+      }
+    }
     if (
-      isScenarioSession &&
+      (isScenarioSession || externalAccountHarnessTurn) &&
       hostRuntimeConfig &&
       resolvedExecution.modelId &&
       resolvedExecution.modelId !== modelDefinition.id
@@ -710,6 +825,7 @@ chatV2.post("/", async (c) => {
           body: modelDefinition.id,
           host: hostModelId,
           provider: hostModel.provider,
+          externalAccountHarness: externalAccountHarnessTurn,
         },
       );
       modelDefinition = hostModel;
@@ -735,6 +851,33 @@ chatV2.post("/", async (c) => {
     // runtime isn't available on this server — never silently degrade to the
     // emulated engine. Capability-driven (computer / approval / MCP / model
     // eligibility), so a new harness gets the right gates for free.
+    // The LOCAL harness target is parsed here too — by the same shared parser
+    // the /api/mcp route uses — precisely so it can be REFUSED rather than
+    // ignored.
+    //
+    // This route serves the hosted product and the org-aware path. A hosted
+    // replica running a vendor agent on ITS machine is the structural thing the
+    // whole local design forbids, so `serverEnabled` is false here by
+    // construction (HOSTED_MODE forces the kill switch off) and an explicit ask
+    // gets a 400 saying so. Dropping the field silently would leave a
+    // misconfigured client believing its turn ran locally.
+    const hostedHarnessTargetParse = parseHarnessExecutionTarget({
+      body: body as { harnessTarget?: RawHarnessTargetInput },
+      grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
+      // Even on a non-hosted deployment this route is the org-aware one, whose
+      // turns are not necessarily an attended member running on their own
+      // machine. Local execution belongs on the local route.
+      actorEligible: false,
+      // Nothing here can consent, so there is no acting user to bind a grant
+      // to. Both gates above already refuse a local target on this route; this
+      // says the same thing in the one field a grant would be verified against.
+      actingUserId: null,
+    });
+    if (hostedHarnessTargetParse.kind === "refused") {
+      return c.json({ error: hostedHarnessTargetParse.reason }, 400);
+    }
+
     if (resolvedExecution.harness) {
       const availability = checkHarnessRuntimeAvailable({
         harnessId: resolvedExecution.harness,
@@ -755,6 +898,13 @@ chatV2.post("/", async (c) => {
           id: String(modelDefinition.id),
           provider: modelDefinition.provider,
         },
+        // The HOST's own configured id, kept separate from the resolved model
+        // above. Only the external-account rule reads it, and only that rule
+        // should: it asks whether this HOST carries the runtime's sentinel, a
+        // question a request body must not be able to answer.
+        ...(resolvedExecution.modelId
+          ? { hostModelId: resolvedExecution.modelId }
+          : {}),
         // Fail closed rather than let a harness turn bypass the host's
         // enterprise-managed policy: the harness proxy token carries no
         // host, so that route can't enforce it (see the flag's docstring).
@@ -775,7 +925,9 @@ chatV2.post("/", async (c) => {
     // (pre-Phase-3 backend) ⇒ the tools fall back to the legacy projectId reserve.
     const executionScope = (
       hostRuntimeConfig as
-        { executionScope?: ExecutionScope } | null | undefined
+        | { executionScope?: ExecutionScope }
+        | null
+        | undefined
     )?.executionScope;
 
     // COMP-16: the host-configured computer working directory — the SAME
@@ -1198,6 +1350,89 @@ chatV2.post("/", async (c) => {
     // failure) must be rejected BEFORE it can acquire a paid box. Nothing
     // between here and the `streamWebChatTurn` call reads `builtInTools` or
     // `effectiveSystemPrompt`, which is what makes the late placement free.
+    // MATERIALIZED PROJECT SECRETS for this turn, resolved ONCE, here, because
+    // three separate things consume the SAME list and must not disagree:
+    //
+    //   1. the emulated engine's `bash` tool, which exports them into every
+    //      command's environment (sandbox bindings only — see the registry);
+    //   2. the harness turn, which puts them in its sandbox session's env bag;
+    //   3. the transcript scrubber, which replaces those same values with
+    //      `[secret:NAME]` in everything the turn persists.
+    //
+    // Three fetches would be three KMS decrypts per turn, and — worse — a
+    // window where the scrubber's registry is missing a value the box already
+    // has. Values delivered but unregistered are values written to the
+    // transcript verbatim, which is the one way this feature leaks by accident.
+    //
+    // Tri-state: on failure this is `null`, and every consumer treats that as
+    // "leave whatever state exists alone" rather than "there are no secrets".
+    //
+    // `environmentServers` — not `environmentSpec` — because an ENV-BACKED
+    // SCENARIO turn resolves its environment into `scenarioEnvironment`
+    // instead, exactly as the server set and the skill union above already
+    // account for. Reading only `environmentSpec` would hand those turns no
+    // secrets at all, and it would do it silently: the box simply would not
+    // have the credential, and the failure would surface as a `stripe` command
+    // exiting non-zero with nothing to connect it back to.
+    const secretsFetch = await fetchRuntimeSecrets(bearerToken, {
+      projectId: hostedBody.projectId,
+      ...(environmentServers
+        ? { environmentId: environmentServers.environmentRef.environmentId }
+        : {}),
+      ...(body.chatSessionId ? { chatSessionId: body.chatSessionId } : {}),
+    });
+    // A FAILED FETCH IS NOT "NO SECRETS" — IT FORKS THE SESSION.
+    //
+    // The tri-state exists precisely so a transient Convex failure cannot read
+    // as an empty grant, and passing `null` downstream re-collapsed it: a null
+    // list omits the secrets dimension from the harness runtime fingerprint,
+    // which RESUMES the session — and a resumed harness session reattaches to a
+    // bridge process that still holds the previously delivered values. The box
+    // would go on holding live credentials this process can no longer
+    // enumerate, so nothing could be scrubbed out of the transcript.
+    //
+    // Forking is the fix rather than refusing the turn. A fork starts a fresh
+    // bridge, which holds no previously delivered values — so there is nothing
+    // in the box left to leak, and nothing this turn needs to redact. The user
+    // loses shell state, which is a real cost, but a bounded and visible one.
+    //
+    // Refusing the turn outright was the first attempt here and it was wrong:
+    // `{ok:false}` covers every failure of the secrets service, so it made
+    // every environment-backed chat unavailable whenever that service blipped,
+    // including for projects that have never created a secret and had nothing
+    // at risk. The hazard is specific to sessions that may already be holding
+    // values; the remedy has to be too.
+    const runtimeSecrets = secretsFetch.ok ? secretsFetch.secrets : null;
+    const secretsUnavailable = !secretsFetch.ok;
+    const secretEnv = runtimeSecrets ? toSecretEnv(runtimeSecrets) : undefined;
+    // Fired by whichever adapter actually hands the values over — a bash
+    // command that carries them, or a harness session that starts holding them.
+    //
+    // NOT fired from this route. Here we only know a destination looked
+    // available: a conversation can advertise bash and never call it, and a
+    // harness start can fail after the route has decided everything. Stamping
+    // on availability made `lastDeliveredAt` mean "a turn could have used
+    // this", when the question it is read for — before deleting a credential
+    // believed dormant — is "did anything actually receive it".
+    //
+    // Idempotent and throttled downstream, so several commands in one turn cost
+    // at most one row revision a minute.
+    const markSecretsDelivered =
+      secretEnv && Object.keys(secretEnv).length > 0
+        ? () => {
+            void markRuntimeSecretsDelivered(bearerToken, {
+              projectId: hostedBody.projectId,
+              ...(environmentServers
+                ? {
+                    environmentId:
+                      environmentServers.environmentRef.environmentId,
+                  }
+                : {}),
+              secretCount: Object.keys(secretEnv).length,
+            });
+          }
+        : undefined;
+
     const computerSandboxMode =
       isScenarioSession && scenarioId && !resolvedExecution.harness
         ? readComputerSandboxMode(hostRuntimeConfig)
@@ -1208,7 +1443,8 @@ chatV2.post("/", async (c) => {
     // stream layer calls this right after writing the SSE parts; until it does,
     // the notices stay pending server-side and are re-delivered next turn.
     let ackSandboxNotices:
-      ((delivered: SandboxNoticeReason[]) => void) | undefined;
+      | ((delivered: SandboxNoticeReason[]) => void)
+      | undefined;
     // Drop the personal-computer resource for every suppressing plan, so
     // `bash` is not advertised at all rather than falling back to the member's
     // own box — which is precisely the behaviour this feature replaces:
@@ -1230,6 +1466,9 @@ chatV2.post("/", async (c) => {
       ),
       ephemeralCloudAvailable: isComputersDataPlaneConfigured(),
       hasChatSessionId: Boolean(body.chatSessionId),
+      secretsUnavailable,
+      environmentSelectsSecrets:
+        scenarioEnvironment?.selectsMaterializedSecrets === true,
     });
     let suppressComputerResource = sandboxPlan.action === "suppress";
     if (sandboxPlan.suppressReason === "no_chat_session_id") {
@@ -1241,6 +1480,19 @@ chatV2.post("/", async (c) => {
         "[chat-v2] ephemeral scenario sandbox requested without a chatSessionId; bash suppressed",
         { scenarioId },
       );
+    } else if (sandboxPlan.suppressReason === "secrets_unavailable") {
+      // The scenario counterpart of the harness fork. A harness session that
+      // cannot establish its secret state starts a fresh bridge, which holds
+      // nothing; a scenario conversation's box is keyed to the conversation and
+      // cannot be swapped without destroying the shell state that is the whole
+      // point of it. So the box is left alone and simply not spoken to for this
+      // turn — it may still hold a credential from an earlier turn, and this
+      // turn has no list to scrub what it prints.
+      logger.warn(
+        "[chat-v2] secret resolution failed for a conversation with a persistent sandbox; bash suppressed for this turn",
+        { scenarioId },
+      );
+      if (sandboxPlan.notice) sandboxNotices = [sandboxPlan.notice];
     } else if (sandboxPlan.suppressReason === "not_a_data_plane") {
       logger.warn(
         "[chat-v2] ephemeral scenario sandbox requested but this server is not a computers data plane; bash suppressed without provisioning",
@@ -1322,6 +1574,49 @@ chatV2.post("/", async (c) => {
       }
     }
 
+    // MATERIALIZED secrets resolved, and nowhere legitimate to put them.
+    //
+    // `resolveHostTools` reads `secretEnv` ONLY inside its `sandboxBinding`
+    // branch, on purpose: a materialized value becomes a real environment
+    // variable in whatever box runs the command, and the only boxes allowed to
+    // hold a project's credential are the ones the project provisioned. A
+    // direct (non-scenario) environment chat never gets one — `planScenarioSandbox`
+    // provisions for scenario sessions only — so its bash runs on the member's
+    // own machine or a shared remote runner, and delivering there would put the
+    // project's credential on hardware the project does not control.
+    //
+    // So the DROP is correct and stays. What was wrong is that it happened in
+    // silence: the value was fetched, handed over, and discarded with nothing
+    // said, leaving a tester to debug a 401 from a credential they can see
+    // selected in the environment editor.
+    //
+    // Harness turns are excluded because they are not affected: THIS route hands
+    // its own `runtimeSecrets` to `runAssistantTurn`, and `run-harness-turn`
+    // delivers them as `sessionEnv` on the box it is bound to. (It never fetches
+    // for itself — `runtimeSecretsOverride ?? null` — so "the harness will sort
+    // it out" is true only because the caller already did.) Brokered secrets
+    // never reach this code at all — they are injected outside the box — so this
+    // speaks only for the mode that actually went missing.
+    if (
+      shouldWarnSecretsUndelivered({
+        secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
+        hasSandboxBinding: Boolean(sandboxBinding),
+        harness: resolvedExecution.harness,
+      })
+    ) {
+      getRequestLogger(c, "routes.web.chat-v2").event(
+        "chat.secrets.undelivered",
+        {
+          // COUNT ONLY. Never a name, and never a value: this row is one
+          // `secretScrubber` miss away from being the leak the whole feature
+          // exists to prevent, and a count answers the operational question.
+          secretCount: secretEnv ? Object.keys(secretEnv).length : 0,
+          isScenarioSession,
+        },
+      );
+      sandboxNotices = [...(sandboxNotices ?? []), "secrets_undelivered"];
+    }
+
     // Filled by the resolver when browser tools are advertised; forwarded to
     // the turn runner, which merges it into the engines' one approval slot.
     let browserToolApprovals: UiToolApprovalClassification | undefined;
@@ -1352,6 +1647,15 @@ chatV2.post("/", async (c) => {
         // rejects anything that isn't `personal`, so a union on the config
         // would be either rejected or — worse — wire-forgeable.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        // Read by the registry ONLY inside its `sandboxBinding` branch: a
+        // project's credential reaches a box the project provisioned, never the
+        // user's own machine (local runner) or a remote data plane.
+        ...(secretEnv && Object.keys(secretEnv).length > 0
+          ? { secretEnv }
+          : {}),
+        ...(markSecretsDelivered
+          ? { onSecretEnvDelivered: markSecretsDelivered }
+          : {}),
         mcpjamPlatformClient: buildMcpjamPlatformClient(c),
         // This surface threads the classification (below), so it may advertise
         // interactive browser tools.
@@ -1499,6 +1803,18 @@ chatV2.post("/", async (c) => {
           requireToolApproval,
           respectToolVisibility,
           modelVisibleMcpToolResults,
+          // Server-resolved, never from the body, and authoritative whenever a
+          // host config resolved: an EMPTY record means "cancels normally" and
+          // must still be sent, or the connection's stale connect-time copy
+          // would win and a toggle switched back on would keep suppressing.
+          ...(hostRuntimeConfig
+            ? {
+                toolCallCancellation:
+                  toolCallCancellationFromMcpProfile(
+                    (hostRuntimeConfig as { mcpProfile?: unknown }).mcpProfile
+                  ) ?? {},
+              }
+            : {}),
           customProviders: body.customProviders,
           uiMessages: messages,
           ...(resolvedExecution.harness
@@ -1565,11 +1881,30 @@ chatV2.post("/", async (c) => {
           ...(environmentSkills !== undefined
             ? { runtimeSkillsOverride: environmentSkills }
             : {}),
+          ...(turnProvenance ? { turnProvenance } : {}),
           // INS-7: the same resolution, unflattened, for Computer delivery —
           // supporting files (the flat list drops them, and the project-wide
           // file query cannot return a plugin skill's) and the pinned plugin
           // versions that fork an incompatible resumed sandbox.
           ...(effectiveCapabilities ? { effectiveCapabilities } : {}),
+          // PROJECT SECRETS: the id only, never the resolved spec. The harness
+          // turn fetches this environment's materialized secrets from Convex
+          // with the END USER'S OWN bearer, so the backend decides which of
+          // them that user's session receives — this process cannot ask for
+          // somebody else's. Absent ⇒ no grant.
+          ...(environmentSpec
+            ? { environmentId: environmentSpec.environmentRef.environmentId }
+            : {}),
+          // Already resolved above, so the turn helper does not re-fetch:
+          // presence is semantic, and one fetch is what keeps the scrubber's
+          // registry and the box's environment describing the same set.
+          ...(runtimeSecrets !== null ? { runtimeSecrets } : {}),
+          // Distinguishes "there are none" from "we could not find out". Only
+          // the second forks the session — see the fetch site above.
+          ...(secretsUnavailable ? { secretsUnavailable: true } : {}),
+          ...(markSecretsDelivered
+            ? { onSecretEnvDelivered: markSecretsDelivered }
+            : {}),
           ...(isDirectChat ? { directVisibility: body.directVisibility } : {}),
           ...(isDirectChat && body.rewind ? { rewind: body.rewind } : {}),
           // Hosted sessions finally honor the CAS the client already sends.

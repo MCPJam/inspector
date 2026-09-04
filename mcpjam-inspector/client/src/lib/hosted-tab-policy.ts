@@ -18,7 +18,8 @@ const HASH_TAB_ALIASES = {
 
 /**
  * Hosted deployments block a tab only when it cannot work there — today that
- * is Tracing alone, which needs the local OTLP collector.
+ * is Tracing alone, whose live feed streams from the local Inspector
+ * process's RPC bus — which a hosted deployment does not run.
  *
  * This was an ALLOW-list until the Sessions bug (#4210): every new tab had to
  * be added by hand, the sidebar filter ran before the feature-flag filter, and
