@@ -1,5 +1,8 @@
 import type { HostThemeMode } from "@/lib/client-styles";
-import { resolveHostLogoByDisplayName } from "@/lib/scenario-client-style";
+import {
+  resolveHostLogoByDisplayName,
+  resolveHostStyleByDisplayName,
+} from "@/lib/scenario-client-style";
 import { getHostLogoSrc, UNKNOWN_HOST_LOGO } from "@/lib/host-ui-metadata";
 
 export { UNKNOWN_HOST_LOGO };
@@ -46,12 +49,30 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
   [/mistral/i, "mistral"],
 ];
 
+/**
+ * The host id a free-text client name points at, or `null` when nothing in the
+ * hint table matches.
+ *
+ * Extracted from {@link resolveHostLogoByName} so callers that need the ID
+ * rather than the pixels — deduping a live host against its catalog preset, for
+ * instance — read the same table instead of copying the patterns. Ordering
+ * matters and is documented on the table itself; a second copy would drift.
+ */
+export function resolveHostStyleByName(name: string): string | null {
+  for (const [pattern, hostId] of LOGO_NAME_HINTS) {
+    if (pattern.test(name)) return hostId;
+  }
+  // BOTH passes, in the same order the logo resolver runs them. The hint table
+  // alone misses every id it never listed — `codex`, `agentcore`, `n8n` — so a
+  // host named exactly "Codex" resolved to null and matched nothing.
+  return resolveHostStyleByDisplayName(name);
+}
+
 export function resolveHostLogoByName(
   name: string,
   themeMode?: HostThemeMode | null,
 ): string {
-  for (const [pattern, hostId] of LOGO_NAME_HINTS) {
-    if (pattern.test(name)) return getHostLogoSrc(hostId, themeMode);
-  }
+  const hostId = resolveHostStyleByName(name);
+  if (hostId) return getHostLogoSrc(hostId, themeMode);
   return resolveHostLogoByDisplayName(name, themeMode) ?? UNKNOWN_HOST_LOGO;
 }
