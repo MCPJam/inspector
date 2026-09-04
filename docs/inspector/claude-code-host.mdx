@@ -250,7 +250,7 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 |---|---|
 | The local runtime is not installed | The Native option is offered but not selectable, with an Install step in the authorization sheet. |
 | The runtime on disk does not match what this Inspector expects | Refused — reinstall it. MCPJam will not launch a runtime it cannot verify. |
-| Your platform cannot prove whole-tree cleanup (Windows today) | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
+| Your platform cannot prove whole-tree cleanup | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
 | The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
 | Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
 | The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
