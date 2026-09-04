@@ -13,11 +13,8 @@ import { reportCaught } from "./lib/error-reporting";
 import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
-import {
-  initializeSessionToken,
-  isSessionTokenHostDenied,
-} from "./lib/session-token.js";
-import { NetworkAccessError } from "./components/NetworkAccessError";
+import { initializeSessionToken } from "./lib/session-token.js";
+import { resolveBootstrapErrorScreen } from "./components/SessionBootstrapError";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
 import { detectSandboxOriginFault } from "./lib/sandbox-origin-fault";
@@ -117,7 +114,7 @@ const isInIframe = (() => {
       // prefix test would let any unrelated future subpath slip past the
       // misrouted-pushState guard. See lib/tester-link-path.ts.
       const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
-        window.location.pathname
+        window.location.pathname,
       );
       if (sameOrigin && isPublicScenarioRuntimePath) {
         return false;
@@ -150,7 +147,7 @@ function isServerConnectionHandoff(): boolean {
   // must not swallow the Inspector's own OAuth callbacks in the same tab.
   return callbackMatchesPending(
     readPendingAuthorization(),
-    readCallbackParams(window.location.search)
+    readCallbackParams(window.location.search),
   );
 }
 
@@ -160,7 +157,7 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <IframeRouterError />
-    </StrictMode>
+    </StrictMode>,
   );
 } else if (isServerConnectionHandoff()) {
   // <AuthKitProvider> BUT NO CONVEX. The page still holds no credential of its
@@ -188,11 +185,7 @@ if (isInIframe) {
   const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
   const handoffWorkosOptions = handoffRuntimeApiHostname
     ? { apiHostname: handoffRuntimeApiHostname }
-    : resolveWorkosClientOptions(
-        import.meta.env,
-        window.location,
-        HOSTED_MODE
-      );
+    : resolveWorkosClientOptions(import.meta.env, window.location, HOSTED_MODE);
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
@@ -209,7 +202,7 @@ if (isInIframe) {
       >
         <ServerConnectionHandoff />
       </AuthKitProvider>
-    </StrictMode>
+    </StrictMode>,
   );
 } else if (
   import.meta.env.DEV &&
@@ -227,7 +220,7 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <PlanLimitDialogPreview />
-    </StrictMode>
+    </StrictMode>,
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
   // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
@@ -239,7 +232,7 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <OAuthDebugCallback />
-    </StrictMode>
+    </StrictMode>,
   );
 } else {
   const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
@@ -249,8 +242,7 @@ if (isInIframe) {
   // Convex URL above does: the deployed bundle is shared across environments
   // and only the serving process knows which WorkOS environment it belongs to.
   const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
-    | string
-    | undefined;
+    string | undefined;
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
@@ -276,7 +268,7 @@ if (isInIframe) {
   // Warn if critical env vars are missing
   if (!convexUrl) {
     console.warn(
-      "[main] VITE_CONVEX_URL is not set; Convex features may not work."
+      "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
     );
   }
   if (import.meta.env.DEV) {
@@ -285,8 +277,8 @@ if (isInIframe) {
       source: runtimeConvexUrl
         ? "runtime"
         : buildConvexUrl
-        ? "build (VITE_CONVEX_URL)"
-        : "none",
+          ? "build (VITE_CONVEX_URL)"
+          : "none",
       HOSTED_MODE,
     });
   }
@@ -308,12 +300,12 @@ if (isInIframe) {
       {
         buildConvexUrl,
         runtimeConvexUrl,
-      }
+      },
     );
   }
   if (!workosClientId) {
     console.warn(
-      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work."
+      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work.",
     );
   }
 
@@ -326,7 +318,7 @@ if (isInIframe) {
     : resolveWorkosClientOptions(
         import.meta.env,
         typeof window === "undefined" ? undefined : window.location,
-        HOSTED_MODE
+        HOSTED_MODE,
       );
   clearLegacyWorkosRefreshTokenStorage();
 
@@ -381,7 +373,7 @@ if (isInIframe) {
         const returnTo =
           takeHandoffSignInReturn(
             carried?.[HANDOFF_SIGN_IN_STATE_KEY],
-            window.location.origin
+            window.location.origin,
           ) ??
           // An agent-minted permalink the visitor opened while signed out.
           // Without this they authenticate and land on the app shell, having
@@ -390,7 +382,7 @@ if (isInIframe) {
           // at the last step.
           takePermalinkSignInReturn(
             carried?.[PERMALINK_SIGN_IN_STATE_KEY],
-            window.location.origin
+            window.location.origin,
           );
         // `replace`, not `assign`: `/callback` is not somewhere the back
         // button should return to.
@@ -426,7 +418,7 @@ if (isInIframe) {
           <OAuthDesktopReturnNotice
             returnToElectronUrl={electronHostedAuthCallbackUrl}
           />
-        </StrictMode>
+        </StrictMode>,
       );
       return;
     }
@@ -438,79 +430,22 @@ if (isInIframe) {
         console.log("[Auth] Session token initialized");
       } else {
         console.log(
-          "[Auth] Hosted mode active, skipping session token bootstrap"
+          "[Auth] Hosted mode active, skipping session token bootstrap",
         );
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
 
-      // Expected case: the token was withheld with a 403 because this host
-      // isn't localhost or allowlisted — a self-hosted user reaching the
-      // inspector over the network. This is a config problem with a
-      // self-service fix, not a defect, so show tailored guidance and do NOT
-      // report it (these 403s were the bulk of the Sentry noise on this path).
-      if (isSessionTokenHostDenied(error)) {
-        root.render(
-          <StrictMode>
-            <NetworkAccessError />
-          </StrictMode>
-        );
-        return;
+      // The branch decision (which screen; whether to report) lives in
+      // resolveBootstrapErrorScreen so it is unit-testable — main.tsx itself
+      // can't be imported in a test. Expected host-denial 403s render guidance
+      // and are NOT reported (the Sentry noise this feature removed); genuine
+      // failures render the generic screen AND report.
+      const { report, element } = resolveBootstrapErrorScreen(error);
+      if (report) {
+        reportCaught(error, { source: "session_token_bootstrap" });
       }
-
-      // Genuine failure (transport error, 5xx, malformed response). This branch
-      // replaces the whole app with a static screen — without a report the
-      // failure is invisible outside the user's own console.
-      reportCaught(error, { source: "session_token_bootstrap" });
-      // Show error UI instead of crashing
-      root.render(
-        <StrictMode>
-          <div
-            style={{
-              padding: "2rem",
-              textAlign: "center",
-              fontFamily: "system-ui",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: "100vh",
-            }}
-          >
-            <img
-              src="/mcp_jam.svg"
-              alt="MCPJam Logo"
-              style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
-            />
-            <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-              Authentication Error
-            </h1>
-            <p style={{ marginBottom: "0.25rem" }}>
-              Failed to establish secure session.
-            </p>
-            <p style={{ color: "#666", fontSize: "0.875rem" }}>
-              This is usually temporary. Retry below, and check the console if it
-              persists.
-            </p>
-            <button
-              onClick={() => location.reload()}
-              style={{
-                marginTop: "1.5rem",
-                padding: "0.75rem 1.5rem",
-                cursor: "pointer",
-                backgroundColor: "#18181b",
-                color: "#fff",
-                border: "none",
-                borderRadius: "0.5rem",
-                fontSize: "1rem",
-                fontWeight: 500,
-              }}
-            >
-              Restart App
-            </button>
-          </div>
-        </StrictMode>
-      );
+      root.render(<StrictMode>{element}</StrictMode>);
       return;
     }
 
@@ -533,7 +468,7 @@ if (isInIframe) {
             {Providers}
           </PostHogProvider>
         </ErrorBoundary>
-      </StrictMode>
+      </StrictMode>,
     );
   }
 

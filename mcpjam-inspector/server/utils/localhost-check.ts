@@ -68,7 +68,7 @@ export function isPubliclyReachableUrl(raw: string): boolean {
         const hi = parseInt(hex[1], 16);
         const lo = parseInt(hex[2], 16);
         return isRoutableIpv4(
-          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`
+          `${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`,
         );
       }
       return false;
@@ -166,7 +166,7 @@ const TUNNEL_HOST_SUFFIXES = [
  */
 export function isTunnelHost(
   hostHeader: string | undefined,
-  extraTunnelHosts: string[] = []
+  extraTunnelHosts: string[] = [],
 ): boolean {
   if (!hostHeader) {
     return false;
@@ -180,7 +180,7 @@ export function isTunnelHost(
     .some(
       (host) =>
         TUNNEL_HOST_SUFFIXES.some((suffix) => host.endsWith(suffix)) ||
-        extras.includes(host)
+        extras.includes(host),
     );
 }
 
@@ -272,7 +272,7 @@ export function mayServeGuestBootstrap(options: {
  */
 export function isAllowedHost(
   hostHeader: string | undefined,
-  allowedHosts: string[]
+  allowedHosts: string[],
 ): boolean {
   // Always allow localhost
   if (isLocalhostRequest(hostHeader)) {
@@ -314,7 +314,7 @@ function stripPort(host: string): string {
  */
 export function hostnameMatchesAllowlist(
   hostnameWithoutPort: string,
-  allowedHosts: string[]
+  allowedHosts: string[],
 ): boolean {
   return allowedHosts.some((allowed) => {
     // Support exact match or subdomain matching (e.g., "*.railway.app")

@@ -189,12 +189,12 @@ describe("session-token module", () => {
         status: 403,
       } as Response);
 
-      await expect(
-        sessionToken.initializeSessionToken(),
-      ).rejects.toMatchObject({
-        name: "SessionTokenError",
-        status: 403,
-      });
+      await expect(sessionToken.initializeSessionToken()).rejects.toMatchObject(
+        {
+          name: "SessionTokenError",
+          status: 403,
+        },
+      );
     });
 
     it("caches token after successful API fetch", async () => {

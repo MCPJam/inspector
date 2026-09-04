@@ -31,7 +31,7 @@ export function NetworkAccessError() {
     () => () => {
       if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
     },
-    []
+    [],
   );
   const flashCopied = () => {
     setCopied(true);

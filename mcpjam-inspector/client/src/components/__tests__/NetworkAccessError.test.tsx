@@ -53,7 +53,7 @@ describe("NetworkAccessError", () => {
 
     expect(screen.getByText("192.168.1.50:6274")).toBeInTheDocument();
     expect(
-      screen.getByText("MCPJAM_ALLOWED_HOSTS=192.168.1.50")
+      screen.getByText("MCPJAM_ALLOWED_HOSTS=192.168.1.50"),
     ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
   });
@@ -72,11 +72,11 @@ describe("NetworkAccessError", () => {
 
     await waitFor(() =>
       expect(writeText).toHaveBeenCalledWith(
-        "MCPJAM_ALLOWED_HOSTS=192.168.1.50"
-      )
+        "MCPJAM_ALLOWED_HOSTS=192.168.1.50",
+      ),
     );
     expect(
-      await screen.findByRole("button", { name: "Copied" })
+      await screen.findByRole("button", { name: "Copied" }),
     ).toBeInTheDocument();
   });
 
@@ -94,7 +94,7 @@ describe("NetworkAccessError", () => {
 
     await waitFor(() => expect(execCommand).toHaveBeenCalledWith("copy"));
     expect(
-      await screen.findByRole("button", { name: "Copied" })
+      await screen.findByRole("button", { name: "Copied" }),
     ).toBeInTheDocument();
   });
 
@@ -113,7 +113,7 @@ describe("NetworkAccessError", () => {
     // copy by hand.
     expect(screen.getByRole("button", { name: "Copy" })).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Copied" })
+      screen.queryByRole("button", { name: "Copied" }),
     ).not.toBeInTheDocument();
   });
 

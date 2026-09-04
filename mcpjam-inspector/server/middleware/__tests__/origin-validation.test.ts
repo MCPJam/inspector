@@ -30,7 +30,8 @@ function createTestApp(): Hono {
 describe("originValidationMiddleware", () => {
   let app: Hono;
   const originalAllowedOrigins = process.env.ALLOWED_ORIGINS;
-  const originalAllowWildcardOrigins = process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
+  const originalAllowWildcardOrigins =
+    process.env.MCPJAM_ALLOW_WILDCARD_ORIGINS;
   const originalAllowedHosts = process.env.MCPJAM_ALLOWED_HOSTS;
 
   beforeEach(() => {
@@ -431,7 +432,9 @@ describe("originValidationMiddleware", () => {
         "http://192.168.1.50:6274/evil",
         "http://attacker@192.168.1.50:6274",
       ]) {
-        const res = await app.request("/api/test", { headers: { Origin: origin } });
+        const res = await app.request("/api/test", {
+          headers: { Origin: origin },
+        });
         expect(res.status).toBe(403);
       }
     });

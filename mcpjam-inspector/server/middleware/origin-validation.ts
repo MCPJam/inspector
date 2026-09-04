@@ -172,7 +172,7 @@ function originHostIsAllowlisted(origin: string): boolean {
  */
 function matchesAllowedOrigin(
   origin: string,
-  allowedOrigins: string[]
+  allowedOrigins: string[],
 ): boolean {
   for (const allowed of allowedOrigins) {
     if (allowed.includes("*")) {
@@ -223,7 +223,7 @@ export function isAllowedRequestOrigin(origin: string | undefined): boolean {
  */
 export async function originValidationMiddleware(
   c: Context,
-  next: Next
+  next: Next,
 ): Promise<Response | void> {
   // Allow CORS preflight requests through
   if (c.req.method === "OPTIONS") {
@@ -259,7 +259,7 @@ export async function originValidationMiddleware(
         error: "Forbidden",
         message: "Request origin not allowed.",
       },
-      403
+      403,
     );
   }
 

@@ -205,7 +205,7 @@ describe("isTunnelHost", () => {
 
   it("matches explicitly registered active tunnel domains", () => {
     expect(isTunnelHost("tunnel.example.com", ["tunnel.example.com"])).toBe(
-      true
+      true,
     );
   });
 
@@ -231,13 +231,13 @@ describe("isTunnelHost", () => {
   describe("comma-separated forwarded values", () => {
     it("matches a tunnel in ANY position, not just the first", () => {
       expect(
-        isTunnelHost("localhost:6274, x7d9j2m1p9k3.tunnels.mcpjam.com")
+        isTunnelHost("localhost:6274, x7d9j2m1p9k3.tunnels.mcpjam.com"),
       ).toBe(true);
       expect(
-        isTunnelHost("x7d9j2m1p9k3.tunnels.mcpjam.com, localhost:6274")
+        isTunnelHost("x7d9j2m1p9k3.tunnels.mcpjam.com, localhost:6274"),
       ).toBe(true);
       expect(isTunnelHost("a.example.com,b.example.com, foo.ngrok.app")).toBe(
-        true
+        true,
       );
     });
 
@@ -245,7 +245,7 @@ describe("isTunnelHost", () => {
       expect(
         isTunnelHost("localhost:6274, tunnel.example.com", [
           "tunnel.example.com",
-        ])
+        ]),
       ).toBe(true);
     });
 
@@ -265,7 +265,7 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "localhost:6274",
         allowedHosts: [],
-      })
+      }),
     ).toBe(true);
   });
 
@@ -274,13 +274,13 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "abc123.ngrok.app",
         allowedHosts: [],
-      })
+      }),
     ).toBe(false);
     expect(
       mayServeSessionToken({
         host: "abc123.tunnels.mcpjam.com",
         allowedHosts: [],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -292,14 +292,14 @@ describe("mayServeSessionToken", () => {
         host: "localhost:6274",
         forwardedHost: "abc123.ngrok.app",
         allowedHosts: [],
-      })
+      }),
     ).toBe(false);
     expect(
       mayServeSessionToken({
         host: "localhost:6274",
         forwardedHost: "abc123.tunnels.mcpjam.com",
         allowedHosts: [],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -310,13 +310,13 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "abc123.ngrok.app",
         allowedHosts: ["abc123.ngrok.app", "*.ngrok.app"],
-      })
+      }),
     ).toBe(false);
     expect(
       mayServeSessionToken({
         host: "abc123.tunnels.mcpjam.com",
         allowedHosts: ["abc123.tunnels.mcpjam.com", "*.tunnels.mcpjam.com"],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -326,7 +326,7 @@ describe("mayServeSessionToken", () => {
         host: "tunnel.example.com",
         allowedHosts: ["tunnel.example.com"],
         activeTunnelDomains: ["tunnel.example.com"],
-      })
+      }),
     ).toBe(false);
   });
 
@@ -335,7 +335,7 @@ describe("mayServeSessionToken", () => {
       mayServeSessionToken({
         host: "myapp.railway.app",
         allowedHosts: ["*.railway.app"],
-      })
+      }),
     ).toBe(true);
   });
 
@@ -349,7 +349,7 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: ["192.168.1.50"],
-        })
+        }),
       ).toBe(true);
     });
 
@@ -358,14 +358,14 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: ["192.168.1.99"],
-        })
+        }),
       ).toBe(false);
       // Empty allowlist = localhost-only, the pre-BB-118 default.
       expect(
         mayServeSessionToken({
           host: "192.168.1.50:6274",
           allowedHosts: [],
-        })
+        }),
       ).toBe(false);
     });
 
@@ -374,7 +374,7 @@ describe("mayServeSessionToken", () => {
         mayServeSessionToken({
           host: "abc123.tunnels.mcpjam.com",
           allowedHosts: ["*.tunnels.mcpjam.com"],
-        })
+        }),
       ).toBe(false);
     });
   });

@@ -74,7 +74,7 @@ beforeAll(async () => {
   const response = await app.fetch(
     new Request("http://localhost:6274/api/session-token", {
       headers: { Host: "localhost:6274" },
-    })
+    }),
   );
   issuedToken = ((await response.json()) as { token: string }).token;
   // A blank or trivially short token would make every assertion below pass by
@@ -93,7 +93,9 @@ function get(path: string, headers: Record<string, string>, target = app) {
 
 describe("/api/session-token", () => {
   it("serves the token to localhost", async () => {
-    const response = await get("/api/session-token", { Host: "localhost:6274" });
+    const response = await get("/api/session-token", {
+      Host: "localhost:6274",
+    });
     expect(response.status).toBe(200);
     expect(await response.json()).toHaveProperty("token");
   });
@@ -115,7 +117,7 @@ describe("/api/session-token", () => {
         "X-Forwarded-Host": forwarded,
       });
       expect(response.status).toBe(403);
-    }
+    },
   );
 
   it("denies a non-allowlisted public host", async () => {
@@ -139,7 +141,7 @@ describe("/api/session-token with MCPJAM_ALLOWED_HOSTS (self-hosted)", () => {
     const response = await get(
       "/api/session-token",
       { Host: "192.168.1.50:6274" },
-      allowlisted
+      allowlisted,
     );
     expect(response.status).toBe(200);
     expect(await response.json()).toHaveProperty("token");
@@ -150,7 +152,7 @@ describe("/api/session-token with MCPJAM_ALLOWED_HOSTS (self-hosted)", () => {
     const response = await get(
       "/api/session-token",
       { Host: "192.168.1.99:6274" },
-      allowlisted
+      allowlisted,
     );
     expect(response.status).toBe(403);
   });
@@ -160,7 +162,7 @@ describe("/api/session-token with MCPJAM_ALLOWED_HOSTS (self-hosted)", () => {
     const response = await get(
       "/api/session-token",
       { Host: "abc123.tunnels.mcpjam.com" },
-      misconfigured
+      misconfigured,
     );
     expect(response.status).toBe(403);
     expect(JSON.stringify(await response.json())).not.toContain(issuedToken);

@@ -250,7 +250,9 @@ export function parseAllowedHosts(raw: string | undefined): string[] {
     : [];
 }
 
-export const ALLOWED_HOSTS = parseAllowedHosts(process.env.MCPJAM_ALLOWED_HOSTS);
+export const ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS,
+);
 
 // Vanity domains whose root path ("/") should land on the host-compare
 // showcase ("Can I use" for MCP hosts). Override via env if more are added.
@@ -258,7 +260,7 @@ export const CANIUSE_LANDING_HOSTS = new Set(
   (process.env.CANIUSE_LANDING_HOSTS ?? "caniuse.dev,www.caniuse.dev")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0)
+    .filter((h) => h.length > 0),
 );
 
 // Vanity domains whose root path ("/") should land on the conformance-score
@@ -269,7 +271,7 @@ export const SCORE_LANDING_HOSTS = new Set(
   (process.env.SCORE_LANDING_HOSTS ?? "score.mcpjam.com,www.score.mcpjam.com")
     .split(",")
     .map((h) => h.trim().toLowerCase())
-    .filter((h) => h.length > 0)
+    .filter((h) => h.length > 0),
 );
 
 /** A bare DNS hostname: dot-separated labels of letters, digits, and hyphens. */
@@ -292,7 +294,7 @@ function parseSandboxHosts(raw: string): Set<string> {
     raw
       .split(",")
       .map((h) => h.trim().toLowerCase())
-      .filter((h) => BARE_HOSTNAME.test(h))
+      .filter((h) => BARE_HOSTNAME.test(h)),
   );
 }
 
@@ -304,7 +306,7 @@ function parseSandboxHosts(raw: string): Set<string> {
 //
 // Rollback is SANDBOX_HOSTS="" on the service: an empty set partitions nothing.
 export const SANDBOX_HOSTS = parseSandboxHosts(
-  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com"
+  process.env.SANDBOX_HOSTS ?? "sandbox.mcpjam.com,sandbox-staging.mcpjam.com",
 );
 
 /**
@@ -331,7 +333,7 @@ export type SandboxIsolationStatus = "ok" | "same-origin" | "unset";
  */
 export function resolveSandboxIsolation(
   sandboxHosts: ReadonlySet<string> = SANDBOX_HOSTS,
-  hostedOrigin: string = MCPJAM_HOSTED_ORIGIN
+  hostedOrigin: string = MCPJAM_HOSTED_ORIGIN,
 ): SandboxIsolationStatus {
   if (sandboxHosts.size === 0) {
     return "unset";
