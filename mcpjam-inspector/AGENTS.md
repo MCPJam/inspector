@@ -92,6 +92,23 @@ Tests live in `__tests__/` directories next to source files. Use existing tests 
 
 Cover: happy path, validation errors, error handling, edge cases (null, empty, etc.).
 
+## Design
+
+UI work starts from [`../DESIGN.md`](../DESIGN.md) — the design system's color
+roles, typography, layout, elevation, shapes and component conventions.
+
+Import primitives per-file from the shared package:
+
+```tsx
+import { Button } from "@mcpjam/design-system/button";
+import { cn } from "@mcpjam/design-system/cn";
+```
+
+`design-system/src/tokens.css` is the source of truth for the palette; DESIGN.md's
+front matter and the docs/chat-ui token mirrors are generated from it. Edit
+tokens.css, then `npm run design:sync`. `npm run design:check` and
+`npm run design:lint` gate CI. Never hardcode a color value.
+
 ## Eval Prompt Policy
 
 - Keep eval-generation and repair prompts focused on attributable cases: prefer short, discovery-backed, live-workspace-safe scenarios over long synthetic workflows.

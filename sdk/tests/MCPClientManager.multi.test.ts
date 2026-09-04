@@ -1,5 +1,9 @@
 import { MCPClientManager } from "../src/mcp-client-manager";
-import { startMockHttpServer, MOCK_TOOLS } from "./mock-servers";
+import {
+  everythingServerConfig,
+  startMockHttpServer,
+  MOCK_TOOLS,
+} from "./mock-servers";
 
 describe("MCPClientManager", () => {
   describe("multiple servers", () => {
@@ -27,10 +31,7 @@ describe("MCPClientManager", () => {
 
     it("should manage multiple servers simultaneously", async () => {
       await Promise.all([
-        manager.connectToServer("stdio-server", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
-        }),
+        manager.connectToServer("stdio-server", everythingServerConfig()),
         manager.connectToServer("http-server", {
           url: serverUrl,
           preferSSE: true,
@@ -52,10 +53,7 @@ describe("MCPClientManager", () => {
 
     it("should get tools from all servers", async () => {
       await Promise.all([
-        manager.connectToServer("server-a", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
-        }),
+        manager.connectToServer("server-a", everythingServerConfig()),
         manager.connectToServer("server-b", {
           url: serverUrl,
           preferSSE: true,
@@ -68,10 +66,7 @@ describe("MCPClientManager", () => {
 
     it("should disconnect all servers", async () => {
       await Promise.all([
-        manager.connectToServer("disc-a", {
-          command: "npx",
-          args: ["-y", "@modelcontextprotocol/server-everything"],
-        }),
+        manager.connectToServer("disc-a", everythingServerConfig()),
         manager.connectToServer("disc-b", {
           url: serverUrl,
           preferSSE: true,
