@@ -23,6 +23,15 @@ import {
 import { summaryTargetKey, type SwarmTargetColumn } from "./swarm-targets";
 import { usePersistedSessionTrace } from "./use-persisted-session-trace";
 import { shortBundleHash } from "@/components/plugins/plugin-presentation";
+import { ErrorCard } from "@/components/ui/error-card";
+import {
+  humanizeSwarmAttemptError,
+  isAccountLimit,
+} from "@/shared/swarm-attempt-error";
+import {
+  describeProviderRateLimit,
+  providerLabelForModelId,
+} from "./session-rate-limit";
 
 export type SwarmMatrixCellOutcome =
   | "pending"
@@ -359,6 +368,7 @@ export function SwarmLiveStreamPane({
   selection,
   stream,
   convexSession,
+  attempt,
   fallbackTrace,
   runStatus,
   onOpenCompleted,
@@ -368,6 +378,12 @@ export function SwarmLiveStreamPane({
   selection: SwarmMatrixSelection | null;
   stream: JourneyRunStreamState;
   convexSession: JourneySessionRow | null;
+  /**
+   * The selected session's attempt row, where the caller has it. It outranks
+   * the session lifecycle, which can read `completed` on a session the
+   * provider refused — see `resolveSwarmCellOutcome`.
+   */
+  attempt?: SwarmAttemptOutcome | null;
   fallbackTrace: TraceEnvelope | null;
   runStatus: string;
   /** Open the full ShareUsageThreadDetail for a completed Convex session. */
@@ -450,6 +466,7 @@ export function SwarmLiveStreamPane({
         swarmCellKey(selection.targetKey, selection.sessionIndex)
       ],
     session: convexSession,
+    attempt,
     runStatus,
   });
   const isTerminal =
@@ -458,6 +475,19 @@ export function SwarmLiveStreamPane({
     outcome === "rate_limited";
   const meta = CELL_META[outcome];
   const isStreaming = outcome === "running" || outcome === "pending";
+  // A rate-limited session is either MCPJam's account limit or the user's own
+  // provider throttling their key. Only the second gets the card — the first is
+  // lifted by credit or BYOK, and this copy would point at the wrong fix.
+  const rateLimitInfo =
+    outcome === "rate_limited"
+      ? humanizeSwarmAttemptError(live?.errorMessage ?? null)
+      : null;
+  const providerRateLimit =
+    rateLimitInfo && !isAccountLimit(rateLimitInfo.message, rateLimitInfo.code)
+      ? describeProviderRateLimit(
+          providerLabelForModelId(convexSession?.modelId),
+        )
+      : null;
   const showLoading = !displayTrace && (isStreaming || persisted.loading);
 
   return (
@@ -495,7 +525,11 @@ export function SwarmLiveStreamPane({
         </span>
       </div>
 
-      {live?.errorMessage ? (
+      {providerRateLimit ? (
+        <div data-testid="swarm-live-pane-rate-limit">
+          <ErrorCard error={providerRateLimit} variant="inline" />
+        </div>
+      ) : live?.errorMessage ? (
         <p className="text-[11px] text-muted-foreground">{live.errorMessage}</p>
       ) : null}
 
