@@ -531,9 +531,6 @@ export function ServerDetailModal({
   return (
     <Dialog open={isOpen} onOpenChange={handleOpenChange}>
       <DialogContent
-        // Browser translators rewrite text nodes in-place. React then cannot
-        // safely remove this portaled dialog after its close animation.
-        translate="no"
         // The `sm:` prefix is load-bearing. DialogContent's base carries
         // `sm:max-w-lg`, and tailwind-merge only collapses classes that
         // share a variant — so an unprefixed `max-w-2xl` never conflicts
@@ -543,7 +540,7 @@ export function ServerDetailModal({
         // spares the base `max-w-[calc(100%-2rem)]`, which tailwind-merge
         // used to drop as a same-variant conflict — that's the guard that
         // keeps the dialog off both screen edges below 640px.
-        className="notranslate sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
+        className="sm:max-w-2xl max-h-[85vh] flex flex-col outline-none focus:outline-none focus-visible:outline-none focus:ring-0 focus-visible:ring-0"
         onOpenAutoFocus={(event) => {
           event.preventDefault();
         }}
