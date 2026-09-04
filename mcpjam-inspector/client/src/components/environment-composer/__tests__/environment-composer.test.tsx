@@ -117,6 +117,7 @@ describe("EnvironmentComposer slots", () => {
 
     expect(screen.getByTestId("strip-clients-picker")).toBeVisible();
     expect(screen.getByTestId("strip-models-picker")).toBeVisible();
+    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent("models");
     expect(screen.queryByTestId("strip-servers-picker")).toBeNull();
     expect(screen.queryByTestId("strip-environments-picker")).toBeNull();
   });
@@ -166,5 +167,22 @@ describe("EnvironmentComposer slots", () => {
     );
 
     expect(screen.queryByTestId("strip-collapse-hint")).toBeNull();
+  });
+
+  it("names the models pill after the selected client's default model", () => {
+    render(
+      <Harness
+        slots={["clients", "models"]}
+        initialValue={{
+          ...emptyComposerState(),
+          stack: {
+            ...emptyComposerState().stack,
+            hostIds: ["host-1"],
+          },
+        }}
+      />,
+    );
+
+    expect(screen.getByTestId("strip-models-picker")).toHaveTextContent("GPT-4");
   });
 });
