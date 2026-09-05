@@ -300,11 +300,22 @@ export function ServerPicker({
           [server.name],
           attachments.map((a) => a.name ?? ""),
         );
-        const result = (await createServerAttachment({
-          projectId,
-          name,
-          serverIds: [serverId],
-        })) as { _id: string };
+        let result: { _id: string };
+        try {
+          result = (await createServerAttachment({
+            projectId,
+            name,
+            serverIds: [serverId],
+          })) as { _id: string };
+        } catch (err) {
+          const raw = err instanceof Error ? err.message : "";
+          toast.error(
+            /already exists/i.test(raw)
+              ? `A server group named after "${server.name}" already exists.`
+              : raw || `Couldn't select ${server.name}`,
+          );
+          throw err;
+        }
         const created: EvalServerAttachment = {
           _id: result._id,
           name,
@@ -317,11 +328,7 @@ export function ServerPicker({
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
-        toast.error(
-          /already exists/i.test(raw)
-            ? `A server group named after "${server.name}" already exists.`
-            : raw || `Couldn't select ${server.name}`,
-        );
+        toast.error(raw || `Couldn't select ${server.name}`);
       } finally {
         writing.current = false;
         setCreating(false);
@@ -333,6 +340,13 @@ export function ServerPicker({
   /** Persist a multi-server group from the panel's form, then select it. */
   const handleCreateGroup = useCallback(
     async (name: string, serverIds: string[]) => {
+      // Named against the rows already taken, so a list that has not arrived
+      // derives a name that collides and the backend rejects. Throwing keeps
+      // the draft rather than costing the user what they picked.
+      if (!attachmentsKnown) {
+        toast.error("Still loading this project's server groups.");
+        throw new Error("Attachments not loaded");
+      }
       // A backstop: `busy` disables Create, so this is only reachable if the
       // panel ever stops honouring it. Say so and throw, which keeps the draft.
       if (writing.current) {
@@ -342,11 +356,25 @@ export function ServerPicker({
       writing.current = true;
       setCreating(true);
       try {
-        const result = (await createServerAttachment({
-          projectId,
-          name,
-          serverIds,
-        })) as { _id: string };
+        let result: { _id: string };
+        try {
+          result = (await createServerAttachment({
+            projectId,
+            name,
+            serverIds,
+          })) as { _id: string };
+        } catch (err) {
+          // Scoped to the WRITE. Matching the caller's commit error against
+          // the same pattern told the user to rename a group that already
+          // exists, and renaming created a second one.
+          const raw = err instanceof Error ? err.message : "";
+          toast.error(
+            /already exists/i.test(raw)
+              ? `A server group named "${name}" already exists.`
+              : raw || "Failed to create server group",
+          );
+          throw err;
+        }
         const byId = new Map(catalog.map((row) => [row._id, row.name]));
         const created: EvalServerAttachment = {
           _id: result._id,
@@ -365,18 +393,14 @@ export function ServerPicker({
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
-        toast.error(
-          /already exists/i.test(raw)
-            ? `A server group named "${name}" already exists.`
-            : raw || "Failed to create server group",
-        );
+        toast.error(raw || "Failed to create server group");
         throw err;
       } finally {
         writing.current = false;
         setCreating(false);
       }
     },
-    [catalog, createServerAttachment, onChange, projectId],
+    [attachmentsKnown, catalog, createServerAttachment, onChange, projectId],
   );
 
   /**
@@ -391,8 +415,18 @@ export function ServerPicker({
   const deriveName = useCallback(
     (pickedServerNames: string[]) => {
       const taken = attachments.map((a) => a.name ?? "");
-      const derived = deriveServerGroupName(pickedServerNames, taken);
-      if (pickedServerNames.length !== 1) return derived;
+      if (pickedServerNames.length !== 1) {
+        return deriveServerGroupName(pickedServerNames, taken);
+      }
+      /**
+       * The numbered name, not the server's own — that one IS the stand-in
+       * shape, so suggesting it would hide the group being made.
+       *
+       * Known gap, and not closable by naming: for a server called literally
+       * `group`, every `Group N` reads as ITS stand-in, because the rule
+       * infers kind from the name and the numbering stem is that name. Closing
+       * it wants the storage column, the same one the rename case wants.
+       */
       return deriveServerGroupName([], taken);
     },
     [attachments],
@@ -409,10 +443,20 @@ export function ServerPicker({
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {
       if (writing.current) return;
+      // Removing what the parent is storing, with no way to tell it, would
+      // leave that id pointing at nothing — the picker would read as empty
+      // while the surface kept launching against a row that is gone.
+      if (value === groupId && !onClearSelection) {
+        toast.error("Pick a different server first — this one is in use here.");
+        return;
+      }
       writing.current = true;
       setCreating(true);
       try {
         await deleteServerAttachment({ serverAttachmentId: groupId });
+        // A delete is a write too, and the bridge is there for the query's
+        // lag after one. Holding a deleted row keeps a ghost on the tab.
+        setJustCreated((row) => (row && row._id === groupId ? null : row));
         if (value === groupId) onClearSelection?.();
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
@@ -472,7 +516,17 @@ export function ServerPicker({
         </button>
       </PopoverTrigger>
 
-      {onClearSelection && resolved && !disabled ? (
+      {/*
+        `selection`, not `resolved`: a dangling id is exactly the one that most
+        needs a way out, and the label already falls back for it. Withheld
+        while the list is unknown (every row looks dangling then) and while a
+        write is in flight (its `onChange` would undo the clear).
+      */}
+      {onClearSelection &&
+      selection &&
+      attachmentsKnown &&
+      !creating &&
+      !disabled ? (
         <button
           type="button"
           data-testid="server-picker-clear"

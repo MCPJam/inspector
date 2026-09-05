@@ -136,6 +136,34 @@ describe("a stand-in whose name had to be suffixed", () => {
     });
   });
 
+  it("only accepts the numbers the generator can actually write", () => {
+    // `deriveServerGroupName` starts its suffix at 2. `alpha 0` and `alpha 1`
+    // are names a person chose, and treating them as ours hides their group
+    // and hands it out as the bare server.
+    expect(isServerStandIn(group("g_0", "alpha 0", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
+    expect(isServerStandIn(group("g_1", "alpha 1", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
+    expect(isServerStandIn(group("g_2", "alpha 2", ["srv_1"], ["alpha"]))).toBe(
+      true,
+    );
+    expect(isServerStandIn(group("g_10", "alpha 10", ["srv_1"], ["alpha"]))).toBe(
+      true,
+    );
+  });
+
+  it("escapes a server name that carries regex punctuation", () => {
+    // Server names are user text. Unescaped, `a.b` would match `axb 2` and
+    // `a+b` would not compile at all.
+    const dotted = group("g_d", "axb 2", ["srv_1"], ["a.b"]);
+    expect(isServerStandIn(dotted)).toBe(false);
+    expect(
+      isServerStandIn(group("g_p", "a+b 2", ["srv_1"], ["a+b"])),
+    ).toBe(true);
+  });
+
   it("does not swallow a name that merely starts the same way", () => {
     // Only the exact shape the generator writes: a space and digits, nothing
     // else. `alpha two` and `alpha 2 backup` are names a person chose.

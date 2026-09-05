@@ -411,6 +411,34 @@ describe("ServerPickerPanel — creating a group", () => {
   });
 });
 
+describe("ServerPickerPanel — a draft emptied by the catalog", () => {
+  it("stops offering Create when nothing picked still exists", async () => {
+    // `draftIds.size` counts ids, not rows. When the catalog drops all of
+    // them the button stayed live and submitted `[]`, which the route rejects.
+    const onCreateGroup = vi.fn();
+    const deriveName = () => "Pair";
+    const { rerender } = render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onCreateGroup, deriveName })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Excalidraw (App)" }),
+    );
+    expect(screen.getByRole("button", { name: /^Create$/ })).toBeEnabled();
+
+    rerender(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onCreateGroup, deriveName, servers: [] })}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /^Create$/ })).toBeDisabled();
+    expect(screen.getByText(/Servers \(0 picked\)/)).toBeInTheDocument();
+  });
+});
+
 describe("ServerPickerPanel — a submit in flight", () => {
   it("freezes the draft it already sent", async () => {
     // `onCreateGroup` is handed the name and ids as they were on click. Leaving

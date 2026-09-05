@@ -918,6 +918,144 @@ describe("ServerPicker — removing a group", () => {
   });
 });
 
+describe("ServerPicker — the consequences of a delete", () => {
+  const PAIR2 = {
+    _id: "att_p",
+    name: "prod pair",
+    serverIds: ["srv_1", "srv_2"],
+    resolvedServerNames: ["alpha", "beta"],
+  };
+
+  it("refuses to delete the SELECTED row when the caller cannot be told", async () => {
+    // Without `onClearSelection` the parent keeps the id it stored, so the
+    // delete would leave it pointing at a row that no longer exists.
+    mockState.attachments = [PAIR2];
+    render(
+      <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+
+    expect(mockState.deleteSpy).not.toHaveBeenCalled();
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  });
+
+  it("still deletes a row that is NOT the selection", async () => {
+    mockState.attachments = [
+      PAIR2,
+      { _id: "att_o", name: "other pair", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+    ];
+    render(
+      <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete other pair" }),
+    );
+
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
+  });
+
+  it("stops holding a bridged row once it has been deleted", async () => {
+    // The bridge exists because the query lags a WRITE. A delete is a write
+    // too, and holding the row past it keeps a ghost on the tab.
+    const onChange = vi.fn();
+    const onClearSelection = vi.fn();
+    const { rerender } = render(
+      <ServerPicker
+        projectId="p_1"
+        value={null}
+        onChange={onChange}
+        onClearSelection={onClearSelection}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+
+    rerender(
+      <ServerPicker
+        projectId="p_1"
+        value="att_new"
+        onChange={onChange}
+        onClearSelection={onClearSelection}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    const del = await screen.findAllByRole("button", { name: /^Delete / });
+    await userEvent.click(del[0]);
+
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryAllByRole("button", { name: /^Delete / })).toHaveLength(
+        0,
+      ),
+    );
+  });
+});
+
+describe("ServerPicker — clearing a selection the list no longer holds", () => {
+  it("still offers the way out when the row is gone", () => {
+    // The label falls back to the empty text, but the parent is still storing
+    // the dead id. Hiding the X leaves no way to null it.
+    mockState.attachments = [];
+    const onClearSelection = vi.fn();
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_deleted"
+        onChange={vi.fn()}
+        onClearSelection={onClearSelection}
+      />,
+    );
+
+    fireEvent.click(screen.getByTestId("server-picker-clear"));
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
+  });
+
+  it("withholds it while its own write is in flight", async () => {
+    mockState.attachments = [
+      { _id: "att_solo", name: "alpha", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+    ];
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_solo"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await serverRow("srv_2"));
+
+    // The mint will report its own selection; clearing underneath it would be
+    // silently undone.
+    await waitFor(() =>
+      expect(screen.queryByTestId("server-picker-clear")).toBeNull(),
+    );
+  });
+});
+
 describe("ServerPicker — a group of exactly one server", () => {
   it("does not suggest a name that would hide the group being made", async () => {
     // The form pre-fills the name, and for one pick the shared deriver returns
@@ -943,6 +1081,60 @@ describe("ServerPicker — a group of exactly one server", () => {
   });
 });
 
+describe("ServerPicker — a server named like the fallback", () => {
+  it("suggests a name that is not that server's stand-in", async () => {
+    mockState.servers = [{ _id: "srv_g", name: "prod" }];
+    mockState.attachments = [
+      { _id: "att_1", name: "Group 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["a", "b"] },
+    ];
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "prod" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalled());
+    const written = mockState.createSpy.mock.calls[0][0];
+    expect(
+      isServerStandIn({ ...written, resolvedServerNames: ["prod"] }),
+    ).toBe(false);
+  });
+
+  it("cannot clear the rule for a server named after the numbering stem", async () => {
+    // Documented, not fixed. `Group 1` is safe — the rule only claims numbers
+    // from 2, where the generator starts. But once `Group 1` is taken the
+    // fallback is `Group 2`, which for a server called `group` IS its stand-in.
+    // No choice of number escapes that; only the storage column would.
+    mockState.servers = [{ _id: "srv_g", name: "group" }];
+    mockState.attachments = [
+      { _id: "att_1", name: "Group 1", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["a", "b"] },
+    ];
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "group" }));
+
+    const suggested = (screen.getByLabelText("Group name") as HTMLInputElement)
+      .value;
+    expect(
+      isServerStandIn({
+        _id: "",
+        name: suggested,
+        serverIds: ["srv_g"],
+        resolvedServerNames: ["group"],
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("ServerPicker — a parent whose onChange is async", () => {
   it("reports a rejected commit instead of losing it", async () => {
     // `onChange` is typed `=> void`, and void-return bivariance lets a caller
@@ -958,6 +1150,25 @@ describe("ServerPicker — a parent whose onChange is async", () => {
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect((toast.error as any).mock.calls[0][0]).toMatch(/Suite is locked/);
+  });
+
+  it("does not read the caller's error as a name collision", async () => {
+    // The write SUCCEEDED. Matching `/already exists/i` against whatever comes
+    // back from the commit tells the user to rename, and renaming creates a
+    // second real group.
+    const onChange = vi.fn(() =>
+      Promise.reject(new Error(`A suite named "smoke" already exists`)),
+    );
+    render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange as any} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await screen.findByText("alpha"));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect((toast.error as any).mock.calls[0][0]).not.toMatch(
+      /server group named/i,
+    );
   });
 });
 

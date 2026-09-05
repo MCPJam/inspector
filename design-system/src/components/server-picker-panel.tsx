@@ -152,6 +152,17 @@ export function ServerPickerPanel({
   const [draftName, setDraftName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
 
+  /**
+   * The picked servers that the caller still offers. `draftIds` can outlive
+   * them — nothing closes the form when `servers` changes — so the count, the
+   * derived name, the Create gate and the submission all read this, or they
+   * disagree with each other and with what gets written.
+   */
+  const draftServers = useMemo(
+    () => servers.filter((s) => draftIds.has(s.id)),
+    [servers, draftIds],
+  );
+
   const draftNames = useMemo(
     () => servers.filter((s) => draftIds.has(s.id)).map((s) => s.name),
     [servers, draftIds],
@@ -256,7 +267,7 @@ export function ServerPickerPanel({
             </div>
             <div className="space-y-1">
               <Label className="text-[11px]">
-                {`Servers (${draftIds.size} picked)`}
+                {`Servers (${draftServers.length} picked)`}
               </Label>
               {/* Scrolls internally so a long pool never pushes Create out of
                   reach — the reason the old picker resorted to committing on
@@ -297,7 +308,7 @@ export function ServerPickerPanel({
                 size="sm"
                 className="h-7 flex-1 text-xs"
                 disabled={
-                  draftIds.size === 0 ||
+                  draftServers.length === 0 ||
                   draftName.trim().length === 0 ||
                   submitting ||
                   busy
@@ -311,9 +322,7 @@ export function ServerPickerPanel({
                     // count already ignore the ones that went away.
                     await onCreateGroup(
                       draftName.trim(),
-                      servers
-                        .filter((s) => draftIds.has(s.id))
-                        .map((s) => s.id),
+                      draftServers.map((s) => s.id),
                     );
                     resetForm();
                   } catch {

@@ -61,7 +61,12 @@ export function isServerStandIn(group: PickerGroup): boolean {
   const base = normalize(serverName);
   const name = normalize(group.name);
   if (name === base) return true;
-  return new RegExp(`^${escapeForPattern(base)} \\d+$`).test(name);
+  // From 2 up, because that is where `deriveServerGroupName` starts counting:
+  // `alpha 0` and `alpha 1` are names a person chose, and claiming them would
+  // hide their group and hand it out as the bare server.
+  return new RegExp(`^${escapeForPattern(base)} (?:[2-9]|[1-9][0-9]+)$`).test(
+    name,
+  );
 }
 
 /**
