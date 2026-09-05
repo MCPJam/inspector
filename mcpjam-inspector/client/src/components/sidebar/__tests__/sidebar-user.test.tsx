@@ -4,6 +4,7 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import {
   isSignOutInProgress,
   resetSignOutLatchForTests,
+  SIGN_OUT_REQUEST_TIMEOUT_MS,
 } from "@/lib/auth/sign-out-latch";
 
 const authState = vi.hoisted(() => ({
@@ -213,6 +214,48 @@ describe("SidebarUser", () => {
     expect(onBeforeSignOut.mock.invocationCallOrder[0]).toBeLessThan(
       authState.signOutMock.mock.invocationCallOrder[0]
     );
+  });
+
+  it("leaves Electron even when the logout request never answers", async () => {
+    // Nothing else navigates this window: `signOut({navigate: false})` settles
+    // only when its logout fetch does. A request that hung used to outlast the
+    // sign-out latch, and the refresh timer would then redirect the window to
+    // the hosted login page — the same hijack, arriving on a slow network.
+    authState.user = {
+      email: "owner@example.com",
+      firstName: "Owner",
+      lastName: "Example",
+    };
+    window.isElectron = true;
+    authState.signOutMock.mockReturnValue(new Promise(() => {}));
+
+    const assign = vi.fn();
+    const realLocation = window.location;
+    // jsdom's `location` is not writable and its `assign` throws "not
+    // implemented", so replacing the property is the only way to see where the
+    // sign-out would have gone.
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { assign, origin: "https://app.example.test" },
+    });
+
+    render(<SidebarUser />);
+    vi.useFakeTimers();
+    try {
+      fireEvent.click(screen.getByText("Log out"));
+
+      expect(assign).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(SIGN_OUT_REQUEST_TIMEOUT_MS);
+
+      expect(assign).toHaveBeenCalledWith("https://app.example.test");
+    } finally {
+      vi.useRealTimers();
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: realLocation,
+      });
+    }
   });
 
   it("uses non-navigation logout in Electron", () => {
