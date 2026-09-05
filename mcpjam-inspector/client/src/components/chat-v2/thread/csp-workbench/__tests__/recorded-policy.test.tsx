@@ -15,11 +15,16 @@ describe("CspWorkbench recorded policy", () => {
           permissions: { clipboardWrite: {} },
           permissive: false,
           prefersBorder: true,
+          consoleErrors: ["TypeError: broken"],
+          blockedRequests: ["https://blocked.example.com"],
         }}
       />,
     );
 
     expect(screen.getByText("Recorded widget policy")).toBeInTheDocument();
+    expect(screen.getByText("2 recorded errors")).toBeInTheDocument();
+    expect(screen.getByText("TypeError: broken")).toBeInTheDocument();
+    expect(screen.getByText("https://blocked.example.com")).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Findings" })).toBeNull();
     expect(screen.getAllByText("Not recorded")).toHaveLength(2);
 

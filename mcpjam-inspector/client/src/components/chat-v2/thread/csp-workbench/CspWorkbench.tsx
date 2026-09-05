@@ -37,6 +37,8 @@ export interface RecordedWidgetPolicy {
   permissions?: unknown;
   permissive?: boolean;
   prefersBorder?: boolean;
+  consoleErrors?: string[];
+  blockedRequests?: string[];
 }
 
 /** Subset of the existing `sandboxInfo` prop the workbench needs. Mirrors
@@ -82,6 +84,9 @@ export function CspWorkbench({
   );
   const [jumpToHost, setJumpToHost] = useState<string | null>(null);
   const isRecorded = !!recordedPolicy;
+  const recordedErrorCount =
+    (recordedPolicy?.consoleErrors?.length ?? 0) +
+    (recordedPolicy?.blockedRequests?.length ?? 0);
 
   const input = useMemo<ClassifierInput>(
     () => ({
@@ -133,6 +138,45 @@ export function CspWorkbench({
             Saved with this eval run; live policy and violations are
             unavailable.
           </div>
+        </div>
+      )}
+      {recordedErrorCount > 0 && (
+        <div
+          className="rounded-md border border-destructive/30 bg-destructive/5 p-3"
+          data-testid="recorded-widget-errors"
+        >
+          <div className="text-[11px] font-semibold text-destructive">
+            {recordedErrorCount} recorded error
+            {recordedErrorCount === 1 ? "" : "s"}
+          </div>
+          {(recordedPolicy?.consoleErrors?.length ?? 0) > 0 && (
+            <div className="mt-2">
+              <div className="text-[10px] font-medium text-muted-foreground">
+                Console
+              </div>
+              <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
+                {recordedPolicy?.consoleErrors?.map((error, index) => (
+                  <li key={`${error}-${index}`} className="break-all">
+                    {error}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {(recordedPolicy?.blockedRequests?.length ?? 0) > 0 && (
+            <div className="mt-2">
+              <div className="text-[10px] font-medium text-muted-foreground">
+                Blocked requests
+              </div>
+              <ul className="mt-1 space-y-1 font-mono text-[10.5px] text-muted-foreground">
+                {recordedPolicy?.blockedRequests?.map((request, index) => (
+                  <li key={`${request}-${index}`} className="break-all">
+                    {request}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
       <Tabs

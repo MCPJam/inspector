@@ -611,6 +611,10 @@ describe("PartSwitch", () => {
               widgetPermissions: { clipboardWrite: {} },
               widgetPermissive: false,
               prefersBorder: true,
+              recordedWidgetErrors: {
+                consoleErrors: ["TypeError: broken"],
+                blockedRequests: ["https://blocked.example.com"],
+              },
             },
           }}
         />,
@@ -629,6 +633,8 @@ describe("PartSwitch", () => {
             permissions: { clipboardWrite: {} },
             permissive: false,
             prefersBorder: true,
+            consoleErrors: ["TypeError: broken"],
+            blockedRequests: ["https://blocked.example.com"],
           },
         }),
       );

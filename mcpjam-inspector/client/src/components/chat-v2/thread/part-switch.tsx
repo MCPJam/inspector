@@ -570,6 +570,10 @@ export function PartSwitch({
                     permissions: renderOverride?.widgetPermissions,
                     permissive: renderOverride?.widgetPermissive,
                     prefersBorder: renderOverride?.prefersBorder,
+                    consoleErrors:
+                      renderOverride?.recordedWidgetErrors?.consoleErrors,
+                    blockedRequests:
+                      renderOverride?.recordedWidgetErrors?.blockedRequests,
                   }
                 : undefined
             }
