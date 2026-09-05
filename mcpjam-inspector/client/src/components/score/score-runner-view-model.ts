@@ -71,7 +71,7 @@ export function scoreRunnerHeadline(phase: ScoreRunnerPhase): string {
 export function scoreRunnerLead(phase: ScoreRunnerPhase): string {
   switch (scoreRunnerCopyStage(phase)) {
     case "email":
-      return "We'll email a hosted page with the overall score, five dimensions, and the check ledger.";
+      return "We'll email you a hosted page with the overall score with breakdowns in each category.";
     case "authorizing":
       return "We can't check what a server does for an authorized client without being one. Authorizing sends you to the server's own login and brings you straight back here to finish the scan.";
     case "scanning":

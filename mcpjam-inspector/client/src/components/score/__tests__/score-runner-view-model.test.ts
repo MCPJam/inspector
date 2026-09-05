@@ -39,7 +39,7 @@ describe("score runner view model", () => {
       "Where should we send the scorecard?",
     );
     expect(scoreRunnerLead("email")).toBe(
-      "We'll email a hosted page with the overall score, five dimensions, and the check ledger.",
+      "We'll email you a hosted page with the overall score with breakdowns in each category.",
     );
     expect(isScoreRunnerBusy("email")).toBe(false);
   });
