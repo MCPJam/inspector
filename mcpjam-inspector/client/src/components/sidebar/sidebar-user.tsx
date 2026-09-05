@@ -20,6 +20,10 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  markSignOutInProgress,
+  SIGN_OUT_REQUEST_TIMEOUT_MS,
+} from "@/lib/auth/sign-out-latch";
 import { getInitials } from "@/lib/utils";
 import {
   Bell,
@@ -64,13 +68,30 @@ export function SidebarUser({ onBeforeSignOut }: SidebarUserProps = {}) {
   const initials = getInitials(displayName);
 
   const finishSignOut = () => {
+    // Before `signOut()`, never after: authkit's refresh timer can fire on the
+    // next tick, and an unlatched failure would redirect this tab to the login
+    // page on top of the logout navigation below. See `sign-out-latch`.
+    markSignOutInProgress();
     const returnTo = window.location.origin;
     if (window.isElectron) {
-      void Promise.resolve(signOut({ returnTo, navigate: false })).finally(
-        () => {
+      // Bounded, because the latch above is. This promise settles when the
+      // logout request does, and nothing else navigates this window, so a hung
+      // request would outlive the suppression window and let the refresh timer
+      // redirect to the hosted login page mid-logout. The response is opaque,
+      // so there is nothing to lose by giving up on it and leaving anyway.
+      void Promise.race([
+        Promise.resolve(signOut({ returnTo, navigate: false })),
+        new Promise((resolve) =>
+          setTimeout(resolve, SIGN_OUT_REQUEST_TIMEOUT_MS)
+        ),
+      ])
+        // A failed logout request still gets the navigation: the session is
+        // already gone locally, and stranding the user on the signed-in app
+        // would be a worse answer than leaving.
+        .catch(() => undefined)
+        .finally(() => {
           window.location.assign(returnTo);
-        }
-      );
+        });
       return;
     }
 

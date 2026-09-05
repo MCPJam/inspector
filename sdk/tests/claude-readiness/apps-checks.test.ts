@@ -32,7 +32,7 @@ const URL_UNDER_TEST = "https://mcp.example.com/mcp";
 function run(evidence: Partial<ClaudeAppsEvidence>) {
   return runClaudeAppsChecks(
     { enteredUrl: URL_UNDER_TEST, appsSuiteRan: true, ...evidence },
-    STAMP,
+    STAMP
   );
 }
 
@@ -58,7 +58,7 @@ describe("no apps evidence versus no apps", () => {
     // "We have no result" is not "this server has no widgets".
     const findings = runClaudeAppsChecks(
       { enteredUrl: URL_UNDER_TEST, appsSuiteRan: false },
-      STAMP,
+      STAMP
     );
     expect(findings.every((f) => f.status === "not-evaluated")).toBe(true);
   });
@@ -81,8 +81,8 @@ describe("no apps evidence versus no apps", () => {
           tools: [MODERN_TOOL],
           resources: [GOOD_RESOURCE],
         },
-        STAMP,
-      ).map((finding) => finding.id),
+        STAMP
+      ).map((finding) => finding.id)
     );
 
     for (const evidence of [
@@ -90,7 +90,7 @@ describe("no apps evidence versus no apps", () => {
       { enteredUrl: URL_UNDER_TEST, appsSuiteRan: true, tools: [] },
     ]) {
       const reported = new Set(
-        runClaudeAppsChecks(evidence, STAMP).map((finding) => finding.id),
+        runClaudeAppsChecks(evidence, STAMP).map((finding) => finding.id)
       );
       expect(reported).toEqual(everyId);
     }
@@ -100,8 +100,10 @@ describe("no apps evidence versus no apps", () => {
 describe("resourceUri modernity", () => {
   it("passes a tool that declares only the modern field", () => {
     expect(
-      byId(run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }), "claude.apps.resource-uri-modern")
-        .status,
+      byId(
+        run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
+        "claude.apps.resource-uri-modern"
+      ).status
     ).toBe("satisfied");
   });
 
@@ -112,18 +114,20 @@ describe("resourceUri modernity", () => {
           tools: [{ ...MODERN_TOOL, hasLegacyField: true }],
           resources: [GOOD_RESOURCE],
         }),
-        "claude.apps.resource-uri-modern",
-      ).status,
+        "claude.apps.resource-uri-modern"
+      ).status
     ).toBe("satisfied");
   });
 
   it("fails only a tool that declares the legacy field alone", () => {
     const finding = byId(
       run({
-        tools: [{ ...MODERN_TOOL, hasNestedField: false, hasLegacyField: true }],
+        tools: [
+          { ...MODERN_TOOL, hasNestedField: false, hasLegacyField: true },
+        ],
         resources: [GOOD_RESOURCE],
       }),
-      "claude.apps.resource-uri-modern",
+      "claude.apps.resource-uri-modern"
     );
     expect(finding.status).toBe("violated");
     expect(finding.details).toMatchObject({ tools: ["show_order"] });
@@ -131,8 +135,10 @@ describe("resourceUri modernity", () => {
 
   it("cites the apps-suite check it composes rather than re-running it", () => {
     expect(
-      byId(run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }), "claude.apps.resource-uri-modern")
-        .derivedFrom,
+      byId(
+        run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
+        "claude.apps.resource-uri-modern"
+      ).derivedFrom
     ).toContain("apps-conformance:ui-tool-metadata-valid");
   });
 });
@@ -144,7 +150,7 @@ describe("the html mime profile", () => {
         tools: [MODERN_TOOL],
         resources: [{ uri: "ui://order", mimeType: "text/html" }],
       }),
-      "claude.apps.html-mime-profile",
+      "claude.apps.html-mime-profile"
     );
     // A failure, not a warning: without the profile the host does not know the
     // payload is an app.
@@ -166,8 +172,8 @@ describe("the html mime profile", () => {
             },
           ],
         }),
-        "claude.apps.html-mime-profile",
-      ).status,
+        "claude.apps.html-mime-profile"
+      ).status
     ).toBe("satisfied");
   });
 
@@ -180,8 +186,8 @@ describe("the html mime profile", () => {
             { uri: "ui://order", mimeType: 'text/html;profile="mcp-app"' },
           ],
         }),
-        "claude.apps.html-mime-profile",
-      ).status,
+        "claude.apps.html-mime-profile"
+      ).status
     ).toBe("satisfied");
   });
 
@@ -190,10 +196,12 @@ describe("the html mime profile", () => {
       byId(
         run({
           tools: [MODERN_TOOL],
-          resources: [{ uri: "ui://order", mimeType: "text/html; charset=utf-8" }],
+          resources: [
+            { uri: "ui://order", mimeType: "text/html; charset=utf-8" },
+          ],
         }),
-        "claude.apps.html-mime-profile",
-      ).status,
+        "claude.apps.html-mime-profile"
+      ).status
     ).toBe("violated");
   });
 
@@ -202,10 +210,12 @@ describe("the html mime profile", () => {
       byId(
         run({
           tools: [MODERN_TOOL],
-          resources: [{ uri: "ui://order", mimeType: "Text/HTML; profile=mcp-app" }],
+          resources: [
+            { uri: "ui://order", mimeType: "Text/HTML; profile=mcp-app" },
+          ],
         }),
-        "claude.apps.html-mime-profile",
-      ).status,
+        "claude.apps.html-mime-profile"
+      ).status
     ).toBe("satisfied");
   });
 });
@@ -225,7 +235,7 @@ describe("OpenAI-only widgets", () => {
         tools: [{ ...openAiTool, toolMeta: { ui: { visibility: ["app"] } } }],
         resources: [],
       }),
-      "claude.apps.openai-only-widget",
+      "claude.apps.openai-only-widget"
     );
     expect(finding.status).toBe("violated");
     expect(finding.class).toBe("runtime-blocker");
@@ -237,7 +247,7 @@ describe("OpenAI-only widgets", () => {
         tools: [{ ...openAiTool, hasTextualFallback: true }],
         resources: [],
       }),
-      "claude.apps.openai-only-widget",
+      "claude.apps.openai-only-widget"
     );
     expect(finding.status).toBe("satisfied");
     // …and still names it, so a reviewer knows the UI is lost in Claude.
@@ -253,13 +263,13 @@ describe("ui.domain", () => {
     // check that canonicalized first would pass a value that fails in
     // production.
     expect(claudeAppContentDomain(URL_UNDER_TEST)).not.toBe(
-      claudeAppContentDomain(`${URL_UNDER_TEST}/`),
+      claudeAppContentDomain(`${URL_UNDER_TEST}/`)
     );
   });
 
   it("produces a 32-hex label under the Claude content host", () => {
     expect(claudeAppContentDomain(URL_UNDER_TEST)).toMatch(
-      /^[0-9a-f]{32}\.claudemcpcontent\.com$/,
+      /^[0-9a-f]{32}\.claudemcpcontent\.com$/
     );
   });
 
@@ -279,8 +289,8 @@ describe("ui.domain", () => {
     expect(
       byId(
         run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
-        "claude.apps.ui-domain-derivation",
-      ).status,
+        "claude.apps.ui-domain-derivation"
+      ).status
     ).toBe("not-applicable");
   });
 
@@ -290,11 +300,14 @@ describe("ui.domain", () => {
         run({
           tools: [MODERN_TOOL],
           resources: [
-            { ...GOOD_RESOURCE, domain: claudeAppContentDomain(URL_UNDER_TEST) },
+            {
+              ...GOOD_RESOURCE,
+              domain: claudeAppContentDomain(URL_UNDER_TEST),
+            },
           ],
         }),
-        "claude.apps.ui-domain-derivation",
-      ).status,
+        "claude.apps.ui-domain-derivation"
+      ).status
     ).toBe("satisfied");
   });
 
@@ -303,10 +316,13 @@ describe("ui.domain", () => {
       run({
         tools: [MODERN_TOOL],
         resources: [
-          { ...GOOD_RESOURCE, domain: claudeAppContentDomain(`${URL_UNDER_TEST}/`) },
+          {
+            ...GOOD_RESOURCE,
+            domain: claudeAppContentDomain(`${URL_UNDER_TEST}/`),
+          },
         ],
       }),
-      "claude.apps.ui-domain-derivation",
+      "claude.apps.ui-domain-derivation"
     );
     expect(finding.status).toBe("violated");
     expect(finding.remediation).toMatch(/trailing slash/);
@@ -317,12 +333,16 @@ describe("ui.domain", () => {
     expect(
       byId(
         run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
-        "claude.apps.ui-domain-recommended-for-app-oauth",
-      ).status,
+        "claude.apps.ui-domain-recommended-for-app-oauth"
+      ).status
     ).toBe("satisfied");
     const advised = byId(
-      run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE], appOwnedOAuth: true }),
-      "claude.apps.ui-domain-recommended-for-app-oauth",
+      run({
+        tools: [MODERN_TOOL],
+        resources: [GOOD_RESOURCE],
+        appOwnedOAuth: true,
+      }),
+      "claude.apps.ui-domain-recommended-for-app-oauth"
     );
     expect(advised.status).toBe("violated");
     // An advisory, so it can never fail the lane.
@@ -334,7 +354,7 @@ describe("the result-size budget is not a static check", () => {
   it("is reported as an unevaluated functional observation", () => {
     const finding = byId(
       run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
-      "claude.apps.result-size-budget",
+      "claude.apps.result-size-budget"
     );
     expect(finding.status).toBe("not-evaluated");
     expect(finding.notEvaluatedReason).toMatch(/per CALL/);
@@ -343,7 +363,9 @@ describe("the result-size budget is not a static check", () => {
 
 describe("design-guideline lints", () => {
   const bareHtml = "<html><body><button>Go</button></body></html>";
-  const carefulHtml = `<html><head><style>
+  // Declares a doctype: a careful widget is one Claude renders in standards
+  // mode, and Claude writes the view into a blank document.
+  const carefulHtml = `<!DOCTYPE html><html><head><style>
     @media (max-width: 320px) { body { padding: 0 } }
     button { min-height: 44px }
     body { padding: env(safe-area-inset-bottom) }
@@ -356,7 +378,9 @@ describe("design-guideline lints", () => {
       resources: [{ ...GOOD_RESOURCE, html: bareHtml }],
     }).filter((finding) => finding.id.startsWith("claude.apps.design."));
     expect(findings.length).toBeGreaterThan(0);
-    expect(findings.every((finding) => finding.class === "heuristic")).toBe(true);
+    expect(findings.every((finding) => finding.class === "heuristic")).toBe(
+      true
+    );
     expect(decideLaneStatus(findings)).toBe("incomplete");
   });
 
@@ -366,17 +390,59 @@ describe("design-guideline lints", () => {
       resources: [{ ...GOOD_RESOURCE, html: bareHtml }],
     }).filter(
       (finding) =>
-        finding.id.startsWith("claude.apps.design.") && finding.status === "violated",
+        finding.id.startsWith("claude.apps.design.") &&
+        finding.status === "violated"
     );
     expect(flagged.map((f) => f.id)).toEqual(
       expect.arrayContaining([
+        "claude.apps.design.doctype",
         "claude.apps.design.responsive-320",
         "claude.apps.design.touch-targets",
         "claude.apps.design.safe-area",
         "claude.apps.design.theming",
         "claude.apps.design.accessibility",
-      ]),
+      ])
     );
+  });
+
+  describe("doctype", () => {
+    // Claude mounts a view by writing its HTML into a blank document, and a
+    // written document with no doctype is parsed in quirks mode. A host that
+    // mounts via `srcdoc` is never in quirks mode, so the same markup can
+    // look right in one host and wrong in Claude — which is exactly the class
+    // of bug a static lint should catch before submission.
+    const doctypeStatus = (html: string) =>
+      run({
+        tools: [MODERN_TOOL],
+        resources: [{ ...GOOD_RESOURCE, html }],
+      }).find((f) => f.id === "claude.apps.design.doctype")!.status;
+
+    it("flags markup that declares none", () => {
+      expect(doctypeStatus(bareHtml)).toBe("violated");
+    });
+
+    it("accepts a declared doctype, in any case and with leading space", () => {
+      expect(doctypeStatus(`<!DOCTYPE html>${bareHtml}`)).toBe("satisfied");
+      expect(doctypeStatus(`<!doctype html>${bareHtml}`)).toBe("satisfied");
+      expect(doctypeStatus(`\n  <!DOCTYPE html>\n${bareHtml}`)).toBe(
+        "satisfied"
+      );
+    });
+
+    it("accepts a doctype behind a leading comment", () => {
+      expect(doctypeStatus(`<!-- build: 1 --><!DOCTYPE html>${bareHtml}`)).toBe(
+        "satisfied"
+      );
+    });
+
+    it("does not count a doctype the parser would ignore", () => {
+      // Written after the document has started, it has no effect on the
+      // rendering mode — reporting it as satisfied would promise quirks-mode
+      // safety the browser does not deliver.
+      expect(doctypeStatus("<html><body><!DOCTYPE html></body></html>")).toBe(
+        "violated"
+      );
+    });
   });
 
   it("counts inline style declarations, not only <style> blocks", () => {
@@ -391,7 +457,7 @@ describe("design-guideline lints", () => {
     }).filter(
       (finding) =>
         finding.id === "claude.apps.design.touch-targets" &&
-        finding.status === "violated",
+        finding.status === "violated"
     );
     expect(flagged).toEqual([]);
   });
@@ -407,24 +473,24 @@ describe("design-guideline lints", () => {
     // old regex accepted at ANY value, including ones far below the minimum.
     expect(
       touchTarget(
-        `<html><body><button style="min-height: ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px" aria-label="Go">Go</button></body></html>`,
-      ),
+        `<html><body><button style="min-height: ${CLAUDE_APP_DESIGN_BUDGETS.minTouchTargetPx}px" aria-label="Go">Go</button></body></html>`
+      )
     ).toBe("satisfied");
     expect(
       touchTarget(
-        '<html><body><button style="min-block-size: 48px" aria-label="Go">Go</button></body></html>',
-      ),
+        '<html><body><button style="min-block-size: 48px" aria-label="Go">Go</button></body></html>'
+      )
     ).toBe("satisfied");
     expect(
       touchTarget(
-        '<html><body><button style="min-block-size: 8px" aria-label="Go">Go</button></body></html>',
-      ),
+        '<html><body><button style="min-block-size: 8px" aria-label="Go">Go</button></body></html>'
+      )
     ).toBe("violated");
     // A fractional value below the budget is still below it.
     expect(
       touchTarget(
-        '<html><body><button style="min-height: 43.5px" aria-label="Go">Go</button></body></html>',
-      ),
+        '<html><body><button style="min-height: 43.5px" aria-label="Go">Go</button></body></html>'
+      )
     ).toBe("violated");
   });
 
@@ -441,7 +507,7 @@ describe("design-guideline lints", () => {
       (finding) =>
         (finding.id === "claude.apps.design.accessibility" ||
           finding.id === "claude.apps.design.touch-targets") &&
-        finding.status === "violated",
+        finding.status === "violated"
     );
     expect(flagged).toEqual([]);
   });
@@ -452,7 +518,8 @@ describe("design-guideline lints", () => {
       resources: [{ ...GOOD_RESOURCE, html: carefulHtml }],
     }).filter(
       (finding) =>
-        finding.id.startsWith("claude.apps.design.") && finding.status === "violated",
+        finding.id.startsWith("claude.apps.design.") &&
+        finding.status === "violated"
     );
     expect(flagged).toEqual([]);
   });
@@ -486,8 +553,8 @@ describe("instance supersession", () => {
     expect(
       byId(
         run({ tools: [MODERN_TOOL], resources: [GOOD_RESOURCE] }),
-        "claude.apps.instance-supersession",
-      ).status,
+        "claude.apps.instance-supersession"
+      ).status
     ).toBe("not-applicable");
     expect(
       byId(
@@ -495,8 +562,8 @@ describe("instance supersession", () => {
           tools: [MODERN_TOOL],
           resources: [{ ...GOOD_RESOURCE, claimsSingleActiveInstance: true }],
         }),
-        "claude.apps.instance-supersession",
-      ).status,
+        "claude.apps.instance-supersession"
+      ).status
     ).toBe("not-evaluated");
   });
 });
@@ -507,16 +574,19 @@ describe("composition helpers", () => {
       claudeAppToolEvidenceFrom({
         name: "a",
         _meta: { ui: { resourceUri: "ui://a" } },
-      }),
+      })
     ).toMatchObject({ hasNestedField: true, hasLegacyField: false });
     expect(
-      claudeAppToolEvidenceFrom({ name: "b", _meta: { "ui/resourceUri": "ui://b" } }),
+      claudeAppToolEvidenceFrom({
+        name: "b",
+        _meta: { "ui/resourceUri": "ui://b" },
+      })
     ).toMatchObject({ hasNestedField: false, hasLegacyField: true });
     expect(
       claudeAppToolEvidenceFrom({
         name: "c",
         _meta: { "openai/outputTemplate": "ui://c" },
-      }),
+      })
     ).toMatchObject({ hasOpenAiWidget: true, hasNestedField: false });
   });
 
@@ -530,14 +600,14 @@ describe("composition helpers", () => {
         uri: "ui://a",
         mimeType: "application/json",
         text: '{"not":"html"}',
-      }).html,
+      }).html
     ).toBeUndefined();
     expect(
       claudeAppResourceEvidenceFrom({
         uri: "ui://a",
         mimeType: "text/html;profile=mcp-app",
         text: "<html></html>",
-      }).html,
+      }).html
     ).toBe("<html></html>");
   });
 
@@ -546,8 +616,13 @@ describe("composition helpers", () => {
       claudeAppResourceEvidenceFrom({
         uri: "ui://a",
         mimeType: "text/html;profile=mcp-app",
-        _meta: { ui: { domain: "abc.claudemcpcontent.com", csp: { "connect-src": ["*"] } } },
-      }),
+        _meta: {
+          ui: {
+            domain: "abc.claudemcpcontent.com",
+            csp: { "connect-src": ["*"] },
+          },
+        },
+      })
     ).toMatchObject({
       domain: "abc.claudemcpcontent.com",
       csp: { "connect-src": ["*"] },
@@ -561,10 +636,12 @@ describe("CSP shape", () => {
       byId(
         run({
           tools: [MODERN_TOOL],
-          resources: [{ ...GOOD_RESOURCE, csp: { "connect-src": ["https://*"] } }],
+          resources: [
+            { ...GOOD_RESOURCE, csp: { "connect-src": ["https://*"] } },
+          ],
         }),
-        "claude.apps.csp-shape",
-      ).status,
+        "claude.apps.csp-shape"
+      ).status
     ).toBe("violated");
   });
 
@@ -574,11 +651,14 @@ describe("CSP shape", () => {
         run({
           tools: [MODERN_TOOL],
           resources: [
-            { ...GOOD_RESOURCE, csp: { "connect-src": "https://*.example.com" } },
+            {
+              ...GOOD_RESOURCE,
+              csp: { "connect-src": "https://*.example.com" },
+            },
           ],
         }),
-        "claude.apps.csp-shape",
-      ).status,
+        "claude.apps.csp-shape"
+      ).status
     ).toBe("violated");
   });
 
@@ -588,11 +668,14 @@ describe("CSP shape", () => {
         run({
           tools: [MODERN_TOOL],
           resources: [
-            { ...GOOD_RESOURCE, csp: { "connect-src": ["https://api.example.com"] } },
+            {
+              ...GOOD_RESOURCE,
+              csp: { "connect-src": ["https://api.example.com"] },
+            },
           ],
         }),
-        "claude.apps.csp-shape",
-      ).status,
+        "claude.apps.csp-shape"
+      ).status
     ).toBe("satisfied");
   });
 });

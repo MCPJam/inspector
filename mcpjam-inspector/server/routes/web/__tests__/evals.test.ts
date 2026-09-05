@@ -405,6 +405,16 @@ describe("web routes — evals", () => {
         clientInfo: { name: "Pinned Client", version: "1.0.0" },
         supportedProtocolVersions: ["2025-11-25"],
         mcpProtocolVersionsByServerId: { "server-1": "2025-11-25" },
+        // The client-conformance knobs. This body is parsed by
+        // `hostedBatchSchema` BEFORE `extractMcpInitializeOptions` reads the
+        // pins off it, so a schema that does not name them strips them and
+        // the eval runs as a fully conforming client — silently, against a
+        // host configured to be anything but.
+        suppressListenChannel: true,
+        dropToolListChanged: true,
+        firstPageOnly: true,
+        supportsMrtr: false,
+        toolCallCancellation: { legacy: false, modern: false },
       },
       token,
     );
@@ -446,6 +456,11 @@ describe("web routes — evals", () => {
           clientInfo: { name: "Pinned Client", version: "1.0.0" },
           supportedProtocolVersions: ["2025-11-25"],
           mcpProtocolVersion: "2025-11-25",
+          suppressListenChannel: true,
+          dropToolListChanged: true,
+          firstPageOnly: true,
+          supportsMrtr: false,
+          toolCallCancellation: { legacy: false, modern: false },
         }),
       }),
     );
@@ -578,6 +593,16 @@ describe("web routes — evals", () => {
         model: "openai/gpt-5-mini",
         provider: "openai",
         compareRunId: "cmp_stream",
+        // Pins and knobs on the ONE eval route that builds its own manager
+        // rather than going through the wrappers that extract them. Its
+        // schema has always accepted these; until the extraction below it
+        // connected as though none had been sent.
+        clientInfo: { name: "Pinned Client", version: "1.0.0" },
+        supportedProtocolVersions: ["2025-11-25"],
+        mcpProtocolVersionsByServerId: { "server-1": "2025-11-25" },
+        suppressListenChannel: true,
+        dropToolListChanged: true,
+        toolCallCancellation: { legacy: false, modern: false },
       },
       token,
     );
@@ -595,6 +620,18 @@ describe("web routes — evals", () => {
         provider: "openai",
         compareRunId: "cmp_stream",
         convexAuthToken: token,
+      }),
+    );
+    expect(managerConfigsMock.mock.calls[0]?.[0]).toEqual(
+      expect.objectContaining({
+        "server-1": expect.objectContaining({
+          clientInfo: { name: "Pinned Client", version: "1.0.0" },
+          supportedProtocolVersions: ["2025-11-25"],
+          mcpProtocolVersion: "2025-11-25",
+          suppressListenChannel: true,
+          dropToolListChanged: true,
+          toolCallCancellation: { legacy: false, modern: false },
+        }),
       }),
     );
   });

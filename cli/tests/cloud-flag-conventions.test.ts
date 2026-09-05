@@ -22,16 +22,19 @@ const CLOUD_COMMAND_FILES = [
   "cloud.ts",
   "cloud-link.ts",
   "environments.ts",
+  "clients.ts",
   "eval.ts",
-  "hosts.ts",
   "images.ts",
   "journeys.ts",
   "organizations.ts",
   "projects.ts",
   "registry.ts",
   "scenarios.ts",
+  "secrets.ts",
   "sessions.ts",
+  "skills.ts",
   "swarms.ts",
+  "trace-destinations.ts",
   "tunnel.ts",
   "user-testing.ts",
 ] as const;
@@ -52,6 +55,10 @@ test("Cloud command sources follow flag and placeholder conventions", () => {
         "oauth.ts",
         "prompts.ts",
         "resources.ts",
+        // Local-first, like `resources.ts`: `mcpjam skills` connects to a
+        // server directly and never touches a project or an API key. The
+        // project's own Cloud Skills live in `skills.ts` under `cloud`.
+        "server-skills.ts",
         "server.ts",
         "subscriptions.ts",
         "tasks.ts",

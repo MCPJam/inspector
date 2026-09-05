@@ -25,6 +25,11 @@ import {
   type HandleUiToolCallOptions,
 } from "./ui-tool-executor";
 import { useUiToolsRegistry } from "./ui-tools-registry";
+import {
+  fulfillApprovedPageToolCall,
+  ownsPageToolAlias,
+  settleDeniedPageToolCall,
+} from "@/lib/webmcp-inspector/chat-dispatch";
 
 interface ToolPartLike {
   type?: string;
@@ -98,7 +103,11 @@ function isUiToolWeOwn(toolName: string): boolean {
 
 export interface UiAwareApprovalHandlerDeps {
   getMessages: () => UIMessage[];
-  addToolApprovalResponse: (response: { id: string; approved: boolean }) => void;
+  addToolApprovalResponse: (response: {
+    id: string;
+    approved: boolean;
+    reason?: string;
+  }) => void;
   addToolOutput: HandleUiToolCallOptions["addToolOutput"];
   onNavigationToolCall?: (toolName: string) => void;
   /** Duplicate-detection scope (the chat's session id) — survives reloads. */
@@ -106,26 +115,51 @@ export interface UiAwareApprovalHandlerDeps {
 }
 
 export function createUiAwareApprovalResponseHandler(
-  deps: UiAwareApprovalHandlerDeps
-): (response: { id: string; approved: boolean }) => void {
-  return ({ id, approved }) => {
+  deps: UiAwareApprovalHandlerDeps,
+): (response: { id: string; approved: boolean; reason?: string }) => void {
+  return ({ id, approved, reason }) => {
     const located = findPartByApprovalId(deps.getMessages(), id);
-    if (!located || !isUiToolWeOwn(located.toolName)) {
-      deps.addToolApprovalResponse({ id, approved });
+    const isPageTool = located ? ownsPageToolAlias(located.toolName) : false;
+    if (!located || (!isUiToolWeOwn(located.toolName) && !isPageTool)) {
+      deps.addToolApprovalResponse({
+        id,
+        approved,
+        ...(reason ? { reason } : {}),
+      });
       return;
     }
     if (!approved) {
+      if (isPageTool) {
+        settleDeniedPageToolCall(located.toolCallId);
+      }
       // Settle first: the server's denial machinery supplies the result,
       // and a later duplicate approve event must not be able to execute a
       // call the user explicitly rejected.
-      settleDeniedUiToolCall(located.toolCallId, {
-        toolName: located.toolName,
-        input: located.input,
-        ...(deps.telemetryScope !== undefined
-          ? { telemetryScope: deps.telemetryScope }
-          : {}),
+      if (!isPageTool) {
+        settleDeniedUiToolCall(located.toolCallId, {
+          toolName: located.toolName,
+          input: located.input,
+          ...(deps.telemetryScope !== undefined
+            ? { telemetryScope: deps.telemetryScope }
+            : {}),
+        });
+      }
+      deps.addToolApprovalResponse({
+        id,
+        approved: false,
+        ...(reason ? { reason } : {}),
       });
-      deps.addToolApprovalResponse({ id, approved: false });
+      return;
+    }
+    if (isPageTool) {
+      void fulfillApprovedPageToolCall({
+        toolCallId: located.toolCallId,
+        alias: located.toolName,
+        input: located.input,
+        addToolOutput: deps.addToolOutput as Parameters<
+          typeof fulfillApprovedPageToolCall
+        >[0]["addToolOutput"],
+      });
       return;
     }
     void fulfillApprovedUiToolCall({

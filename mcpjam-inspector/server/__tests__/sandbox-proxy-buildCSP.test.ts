@@ -51,6 +51,7 @@ function extract(name: string): string {
 const sanitize = extract("sanitizeDomain");
 const build = extract("buildCSP");
 const buildGuard = extract("buildConnectGuardScript");
+const buildStorageGuard = extract("buildBrowserStorageGuardScript");
 
 // eslint-disable-next-line @typescript-eslint/no-implied-eval
 const buildCSP = new Function(
@@ -73,6 +74,12 @@ const buildConnectGuardScript = new Function(
   cspSubtypePolicy?: Record<string, unknown>,
   cspDirectives?: Record<string, string[]>
 ) => string;
+
+// eslint-disable-next-line @typescript-eslint/no-implied-eval
+const buildBrowserStorageGuardScript = new Function(
+  "browserStorage",
+  `${buildStorageGuard}\nreturn buildBrowserStorageGuardScript(browserStorage);`
+) as (browserStorage?: Record<string, unknown>) => string;
 
 describe("sandbox-proxy buildCSP merge rule", () => {
   it("emits 'none' when no domains and no cspDirectives for an empty directive", () => {
@@ -655,8 +662,26 @@ describe("sandbox-proxy connect guard — CSP source matching", () => {
     return nativeFetch.mock.calls.length === 1;
   }
 
-  describe("srcdoc base URL", () => {
-    it("resolves relative requests against document.baseURI", async () => {
+  describe("document base URL", () => {
+    // The view is written into a same-origin frame, so its document URL is
+    // the proxy URL (the srcdoc fallback inherits the same baseURI). Both
+    // shapes must resolve relative requests and 'self' the same way.
+    const PROXY_URL =
+      "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1";
+
+    it("resolves relative requests against the proxy URL", async () => {
+      await expect(
+        fetchAllowed(["http://127.0.0.1:6274"], "/api/data", PROXY_URL),
+      ).resolves.toBe(true);
+    });
+
+    it("matches 'self' against the proxy origin", async () => {
+      await expect(
+        fetchAllowed(["'self'"], "http://127.0.0.1:6274/api/data", PROXY_URL),
+      ).resolves.toBe(true);
+    });
+
+    it("resolves relative requests against document.baseURI (srcdoc fallback)", async () => {
       await expect(
         fetchAllowed(
           ["https://widget.example.test"],
@@ -667,7 +692,7 @@ describe("sandbox-proxy connect guard — CSP source matching", () => {
       ).resolves.toBe(true);
     });
 
-    it("matches 'self' against document.baseURI origin", async () => {
+    it("matches 'self' against document.baseURI origin (srcdoc fallback)", async () => {
       await expect(
         fetchAllowed(
           ["'self'"],
@@ -791,5 +816,84 @@ describe("sandbox-proxy connect guard — CSP source matching", () => {
       fetchAllowed(["https://h.test"], "https://other.test/x")
     ).resolves.toBe(false);
     await expect(fetchAllowed([], "https://h.test/x")).resolves.toBe(false);
+  });
+});
+
+describe("sandbox-proxy browser storage guard", () => {
+  it("throws SecurityError on a blocked API and leaves the others working", () => {
+    const script = buildBrowserStorageGuardScript({ localStorage: false });
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${script}</head></html>`,
+      { runScripts: "dangerously", url: "https://widget.example.test/" }
+    );
+
+    // Access itself throws — matching a real iframe without
+    // `allow-same-origin`, so a widget's `try { localStorage } catch`
+    // feature-detect takes the same branch here as in production.
+    let caught: unknown;
+    try {
+      void dom.window.localStorage;
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as DOMException | undefined)?.name).toBe("SecurityError");
+
+    // Unlisted APIs are untouched.
+    expect(() => dom.window.sessionStorage).not.toThrow();
+  });
+
+  it("blocks every listed API, including indexedDB", () => {
+    const script = buildBrowserStorageGuardScript({
+      localStorage: false,
+      sessionStorage: false,
+      indexedDB: false,
+    });
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${script}</head></html>`,
+      { runScripts: "dangerously", url: "https://widget.example.test/" }
+    );
+
+    for (const api of ["localStorage", "sessionStorage", "indexedDB"] as const) {
+      let caught: unknown;
+      try {
+        void (dom.window as unknown as Record<string, unknown>)[api];
+      } catch (error) {
+        caught = error;
+      }
+      expect((caught as DOMException | undefined)?.name).toBe("SecurityError");
+    }
+  });
+
+  it("emits nothing when no API is blocked, so the fast path stays free", () => {
+    // Absent, empty, and all-true are the same statement: nothing is denied.
+    expect(buildBrowserStorageGuardScript(undefined)).toBe("");
+    expect(buildBrowserStorageGuardScript({})).toBe("");
+    expect(
+      buildBrowserStorageGuardScript({
+        localStorage: true,
+        sessionStorage: true,
+        indexedDB: true,
+      })
+    ).toBe("");
+  });
+
+  it("only an explicit false blocks — true and absent both mean available", () => {
+    const script = buildBrowserStorageGuardScript({
+      localStorage: true,
+      indexedDB: false,
+    });
+    const dom = new JSDOM(
+      `<!doctype html><html><head>${script}</head></html>`,
+      { runScripts: "dangerously", url: "https://widget.example.test/" }
+    );
+    expect(() => dom.window.localStorage).not.toThrow();
+    expect(() => dom.window.sessionStorage).not.toThrow();
+    let caught: unknown;
+    try {
+      void dom.window.indexedDB;
+    } catch (error) {
+      caught = error;
+    }
+    expect((caught as DOMException | undefined)?.name).toBe("SecurityError");
   });
 });

@@ -86,6 +86,33 @@ export interface SandboxBashToolOptions {
    * the multi-step workflow a persistent shell exists to enable.
    */
   lifetime?: "run" | "conversation";
+  /**
+   * MATERIALIZED project secrets, exported into every command's environment.
+   *
+   * This is how a credential reaches a CLI the model runs: `stripe customers
+   * list` needs `STRIPE_API_KEY` in its process environment, and no amount of
+   * prompt engineering substitutes for that.
+   *
+   * SANDBOX BINDINGS ONLY. This tool is built only where a
+   * `TrustedSandboxBinding` exists, which is the whole condition: the local
+   * runner executes on the user's own machine behind an env allowlist, and the
+   * remote data plane would carry the value in a request body to a plane that
+   * is not this box's. Neither gets secrets, and neither builds this tool.
+   *
+   * Values travel in `envs`, never in the command string.
+   */
+  secretEnv?: Record<string, string>;
+  /**
+   * Called when `secretEnv` is ACTUALLY handed to a command, once per command
+   * that carries it.
+   *
+   * The delivery stamp lives here rather than at the route because the route
+   * only knows a destination looked available. A conversation that advertises
+   * bash and never calls it, or whose first call fails before exec, delivered
+   * nothing — and `lastDeliveredAt` is read by someone deciding whether a
+   * credential is dormant enough to delete.
+   */
+  onSecretEnvDelivered?: () => void;
 }
 
 const LIFETIME_DESCRIPTION: Record<
@@ -110,7 +137,7 @@ const LIFETIME_DESCRIPTION: Record<
 
 export function buildSandboxBashTool(
   opts: SandboxBashToolOptions,
-  runner: BashRunner = e2bRunner
+  runner: BashRunner = e2bRunner,
 ): ToolSet[string] {
   // Confined the same way the personal path confines it, so a host config can't
   // point an ephemeral shell outside the home root either.
@@ -139,20 +166,30 @@ export function buildSandboxBashTool(
         .max(MAX_COMMAND_TIMEOUT_S)
         .optional()
         .describe(
-          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`
+          `Command timeout in seconds (default ${DEFAULT_COMMAND_TIMEOUT_S})`,
         ),
     }),
     needsApproval: opts.requireToolApproval === true,
     execute: async (
       { command, timeoutSeconds },
-      { abortSignal }
+      { abortSignal },
     ): Promise<RunComputerCommandResult> => {
       if (workdirError) return { error: workdirError };
       const timeoutMs =
         Math.min(
           Math.max(timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
-          MAX_COMMAND_TIMEOUT_S
+          MAX_COMMAND_TIMEOUT_S,
         ) * 1000;
+      // Whether this invocation hands real credentials to the box.
+      //
+      // The stamp itself is the runner's `onEnvsDispatched`, not this function's
+      // return. A timeout or an abort rejects AFTER the box has the values — the
+      // process may still be alive in there holding them — so stamping only on
+      // a clean return recorded exactly that case as never-delivered. Hanging it
+      // off dispatch instead also keeps a failure BEFORE the values move (no
+      // connection, no workdir) from claiming a delivery that never happened.
+      const deliversSecrets =
+        !!opts.secretEnv && Object.keys(opts.secretEnv).length > 0;
       try {
         const result = await runner({
           sandboxId: opts.sandboxId,
@@ -166,6 +203,12 @@ export function buildSandboxBashTool(
           ...(workdir ? { workdir } : {}),
           timeoutMs,
           ...(abortSignal ? { signal: abortSignal } : {}),
+          ...(deliversSecrets
+            ? {
+                envs: opts.secretEnv,
+                onEnvsDispatched: () => opts.onSecretEnvDelivered?.(),
+              }
+            : {}),
         });
         const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);
         return {

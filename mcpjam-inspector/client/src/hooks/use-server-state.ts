@@ -112,7 +112,7 @@ import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { standardEventProps } from "@/lib/PosthogUtils";
 import { track } from "@/lib/analytics";
 import { isProtocolVersionPinFailure } from "@/lib/protocol-version-pin";
-import { attributeToServer } from "@/lib/server-error-copy";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { buildHostFocusTabPath } from "@/components/hosts/host-verify-deep-link";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import type { ConnectionDefaults } from "@/shared/connection-defaults";
@@ -1087,6 +1087,16 @@ export function useServerState({
         ...server,
         config: server.config,
         connectionStatus: runtimeState?.connectionStatus || "disconnected",
+        // Why the last attempt failed. Convex server rows do not store it, so
+        // omitting it here left a hosted card reading "Failed" with an empty
+        // error area and an empty Overview: the toast was the only copy of the
+        // reason, and it vanished with the toast (BB-48). Sourced from runtime
+        // state ONLY — exactly like `connectionStatus` above — so a reload that
+        // drops the runtime drops the reason with it instead of showing a stale
+        // one next to a "disconnected" status.
+        lastError: runtimeState?.lastError,
+        lastNormalizedError: runtimeState?.lastNormalizedError,
+        lastOAuthTrace: runtimeState?.lastOAuthTrace,
         oauthTokens: runtimeState?.oauthTokens,
         initializationInfo: runtimeState?.initializationInfo,
         lastConnectionTime:
@@ -1446,6 +1456,25 @@ export function useServerState({
       }
       if (mcpProfile?.mrtrSupport === "none") {
         defaults.supportsMrtr = false;
+      }
+      // Nested record rather than an enum, but the same rule: only an
+      // explicit `false` leaf travels.
+      if (mcpProfile?.toolListChanged?.listens === false) {
+        defaults.suppressListenChannel = true;
+      }
+      if (mcpProfile?.toolListChanged?.refetches === false) {
+        defaults.dropToolListChanged = true;
+      }
+      // Tool cancellation: forward the degraded leaves and let the SDK pick
+      // which one applies once the connection has negotiated. Resolving here
+      // cannot work for an unpinned host — the era does not exist yet.
+      const cancellationLeaves = Object.fromEntries(
+        (["legacy", "modern"] as const)
+          .filter((key) => mcpProfile?.toolCallCancellation?.[key] === false)
+          .map((key) => [key, false])
+      );
+      if (Object.keys(cancellationLeaves).length > 0) {
+        defaults.toolCallCancellation = cancellationLeaves;
       }
       // Enterprise-managed authorization policy from the active host's
       // mcpProfile. Sent only when validly ON; an `invalid` stored policy
@@ -3130,16 +3159,42 @@ export function useServerState({
       if (oauthCallbackHandledRef.current) {
         return;
       }
-      oauthCallbackHandledRef.current = true;
 
-      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
-      // concurrently) cannot set the server back to "disconnected" while the
-      // token exchange is still in flight.
       // Prefer the hostedOAuthCallbackContext server name (already validated),
       // fall back to the legacy localStorage key.
       const earlyPendingName =
         hostedOAuthCallbackContext?.serverName ??
         localStorage.getItem(OAUTH_PENDING_STORAGE_KEY);
+
+      // A `?code=` in the URL is NOT proof the callback is ours. This effect
+      // runs on every route, so any other OAuth-shaped return lands here too —
+      // notably the GitHub App bind at `/settings/integrations/github/callback`,
+      // which this handler used to claim, fail, toast "No pending OAuth flow
+      // found", and then navigate away from, stripping GitHub's `code`/`state`
+      // out of the URL before the route that owned them could read them.
+      //
+      // The guard is DERIVED, not a path denylist: both completion paths read
+      // exactly this pending marker and throw "No pending OAuth flow found"
+      // when it is absent (`mcp-oauth.ts` — `handleOAuthCallback` and
+      // `completeHostedOAuthCallback`). So with no marker there is no MCP flow
+      // to complete and claiming the callback could only ever have failed. A
+      // path list would have to grow by hand for every future OAuth route and
+      // would silently break the one nobody remembered to add.
+      //
+      // Deliberate consequence: a genuinely orphaned MCP callback (marker lost
+      // to a cleared localStorage or another tab) no longer raises a toast. It
+      // was unrecoverable either way, the message named nothing the user could
+      // act on, and leaving the URL intact is more honest than navigating away
+      // from a callback we cannot attribute.
+      if (!earlyPendingName) {
+        return;
+      }
+
+      oauthCallbackHandledRef.current = true;
+
+      // Dispatch "connecting" immediately so SYNC_AGENT_STATUS (which fires
+      // concurrently) cannot set the server back to "disconnected" while the
+      // token exchange is still in flight.
       if (earlyPendingName) {
         const earlyServer = effectiveServers[earlyPendingName];
         if (earlyServer) {
@@ -4736,11 +4791,10 @@ export function useServerState({
         if (suppressErrors) return;
         // Reconnect is the path a user takes right AFTER changing the protocol
         // version, so it is the likeliest place to meet a pin the server
-        // doesn't offer — and its toast carries the bare message, with no
-        // action of its own. Matched on the message because that is all this
+        // doesn't offer. Matched on the message because that is all this
         // helper receives; the clause is MCPJam's own wording.
         if (isProtocolVersionPinFailure(undefined, errorMessage)) {
-          toast.error(errorMessage, {
+          toastServerConnectionFailure(serverName, errorMessage, {
             action: {
               label: "Change protocol version",
               onClick: () => {
@@ -4756,15 +4810,10 @@ export function useServerState({
           });
           return;
         }
-        // Name the server for everything else. The route stopped prefixing its
-        // payload with "Connection failed for server X:" — that preamble
-        // buried the sentence and repeated the name against errors that
-        // already carry it — but a generic failure ("Connection refused") then
-        // says nothing about WHICH server, and several can fail at once.
-        //
-        // So it is added here, in the copy layer, and only when the message
-        // does not already name the server: attribution without the stutter.
-        toast.error(attributeToServer(serverName, errorMessage));
+        // Everything else names the server in the toast title: a generic
+        // failure ("Connection refused") says nothing about WHICH one, and
+        // several can fail at once.
+        toastServerConnectionFailure(serverName, errorMessage);
       };
 
       if (isClientConfigSyncPending) {

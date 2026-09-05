@@ -201,6 +201,31 @@ describe("InsightsWorkbench", () => {
     );
   });
 
+  it("does not render the retired criterion scorecard", () => {
+    mockUseUsageInsights.mockReturnValue({
+      threads: undefined,
+      breakdown: {
+        criterionBreakdown: [
+          {
+            criterionId: "criterion-1",
+            label: "Quick resolution",
+            passCount: 1,
+            failCount: 1,
+            ungradedCount: 0,
+          },
+        ],
+        totalSessions: 2,
+      },
+      rebuild: vi.fn().mockResolvedValue({ alreadyRunning: false }),
+    });
+
+    renderSwarmWorkbench({ projectId: "proj-1" });
+
+    expect(screen.queryByTestId("swarm-insights-scorecard")).toBeNull();
+    expect(screen.queryByText("Scorecard")).toBeNull();
+    expect(screen.getByTestId("goal-header")).toBeInTheDocument();
+  });
+
   it("forwards journeyRunIds onto the swarm scope for a wave-scoped Sankey", () => {
     renderSwarmWorkbench({ projectId: "proj-1", journeyRunIds: ["run-a", "run-b"] });
     expect(lastInsightsCall().scope).toEqual({

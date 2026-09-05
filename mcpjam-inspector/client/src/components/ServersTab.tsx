@@ -40,6 +40,10 @@ import { ActiveMcpProfileProvider } from "@/contexts/active-mcp-profile-context"
 import { JsonImportModal } from "./connection/JsonImportModal";
 import { AddPluginModal } from "./plugins/AddPluginModal";
 import { PluginsSection } from "./plugins/PluginsSection";
+import {
+  permalinkUnavailableMessage,
+  resolvePermalinkTarget,
+} from "@/lib/permalink-target";
 import { usePluginsEnabled } from "@/hooks/usePluginsEnabled";
 import { ServerFormData } from "@/shared/types.js";
 import {
@@ -587,6 +591,16 @@ interface ServersTabProps {
   areServersHydrated?: boolean;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   onLeaveProject?: () => void;
+  /**
+   * The saved server named by a `/servers/:serverId` permalink, if any.
+   *
+   * A HOSTED (Convex) server id, not a name: a permalink has to survive a
+   * rename, and the id is what an agent returned. Resolved against the
+   * project's remote server rows below.
+   */
+  routeServerId?: string | null;
+  /** The plugin named by a `/servers/plugins/:pluginId` permalink, if any. */
+  routePluginId?: string | null;
   isRegistryEnabled?: boolean;
   onNavigateToRegistry?: () => void;
 }
@@ -608,6 +622,8 @@ export function ServersTab({
   isAuthHydrating = false,
   areServersHydrated = true,
   onProjectShared: _onProjectShared,
+  routeServerId,
+  routePluginId,
   isRegistryEnabled = false,
   onNavigateToRegistry,
 }: ServersTabProps) {
@@ -1196,12 +1212,54 @@ export function ServersTab({
   // what every other project-scoped Convex consumer expects for local mode,
   // and matches `sharedProjectIdForHostScope` on the Add Server modal.
   const hostedProjectId = sharedProjectId ?? null;
-  const { serversRecord: sharedProjectServersRecord } = useRemoteProjectServers(
-    {
-      projectId: sharedProjectId ?? null,
-      isAuthenticated,
-    }
+  const {
+    serversRecord: sharedProjectServersRecord,
+    // The RAW array, which is `undefined` until the query settles. The record
+    // beside it is `{}` in that state AND for a project with no servers, so it
+    // cannot tell "still loading" from "loaded, empty" — and a permalink
+    // resolved against the empty one flashes the deleted-or-forbidden notice
+    // before the target arrives.
+    servers: sharedProjectServers,
+  } = useRemoteProjectServers({
+    projectId: sharedProjectId ?? null,
+    isAuthenticated,
+  });
+
+  // ── Permalink targets ──────────────────────────────────────────────
+  //
+  // `/servers/:serverId` and `/servers/plugins/:pluginId` are exact
+  // addresses an agent hands to a human. Resolving them HERE, against the
+  // rows this viewer can actually see, is what keeps a link to a deleted or
+  // inaccessible resource from quietly rendering the collection instead —
+  // the wrong-resource failure the permalink work exists to end.
+  const routeServerState = resolvePermalinkTarget(
+    routeServerId,
+    // `undefined` until the query settles, so a cold load waits instead of
+    // deciding. A project with no servers at all still answers with a real
+    // empty array, which resolves to `unavailable` — the honest answer.
+    isAuthenticated && hostedProjectId ? sharedProjectServers : undefined,
+    (row) => row?._id
   );
+  const routeServerName =
+    routeServerState.kind === "found" ? routeServerState.target?.name : null;
+
+  useEffect(() => {
+    if (!routeServerName) return;
+    const server = projectServers[routeServerName];
+    if (!server) return;
+    setDetailModalState((prev) =>
+      prev.isOpen && prev.serverName === server.name
+        ? prev
+        : {
+            isOpen: true,
+            serverName: server.name,
+            defaultTab: "configuration",
+            sessionKey: prev.sessionKey + 1,
+            serverSnapshot: server,
+          }
+    );
+  }, [routeServerName, projectServers]);
+
 
   /**
    * PROMOTE: share a server that is already connected here on the
@@ -1959,10 +2017,58 @@ export function ServersTab({
   // component servers never appear in that grid (the backend excludes
   // `lifecycleScope: 'plugin_component'` rows from the standalone list), so
   // this section is the only place their health is visible on Connect.
-  const renderPluginsSection = () =>
-    isPluginsEnabled ? (
-      <PluginsSection projectId={sharedProjectIdForHostScope} />
-    ) : null;
+  const renderPluginsSection = () => {
+    if (isPluginsEnabled) {
+      return (
+        <PluginsSection
+          projectId={sharedProjectIdForHostScope}
+          expandedPluginId={routePluginId ?? null}
+        />
+      );
+    }
+    // The flag is a per-viewer PostHog rollout, and `list_project_plugins` is
+    // NOT flag-gated — so an agent working for someone inside the rollout can
+    // hand a `/servers/plugins/:pluginId` link to someone outside it. Dropping
+    // the section silently would render ordinary Connect and never mention
+    // that the link went nowhere. Same message as a missing plugin: whether
+    // the resource exists is not something this screen should disclose.
+    if (!routePluginId) return null;
+    return (
+      <div
+        role="status"
+        data-testid="plugin-permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("plugin")}
+      </div>
+    );
+  };
+
+  /**
+   * What a permalink to a gone-or-forbidden resource renders.
+   *
+   * Deliberately says one thing for BOTH "deleted" and "you cannot see it":
+   * two messages would confirm to someone without access that the id exists.
+   * Rendered ABOVE the collection rather than instead of it, so the recipient
+   * can still use the screen — but never without being told the link they
+   * followed did not land.
+   */
+  const renderPermalinkNotice = () => {
+    // The PLUGIN half of the same question is answered inside
+    // `PluginsSection`, which is where the plugin list lives — duplicating
+    // that query here to render one sentence would put two sources of truth
+    // behind one message.
+    if (routeServerState.kind !== "unavailable") return null;
+    return (
+      <div
+        role="status"
+        data-testid="permalink-unavailable"
+        className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground"
+      >
+        {permalinkUnavailableMessage("server")}
+      </div>
+    );
+  };
 
   const renderConnectedContent = () => (
     <ResizablePanelGroup direction="horizontal" className="flex-1">
@@ -1972,6 +2078,7 @@ export function ServersTab({
         minSize={70}
       >
         <div className="space-y-6 p-8 h-full overflow-auto">
+          {renderPermalinkNotice()}
           {/* Header Section */}
           <div className="flex flex-wrap items-center justify-end gap-2">
             <div className="flex items-center gap-2">
@@ -2117,6 +2224,11 @@ export function ServersTab({
 
   const renderEmptyContent = () => (
     <div className="space-y-6 p-8 h-full overflow-auto">
+      {/* Rendered in BOTH branches: a permalink to a server this viewer
+          cannot see most often lands on a project with no servers at all,
+          which is exactly when the collection fallback would say only "No
+          servers connected" and the link's failure would go unmentioned. */}
+      {renderPermalinkNotice()}
       {/* Header Section */}
       <div className="flex flex-wrap items-center justify-end gap-2">
         <div className="flex items-center gap-2">

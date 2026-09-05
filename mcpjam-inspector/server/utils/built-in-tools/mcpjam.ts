@@ -34,13 +34,20 @@ import {
   connectProjectServerOperation,
   diagnoseServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
   listEvalCheckReposOperation,
   getScenarioOperation,
   getEvalIterationTraceOperation,
+  getEvalRunDisclosureOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   getEvalRunOperation,
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
   listScenariosOperation,
@@ -48,6 +55,7 @@ import {
   searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
   createProjectServerOperation,
@@ -59,6 +67,9 @@ import {
   listServerResourcesOperation,
   listServerToolsOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -76,6 +87,8 @@ import {
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+  listSecretsOperation,
+  getSecretOperation,
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -126,6 +139,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // opens in the same browser they are already signed into.
   connectProjectServerOperation,
   getProjectServerConnectionStatusOperation,
+  cancelProjectServerConnectionOperation,
   diagnoseServerOperation,
   listServerToolsOperation,
   callServerToolOperation,
@@ -133,6 +147,9 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getServerPromptOperation,
   listServerResourcesOperation,
   readServerResourceOperation,
+  listServerSkillsOperation,
+  getServerSkillOperation,
+  readServerSkillFileOperation,
   startClaudeReadinessRunOperation,
   startOpenAIReadinessRunOperation,
   getReadinessRunOperation,
@@ -145,10 +162,27 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // The suite's settings HISTORY. In-product because it answers the first
+  // question after an unexplained change in results — who edited this suite,
+  // and when — and because its `revisionNumber` is what turns an
+  // `update_eval_suite` into a compare-and-set rather than a last-write-wins.
+  listEvalSuiteRevisionsOperation,
+  // Read-only, checked BEFORE a launch decision — placed ahead of the two run
+  // operations it exists to inform. `run_eval_suite` already fetches and
+  // returns its own disclosure on the receipt, so this is for when a caller
+  // needs the answer before committing to launch, not after.
+  getEvalRunDisclosureOperation,
   runEvalCaseOperation,
   runEvalSuiteOperation,
   getEvalRunOperation,
+  // The measured description beside the decision: how much of the run was
+  // measured at all, per stage. Reads, so they ride with the run read.
+  getEvalRunStageAnalyticsOperation,
+  listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
+  waiveEvalGateOperation,
+  getEvalGateWaiverOperation,
+  revokeEvalGateWaiverOperation,
   listEvalRunIterationsOperation,
   getEvalIterationTraceOperation,
   getEvalRunStepsOperation,
@@ -181,6 +215,24 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getPersonaOperation,
   createPersonaOperation,
   updatePersonaOperation,
+
+  // ── Project secrets: the METADATA READS only ────────────────────────────
+  //
+  // This list has no drift test — it is hand-maintained — so the omission is
+  // stated rather than left to be noticed. `list_secrets` and `get_secret` are
+  // here because a workspace chat needs to answer "does this project already
+  // have a STRIPE_API_KEY, and is it brokered?"; both return metadata and are
+  // structurally incapable of returning a value.
+  //
+  // The three WRITES are deliberately absent. `create_secret` and
+  // `update_secret` carry the plaintext as an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it; `delete_secret` hard-revokes a credential and belongs on
+  // a surface where the person meant it. All three stay on REST, the SDK and
+  // the CLI.
+  listSecretsOperation,
+  getSecretOperation,
+
   listJourneysOperation,
   getJourneyOperation,
   createJourneyOperation,
@@ -248,6 +300,47 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   // looking at them.
   delete_persona:
     "Takes a persona off the roster; the Swarms tab shows what still references it before you do.",
+  // PROJECT SECRET WRITES. The first two are excluded for a reason unrelated to
+  // reversibility: the plaintext credential is an ARGUMENT, so it would transit
+  // model context and be written into this chat's transcript before anything
+  // could approve it. An approval that fires after the value is already logged
+  // is not an approval, so no gate fixes this — only keeping them off the chat
+  // surface does. `delete_secret` is the ordinary destructive case: the
+  // Secrets section names the environments that stop working before you revoke.
+  create_secret:
+    "The plaintext value is an argument, so it would reach model context and this chat's transcript before anything could approve it. Create secrets in project settings, or through the API/CLI where you choose where the value comes from.",
+  update_secret:
+    "Same as create_secret: a rotation carries the new plaintext as an argument, with the same exposure before any approval.",
+  delete_secret:
+    "Revokes a credential permanently; the Secrets section names the environments that stop delivering it before you do.",
+  // TRACE DESTINATIONS. All ten, and the reason is one sentence with two
+  // halves. The two credential writes carry vendor headers as ARGUMENTS, with
+  // exactly the exposure `create_secret` above describes. The other eight are
+  // organization observability wiring, whose consequences land in a THIRD
+  // PARTY'S system and cannot be retracted from there — the Observability
+  // section in organization settings shows the endpoint, what it subscribes
+  // to, whether content is redacted and how delivery is going, which is the
+  // context every one of these decisions needs.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would reach model context and this chat's transcript before anything could approve them. Create destinations in organization settings, or through the API/CLI where you choose where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same exposure before any approval.",
+  delete_trace_destination:
+    "Discards a live export and its stored credentials. The Observability section shows what is still streaming before you remove it — and says what a delete cannot do, which is retract the traces already delivered.",
+  pause_trace_destination:
+    "Nothing is queued while a destination is paused, so pausing creates a gap rather than a backlog. The section says so next to the button.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something was wrong. The section shows the pause reason and the remediation next to Resume; a chat tool would resume by id with neither.",
+  test_trace_destination:
+    "Sends to a third party's intake on the organization's credentials, and the outcome lands on the destination rather than in the reply. The section shows the result inline, where the destination it belongs to is on screen.",
+  backfill_trace_destination:
+    "Can queue a month of history at a vendor that bills on ingest. The section offers exactly the window a pause dropped, which is the sizing a chat tool cannot do.",
+  list_trace_destinations:
+    "Organization observability configuration, which the Observability section shows in full — including delivery health, which is what someone asking is usually after. Available on the API and CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: the section is the better view of it. Available on the API and CLI.",
+  list_trace_destination_backfills:
+    "Backfill history is operational detail an admin reads while diagnosing an export. Available on the API and CLI.",
   archive_journey:
     "Takes a journey off the roster. The tab shows its run history first, which is the thing you are deciding about.",
   archive_swarm:
@@ -354,14 +447,23 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
     "Spends model quota; the Evaluate tab offers it explicitly.",
 
   // Host and environment administration: re-wires the execution surface.
-  list_hosts: "Host administration has its own tab.",
-  get_host: "Host administration has its own tab.",
-  create_host: "Host creation re-wires the execution surface.",
-  update_host: "Host config changes affect every later run.",
-  delete_host: "Irreversible and rotates every host config that referenced it.",
-  set_host_servers:
-    "Re-wiring a host's server set is an administrative action.",
-  duplicate_host: "Host administration has its own tab.",
+  // Clients stay OUT of the in-app toolset, and this is the one surface where
+  // that did not change. The Clients tab and the WebMCP `ui_*_client` tools own
+  // this surface: the person is already looking at the editor, with undo, a
+  // diff and the whole config in front of them. A chat tool that edits the
+  // client the chat itself is running on would be a worse version of the thing
+  // on screen. The MCP catalog and the agent registry are different — there is
+  // no editor there to defer to.
+  list_clients: "Client administration has its own tab.",
+  get_client: "Client administration has its own tab.",
+  create_client: "Client creation re-wires the execution surface.",
+  update_client:
+    "Client config changes affect every later run, and the Clients tab (plus the WebMCP client tools) is the surface that owns them in-app.",
+  delete_client:
+    "Irreversible and rotates every client config that referenced it.",
+  set_client_servers:
+    "Re-wiring a client's server set is an administrative action.",
+  duplicate_client: "Client administration has its own tab.",
   list_project_environments: "Environments have their own tab.",
   get_project_environment_capabilities:
     "A deployment-compatibility probe, not a user-facing action: it answers whether this platform accepts a model override, which every write path already asks on the caller's behalf.",
@@ -408,6 +510,16 @@ export const EXCLUDED_FROM_WORKSPACE: Readonly<Record<string, string>> = {
   export_server: "Emits a full server config including its auth shape.",
   show_servers:
     "The widget-bearing variant for MCP Apps hosts, not in-app chat.",
+
+  // Cloud Skills, the read half. Advertised on the agent catalog
+  // (`mcp/src/tools/platformTools.ts`) because an agent driving eval runs
+  // cannot pin a skill it cannot name. In-app chat is the surface where that
+  // argument does NOT hold: the person is already looking at /skills, which
+  // lists the same rows with the pinnability and the body beside them.
+  list_project_skills:
+    "Skill IDs are load-bearing on the agent catalog, not in in-app chat: the /skills surface lists the same rows with each one's pinnability inline, which is the half of the answer an id alone leaves out. Available on REST/CLI/MCP.",
+  get_project_skill:
+    "Paired with the list above; /skills renders the SKILL.md body next to the aggregateHash that says which version it is, and the body is mutable so that pairing is the point.",
 };
 
 const OPERATIONS_BY_ID = new Map(
@@ -433,6 +545,11 @@ const CONNECTION_OPENING_IDS = new Set([
   getServerPromptOperation.name,
   listServerResourcesOperation.name,
   readServerResourceOperation.name,
+  // Skills over MCP opens the same ephemeral connection as the primitives
+  // above, so it inherits the host's approval policy for the same reason.
+  listServerSkillsOperation.name,
+  getServerSkillOperation.name,
+  readServerSkillFileOperation.name,
 ]);
 
 // Operations that mutate state and therefore require user approval when the

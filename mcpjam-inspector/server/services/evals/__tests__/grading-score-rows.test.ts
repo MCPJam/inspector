@@ -7,6 +7,7 @@ import {
   shadowVerdictFromScores,
 } from "../score-rows.js";
 import { HOSTED_JUDGE_SCORER_ID } from "../score-definitions.js";
+import { allGatingScorersPassed } from "@mcpjam/sdk/contract";
 import {
   MAX_SHADOW_MISMATCHES_PER_RUN,
   buildShadowMismatch,
@@ -295,8 +296,163 @@ describe("shadow telemetry: silence is the success signal", () => {
   });
 });
 
+// =============================================================================
+// B10e — THE JUDGE'S ROLE COMES FROM THE VERDICT.
+//
+// The projection used to hard-code the judge advisory, which made a gating
+// judge structurally powerless: a suite could earn the gate, the backend could
+// hold the run for it, and this file would still emit a row the gate
+// arithmetic never looks at. The role now travels on
+// `metadata.judgeVerdict.role`, stamped by the backend from the run's frozen
+// config.
+//
+// The decision is CLOSED and fails closed. Only the literal "gating" gates;
+// absent, "advisory", and anything else — a future spelling, the wrong case —
+// are advisory, because the default here decides whether a judge may fail
+// somebody's build.
+// =============================================================================
+/**
+ * The advisory judge's `definitionHash`, pinned.
+ *
+ * Stamped on every hosted iteration ever recorded, and the join key between a
+ * stored row and its stored definition. A change here re-fingerprints all of
+ * them; if this literal has to move, that is the fact to notice.
+ */
+const ADVISORY_JUDGE_DEFINITION_HASH =
+  "1517eb5af43c9a7360c099db3a594022e389e850e0883427d287a769db933aaf";
+
+describe("the judge's role comes from the verdict", () => {
+  const advisoryRoles: Array<Record<string, unknown>> = [
+    { score: 0.2, threshold: 0.8, status: "scored" },
+    { score: 0.2, threshold: 0.8, status: "scored", role: "advisory" },
+    // Wrong case. A near-miss must never be read as licence to gate.
+    { score: 0.2, threshold: 0.8, status: "scored", role: "GATING" },
+  ];
+
+  test("absent, advisory and an unrecognised role are byte-identical", () => {
+    const built = advisoryRoles.map((judgeVerdict) =>
+      buildHostedScoreContract({ predicateResults, evaluation, judgeVerdict })
+    );
+    for (const contract of built.slice(1)) {
+      expect(contract.evaluationConfig).toEqual(built[0].evaluationConfig);
+      expect(contract.scores).toEqual(built[0].scores);
+    }
+    const definition = built[0].evaluationConfig.definitions.find(
+      (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
+    );
+    expect(definition?.role).toBe("advisory");
+    expect(definition?.onError).toBe("ignore");
+    expect(definition?.onSkipped).toBe("ignore");
+    expect(definition?.label).toBe("goal completion (advisory)");
+    // GOLDEN. This digest is stamped on every hosted iteration ever recorded;
+    // a change here re-fingerprints all of them and orphans their stored rows
+    // from their stored definitions. If this fails, the projection changed —
+    // decide whether that was intended before updating the literal.
+    expect(built[0].scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID)
+      ?.definitionHash).toBe(ADVISORY_JUDGE_DEFINITION_HASH);
+  });
+
+  test("role gating produces a gating definition, same implementation", () => {
+    const advisory = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: { score: 0.2, threshold: 0.8, status: "scored" },
+    });
+    const gating = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: {
+        score: 0.2,
+        threshold: 0.8,
+        status: "scored",
+        role: "gating",
+      },
+    });
+    const advisoryDef = advisory.evaluationConfig.definitions.find(
+      (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
+    );
+    const gatingDef = gating.evaluationConfig.definitions.find(
+      (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
+    );
+    expect(gatingDef?.role).toBe("gating");
+    expect(gatingDef?.label).toBe("goal completion (gating)");
+    // `resolveScoreDefinition` supplies these from the role, so the backend
+    // finalizer reads exactly the rule the contract states rather than a
+    // second copy of it in this repo.
+    expect(gatingDef?.onError).toBe("fail");
+    expect(gatingDef?.onSkipped).toBe("fail");
+    // The IMPLEMENTATION did not change — same judge, same template, same
+    // arithmetic — so its hash must not move. The role is already an input to
+    // `definitionHash`, which is what makes the two definitions distinct
+    // without re-fingerprinting the advisory one.
+    expect(gatingDef?.implementationHash).toBe(advisoryDef?.implementationHash);
+    expect(
+      gating.scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID)
+        ?.definitionHash
+    ).not.toBe(
+      advisory.scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID)
+        ?.definitionHash
+    );
+  });
+
+  test("a gating judge below threshold fails the shadow verdict", () => {
+    const advisory = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: { score: 0.2, threshold: 0.8, status: "scored" },
+    });
+    expect(
+      shadowVerdictFromScores(advisory.scores, advisory.evaluationConfig)
+        .passed
+    ).toBe(true);
+
+    const gating = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: {
+        score: 0.2,
+        threshold: 0.8,
+        status: "scored",
+        role: "gating",
+      },
+    });
+    const verdict = shadowVerdictFromScores(
+      gating.scores,
+      gating.evaluationConfig
+    );
+    expect(verdict.passed).toBe(false);
+    expect(verdict.disagreeingScorerIds).toEqual([HOSTED_JUDGE_SCORER_ID]);
+  });
+
+  test("a gating judge that ERRORED is unresolved, never a failure", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: {
+        threshold: 0.8,
+        status: "error",
+        error: "judge timeout",
+        role: "gating",
+      },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    // Structurally incapable of failing a trial on its own: no `passed` to
+    // fail with. The backend quarantines the trial instead of grading it.
+    expect(judgeRow?.passed).toBeUndefined();
+    // Read through the contract helper rather than `shadowVerdictFromScores`,
+    // which reports only disagreements — the distinction between "disagreed"
+    // and "could not answer" is exactly what this test is about.
+    const derived = allGatingScorersPassed(scores, evaluationConfig);
+    expect(derived.unresolvedScorerIds).toEqual([HOSTED_JUDGE_SCORER_ID]);
+    expect(derived.disagreeingScorerIds).toEqual([]);
+    // `onError: "fail"` on a gating definition is what makes the gate
+    // unsatisfied: a gate nobody could evaluate has not been met.
+    expect(derived.passed).toBe(false);
+  });
+});
+
 describe("shadowVerdictFromScores", () => {
-  test("an advisory judge row never participates", () => {
+  test("an ADVISORY judge row never participates", () => {
     const { scores, evaluationConfig } = buildHostedScoreContract({
       predicateResults,
       evaluation,
@@ -316,6 +472,76 @@ describe("shadowVerdictFromScores", () => {
     expect(judgeRow?.status).toBe("error");
     expect(judgeRow?.value).toBeUndefined();
     expect(judgeRow?.passed).toBeUndefined();
+  });
+
+  // B4 validity distinguishes "this scorer was never measured" from "this
+  // iteration had no such scorer": only a projected row can carry that.
+  test("a judge that errored is projected as error, not dropped", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "error", error: "judge timeout" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+    expect(judgeRow?.error).toContain("judge timeout");
+    expect(judgeRow?.value).toBeUndefined();
+  });
+
+  test("a judge that did not run is projected as skipped", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      predicateResults,
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "skipped" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("skipped");
+    // Absent evidence from an ADVISORY scorer still decides nothing.
+    expect(shadowVerdictFromScores(scores, evaluationConfig).passed).toBe(true);
+  });
+
+  test("an out-of-scope judge is projected as not_applicable", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "not_applicable" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("not_applicable");
+  });
+
+  // A malformed verdict is not an absent scorer: it errored.
+  test("a scored verdict carrying no number errors rather than vanishing", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { threshold: 0.8, status: "scored" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+  });
+
+  test("an unknown judge status errors even when it carries a numeric score", () => {
+    const { scores } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { score: 1, threshold: 0.8, status: "mystery" },
+    });
+    const judgeRow = scores.find((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID);
+    expect(judgeRow?.status).toBe("error");
+    expect(judgeRow?.value).toBeUndefined();
+  });
+
+  // Without a threshold there is no definition, so nothing is fabricated.
+  test("a thresholdless judge verdict contributes no scorer at all", () => {
+    const { scores, evaluationConfig } = buildHostedScoreContract({
+      evaluation,
+      judgeVerdict: { status: "error" },
+    });
+    expect(
+      scores.some((s) => s.scorerId === HOSTED_JUDGE_SCORER_ID)
+    ).toBe(false);
+    expect(
+      evaluationConfig.definitions.some(
+        (d) => d.scorerId === HOSTED_JUDGE_SCORER_ID
+      )
+    ).toBe(false);
   });
 
   test("a failing gating row names itself", () => {

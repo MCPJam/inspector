@@ -61,8 +61,10 @@ type RunResultBadgeKind =
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending";
 
 function runResultBadge(result: RunResultBadgeKind) {
@@ -71,12 +73,22 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, never red: the backend refused to call this run either way.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`: the run is still happening. Green or red would
+      // claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }
@@ -726,19 +738,25 @@ export function RunOverview({
                       ? formatDuration(Date.now() - run.createdAt)
                       : "—";
 
+                  // Status FIRST for a held run: its `result` is the truthy
+                  // "pending", which would otherwise win the `||` below and
+                  // the "grading" badge arm would never be reached.
                   const runResult =
-                    run.result ||
-                    (run.status === "completed" && passRate !== null
-                      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-                        ? "passed"
-                        : "failed"
-                      : run.status === "cancelled"
-                        ? "cancelled"
-                        : run.status === "timed_out"
-                          ? "timed_out"
-                          : run.status === "running"
-                            ? "running"
-                            : "pending");
+                    run.status === "grading"
+                      ? "grading"
+                      : run.result ||
+                        (run.status === "completed" && passRate !== null
+                          ? passRate >=
+                            (run.passCriteria?.minimumPassRate ?? 100)
+                            ? "passed"
+                            : "failed"
+                          : run.status === "cancelled"
+                            ? "cancelled"
+                            : run.status === "timed_out"
+                              ? "timed_out"
+                              : run.status === "running"
+                                ? "running"
+                                : "pending");
                   const badge = runResultBadge(runResult);
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 

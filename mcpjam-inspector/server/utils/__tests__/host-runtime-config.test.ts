@@ -187,6 +187,38 @@ describe("fetchHostRuntimeConfig", () => {
     const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "t" });
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.status).toBe(502);
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("retries one transient network failure before failing the turn", async () => {
+    const fetchSpy = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(Response.json({ ok: true, config: { hostId: "h1" } }));
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await fetchHostRuntimeConfig({ hostId: "h1", bearer: "t" });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(result).toEqual({ ok: true, config: { hostId: "h1" } });
+  });
+
+  it("does not retry an aborted request", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const fetchSpy = vi.fn(async () => {
+      throw new DOMException("Aborted", "AbortError");
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const result = await fetchHostRuntimeConfig({
+      hostId: "h1",
+      bearer: "t",
+      signal: controller.signal,
+    });
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ ok: false, status: 502 });
   });
 
   it("treats a 200 with a non-JSON body as a 502", async () => {

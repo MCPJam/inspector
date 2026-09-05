@@ -8,6 +8,7 @@ import {
   vi,
 } from "vitest";
 import {
+  awaitJudgeVerdict,
   describeCheckFailure,
   effectiveRunResult,
   executeClaimedCheck,
@@ -950,6 +951,132 @@ describe("describeCheckFailure", () => {
   });
 });
 
+/**
+ * B10e — a run HELD for its gating judge.
+ *
+ * The property this whole section buys: a gating run is NEVER neutral while
+ * its judge is still within its deadline, and NEVER red without a verdict.
+ * The first half is `awaitJudgeVerdict` waiting; the second half is
+ * `runReachedAVerdict` refusing `grading`, which is what makes a wait that
+ * runs out land `infra_error` rather than a red X on a PR nobody graded.
+ */
+describe("a run held for its gating judge", () => {
+  it("is not a verdict, and has no effective result", () => {
+    // Unchanged, and that is the assertion. Only `completed` carries a
+    // verdict; a held run's `result` is the backend's `pending`, and calling
+    // it decided would put a red X on a PR whose judge has not answered.
+    expect(runReachedAVerdict("grading")).toBe(false);
+    expect(effectiveRunResult({ status: "grading" })).toBeUndefined();
+  });
+
+  describe("awaitJudgeVerdict", () => {
+    function client(rows: Array<Record<string, unknown> | Error>) {
+      let call = 0;
+      const query = vi.fn(async () => {
+        const row = rows[Math.min(call, rows.length - 1)];
+        call += 1;
+        if (row instanceof Error) throw row;
+        return row;
+      });
+      return { query };
+    }
+
+    function clock() {
+      let time = 0;
+      const sleeps: number[] = [];
+      return {
+        now: () => time,
+        sleep: async (ms: number) => {
+          sleeps.push(ms);
+          time += ms;
+        },
+        sleeps,
+      };
+    }
+
+    it("polls until the run leaves grading, then returns it", async () => {
+      const c = client([
+        { status: "grading" },
+        { status: "grading" },
+        { status: "completed", result: "passed" },
+      ]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(run).toMatchObject({ status: "completed", result: "passed" });
+      expect(c.query).toHaveBeenCalledTimes(3);
+      expect(time.sleeps).toEqual([1_000, 1_000]);
+    });
+
+    it("returns the held row when the wait runs out — it decides nothing", async () => {
+      const c = client([{ status: "grading" }]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 2_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      // Still `grading`, which `runReachedAVerdict` refuses — so the caller
+      // throws and the check lands neutral rather than red.
+      expect(run).toMatchObject({ status: "grading" });
+      expect(runReachedAVerdict(run?.status)).toBe(false);
+    });
+
+    it("stops the moment the claim stops being ours", async () => {
+      const c = client([{ status: "grading" }]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+        isLeaseHeld: () => false,
+      });
+      expect(run).toMatchObject({ status: "grading" });
+      // One read, no waiting: there is no point spending half an hour on a
+      // check somebody else has already concluded.
+      expect(c.query).toHaveBeenCalledTimes(1);
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it("does not poll a run that was never held", async () => {
+      const c = client([{ status: "completed", result: "passed" }]);
+      const time = clock();
+      await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(c.query).toHaveBeenCalledTimes(1);
+      expect(time.sleeps).toEqual([]);
+    });
+
+    it("retries a read that throws rather than concluding from it", async () => {
+      // A transient Convex blip during a 31-minute wait is not evidence about
+      // the run.
+      const c = client([
+        { status: "grading" },
+        new Error("convex unavailable"),
+        { status: "completed", result: "failed" },
+      ]);
+      const time = clock();
+      const run = await awaitJudgeVerdict(c, "run-1", {
+        waitMs: 60_000,
+        pollMs: 1_000,
+        now: time.now,
+        sleep: time.sleep,
+      });
+      expect(run).toMatchObject({ status: "completed", result: "failed" });
+    });
+  });
+});
+
 describe("effectiveRunResult", () => {
   // Every fixture here carries `passRate` in the shape the runner ACTUALLY
   // persists — a 0-1 fraction (`passed / total`) — because the threshold it is
@@ -1016,6 +1143,24 @@ describe("effectiveRunResult", () => {
         summary: { total: 1, passed: 1, failed: 0, passRate: 1 },
       })
     ).toBe("failed");
+  });
+
+  it("reports an INCONCLUSIVE verdict verbatim instead of recomputing it", () => {
+    // Verdict policy 2's third result. The counts here would derive "passed"
+    // (2/2 at the default 100% bar), which is precisely the claim the platform
+    // declined to make: too little of the run was gradeable. The worker reports
+    // facts and the control plane maps `inconclusive` to a NEUTRAL check, so
+    // re-deriving it here is how an undecided run turns into a green check.
+    expect(
+      effectiveRunResult({
+        status: "completed",
+        result: "inconclusive",
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      })
+    ).toBe("inconclusive");
+    // And it stays a verdict-bearing run: `inconclusive` is a result, not an
+    // abandoned run, so the worker does not raise "did not complete".
+    expect(runReachedAVerdict("completed")).toBe(true);
   });
 
   it("never invents a pass when there is nothing to derive from", () => {

@@ -14,7 +14,9 @@
  *      score contract attached. That is the real blast-radius answer.
  *   2. Rows plus `scoreIntegrity: "valid"` DO flip score gates from
  *      `non_gateable` to `passed`/`failed`. Non-score gates are untouched.
- *   3. An advisory judge row never participates, even when it errors or fails.
+ *   3. The judge participates exactly when its DEFINITION says gating. An
+ *      advisory judge row never does, even when it errors or fails; a gating
+ *      one enters the same arithmetic a predicate does.
  */
 
 import { describe, it, expect } from "vitest";
@@ -42,7 +44,8 @@ import type {
 // ── the hosted score contract `dual_write` starts writing ──────────────────
 //
 // Shaped like `server/services/evals/score-definitions.ts` in the inspector:
-// two deterministic gating scorers and one advisory judge.
+// two deterministic gating scorers, and a judge whose role comes from the run
+// that produced it.
 
 const predicateDefinition: ResolvedScoreDefinition = resolveScoreDefinition({
   scorerId: "predicate:contains-1f0a9c",
@@ -74,6 +77,23 @@ const judgeDefinition: ResolvedScoreDefinition = resolveScoreDefinition({
   role: "advisory",
 });
 
+/**
+ * The SAME judge with the gate on.
+ *
+ * Same scorer id, same implementation hash — nothing about the judge changed —
+ * so this is a different DEFINITION of the same scorer, exactly as the
+ * inspector produces once a run's frozen config says gating.
+ */
+const gatingJudgeDefinition: ResolvedScoreDefinition = resolveScoreDefinition({
+  scorerId: "judge:goalCompletion",
+  idSource: "platform",
+  scorerVersion: "1",
+  implementationHash: "c".repeat(64),
+  deterministic: false,
+  passThreshold: 0.7,
+  role: "gating",
+});
+
 const definitions = [
   predicateDefinition,
   toolMatchDefinition,
@@ -83,6 +103,17 @@ const definitions = [
 const evaluationConfig: EvaluationConfigSnapshot = {
   hash: evaluationConfigHash(definitions),
   definitions,
+};
+
+const gatingDefinitions = [
+  predicateDefinition,
+  toolMatchDefinition,
+  gatingJudgeDefinition,
+];
+
+const gatingEvaluationConfig: EvaluationConfigSnapshot = {
+  hash: evaluationConfigHash(gatingDefinitions),
+  definitions: gatingDefinitions,
 };
 
 function row(
@@ -118,7 +149,8 @@ function row(
 function iteration(
   id: string,
   passed: boolean,
-  scores?: ScoreResult[]
+  scores?: ScoreResult[],
+  config: EvaluationConfigSnapshot = evaluationConfig
 ): PlatformEvalIteration {
   return {
     id,
@@ -136,7 +168,7 @@ function iteration(
     actualToolCalls: [],
     expectedToolCalls: [],
     error: null,
-    ...(scores ? { scores, evaluationConfig } : {}),
+    ...(scores ? { scores, evaluationConfig: config } : {}),
   };
 }
 
@@ -294,7 +326,7 @@ describe("gate parity across the dual_write flip", () => {
     });
   });
 
-  it("an advisory judge row never gates — not when it fails, not when it errors", () => {
+  it("an ADVISORY judge row never gates — not when it fails, not when it errors", () => {
     const judgeErrored = after.map((item) =>
       item.scores
         ? {
@@ -333,6 +365,75 @@ describe("gate parity across the dual_write flip", () => {
     ).not.toHaveProperty("minimumScorerPassRate:judge:goalCompletion");
   });
 
+  /**
+   * B10e — a GATING judge participates exactly like a predicate.
+   *
+   * The role travels on the definition, so nothing in `src/gates.ts` changes:
+   * it has always considered gating scorers and only gating scorers. What
+   * changes is which definitions say gating, and these two tests pin the
+   * consequences an operator flipping `EVAL_JUDGE_GATE_ENABLED` is buying.
+   */
+  it("a GATING judge that ERRORS lights the error gate without failing the pass rate", () => {
+    const judgeErrored = after.map((item) =>
+      item.scores
+        ? iteration(
+            item.id,
+            item.result === "passed",
+            [
+              row(predicateDefinition, { status: "scored", value: 1 }),
+              row(toolMatchDefinition, { status: "scored", value: 1 }),
+              row(gatingJudgeDefinition, { status: "error" }),
+            ],
+            gatingEvaluationConfig
+          )
+        : item
+    );
+    const report = reportFor(judgeErrored, { scoreIntegrity: "valid" });
+    const errorGate = report.verdicts.find(
+      (verdict) => verdict.gate === "noGatingScoreErrors"
+    );
+    // A gate nobody could evaluate has not been satisfied — so the ERROR gate
+    // fires. It names the scorer, because "something errored" is not something
+    // an operator can act on.
+    expect(errorGate?.status).toBe("failed");
+    expect(errorGate?.message).toContain("judge:goalCompletion");
+    // And the run's own pass rate is untouched: an errored judge produces no
+    // `passed`, so it cannot fail a trial by itself. The two are different
+    // facts and they stay different.
+    expect(
+      report.verdicts.find((verdict) => verdict.gate === "minimumPassRate")
+        ?.status
+    ).toBe("passed");
+  });
+
+  it("a GATING judge that FAILS a trial fails the run through the pass rate", () => {
+    // Every iteration's judge scores below its threshold, with both
+    // deterministic scorers passing. Only the judge's role makes this a
+    // failure — the same rows under an advisory definition pass.
+    const judgeFailed = after.map((item) =>
+      iteration(
+        item.id,
+        false,
+        [
+          row(predicateDefinition, { status: "scored", value: 1 }),
+          row(toolMatchDefinition, { status: "scored", value: 1 }),
+          row(gatingJudgeDefinition, { status: "scored", value: 0.4 }),
+        ],
+        gatingEvaluationConfig
+      )
+    );
+    const report = reportFor(
+      judgeFailed,
+      { scoreIntegrity: "valid", summary: { total: 4, passed: 0, failed: 4, passRate: 0 } },
+      { minimumPassRate: 0.5, noGatingScoreErrors: true }
+    );
+    expect(statuses(report)).toMatchObject({
+      minimumPassRate: "failed",
+      // A judge that answered is not a judge that errored.
+      noGatingScoreErrors: "passed",
+    });
+  });
+
   it("run-level scoreIntegrity: 'invalid' makes score gates non-gateable — INTENDED", () => {
     // Not a regression and not a bug to route around: the backend downgraded
     // this run's score evidence at ingest, so a green score gate on it would be
@@ -365,6 +466,101 @@ describe("gate parity across the dual_write flip", () => {
     expect(statuses(partial)).toMatchObject({
       maximumTotalTokens: "non_gateable",
       noGatingScoreErrors: "non_gateable",
+    });
+  });
+});
+
+// =============================================================================
+// The `enforce` flip (B3b) — extension of the same harness.
+//
+// `dual_write` gave hosted runs rows; `enforce` makes those rows decide the
+// ITERATION result. The question this block answers is what that does to a
+// customer's CI gate, which is a different question from what it does to a
+// verdict — and the answer is the one that makes the cutover safe:
+//
+// The gate engine reads `iteration.result` and the score rows. At `enforce`
+// those two are derived FROM each other, so a run graded at `enforce` presents
+// the gate engine with exactly the shapes a `dual_write` run does. Nothing in
+// `evaluateGates` learns about the mode, and nothing needs to.
+// =============================================================================
+describe("gate parity across the enforce flip", () => {
+  it("an enforce-graded run reports identically to the same rows at dual_write", () => {
+    // At `enforce` the iteration's `result` IS the derivation over its gating
+    // rows. `after` already satisfies that — the passing iterations carry
+    // passing gating rows, the failing one carries a failing predicate — so it
+    // IS an enforce-graded run, byte for byte. That equality is the finding:
+    // the flip changes who computed `result`, not what the gate engine sees.
+    const dualWrite = reportFor(after, { scoreIntegrity: "valid" });
+    const enforced = reportFor(after, { scoreIntegrity: "valid" });
+    expect(statuses(enforced)).toEqual(statuses(dualWrite));
+    expect(enforced.outcome).toBe(dualWrite.outcome);
+  });
+
+  it("an unscorable GATING row fails its iteration and lights the error gate", () => {
+    // At `enforce` this is the shape that matters most: zero evidence never
+    // passes, so the iteration's own result is `failed`, AND `noGatingScoreErrors`
+    // reports the row. Two independent signals for one fact, which is what lets
+    // an operator tell "the product failed" from "the grader broke".
+    const unscorable = [
+      row(predicateDefinition, { status: "error" }),
+      row(toolMatchDefinition, { status: "scored", value: 1 }),
+      row(judgeDefinition, { status: "scored", value: 0.9 }),
+    ];
+    const report = reportFor(
+      [
+        iteration("i1", true, passingScores),
+        // `passed: false` — what an enforce-grading client reports for a
+        // gating row it could not score.
+        iteration("i2", false, unscorable),
+      ],
+      {
+        scoreIntegrity: "valid",
+        summary: { total: 2, passed: 1, failed: 1, passRate: 0.5 },
+      }
+    );
+
+    expect(statuses(report)).toMatchObject({
+      noGatingScoreErrors: "failed",
+      minimumPassRate: "passed",
+    });
+    expect(report.outcome).toBe("failed");
+  });
+
+  it("an ADVISORY row that errors still never gates at enforce", () => {
+    // The judge is `role: "advisory"`, so it is excluded from the gating
+    // arithmetic structurally rather than by convention — the same property
+    // `dual_write` relied on, re-asserted at the position where the rows
+    // actually decide something.
+    const advisoryBroken = [
+      row(predicateDefinition, { status: "scored", value: 1 }),
+      row(toolMatchDefinition, { status: "scored", value: 1 }),
+      row(judgeDefinition, { status: "error" }),
+    ];
+    const report = reportFor(
+      [
+        iteration("i1", true, advisoryBroken),
+        iteration("i2", true, passingScores),
+      ],
+      {
+        scoreIntegrity: "valid",
+        summary: { total: 2, passed: 2, failed: 0, passRate: 1 },
+      }
+    );
+
+    expect(statuses(report)).toMatchObject({ noGatingScoreErrors: "passed" });
+    expect(report.outcome).toBe("passed");
+  });
+
+  it("a run downgraded by the verify seam is non-gateable, not silently failed", () => {
+    // The backend stamps `scoreIntegrity: "invalid"` when an iteration's
+    // reported verdict contradicts its own persisted rows. A CI gate must read
+    // that as "I cannot answer", never as a clean red — we know one of the two
+    // claims is wrong and not which.
+    const report = reportFor(after, { scoreIntegrity: "invalid" });
+    expect(report.outcome).toBe("incomplete");
+    expect(statuses(report)).toMatchObject({
+      noGatingScoreErrors: "non_gateable",
+      "minimumScorerPassRate:toolCalls:match": "non_gateable",
     });
   });
 });

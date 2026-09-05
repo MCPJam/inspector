@@ -22,6 +22,7 @@ import {
   Layers,
   Cable,
   MessagesSquare,
+  Globe,
 } from "lucide-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { track } from "@/lib/analytics";
@@ -64,6 +65,7 @@ import {
 } from "@/lib/hosted-tab-policy";
 import { useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
+import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
 import {
   useOrganizationBillingStatus,
@@ -121,6 +123,8 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
   "xaa",
   "project-environments-enabled",
   "unified-sessions-enabled",
+  "evaluate-enabled",
+  "webmcp-inspector-enabled",
 ] as const;
 
 /**
@@ -133,7 +137,7 @@ export const SIDEBAR_RESOLVED_FLAG_KEYS = [
  */
 export function filterByFeatureFlags(
   sections: NavSection[],
-  flags: Record<string, boolean>
+  flags: Record<string, boolean>,
 ): NavSection[] {
   return sections
     .map((section) => ({
@@ -161,7 +165,7 @@ export function applyBillingGateNavState(
     /** When true, feature is denied by premiumness (locked). */
     gateDenied: Partial<Record<BillingFeatureName, boolean>>;
     enforcementActive: boolean;
-  }
+  },
 ): NavSection[] {
   const { billingUiEnabled, gateDenied, enforcementActive } = options;
   if (!billingUiEnabled || !enforcementActive) {
@@ -245,9 +249,7 @@ export const navigationSections: NavSection[] = [
     label: "Measure",
     items: [
       {
-        // Labeled "Acceptance Testing" in the nav; the route stays
-        // /user-testing so existing links and hash tabs keep working.
-        title: "Acceptance Testing",
+        title: "User Testing",
         url: "/user-testing",
         icon: Users,
         featureFlag: "sandboxes-enabled",
@@ -267,7 +269,18 @@ export const navigationSections: NavSection[] = [
         billingFeature: "evals",
       },
       {
-        // Cross-surface session feed (Playground + Acceptance Testing + Evals +
+        // The redesigned Evaluate tab, shown ALONGSIDE the original while it
+        // is dogfooded — the point of a second tab is being able to compare
+        // them. When the redesign wins, this item takes the "Evaluate" name
+        // and the one above is deleted.
+        title: "Evaluate (New)",
+        url: "/evaluate",
+        icon: FlaskConical,
+        featureFlag: "evaluate-enabled",
+        billingFeature: "evals",
+      },
+      {
+        // Cross-surface session feed (Playground + User Testing + Evals +
         // Swarms). Route-guarded on the same flag (`SessionsRoute`).
         title: "Sessions",
         url: "/sessions",
@@ -339,6 +352,15 @@ export const navigationSections: NavSection[] = [
         url: "/tasks",
         icon: ListTodo,
       },
+      {
+        // Tools a live web PAGE registers, rather than an MCP server — the
+        // same primitive from the other side of the browser boundary, which is
+        // why it sits here and not under Explore.
+        title: "WebMCP",
+        url: "/webmcp",
+        icon: Globe,
+        featureFlag: "webmcp-inspector-enabled",
+      },
     ],
   },
   {
@@ -400,14 +422,14 @@ function SidebarNavSkeleton() {
  * was an allow-list.
  */
 export function getHostedNavigationSections(
-  sections: NavSection[]
+  sections: NavSection[],
 ): NavSection[] {
   return sections
     .map((section) => ({
       ...section,
       items: section.items.flatMap((item) => {
         const normalizedTab = normalizeHostedHashTab(
-          item.url.replace(/^[#/]+/, "")
+          item.url.replace(/^[#/]+/, ""),
         );
 
         if (isHostedTabBlocked(normalizedTab)) {
@@ -430,6 +452,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   projects: Record<string, Project>;
   activeProjectId: string;
   onSwitchProject: (projectId: string) => void;
+  /**
+   * The switcher's per-row settings gear. Takes the project id because the
+   * gear opens THAT project's settings directly — `/p/<id>/project-settings`
+   * — rather than switching the active project and then navigating to
+   * whatever the settings route resolves to afterwards.
+   */
+  onOpenProjectSettings?: (projectId: string) => void;
   onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
@@ -437,7 +466,7 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   activeOrganizationName?: string;
   onSwitchOrganization?: (
     organizationId: string,
-    section?: OrganizationRouteSection
+    section?: OrganizationRouteSection,
   ) => void;
   onSwitchActiveOrganization?: (organizationId: string) => void;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
@@ -455,6 +484,7 @@ export function MCPSidebar({
   projects,
   activeProjectId,
   onSwitchProject,
+  onOpenProjectSettings,
   onCreateProject,
   onDeleteProject,
   isLoadingProjects,
@@ -479,10 +509,14 @@ export function MCPSidebar({
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const projectEnvironmentsEnabled = useFeatureFlagEnabled(
-    "project-environments-enabled"
+    "project-environments-enabled",
   );
   const unifiedSessionsEnabled = useFeatureFlagEnabled(
-    "unified-sessions-enabled"
+    "unified-sessions-enabled",
+  );
+  const evaluateEnabled = useFeatureFlagEnabled("evaluate-enabled");
+  const webmcpInspectorEnabled = useFeatureFlagEnabled(
+    WEBMCP_INSPECTOR_FEATURE_FLAG,
   );
   const { isAuthenticated, isLoading: isConvexAuthLoading } = useConvexAuth();
   const { user, isLoading: isWorkOsAuthLoading } = useAuth();
@@ -516,14 +550,15 @@ export function MCPSidebar({
 
     return Object.fromEntries(
       Object.entries(projects).filter(
-        ([, project]) => project.organizationId === activeProject.organizationId
-      )
+        ([, project]) =>
+          project.organizationId === activeProject.organizationId,
+      ),
     );
   }, [activeProject?.organizationId, projects]);
   const shouldShowInviteCta = isAuthenticated && !!user && !!activeProject;
   const trialBilling = useOrganizationBillingStatus(
     activeProject?.organizationId ?? null,
-    { enabled: billingUiEnabled && !!activeProject?.organizationId }
+    { enabled: billingUiEnabled && !!activeProject?.organizationId },
   );
   const trialActive =
     billingUiEnabled &&
@@ -564,6 +599,14 @@ export function MCPSidebar({
       // `SessionsRoute` renders a "needs a project" empty state without one.
       "unified-sessions-enabled":
         unifiedSessionsEnabled === true && isAuthenticated,
+      // Project-scoped like the rows above: every screen behind it needs a
+      // project to resolve suites against.
+      "evaluate-enabled": evaluateEnabled === true && isAuthenticated,
+      // Not auth-scoped, unlike the rows above: the browser and the page run
+      // on this machine, so a signed-out local user has everything the surface
+      // needs. It is hostedBlocked, so hosted builds drop it before this map
+      // is consulted.
+      "webmcp-inspector-enabled": webmcpInspectorEnabled === true,
     }),
     [
       learningEnabled,
@@ -574,13 +617,15 @@ export function MCPSidebar({
       xaaEnabled,
       projectEnvironmentsEnabled,
       unifiedSessionsEnabled,
+      evaluateEnabled,
+      webmcpInspectorEnabled,
       isAuthenticated,
-    ]
+    ],
   );
   const hubNavHash = "#servers";
   const visibleNavigationSections = filterByFeatureFlags(
     HOSTED_MODE ? hostedNavigationSections : navigationSections,
-    featureFlags
+    featureFlags,
   );
 
   // Signed-in users reach Settings/Support via the account menu; only
@@ -590,7 +635,7 @@ export function MCPSidebar({
 
   const isNavItemActive = (item: NavItem) =>
     normalizeHostedHashTab(
-      item.url.replace(/^[#/]+/, "").split("/")[0] || "servers"
+      item.url.replace(/^[#/]+/, "").split("/")[0] || "servers",
     ) === activeTab ||
     (activeTab !== undefined && (item.matchTabs?.includes(activeTab) ?? false));
 
@@ -614,7 +659,7 @@ export function MCPSidebar({
           <div
             className={cn(
               "no-drag",
-              state === "collapsed" && !isMobile && "flex justify-center px-0"
+              state === "collapsed" && !isMobile && "flex justify-center px-0",
             )}
           >
             {isMobile ? (
@@ -645,7 +690,7 @@ export function MCPSidebar({
                        one left margin. It used to be centered, which read as pushed right.
                        `pr-10` still reserves the collapse control's slot so a wider logo
                        can never slide under its hit target. */
-                    "px-2 pr-10 hover:opacity-80"
+                    "px-2 pr-10 hover:opacity-80",
                   )}
                 >
                   <img
@@ -667,7 +712,7 @@ export function MCPSidebar({
                     "pointer-events-auto opacity-0 transition-opacity duration-200",
                     /* Named group avoids ambiguous group-hover when SidebarProvider also uses group/sidebar-wrapper */
                     "group-hover/sidebar-rail:opacity-100 focus-visible:opacity-100",
-                    "[@media(hover:none)]:opacity-100"
+                    "[@media(hover:none)]:opacity-100",
                   )}
                   aria-label="Collapse sidebar"
                 />
@@ -686,7 +731,20 @@ export function MCPSidebar({
             onCreateProject={onCreateProject}
             onDeleteProject={onDeleteProject}
             isLoading={isLoadingProjects || authResolving}
-            onNavigateToSettings={() => handleNavClick("#project-settings")}
+            onNavigateToSettings={(projectId) => {
+              // Tracked with the SECTION, never the project id: this event is
+              // an aggregate over navigation, and an id would make it a
+              // per-customer series.
+              track("sidebar_nav_clicked", {
+                location: "mcp_sidebar",
+                section: "project-settings",
+              });
+              if (onOpenProjectSettings) {
+                onOpenProjectSettings(projectId);
+                return;
+              }
+              onNavigate?.("project-settings");
+            }}
             isCreateDisabled={isCreateProjectDisabled}
             createDisabledReason={createProjectDisabledReason}
             onLearnMoreExpand={
@@ -704,7 +762,7 @@ export function MCPSidebar({
                 aria-disabled={updateInstalling}
                 className={cn(
                   "h-5 w-full gap-1 rounded-full bg-primary px-2 text-[11px] font-medium text-primary-foreground hover:bg-primary/90",
-                  updateInstalling && "pointer-events-none hover:bg-primary"
+                  updateInstalling && "pointer-events-none hover:bg-primary",
                 )}
               >
                 {updateInstalling && (
@@ -759,7 +817,7 @@ export function MCPSidebar({
                       className={cn(
                         "flex size-7 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         isNavItemActive(item) &&
-                          "bg-sidebar-accent text-sidebar-accent-foreground"
+                          "bg-sidebar-accent text-sidebar-accent-foreground",
                       )}
                     >
                       {item.icon ? <item.icon className="size-4" /> : null}

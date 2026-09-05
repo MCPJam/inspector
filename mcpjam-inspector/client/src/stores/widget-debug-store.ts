@@ -109,6 +109,23 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the sandbox proxy mounted the view. `"url"` means it was written into
+   * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
+   * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
+   * mount switch, `"srcdoc-fallback"` was forced because the frame's document
+   * was unreachable). Twin of the same field in
+   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — the origin a developer allowlists with a third party
+   * that keys on the page URL (a referrer-restricted API key, an OAuth
+   * redirect URI). Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 /**
@@ -146,7 +163,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -185,6 +203,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -290,7 +315,7 @@ interface WidgetDebugStore {
   // Update widget debug info
   setWidgetDebugInfo: (
     toolCallId: string,
-    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>
+    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
   ) => void;
 
   // Update just the widget state
@@ -299,7 +324,7 @@ interface WidgetDebugStore {
   // Update just the globals
   setWidgetGlobals: (
     toolCallId: string,
-    globals: Partial<WidgetGlobals>
+    globals: Partial<WidgetGlobals>,
   ) => void;
 
   // Get debug info for a specific widget
@@ -314,7 +339,7 @@ interface WidgetDebugStore {
   // Set CSP info for a widget
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetSandboxInfo, "violations">
+    csp: Omit<WidgetSandboxInfo, "violations">,
   ) => void;
 
   // Add a CSP violation for a widget
@@ -329,7 +354,7 @@ interface WidgetDebugStore {
     context: {
       content?: unknown[];
       structuredContent?: Record<string, unknown>;
-    } | null
+    } | null,
   ) => void;
 
   // Set widget HTML for offline rendering cache. Optional
@@ -342,7 +367,7 @@ interface WidgetDebugStore {
     toolCallId: string,
     html: string,
     injectedOpenAiCompat?: boolean,
-    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities
+    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
   ) => void;
 
   /**
@@ -356,7 +381,7 @@ interface WidgetDebugStore {
     toolCallId: string,
     applied: WidgetSandboxApplied,
     hostProfileId?: string,
-    hostInfo?: { name: string; version: string } | null
+    hostInfo?: { name: string; version: string } | null,
   ) => void;
 
   /**
@@ -391,7 +416,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState:
           info.widgetState !== undefined
             ? info.widgetState
-            : existing?.widgetState ?? null,
+            : (existing?.widgetState ?? null),
         globals: info.globals ??
           existing?.globals ?? {
             theme: "dark",
@@ -556,7 +581,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
     toolCallId,
     html,
     injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities
+    injectedOpenAiCompatCapabilities,
   ) => {
     set((state) => {
       const widgets = new Map(state.widgets);
@@ -591,8 +616,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         injectedOpenAiCompatCapabilities:
           injectedOpenAiCompat === false
             ? undefined
-            : injectedOpenAiCompatCapabilities ??
-              existing?.injectedOpenAiCompatCapabilities,
+            : (injectedOpenAiCompatCapabilities ??
+              existing?.injectedOpenAiCompatCapabilities),
         updatedAt: Date.now(),
       });
       return { widgets };
