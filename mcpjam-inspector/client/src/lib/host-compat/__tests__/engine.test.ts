@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { evaluateAllHosts } from "../engine";
 import { buildHostCompatProfiles } from "../profiles";
-import { summarizeReports } from "@/components/compat/HostCompatStrip";
+import { summarizeReports } from "@/components/compat/ClientSupportPill";
 import { getCompatDisplayStatus } from "@/components/compat/verdict-meta";
 import type { CompatVerdict, HostCompatReport } from "../types";
 import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";

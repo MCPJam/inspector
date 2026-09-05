@@ -32,7 +32,6 @@ import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";
 import { PAGE_TEXT_FN } from "../daemon/page-text";
 import { PAGE_API_PROBE } from "../../webmcp-inspector/launch-args";
 import { DebuggerCdpAdapter } from "./debugger-cdp";
-import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
 import { insertsText, resolveKeyPress } from "./key-events";
 
 /** Matches the Playwright engine's navigation budget. */
@@ -605,17 +604,6 @@ export function createElectronPage(
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector?: string): Promise<A11yNode | null> {
-      const cdp = await session();
-      if (!cdp) return null;
-      if (rootSelector === undefined) return readAxTree(cdp);
-      const backendNodeId = await resolveBackendNodeId(cdp, rootSelector);
-      // `null` for an unmatched root as well: the driver already reports an
-      // unmatched ROOT selector as an error rather than as an empty page, and
-      // it decides that by whether it asked for one.
-      if (backendNodeId === null) return null;
-      return readAxTree(cdp, backendNodeId);
-    },
     async pageText() {
       // Degrades rather than throwing, like every other read on this page: a
       // navigation mid-read destroys the execution context and rejects, and a
