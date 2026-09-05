@@ -11,12 +11,12 @@ vi.mock("@/lib/error-reporting", () => ({
 
 import { RouteErrorScreen } from "../RouteErrorScreen";
 
-function renderCrashingRoute() {
+function renderCrashingRoute(message = "route exploded") {
   const router = createMemoryRouter(
     [
       {
         path: "/",
-        element: <ThrowingRoute />,
+        element: <ThrowingRoute message={message} />,
         errorElement: <RouteErrorScreen />,
       },
     ],
@@ -25,8 +25,8 @@ function renderCrashingRoute() {
   return render(<RouterProvider router={router} />);
 }
 
-function ThrowingRoute(): React.ReactElement {
-  throw new Error("route exploded");
+function ThrowingRoute({ message }: { message: string }): React.ReactElement {
+  throw new Error(message);
 }
 
 describe("RouteErrorScreen", () => {
@@ -56,6 +56,29 @@ describe("RouteErrorScreen", () => {
     expect(reportCaught).toHaveBeenCalledWith(
       expect.any(Error),
       expect.objectContaining({ source: "route_error_element" }),
+    );
+  });
+
+  it("reloads once and explains itself when a lazy chunk is gone", async () => {
+    const reload = vi.fn();
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...window.location, reload },
+    });
+    window.sessionStorage.clear();
+
+    renderCrashingRoute(
+      "Failed to fetch dynamically imported module: https://staging.mcpjam.com/assets/highlighted-body-OFNGDK62-BtUjfQ3T.js",
+    );
+    await screen.findByTestId("route-error-screen");
+
+    expect(reload).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText(/MCPJam was updated while this tab was open/),
+    ).toBeInTheDocument();
+    expect(reportCaught).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({ source: "stale_chunk", level: "warning" }),
     );
   });
 });

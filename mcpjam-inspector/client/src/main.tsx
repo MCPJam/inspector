@@ -10,6 +10,7 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { reportCaught } from "./lib/error-reporting";
+import { installStaleChunkRecovery } from "./lib/stale-chunk";
 import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
@@ -63,6 +64,11 @@ import {
 
 // Initialize Sentry before React mounts
 initSentry();
+
+// Before anything can `import()`. Covers the failures no React boundary sees —
+// a failed dependency preload, and a rejected dynamic import outside a
+// component. See lib/stale-chunk.ts.
+installStaleChunkRecovery();
 
 // The invariant a browser can actually decide. Its reasoning, and the half
 // that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
