@@ -248,6 +248,41 @@ describe("SwarmSessionsGroupedList", () => {
     expect(screen.getByText("Run 123456")).toBeInTheDocument();
   });
 
+  it("leads an unlabeled group with the persona its sessions share", () => {
+    const unlabeled = group("run-abcdef123456", "Goal A", ["s1", "s2"]);
+    for (const row of unlabeled.rows) {
+      row.personaLabel = "Occasional Impulse Buyer";
+    }
+
+    render(
+      <SwarmSessionsGroupedList
+        groups={[unlabeled]}
+        threadsById={new Map([["s1", thread("s1", "Persona A")]])}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+      />,
+    );
+    expect(
+      screen.getByText("Occasional Impulse Buyer · Run 123456"),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the bare id when the group mixes personas", () => {
+    const unlabeled = group("run-abcdef123456", "Goal A", ["s1", "s2"]);
+    unlabeled.rows[0].personaLabel = "Occasional Impulse Buyer";
+    unlabeled.rows[1].personaLabel = "Power User";
+
+    render(
+      <SwarmSessionsGroupedList
+        groups={[unlabeled]}
+        threadsById={new Map([["s1", thread("s1", "Persona A")]])}
+        selectedThreadId={null}
+        onSelectThread={() => {}}
+      />,
+    );
+    expect(screen.getByText("Run 123456")).toBeInTheDocument();
+  });
+
   it("tints group headers so they sit above session rows", () => {
     render(
       <SwarmSessionsGroupedList
