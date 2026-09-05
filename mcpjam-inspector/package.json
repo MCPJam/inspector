@@ -246,7 +246,7 @@
     "@vitejs/plugin-react": "^4.3.4",
     "@vitest/coverage-v8": "^3.2.7",
     "autoprefixer": "^10.5.4",
-    "concurrently": "^9.1.0",
+    "concurrently": "^10.0.5",
     "cross-env": "^10.1.0",
     "electron": "^43.4.0",
     "eslint": "^9",
