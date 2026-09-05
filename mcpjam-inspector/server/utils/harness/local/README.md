@@ -45,13 +45,13 @@ Per platform, for `local-native`:
 | -------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | linux    | Yes            | POSIX process groups; `/proc/<pid>/stat` gives an exact process birth identity                                                                                                               |
 | darwin   | Yes            | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity                                                                                                                 |
-| win32    | **No**         | No process-group primitive here, and no Job Object implementation yet, so whole-tree cleanup cannot be guaranteed — and Job Objects would not be filesystem or network isolation in any case |
+| win32    | Yes            | No process group; the verified `mcpjam-job-launcher.exe` inside the pack puts the tree in a Job Object with `KILL_ON_JOB_CLOSE`, and PowerShell's `Get-Process` gives a FILETIME birth identity. Refused on a machine whose pack lacks the launcher. Not filesystem or network isolation, same as the other two |
 
 Per harness:
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| claude-code | Eligible (darwin, linux) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                             |
+| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
 | codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
