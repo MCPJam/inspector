@@ -313,6 +313,67 @@ describe("eval description experiments", () => {
       );
     });
 
+    it("refuses a partially captured catalog, read off the debug every run carries", async () => {
+      // No inline snapshot at all — a new row keeps the hash — but the
+      // capture result names the server that failed, and that is enough.
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshotDebug: {
+            captureResult: {
+              status: "partial",
+              serverCount: 2,
+              toolCount: 3,
+              failedServerCount: 1,
+              failedServerIds: ["s_beta"],
+            },
+          },
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+        { toolName: "search" },
+      );
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as {
+        message?: string;
+        details?: { reason?: string };
+      };
+      expect(body.details?.reason).toBe(
+        "DESCRIPTION_OVERRIDE_CATALOG_INCOMPLETE",
+      );
+      expect(body.message).toContain("s_beta");
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:proposeDescriptionRewrite",
+        expect.anything(),
+      );
+    });
+
+    it("defers a run with no inline snapshot and a complete capture to the backend", async () => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshotHash: "hash_1",
+          toolSnapshotDebug: {
+            captureResult: {
+              status: "complete",
+              serverCount: 1,
+              toolCount: 2,
+              failedServerCount: 0,
+              failedServerIds: [],
+            },
+          },
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+        { toolName: "search" },
+      );
+      expect(res.status).toBe(202);
+    });
+
     it("proposes a tool one server offers even when another shares no name", async () => {
       mockConvex({
         "testSuites:getTestSuiteRun": () => ({
@@ -440,6 +501,34 @@ describe("eval description experiments", () => {
       );
     });
 
+    it("refuses a partially captured catalog before taking a slot or moving state", async () => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshot: {
+            servers: [
+              { serverId: "s_alpha", tools: [{ name: "search" }] },
+              { serverId: "s_beta", tools: [], captureError: "ECONNREFUSED" },
+            ],
+          },
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "DESCRIPTION_OVERRIDE_CATALOG_INCOMPLETE" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markLaunching",
+        expect.anything(),
+      );
+    });
+
     it("refuses a harness source before taking a slot or moving state", async () => {
       mockConvex({
         "descriptionExperiments:getDescriptionExperiment": () => ({
@@ -556,6 +645,87 @@ describe("eval description experiments", () => {
       expect(((await res.json()) as { status?: string }).status).toBe(
         "running",
       );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "testSuites:cancelTestSuiteRun",
+        expect.anything(),
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markFailed",
+        expect.anything(),
+      );
+    });
+
+    it("retries the read-back and keeps the pair once a read sees the arms", async () => {
+      mockHappyLaunch();
+      let armsAttempted = false;
+      let readBacks = 0;
+      mockConvex({
+        "descriptionExperiments:recordArms": () => {
+          armsAttempted = true;
+          throw new Error("socket hang up");
+        },
+        "descriptionExperiments:getDescriptionExperiment": () => {
+          if (!armsAttempted) return EXPERIMENT_DOC;
+          readBacks += 1;
+          // The same blip that lost the response fails the first read too.
+          if (readBacks === 1) throw new Error("socket hang up");
+          return {
+            ...EXPERIMENT_DOC,
+            status: "running",
+            arms: { original: "run_original", rewrite: "run_rewrite" },
+            runGroupId: EXPERIMENT_ID,
+          };
+        },
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(202);
+      expect(readBacks).toBe(2);
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "testSuites:cancelTestSuiteRun",
+        expect.anything(),
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markFailed",
+        expect.anything(),
+      );
+    });
+
+    it("touches nothing and reports an unconfirmed launch when every read-back fails", async () => {
+      mockHappyLaunch();
+      let armsAttempted = false;
+      let readBacks = 0;
+      mockConvex({
+        "descriptionExperiments:recordArms": () => {
+          armsAttempted = true;
+          throw new Error("socket hang up");
+        },
+        "descriptionExperiments:getDescriptionExperiment": () => {
+          if (!armsAttempted) return EXPERIMENT_DOC;
+          readBacks += 1;
+          throw new Error("socket hang up");
+        },
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(502);
+      expect(await res.json()).toMatchObject({
+        details: {
+          reason: "ARMS_RECORD_UNCONFIRMED",
+          experimentId: EXPERIMENT_ID,
+          originalRunId: "run_original",
+          rewriteRunId: "run_rewrite",
+        },
+      });
+      expect(readBacks).toBe(3);
+      // A guess either way could be wrong; the arms and the document keep
+      // whatever state the write left them in.
       expect(convexMutationMock).not.toHaveBeenCalledWith(
         "testSuites:cancelTestSuiteRun",
         expect.anything(),

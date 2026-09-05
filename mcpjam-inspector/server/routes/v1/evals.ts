@@ -5465,89 +5465,186 @@ async function markDescriptionExperimentFailed(
   }
 }
 
+type DescriptionExperimentArmReadBack =
+  | { state: "recorded"; experiment: Record<string, unknown> }
+  | { state: "unrecorded" }
+  | { state: "indeterminate"; error: string };
+
+/** Read-back attempts after `recordArms` threw: the pause before each one. */
+const ARM_READ_BACK_DELAYS_MS = [0, 150, 400];
+
 /**
- * The experiment as it stands after `recordArms` threw, when the throw was
- * a lost response rather than a refusal. A Convex mutation either committed
- * or it did not, and from this side the two look the same — so before
- * anything is cancelled the document is read back. Arms that name this
- * request's own run ids prove the write landed: the pair is a running
- * experiment, and stopping it would spend the launch and report nothing.
- * Returns that document, or null when the arms are not recorded or the
- * read itself failed — both of which the caller treats as "not recorded".
+ * The experiment as it stands after `recordArms` threw. A Convex mutation
+ * either committed or it did not, and from this side a lost response reads
+ * exactly like a refusal — so before anything is cancelled the document is
+ * read back, and a read that fails is retried: the blip that lost the
+ * response is the likeliest reason a read would fail too.
+ *
+ * `recorded`: the arms name this request's own run ids, so the write
+ * landed and the pair is a running experiment. `unrecorded`: a read
+ * succeeded and the arms are not there — reads are consistent, so the
+ * throw was a refusal and the caller cleans up. `indeterminate`: every
+ * read failed, and the caller must not act on a guess — a running
+ * experiment cancelled is the launch spent for nothing, while an
+ * unrecorded pair left running is the caller's own planned trials,
+ * bounded by the cap they accepted and cancellable with the experiment.
  */
-async function readDescriptionExperimentWithArms(
+async function readBackDescriptionExperimentArms(
   convexAuthToken: string,
   experimentId: string,
   arms: { original: string; rewrite: string },
-): Promise<Record<string, unknown> | null> {
-  try {
-    const current = (await createConvexReadClient(convexAuthToken).query(
-      "descriptionExperiments:getDescriptionExperiment" as any,
-      { experimentId },
-    )) as Record<string, unknown> | null;
-    const recorded = current?.arms as
-      | { original?: unknown; rewrite?: unknown }
-      | undefined;
-    return current &&
-      recorded?.original === arms.original &&
-      recorded?.rewrite === arms.rewrite
-      ? current
-      : null;
-  } catch (error) {
-    logger.warn(
-      "[v1 evals] could not read back a description experiment after recordArms failed",
-      {
-        experimentId,
-        error: error instanceof Error ? error.message : String(error),
-      },
-    );
-    return null;
+): Promise<DescriptionExperimentArmReadBack> {
+  let lastError: unknown;
+  for (const delayMs of ARM_READ_BACK_DELAYS_MS) {
+    if (delayMs > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+    try {
+      const current = (await createConvexReadClient(convexAuthToken).query(
+        "descriptionExperiments:getDescriptionExperiment" as any,
+        { experimentId },
+      )) as Record<string, unknown> | null;
+      const recorded = current?.arms as
+        | { original?: unknown; rewrite?: unknown }
+        | undefined;
+      return current &&
+        recorded?.original === arms.original &&
+        recorded?.rewrite === arms.rewrite
+        ? { state: "recorded", experiment: current }
+        : { state: "unrecorded" };
+    } catch (error) {
+      lastError = error;
+    }
   }
+  const message =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  logger.warn(
+    "[v1 evals] could not read back a description experiment after recordArms failed",
+    {
+      experimentId,
+      attempts: ARM_READ_BACK_DELAYS_MS.length,
+      error: message,
+    },
+  );
+  return { state: "indeterminate", error: message };
 }
 
-/**
- * How many of a run's servers offer `toolName`, read off the run's inline
- * tool snapshot. A description override applies by bare name — the runner
- * hands every server the same name-keyed override and then flattens their
- * tools into one set — so a name two servers share cannot say which tool
- * the experiment changed, and a report about it would be about neither.
- * A run with no readable inline snapshot counts 0: the check refuses only
- * what it can see.
- */
-function serversOfferingTool(run: unknown, toolName: string): number {
-  const snapshot = (run as { toolSnapshot?: unknown } | null)?.toolSnapshot;
+type SnapshotServerView = {
+  serverId: string;
+  /** Null when the entry carries no tool list at all — unreadable, not empty. */
+  toolNames: string[] | null;
+  captureFailed: boolean;
+};
+
+/** The server entries of an inline tool snapshot, read defensively. */
+function readSnapshotServers(snapshot: unknown): SnapshotServerView[] {
   const servers =
     snapshot && typeof snapshot === "object"
       ? (snapshot as { servers?: unknown }).servers
       : undefined;
-  if (!Array.isArray(servers)) return 0;
-  let count = 0;
-  for (const server of servers) {
-    const tools = (server as { tools?: unknown } | null)?.tools;
-    if (
-      Array.isArray(tools) &&
-      tools.some(
-        (tool) => (tool as { name?: unknown } | null)?.name === toolName,
-      )
-    ) {
-      count += 1;
-    }
-  }
-  return count;
+  if (!Array.isArray(servers)) return [];
+  return servers.map((server, index) => {
+    const entry = (server ?? {}) as {
+      serverId?: unknown;
+      tools?: unknown;
+      captureError?: unknown;
+    };
+    return {
+      serverId:
+        typeof entry.serverId === "string" ? entry.serverId : `#${index}`,
+      toolNames: Array.isArray(entry.tools)
+        ? entry.tools.flatMap((tool) => {
+            const name = (tool as { name?: unknown } | null)?.name;
+            return typeof name === "string" ? [name] : [];
+          })
+        : null,
+      captureFailed: typeof entry.captureError === "string",
+    };
+  });
 }
 
-function throwIfDescriptionOverrideToolAmbiguous(
+/**
+ * Why a description override for `toolName` cannot be attributed to ONE of
+ * the run's tools, read off what the run document carries — or null when
+ * nothing it carries says otherwise.
+ *
+ * The override applies by bare name: the runner hands every server the same
+ * name-keyed override and then flattens their tools into one set, so a name
+ * two servers share cannot say which tool the experiment changed, and a
+ * report about it would be about neither. A server whose capture failed may
+ * hold the same name unseen, so a partial catalog cannot say either.
+ *
+ * What a run document carries decides which of the two this route can see.
+ * `toolSnapshotDebug.captureResult` is written for every run and names the
+ * servers whose capture failed, so the partial-capture refusal holds for
+ * every run. An inline `toolSnapshot` is present only on older rows — a new
+ * row keeps the hash, and the catalog lives in the backend's archive — so
+ * the shared-name refusal holds here only where the catalog is inline. The
+ * backend makes both refusals over the archived catalog, at propose, at
+ * launch and where the rewrite arm is created
+ * (`descriptionOverrideAttributionRefusal`, MCPJam/mcpjam-backend#1254);
+ * this is the copy at the door for what the document already says.
+ */
+function descriptionOverrideAttributionRefusal(
+  run: unknown,
+  toolName: string,
+): {
+  reason:
+    | "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS"
+    | "DESCRIPTION_OVERRIDE_CATALOG_INCOMPLETE";
+  message: string;
+} | null {
+  const doc = run as
+    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
+    | null
+    | undefined;
+  const servers = readSnapshotServers(doc?.toolSnapshot);
+  const offering = servers
+    .filter((server) => server.toolNames?.includes(toolName))
+    .map((server) => server.serverId);
+  if (offering.length > 1) {
+    return {
+      reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS",
+      message: `Tool "${toolName}" is served by ${offering.length} of this run's servers (${offering.join(", ")}). A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
+    };
+  }
+  const failed = new Set<string>(
+    servers
+      .filter((server) => server.captureFailed || server.toolNames === null)
+      .map((server) => server.serverId),
+  );
+  const captureResult = (
+    doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
+  )?.captureResult as
+    | { status?: unknown; failedServerIds?: unknown }
+    | null
+    | undefined;
+  if (Array.isArray(captureResult?.failedServerIds)) {
+    for (const id of captureResult.failedServerIds) {
+      if (typeof id === "string") failed.add(id);
+    }
+  }
+  if (failed.size > 0 || captureResult?.status === "partial") {
+    const named = [...failed].sort();
+    return {
+      reason: "DESCRIPTION_OVERRIDE_CATALOG_INCOMPLETE",
+      message: `This run's tool catalog was only partially captured${
+        named.length > 0 ? ` (${named.join(", ")} failed)` : ""
+      }, so the experiment cannot tell whether "${toolName}" is unique to one server.`,
+    };
+  }
+  return null;
+}
+
+function throwIfDescriptionOverrideUnattributable(
   run: unknown,
   toolName: string,
 ): void {
-  const servers = serversOfferingTool(run, toolName);
-  if (servers > 1) {
-    throw new WebRouteError(
-      400,
-      ErrorCode.VALIDATION_ERROR,
-      `Tool "${toolName}" is served by ${servers} of this run's servers. A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
-      { reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS" },
-    );
+  const refusal = descriptionOverrideAttributionRefusal(run, toolName);
+  if (refusal) {
+    throw new WebRouteError(400, ErrorCode.VALIDATION_ERROR, refusal.message, {
+      reason: refusal.reason,
+    });
   }
 }
 
@@ -5643,11 +5740,10 @@ evals.post(
       throw error;
     }
     requireProjectMatch(run, projectId, "Eval run");
-    // Refused at the door, before the proposal spends: the override is
-    // applied by bare name at replay, and the backend keys the experiment on
-    // the first server that has the tool, so a shared name has no one tool
-    // to be about.
-    throwIfDescriptionOverrideToolAmbiguous(run, body.toolName);
+    // Refused at the door, before the proposal spends: a name two servers
+    // share, or a catalog with a failed capture, has no one tool for the
+    // experiment to be about.
+    throwIfDescriptionOverrideUnattributable(run, body.toolName);
 
     const { convexClient } = createConvexClients(token);
     let experiment: Record<string, unknown>;
@@ -5746,7 +5842,7 @@ evals.post(
       throw error;
     }
     requireProjectMatch(sourceRun, projectId, "Eval run");
-    throwIfDescriptionOverrideToolAmbiguous(
+    throwIfDescriptionOverrideUnattributable(
       sourceRun,
       String(experiment.toolName),
     );
@@ -5957,13 +6053,35 @@ evals.post(
       // A lost response reads like a refusal from here, and the two call for
       // opposite handling: if the write landed, the pair is a running
       // experiment and nothing below may touch it.
-      const recordedAfterAll = await readDescriptionExperimentWithArms(
+      const readBack = await readBackDescriptionExperimentArms(
         token,
         experimentId,
         { original: original.runId, rewrite: rewrite.runId },
       );
-      if (recordedAfterAll) {
-        return v1Resource(c, toDescriptionExperimentDto(recordedAfterAll), 202);
+      if (readBack.state === "recorded") {
+        return v1Resource(
+          c,
+          toDescriptionExperimentDto(readBack.experiment),
+          202,
+        );
+      }
+      if (readBack.state === "indeterminate") {
+        // Nothing destructive on an unknown state. If the write landed, the
+        // pair is a running experiment and the next read says so; if it did
+        // not, the experiment is still `launching` and can be cancelled,
+        // which stops the arms with it.
+        throw new WebRouteError(
+          502,
+          ErrorCode.SERVER_UNREACHABLE,
+          "Both arms launched, but whether they were recorded on the experiment could not be confirmed. Read the experiment back: `running` means they were; `launching` means they were not, and cancelling the experiment stops them.",
+          {
+            reason: "ARMS_RECORD_UNCONFIRMED",
+            experimentId,
+            originalRunId: original.runId,
+            rewriteRunId: rewrite.runId,
+            readBackError: readBack.error,
+          },
+        );
       }
       // Both arms are already running detached. Without the arm ids the
       // experiment can never reach a report, so it does not stay `launching`:
