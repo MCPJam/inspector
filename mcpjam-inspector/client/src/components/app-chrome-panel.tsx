@@ -34,7 +34,11 @@ export function AppChromePanel({
         "bg-background flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
         // rounded-t-2xl is 16px; it is not remapped by the theme's radius
         // scale (only sm/md/lg/xl are), so it tracks the design value.
-        headerVisible && "rounded-t-2xl shadow-[0_2px_3px_#00000033]"
+        //
+        // The lift is --shadow-chrome-panel rather than an arbitrary value:
+        // AGENTS.md forbids a literal hex in a component, and the tuning
+        // (why the depth is in the blur) belongs next to the other shadows.
+        headerVisible && "rounded-t-2xl shadow-chrome-panel"
       )}
     >
       {children}
