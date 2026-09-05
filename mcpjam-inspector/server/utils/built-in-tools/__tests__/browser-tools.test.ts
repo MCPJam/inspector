@@ -1064,12 +1064,17 @@ describe("the toolset's context footprint is pinned", () => {
     const { result } = build();
     const bytes = footprintBytes(result!.tools as any);
     expect(bytes).toBeGreaterThan(1_000); // the pin is measuring something real
-    // ~3.7 KB today. The headroom is deliberately thin: a ceiling with room
+    // ~4.2 KB today. The headroom is deliberately thin: a ceiling with room
     // for another whole tool in it is not a pin, it is a comment.
+    //
+    // Raised once, from 4_200, when observations started naming elements: the
+    // ~400 bytes bought `filter`, `rootRef`, and the sentence that tells the
+    // model refs are fresh on every observation. Without that sentence a model
+    // holds a ref across an act and clicks whatever inherited the number.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(4_200);
+    ).toBeLessThanOrEqual(4_600);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {
