@@ -6,16 +6,20 @@
  * time someone opens the New case menu.
  *
  * The draft kind is carried inside the `test-edit` route's `testId` as an opaque
- * sentinel (e.g. `draft:prompt`), so no route/navigation plumbing has to learn a
- * new field — every consumer keeps treating `testId` as a string. The sentinel
- * is not a real Convex id, so it must never be handed to a Convex query.
+ * sentinel (e.g. `draft:prompt` or `draft:record`), so no route/navigation
+ * plumbing has to learn a new field — every consumer keeps treating `testId`
+ * as a string. The sentinel is not a real Convex id, so it must never be
+ * handed to a Convex query.
+ *
+ * `record` is run-once-then-adopt (Quick Run, then use the observed route),
+ * not the widget recorder.
  */
 
-// Render checks were unified into pinned prompt turns (created inside the
-// editor), so the only top-level draft kind is a prompt test case.
-export type DraftCaseKind = "prompt";
+export type DraftCaseKind = "prompt" | "record";
 
 const DRAFT_TEST_CASE_PREFIX = "draft:";
+
+const DRAFT_KINDS = new Set<DraftCaseKind>(["prompt", "record"]);
 
 /** Route `testId` sentinel for an unsaved case of the given kind. */
 export function draftTestCaseId(kind: DraftCaseKind): string {
@@ -30,7 +34,9 @@ export function parseDraftTestCaseId(
     return null;
   }
   const kind = id.slice(DRAFT_TEST_CASE_PREFIX.length);
-  return kind === "prompt" ? kind : null;
+  return DRAFT_KINDS.has(kind as DraftCaseKind)
+    ? (kind as DraftCaseKind)
+    : null;
 }
 
 export function isDraftTestCaseId(id: string | null | undefined): boolean {
