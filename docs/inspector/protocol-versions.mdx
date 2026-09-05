@@ -40,6 +40,20 @@ When Automatic falls back to the legacy `initialize` handshake, it respects the 
 
 **Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. Every other known revision is shown as a bare date.
 
+### Dropdown options vary by client
+
+The dropdown only shows versions the client actually advertises. Preset-backed clients — Claude, ChatGPT, Cursor, and Copilot — advertise `["2025-11-25"]`, so their dropdowns show only **Automatic** and **November (2025-11-25)**. This prevents picking a version that the backend would reject at save time.
+
+**Automatic** is always available regardless of the advertised list, because it stores no pin and makes no version claim.
+
+When the dropdown is restricted, a note appears below it naming the advertised versions and pointing to the JSON editor (`supportedProtocolVersions` inside **MCP Protocol → JSON**) where you can extend the list if needed.
+
+MCPJam's own client advertises no list, so it always shows all versions.
+
+#### Stored pin outside the advertised list
+
+If a client row was saved before this filtering was introduced — or was hand-edited in the JSON editor — it may carry a pin that is not in the client's advertised list. The dropdown keeps that option visible so you can see and change it, but a red warning appears below the dropdown explaining that saving will fail until you either pick an advertised version or add the pinned version to `supportedProtocolVersions` in the JSON editor.
+
 The 2026 RC applies the stateless model across transports. MCPJam's initial preview client is narrower: it currently supports the RC over Streamable HTTP POST. The per-server dropdown hides the RC option for STDIO and legacy SSE servers; if a host-level RC default reaches a non-HTTP server, the inspector fails the connection with a clear transport error instead of silently attempting the wrong protocol.
 
 ## Setting the host default
