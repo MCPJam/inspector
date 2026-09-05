@@ -45,7 +45,10 @@ export function serverPickerElements(source: string): string[] {
  * something a grep cannot resolve, so it does not get to vouch for the site.
  */
 export function disablesPortal(element: string): boolean {
-  return /\binModal(?:\s*=\s*\{\s*(?:true|inModal)\s*\})?[\s/>]/.test(
+  // Preceded by WHITESPACE, not just a word boundary: a JSX attribute always
+  // is, while `\b` also matched the tail of `data-inModal`, which is a
+  // different prop entirely and leaves the popover portaled.
+  return /\sinModal(?:\s*=\s*\{\s*(?:true|inModal)\s*\})?[\s/>]/.test(
     element,
   );
 }
@@ -132,5 +135,9 @@ describe("what the grep above actually matches", () => {
     // for a reason the test was not written to check.
     expect(disablesPortal(`<ServerPicker xinModal />`)).toBe(false);
     expect(disablesPortal(`<ServerPicker data-notinModal />`)).toBe(false);
+    // A hyphen IS a word boundary, so `\b` alone let this through and the
+    // ratchet vouched for a picker holding no such prop.
+    expect(disablesPortal(`<ServerPicker data-inModal />`)).toBe(false);
+    expect(disablesPortal(`<ServerPicker aria-inModal="x" />`)).toBe(false);
   });
 });

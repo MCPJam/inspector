@@ -411,6 +411,34 @@ describe("ServerPickerPanel — creating a group", () => {
   });
 });
 
+describe("ServerPickerPanel — a submit in flight", () => {
+  it("freezes the draft it already sent", async () => {
+    // `onCreateGroup` is handed the name and ids as they were on click. Leaving
+    // the controls live means a success then calls `resetForm` over edits the
+    // written group does not contain.
+    const deriveName = () => "Pair";
+    render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          deriveName,
+          onCreateGroup: () => new Promise(() => {}),
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Excalidraw (App)" }),
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Create$/ }));
+
+    expect(screen.getByLabelText("Group name")).toBeDisabled();
+    expect(
+      screen.getByRole("checkbox", { name: "Demo (App)" }),
+    ).toBeDisabled();
+  });
+});
+
 describe("ServerPickerPanel — removing a group", () => {
   it("offers no delete where the caller cannot perform one", () => {
     render(<ServerPickerPanel {...panelProps({ tab: "groups" })} />);

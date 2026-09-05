@@ -244,6 +244,7 @@ export function ServerPickerPanel({
               </Label>
               <Input
                 id={fieldId}
+                disabled={submitting || busy}
                 value={draftName}
                 onChange={(e) => {
                   setNameEdited(true);
@@ -272,6 +273,7 @@ export function ServerPickerPanel({
                   >
                     <Checkbox
                       checked={draftIds.has(server.id)}
+                      disabled={submitting || busy}
                       aria-label={server.name}
                       onCheckedChange={(next) =>
                         setDraftIds((prev) => {
