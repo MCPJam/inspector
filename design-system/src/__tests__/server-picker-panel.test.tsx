@@ -413,6 +413,41 @@ describe("ServerPickerPanel — creating a group", () => {
   });
 });
 
+describe("ServerPickerPanel — a draft the catalog moved under", () => {
+  it("submits only ids it still renders", async () => {
+    // Nothing closes the form when `servers` changes, so a draft can outlive
+    // the rows it was built from. Submitting a stale id writes a group whose
+    // members the caller cannot resolve — and the name it derived, and the
+    // "(N picked)" count, already disagree with it.
+    const onCreateGroup = vi.fn();
+    const deriveName = () => "Pair";
+    const { rerender } = render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onCreateGroup, deriveName })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Excalidraw (App)" }),
+    );
+    await userEvent.click(screen.getByRole("checkbox", { name: "Demo (App)" }));
+
+    rerender(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          onCreateGroup,
+          deriveName,
+          servers: [{ id: "srv_1", name: "Excalidraw (App)", status: CONNECTED }],
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /^Create$/ }));
+
+    expect(onCreateGroup).toHaveBeenCalledWith("Pair", ["srv_1"]);
+  });
+});
+
 describe("ServerPickerPanel — busy", () => {
   // The caller refuses a second write while one is in flight. Without a signal
   // the panel keeps offering the controls, so the refusal reads as a dead

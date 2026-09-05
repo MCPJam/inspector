@@ -35,26 +35,38 @@ function normalize(name: string): string {
   return name.trim().toLowerCase();
 }
 
+/** Escape a name for use inside a RegExp — server names are user text. */
+function escapeForPattern(name: string): string {
+  return name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 /**
  * Is this row a bare server's stand-in rather than a group of its own?
  *
  * Both halves are required: a one-server group the user NAMED is a deliberate
- * group, and size alone would swallow it. Every reader uses this one.
+ * group, and size alone would swallow it.
+ *
+ * The name matches either the server's own, or the ` 2`, ` 3`, … form
+ * `deriveServerGroupName` falls back to when that one is taken. Recognising
+ * only the first meant a mint that had to be suffixed was never seen again, so
+ * the next pick of the same server minted another, unbounded. A group a person
+ * happens to name `alpha 2` around exactly `alpha` is read as a stand-in — the
+ * same collision the unsuffixed rule already accepts.
  */
 export function isServerStandIn(group: PickerGroup): boolean {
   if (group.serverIds.length !== 1) return false;
   const serverName = group.resolvedServerNames?.[0];
   // No name to compare against: cannot be judged, so not a stand-in.
   if (!serverName) return false;
-  return normalize(group.name) === normalize(serverName);
+  const base = normalize(serverName);
+  const name = normalize(group.name);
+  if (name === base) return true;
+  return new RegExp(`^${escapeForPattern(base)} \\d+$`).test(name);
 }
 
 /**
  * The rows the Groups tab offers: everything a server can already be reached
  * by on the Servers tab is dropped, so no choice appears twice.
- *
- * Known gap, accepted: a collided name is minted as `<server> 2`, which
- * `isServerStandIn` does not recognise, so it shows up here.
  */
 export function listGroupsForTab(
   groups: readonly PickerGroup[],
@@ -89,8 +101,8 @@ export function resolvePickerSelection(
   const row = groups.find((group) => group._id === selectedId);
   if (!row) return { kind: "dangling", groupId: selectedId };
 
-  // Read the name once: `isServerStandIn` already proved it is there, but the
-  // compiler cannot carry that across the call.
+  // The SERVER's name, not the row's: a stand-in minted as `alpha 2` still
+  // stands in for `alpha`, and that is what the trigger has to say.
   const standInName = isServerStandIn(row)
     ? row.resolvedServerNames?.[0]
     : undefined;

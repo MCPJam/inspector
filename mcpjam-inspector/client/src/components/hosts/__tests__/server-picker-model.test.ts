@@ -106,6 +106,56 @@ describe("rows persisted before `resolvedServerNames` existed", () => {
   });
 });
 
+describe("a stand-in whose name had to be suffixed", () => {
+  // `deriveServerGroupName` suffixes when the server's own name is taken, so
+  // the mint for a bare pick can land as `alpha 2`. Refusing to recognise the
+  // shape we ourselves write means the next pick mints `alpha 3`, then
+  // `alpha 4` — one row per click, and none of them deletable.
+  const SUFFIXED = group("g_2", "alpha 2", ["srv_1"], ["alpha"]);
+
+  it("is recognised as the server's stand-in", () => {
+    expect(isServerStandIn(SUFFIXED)).toBe(true);
+  });
+
+  it("is reused instead of minting another row", () => {
+    expect(findSoloGroup([SUFFIXED], "srv_1")).toBe(SUFFIXED);
+  });
+
+  it("stays off the Groups tab, like any other stand-in", () => {
+    expect(listGroupsForTab([SUFFIXED, PAIR]).map((g) => g._id)).toEqual([
+      "g_pair",
+    ]);
+  });
+
+  it("is labelled with the SERVER, not with the suffixed row name", () => {
+    expect(resolvePickerSelection([SUFFIXED], "g_2")).toEqual({
+      kind: "server",
+      groupId: "g_2",
+      serverId: "srv_1",
+      label: "alpha",
+    });
+  });
+
+  it("does not swallow a name that merely starts the same way", () => {
+    // Only the exact shape the generator writes: a space and digits, nothing
+    // else. `alpha two` and `alpha 2 backup` are names a person chose.
+    expect(isServerStandIn(group("g_a", "alpha two", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
+    expect(
+      isServerStandIn(group("g_b", "alpha 2 backup", ["srv_1"], ["alpha"])),
+    ).toBe(false);
+    expect(isServerStandIn(group("g_c", "alphax 2", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
+  });
+
+  it("still needs to hold exactly the one server", () => {
+    const pair = group("g_d", "alpha 2", ["srv_1", "srv_2"], ["alpha", "beta"]);
+    expect(isServerStandIn(pair)).toBe(false);
+  });
+});
+
 describe("findSoloGroup", () => {
   it("finds the row that holds exactly this one server", () => {
     expect(findSoloGroup([PAIR, SOLO_ALPHA], "srv_1")).toBe(SOLO_ALPHA);

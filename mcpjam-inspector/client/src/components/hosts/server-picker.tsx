@@ -138,21 +138,33 @@ export function ServerPicker({
     return [...serverAttachments, justCreated];
   }, [serverAttachments, justCreated]);
 
+  // A boolean, not the array: `serverAttachments` is a fresh `[]` on every
+  // render until the query answers, so depending on it rescheduled the timer
+  // below on each render and it never fired.
+  const bridgeLanded = justCreated
+    ? serverAttachments.some((a) => a._id === justCreated._id)
+    : false;
+
   useEffect(() => {
     if (!justCreated) return;
     // Released as soon as the query reflects the row.
-    if (serverAttachments.some((a) => a._id === justCreated._id)) {
+    if (bridgeLanded) {
       setJustCreated(null);
       return;
     }
     // While it is still what `value` points at, it is the only thing that can
     // name the trigger — dropping it on a timer would blank a live selection.
     if (value === justCreated._id) return;
-    // The parent moved on without the query ever catching up: stop holding a
-    // row nothing refers to.
-    const timer = setTimeout(() => setJustCreated(null), 3000);
+    /**
+     * `value` has not come back yet, which is the NORMAL state for a caller
+     * that commits through its own mutation before echoing the id — the suite
+     * bar awaits `updateSuite`. So this deadline exists only to stop holding a
+     * row for the life of the mount, and has to outlast a round trip; at 3s it
+     * fired mid-flight and blanked the trigger over a row that was written.
+     */
+    const timer = setTimeout(() => setJustCreated(null), 60_000);
     return () => clearTimeout(timer);
-  }, [justCreated, serverAttachments, value]);
+  }, [justCreated, bridgeLanded, value]);
 
   /**
    * `ensureServersReady` runs with `allowInteractiveOAuthFlow: false`, so a
@@ -297,14 +309,15 @@ export function ServerPicker({
           resolvedServerNames: [server.name],
         };
         setJustCreated(created);
-        onChange(result._id, created);
+        // Awaited for the same reason as the group path.
+        await onChange(result._id, created);
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
         toast.error(
           /already exists/i.test(raw)
             ? `A server group named after "${server.name}" already exists.`
-            : `Couldn't select ${server.name}`,
+            : raw || `Couldn't select ${server.name}`,
         );
       } finally {
         writing.current = false;
@@ -336,19 +349,23 @@ export function ServerPicker({
           _id: result._id,
           name,
           serverIds,
-          resolvedServerNames: serverIds
-            .map((id) => byId.get(id))
-            .filter((n): n is string => Boolean(n)),
+          // Positional, never compacted: the model documents these as parallel
+          // to `serverIds`, and `isServerStandIn` reads index 0. Dropping a
+          // gap shifts every later name onto the wrong id.
+          resolvedServerNames: serverIds.map((id) => byId.get(id) ?? ""),
         };
         setJustCreated(created);
-        onChange(result._id, created);
+        // Awaited: `onChange` is typed `=> void`, but bivariance lets a caller
+        // pass an async commit — the suite bar passes an awaited `updateSuite`
+        // — and an un-awaited rejection escapes this catch entirely.
+        await onChange(result._id, created);
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
         toast.error(
           /already exists/i.test(raw)
             ? `A server group named "${name}" already exists.`
-            : "Failed to create server group",
+            : raw || "Failed to create server group",
         );
         throw err;
       } finally {

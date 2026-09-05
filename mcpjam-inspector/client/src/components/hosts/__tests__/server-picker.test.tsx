@@ -161,6 +161,24 @@ describe("ServerPicker — picking a bare server", () => {
     await waitFor(() => expect(mockState.createSpy).toHaveBeenCalledTimes(1));
   });
 
+  it("REUSES the suffixed row it minted, instead of minting again", async () => {
+    // The name `alpha` is taken by a group holding a different server, so the
+    // stand-in lands as `alpha 2`. Not recognising our own suffix meant the
+    // next click minted `alpha 3`, then `alpha 4`, unbounded — and nothing in
+    // the app can delete them.
+    mockState.attachments = [
+      { _id: "att_other", name: "alpha", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
+      { _id: "att_sfx", name: "alpha 2", serverIds: ["srv_1"], resolvedServerNames: ["alpha"] },
+    ];
+    const onChange = open();
+
+    fireEvent.click(await serverRow("srv_1"));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(onChange.mock.calls[0][0]).toBe("att_sfx");
+    expect(mockState.createSpy).not.toHaveBeenCalled();
+  });
+
   it("suffixes the minted name when the server's name is taken", async () => {
     mockState.attachments = [
       { _id: "att_other", name: "alpha", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
@@ -444,6 +462,36 @@ describe("ServerPicker — the window before the query refetches", () => {
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
     expect(onChange.mock.calls[1][0]).toBe("att_new");
     expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("survives a parent whose value only returns through its own mutation", async () => {
+    // The suite bar commits through an awaited `updateSuite`, so `value` is
+    // still the OLD id at mint time and stays there for the round trip. A
+    // deadline short enough to bite during that drops the only thing that can
+    // name the trigger — over a row that WAS written.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const onChange = vi.fn();
+      render(
+        <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+      );
+      fireEvent.click(screen.getByTestId("server-picker-trigger"));
+      fireEvent.click(await screen.findByText("alpha"));
+      await waitFor(() => expect(onChange).toHaveBeenCalled());
+
+      // `value` has NOT come back yet, and the query has not refetched.
+      await act(async () => {
+        vi.advanceTimersByTime(8_000);
+      });
+
+      // Re-picking must still find the row it already wrote.
+      fireEvent.click(screen.getByTestId("server-picker-trigger"));
+      fireEvent.click(await serverRow("srv_1"));
+      await waitFor(() => expect(onChange).toHaveBeenCalledTimes(2));
+      expect(mockState.createSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("keeps naming the selection when the query outlives the bridge timeout", async () => {
@@ -732,6 +780,24 @@ describe("ServerPicker — a catalog query that never runs", () => {
     open();
 
     expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
+  });
+});
+
+describe("ServerPicker — a parent whose onChange is async", () => {
+  it("reports a rejected commit instead of losing it", async () => {
+    // `onChange` is typed `=> void`, and void-return bivariance lets a caller
+    // hand over an async function. `suite-environment-composer-bar` does: it
+    // passes an awaited `updateSuite`. Not awaiting it here means its
+    // rejection escapes the try that would have reported it.
+    const onChange = vi.fn(() => Promise.reject(new Error("Suite is locked")));
+    render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange as any} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await screen.findByText("alpha"));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect((toast.error as any).mock.calls[0][0]).toMatch(/Suite is locked/);
   });
 });
 

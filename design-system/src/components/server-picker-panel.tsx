@@ -296,7 +296,16 @@ export function ServerPickerPanel({
                 onClick={async () => {
                   setSubmitting(true);
                   try {
-                    await onCreateGroup(draftName.trim(), Array.from(draftIds));
+                    // Only ids still on offer: nothing closes this form when
+                    // `servers` changes, so a draft can outlive the rows it
+                    // was built from — and the derived name and the picked
+                    // count already ignore the ones that went away.
+                    await onCreateGroup(
+                      draftName.trim(),
+                      servers
+                        .filter((s) => draftIds.has(s.id))
+                        .map((s) => s.id),
+                    );
                     resetForm();
                   } catch {
                     // The caller reports the reason; keep the draft so the
