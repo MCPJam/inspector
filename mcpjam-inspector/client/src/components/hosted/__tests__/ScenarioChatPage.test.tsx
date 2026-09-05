@@ -16,6 +16,8 @@ import {
   clearHostedOAuthResumeMarker,
   writeHostedOAuthResumeMarker,
 } from "@/lib/hosted-oauth-resume";
+import { BootstrapNotReadyError } from "@/lib/app-ready";
+import { PROBE_TIMEOUT_MS } from "@/hooks/hosted/use-scenario-server-reachability";
 
 const {
   mockConvexAuthState,
@@ -2075,6 +2077,360 @@ describe("ScenarioChatPage", () => {
           expect.objectContaining({ scenarioComposerBlocked: false })
         )
       );
+    });
+  });
+
+  describe("a tester is told when a server did not connect", () => {
+    // The reported failure: a scenario built on an Excalidraw server ran a full
+    // session without it. The bootstrap payload lists servers but never touches
+    // them, and the page then hard-coded `connectionStatus: "connected"` for
+    // every row — so the composer showed a green dot for a server nothing had
+    // ever reached, and the first real connection attempt happened inside a
+    // chat turn.
+    function writeDrawingScenario() {
+      writeScenarioSession({
+        scenarioId: "sbx_1",
+        accessVersion: 1,
+        payload: {
+          projectId: "ws_1",
+          scenarioId: "sbx_1",
+          name: "Drawing Scenario",
+          description: "Hosted scenario",
+          hostStyle: "cursor",
+          mode: "anyone_with_link",
+          allowGuestAccess: true,
+          viewerIsProjectMember: false,
+          systemPrompt: "You are helpful.",
+          modelId: "openai/gpt-5-mini",
+          temperature: 0.4,
+          requireToolApproval: false,
+          servers: [
+            {
+              serverId: "srv_excalidraw",
+              serverName: "excalidraw",
+              useOAuth: false,
+              serverUrl: "https://mcp.excalidraw.example/mcp",
+              clientId: null,
+              oauthScopes: null,
+            },
+          ],
+        },
+      });
+    }
+
+    function latestHostedContext() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | { hostedContext?: { selectedServerIds?: string[] } }
+        | undefined;
+      return last?.hostedContext;
+    }
+
+    function latestServerConfigs() {
+      const calls = mockChatTabV2.mock.calls;
+      const last = calls[calls.length - 1]?.[0] as
+        | {
+            connectedOrConnectingServerConfigs?: Record<
+              string,
+              { connectionStatus?: string }
+            >;
+          }
+        | undefined;
+      return last?.connectedOrConnectingServerConfigs;
+    }
+
+    it("names the unreachable server instead of reporting it connected", async () => {
+      const consoleError = vi
+        .spyOn(console, "error")
+        .mockImplementation(() => {});
+      mockValidateHostedServer.mockRejectedValue(
+        new Error("SSE error: Non-200 status code (502)")
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "failed"
+        )
+      );
+      // Shipping it to the turn anyway costs the whole turn: one server that
+      // fails `listTools` rejects the Promise.all behind the tool set.
+      expect(latestHostedContext()?.selectedServerIds).toEqual([]);
+      // Transport detail is noise to someone who followed a link, but whoever
+      // debugs the scenario still needs it.
+      expect(consoleError).toHaveBeenCalledWith(
+        "[useScenarioServerReachability] server did not connect",
+        expect.objectContaining({
+          serverId: "srv_excalidraw",
+          serverName: "excalidraw",
+        })
+      );
+    });
+
+    it("says nothing when the server answers", async () => {
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(
+        screen.queryByText(/couldn't be reached/)
+      ).not.toBeInTheDocument();
+      expect(mockValidateHostedServer).toHaveBeenCalledWith(
+        "srv_excalidraw",
+        undefined,
+        undefined,
+        undefined,
+        expect.any(AbortSignal)
+      );
+    });
+
+    it("retries a blip rather than branding a healthy server unreachable", async () => {
+      // The verdict is final for the session — nothing re-probes, and it drops
+      // the server from the turn — so a 502 or a dropped connection must not
+      // decide it on the first try.
+      mockValidateHostedServer
+        .mockRejectedValueOnce(new Error("Bad Gateway"))
+        .mockResolvedValue({ success: true, status: "connected" });
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(2);
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+    });
+
+    it("holds the composer until the probe answers", async () => {
+      // Sending while a server is still being checked withholds it from the
+      // turn, which is the same silent failure wearing a different hat: the
+      // model answers with none of the tools the tester was sent here to try.
+      let resolveValidation: (value: unknown) => void = () => {};
+      mockValidateHostedServer.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            resolveValidation = resolve;
+          })
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({
+            scenarioComposerBlocked: true,
+            scenarioComposerBlockedReason: "Connecting to this session's tools…",
+          })
+        )
+      );
+
+      await act(async () => {
+        resolveValidation({ success: true, status: "connected" });
+      });
+
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false })
+        )
+      );
+    });
+
+    it("holds the composer on the very first frame, before the probe registers", async () => {
+      // The hook records "checking" from an effect, so the render that first
+      // has a session still has an empty verdict map. That frame is painted and
+      // interactive: a tester who sends into it ships a server nothing has
+      // reached yet, which is the failure the probe exists to prevent.
+      mockValidateHostedServer.mockImplementation(() => new Promise(() => {}));
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(mockChatTabV2.mock.calls.length).toBeGreaterThan(0);
+      for (const [props] of mockChatTabV2.mock.calls) {
+        expect(props).toMatchObject({
+          scenarioComposerBlocked: true,
+          scenarioComposerBlockedReason: "Connecting to this session's tools…",
+        });
+      }
+      const firstProps = mockChatTabV2.mock.calls[0]?.[0] as {
+        connectedOrConnectingServerConfigs?: Record<
+          string,
+          { connectionStatus?: string }
+        >;
+      };
+      expect(
+        firstProps.connectedOrConnectingServerConfigs?.excalidraw
+          ?.connectionStatus
+      ).toBe("connecting");
+    });
+
+    it("abandons a probe that outlives the page", async () => {
+      // The route holds an MCP connection open for its whole connect timeout.
+      // A tester who closed the tab has no use for the answer, and the
+      // connection should not stay open waiting to give it.
+      let probeSignal: AbortSignal | undefined;
+      mockValidateHostedServer.mockImplementation(
+        (
+          _serverId: string,
+          _oauthAccessToken: unknown,
+          _clientCapabilities: unknown,
+          _hostedContext: unknown,
+          signal?: AbortSignal
+        ) =>
+          new Promise(() => {
+            probeSignal = signal;
+          })
+      );
+      writeDrawingScenario();
+
+      const view = render(<ScenarioChatPage />);
+
+      await waitFor(() => expect(probeSignal).toBeDefined());
+      expect(probeSignal?.aborted).toBe(false);
+
+      view.unmount();
+
+      expect(probeSignal?.aborted).toBe(true);
+    });
+
+    it("keeps a server reported connected when the probe never got to run", async () => {
+      // The request builder refuses to build until `useApiContext` has
+      // published this scenario's ids, and `/redeem` resolves before it does.
+      // Running out of attempts on that race means nothing ever reached the
+      // wire — branding the server unreachable there would show the tester a
+      // failure this session never observed and drop a healthy server from the
+      // turn, which is the same lie this probe exists to remove.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockRejectedValue(
+        new BootstrapNotReadyError("provisioning-project")
+      );
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      // Long enough to burn every attempt the race is allowed.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+
+      expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+        "connected"
+      );
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+      expect(latestHostedContext()?.selectedServerIds).toEqual([
+        "srv_excalidraw",
+      ]);
+    });
+
+    it("does not wait out a second deadline after the first response is lost", async () => {
+      // The deadline sits above the route's own connect timeout, so reaching it
+      // means the response was lost rather than that the server was slow. A
+      // second full wait buys the same answer while the composer stays shut for
+      // twice as long.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      vi.useFakeTimers();
+      mockValidateHostedServer.mockImplementation(() => new Promise(() => {}));
+      writeDrawingScenario();
+
+      render(<ScenarioChatPage />);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS + 1_000);
+      });
+
+      expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
+      expect(
+        screen.getByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+    });
+
+    it("re-probes a shared server when the tester opens another scenario", async () => {
+      // Opening a second link does not remount this page — the session is
+      // swapped in place — and two scenarios in one project can list the same
+      // server id. The first session's verdict used to carry over, so the
+      // second scenario reported a failure it had never observed, and the
+      // server was never probed for it at all.
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      let serverIsDown = true;
+      mockValidateHostedServer.mockImplementation(async () => {
+        if (serverIsDown) {
+          throw new Error("SSE error: Non-200 status code (502)");
+        }
+        return { success: true, status: "connected", initInfo: null };
+      });
+      mockAuthFetch.mockImplementation(
+        async (_path: string, init: RequestInit) => {
+          const { scenarioToken } = JSON.parse(String(init.body)) as {
+            scenarioToken: string;
+          };
+          const scenarioId = scenarioToken === "tok_b" ? "sbx_b" : "sbx_a";
+          return createFetchResponse({
+            scenarioId,
+            accessVersion: 1,
+            bootstrap: {
+              projectId: "ws_1",
+              scenarioId,
+              name: "Drawing Scenario",
+              description: "Hosted scenario",
+              hostStyle: "cursor",
+              mode: "anyone_with_link",
+              allowGuestAccess: true,
+              viewerIsProjectMember: false,
+              systemPrompt: "You are helpful.",
+              modelId: "openai/gpt-5-mini",
+              temperature: 0.4,
+              requireToolApproval: false,
+              servers: [
+                {
+                  serverId: "srv_excalidraw",
+                  serverName: "excalidraw",
+                  useOAuth: false,
+                  serverUrl: "https://mcp.excalidraw.example/mcp",
+                  clientId: null,
+                  oauthScopes: null,
+                },
+              ],
+            },
+          });
+        }
+      );
+
+      const view = render(<ScenarioChatPage pathToken="tok_a" />);
+
+      expect(
+        await screen.findByText("excalidraw couldn't be reached")
+      ).toBeInTheDocument();
+
+      serverIsDown = false;
+      window.history.replaceState({}, "", "/user-testing/other/tok_b");
+      view.rerender(<ScenarioChatPage pathToken="tok_b" />);
+
+      await waitFor(() =>
+        expect(latestServerConfigs()?.excalidraw?.connectionStatus).toBe(
+          "connected"
+        )
+      );
+      expect(screen.queryByText(/couldn't be reached/)).not.toBeInTheDocument();
+      expect(latestHostedContext()?.selectedServerIds).toEqual([
+        "srv_excalidraw",
+      ]);
     });
   });
 });
