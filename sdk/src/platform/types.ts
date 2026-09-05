@@ -1574,6 +1574,8 @@ export interface PlatformEvalCase {
   title: string;
   /** Optional authored analytics grouping label; absent is unlabelled. */
   intent?: string;
+  /** Authored case kind; absent means the editor derives it from matchOptions. */
+  kind?: "capability" | "regression";
   /** Ordered test steps that define the case. */
   steps: PlatformEvalStep[];
   expectedOutput?: string;
