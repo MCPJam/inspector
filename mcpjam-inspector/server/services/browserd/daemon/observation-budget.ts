@@ -61,18 +61,18 @@ function countNodes(node: A11yNode): number {
 }
 
 /**
- * A marker that REPLACES an omitted subtree. It names the verb that fetches
- * it, because "there is more here" without "and this is how you get it" just
- * teaches a model to guess.
+ * A marker that REPLACES an omitted subtree.
+ *
+ * STRUCTURED, not prose. It used to bake a sentence into `name` ending in
+ * `rootSelector:"<selector for this element>"` — a placeholder, because an AX
+ * node has no selector to offer, so the retrieval verb it named could not be
+ * typed out by anyone reading it. The count travels as a number and the
+ * renderer names the verb, using the ref that the parent of this marker was
+ * actually given. "There is more here" without "and this is how you get it"
+ * only teaches a model to guess.
  */
-function omissionMarker(node: A11yNode, hiddenNodes: number): A11yNode {
-  const label = node.name ? `${node.role ?? "node"} "${node.name}"` : (node.role ?? "node");
-  return {
-    role: "omitted",
-    name:
-      `${hiddenNodes} node(s) under ${label} omitted — re-observe with ` +
-      `{mode:"a11y", rootSelector:"<selector for this element>"} to read this subtree`,
-  };
+function omissionMarker(_node: A11yNode, hiddenNodes: number): A11yNode {
+  return { role: "omitted", hiddenNodes };
 }
 
 /**
