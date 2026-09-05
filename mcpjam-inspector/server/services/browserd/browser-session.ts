@@ -24,6 +24,7 @@
  * unit-testable without E2B or the network. The live construction lives in
  * `live-session-deps.ts` (VALIDATE-ON-STAGING).
  */
+import { randomUUID } from "node:crypto";
 import type {
   BootBrowserdOptions,
   BrowserdHandle,
@@ -34,14 +35,18 @@ import type {
   BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
-import type { BrowserCommand } from "./protocol";
+import { formatBrowserdError, type BrowserCommand } from "./protocol";
 import type {
   BrowserContextMode,
+  BrowserRelaunchClaim,
   BrowserSessionLookup,
   BrowserSessionRecord,
   BrowserSessionRecordResult,
 } from "./browser-sessions-client";
 import { withKeyedLock } from "./probe-lock";
+// The same once-a-minute throttle the panel and the page tools use, so one
+// computer is never told it is busy by three callers in the same minute.
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 
 /** Where the daemon lives inside the sandbox — the probe's proven recipe. */
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -117,6 +122,27 @@ export interface SessionStore {
     replacesSessionId?: string;
     signal?: AbortSignal;
   }): Promise<BrowserSessionRecordResult>;
+  /**
+   * Take the exclusive right to relaunch this computer's browser.
+   *
+   * OPTIONAL, and its absence means "proceed as before". Two things arrive as
+   * absence: a control plane that predates the route, and a test fake that has
+   * no opinion about claims. Neither should turn a relaunch into a refusal —
+   * the claim narrows a race that the record compare-and-swap still catches
+   * afterwards, at the cost of a wasted boot.
+   */
+  claimRelaunch?(args: {
+    computerId: string;
+    claimId: string;
+    ttlMs?: number;
+    signal?: AbortSignal;
+  }): Promise<BrowserRelaunchClaim>;
+  /** Give it back. Best-effort: an unreleased claim expires on its own. */
+  releaseRelaunch?(args: {
+    computerId: string;
+    claimId: string;
+    signal?: AbortSignal;
+  }): Promise<void>;
   touch(args: {
     sessionId: string;
     kind: "command" | "panel";
@@ -148,6 +174,15 @@ export interface BrowserSessionDeps {
   /** Build the client for a daemon at `baseUrl` presenting `bearer`. */
   createClient(baseUrl: string, bearer: string): SessionClient;
   store: SessionStore;
+  /**
+   * Keep the COMPUTER awake, as distinct from the session row.
+   *
+   * Optional because it is best-effort in the strictest sense: the row touch
+   * is what the session sweep reads, and losing this one only risks an earlier
+   * hibernate. Injected rather than imported so this module stays
+   * orchestration with no control-plane dependency of its own.
+   */
+  touchActivity?: (args: { computerId: string }) => Promise<unknown>;
   /** The daemon bundle bytes to upload on a relaunch. */
   bundle(): Uint8Array;
   /** sha256 (hex) of those bytes — the row's `bundleHash` identity. */
@@ -259,12 +294,43 @@ export async function attachBrowserSession(
     signal?: AbortSignal;
   },
 ): Promise<HostedBrowserSessionHandle> {
-  const contextMode = args.contextMode ?? "persistent";
-  return withKeyedLock(`browser-session:${args.computerId}`, () =>
-    ensureOnComputer(deps, args.computerId, contextMode, {
+  return withKeyedLock(`browser-session:${args.computerId}`, async () => {
+    const contextMode =
+      args.contextMode ??
+      (await modeAlreadyRunning(deps, args.computerId, args.signal));
+    return ensureOnComputer(deps, args.computerId, contextMode, {
       ...(args.signal ? { signal: args.signal } : {}),
-    }),
-  );
+    });
+  });
+}
+
+/**
+ * The profile mode ALREADY RUNNING on this computer, or `persistent`.
+ *
+ * An attach names no mode: the panel's caller wants "the browser on this
+ * machine", not a particular profile. Defaulting to `persistent` regardless
+ * meant an attach to a box running an ephemeral daemon was a mode mismatch,
+ * and a mode mismatch is a relaunch — so opening a panel to LOOK at what was
+ * happening destroyed it, and replaced it with a different profile. Adopting
+ * whatever is there makes the attach the read-only act it reads as.
+ *
+ * `persistent` remains the answer when nothing is running, which is the case
+ * this default was written for and the right one for a person.
+ */
+async function modeAlreadyRunning(
+  deps: BrowserSessionDeps,
+  computerId: string,
+  signal?: AbortSignal,
+): Promise<BrowserContextMode> {
+  const lookup = await deps.store
+    .lookup({
+      computerId,
+      expectedBundleHash: deps.bundleHash(),
+      expectedContextMode: "any",
+      ...(signal ? { signal } : {}),
+    })
+    .catch(() => null);
+  return lookup?.session?.contextMode ?? "persistent";
 }
 
 /** Verify a looked-up row against the daemon itself; a handle on success. */
@@ -292,10 +358,213 @@ async function tryReuse(
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
     .catch(() => {});
-  return handleFromRecord(session, client, true);
+  return handleFromRecord(deps, session, client, true);
+}
+
+/**
+ * The holder a relaunch fences with, and the ceiling on how long it may last.
+ *
+ * The prefix is load-bearing, not cosmetic: it is how a later relaunch tells
+ * ITS OWN debris from a person. See `fenceForRelaunch`.
+ */
+const RELAUNCH_HOLDER_PREFIX = "relaunch:";
+const RELAUNCH_FENCE_TTL_MS = 30_000;
+
+/** A lease this relaunch is holding, to be given back if the kill fails. */
+interface RelaunchFence {
+  release(): Promise<void>;
+}
+
+interface RelaunchGate {
+  /** The lease we took, or null when there was nothing to fence. */
+  fence: RelaunchFence | null;
+  /** The row the ownership lookup saw, which may be a WINNER'S. */
+  owner: BrowserSessionLookup | null;
+}
+
+/**
+ * TAKE the lease before killing the daemon, so nobody can take it after we
+ * looked.
+ *
+ * Reading the lease and then killing is a check-then-act with an HTTP round
+ * trip in the middle: a person can press "Take control" inside that window and
+ * have the page pulled away a moment later — the exact failure the check
+ * exists to prevent, merely made rarer. The daemon's `acquire` is already an
+ * atomic take-or-fail (`{took:false}` when somebody else holds it, evaluated
+ * on the daemon's own event loop), so the honest version of this check is to
+ * take the lease rather than to read it. Whoever loses the race loses it at
+ * the daemon, once, and the winner is unambiguous.
+ *
+ * A `took` becomes a fence: while we hold it no pane can acquire, and the kill
+ * below discards it along with the process. If the kill fails we hand it back,
+ * because a lease left on a LIVE daemon blocks the agent and every person.
+ *
+ * OUR OWN DEBRIS IS NOT A PERSON. A fence outlives its relaunch if this
+ * process dies between the take and the kill; on expiry it parks, and a parked
+ * lease never auto-frees, so a naive refusal would then brick the box forever —
+ * and brick it precisely because of the guard meant to protect it. Only this
+ * function mints holders with `RELAUNCH_HOLDER_PREFIX`, so a hold under that
+ * prefix can only be an interrupted relaunch, and stepping over it is the same
+ * judgement `profile-lock.ts` makes about a stale `SingletonLock`.
+ *
+ * Best-effort about REACHING the daemon, never about the answer: a transport
+ * failure or a client too old to have the endpoint means nobody could be
+ * driving it through us either, so the relaunch proceeds — but a daemon that
+ * answers "somebody else has it" always stops it.
+ */
+async function fenceForRelaunch(
+  deps: BrowserSessionDeps,
+  computerId: string,
+  bundleHash: string,
+  signal?: AbortSignal,
+): Promise<RelaunchGate> {
+  // `"any"`, because OWNERSHIP IS NOT MODE-SCOPED. The reuse lookup above asks
+  // "is there a daemon I may run in?", and the backend answers `null` for a row
+  // in the other profile mode — correctly, since an eval must never inherit a
+  // signed-in profile. But this asks a different question: "is anyone holding
+  // this box's browser?", and a persistent daemon with a person on it is the
+  // most emphatic possible yes. Reusing the mode-filtered answer here read that
+  // yes as "no row, nothing to protect" and killed them.
+  const owner = await deps.store
+    .lookup({
+      computerId,
+      expectedBundleHash: bundleHash,
+      expectedContextMode: "any",
+      ...(signal ? { signal } : {}),
+    })
+    .catch(() => null);
+  // RESIDUAL, and named rather than papered over: the backend checks the bundle
+  // hash BEFORE the mode, so a daemon booted from a previous bundle answers
+  // `null` here too and its holder is not protected. That is not a corner —
+  // every daemon change rotates the hash, so the first relaunch after a deploy
+  // is exactly this case. Closing it needs the control plane to hand back a
+  // stale row's credentials for an ownership read, which is a backend change
+  // and belongs in the backend PR, not smuggled into this one.
+  // A STALE ROW STILL HAS A DAEMON. The lookup above answers `null` the moment
+  // the bundle hash has moved — and every daemon change rotates it, so right
+  // after each deploy this is the state EVERY box is in. Reading that as "no
+  // row, nothing to protect" is what killed people mid-login on the first
+  // relaunch after every release.
+  //
+  // The control plane now hands back just enough of such a row to ask its
+  // daemon who is holding it. Absent means there is genuinely nobody to ask —
+  // the box is not serving, or the control plane predates the field — and the
+  // relaunch proceeds exactly as it did before, which is what lets this ship
+  // ahead of the backend.
+  const askable = owner?.session ?? owner?.staleSession;
+  if (!askable) return { fence: null, owner: owner ?? null };
+  const client = deps.createClient(askable.publicOrigin, askable.browserdToken);
+  const holder = `${RELAUNCH_HOLDER_PREFIX}${randomUUID()}`;
+  const taken = await client
+    .leaseAction?.({
+      action: "acquire",
+      holder,
+      ttlMs: RELAUNCH_FENCE_TTL_MS,
+      // A relaunch is not a person at a keyboard, and the resume note that
+      // names the kind would be a lie if it said otherwise.
+      kind: "script",
+    })
+    .catch(() => null);
+  if (!taken) return { fence: null, owner: owner ?? null };
+  if (taken.took) {
+    return {
+      owner: owner ?? null,
+      fence: {
+        async release() {
+          await client
+            .leaseAction?.({ action: "resume", holder })
+            .catch(() => {});
+        },
+      },
+    };
+  }
+  const state = taken.lease;
+  if (state.state !== "held" && state.state !== "parked") {
+    // Refused without anybody holding it — not an answer we can act on, and
+    // not one that says a person is there.
+    return { fence: null, owner: owner ?? null };
+  }
+  if (state.holder.startsWith(RELAUNCH_HOLDER_PREFIX)) {
+    // Another relaunch minted this hold, and WHICH STATE IT IS IN decides
+    // everything.
+    //
+    // `parked` is debris: the fence outlived its relaunch, so more than its
+    // whole TTL has passed with nobody finishing. Stepping over it is what
+    // stops an interrupted relaunch from bricking the box forever.
+    //
+    // `held` is a relaunch IN PROGRESS — another replica inside its own thirty
+    // seconds, quite possibly mid-boot. Reading that as debris and killing the
+    // daemon underneath it is the same collision the fence exists to prevent,
+    // only now between two of us instead of a person and an agent. Refuse and
+    // let their boot finish; the row they record is the one the next ensure
+    // reuses.
+    if (state.state === "parked") return { fence: null, owner: owner ?? null };
+    throw new BrowserSessionInUseError(
+      "another replica is restarting this browser right now; try again in a moment",
+    );
+  }
+  throw new BrowserSessionInUseError(
+    state.state === "held"
+      ? "somebody is using this browser right now; restarting it would take the page out from under them"
+      : "somebody still holds this browser — their pane stopped responding, but the session is theirs until they hand it back",
+  );
+}
+
+/** The relaunch was refused because a person holds the browser. */
+export class BrowserSessionInUseError extends Error {
+  readonly code = "browser_in_use";
+  constructor(detail: string) {
+    super(formatBrowserdError("lease_held", detail));
+    this.name = "BrowserSessionInUseError";
+  }
+}
+
+/**
+ * EVERY COMMAND IS ACTIVITY.
+ *
+ * Before this, a browser session was touched once per `ensureBrowserSession` —
+ * and a turn ensures once and then drives for minutes. The session sweep (30
+ * min idle) and the computer's own hibernation both read those clocks, so a
+ * long agent run reading and clicking the whole time looked exactly like an
+ * abandoned box and could be reaped mid-turn. The panel keepalive papered over
+ * it whenever somebody happened to be watching, which is precisely the case
+ * that did not need help.
+ *
+ * FIRE-AND-FORGET, AND AT ISSUE. Neither touch may add latency to a command or
+ * fail one, so both are unawaited and both swallow their errors. Issuing at
+ * the start rather than on completion is deliberate: a command that takes
+ * thirty seconds, or never returns at all, is still the box being used.
+ */
+function withActivityTouches(
+  deps: BrowserSessionDeps,
+  session: { sessionId: string; computerId: string },
+  client: SessionClient,
+): SessionClient {
+  // Rebuilt method by method rather than spread: `client` is usually a
+  // `BrowserdClient` INSTANCE, whose methods live on the prototype and would
+  // not survive `{ ...client }`.
+  return {
+    status: () => client.status(),
+    sendCommand: (command, expectedBootId) => {
+      void deps.store
+        .touch({ sessionId: session.sessionId, kind: "command" })
+        .catch(() => {});
+      if (deps.touchActivity && shouldTouchActivity(session.computerId)) {
+        void deps
+          .touchActivity({ computerId: session.computerId })
+          .catch(() => {});
+      }
+      return client.sendCommand(command, expectedBootId);
+    },
+    ...(client.lease ? { lease: () => client.lease!() } : {}),
+    ...(client.leaseAction
+      ? { leaseAction: (args) => client.leaseAction!(args) }
+      : {}),
+  };
 }
 
 function handleFromRecord(
+  deps: BrowserSessionDeps,
   session: BrowserSessionRecord,
   client: SessionClient,
   reused: boolean,
@@ -305,7 +574,7 @@ function handleFromRecord(
     sessionId: session.sessionId,
     computerId: session.computerId,
     bootId: session.bootId,
-    client,
+    client: withActivityTouches(deps, session, client),
     streamUrl: session.streamUrl,
     streamPassword: session.streamPassword,
     contextMode: session.contextMode,
@@ -352,8 +621,110 @@ async function ensureOnComputer(
   const sandboxId = await deps.resolveSandboxId(computerId);
   const sandbox = await deps.connect(sandboxId);
   let handle: BrowserdHandle | undefined;
+  /**
+   * Give back the relaunch claim, whatever happens.
+   *
+   * Assigned only once a claim is actually held, so the `finally` below can
+   * call it unconditionally. Everything the relaunch can do after taking it —
+   * a refused fence, a kill that fails, a lost record, a thrown boot — has to
+   * end with the claim released, or the next attempt waits out its whole TTL
+   * for no reason.
+   */
+  let releaseClaim: () => Promise<void> = async () => {};
   try {
-    await sandbox.killBrowserd();
+    // WAKE, THEN ASK AGAIN, before deciding the daemon is gone.
+    //
+    // `tryReuse` above deliberately never touches the sandbox, so a merely
+    // PAUSED box fails its probe exactly like a dead daemon does. Connecting
+    // is what resumes one — which has already happened by the time we get
+    // here — so the probe that failed a moment ago may well succeed now, and
+    // the whole relaunch below would be for nothing: it rotates `bootId` and
+    // the stream password, so every open pane and every in-flight command
+    // against this box breaks, to replace a daemon that was only asleep.
+    const awake = await tryReuse(deps, lookup, contextMode, args.signal);
+    if (awake) return awake;
+
+    // AND ANOTHER REPLICA MAY BE ABOUT TO DO THE SAME THING.
+    //
+    // The fence below is a lease on the daemon being replaced, which is
+    // exactly the wrong tool for this: the race that hurts is the one where
+    // there is no daemon yet to hold a lease on — a first boot, or a row the
+    // sweep took — and there the second replica's `pkill` reaps the daemon the
+    // first has just booted. The record compare-and-swap cannot save that
+    // either, because it fires long after the kill and the damage IS the kill.
+    //
+    // So the claim comes first, and it lives in the control plane because that
+    // is the only thing both replicas can see.
+    const claimId = randomUUID();
+    const claimed = await deps.store.claimRelaunch?.({
+      computerId,
+      claimId,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    if (claimed?.ok === false && claimed.reason === "claimed") {
+      throw new BrowserSessionInUseError(
+        "another replica is restarting this browser right now; try again in a moment",
+      );
+    }
+    // `undefined` (no claim support) and `unavailable` (unreachable, or a
+    // control plane that predates the route) both proceed unclaimed, as every
+    // relaunch did before this existed. Releasing is then a no-op.
+    if (claimed?.ok === true) {
+      releaseClaim = async () => {
+        await deps.store
+          .releaseRelaunch?.({
+            computerId,
+            claimId,
+            ...(args.signal ? { signal: args.signal } : {}),
+          })
+          .catch(() => {});
+      };
+    }
+
+    // A person may be DRIVING this browser. The relaunch below pkills their
+    // Chromium and rotates the boot, which from their side is the page
+    // vanishing mid-login. The lease is the whole reason we can know that, so
+    // take it — refusing if somebody else has it — rather than read it and
+    // hope nobody acts in the gap.
+    const { fence, owner } = await fenceForRelaunch(
+      deps,
+      computerId,
+      bundleHash,
+      args.signal,
+    );
+
+    // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
+    //
+    // Resuming a paused sandbox takes seconds, and another replica that lost
+    // no time can boot and record inside them. Our own lookup is from before
+    // all that, so the daemon it names is the dead one — and `killBrowserd`
+    // is a `pkill` on the box, which would reap the WINNER'S new daemon and
+    // leave their row pointing at nothing. The record CAS cannot save that:
+    // it fires after the kill.
+    //
+    // The ownership lookup above is fresh and costs nothing extra, so ask it:
+    // a different `bootId` means somebody else booted, and if that daemon
+    // verifies it is the one to use. The fence goes back first — we may be
+    // holding a lease on the very daemon we are about to hand over, and
+    // returning a session the agent is blocked out of would be worse than the
+    // relaunch.
+    if (owner?.session && owner.session.bootId !== lookup.session?.bootId) {
+      const winner = await tryReuse(deps, owner, contextMode, args.signal);
+      if (winner) {
+        await fence?.release();
+        return winner;
+      }
+    }
+
+    try {
+      await sandbox.killBrowserd();
+    } catch (killError) {
+      // The daemon is still alive and we are holding its lease. Left there it
+      // would block the agent AND every person until it parked, which never
+      // frees on its own.
+      await fence?.release();
+      throw killError;
+    }
     await sandbox.writeBundle(BROWSERD_SCRIPT_PATH, deps.bundle());
     try {
       handle = await deps.boot(sandbox.browserd, {
@@ -419,7 +790,11 @@ async function ensureOnComputer(
       sessionId: recorded.sessionId,
       computerId,
       bootId: booted.bootId,
-      client: deps.createClient(booted.publicOrigin, booted.bearer),
+      client: withActivityTouches(
+        deps,
+        { sessionId: recorded.sessionId, computerId },
+        deps.createClient(booted.publicOrigin, booted.bearer),
+      ),
       streamUrl,
       streamPassword,
       contextMode,
@@ -430,5 +805,8 @@ async function ensureOnComputer(
     // never kill the durable computer itself.
     await handle?.stop().catch(() => {});
     await sandbox.disconnect().catch(() => {});
+    // The claim last: it is the thing another replica is waiting on, and
+    // holding it while this one tidies up is time nobody else can use.
+    await releaseClaim();
   }
 }

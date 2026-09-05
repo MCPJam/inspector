@@ -284,6 +284,9 @@ describe("v1 eval-edit routes", () => {
       model: "openai/gpt-5-mini",
       autoRun: false,
       threshold: 0.7,
+      // S6 — the suite's own criteria, `null` when it has none. Distinct from
+      // an empty list, which the write side refuses.
+      rubric: null,
     });
     expect(body.executionConfig).toEqual({
       model: "anthropic/claude-haiku-4.5",
@@ -485,6 +488,7 @@ describe("v1 eval-edit routes", () => {
       model: "openai/gpt-5.4-mini",
       autoRun: false,
       threshold: 0.7,
+      rubric: null,
     });
   });
 
@@ -840,6 +844,13 @@ describe("v1 eval-edit routes", () => {
       // Project-environment schedule pin (read-only DTO field); this suite
       // has none.
       environmentId: null,
+      // B9b — the schedule's own state, owner and next firing. A schedule that
+      // paused itself keeps `enabled: true`, so these are the fields that tell
+      // a caller whether it is actually running.
+      state: null,
+      createdBy: null,
+      nextDueAt: null,
+      consecutiveFailures: 0,
     });
   });
 
@@ -973,6 +984,9 @@ describe("v1 eval-edit routes", () => {
       expect(args).toEqual({
         suiteId: "suite_1",
         environmentIds: ["env_1", "env_2"],
+        // B9b — every write in one PATCH shares one revision group, so the
+        // suite's history records one edit rather than several.
+        revision: { source: "api", groupId: expect.any(String) },
       });
     });
 
@@ -2846,6 +2860,60 @@ describe("v1 eval-edit routes", () => {
   });
 
   /**
+   * `kind` rides the same three-way protocol as `intent`. The point of these
+   * is the silent-drop trap: a v1 body is non-strict on create, so a field
+   * the route forgets to forward vanishes with a 201 — and the CLI's
+   * `--file` sync would then claim a kind the case never got.
+   */
+  describe("per-case kind", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+    const CASES_PATH = "/api/v1/projects/p1/eval-suites/suite_1/cases";
+    const CASE_PATH = `${CASES_PATH}/case_1`;
+
+    it("forwards a valid kind on create", async () => {
+      const res = await request("POST", CASES_PATH, {
+        title: "Refund flow",
+        steps: [PROMPT_STEP],
+        kind: "regression",
+      });
+
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().kind).toBe("regression");
+    });
+
+    it("forwards a valid kind on PATCH", async () => {
+      const res = await request("PATCH", CASE_PATH, { kind: "capability" });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().kind).toBe("capability");
+    });
+
+    it("omits kind on PATCH when the caller leaves it untouched", async () => {
+      const res = await request("PATCH", CASE_PATH, { title: "Renamed" });
+
+      expect(res.status).toBe(200);
+      expect("kind" in updateArgs()).toBe(false);
+    });
+
+    it("forwards null on PATCH to clear kind", async () => {
+      const res = await request("PATCH", CASE_PATH, { kind: null });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().kind).toBeNull();
+    });
+
+    it.each(["", "smoke", "CAPABILITY"])(
+      "rejects invalid kind %j on PATCH before mutation",
+      async (kind) => {
+        const res = await request("PATCH", CASE_PATH, { kind });
+
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  /**
    * The per-case IMPORT CLAIM, across every public write and read.
    *
    * Asserted at the TRANSPORT boundary — the exact Convex mutation argument and
@@ -3115,6 +3183,631 @@ describe("v1 eval-edit routes", () => {
       );
       expect(res.status).toBe(400);
       expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * B9b — the v2 verdict policy, the revision precondition, and the group id.
+   *
+   * The settings sheet's policy rows write `verdictPolicyDefaults`, which the
+   * PATCH did not accept: an agent could see a row it had no way to drive. The
+   * three rules pinned here are the ones a caller gets wrong:
+   *
+   *   - an UPGRADE is explicit (both halves, or neither), because a v2 policy
+   *     with a repetition count and no threshold is not a partial answer;
+   *   - a MERGE preserves what the caller did not mention, including inside
+   *     `validity`, because PATCH is merge semantics everywhere else here;
+   *   - the two thresholds are ALTERNATIVES, never layers, and nothing on this
+   *     path converts a percent into a fraction.
+   */
+  describe("verdict policy v2 on PATCH", () => {
+    const V2_SUITE = {
+      ...SUITE_DOC,
+      verdictPolicyVersion: 2,
+      verdictPolicyDefaults: {
+        repetitions: 5,
+        passThreshold: 0.6,
+        validity: { minCompletionRate: 0.7, maxEvaluatorErrorRate: 0.2 },
+      },
+      // A v2 suite carries no legacy percent; leaving one here would let a
+      // handler that reads the wrong field keep passing.
+      defaultPassCriteria: undefined,
+    };
+
+    function withSuite(doc: Record<string, unknown>) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve(doc)
+          : defaultQueryImpl(name)
+      );
+    }
+
+    function suiteUpdateArgs(): any {
+      return convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )?.[1];
+    }
+
+    it("refuses a half upgrade on a legacy suite, writing nothing", async () => {
+      for (const settings of [{ repetitions: 3 }, { passThreshold: 0.8 }]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "PATCH",
+          "/api/v1/projects/p1/eval-suites/suite_1",
+          { settings }
+        );
+        expect(res.status).toBe(400);
+        const json = (await res.json()) as { code?: string; message?: string };
+        expect(json.code).toBe("VALIDATION_ERROR");
+        expect(json.message).toContain("repetitions");
+        expect(json.message).toContain("passThreshold");
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it("upgrades a legacy suite when both halves are supplied", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          settings: {
+            repetitions: 3,
+            passThreshold: 0.8,
+            validity: { minCompletionRate: 0.9 },
+          },
+        }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      expect(args.verdictPolicyVersion).toBe(2);
+      expect(args.verdictPolicyDefaults).toEqual({
+        repetitions: 3,
+        // The FRACTION as sent. A handler that divided the legacy percent by
+        // 100 anywhere on this path would land 0.008 here.
+        passThreshold: 0.8,
+        validity: { minCompletionRate: 0.9 },
+      });
+    });
+
+    it("merges a partial edit over a v2 suite's stored defaults", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { passThreshold: 0.95 } }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      // `repetitions` and BOTH validity ceilings survive an edit that
+      // mentioned neither — the object is written wholesale, so a handler that
+      // sent only the changed field would silently clear the rest.
+      expect(args.verdictPolicyDefaults).toEqual({
+        repetitions: 5,
+        passThreshold: 0.95,
+        validity: { minCompletionRate: 0.7, maxEvaluatorErrorRate: 0.2 },
+      });
+      expect(args.verdictPolicyVersion).toBeUndefined();
+    });
+
+    it("merges validity field-by-field rather than replacing it", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { validity: { minCompletionRate: 0.99 } } }
+      );
+      expect(res.status).toBe(200);
+      expect(suiteUpdateArgs().verdictPolicyDefaults.validity).toEqual({
+        minCompletionRate: 0.99,
+        maxEvaluatorErrorRate: 0.2,
+      });
+    });
+
+    it("refuses minimumAccuracy beside a v2 field (400, no mutation)", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumAccuracy: 80, passThreshold: 0.8 } }
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { code?: string; message?: string };
+      expect(json.code).toBe("VALIDATION_ERROR");
+      expect(json.message).toContain("minimumAccuracy");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("names the policy on the detail, without synthesizing a fraction", async () => {
+      const legacy = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const legacySettings = ((await legacy.json()) as any).settings;
+      expect(legacySettings.policy).toBe("legacy");
+      expect(legacySettings.minimumAccuracy).toBe(80);
+      // A legacy percent is NOT a v2 fraction wearing a different name; a DTO
+      // that reported 0.8 here would hand a caller a threshold the suite is
+      // not graded against.
+      expect(legacySettings.passThreshold).toBeUndefined();
+      expect(legacySettings.verdictPolicyVersion).toBeUndefined();
+      expect(legacySettings.verdictPolicyDefaults).toBeUndefined();
+
+      withSuite(V2_SUITE);
+      const v2 = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const v2Settings = ((await v2.json()) as any).settings;
+      expect(v2Settings.policy).toBe("v2");
+      expect(v2Settings.verdictPolicyVersion).toBe(2);
+      expect(v2Settings.verdictPolicyDefaults.passThreshold).toBe(0.6);
+      expect(v2Settings.minimumAccuracy).toBeNull();
+    });
+
+    it("refuses minimumAccuracy on a v2 suite, pointing at passThreshold", async () => {
+      withSuite(V2_SUITE);
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { minimumAccuracy: 80 } }
+      );
+      expect(res.status).toBe(400);
+      const json = (await res.json()) as { code?: string; message?: string };
+      expect(json.code).toBe("VALIDATION_ERROR");
+      expect(json.message).toContain("passThreshold");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * B9b — the revision precondition and the one revision group per request.
+   */
+  describe("suite revisions on PATCH", () => {
+    it("forwards expectedRevisionNumber on the first write only", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+          expectedRevisionNumber: 7,
+          hosts: [],
+        }
+      );
+      expect(res.status).toBe(200);
+      const writes = convexMutationMock.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      );
+      expect(writes.length).toBeGreaterThanOrEqual(2);
+      expect(writes[0][1].expectedRevisionNumber).toBe(7);
+      // Re-sending it would compare against a number THIS request has already
+      // advanced, refusing the caller's own edit halfway through.
+      for (const later of writes.slice(1)) {
+        expect(later[1].expectedRevisionNumber).toBeUndefined();
+      }
+    });
+
+    it("checks the precondition even when no settings write carries it", async () => {
+      // `{ environmentIds }` alone never calls updateTestSuite, the only
+      // mutation that accepts expectedRevisionNumber — so the stale number
+      // used to be dropped and the write went through with a 200.
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 5 })
+          : defaultQueryImpl(name)
+      );
+      const stale = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 3 }
+      );
+      expect(stale.status).toBe(409);
+      const body = (await stale.json()) as { code?: string; message?: string };
+      expect(body.code).toBe("CONFLICT");
+      expect(body.message).toContain("current revision 5");
+      expect(convexMutationMock).not.toHaveBeenCalled();
+
+      const current = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { environmentIds: ["env_1"], expectedRevisionNumber: 5 }
+      );
+      expect(current.status).toBe(200);
+      expect(
+        convexMutationMock.mock.calls.some(
+          (c) => c[0] === "testSuites:setSuiteEnvironments"
+        )
+      ).toBe(true);
+    });
+
+    it("rides the precondition on the hosts write when that is the first one", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { hosts: [], expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(200);
+      const writes = convexMutationMock.mock.calls.filter(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      );
+      expect(writes.length).toBe(1);
+      expect(writes[0][1].expectedRevisionNumber).toBe(7);
+    });
+
+    it("stamps one revision group across every write in the request", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          name: "Renamed",
+          hosts: [],
+          environmentIds: ["env_1"],
+        }
+      );
+      expect(res.status).toBe(200);
+      const revisions = convexMutationMock.mock.calls
+        .filter(
+          (c) =>
+            c[0] === "testSuites:updateTestSuite" ||
+            c[0] === "testSuites:setSuiteEnvironments"
+        )
+        .map((c) => c[1].revision);
+      expect(revisions.length).toBeGreaterThanOrEqual(3);
+      for (const revision of revisions) {
+        expect(revision.source).toBe("api");
+        expect(typeof revision.groupId).toBe("string");
+      }
+      expect(new Set(revisions.map((r: any) => r.groupId)).size).toBe(1);
+    });
+
+    it("maps a stale precondition to 409 CONFLICT with the current number", async () => {
+      convexMutationMock.mockImplementation((name: string, args?: any) => {
+        if (name === "testSuites:updateTestSuite") {
+          const error: Error & { data?: unknown } = new Error(
+            "This suite changed since you loaded it."
+          );
+          error.data = {
+            code: "EVAL_SUITE_REVISION_CONFLICT",
+            message: "This suite changed since you loaded it.",
+            current: 9,
+            expected: 7,
+          };
+          return Promise.reject(error);
+        }
+        return defaultMutationImpl(name, args);
+      });
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { name: "Renamed", expectedRevisionNumber: 7 }
+      );
+      expect(res.status).toBe(409);
+      const json = (await res.json()) as {
+        code?: string;
+        message?: string;
+        details?: Record<string, unknown>;
+      };
+      expect(json.code).toBe("CONFLICT");
+      // The number is the actionable half: "reload and retry" is only advice
+      // if the caller learns what to retry against.
+      expect(json.message).toContain("9");
+      expect(json.details?.currentRevisionNumber).toBe(9);
+    });
+
+    it("reports revisionNumber on the suite detail, null when unrecorded", async () => {
+      const unset = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await unset.json()) as any).revisionNumber).toBeNull();
+
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, revisionNumber: 4 })
+          : defaultQueryImpl(name)
+      );
+      const set = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await set.json()) as any).revisionNumber).toBe(4);
+    });
+  });
+
+  /**
+   * S6 — the suite's judge criteria on the public PATCH.
+   *
+   * `null` clears; an empty list is refused, because a rubric that asks nothing
+   * is not the absence of one — it still changes what the judge was asked, and
+   * every verdict is hashed against it.
+   */
+  describe("judge rubric on PATCH", () => {
+    function suiteUpdateArgs(): any {
+      return convexMutationMock.mock.calls.find(
+        (c) => c[0] === "testSuites:updateTestSuite"
+      )?.[1];
+    }
+
+    it("maps settings.judge.rubric onto the suite's judgeRubric", async () => {
+      const res = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        {
+          settings: {
+            judge: {
+              rubric: {
+                criteria: [
+                  { id: "cites", label: "Cites a source", required: true },
+                ],
+              },
+            },
+          },
+        }
+      );
+      expect(res.status).toBe(200);
+      const args = suiteUpdateArgs();
+      // The rubric is a SUITE field, not a judge-config one: it is hashed into
+      // every verdict and editing it retires the suite's calibration.
+      expect(args.judgeRubric).toEqual({
+        criteria: [{ id: "cites", label: "Cites a source", required: true }],
+      });
+    });
+
+    it("clears with null and refuses an empty list", async () => {
+      const cleared = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { judge: { rubric: null } } }
+      );
+      expect(cleared.status).toBe(200);
+      expect(suiteUpdateArgs()).toHaveProperty("judgeRubric", null);
+
+      vi.clearAllMocks();
+      convexQueryMock.mockImplementation((name: string) =>
+        defaultQueryImpl(name)
+      );
+      const empty = await request(
+        "PATCH",
+        "/api/v1/projects/p1/eval-suites/suite_1",
+        { settings: { judge: { rubric: { criteria: [] } } } }
+      );
+      expect(empty.status).toBe(400);
+      expect(convexMutationMock).not.toHaveBeenCalled();
+    });
+
+    it("refuses a malformed criterion before the write", async () => {
+      for (const criteria of [
+        [{ id: "not valid!", label: "x" }],
+        [{ id: "ok", label: "" }],
+        [{ id: "a", label: "x" }, { id: "a", label: "y" }].slice(0, 1).concat([
+          { id: "b", label: "z".repeat(201) },
+        ]),
+      ]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "PATCH",
+          "/api/v1/projects/p1/eval-suites/suite_1",
+          { settings: { judge: { rubric: { criteria } } } }
+        );
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      }
+    });
+
+    it("reports the rubric back on the suite detail, null when there is none", async () => {
+      const none = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await none.json()) as any).settings.judge.rubric).toBeNull();
+
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              judgeRubric: {
+                criteria: [
+                  { id: "cites", label: "Cites a source", description: "d" },
+                ],
+              },
+            })
+          : defaultQueryImpl(name)
+      );
+      const some = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      expect(((await some.json()) as any).settings.judge.rubric).toEqual({
+        criteria: [{ id: "cites", label: "Cites a source", description: "d" }],
+      });
+    });
+  });
+
+  /**
+   * S5b — the suite's settings history, for agents.
+   *
+   * The app reads the same history through Convex, so this route exists for
+   * the SDK, the CLI and MCP. Two things it must get right: the project scope
+   * (the revision list is addressed by suite id alone, so without the guard a
+   * caller could read another project's history by guessing one) and an
+   * out-of-range page size, which is a refusal rather than a silent clamp — a
+   * caller who asked for 500 and got 100 cannot tell a capped page from the
+   * end of the history.
+   */
+  describe("suite revisions route", () => {
+    const REVISION = {
+      _id: "rev_1",
+      revisionNumber: 7,
+      source: "api",
+      createdBy: "user_1",
+      createdByName: "Ada",
+      createdAt: 1750,
+      note: "tightened the threshold",
+      changedFields: ["defaultPassCriteria"],
+      revisionGroupId: "group-1",
+      configRevisionHashAfter: "hash",
+      pinnedRunCount: 100,
+      pinnedRunCountCapped: true,
+      // Never projected: the list carries no configuration snapshots.
+      beforeSnapshot: { name: "old" },
+      afterSnapshot: { name: "new" },
+    };
+
+    function withRevisions(page: {
+      page: unknown[];
+      isDone: boolean;
+      continueCursor: string;
+    }) {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:listSuiteRevisions"
+          ? Promise.resolve(page)
+          : defaultQueryImpl(name)
+      );
+    }
+
+    it("projects a revision without its snapshots", async () => {
+      withRevisions({ page: [REVISION], isDone: true, continueCursor: "" });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+      );
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]).toEqual({
+        id: "rev_1",
+        revisionNumber: 7,
+        source: "api",
+        createdBy: "user_1",
+        createdByName: "Ada",
+        createdAt: 1750,
+        note: "tightened the threshold",
+        changedFields: ["defaultPassCriteria"],
+        revisionGroupId: "group-1",
+        pinnedRunCount: 100,
+        // The flag is what stops a caller reading the cap as an exact count.
+        pinnedRunCountCapped: true,
+      });
+      expect(body.nextCursor).toBeUndefined();
+    });
+
+    it("forwards the cursor and reports the next one", async () => {
+      withRevisions({
+        page: [REVISION],
+        isDone: false,
+        continueCursor: "cursor-2",
+      });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=5&cursor=cursor-1"
+      );
+      expect(res.status).toBe(200);
+      const call = convexQueryMock.mock.calls.find(
+        (c) => c[0] === "testSuites:listSuiteRevisions"
+      );
+      expect(call![1]).toEqual({
+        suiteId: "suite_1",
+        paginationOpts: { numItems: 5, cursor: "cursor-1" },
+      });
+      expect(((await res.json()) as any).nextCursor).toBe("cursor-2");
+    });
+
+    it("refuses an out-of-range limit rather than clamping it", async () => {
+      for (const limit of ["0", "101", "abc"]) {
+        vi.clearAllMocks();
+        convexQueryMock.mockImplementation((name: string) =>
+          defaultQueryImpl(name)
+        );
+        const res = await request(
+          "GET",
+          `/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=${limit}`
+        );
+        expect(res.status, limit).toBe(400);
+      }
+    });
+
+    it("treats an empty limit as unsupplied", async () => {
+      withRevisions({ page: [], isDone: true, continueCursor: "" });
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions?limit=&cursor="
+      );
+      // `?limit=` would otherwise coerce to 0 and be refused for a request
+      // that asked for nothing in particular.
+      expect(res.status).toBe(200);
+      const call = convexQueryMock.mock.calls.find(
+        (c) => c[0] === "testSuites:listSuiteRevisions"
+      );
+      expect(call![1].paginationOpts).toEqual({ numItems: 25, cursor: null });
+    });
+
+    it("404s for a suite in another project, without listing anything", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({ ...SUITE_DOC, projectId: "p2" })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1/revisions"
+      );
+      expect(res.status).toBe(404);
+      expect(
+        convexQueryMock.mock.calls.find(
+          (c) => c[0] === "testSuites:listSuiteRevisions"
+        )
+      ).toBeUndefined();
+    });
+  });
+
+  /**
+   * B9b — the schedule reports a STATE, not just a boolean.
+   */
+  describe("schedule state on the suite detail", () => {
+    it("reports state, owner, next due and failure count", async () => {
+      convexQueryMock.mockImplementation((name: string) =>
+        name === "testSuites:getTestSuite"
+          ? Promise.resolve({
+              ...SUITE_DOC,
+              schedule: {
+                enabled: true,
+                intervalMinutes: 60,
+                state: "paused_auth",
+                createdByUserId: "user_9",
+                consecutiveFailures: 3,
+              },
+              scheduleNextDueAt: 1750,
+            })
+          : defaultQueryImpl(name)
+      );
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const schedule = ((await res.json()) as any).schedule;
+      // `enabled` stays TRUE on a self-paused schedule, which is exactly why
+      // reading it alone reports a healthy automation that has not run.
+      expect(schedule.enabled).toBe(true);
+      expect(schedule.state).toBe("paused_auth");
+      expect(schedule.createdBy).toBe("user_9");
+      expect(schedule.nextDueAt).toBe(1750);
+      expect(schedule.consecutiveFailures).toBe(3);
+    });
+
+    it("reports a null state and a zero failure count when unset", async () => {
+      const res = await request(
+        "GET",
+        "/api/v1/projects/p1/eval-suites/suite_1"
+      );
+      const schedule = ((await res.json()) as any).schedule;
+      expect(schedule.state).toBeNull();
+      expect(schedule.createdBy).toBeNull();
+      expect(schedule.nextDueAt).toBeNull();
+      expect(schedule.consecutiveFailures).toBe(0);
     });
   });
 

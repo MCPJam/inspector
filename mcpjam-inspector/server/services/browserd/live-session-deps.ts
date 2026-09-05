@@ -28,13 +28,16 @@ import type { Sandbox } from "e2b";
 import {
   ensureComputerReady,
   getComputerSandboxInfo,
+  touchComputerActivity,
 } from "../../utils/computers/control-plane-client.js";
 import { bootBrowserd, type BrowserdSandbox } from "./boot-browserd.js";
 import { BrowserdClient } from "./browserd-client.js";
 import { HostedReserveError } from "./hosted-reserve-error.js";
 import {
+  claimBrowserRelaunch,
   lookupBrowserSession,
   recordBrowserSession,
+  releaseBrowserRelaunch,
   touchBrowserSession,
 } from "./browser-sessions-client.js";
 import {
@@ -281,7 +284,10 @@ export function liveBrowserSessionDeps(): BrowserSessionDeps {
       lookup: lookupBrowserSession,
       record: recordBrowserSession,
       touch: touchBrowserSession,
+      claimRelaunch: claimBrowserRelaunch,
+      releaseRelaunch: releaseBrowserRelaunch,
     },
+    touchActivity: (args) => touchComputerActivity(args),
     bundle: loadBrowserdBundle,
     bundleHash: browserdBundleHash,
   };

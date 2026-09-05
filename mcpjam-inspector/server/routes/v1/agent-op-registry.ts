@@ -82,6 +82,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listClientsOperation,
   setClientServersOperation,
@@ -1558,6 +1559,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: listEvalCasesOperation, tier: "direct" },
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
+  {
+    operation: listEvalSuiteRevisionsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
+    ],
+  },
   {
     operation: getEvalRunOperation,
     tier: "direct",

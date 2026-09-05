@@ -51,9 +51,11 @@ import {
 import {
   caseIntentSchema,
   caseIntentUpdateSchema,
+  EVAL_VERDICT_POLICY_VERSION,
   evalStageAnalyticsSchema,
   evalSuiteFileCaseImportSchema,
   IMPORT_MAPPING_STATUSES,
+  isEvalVerdictPolicyV2,
   opaqueIdSchema,
 } from "@mcpjam/sdk/contract";
 import type { EvalStageAnalyticsV1 } from "@mcpjam/sdk/contract";
@@ -571,7 +573,10 @@ const syncFileOwnedSuiteSchema = z
         passThreshold: z.number().min(0).max(1),
         validity: z
           .object({
-            minEligibleTrials: z.number().int().min(0).optional(),
+            // `min(1)`, like the SDK contract and the backend validator: a floor
+            // of zero eligible trials is not a validity rule, and the backend
+            // refuses it after the file has already been accepted here.
+            minEligibleTrials: z.number().int().min(1).optional(),
             minCompletionRate: z.number().min(0).max(1).optional(),
             maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
           })
@@ -1823,6 +1828,9 @@ function toCaseDto(testCase: CaseDoc) {
         }
       : {}),
     ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
+    ...(testCase.kind === "capability" || testCase.kind === "regression"
+      ? { kind: testCase.kind }
+      : {}),
     ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
@@ -1913,6 +1921,21 @@ function toSuiteDetailDto(
           typeof goal?.threshold === "number"
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
+        // The suite's own criteria, so a caller can read back what it wrote.
+        // `null` for a suite with none — distinct from an empty list, which the
+        // write side refuses precisely because "asks nothing" is not "absent".
+        rubric: Array.isArray(suite.judgeRubric?.criteria)
+          ? {
+              criteria: suite.judgeRubric.criteria.map((criterion: any) => ({
+                id: String(criterion.id),
+                label: String(criterion.label),
+                ...(typeof criterion.description === "string"
+                  ? { description: criterion.description }
+                  : {}),
+                ...(criterion.required === true ? { required: true } : {}),
+              })),
+            }
+          : null,
       },
       // The v2 verdict policy this suite's runs are decided under, with the
       // defaults a case inherits. ABSENT for a legacy suite — its runs are
@@ -1920,6 +1943,17 @@ function toSuiteDetailDto(
       // `max(case.iterations, minimumIterations)`, which is a different
       // resolver and not expressible here.
       ...toSuiteVerdictPolicyDto(suite),
+      // WHICH policy decides this suite's runs, as one word.
+      //
+      // The fields above already say it by their presence, but "absent means
+      // legacy" is a rule every caller has to know and half of them will not:
+      // a legacy suite and a v2 suite whose defaults failed validation project
+      // the same missing `verdictPolicyVersion`. Naming it removes the
+      // inference, and it is what tells a caller whether to send
+      // `minimumAccuracy` or `passThreshold` — the two are refused together.
+      policy: isEvalVerdictPolicyV2(suite.verdictPolicyVersion)
+        ? ("v2" as const)
+        : ("legacy" as const),
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -1930,7 +1964,30 @@ function toSuiteDetailDto(
       environmentId: suite.schedule?.environmentId
         ? String(suite.schedule.environmentId)
         : null,
+      // A schedule is not a boolean. It runs AS somebody, it pauses itself on
+      // quota, on lost authorization and on repeated failure, and it has a next
+      // due time — none of which `enabled: true` can express. A caller reading
+      // only `enabled` on a suite whose schedule paused itself a week ago
+      // reports a healthy automation that has not run since.
+      state:
+        typeof suite.schedule?.state === "string" ? suite.schedule.state : null,
+      createdBy: suite.schedule?.createdByUserId
+        ? String(suite.schedule.createdByUserId)
+        : null,
+      nextDueAt:
+        typeof suite.scheduleNextDueAt === "number"
+          ? suite.scheduleNextDueAt
+          : null,
+      consecutiveFailures:
+        typeof suite.schedule?.consecutiveFailures === "number"
+          ? suite.schedule.consecutiveFailures
+          : 0,
     },
+    // The suite's revision number, or `null` on a deployment that does not
+    // record revisions yet. Send it back as `expectedRevisionNumber` on a
+    // PATCH to make that edit a compare-and-set.
+    revisionNumber:
+      typeof suite.revisionNumber === "number" ? suite.revisionNumber : null,
     createdAt: suite.createdAt ?? null,
     updatedAt: suite.updatedAt ?? null,
   };
@@ -2088,6 +2145,12 @@ const publicCaseBodyShape = {
    * `createCaseSchema` narrows this to the stored (string-only) form below.
    */
   intent: caseIntentUpdateSchema.optional(),
+  /**
+   * Authored case kind (capability | regression). Same three-way protocol as
+   * `intent`: omitted preserves, `null` clears, a literal sets. Metadata plus
+   * an authoring default — nothing in the runner or verdict reads it.
+   */
+  kind: z.enum(["capability", "regression"]).nullable().optional(),
   models: z
     .array(
       z.object({
@@ -2140,6 +2203,8 @@ const createCaseSchema = z.strictObject({
   id: opaqueIdSchema.optional(),
   // A new case has nothing to clear: stored intent is a string or absent.
   intent: caseIntentSchema.optional(),
+  // Likewise for kind: `null` on create has nothing to clear.
+  kind: z.enum(["capability", "regression"]).optional(),
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
 });
@@ -2254,10 +2319,92 @@ export const updateSuiteSchema = z.strictObject({
           // `enabled` forever and never grade a run.
           autoRun: z.boolean().optional(),
           threshold: z.number().min(0).max(1).optional(),
+          // The suite's own grading criteria, handed to the judge alongside
+          // each case's expected output. `null` CLEARS them; an empty array is
+          // refused because a rubric that asks nothing is not the absence of
+          // one — it still changes what the judge was asked. The limits mirror
+          // the platform's own so a rejection arrives before the write rather
+          // than taking the settings beside it down with it.
+          rubric: z
+            .union([
+              z.object({
+                criteria: z
+                  .array(
+                    z.object({
+                      id: z
+                        .string()
+                        .regex(
+                          /^[A-Za-z0-9_-]{1,64}$/,
+                          "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    }),
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional(),
         })
         .optional(),
+      // ── The v2 verdict policy ────────────────────────────────────────────
+      //
+      // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
+      // above, and `evalSuiteFileValiditySchema` in the contract), because they
+      // describe the same stored object. A caller that read a suite file and a
+      // caller that read this API must be able to send each other's values.
+      //
+      // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
+      // the legacy `minimumAccuracy: 80` is the same number in the other unit
+      // — which is exactly why the two cannot be sent together (see the
+      // refinement below). Nothing on this path divides by 100.
+      repetitions: z.number().int().min(1).max(100).optional(),
+      passThreshold: z.number().min(0).max(1).optional(),
+      validity: z
+        .object({
+          minEligibleTrials: z.number().int().min(1).optional(),
+          minCompletionRate: z.number().min(0).max(1).optional(),
+          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+        })
+        .strict()
+        .optional(),
+    })
+    .superRefine((settings, ctx) => {
+      // The two policies are alternatives, not layers. A body carrying both a
+      // percent and a fraction is a caller who believes one of them will be
+      // ignored, and whichever one we picked would be wrong for half of them.
+      const v2Fields = [
+        settings.repetitions,
+        settings.passThreshold,
+        settings.validity,
+      ];
+      if (
+        settings.minimumAccuracy !== undefined &&
+        v2Fields.some((value) => value !== undefined)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["minimumAccuracy"],
+          message:
+            "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+        });
+      }
     })
     .optional(),
+  /**
+   * The suite revision this edit was composed against.
+   *
+   * Optional, and omitting it means "apply regardless" — the same
+   * last-write-wins this route has always had. Supplying it turns the PATCH
+   * into a compare-and-set: a suite someone else edited in between is refused
+   * with 409 having changed NOTHING, rather than applying half a caller's
+   * intent over a document it no longer describes. Read the current number
+   * from `revisionNumber` on the suite detail.
+   */
+  expectedRevisionNumber: z.number().int().min(0).optional(),
 });
 
 /**
@@ -2356,10 +2503,11 @@ const generateCasesSchema = z
  */
 type CaseMutationBody = Omit<
   z.infer<typeof createCaseSchema>,
-  "import" | "intent"
+  "import" | "intent" | "kind"
 > & {
   import?: z.infer<typeof publicCaseImportSchema> | null;
   intent?: z.infer<typeof caseIntentUpdateSchema>;
+  kind?: "capability" | "regression" | null;
 };
 
 function buildCaseMutationArgs(
@@ -2399,6 +2547,8 @@ function buildCaseMutationArgs(
   // clear; string = set. Never use a truthiness check here: it would collapse
   // the explicit clear into omission before Convex can apply it.
   if (body.intent !== undefined) args.intent = body.intent;
+  // Same definedness rule as intent: `null` must reach Convex as the clear.
+  if (body.kind !== undefined) args.kind = body.kind;
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 
@@ -2548,6 +2698,35 @@ function caseBatchFailureToWebError(
  * 400), not 500s.
  */
 function translateConvexWriteError(error: unknown): WebRouteError {
+  // The revision precondition, before the generic mapping.
+  //
+  // The shared translator maps `code === "CONFLICT"` to a 409, and the suite
+  // precondition does not spell its refusal that way — it throws
+  // `EVAL_SUITE_REVISION_CONFLICT` with the numbers attached. Left to the
+  // generic path it fell through to the 500 fallback, which told a caller who
+  // supplied a correct precondition that the platform had broken rather than
+  // that their draft was stale. Reported here with the CURRENT number, because
+  // "reload and retry" is only actionable if the caller learns what to retry
+  // against.
+  const data = (error as { data?: unknown } | null | undefined)?.data;
+  if (
+    data &&
+    typeof data === "object" &&
+    !Array.isArray(data) &&
+    (data as { code?: unknown }).code === "EVAL_SUITE_REVISION_CONFLICT"
+  ) {
+    const current = (data as { current?: unknown }).current;
+    return new WebRouteError(
+      409,
+      ErrorCode.CONFLICT,
+      typeof current === "number"
+        ? `This suite changed since you loaded it (current revision ${current}).`
+        : "This suite changed since you loaded it.",
+      typeof current === "number"
+        ? { currentRevisionNumber: current }
+        : undefined,
+    );
+  }
   return translateConvexError(error, {
     resource: "Resource",
     // Eval writes span suites, cases, runs and schedules, and Convex collapses
@@ -4677,6 +4856,107 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
   return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
 
+/**
+ * Query for `GET …/eval-suites/{id}/revisions`.
+ *
+ * Coerced because query strings are strings, and `.int()` after coercion is
+ * what rejects `1.5` and `abc` (which coerce to NaN) rather than handing Convex
+ * a non-integer page size. An out-of-range `limit` is a 400 rather than a
+ * silent clamp: a caller who asked for 500 rows and got 100 has no way to know
+ * their page is short because of the cap rather than because the history ended.
+ */
+const suiteRevisionsQuerySchema = z.object({
+  cursor: z.string().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).optional(),
+});
+
+/** One committed settings edit, as the public API reports it. */
+function toSuiteRevisionDto(row: Record<string, any>) {
+  return {
+    id: String(row._id),
+    revisionNumber: row.revisionNumber,
+    source: row.source,
+    createdBy: row.createdBy ? String(row.createdBy) : null,
+    createdByName: row.createdByName ?? null,
+    createdAt: row.createdAt,
+    note: row.note ?? null,
+    changedFields: Array.isArray(row.changedFields)
+      ? row.changedFields.map(String)
+      : [],
+    // Every write in ONE request shares this, so an edit that touched the
+    // settings and the environments reads as one change rather than several.
+    revisionGroupId: row.revisionGroupId ?? null,
+    // CAPPED by the backend: the question is "did runs use this", and the
+    // difference between 100 and 400 does not change the answer while counting
+    // them all would make the list cost grow with the suite's history. The flag
+    // is what stops a caller reading the cap as an exact count.
+    pinnedRunCount:
+      typeof row.pinnedRunCount === "number" ? row.pinnedRunCount : 0,
+    pinnedRunCountCapped: row.pinnedRunCountCapped === true,
+  };
+}
+
+// GET /v1/projects/:projectId/eval-suites/:suiteId/revisions?cursor=&limit=
+//
+// The suite's settings history, newest first: one entry per committed edit,
+// with who made it, which fields moved, the note they left and how many runs
+// were launched against it.
+//
+// NO SNAPSHOTS. A page of whole suite configurations is a large payload for a
+// list nobody reads that way; this answers "what changed and when", and the
+// before/after of one revision is a different question with a different cost.
+evals.get("/projects/:projectId/eval-suites/:suiteId/revisions", async (c) => {
+  const projectId = c.req.param("projectId");
+  const suiteId = c.req.param("suiteId");
+  const rawLimit = c.req.query("limit");
+  const rawCursor = c.req.query("cursor");
+  const query = parseWithSchema(suiteRevisionsQuerySchema, {
+    // An EMPTY query value means "not supplied", not "supplied as empty":
+    // `?limit=` would otherwise coerce to 0 and be refused as out of range
+    // for a request that asked for nothing in particular.
+    ...(rawLimit !== undefined && rawLimit.trim() !== ""
+      ? { limit: rawLimit }
+      : {}),
+    ...(rawCursor !== undefined && rawCursor.trim() !== ""
+      ? { cursor: rawCursor }
+      : {}),
+  });
+  const limit = query.limit ?? 25;
+  const cursor = query.cursor ?? null;
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let page: {
+    page: Array<Record<string, any>>;
+    isDone: boolean;
+    continueCursor: string;
+  };
+  try {
+    // Project scope first, on the SUITE — the revision list is scoped by the
+    // suite id alone, so without this a caller could read another project's
+    // history by guessing an id.
+    const suite: SuiteDoc | null = await convex.query(
+      "testSuites:getTestSuite" as any,
+      { suiteId },
+    );
+    requireProjectMatch(suite, projectId, "Eval suite");
+    page = await convex.query("testSuites:listSuiteRevisions" as any, {
+      suiteId,
+      paginationOpts: { numItems: limit, cursor },
+    });
+  } catch (error) {
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval suite not found");
+    }
+    throw error;
+  }
+
+  return v1PageJson(
+    c,
+    (page.page ?? []).map(toSuiteRevisionDto),
+    page.isDone ? undefined : page.continueCursor,
+  );
+});
+
 // GET /v1/projects/:projectId/eval-suites/:suiteId/stage-analytics
 //     ?from=&to=&runGroupId=&cursor=&limit=
 //
@@ -5124,6 +5404,86 @@ evals.get("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   return v1Resource(c, await readSuiteDetail(token, projectId, suiteId));
 });
 
+/**
+ * Map the public v2 policy fields onto `updateTestSuite` arguments.
+ *
+ * TWO CASES, and conflating them is how a caller loses a field they never
+ * mentioned. `verdictPolicyDefaults` is stored and written WHOLESALE, so:
+ *
+ *   - a LEGACY suite has nothing to merge over. Sending `repetitions` alone
+ *     would materialize a v2 policy with no threshold, which the backend
+ *     refuses (`assertValidV2SuiteDefaults`) — so this route refuses first,
+ *     with a message that names the missing half instead of a platform error
+ *     that names neither. The upgrade is therefore explicit: both fields, or
+ *     no upgrade.
+ *   - a V2 suite merges field-by-field over what is stored, including inside
+ *     `validity`, because PATCH is merge semantics everywhere else on this
+ *     body and a caller adjusting one ceiling did not ask to clear the others.
+ *
+ * `minimumAccuracy` on a v2 suite is refused rather than translated. It is a
+ * percent against a different trial resolver; silently dividing it by 100 into
+ * `passThreshold` would answer a question the caller did not ask.
+ */
+function applyVerdictPolicySettings(
+  suite: SuiteDoc,
+  settings: NonNullable<z.infer<typeof updateSuiteSchema>["settings"]>,
+  updateArgs: Record<string, unknown>,
+): void {
+  const isV2 = isEvalVerdictPolicyV2(suite.verdictPolicyVersion);
+  if (settings.minimumAccuracy !== undefined && isV2) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      "This suite is on verdict policy v2; send settings.passThreshold (a fraction) instead of settings.minimumAccuracy.",
+    );
+  }
+  const touchesPolicy =
+    settings.repetitions !== undefined ||
+    settings.passThreshold !== undefined ||
+    settings.validity !== undefined;
+  if (!touchesPolicy) return;
+
+  if (!isV2) {
+    if (
+      settings.repetitions === undefined ||
+      settings.passThreshold === undefined
+    ) {
+      throw new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        "Upgrading to verdict policy v2 requires both settings.repetitions and settings.passThreshold.",
+      );
+    }
+    updateArgs.verdictPolicyVersion = EVAL_VERDICT_POLICY_VERSION;
+    updateArgs.verdictPolicyDefaults = {
+      repetitions: settings.repetitions,
+      passThreshold: settings.passThreshold,
+      ...(settings.validity ? { validity: settings.validity } : {}),
+    };
+    return;
+  }
+
+  const stored = (suite.verdictPolicyDefaults ?? {}) as {
+    repetitions?: number;
+    passThreshold?: number;
+    validity?: Record<string, number>;
+  };
+  const validity = {
+    ...(stored.validity ?? {}),
+    ...(settings.validity ?? {}),
+  };
+  updateArgs.verdictPolicyDefaults = {
+    ...stored,
+    ...(settings.repetitions !== undefined
+      ? { repetitions: settings.repetitions }
+      : {}),
+    ...(settings.passThreshold !== undefined
+      ? { passThreshold: settings.passThreshold }
+      : {}),
+    ...(Object.keys(validity).length > 0 ? { validity } : {}),
+  };
+}
+
 // PATCH /v1/projects/:projectId/eval-suites/:suiteId — edit suite settings.
 evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   const projectId = c.req.param("projectId");
@@ -5230,16 +5590,45 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
         goalCompletion.threshold = s.judge.threshold;
+      // The RUBRIC is a suite field, not a judge-config one — it is stored
+      // beside `judgeConfig` because it is hashed into every verdict and
+      // editing it retires the suite's calibration. Nested under `judge` on
+      // the wire because that is where a caller looks for it.
+      if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
       updateArgs.judgeConfig = { goalCompletion };
     }
+    applyVerdictPolicySettings(suite!, s, updateArgs);
   }
+
+  // ONE revision group for the whole request.
+  //
+  // This handler applies up to four mutations, and each one records its own
+  // suite revision. Without a shared group id, a single PATCH that edits the
+  // name and the environments reads in the history as two unrelated edits by
+  // the same person a millisecond apart — which is the thing the revision log
+  // exists to stop being ambiguous.
+  const revisionGroupId = randomUUID();
+  const revision = { source: "api" as const, groupId: revisionGroupId };
+
+  // The precondition rides on the FIRST write only. Re-sending it on the
+  // later mutations would compare against a number this request has itself
+  // just advanced, refusing the caller's own edit. `takePrecondition` hands
+  // it out once, to whichever `updateTestSuite` call runs first.
+  let preconditionCarried = body.expectedRevisionNumber === undefined;
+  const takePrecondition = (): { expectedRevisionNumber?: number } => {
+    if (preconditionCarried) return {};
+    preconditionCarried = true;
+    return { expectedRevisionNumber: body.expectedRevisionNumber };
+  };
+
   // Only call updateTestSuite when there's something beyond the suiteId.
   if (Object.keys(updateArgs).length > 1) {
     try {
-      await convexClient.mutation(
-        "testSuites:updateTestSuite" as any,
-        updateArgs,
-      );
+      await convexClient.mutation("testSuites:updateTestSuite" as any, {
+        ...updateArgs,
+        revision,
+        ...takePrecondition(),
+      });
     } catch (error) {
       throw translateConvexWriteError(error);
     }
@@ -5262,10 +5651,33 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           refreshed ?? suite!,
           body.hosts,
         ),
+        revision,
+        ...takePrecondition(),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
     }
+  }
+
+  // A body with no settings field and no hosts never called `updateTestSuite`,
+  // which is the only mutation that accepts the precondition. Without this
+  // check, `{ environmentIds, expectedRevisionNumber: 3 }` against a suite at
+  // revision 5 wrote unconditionally and answered 200 — the one thing the
+  // field promises not to do. Compared here, against the row the request
+  // already read, BEFORE the writes below; the same rule the backend applies
+  // (absent revision reads as 0).
+  if (!preconditionCarried) {
+    const currentRevisionNumber =
+      (suite as { revisionNumber?: number } | null)?.revisionNumber ?? 0;
+    if (currentRevisionNumber !== body.expectedRevisionNumber) {
+      throw new WebRouteError(
+        409,
+        ErrorCode.CONFLICT,
+        `This suite changed since you loaded it (current revision ${currentRevisionNumber}).`,
+        { currentRevisionNumber },
+      );
+    }
+    preconditionCarried = true;
   }
 
   // Execution config edits go through setSuiteConfig (preserves servers).
@@ -5314,6 +5726,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("testSuites:setSuiteEnvironments" as any, {
         suiteId,
         environmentIds: body.environmentIds,
+        revision,
       });
     } catch (error) {
       throw translateConvexWriteError(error);

@@ -104,3 +104,37 @@ export function buildPresetCompareEntries(
 
   return { hosts, subjects };
 }
+
+/**
+ * Move MCPJam's own row out of the leading chips without removing it.
+ *
+ * MCPJam is the emulator doing the comparing, so it should not occupy one of
+ * the inline chip slots reserved for the clients you are actually comparing —
+ * but it stays selectable, on both surfaces.
+ *
+ * Three signals, because no single one covers every case:
+ *
+ * - `preset:mcpjam` — the catalog row. Exact, always available.
+ * - `subjectsByHost[id].hostStyle` — the truth for a live host, but subjects
+ *   are only loaded for SELECTED hosts, so an unselected one has none.
+ * - the host NAME — the fallback that covers exactly that gap. It is the same
+ *   signal `resolveHostLogoByName` already uses to draw the chip's logo, so a
+ *   chip showing the MCPJam mark and a chip being demoted agree by
+ *   construction.
+ *
+ * Stable: everything else keeps its relative order.
+ */
+export function demoteMcpjamHosts<
+  T extends Pick<HostListItem, "hostId"> & { name?: string },
+>(
+  hosts: ReadonlyArray<T>,
+  subjectsByHost: Readonly<Record<string, { hostStyle?: string }>> = {},
+): T[] {
+  const isMcpjam = (host: T) =>
+    host.hostId === `${PRESET_HOST_ID_PREFIX}mcpjam` ||
+    subjectsByHost[host.hostId]?.hostStyle === "mcpjam" ||
+    (host.name !== undefined && /mcpjam/i.test(host.name));
+  const rest = hosts.filter((host) => !isMcpjam(host));
+  if (rest.length === hosts.length) return [...hosts];
+  return [...rest, ...hosts.filter(isMcpjam)];
+}
