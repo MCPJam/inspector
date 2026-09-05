@@ -581,9 +581,11 @@ describe("UserTestingScenarioCreateFlow — create study (Production Redesign)",
         /publish one of your environments, hand them to users, then read what happened in their sessions/i
       )
     ).toBeVisible();
-    expect(screen.getByTestId("user-testing-create-back")).toHaveTextContent(
-      "Acceptance Testing"
-    );
+    const back = screen.getByTestId("user-testing-create-back");
+    expect(back).toHaveTextContent("User Testing");
+    // The chevron the Swarms create flow uses, not an arrow. Asserted because
+    // the whole point of the glyph is that the two flows match.
+    expect(back.querySelector("svg.lucide-chevron-left")).not.toBeNull();
     expect(screen.getByLabelText(/^study name/i)).toBeInTheDocument();
     expect(screen.getByTestId("user-testing-create-save")).toHaveTextContent(
       "Create study"
