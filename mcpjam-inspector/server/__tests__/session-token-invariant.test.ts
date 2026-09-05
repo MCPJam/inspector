@@ -74,7 +74,7 @@ beforeAll(async () => {
   const response = await app.fetch(
     new Request("http://localhost:6274/api/session-token", {
       headers: { Host: "localhost:6274" },
-    })
+    }),
   );
   issuedToken = ((await response.json()) as { token: string }).token;
   // A blank or trivially short token would make every assertion below pass by
@@ -93,7 +93,9 @@ function get(path: string, headers: Record<string, string>, target = app) {
 
 describe("/api/session-token", () => {
   it("serves the token to localhost", async () => {
-    const response = await get("/api/session-token", { Host: "localhost:6274" });
+    const response = await get("/api/session-token", {
+      Host: "localhost:6274",
+    });
     expect(response.status).toBe(200);
     expect(await response.json()).toHaveProperty("token");
   });
@@ -115,7 +117,7 @@ describe("/api/session-token", () => {
         "X-Forwarded-Host": forwarded,
       });
       expect(response.status).toBe(403);
-    }
+    },
   );
 
   it("denies a non-allowlisted public host", async () => {
@@ -126,14 +128,46 @@ describe("/api/session-token", () => {
   });
 });
 
-// NOT tested here: "a tunnel domain wrongly added to MCPJAM_ALLOWED_HOSTS".
-// The allowlist only applies in hosted mode (`isAllowedHost`), and in hosted
-// mode this route returns 410 before reading a header at all — so the
-// misconfiguration is unreachable through the route and an integration test
-// of it would pass for the wrong reason. It IS covered, directly, in
-// `server/utils/__tests__/localhost-check.test.ts` ("SECURITY INVARIANT:
-// denies a tunnel host even when allowlisted"), which is where the decision
-// actually lives.
+// The allowlist (`MCPJAM_ALLOWED_HOSTS`) now applies in self-hosted mode too
+// (BB-118): a self-hosted operator can name their own LAN host so the inspector
+// is reachable over the network. The tunnel veto still runs first, so a tunnel
+// domain wrongly added to the allowlist can never leak the token — covered
+// directly in `server/utils/__tests__/localhost-check.test.ts` ("SECURITY
+// INVARIANT: denies a tunnel host even when allowlisted"), where the decision
+// actually lives. The route-level positive/negative cases are below.
+describe("/api/session-token with MCPJAM_ALLOWED_HOSTS (self-hosted)", () => {
+  it("serves the token to an allowlisted LAN host in self-hosted mode", async () => {
+    const allowlisted = await bootApp("192.168.1.50");
+    const response = await get(
+      "/api/session-token",
+      { Host: "192.168.1.50:6274" },
+      allowlisted,
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toHaveProperty("token");
+  });
+
+  it("still denies a host that isn't in the allowlist", async () => {
+    const allowlisted = await bootApp("192.168.1.50");
+    const response = await get(
+      "/api/session-token",
+      { Host: "192.168.1.99:6274" },
+      allowlisted,
+    );
+    expect(response.status).toBe(403);
+  });
+
+  it("still denies a tunnel host even when its domain is allowlisted", async () => {
+    const misconfigured = await bootApp("*.tunnels.mcpjam.com");
+    const response = await get(
+      "/api/session-token",
+      { Host: "abc123.tunnels.mcpjam.com" },
+      misconfigured,
+    );
+    expect(response.status).toBe(403);
+    expect(JSON.stringify(await response.json())).not.toContain(issuedToken);
+  });
+});
 
 describe("the injected document", () => {
   // In this env the app serves the dev JSON root rather than index.html, so

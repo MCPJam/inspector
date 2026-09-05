@@ -510,7 +510,8 @@ export async function createHonoApp() {
   });
 
   // Session token endpoint (for dev mode where HTML isn't served by this server)
-  // Token is only served to localhost or allowed hosts (in hosted mode)
+  // Token is only served to localhost or hosts in MCPJAM_ALLOWED_HOSTS (honored
+  // in BOTH hosted and self-hosted mode); tunnel hosts are always vetoed.
   app.get("/api/session-token", (c) => {
     if (HOSTED_MODE) {
       return strictModeResponse(c, "/api/session-token");
@@ -529,7 +530,6 @@ export async function createHonoApp() {
         host,
         forwardedHost,
         allowedHosts: ALLOWED_HOSTS,
-        hostedMode: HOSTED_MODE,
         activeTunnelDomains: getActiveTunnelDomains(),
       })
     ) {
@@ -586,7 +586,8 @@ export async function createHonoApp() {
         const indexPath = path.join(root, "index.html");
         let html = readFileSync(indexPath, "utf-8");
 
-        // SECURITY: Only inject token for localhost or allowed hosts (in hosted mode)
+        // SECURITY: Only inject token for localhost or hosts in
+        // MCPJAM_ALLOWED_HOSTS (honored in both hosted and self-hosted mode).
         // This prevents token leakage when bound to 0.0.0.0
         const host = c.req.header("Host");
         const forwardedHost = c.req.header("X-Forwarded-Host");
@@ -601,7 +602,6 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {
@@ -635,7 +635,6 @@ export async function createHonoApp() {
             host,
             forwardedHost,
             allowedHosts: ALLOWED_HOSTS,
-            hostedMode: HOSTED_MODE,
             activeTunnelDomains: getActiveTunnelDomains(),
           })
         ) {
