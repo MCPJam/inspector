@@ -48,16 +48,19 @@ describe("capA11yTree", () => {
     // (a partially-serialized node could not).
     const serialized = jsonOf(result.tree);
     expect(() => JSON.parse(serialized)).not.toThrow();
-    // The marker tells the model how to get what is missing.
-    const markers: string[] = [];
+    // The marker carries the COUNT as a number; the renderer turns it into the
+    // retrieval verb, using the ref the parent was actually given. It used to
+    // bake a sentence in here naming a `<selector for this element>`
+    // placeholder that nobody could type out.
+    const markers: A11yNode[] = [];
     const walk = (node: A11yNode) => {
-      if (node.role === "omitted") markers.push(node.name ?? "");
+      if (node.role === "omitted") markers.push(node);
       for (const child of node.children ?? []) walk(child);
     };
     walk(result.tree!);
     expect(markers.length).toBe(result.omittedSubtrees);
-    expect(markers[0]).toContain('mode:"a11y"');
-    expect(markers[0]).toContain("rootSelector");
+    expect(typeof markers[0].hiddenNodes).toBe("number");
+    expect(markers[0].hiddenNodes as number).toBeGreaterThan(0);
   });
 
   it("omits below maxDepth rather than deepening", () => {
@@ -76,7 +79,7 @@ describe("capA11yTree", () => {
   it("reports the hidden node count so the model knows the scale", () => {
     const big = tree(3, 3);
     const result = capA11yTree(big, { maxNodes: 3, maxDepth: 12 });
-    expect(jsonOf(result.tree)).toMatch(/\d+ node\(s\) under/);
+    expect(jsonOf(result.tree)).toMatch(/"hiddenNodes":\d+/);
   });
 
   it("handles null, empty and childless roots", () => {
