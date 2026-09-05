@@ -141,6 +141,8 @@ Judge results are also accessible outside the app. `mcpjam cloud eval status` re
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+Each Swarm and User Testing session detail also shows a **Checks** block listing every deterministic check that ran against that session — its name, PASS/FAIL verdict, and the evaluator's reason string. The block is separate from the judge section: a check is a rule that held or did not, while the judge is an LLM opinion, and the two are kept visually distinct. The block is hidden for sessions that have no check rows (eval sessions store their verdicts differently and do not show this block).
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
@@ -291,7 +293,7 @@ When two or more host configurations are attached to a suite, a **By case / By h
 - **Full trace** — every turn, every tool call, every token. This is the thing you couldn't see before; spend time here. When a turn ran through a harness (e.g. Claude Code), the trace detail pane shows an **Engine** badge — "Claude Code" for harness turns, "Emulated" for turns that ran through MCPJam's built-in chat engine — so you can tell at a glance which runtime handled each turn. The user-value chain also appears above the transcript in the trace pane, so the answer to "where did this trial stop" is on the same screen as the evidence.
 - **Per-model breakdown** to compare how the same case behaves across models.
 - **Suggested fixes** — after a run completes, a **Suggested fixes** panel ranks tool-quality and workflow issues by impact. Each issue has a **Copy** button that copies a ready-to-use fix prompt (tool description + input schema) for a coding agent; **Copy top N** copies the top issues combined.
-- **Predicate Gate** — when `successPredicates` are configured on a case, an expandable Predicate Gate section in the iteration detail lists each predicate with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no predicates are configured.
+- **Checks** — when checks are configured on a case, an expandable Checks section in the iteration detail lists each check with a PASS/FAIL verdict, a one-line summary, and the evaluator's reason. Hidden when no checks are configured.
 
 #### Comparing two runs
 
