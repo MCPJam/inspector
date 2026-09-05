@@ -23,18 +23,24 @@
   left: max(0px, calc((100% - 1440px) / 2));
 }
 
-.score-site-email-glow {
-  left: max(859px, calc((100% - 1440px) / 2 + 859px));
-}
-
 .score-site-orb {
   will-change: transform;
-  animation: score-orb-drift 16s var(--score-ease-out) infinite alternate;
+}
+
+.score-site-orb--bloom {
+  animation: score-orb-bloom 24.48s ease-in-out infinite;
 }
 
 .score-site-orb--ember {
-  animation-duration: 20s;
-  animation-delay: -6s;
+  animation: score-orb-ember 29.52s ease-in-out infinite;
+}
+
+.score-preview-plane-mark {
+  display: block;
+  height: 100%;
+  width: auto;
+  max-width: none;
+  mix-blend-mode: lighten;
 }
 
 @media (min-width: 1360px) and (min-height: 700px) {
@@ -66,7 +72,57 @@
 
 .score-site-layout--page .score-site-content {
   width: 100%;
-  max-width: 720px;
+  max-width: 1040px;
+}
+
+.score-grade-card {
+  position: relative;
+  overflow: hidden;
+}
+
+.score-grade-card-orb {
+  pointer-events: none;
+  position: absolute;
+  border-radius: 9999px;
+}
+
+.score-grade-card-orb--bloom {
+  right: -83px;
+  bottom: -203px;
+  z-index: 1;
+  height: 280px;
+  width: 280px;
+  background: #ee362f;
+  opacity: 0.16;
+}
+
+.score-grade-card-orb--ember {
+  right: 123px;
+  bottom: -120px;
+  height: 160px;
+  width: 160px;
+  background: #e07856;
+  opacity: 0.12;
+}
+
+.score-ledger-pending {
+  background: repeating-linear-gradient(
+    -45deg,
+    var(--score-border) 0 5px,
+    #1a1918 5px 10px
+  );
+}
+
+.score-copy-enter .score-copy-headline {
+  animation: score-pop 480ms var(--score-ease-out) both;
+}
+
+.score-copy-enter .score-copy-lead {
+  animation: score-pop 480ms var(--score-ease-out) 70ms both;
+}
+
+.score-copy-enter .score-copy-slot {
+  animation: score-pop 480ms var(--score-ease-out) 130ms both;
 }
 
 .score-card--enter .score-card-number {
@@ -82,17 +138,45 @@
   animation: score-bar-fill 640ms var(--score-ease-out) 160ms both;
 }
 
+.score-card--depart .score-card-row {
+  animation: score-row-out 160ms var(--score-ease-sharp) forwards;
+}
+
+.score-card--depart .score-card-row:nth-child(5) {
+  animation-delay: 0ms;
+}
+
+.score-card--depart .score-card-row:nth-child(4) {
+  animation-delay: 30ms;
+}
+
+.score-card--depart .score-card-row:nth-child(3) {
+  animation-delay: 60ms;
+}
+
+.score-card--depart .score-card-row:nth-child(2) {
+  animation-delay: 90ms;
+}
+
+.score-card--depart .score-card-row:nth-child(1) {
+  animation-delay: 120ms;
+}
+
+.score-card--depart .score-card-number {
+  transform-origin: center;
+  animation: score-number-collapse 240ms var(--score-ease-sharp) forwards;
+}
+
+.score-card--depart .score-card-kicker,
+.score-card--depart .score-card-server,
+.score-card--depart .score-card-bar,
+.score-card--depart .score-card-footer {
+  animation: score-fade-out 160ms var(--score-ease-sharp) forwards;
+}
+
 .score-preview-card-fold {
-  animation: score-card-fold 280ms var(--score-ease-sharp) forwards;
-  transform-origin: 70% 40%;
-}
-
-.score-preview-plane--parked {
-  animation: score-plane-settle 520ms var(--score-ease-out) both;
-}
-
-.score-preview-plane--launch {
-  animation: score-plane-launch 440ms var(--score-ease-sharp) 240ms both;
+  transform-origin: 50% 42%;
+  animation: score-card-fold 280ms var(--score-ease-sharp) 240ms forwards;
 }
 
 .score-site :focus-visible {
@@ -100,13 +184,33 @@
   outline-offset: 2px;
 }
 
-@keyframes score-orb-drift {
-  from {
+@keyframes score-orb-bloom {
+  0%,
+  100% {
     transform: translate3d(0, 0, 0);
   }
 
-  to {
-    transform: translate3d(18px, -10px, 0);
+  30% {
+    transform: translate3d(17.6px, -11px, 0);
+  }
+
+  62% {
+    transform: translate3d(-8.8px, -17.6px, 0);
+  }
+}
+
+@keyframes score-orb-ember {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+
+  38% {
+    transform: translate3d(-15.4px, 8.8px, 0);
+  }
+
+  71% {
+    transform: translate3d(11px, -6.6px, 0);
   }
 }
 
@@ -144,45 +248,48 @@
   }
 }
 
+@keyframes score-row-out {
+  to {
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+  }
+}
+
+@keyframes score-number-collapse {
+  to {
+    opacity: 0;
+    transform: scale(0.2);
+  }
+}
+
+@keyframes score-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+
 @keyframes score-card-fold {
   to {
     opacity: 0;
-    transform: scale(0.28) rotate(-12deg);
-  }
-}
-
-@keyframes score-plane-settle {
-  from {
-    opacity: 0;
-    transform: scale(0.92) translate3d(0, 12px, 0);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1) translate3d(0, 0, 0);
-  }
-}
-
-@keyframes score-plane-launch {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.35) rotate(-18deg);
-  }
-
-  to {
-    opacity: 1;
-    transform: translate(42vw, -38vh) scale(1) rotate(12deg);
+    transform: scale(0.22) rotate(-8deg);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .score-site-orb,
+  .score-copy-enter .score-copy-headline,
+  .score-copy-enter .score-copy-lead,
+  .score-copy-enter .score-copy-slot,
   .score-card--enter .score-card-number,
   .score-card--enter .score-card-row,
   .score-card--enter .score-card-bar,
-  .score-preview-card-fold,
-  .score-preview-plane--parked,
-  .score-preview-plane--launch {
+  .score-card--depart .score-card-row,
+  .score-card--depart .score-card-number,
+  .score-card--depart .score-card-kicker,
+  .score-card--depart .score-card-server,
+  .score-card--depart .score-card-bar,
+  .score-card--depart .score-card-footer,
+  .score-preview-card-fold {
     animation: none;
   }
 

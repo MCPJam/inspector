@@ -101,9 +101,9 @@ function stampLessLegacyRun(): StoredScoreRun {
   };
 }
 
-function renderPage() {
+function renderPage(path = "/results/tok_test") {
   return render(
-    <MemoryRouter initialEntries={["/results/tok_test"]}>
+    <MemoryRouter initialEntries={[path]}>
       <Routes>
         <Route path="/results/:runToken" element={<ScoreResultsPage />} />
       </Routes>
@@ -122,7 +122,7 @@ describe("ScoreResultsPage pending profile stamp", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/1 pending \(unscored by this profile\)/).length,
+        screen.getAllByText(/1 not scored in this run/).length,
       ).toBeGreaterThan(0);
     });
 
@@ -138,7 +138,12 @@ describe("ScoreResultsPage pending profile stamp", () => {
     const scoredRow = screen.getByText("Initialize handshake").closest("li");
     expect(scoredRow).not.toHaveTextContent("unscored");
     expect(screen.getByText("mcp.example.com")).toBeInTheDocument();
-    expect(screen.getByText("Overall · run 2023-11-14")).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "example.com Scorecard" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Overall score/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Scanned /)).toBeInTheDocument();
+    expect(screen.getByText(/Protocol 2025-11-25/i)).toBeInTheDocument();
   });
 
   it("renders a stamp-less legacy run unchanged — no pending clause, no unscored badge", async () => {
@@ -147,15 +152,42 @@ describe("ScoreResultsPage pending profile stamp", () => {
 
     await waitFor(() => {
       expect(
-        screen.getAllByText(/1\/2 applicable checks passed, 1 failed/).length,
-      ).toBeGreaterThan(0);
+        screen.getByText(
+          "One suite failed, so this run did not pass. 91 is how much still held.",
+        ),
+      ).toBeInTheDocument();
     });
 
     expect(
-      screen.queryByText(/pending \(unscored by this profile\)/),
+      screen.queryByText(/not scored in this run/),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("unscored")).not.toBeInTheDocument();
     expect(screen.getByText("Wire schema is valid")).toBeInTheDocument();
     expect(screen.getByText("schema mismatch")).toBeInTheDocument();
+  });
+
+  it("renders the local dummy report for /results/preview without fetching", async () => {
+    renderPage("/results/preview");
+
+    await waitFor(() => {
+      expect(screen.getByText("mcp.monday.com")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByRole("heading", { name: "monday.com Scorecard" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        "Assessments across reliability, conformance (protocol, apps, OAuth), and security.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText("84")).toBeInTheDocument();
+    expect(screen.getByText(/Overall score/i)).toBeInTheDocument();
+    expect(screen.getByText(/^Scanned /)).toBeInTheDocument();
+    expect(screen.getByText(/Protocol 2025-11-25/i)).toBeInTheDocument();
+    expect(screen.getByText("Query Board")).toBeInTheDocument();
+    expect(screen.getByText("Query Board").closest("details")).not.toHaveAttribute(
+      "open",
+    );
+    expect(mockFetchScoreRun).not.toHaveBeenCalled();
   });
 });

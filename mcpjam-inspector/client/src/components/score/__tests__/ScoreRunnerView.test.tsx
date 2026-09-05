@@ -21,8 +21,6 @@ function renderView(
     formDisabled: false,
     appReadyMessage: null,
     resultUrl: null,
-    copied: false,
-    onCopy: vi.fn(),
     showAuthorize: false,
     onAuthorize: vi.fn(),
     authorizeBusy: false,
@@ -45,6 +43,7 @@ describe("ScoreRunnerView", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Featured scores")).toBeInTheDocument();
     expect(screen.getByText("mcp.monday.com")).toBeInTheDocument();
+    expect(screen.getByText("https://demo.mcpjam.com/mcp")).toBeInTheDocument();
     expect(screen.getByText("https://mcp.linear.app/mcp")).toBeInTheDocument();
     expect(screen.getByText(/we email a scorecard/i)).toBeInTheDocument();
     expect(
@@ -52,7 +51,7 @@ describe("ScoreRunnerView", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Reliability")).toBeInTheDocument();
     expect(
-      screen.getByText("113 checks. 63 passed, 8 failed."),
+      screen.getByText("113 checks. 63 passed, 8 failed, 27 not applicable."),
     ).toBeInTheDocument();
   });
 
@@ -86,7 +85,7 @@ describe("ScoreRunnerView", () => {
     expect(
       screen.getByRole("button", { name: "Email the scorecard" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Featured scores")).toBeInTheDocument();
+    expect(screen.queryByText("Featured scores")).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: "Use https://mcp.linear.app/mcp",
@@ -127,6 +126,12 @@ describe("ScoreRunnerView", () => {
       formDisabled: true,
       urlInput: "https://mcp.acme.com/mcp",
     });
+    expect(
+      screen.getByRole("heading", { name: "Scanning your MCP server" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Preparing your results shortly."),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Preparing…" })).toBeDisabled();
     expect(screen.getByLabelText("MCP server URL")).toBeDisabled();
     expect(screen.getByRole("status")).toHaveTextContent("Preparing…");
@@ -164,49 +169,37 @@ describe("ScoreRunnerView", () => {
     expect(screen.queryByText("Reliability")).not.toBeInTheDocument();
   });
 
-  it("shows the ready-state private link", () => {
+  it("shows the ready-state actions", () => {
     renderView({
       phase: "done",
       resultUrl: "https://score.mcpjam.com/results/tok_1",
     });
     expect(
-      screen.getByRole("heading", { name: "Your scorecard is ready." }),
+      screen.getByRole("heading", { name: "Your scorecard is on its way." }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Private result link")).toHaveValue(
+    expect(
+      screen.getByText(
+        "Find it in your inbox, or open the hosted report in the browser.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "View in browser" })).toHaveAttribute(
+      "href",
       "https://score.mcpjam.com/results/tok_1",
     );
+    expect(screen.getByRole("link", { name: "View in browser" })).toHaveAttribute(
+      "target",
+      "_blank",
+    );
+    expect(screen.getByRole("link", { name: "View in browser" })).toHaveAttribute(
+      "rel",
+      "noopener noreferrer",
+    );
     expect(
-      screen.getByRole("button", { name: "Copy result link" }),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("link", { name: "Debug these failures in MCPJam" }),
+      screen.getByRole("link", { name: "Debug in MCPJam" }),
     ).toHaveAttribute("href", "https://app.mcpjam.com/servers");
     expect(screen.queryByText("84")).not.toBeInTheDocument();
-    expect(screen.getByTestId("score-preview-plane")).toBeInTheDocument();
+    expect(screen.queryByTestId("score-preview-plane")).not.toBeInTheDocument();
     expect(screen.queryByText("Reliability")).not.toBeInTheDocument();
-  });
-
-  it("reports a successful copy", () => {
-    renderView({
-      phase: "done",
-      resultUrl: "https://score.mcpjam.com/results/tok_1",
-      copied: true,
-    });
-    expect(
-      screen.getByRole("button", { name: "Copied result link" }),
-    ).toBeInTheDocument();
-  });
-
-  it("invokes copy from the ready state", async () => {
-    const user = userEvent.setup();
-    const onCopy = vi.fn();
-    renderView({
-      phase: "done",
-      resultUrl: "https://score.mcpjam.com/results/tok_1",
-      onCopy,
-    });
-    await user.click(screen.getByRole("button", { name: "Copy result link" }));
-    expect(onCopy).toHaveBeenCalledOnce();
   });
 
   it("shows a copy-failure alert on the ready state", () => {

@@ -1,3 +1,5 @@
+import { ScoreServerMark } from "./score-server-mark";
+
 export type ScoreCardRow = {
   label: string;
   score: string;
@@ -19,6 +21,7 @@ export function ScoreCard({
   footer,
   compact = false,
   animated = true,
+  departing = false,
 }: {
   kicker: string;
   server: string;
@@ -28,22 +31,35 @@ export function ScoreCard({
   footer: string;
   compact?: boolean;
   animated?: boolean;
+  departing?: boolean;
 }) {
+  const motionClass = departing
+    ? "score-card--depart"
+    : animated
+      ? "score-card--enter"
+      : "";
+
   return (
     <div
-      className={`score-card flex w-full flex-col gap-4 rounded-md border border-[var(--score-border)] bg-[var(--score-card)] p-6 ${
-        animated ? "score-card--enter" : ""
-      }`}
+      className={`score-card flex w-full flex-col gap-4 rounded-md border border-[var(--score-border)] bg-[var(--score-card)] p-6 ${motionClass}`}
     >
-      <div className="font-[family-name:var(--font-score-sans)] text-[11px] font-medium uppercase leading-[14px] tracking-[0.12em] text-[var(--score-primary)]">
+      <div className="score-card-kicker font-[family-name:var(--font-score-sans)] text-[11px] font-medium uppercase leading-[14px] tracking-[0.12em] text-[var(--score-primary)]">
         {kicker}
       </div>
-      <div className="flex items-baseline justify-between">
-        <div className="font-[family-name:var(--font-score-mono)] text-[13px] leading-[18px] text-[var(--score-muted)]">
-          {server}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-end gap-2">
+          <div className="score-card-number font-[family-name:var(--font-score-display)] text-[64px] font-extrabold leading-none tracking-[-0.04em] text-[var(--score-fg)]">
+            {score}
+          </div>
+          <div className="mb-1.5 font-[family-name:var(--font-score-display)] text-[20px] font-extrabold leading-none text-[var(--score-muted)]">
+            /100
+          </div>
         </div>
-        <div className="score-card-number font-[family-name:var(--font-score-display)] text-[64px] font-extrabold leading-16 tracking-[-0.04em] text-[var(--score-primary)]">
-          {score}
+        <div className="score-card-server flex min-w-0 items-center gap-2.5">
+          <ScoreServerMark host={server} />
+          <div className="truncate text-sm font-semibold leading-5 text-[var(--score-fg)]">
+            {server}
+          </div>
         </div>
       </div>
       {!compact && (
@@ -63,9 +79,11 @@ export function ScoreCard({
                 </div>
                 <div
                   className={`w-[88px] shrink-0 text-[11px] leading-4 tracking-[0.08em] ${
-                    row.emphasize
-                      ? "text-[var(--score-primary)]"
-                      : "text-[var(--score-muted)]"
+                    row.status === "PASSED"
+                      ? "text-[#3D8A5A]"
+                      : row.emphasize
+                        ? "text-[var(--score-primary)]"
+                        : "text-[var(--score-muted)]"
                   }`}
                 >
                   {row.status}
@@ -84,7 +102,9 @@ export function ScoreCard({
           </div>
         </>
       )}
-      <div className="text-xs leading-4 text-[var(--score-muted)]">{footer}</div>
+      <div className="score-card-footer text-xs leading-4 text-[var(--score-muted)]">
+        {footer}
+      </div>
     </div>
   );
 }

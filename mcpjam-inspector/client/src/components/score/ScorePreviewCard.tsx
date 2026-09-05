@@ -32,31 +32,125 @@ const PREVIEW_ROWS = SCORE_PREVIEW_DIMENSIONS.map((label, index) => ({
   emphasize: PREVIEW_STATUSES[index] !== "PASSED",
 }));
 
-export type ScorePreviewStage = "card" | "plane";
+export type ScorePreviewStage = "card" | "gone";
+
+const COLLAPSE_MS = 240;
+const FOLD_MS = 280;
+const ANTICIPATE_MS = 120;
+const LAUNCH_MS = 700;
+const DEPART_MS = COLLAPSE_MS + FOLD_MS + ANTICIPATE_MS + LAUNCH_MS;
+
+const EASE_OUT = "cubic-bezier(0.16, 1, 0.3, 1)";
+const POWER2_IN = "cubic-bezier(0.55, 0.06, 0.68, 0.19)";
+
+function prefersReducedMotion(): boolean {
+  return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
 
 function usePreviewVisual(stage: ScorePreviewStage) {
-  const [visual, setVisual] = useState<ScorePreviewStage>(stage);
-  const [departing, setDeparting] = useState(false);
+  const [visual, setVisual] = useState<ScorePreviewStage | "departing">(stage);
   const previous = useRef(stage);
 
   useEffect(() => {
-    if (previous.current === "card" && stage === "plane") {
-      setDeparting(true);
+    if (previous.current === "card" && stage === "gone") {
+      if (prefersReducedMotion()) {
+        previous.current = stage;
+        setVisual("gone");
+        return;
+      }
+      setVisual("departing");
       const timer = window.setTimeout(() => {
-        setDeparting(false);
-        setVisual("plane");
-      }, 720);
+        setVisual("gone");
+      }, DEPART_MS);
       previous.current = stage;
       return () => window.clearTimeout(timer);
     }
 
     previous.current = stage;
     setVisual(stage);
-    setDeparting(false);
   }, [stage]);
 
-  if (departing) return "departing" as const;
   return visual;
+}
+
+async function playSendOff(
+  plane: HTMLElement,
+  signal: AbortSignal,
+): Promise<void> {
+  if (typeof plane.animate !== "function") return;
+
+  const run = (
+    keyframes: Keyframe[],
+    options: KeyframeAnimationOptions,
+  ): Promise<void> => {
+    const animation = plane.animate(keyframes, { ...options, fill: "forwards" });
+    const abort = () => animation.cancel();
+    signal.addEventListener("abort", abort, { once: true });
+    return animation.finished.then(() => undefined).catch(() => undefined);
+  };
+
+  await run(
+    [
+      {
+        opacity: 0,
+        transform: "translate(-50%, -50%) scale(0.22) rotate(-10deg)",
+      },
+      {
+        opacity: 1,
+        transform: "translate(-50%, -50%) scale(1) rotate(0deg)",
+      },
+    ],
+    { delay: COLLAPSE_MS, duration: FOLD_MS, easing: EASE_OUT },
+  );
+  if (signal.aborted) return;
+
+  await run(
+    [
+      { transform: "translate(-50%, -50%) scale(1) rotate(0deg)" },
+      {
+        transform:
+          "translate(calc(-50% - 16px), calc(-50% + 12px)) scale(0.94) rotate(-12deg)",
+      },
+    ],
+    { duration: ANTICIPATE_MS, easing: EASE_OUT },
+  );
+  if (signal.aborted) return;
+
+  await run(
+    [
+      {
+        offset: 0,
+        opacity: 1,
+        transform:
+          "translate(calc(-50% - 16px), calc(-50% + 12px)) scale(0.94) rotate(-12deg)",
+      },
+      {
+        offset: 0.28,
+        opacity: 1,
+        transform:
+          "translate(calc(-50% + 6vw), calc(-50% - 16vh)) scale(0.88) rotate(4deg)",
+      },
+      {
+        offset: 0.58,
+        opacity: 1,
+        transform:
+          "translate(calc(-50% + 20vw), calc(-50% - 30vh)) scale(0.78) rotate(18deg)",
+      },
+      {
+        offset: 0.82,
+        opacity: 1,
+        transform:
+          "translate(calc(-50% + 38vw), calc(-50% - 36vh)) scale(0.68) rotate(28deg)",
+      },
+      {
+        offset: 1,
+        opacity: 0,
+        transform:
+          "translate(calc(-50% + 54vw), calc(-50% - 40vh)) scale(0.58) rotate(34deg)",
+      },
+    ],
+    { duration: LAUNCH_MS, easing: POWER2_IN },
+  );
 }
 
 export function ScorePreviewCard({
@@ -67,7 +161,15 @@ export function ScorePreviewCard({
   stage?: ScorePreviewStage;
 }) {
   const visual = usePreviewVisual(stage);
+  const planeRef = useRef<HTMLDivElement>(null);
   const showCard = visual === "card" || visual === "departing";
+
+  useEffect(() => {
+    if (visual !== "departing" || !planeRef.current) return;
+    const controller = new AbortController();
+    void playSendOff(planeRef.current, controller.signal);
+    return () => controller.abort();
+  }, [visual]);
 
   return (
     <aside
@@ -82,30 +184,24 @@ export function ScorePreviewCard({
           }
         >
           <ScoreCard
-            kicker="Overall · run 2026-08-26"
+            kicker="Overall score"
             server="mcp.monday.com"
             score="84"
             rows={PREVIEW_ROWS}
             segments={PREVIEW_BAR_SEGMENTS}
-            footer="113 checks. 63 passed, 8 failed."
+            footer="113 checks. 63 passed, 8 failed, 27 not applicable."
             compact={compact}
+            departing={visual === "departing"}
           />
         </div>
       )}
       {visual === "departing" && (
         <div
+          ref={planeRef}
           data-testid="score-preview-plane"
-          className="score-preview-plane score-preview-plane--launch pointer-events-none absolute left-1/2 top-1/2 h-[220px] w-[220px]"
+          className="score-preview-plane pointer-events-none absolute left-1/2 top-1/2 h-[70%] opacity-0"
         >
-          <ScorePlane className="h-full w-full" />
-        </div>
-      )}
-      {visual === "plane" && (
-        <div
-          data-testid="score-preview-plane"
-          className="score-preview-plane score-preview-plane--parked flex h-[405px] items-center justify-center"
-        >
-          <ScorePlane className="h-[220px] w-[220px]" />
+          <ScorePlane className="h-full w-auto" />
         </div>
       )}
     </aside>
