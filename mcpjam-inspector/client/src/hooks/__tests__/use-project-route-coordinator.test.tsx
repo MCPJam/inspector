@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter } from "react-router";
 import type { ReactNode } from "react";
 import { useProjectRouteCoordinator } from "../use-project-route-coordinator";
+import { track } from "@/lib/analytics";
 
 vi.mock("@/lib/analytics", () => ({ track: vi.fn() }));
 
@@ -57,7 +58,7 @@ describe("useProjectRouteCoordinator", () => {
       () => useProjectRouteCoordinator(inputFor()),
       {
         wrapper: wrapperFor("/settings"),
-      }
+      },
     );
     expect(result.current).toEqual({ status: "unscoped" });
   });
@@ -67,7 +68,7 @@ describe("useProjectRouteCoordinator", () => {
       () => useProjectRouteCoordinator(inputFor()),
       {
         wrapper: wrapperFor(`/p/${A}/servers`),
-      }
+      },
     );
     expect(result.current).toEqual({ status: "ready", projectId: A });
   });
@@ -76,12 +77,12 @@ describe("useProjectRouteCoordinator", () => {
     const switchProject = vi.fn().mockResolvedValue(undefined);
     const { result } = renderHook(
       () => useProjectRouteCoordinator(inputFor({ switchProject })),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     expect(result.current.status).toBe("resolving");
     await waitFor(
       () => expect(switchProject).toHaveBeenCalledWith(B),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
   });
 
@@ -97,7 +98,7 @@ describe("useProjectRouteCoordinator", () => {
     rerender();
     await waitFor(
       () => expect(switchProject).toHaveBeenCalledTimes(1),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
   });
 
@@ -116,9 +117,9 @@ describe("useProjectRouteCoordinator", () => {
             switchProject: async (id: string) => {
               calls.push(id);
             },
-          })
+          }),
         ),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     for (let i = 0; i < 5; i += 1) rerender();
     await waitFor(() => expect(calls).toEqual([B]), RESOLUTION_TIMEOUT);
@@ -139,13 +140,13 @@ describe("useProjectRouteCoordinator", () => {
             ],
             setActiveOrganizationId,
             switchProject,
-          })
+          }),
         ),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(
       () => expect(setActiveOrganizationId).toHaveBeenCalledWith("org_b"),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
     // The project switch waits for the organization-filtered list to catch up.
     expect(switchProject).not.toHaveBeenCalled();
@@ -160,25 +161,72 @@ describe("useProjectRouteCoordinator", () => {
             projects: { [A]: {} },
             allProjects: [{ _id: A, organizationId: "org_a" }],
             switchProject,
-          })
+          }),
         ),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     expect(result.current).toEqual({
       status: "inaccessible",
       requestedProjectId: B,
+      reason: "not-a-member",
     });
     expect(switchProject).not.toHaveBeenCalled();
+  });
+
+  it("does not report an inaccessible event for a confirmed stale sign-in return", () => {
+    renderHook(
+      () =>
+        useProjectRouteCoordinator(
+          inputFor({
+            projects: { [A]: {} },
+            allProjects: [{ _id: A, organizationId: "org_a" }],
+            suppressInaccessibleTelemetryFor: B,
+          }),
+        ),
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
+    );
+
+    expect(vi.mocked(track)).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("records when an inaccessible route unexpectedly becomes ready", async () => {
+    let input = inputFor({
+      projects: { [A]: {} },
+      allProjects: [{ _id: A, organizationId: "org_a" }],
+    });
+    const { rerender } = renderHook(() => useProjectRouteCoordinator(input), {
+      wrapper: wrapperFor(`/p/${B}/servers`),
+    });
+    await waitFor(() =>
+      expect(vi.mocked(track)).toHaveBeenCalledWith(
+        "project_route_inaccessible",
+        expect.objectContaining({ reason: "not-a-member" }),
+      ),
+    );
+
+    input = inputFor({ activeProjectId: B });
+    rerender();
+
+    await waitFor(() =>
+      expect(vi.mocked(track)).toHaveBeenCalledWith("project_route_recovered", {
+        location: "project-route",
+        cause: "late-ready",
+      }),
+    );
   });
 
   it("answers a malformed project id without waiting", () => {
     const { result } = renderHook(
       () => useProjectRouteCoordinator(inputFor({ isAuthLoading: true })),
-      { wrapper: wrapperFor("/p/none/servers") }
+      { wrapper: wrapperFor("/p/none/servers") },
     );
     expect(result.current).toEqual({
       status: "inaccessible",
       requestedProjectId: "none",
+      reason: "malformed",
     });
   });
 
@@ -194,7 +242,7 @@ describe("useProjectRouteCoordinator", () => {
         window.history.replaceState({}, "", pathname);
         return useProjectRouteCoordinator(inputFor({ switchProject }));
       },
-      { initialProps: { pathname: path } }
+      { initialProps: { pathname: path } },
     );
     expect(result.current).toEqual({ status: "ready", projectId: A });
 
@@ -208,7 +256,7 @@ describe("useProjectRouteCoordinator", () => {
     rerender({ pathname: path });
     await waitFor(
       () => expect(switchProject).toHaveBeenCalledWith(B),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
     expect(result.current.status).toBe("resolving");
   });
@@ -219,15 +267,15 @@ describe("useProjectRouteCoordinator", () => {
     // make one tab's project decide the other's.
     const tabA = renderHook(
       () => useProjectRouteCoordinator(inputFor({ activeProjectId: A })),
-      { wrapper: wrapperFor(`/p/${A}/servers`) }
+      { wrapper: wrapperFor(`/p/${A}/servers`) },
     );
     const switchProject = vi.fn().mockResolvedValue(undefined);
     const tabB = renderHook(
       () =>
         useProjectRouteCoordinator(
-          inputFor({ activeProjectId: B, switchProject })
+          inputFor({ activeProjectId: B, switchProject }),
         ),
-      { wrapper: wrapperFor(`/p/${B}/evals`) }
+      { wrapper: wrapperFor(`/p/${B}/evals`) },
     );
 
     expect(tabA.result.current).toEqual({ status: "ready", projectId: A });
@@ -244,11 +292,11 @@ describe("useProjectRouteCoordinator", () => {
     const switchProject = vi.fn().mockRejectedValue(new Error("nope"));
     const { result } = renderHook(
       () => useProjectRouteCoordinator(inputFor({ switchProject })),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(
       () => expect(switchProject).toHaveBeenCalled(),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
     expect(result.current.status).toBe("resolving");
   });
@@ -267,7 +315,7 @@ describe("useProjectRouteCoordinator", () => {
     });
     await waitFor(
       () => expect(switchProject).toHaveBeenCalledTimes(2),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
     );
   });
 
@@ -277,16 +325,27 @@ describe("useProjectRouteCoordinator", () => {
     // without waiting out the 15s resolve budget first.
     const switchProject = vi.fn().mockRejectedValue(new Error("persistent"));
     const { result } = renderHook(
-      () => useProjectRouteCoordinator(inputFor({ switchProject })),
-      { wrapper: wrapperFor(`/p/${B}/servers`) }
+      () =>
+        useProjectRouteCoordinator(
+          inputFor({
+            switchProject,
+            suppressInaccessibleTelemetryFor: B,
+          }),
+        ),
+      { wrapper: wrapperFor(`/p/${B}/servers`) },
     );
     await waitFor(
       () =>
         expect(result.current).toEqual({
           status: "inaccessible",
           requestedProjectId: B,
+          reason: "timed-out",
         }),
-      RESOLUTION_TIMEOUT
+      RESOLUTION_TIMEOUT,
+    );
+    expect(vi.mocked(track)).toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.objectContaining({ reason: "timed-out" }),
     );
     // Bounded: the cap, not an unbounded retry loop.
     expect(switchProject.mock.calls.length).toBeLessThanOrEqual(4);
