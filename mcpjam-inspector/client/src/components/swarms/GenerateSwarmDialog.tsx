@@ -379,6 +379,16 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
+                // The dialog opens with a group already seeded and nothing
+                // gates on it, so without a way back the client's own servers
+                // — what the empty label promises — become unreachable.
+                onClearSelection={() =>
+                  setTargetState((prev) => ({
+                    ...prev,
+                    stack: { ...prev.stack, serverAttachmentId: null },
+                    customized: true,
+                  }))
+                }
                 emptyTriggerLabel="Server group · client default"
                 triggerTestId="generate-server-group-picker"
                 inModal

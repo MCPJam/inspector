@@ -18,6 +18,10 @@ const { mockState } = vi.hoisted(() => ({
     servers: undefined as any[] | undefined,
     catalogLoading: false,
     runtime: null as Record<string, { connectionStatus: string }> | null,
+    // Separate from `runtime`: the two providers are independent, and a
+    // surface can sit inside SharedAppState but outside ServerActions. Driving
+    // both from one switch made every `actions` guard unfalsifiable.
+    hasActions: true,
     createSpy: vi.fn(),
     deleteSpy: vi.fn(),
     ensureReady: vi.fn(),
@@ -49,9 +53,9 @@ vi.mock("@/state/app-state-context", () => ({
 
 vi.mock("@/state/server-actions-context", () => ({
   useServerActionsOptional: () =>
-    mockState.runtime === null
-      ? null
-      : { ensureServersReady: mockState.ensureReady },
+    mockState.hasActions
+      ? { ensureServersReady: mockState.ensureReady }
+      : null,
 }));
 
 vi.mock("@/lib/toast", () => ({
@@ -80,6 +84,7 @@ beforeEach(() => {
   mockState.servers = CATALOG;
   mockState.catalogLoading = false;
   mockState.runtime = { alpha: { connectionStatus: "connected" } };
+  mockState.hasActions = true;
   mockState.createSpy = vi.fn().mockResolvedValue({ _id: "att_new" });
   mockState.deleteSpy = vi.fn().mockResolvedValue(undefined);
   mockState.ensureReady = vi.fn().mockResolvedValue({
@@ -279,6 +284,17 @@ describe("ServerPicker — connection state", () => {
     // Grey would read as `disconnected`, which is a claim we cannot make here.
     expect(dot).toHaveClass("bg-transparent");
     expect(dot).toHaveAccessibleName("Connection state unavailable");
+  });
+
+  it("offers no Connect when the actions provider is absent but state is not", async () => {
+    // The reachable half of the old single-switch test: inside SharedAppState,
+    // outside ServerActions. Connect would call a provider that is not there.
+    mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
+    mockState.hasActions = false;
+    open();
+
+    expect(await screen.findByText("alpha")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Connect$/ })).toBeNull();
   });
 
   it("offers no Connect at all when there is no runtime to ask", async () => {
@@ -788,6 +804,52 @@ describe("ServerPicker — a catalog query that never runs", () => {
     open();
 
     expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
+  });
+});
+
+describe("ServerPicker — the popover's own lifecycle", () => {
+  it("holds the popover open while its write is in flight", async () => {
+    // A click away mid-write would unmount the panel under a mutation whose
+    // result still has to land on it.
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    open();
+    fireEvent.click(await serverRow("srv_1"));
+
+    fireEvent.pointerDown(document.body);
+    fireEvent.mouseDown(document.body);
+
+    expect(await serverRow("srv_2")).toBeInTheDocument();
+  });
+
+  it("REOPENS on the tab that holds the current selection", async () => {
+    // Not the initial state — `useState` already seeds that. This is the
+    // second open, after the user browsed away from the selection's tab.
+    mockState.attachments = [
+      {
+        _id: "att_pair",
+        name: "prod pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
+    render(
+      <ServerPicker projectId="p_1" value="att_pair" onChange={vi.fn()} />,
+    );
+
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
+    expect(screen.getByRole("tab", { name: "Servers" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    // Close, then open again.
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+
+    expect(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    ).toHaveAttribute("aria-selected", "true");
   });
 });
 

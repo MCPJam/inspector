@@ -37,12 +37,17 @@ export function serverPickerElements(source: string): string[] {
 }
 
 /**
- * Whether an element turns portalling OFF. `inModal` alone or `inModal={true}`
- * count; `inModal={false}` is the same as absent, and a variable is not
- * something a grep can resolve, so it does not count either.
+ * Whether an element turns portalling OFF. `inModal` alone and `inModal={true}`
+ * count, and so does `inModal={inModal}` — a wrapper forwarding its own prop
+ * has handed the decision to its caller, which is the shape the environment
+ * composer uses and the only reason most pickers are reachable at all.
+ * `inModal={false}` is the same as absent, and any OTHER expression is
+ * something a grep cannot resolve, so it does not get to vouch for the site.
  */
 export function disablesPortal(element: string): boolean {
-  return /\binModal(?:\s*=\s*\{\s*true\s*\})?[\s/>]/.test(element);
+  return /\binModal(?:\s*=\s*\{\s*(?:true|inModal)\s*\})?[\s/>]/.test(
+    element,
+  );
 }
 
 function collectTsx(dir: string, out: string[] = []): string[] {
@@ -108,12 +113,24 @@ describe("what the grep above actually matches", () => {
   });
 
   it("refuses a value it cannot read", () => {
-    // A variable may be false at runtime. The grep cannot tell, so it does
-    // not get to claim the call site is safe.
-    expect(disablesPortal(`<ServerPicker inModal={inModal} />`)).toBe(false);
+    // Anything but the forward: a differently named variable, or an
+    // expression, may be false at runtime and the grep cannot tell.
+    expect(disablesPortal(`<ServerPicker inModal={isNested} />`)).toBe(false);
+    expect(disablesPortal(`<ServerPicker inModal={a && b} />`)).toBe(false);
   });
 
-  it("is not fooled by a similarly named prop", () => {
-    expect(disablesPortal(`<ServerPicker notInModalAtAll />`)).toBe(false);
+  it("counts a wrapper forwarding its own inModal", () => {
+    // `environment-composer.tsx` passes `inModal={inModal}`. Refusing that
+    // left every picker reached through the composer — most of them —
+    // unvouched for by a ratchet whose whole job is to vouch.
+    expect(disablesPortal(`<ServerPicker inModal={inModal} />`)).toBe(true);
+  });
+
+  it("is not fooled by a prop whose name merely ends in it", () => {
+    // Lower case, so the `\b` anchor is what has to reject it. The previous
+    // fixture used `notInModalAtAll`, whose capital I made the regex miss it
+    // for a reason the test was not written to check.
+    expect(disablesPortal(`<ServerPicker xinModal />`)).toBe(false);
+    expect(disablesPortal(`<ServerPicker data-notinModal />`)).toBe(false);
   });
 });

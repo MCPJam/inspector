@@ -145,15 +145,13 @@ describe("ServerPickerPanel — Servers tab", () => {
   });
 
   it("renders no expandable control — the nesting is gone", () => {
-    // BB-142's whole point. The old picker put an accordion inside the
-    // popover; a chevron or an aria-expanded here is a regression.
-    render(<ServerPickerPanel {...panelProps()} />);
-    expect(
-      screen.queryByRole("button", { expanded: false }),
-    ).toBeNull();
-    expect(
-      screen.queryByRole("button", { expanded: true }),
-    ).toBeNull();
+    // BB-142's whole point: the old picker put an accordion inside the
+    // popover. Asserted on the DOM, not through `queryByRole(…, {expanded})` —
+    // that option only matches elements that already carry `aria-expanded`, so
+    // both queries were null for any panel and adding a chevron kept them so.
+    const { container } = render(<ServerPickerPanel {...panelProps()} />);
+    expect(container.querySelector("[aria-expanded]")).toBeNull();
+    expect(container.querySelector("[data-state='closed']")).toBeNull();
   });
 
   it("keeps Create new group off the Servers tab", () => {
