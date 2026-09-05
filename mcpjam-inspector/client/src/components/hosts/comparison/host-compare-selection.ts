@@ -52,7 +52,18 @@ export function reconcileHostCompareSelection(
   hostIds: ReadonlyArray<string>,
   liveHostIds: ReadonlySet<string>,
 ): string[] {
-  return hostIds.filter((id) => liveHostIds.has(id));
+  // Deduplicated as well as filtered. A selection is rendered as one column
+  // per id, so a repeat is a visibly duplicated column. Two sources can
+  // produce one: storage, which is only as clean as whatever wrote it, and
+  // `remapSelection`, which rewrites ids and can therefore collapse two onto
+  // the same host. Guaranteeing it here covers every path — url, stored,
+  // previous and default — instead of trusting each caller.
+  const seen = new Set<string>();
+  return hostIds.filter((id) => {
+    if (!liveHostIds.has(id) || seen.has(id)) return false;
+    seen.add(id);
+    return true;
+  });
 }
 
 /** Toggle one host; always keeps at least `minSelected` ids. */

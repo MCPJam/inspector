@@ -53,10 +53,15 @@ const LOGO_NAME_HINTS: Array<[RegExp, string]> = [
  * The host id a free-text client name points at, or `null` when nothing in the
  * hint table matches.
  *
- * Extracted from {@link resolveHostLogoByName} so callers that need the ID
- * rather than the pixels — deduping a live host against its catalog preset, for
- * instance — read the same table instead of copying the patterns. Ordering
- * matters and is documented on the table itself; a second copy would drift.
+ * Runs the same two passes {@link resolveHostLogoByName} does, in the same
+ * order, for callers that need the ID rather than the pixels — deduping a live
+ * host against its catalog preset, for instance. Sharing the hint table matters
+ * because its ordering is load-bearing (`claude-code` before `claude`) and a
+ * second copy would drift.
+ *
+ * The two functions cannot share a body: a logo has to come from the registry
+ * for a custom style and from static metadata for a built-in, while an ID is
+ * just an ID.
  */
 export function resolveHostStyleByName(name: string): string | null {
   for (const [pattern, hostId] of LOGO_NAME_HINTS) {
@@ -72,7 +77,15 @@ export function resolveHostLogoByName(
   name: string,
   themeMode?: HostThemeMode | null,
 ): string {
-  const hostId = resolveHostStyleByName(name);
-  if (hostId) return getHostLogoSrc(hostId, themeMode);
+  // Deliberately NOT `resolveHostStyleByName` here, even though it runs these
+  // same two passes. The passes resolve to ids from different places and only
+  // one of them is in this module's static metadata: the hint table lists
+  // built-ins, while the exact-name pass also matches CUSTOM registered
+  // styles, whose logos live in the style registry. Routing those through
+  // `getHostLogoSrc` finds nothing and renders the generic MCP mark, so each
+  // pass keeps the lookup that can actually serve it.
+  for (const [pattern, hostId] of LOGO_NAME_HINTS) {
+    if (pattern.test(name)) return getHostLogoSrc(hostId, themeMode);
+  }
   return resolveHostLogoByDisplayName(name, themeMode) ?? UNKNOWN_HOST_LOGO;
 }
