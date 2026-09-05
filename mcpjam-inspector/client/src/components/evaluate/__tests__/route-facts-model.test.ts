@@ -2,7 +2,11 @@
  * Client adapter for route facts: catalog read, iteration mapping, copy.
  */
 import { describe, expect, it } from "vitest";
-import { evalCaseAggregationKey } from "@mcpjam/sdk/contract";
+import {
+  MAX_MISMATCH_TOOLS,
+  evalCaseAggregationKey,
+  type EvalRunRouteFactsCase,
+} from "@mcpjam/sdk/contract";
 
 import type { EvalIteration, EvalSuiteRun } from "../../evals/types";
 import type { EvaluateCaseRow } from "../evaluate-case-row-model";
@@ -108,6 +112,12 @@ describe("readRunToolCatalog", () => {
   it("is notLoaded when the snapshot is absent", () => {
     expect(readRunToolCatalog(run())).toEqual({ state: "notLoaded" });
   });
+
+  it("is loaded, and empty, when the snapshot is present but lists no tools", () => {
+    expect(
+      readRunToolCatalog(run({ toolSnapshot: { servers: [{ tools: [] }] } })),
+    ).toEqual({ state: "loaded", toolNames: [] });
+  });
 });
 
 describe("iterationToRouteTrial", () => {
@@ -212,6 +222,30 @@ describe("copy helpers", () => {
     expect(line).toMatch(/ · 7 other routes$/);
   });
 
+  it("adds the document's folded routes to the count when it says how many", () => {
+    const iterations = Array.from({ length: 5 }, (_, index) =>
+      iteration({
+        _id: `it_${index}`,
+        actualToolCalls: [{ toolName: `tool_${index}`, arguments: {} }],
+      }),
+    );
+    const facts = buildRunRouteFacts(run(), iterations)!.cases[0]!;
+    const other = { trials: 4, passed: 1, failed: 3 };
+    const withCount = {
+      ...facts,
+      routes: {
+        ...facts.routes,
+        otherRoutes: { ...other, distinctPaths: 6 },
+      },
+    } as EvalRunRouteFactsCase;
+    expect(routeLine(withCount)).toMatch(/ · 8 other routes$/);
+    const withoutCount = {
+      ...facts,
+      routes: { ...facts.routes, otherRoutes: other },
+    } as EvalRunRouteFactsCase;
+    expect(routeLine(withoutCount)).toMatch(/ · 2\+ other routes$/);
+  });
+
   it("names only the first tool a case looped on", () => {
     const doc = buildRunRouteFacts(run(), [
       iteration({
@@ -268,9 +302,47 @@ describe("copy helpers", () => {
     expect(mismatchLines(facts, doc!.catalogState)).toEqual([
       "expected `tool_a` not called in 1 of 1",
       "`tool_b` called in 1 of 1 (1 failed)",
-      "`tool_b` called instead of `tool_a` in 1 trials",
+      "`tool_b` called instead of `tool_a` in 1 trial",
       "ended with a question: not measured",
     ]);
+  });
+
+  it("pluralizes a substitution seen more than once, and notes a capped list", () => {
+    const doc = buildRunRouteFacts(
+      run({
+        toolSnapshot: {
+          servers: [{ tools: [{ name: "tool_a" }, { name: "tool_b" }] }],
+        },
+      }),
+      [
+        iteration({
+          actualToolCalls: [{ toolName: "tool_b", arguments: {} }],
+          testCaseSnapshot: {
+            title: "Look up a user",
+            query: "q",
+            provider: "anthropic",
+            model: "claude",
+            expectedToolCalls: [{ toolName: "tool_a", arguments: {} }],
+          },
+        }),
+      ],
+    );
+    const facts = doc!.cases[0]!;
+    if (facts.mismatch.state !== "measured")
+      throw new Error("expected measured");
+    const capped = {
+      ...facts,
+      mismatch: {
+        ...facts.mismatch,
+        substitutions: [{ expected: "tool_a", observed: "tool_b", trials: 2 }],
+        truncated: true as const,
+      },
+    } as EvalRunRouteFactsCase;
+    const lines = mismatchLines(capped, doc!.catalogState);
+    expect(lines).toContain("`tool_b` called instead of `tool_a` in 2 trials");
+    expect(lines).toContain(
+      `showing the ${MAX_MISMATCH_TOOLS} most-seen tools`,
+    );
   });
 
   it("labels a negative no-tool route as expected and omits mismatch copy", () => {

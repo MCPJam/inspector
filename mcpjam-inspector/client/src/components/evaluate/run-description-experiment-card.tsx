@@ -4,7 +4,7 @@
  * Progressive disclosure only. Flag-off callers must not mount this.
  * Never render a number when the report's `interval` is null.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { ChevronRight, Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -102,6 +102,7 @@ export function RunDescriptionExperimentCard({
 }) {
   const [open, setOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const runActionRef = useRef<HTMLButtonElement>(null);
   const report = experiment.report ?? null;
   const header = descriptionExperimentHeader(experiment);
   const plannedTrials = plannedTrialsOf(experiment);
@@ -301,7 +302,14 @@ export function RunDescriptionExperimentCard({
       ) : null}
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <AlertDialogContent>
+        <AlertDialogContent
+          // Radix focuses Cancel by default, so Enter on open would cancel
+          // the launch the reader just asked for. Focus the action instead.
+          onOpenAutoFocus={(event) => {
+            event.preventDefault();
+            runActionRef.current?.focus();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>Run this description experiment?</AlertDialogTitle>
             <AlertDialogDescription>
@@ -319,6 +327,7 @@ export function RunDescriptionExperimentCard({
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction
+              ref={runActionRef}
               onClick={() => {
                 setConfirmOpen(false);
                 onStart();

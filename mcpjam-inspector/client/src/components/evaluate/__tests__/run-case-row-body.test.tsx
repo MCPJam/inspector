@@ -7,7 +7,8 @@
  * recommendation.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import type { EvalRunDecisionDiagnostic } from "@mcpjam/sdk/contract";
 
 import { PASS_WORDS } from "./pass-words";
@@ -324,6 +325,63 @@ describe("RunCaseRowBody", () => {
     expect(
       screen.getByText("Not available for harness runs yet"),
     ).toBeInTheDocument();
+  });
+
+  it("dispatches one proposal for rapid clicks and holds the button until it settles", async () => {
+    const user = userEvent.setup();
+    let resolve!: () => void;
+    const onPropose = vi.fn(
+      () =>
+        new Promise<void>((res) => {
+          resolve = res;
+        }),
+    );
+    render(
+      <RunCaseRowBody
+        row={row()}
+        iterations={ITERATIONS}
+        descriptionExperiment={{
+          catalogToolNames: new Set(["export_to_excalidraw"]),
+          engineSupported: true,
+          onPropose,
+        }}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Propose a description rewrite for `export_to_excalidraw`",
+    });
+    await user.tripleClick(button);
+    expect(onPropose).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    // No harness note: the hold is about the request, not the engine.
+    expect(screen.queryByText("Not available for harness runs yet")).toBeNull();
+
+    await act(async () => {
+      resolve();
+      await Promise.resolve();
+    });
+    expect(button).toBeEnabled();
+  });
+
+  it("holds every propose button while the hook has a request out", () => {
+    render(
+      <RunCaseRowBody
+        row={row()}
+        iterations={ITERATIONS}
+        descriptionExperiment={{
+          catalogToolNames: new Set(["export_to_excalidraw"]),
+          engineSupported: true,
+          onPropose: vi.fn(),
+          requestPending: true,
+        }}
+      />,
+    );
+    const button = screen.getByRole("button", {
+      name: "Propose a description rewrite for `export_to_excalidraw`",
+    });
+    expect(button).toBeDisabled();
+    expect(button).not.toHaveAttribute("title");
+    expect(screen.queryByText("Not available for harness runs yet")).toBeNull();
   });
 
   it("does not offer a propose button when the missing tool is not in the snapshot", () => {

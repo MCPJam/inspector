@@ -66,6 +66,11 @@ const flagEnabled = vi.hoisted(() => ({ current: false }));
 const routeFactsFlag = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
+// `null` keeps the advisory section unmounted; an empty result mounts it
+// with no rows, which is what an ordering assertion needs to be non-vacuous.
+const serverQuality = vi.hoisted(() => ({
+  current: { result: null as unknown },
+}));
 const failureGroups = vi.hoisted(() => ({
   calls: [] as Array<{ enabled?: boolean; suiteId?: string }>,
   current: {
@@ -142,7 +147,7 @@ vi.mock("@/hooks/use-eval-run-route-facts", () => ({
 // this test has no reason to stand up. It is advisory input to the improve
 // prompt, never a source of anything the page claims.
 vi.mock("../../evals/use-server-quality", () => ({
-  useServerQuality: () => ({ result: null }),
+  useServerQuality: () => serverQuality.current,
 }));
 
 /**
@@ -257,6 +262,7 @@ afterEach(() => {
   routeFactsFlag.current = false;
   descriptionExperimentFlag.current = false;
   failureGroupsFlag.current = false;
+  serverQuality.current = { result: null };
   failureGroups.calls = [];
   failureGroups.current = {
     latest: null,
@@ -557,6 +563,7 @@ describe("EvaluateRunContent", () => {
 
   it("renders the description-experiment card above the advisory section when the flag is on", () => {
     descriptionExperimentFlag.current = true;
+    serverQuality.current = { result: {} };
     descriptionExperiment.current = {
       status: "ready",
       experiment: {
@@ -581,13 +588,10 @@ describe("EvaluateRunContent", () => {
     expect(descriptionExperiment.calls.at(-1)?.enabled).toBe(true);
     const card = screen.getByTestId("description-experiment-card");
     expect(card).toBeInTheDocument();
-    const body = screen.getByTestId("evaluate-run-content");
-    const advisory = screen.queryByTestId("run-advisory-section");
-    if (advisory) {
-      expect(
-        body.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_FOLLOWING,
-      ).toBeTruthy();
-    }
+    const advisory = screen.getByTestId("run-advisory-section");
+    expect(
+      card.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("does not query or render failure groups when the flag is off", () => {
@@ -606,6 +610,7 @@ describe("EvaluateRunContent", () => {
 
   it("renders the failure-groups card below the advisory section when the flag is on", () => {
     failureGroupsFlag.current = true;
+    serverQuality.current = { result: {} };
     detailState.current = {
       ...detailState.current,
       status: "ready",
@@ -617,12 +622,10 @@ describe("EvaluateRunContent", () => {
     });
     const card = screen.getByTestId("failure-groups-card");
     expect(card).toBeInTheDocument();
-    const advisory = screen.queryByTestId("run-advisory-section");
-    if (advisory) {
-      expect(
-        card.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_PRECEDING,
-      ).toBeTruthy();
-    }
+    const advisory = screen.getByTestId("run-advisory-section");
+    expect(
+      card.compareDocumentPosition(advisory) & Node.DOCUMENT_POSITION_PRECEDING,
+    ).toBeTruthy();
   });
 
   it("discloses a rewritten description exactly once, through the fallback body", () => {

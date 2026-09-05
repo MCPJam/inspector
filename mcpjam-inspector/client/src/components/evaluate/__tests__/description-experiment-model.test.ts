@@ -4,15 +4,20 @@ import {
   descriptionExperimentHeader,
   evidenceCaveat,
   frozenDifferencesLabel,
+  frozenFieldsLabel,
   intervalBoundPhrase,
   isEmulatedDescriptionExperimentEngine,
 } from "../description-experiment-model";
 import type { EvalDescriptionExperiment } from "@/lib/apis/eval-description-experiment-api";
 
 describe("isEmulatedDescriptionExperimentEngine", () => {
-  it("treats emulated and unrecorded as supported", () => {
-    expect(isEmulatedDescriptionExperimentEngine(undefined)).toBe(true);
+  it("accepts only a recorded emulated engine", () => {
     expect(isEmulatedDescriptionExperimentEngine("emulated")).toBe(true);
+  });
+
+  it("refuses an unrecorded engine — unknown is not emulated", () => {
+    expect(isEmulatedDescriptionExperimentEngine(undefined)).toBe(false);
+    expect(isEmulatedDescriptionExperimentEngine("")).toBe(false);
   });
 
   it("refuses harness engines and mixed", () => {
@@ -84,8 +89,44 @@ describe("frozen arms", () => {
     });
     expect(caveat).toContain("they differed on toolSnapshotHash");
     expect(caveat).toContain("upstream server's state was not verified");
+  });
+
+  it("calls frozen only the fields the report recorded", () => {
+    expect(
+      frozenFieldsLabel({
+        equal: true,
+        model: ["claude"],
+        engine: "emulated",
+      }),
+    ).toBe(" with frozen model and engine; host and catalog not recorded");
+    expect(
+      frozenFieldsLabel({
+        equal: true,
+        model: ["claude"],
+        engine: "emulated",
+        hostConfigId: "host_1",
+        toolSnapshotHash: "snap_1",
+      }),
+    ).toBe(" with frozen model, engine, host, and catalog");
+    expect(frozenFieldsLabel({ equal: true, model: [] })).toBe(
+      "; model, engine, host, and catalog not recorded",
+    );
+  });
+
+  it("does not claim a frozen field the report left out", () => {
+    const partial = evidenceCaveat("reproducible", {
+      equal: true,
+      model: ["claude"],
+      engine: "emulated",
+    });
+    expect(partial).toContain("with frozen model and engine");
+    expect(partial).toContain("host and catalog not recorded");
+    expect(partial).not.toContain("frozen model, engine, host, and catalog");
     expect(evidenceCaveat("reproducible", { equal: true })).toContain(
-      "frozen model, engine, host, and catalog",
+      "model, engine, host, and catalog not recorded",
+    );
+    expect(evidenceCaveat("reproducible")).toContain(
+      "model, engine, host, and catalog not recorded",
     );
   });
 });

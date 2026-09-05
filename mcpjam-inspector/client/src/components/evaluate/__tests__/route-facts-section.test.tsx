@@ -143,7 +143,7 @@ describe("RouteFactsSection", () => {
     expect(screen.getByText("computed here")).toBeInTheDocument();
   });
 
-  it("omits the mismatch expander for a negative test", () => {
+  it("omits the mismatch expander for a negative test but keeps the route lines", () => {
     render(
       <RouteFactsSection
         facts={facts({ mismatch: { state: "excludedNegativeTest" } })}
@@ -151,6 +151,27 @@ describe("RouteFactsSection", () => {
       />,
     );
     expect(screen.queryByText("Expected vs observed")).toBeNull();
-    expect(screen.getByText(/Negative test/)).toBeInTheDocument();
+    expect(screen.queryByText(/counted by tool name/)).toBeNull();
+    const note = screen.getByTestId("route-facts-mismatch-note");
+    expect(note).toHaveTextContent(
+      "Negative test — mismatch facts are not measured.",
+    );
+    expect(note).toHaveTextContent("ended with a question: not measured");
+    expect(screen.queryByText(/No gradeable trials/)).toBeNull();
+  });
+
+  it("says not measured, with no expander and no counting note, when there were no gradeable trials", () => {
+    render(
+      <RouteFactsSection
+        facts={facts({ mismatch: { state: "notMeasured" } })}
+        catalogState="loaded"
+      />,
+    );
+    expect(screen.queryByText("Expected vs observed")).toBeNull();
+    expect(screen.queryByText(/counted by tool name/)).toBeNull();
+    expect(screen.queryByText(/Negative test/)).toBeNull();
+    const note = screen.getByTestId("route-facts-mismatch-note");
+    expect(note).toHaveTextContent("No gradeable trials — not measured.");
+    expect(note).toHaveTextContent("ended with a question: not measured");
   });
 });

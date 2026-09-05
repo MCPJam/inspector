@@ -6,7 +6,10 @@
  * experiment attached to the earlier decision must not paint over the new
  * one. Polls every 5 s while status is non-terminal
  * (`proposing` | `launching` | `running` | `reporting`) and stops at
- * `proposed` | `completed` | `failed` | `cancelled`.
+ * `proposed` | `completed` | `failed` | `cancelled`. A poll that fails for
+ * any reason other than `notFound` keeps the 5 s cadence: the document is
+ * still non-terminal, and one bad read must not leave the card frozen on a
+ * status the server has since moved past.
  *
  * The first read is the collection GET for the source run (latest
  * experiment). After propose / start, polling is GET-by-id. Flag-off
@@ -99,6 +102,10 @@ export function useEvalDescriptionExperiment({
     null,
   );
   const [attempt, setAttempt] = useState(0);
+  // Bumped after a failed poll so the poll effect re-arms. `status` and
+  // `error` are not in that effect's dependencies on purpose — a re-render
+  // for them must not restart a timer that is already counting.
+  const [pollTick, setPollTick] = useState(0);
 
   const requestIdRef = useRef(0);
   const experimentIdRef = useRef<string | null>(null);
@@ -206,6 +213,7 @@ export function useEvalDescriptionExperiment({
           }
           setError(info);
           setStatus("error");
+          setPollTick((tick) => tick + 1);
         }
       })();
     }, DESCRIPTION_EXPERIMENT_POLL_MS);
@@ -214,7 +222,7 @@ export function useEvalDescriptionExperiment({
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [active, experiment, projectId]);
+  }, [active, experiment, projectId, pollTick]);
 
   const propose = useCallback(
     async (input: { toolName: string; caseIds?: string[] }) => {

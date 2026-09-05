@@ -802,7 +802,8 @@ export type EvalSuiteRun = {
       description: string;
       proposalHash: string;
       experimentId: string;
-      originalDescriptionHash: string;
+      /** Absent on rows written before the hash was recorded. */
+      originalDescriptionHash?: string;
     };
   };
   /**

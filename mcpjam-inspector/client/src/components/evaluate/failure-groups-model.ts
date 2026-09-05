@@ -5,6 +5,10 @@
  * links only; no discordant counts. Fold at 12 per stage into SANKEY_OTHER.
  * Unjudged members land on SANKEY_UNLABELED ("Not judged").
  *
+ * Real keys are namespaced with `k:` so a case, route, or group whose own
+ * key spells `__other__` or `__unlabeled__` cannot land on the synthetic
+ * bucket. Labels are untouched; only the node key carries the prefix.
+ *
  * The Convex DTO is typed here because `evalFailureGroups` is not generated
  * in this repo — it lives in the backend and may not be deployed yet.
  */
@@ -99,6 +103,13 @@ export type FlatReason = {
 
 type Counted = { label: string; count: number };
 
+/** Prefix on every real node key; the two sentinels are the only bare keys. */
+export const FAILURE_REAL_KEY_PREFIX = "k:";
+
+function realKey(raw: string): string {
+  return `${FAILURE_REAL_KEY_PREFIX}${raw}`;
+}
+
 function routeLabel(pathKey: string): string {
   return pathKey === NO_TOOL_PATH_KEY ? CALLED_NOTHING_LABEL : pathKey;
 }
@@ -112,7 +123,7 @@ function reasonOf(
   }
   const group = groups.find((entry) => entry.index === member.groupIndex);
   return {
-    key: `group:${member.groupIndex}`,
+    key: realKey(`group:${member.groupIndex}`),
     label: group?.label ?? `group:${member.groupIndex}`,
   };
 }
@@ -193,14 +204,12 @@ export function buildFailureSankey(row: SuiteFailureGroupsRow): FailureSankey {
 
   const ribbons = row.members.map((member) => {
     const reason = reasonOf(member, row.groups);
-    addCount(caseCounts, member.caseKey, member.caseTitle || member.caseKey);
-    addCount(routeCounts, member.pathKey, routeLabel(member.pathKey));
+    const caseKey = realKey(member.caseKey);
+    const pathKey = realKey(member.pathKey);
+    addCount(caseCounts, caseKey, member.caseTitle || member.caseKey);
+    addCount(routeCounts, pathKey, routeLabel(member.pathKey));
     addCount(reasonCounts, reason.key, reason.label);
-    return {
-      caseKey: member.caseKey,
-      pathKey: member.pathKey,
-      reasonKey: reason.key,
-    };
+    return { caseKey, pathKey, reasonKey: reason.key };
   });
 
   const caseFold = foldStage(caseCounts);
@@ -266,16 +275,15 @@ export function novelMemberCount(row: SuiteFailureGroupsRow): number {
 }
 
 /**
- * The reason nodes a reader will actually see. A grouped row draws one node
- * per group PLUS the "Not judged" node when any member lacks a group, so the
- * header's count matches the diagram rather than the clustering's k.
+ * The reason nodes a reader will actually see: counted off the same node
+ * list {@link buildFailureSankey} draws, so the header cannot disagree with
+ * the diagram. A fold past 12 is one `Other` node, "Not judged" is one
+ * node, and a group whose members the row dropped draws no node at all.
  */
 export function reasonCount(row: SuiteFailureGroupsRow): number {
   if (!row.grouped) return flatReasonList(row).length;
-  const unjudged = row.members.some(
-    (member) => member.groupIndex === undefined,
-  );
-  return row.groups.length + (unjudged ? 1 : 0);
+  return buildFailureSankey(row).nodes.filter((node) => node.stage === "reason")
+    .length;
 }
 
 export function droppedMemberCount(row: SuiteFailureGroupsRow): number {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useId, useMemo, useRef, useState } from "react";
 
 import type {
   InsightsSankey,
@@ -8,7 +8,6 @@ import {
   SANKEY_NODE_WIDTH,
   layoutSankey,
   stageValueLabel,
-  type SankeyLayoutLink,
   type SankeyLayoutNode,
 } from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
@@ -123,6 +122,16 @@ export function FlowSankeyDiagram<S extends string>({
   const [hovered, setHovered] = useState<string | null>(null);
   const [readout, setReadout] = useState<string | null>(null);
   const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
+  // Gradient ids are per diagram instance and per link INDEX. Two diagrams
+  // on one page must not share `<defs>` ids, and two links whose node ids
+  // differ only in a character the sanitizer folds must not share one
+  // either — the index is unique where a sanitized name is not.
+  const gradientPrefix = `flow-${useId().replace(/[^a-zA-Z0-9_-]/g, "")}`;
+  const gradientIdFor = (index: number) => `${gradientPrefix}-${index}`;
+  // A node is dimmed only when there is a selection model to be refused by.
+  // A diagram with no callbacks is a picture, and every node in it reads at
+  // full weight.
+  const hasSelectionModel = onSelectNode !== undefined;
   const valueLabel = labelForNode ?? stageValueLabel;
   const nodeSelectable = (node: InsightsSankeyNode<S>): boolean =>
     isSelectable ? isSelectable(node) : node.clickable;
@@ -215,10 +224,10 @@ export function FlowSankeyDiagram<S extends string>({
           </g>
 
           <defs>
-            {layout.links.map((link) => (
+            {layout.links.map((link, index) => (
               <linearGradient
-                key={gradientId(link)}
-                id={gradientId(link)}
+                key={gradientIdFor(index)}
+                id={gradientIdFor(index)}
                 x1="0"
                 x2="1"
                 y1="0"
@@ -245,7 +254,7 @@ export function FlowSankeyDiagram<S extends string>({
           </defs>
 
           <g transform={`translate(0, ${HEADER_HEIGHT})`}>
-            {layout.links.map((link) => {
+            {layout.links.map((link, index) => {
               const id = `${link.source.id}→${link.target.id}`;
               const selectable =
                 !!onSelectLink && linkSelectable(link.source, link.target);
@@ -283,7 +292,7 @@ export function FlowSankeyDiagram<S extends string>({
                 >
                   <path
                     d={link.path}
-                    fill={`url(#${gradientId(link)})`}
+                    fill={`url(#${gradientIdFor(index)})`}
                     fillOpacity={
                       hovered === id ? Math.min(base + 0.32, 0.82) : base
                     }
@@ -322,7 +331,7 @@ export function FlowSankeyDiagram<S extends string>({
                     node={node}
                     color={stageColors[node.stage]}
                     emphasized={emphasized}
-                    selectable={selectable}
+                    dimmed={hasSelectionModel && !selectable}
                     label={valueLabel(node)}
                   />
                 </FlowTarget>
@@ -336,13 +345,6 @@ export function FlowSankeyDiagram<S extends string>({
         {readout}
       </div>
     </>
-  );
-}
-
-function gradientId<S extends string>(link: SankeyLayoutLink<S>): string {
-  return `flow-${link.source.id}-${link.target.id}`.replace(
-    /[^a-zA-Z0-9_-]/g,
-    "_",
   );
 }
 
@@ -392,13 +394,14 @@ function FlowNodeShape<S extends string>({
   node,
   color,
   emphasized,
-  selectable,
+  dimmed,
   label,
 }: {
   node: SankeyLayoutNode<S>;
   color: FlowStageColor;
   emphasized: boolean;
-  selectable: boolean;
+  /** The selection model refused this node; a diagram without one never dims. */
+  dimmed: boolean;
   label: string;
 }) {
   const labelX = node.x + SANKEY_NODE_WIDTH + 10;
@@ -413,7 +416,7 @@ function FlowNodeShape<S extends string>({
         height={node.height}
         rx={3}
         fill={emphasized ? color.head : color.node}
-        fillOpacity={selectable ? 1 : 0.45}
+        fillOpacity={dimmed ? 0.45 : 1}
       />
       <text
         x={labelX}

@@ -176,9 +176,30 @@ export function EvaluateRunContent({
         : new Set<string>(),
     [descriptionExperimentEnabled, run],
   );
+  // Absent engine = unknown = refused, with the same note as a harness run.
   const engineSupported = isEmulatedDescriptionExperimentEngine(
     readRunExecutionEngine(run),
   );
+  // The propose CTA exists only where the hook does: a non-terminal run has
+  // no failed trials to draft from, and the hook is `enabled: false` for it.
+  // While the hook has a request out, every button is held, so a second
+  // click cannot draft a second proposal before the first has an id.
+  const proposeProps =
+    descriptionExperimentEnabled && active
+      ? {
+          catalogToolNames,
+          engineSupported,
+          onPropose: (toolName: string) =>
+            descriptionExperiment.propose({ toolName }),
+          ...(descriptionExperiment.status === "loading"
+            ? {
+                requestPending: true,
+                busyToolName:
+                  descriptionExperiment.experiment?.toolName ?? null,
+              }
+            : {}),
+        }
+      : null;
   const failureGroupsEnabled = useFailureGroupsEnabled();
   const routeFactsEnabled = useRouteFactsEnabled();
   const persistedRouteFacts = useEvalRunRouteFacts({
@@ -500,24 +521,7 @@ export function EvaluateRunContent({
                 : {})}
               {...(onOpenIteration ? { onOpenIteration } : {})}
               {...(onEditCase ? { onEditCase } : {})}
-              {...(descriptionExperimentEnabled
-                ? {
-                    descriptionExperiment: {
-                      catalogToolNames,
-                      engineSupported,
-                      onPropose: (toolName: string) => {
-                        void descriptionExperiment.propose({ toolName });
-                      },
-                      ...(descriptionExperiment.status === "loading"
-                        ? {
-                            busyToolName:
-                              descriptionExperiment.experiment?.toolName ??
-                              null,
-                          }
-                        : {}),
-                    },
-                  }
-                : {})}
+              {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
             />
           )}
         />

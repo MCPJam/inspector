@@ -34,13 +34,14 @@ export function readRunExecutionEngine(
 /**
  * v1 of the experiment is emulated-only. `claude-code`, `cursor`,
  * `codex`, `mixed`, and any `harness:<id>` are refused at the button,
- * never silently launched. An unrecorded engine is treated as emulated:
- * those runs predate attribution and went through the platform loop.
+ * never silently launched. An unrecorded engine is UNKNOWN, and unknown
+ * is refused too: a pre-attribution row says nothing about which loop ran
+ * it, and the button must not guess.
  */
 export function isEmulatedDescriptionExperimentEngine(
   engine: string | undefined,
 ): boolean {
-  return !engine || engine === "emulated";
+  return engine === "emulated";
 }
 
 export function catalogToolNamesFromRun(run: EvalSuiteRun): Set<string> {
@@ -202,13 +203,50 @@ export function regressionLine(
   return "No other case flipped.";
 }
 
+type FrozenForCaveat = Pick<
+  DescriptionExperimentFrozen,
+  "equal" | "differences"
+> &
+  Partial<
+    Pick<
+      DescriptionExperimentFrozen,
+      "model" | "engine" | "hostConfigId" | "toolSnapshotHash"
+    >
+  >;
+
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names.join("");
+  if (names.length === 2) return `${names[0]} and ${names[1]}`;
+  return `${names.slice(0, -1).join(", ")}, and ${names[names.length - 1]}`;
+}
+
+/**
+ * Which of the four frozen variables the report actually recorded. A
+ * scalar is present only when both arms agree on it and the builder had
+ * it; an absent one is "not recorded", never "frozen".
+ */
+export function frozenFieldsLabel(frozen: FrozenForCaveat): string {
+  const recorded: string[] = [];
+  const missing: string[] = [];
+  (frozen.model && frozen.model.length > 0 ? recorded : missing).push("model");
+  (frozen.engine ? recorded : missing).push("engine");
+  (frozen.hostConfigId ? recorded : missing).push("host");
+  (frozen.toolSnapshotHash ? recorded : missing).push("catalog");
+  const frozenPart =
+    recorded.length > 0 ? ` with frozen ${joinNames(recorded)}` : "";
+  const missingPart =
+    missing.length > 0 ? `; ${joinNames(missing)} not recorded` : "";
+  return `${frozenPart}${missingPart}`;
+}
+
 /**
  * Why the report gave the label it gave. Reads the label and the frozen
- * block as the report wrote them; the label is never recomputed here.
+ * block as the report wrote them; the label is never recomputed here, and
+ * only the fields the report carries are called frozen.
  */
 export function evidenceCaveat(
   label: DescriptionExperimentEvidenceLabel,
-  frozen?: Pick<DescriptionExperimentFrozen, "equal" | "differences">,
+  frozen?: FrozenForCaveat,
 ): string {
   const unverified = "The upstream server's state was not verified.";
   if (label === "controlled") {
@@ -221,5 +259,8 @@ export function evidenceCaveat(
       "they differed on ",
     )} — the report calls this reproducible, not controlled. ${unverified}`;
   }
-  return `The two arms ran in the same window with frozen model, engine, host, and catalog. ${unverified}`;
+  const fields = frozen
+    ? frozenFieldsLabel(frozen)
+    : "; model, engine, host, and catalog not recorded";
+  return `The two arms ran in the same window${fields}. ${unverified}`;
 }

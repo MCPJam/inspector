@@ -3,7 +3,7 @@
  * and the four report readings the header is allowed to claim.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { DescriptionExperimentReport } from "@mcpjam/sdk/contract";
 
@@ -306,6 +306,21 @@ describe("RunDescriptionExperimentCard", () => {
       screen.getByText(/judge will auto-run on both arms/),
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Run experiment" }));
+    expect(onStart).toHaveBeenCalledTimes(1);
+  });
+
+  it("focuses the launch action when the confirm opens, so Enter launches", async () => {
+    const user = userEvent.setup();
+    const onStart = vi.fn();
+    renderCard(experiment({ status: "proposed" }), onStart);
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
+    await user.click(screen.getByTestId("description-experiment-start"));
+    const run = screen.getByRole("button", { name: "Run experiment" });
+    await waitFor(() => expect(run).toHaveFocus());
+    expect(screen.getByRole("button", { name: "Cancel" })).not.toHaveFocus();
+    await user.keyboard("{Enter}");
     expect(onStart).toHaveBeenCalledTimes(1);
   });
 });

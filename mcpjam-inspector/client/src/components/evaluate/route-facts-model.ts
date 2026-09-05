@@ -11,6 +11,7 @@
  */
 
 import {
+  MAX_MISMATCH_TOOLS,
   NO_TOOL_PATH_KEY,
   buildEvalRunRouteFacts,
   evalCaseAggregationKey,
@@ -49,10 +50,14 @@ function readToolNamesFromSnapshot(snapshot: unknown): string[] | null {
 /**
  * Inline catalog on the run doc, or `notLoaded` for archived runs that
  * carry only a hash. No client fetch of snapshots.
+ *
+ * A snapshot that is present but lists no tools is `loaded` with an empty
+ * catalog: the server had nothing to offer, which is a fact about the
+ * server, not a missing read. Only an absent snapshot is `notLoaded`.
  */
 export function readRunToolCatalog(run: EvalSuiteRun): RouteFactsCatalog {
   const names = readToolNamesFromSnapshot(run.toolSnapshot);
-  if (names === null || names.length === 0) {
+  if (names === null) {
     return { state: "notLoaded" };
   }
   const snapshot = isRecord(run.toolSnapshot) ? run.toolSnapshot : null;
@@ -212,6 +217,20 @@ export function variantLabel(facts: EvalRunRouteFactsCase): string | null {
 /** Routes named on the header line; the rest fold into "N other routes". */
 export const ROUTE_LINE_MAX_ROUTES = 3;
 
+type OtherRoutes = NonNullable<EvalRunRouteFactsCase["routes"]["otherRoutes"]>;
+
+/**
+ * How many distinct paths the document folded into `otherRoutes`, when it
+ * says. The field is read defensively: the published contract does not
+ * carry it yet, and a document without it can only say "and more".
+ */
+function otherRoutesDistinctPaths(other: OtherRoutes): number | null {
+  const value = (other as { distinctPaths?: unknown }).distinctPaths;
+  return typeof value === "number" && Number.isInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
 export function routeLine(facts: EvalRunRouteFactsCase): string {
   const { routes, mismatch } = facts;
   if (routes.includedTrials === 0) return "";
@@ -231,12 +250,21 @@ export function routeLine(facts: EvalRunRouteFactsCase): string {
     parts.push(`${route.trials} took \`${route.pathKey}\``);
   }
   const rest = routes.routes.length - ROUTE_LINE_MAX_ROUTES;
+  const other = routes.otherRoutes;
+  // `otherRoutes` is the document's own fold past its cap. When it carries
+  // the distinct count, the line adds it up; when it does not, the line can
+  // only say "and more".
+  const folded = other ? otherRoutesDistinctPaths(other) : null;
   if (rest > 0) {
-    // `otherRoutes` is the document's own fold past its cap; its distinct
-    // count is not carried, so the line can only say "and more".
-    parts.push(`${rest}${routes.otherRoutes ? "+" : ""} other routes`);
-  } else if (routes.otherRoutes) {
-    parts.push(`${routes.otherRoutes.trials} took other routes`);
+    if (!other) parts.push(`${rest} other routes`);
+    else if (folded !== null) parts.push(`${rest + folded} other routes`);
+    else parts.push(`${rest}+ other routes`);
+  } else if (other) {
+    parts.push(
+      folded !== null
+        ? `${folded} other routes`
+        : `${other.trials} took other routes`,
+    );
   }
   const loop = routes.loopedOn[0];
   if (loop) {
@@ -299,8 +327,13 @@ export function mismatchLines(
     }
     for (const swap of facts.mismatch.substitutions) {
       lines.push(
-        `\`${swap.observed}\` called instead of \`${swap.expected}\` in ${swap.trials} trials`,
+        `\`${swap.observed}\` called instead of \`${swap.expected}\` in ${swap.trials} ${swap.trials === 1 ? "trial" : "trials"}`,
       );
+    }
+    if (facts.mismatch.truncated) {
+      // The document caps each list at MAX_MISMATCH_TOOLS, count-desc, so
+      // what survived is what the most trials touched.
+      lines.push(`showing the ${MAX_MISMATCH_TOOLS} most-seen tools`);
     }
     if (catalogState === "notLoaded") {
       lines.push("catalog not loaded — substitutions were not classified");

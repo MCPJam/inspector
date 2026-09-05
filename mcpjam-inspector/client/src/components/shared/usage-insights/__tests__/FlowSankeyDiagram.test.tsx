@@ -110,6 +110,148 @@ describe("FlowSankeyDiagram", () => {
     ).toBeNull();
   });
 
+  it("draws every node at full weight when no selection model is passed", () => {
+    render(
+      <FlowSankeyDiagram
+        sankey={SANKEY}
+        stages={STAGES}
+        stageTitles={TITLES}
+        stageColors={COLORS}
+        unitNoun="trials"
+        ariaLabel="Failed trials from case through route to reason"
+      />,
+    );
+    const rects = Array.from(document.querySelectorAll("rect"));
+    expect(rects).toHaveLength(3);
+    for (const rect of rects) {
+      expect(rect.getAttribute("fill-opacity")).toBe("1");
+    }
+  });
+
+  it("dims only the node the selection model refuses", () => {
+    const withSentinel: InsightsSankey<Stage> = {
+      ...SANKEY,
+      nodes: [
+        ...SANKEY.nodes,
+        {
+          id: `reason:${SANKEY_UNLABELED}`,
+          stage: "reason",
+          key: SANKEY_UNLABELED,
+          label: "Not judged",
+          count: 1,
+          clickable: true,
+        },
+      ],
+      links: [
+        ...SANKEY.links,
+        {
+          source: "route:search",
+          target: `reason:${SANKEY_UNLABELED}`,
+          count: 1,
+        },
+      ],
+    };
+    render(
+      <FlowSankeyDiagram
+        sankey={withSentinel}
+        stages={STAGES}
+        stageTitles={TITLES}
+        stageColors={COLORS}
+        unitNoun="trials"
+        ariaLabel="Failed trials from case through route to reason"
+        onSelectNode={() => {}}
+        labelForNode={(node) => node.label}
+        isSelectable={(node) => node.clickable && node.key !== SANKEY_UNLABELED}
+      />,
+    );
+    const refused = screen
+      .getByRole("img", { name: /^Not judged,/ })
+      .querySelector("rect");
+    expect(refused?.getAttribute("fill-opacity")).toBe("0.45");
+    const kept = screen
+      .getByRole("button", { name: /^Look up a user,/ })
+      .querySelector("rect");
+    expect(kept?.getAttribute("fill-opacity")).toBe("1");
+  });
+
+  it("gives every gradient its own id across links and diagram instances", () => {
+    // `route:a:b` and `route:a_b` sanitize to the same name; two instances
+    // of the same diagram would otherwise share every id.
+    const colliding: InsightsSankey<Stage> = {
+      nodes: [
+        {
+          id: "case:x",
+          stage: "case",
+          key: "x",
+          label: "X",
+          count: 2,
+          clickable: true,
+        },
+        {
+          id: "route:a:b",
+          stage: "route",
+          key: "a:b",
+          label: "a:b",
+          count: 1,
+          clickable: true,
+        },
+        {
+          id: "route:a_b",
+          stage: "route",
+          key: "a_b",
+          label: "a_b",
+          count: 1,
+          clickable: true,
+        },
+        {
+          id: "reason:g0",
+          stage: "reason",
+          key: "g0",
+          label: "R",
+          count: 2,
+          clickable: true,
+        },
+      ],
+      links: [
+        { source: "case:x", target: "route:a:b", count: 1 },
+        { source: "case:x", target: "route:a_b", count: 1 },
+        { source: "route:a:b", target: "reason:g0", count: 1 },
+        { source: "route:a_b", target: "reason:g0", count: 1 },
+      ],
+      foldedGoalCount: 0,
+    };
+    const diagram = (
+      <FlowSankeyDiagram
+        sankey={colliding}
+        stages={STAGES}
+        stageTitles={TITLES}
+        stageColors={COLORS}
+        unitNoun="trials"
+        ariaLabel="Failed trials from case through route to reason"
+      />
+    );
+    render(
+      <>
+        {diagram}
+        {diagram}
+      </>,
+    );
+    const ids = Array.from(document.querySelectorAll("linearGradient")).map(
+      (gradient) => gradient.getAttribute("id"),
+    );
+    expect(ids).toHaveLength(8);
+    expect(new Set(ids).size).toBe(8);
+    const fills = Array.from(document.querySelectorAll("path")).map((path) =>
+      path.getAttribute("fill"),
+    );
+    expect(fills).toHaveLength(8);
+    for (const fill of fills) {
+      const match = /^url\(#(.+)\)$/.exec(fill ?? "");
+      expect(match).not.toBeNull();
+      expect(ids).toContain(match![1]);
+    }
+  });
+
   it("lets the caller refuse a clickable sentinel, which is then not a button", () => {
     const withSentinel: InsightsSankey<Stage> = {
       ...SANKEY,

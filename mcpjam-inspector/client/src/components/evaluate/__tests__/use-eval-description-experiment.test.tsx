@@ -1,10 +1,14 @@
 /**
- * Polling for one description experiment stops at a terminal status.
+ * Polling for one description experiment stops at a terminal status, and
+ * survives a failed read of a non-terminal one.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "@testing-library/react";
 
-import type { EvalDescriptionExperiment } from "@/lib/apis/eval-description-experiment-api";
+import {
+  EvalDescriptionExperimentError,
+  type EvalDescriptionExperiment,
+} from "@/lib/apis/eval-description-experiment-api";
 import {
   useEvalDescriptionExperiment,
   type EvalDescriptionExperimentState,
@@ -142,6 +146,54 @@ describe("useEvalDescriptionExperiment", () => {
     await vi.waitFor(() => expect(latest().experiment?.status).toBe("failed"));
     await vi.advanceTimersByTimeAsync(15_000);
     expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it("keeps polling after a failed read of a non-terminal experiment", async () => {
+    vi.useFakeTimers();
+    mocks.list.mockResolvedValue([experiment({ status: "running" })]);
+    mocks.get
+      .mockRejectedValueOnce(new Error("upstream 502"))
+      .mockResolvedValue(experiment({ status: "completed" }));
+
+    const { latest } = renderHook();
+    await vi.waitFor(() => expect(latest().experiment?.status).toBe("running"));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(latest().status).toBe("error"));
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+    expect(latest().error?.kind).toBe("requestFailed");
+    // The last good document stays on screen while the read is retried.
+    expect(latest().experiment?.status).toBe("running");
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() =>
+      expect(latest().experiment?.status).toBe("completed"),
+    );
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(latest().status).toBe("ready");
+    expect(latest().error).toBeNull();
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+  });
+
+  it("stops polling when the document is gone", async () => {
+    vi.useFakeTimers();
+    mocks.list.mockResolvedValue([experiment({ status: "running" })]);
+    mocks.get.mockRejectedValue(
+      new EvalDescriptionExperimentError("notFound", "gone", { status: 404 }),
+    );
+
+    const { latest } = renderHook();
+    await vi.waitFor(() => expect(latest().experiment?.status).toBe("running"));
+
+    await vi.advanceTimersByTimeAsync(5_000);
+    await vi.waitFor(() => expect(latest().status).toBe("absent"));
+    expect(latest().experiment).toBeNull();
+    expect(mocks.get).toHaveBeenCalledTimes(1);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(mocks.get).toHaveBeenCalledTimes(1);
   });
 
   it("stops at cancelled without another read", async () => {

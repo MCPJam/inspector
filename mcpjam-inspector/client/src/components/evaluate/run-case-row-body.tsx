@@ -11,6 +11,7 @@
  * reader to check, an unmeasured one says plainly that nothing about the server
  * was established. Neither renders as an instruction to change server code.
  */
+import { useCallback, useRef, useState } from "react";
 import { Copy } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
@@ -54,9 +55,50 @@ async function copyPrompt(text: string) {
 export type DescriptionExperimentProposeProps = {
   catalogToolNames: ReadonlySet<string>;
   engineSupported: boolean;
-  onPropose: (toolName: string) => void;
+  /** May return the request's promise; the row holds every button until it settles. */
+  onPropose: (toolName: string) => void | Promise<void>;
+  /** The hook has a request out. Every propose button is held until it settles. */
+  requestPending?: boolean;
   busyToolName?: string | null;
 };
+
+/**
+ * One proposal at a time per row. The page-level `requestPending` arrives a
+ * render later than the click that caused it, so the row keeps its own lock
+ * as well: the ref refuses a second click in the same tick, the state holds
+ * the buttons until the request settles.
+ */
+function useProposeLock(
+  onPropose: DescriptionExperimentProposeProps["onPropose"] | undefined,
+): { pending: boolean; propose: (toolName: string) => void } {
+  const lockRef = useRef(false);
+  const [pending, setPending] = useState(false);
+  const propose = useCallback(
+    (toolName: string) => {
+      if (!onPropose || lockRef.current) return;
+      lockRef.current = true;
+      setPending(true);
+      const release = () => {
+        lockRef.current = false;
+        setPending(false);
+      };
+      let result: void | Promise<void>;
+      try {
+        result = onPropose(toolName);
+      } catch (error) {
+        release();
+        throw error;
+      }
+      if (result && typeof result.then === "function") {
+        void result.then(release, release);
+      } else {
+        release();
+      }
+    },
+    [onPropose],
+  );
+  return { pending, propose };
+}
 
 function FailureGroup({
   row,
@@ -195,7 +237,8 @@ function FailureGroup({
           {proposeTools.map((toolName) => {
             const disabled = !descriptionExperiment!.engineSupported;
             const busy =
-              descriptionExperiment!.busyToolName === toolName;
+              descriptionExperiment!.busyToolName === toolName ||
+              descriptionExperiment!.requestPending === true;
             return (
               <div key={toolName} className="flex flex-col items-start gap-1">
                 <Button
@@ -251,6 +294,17 @@ export function RunCaseRowBody({
   }) => void;
   onEditCase?: (testCaseId: string) => void;
 }) {
+  const proposeLock = useProposeLock(descriptionExperiment?.onPropose);
+  const proposeProps: DescriptionExperimentProposeProps | undefined =
+    descriptionExperiment
+      ? {
+          ...descriptionExperiment,
+          onPropose: proposeLock.propose,
+          requestPending:
+            descriptionExperiment.requestPending === true ||
+            proposeLock.pending,
+        }
+      : undefined;
   const nudges: string[] = [];
   if (row.iterations.total === 1) {
     // One observation says nothing about consistency, and the fix for a flaky
@@ -286,7 +340,7 @@ export function RunCaseRowBody({
             row={row}
             group={group}
             iterations={iterations}
-            {...(descriptionExperiment ? { descriptionExperiment } : {})}
+            {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
           />
           ))
         )}

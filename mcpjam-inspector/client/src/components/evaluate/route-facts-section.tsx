@@ -15,6 +15,17 @@ function namesOf(
   return (rows ?? []).map((row) => row.tool);
 }
 
+function FactLines({ lines }: { lines: readonly string[] }) {
+  if (lines.length === 0) return null;
+  return (
+    <ul className="mt-2.5 flex list-disc flex-col gap-1 pl-4 text-[12.5px] leading-relaxed text-muted-foreground">
+      {lines.map((line) => (
+        <li key={line}>{line}</li>
+      ))}
+    </ul>
+  );
+}
+
 export function RouteFactsSection({
   facts,
   catalogState,
@@ -32,8 +43,9 @@ export function RouteFactsSection({
   variantLabel?: string;
 }) {
   const mismatch = facts.mismatch;
+  // Route-level lines ("ended with a question: …") come back whatever the
+  // mismatch state is, so an unmeasured case still shows them.
   const lines = mismatchLines(facts, catalogState);
-  const showMismatch = mismatch.state !== "excludedNegativeTest";
   const expectedNames =
     mismatch.state === "measured" ? namesOf(mismatch.expected) : [];
   const unexpectedNames =
@@ -82,7 +94,7 @@ export function RouteFactsSection({
         </ul>
       </details>
 
-      {showMismatch ? (
+      {mismatch.state === "measured" ? (
         <details className="group rounded-lg border border-border/40 bg-muted/20 px-3.5 py-2.5">
           <summary className="cursor-pointer list-none text-[12.5px] text-muted-foreground marker:content-none hover:text-foreground">
             Expected vs observed
@@ -99,18 +111,17 @@ export function RouteFactsSection({
             />
             <EvaluateToolList label="Observed extra" names={unexpectedNames} />
           </div>
-          {lines.length > 0 ? (
-            <ul className="mt-2.5 flex list-disc flex-col gap-1 pl-4 text-[12.5px] leading-relaxed text-muted-foreground">
-              {lines.map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
-          ) : null}
+          <FactLines lines={lines} />
         </details>
       ) : (
-        <p className="text-[12.5px] text-muted-foreground">
-          Negative test — mismatch facts are not measured.
-        </p>
+        <div data-testid="route-facts-mismatch-note">
+          <p className="text-[12.5px] text-muted-foreground">
+            {mismatch.state === "excludedNegativeTest"
+              ? "Negative test — mismatch facts are not measured."
+              : "No gradeable trials — not measured."}
+          </p>
+          <FactLines lines={lines} />
+        </div>
       )}
     </div>
   );

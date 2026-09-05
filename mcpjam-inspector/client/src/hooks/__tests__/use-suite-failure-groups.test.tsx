@@ -1,16 +1,18 @@
 /**
- * The suite failure-groups hook's "skip" contract.
+ * The suite failure-groups hook's "skip" contract, and whose request its
+ * `requesting` / `error` belong to.
  *
  * Convex's `useQuery` runs the query the moment it is given args; the only
  * way to not ask is the literal `"skip"`. A flag-off card and a suite-less
  * caller must both land there, or the flag gates the DOM and not the read.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render } from "@testing-library/react";
 
 const convex = vi.hoisted(() => ({
   queryCalls: [] as Array<{ name: unknown; args: unknown }>,
   result: undefined as unknown,
+  mutation: vi.fn(async (_args: unknown) => undefined),
 }));
 
 vi.mock("convex/react", () => ({
@@ -18,36 +20,41 @@ vi.mock("convex/react", () => ({
     convex.queryCalls.push({ name, args });
     return convex.result;
   },
-  useMutation: () => vi.fn(),
+  useMutation: () => convex.mutation,
 }));
 
 import { useSuiteFailureGroups } from "../use-suite-failure-groups";
 
 type HookState = ReturnType<typeof useSuiteFailureGroups>;
+type HookProps = { suiteId: string | null | undefined; enabled: boolean };
 
 function Harness({
   suiteId,
   enabled,
   onState,
-}: {
-  suiteId: string | null | undefined;
-  enabled: boolean;
-  onState: (state: HookState) => void;
-}) {
+}: HookProps & { onState: (state: HookState) => void }) {
   onState(useSuiteFailureGroups({ suiteId, enabled }));
   return null;
 }
 
-function renderHook(props: { suiteId: string | null | undefined; enabled: boolean }) {
+function renderHook(props: HookProps) {
   const states: HookState[] = [];
-  render(<Harness {...props} onState={(state) => states.push(state)} />);
-  return { latest: () => states[states.length - 1]! };
+  const onState = (state: HookState) => {
+    states.push(state);
+  };
+  const utils = render(<Harness {...props} onState={onState} />);
+  return {
+    latest: () => states[states.length - 1]!,
+    rerender: (next: HookProps) =>
+      utils.rerender(<Harness {...next} onState={onState} />),
+  };
 }
 
 afterEach(() => {
   cleanup();
   convex.queryCalls = [];
   convex.result = undefined;
+  convex.mutation = vi.fn(async (_args: unknown) => undefined);
 });
 
 describe("useSuiteFailureGroups", () => {
@@ -76,7 +83,59 @@ describe("useSuiteFailureGroups", () => {
 
   it("does not request when skipped", async () => {
     const { latest } = renderHook({ suiteId: "suite_1", enabled: false });
-    await latest().request();
+    await act(async () => {
+      await latest().request();
+    });
+    expect(convex.mutation).not.toHaveBeenCalled();
+    expect(latest().requesting).toBe(false);
+    expect(latest().error).toBeNull();
+  });
+
+  it("requests for the suite and keeps the mutation's error for it", async () => {
+    convex.mutation = vi.fn(async () => {
+      throw new Error("judge unavailable");
+    });
+    const { latest } = renderHook({ suiteId: "suite_1", enabled: true });
+    await act(async () => {
+      await latest().request();
+    });
+    expect(convex.mutation).toHaveBeenCalledTimes(1);
+    expect(convex.mutation).toHaveBeenCalledWith({ suiteId: "suite_1" });
+    expect(latest().requesting).toBe(false);
+    expect(latest().error).toBe("judge unavailable");
+  });
+
+  it("drops the old suite's requesting and error on a switch, and ignores its completion", async () => {
+    let reject!: (error: Error) => void;
+    convex.mutation = vi.fn(
+      () =>
+        new Promise<undefined>((_, rej) => {
+          reject = rej;
+        }),
+    );
+    const { latest, rerender } = renderHook({
+      suiteId: "suite_a",
+      enabled: true,
+    });
+    act(() => {
+      void latest().request();
+    });
+    expect(latest().requesting).toBe(true);
+
+    rerender({ suiteId: "suite_b", enabled: true });
+    expect(latest().requesting).toBe(false);
+    expect(latest().error).toBeNull();
+
+    // Suite A's request settles after the switch: suite B must not wear it.
+    await act(async () => {
+      reject(new Error("late failure for suite_a"));
+      await Promise.resolve();
+    });
+    expect(latest().requesting).toBe(false);
+    expect(latest().error).toBeNull();
+
+    // And switching back does not resurrect it either.
+    rerender({ suiteId: "suite_a", enabled: true });
     expect(latest().requesting).toBe(false);
     expect(latest().error).toBeNull();
   });

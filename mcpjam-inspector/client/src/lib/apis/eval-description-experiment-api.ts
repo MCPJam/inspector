@@ -288,7 +288,10 @@ export async function proposeEvalDescriptionRewrite(
         projectId: params.projectId,
         runId: params.runId,
         toolName: params.toolName,
-        ...(params.caseIds ? { caseIds: params.caseIds } : {}),
+        // An empty list is refused with a 400 — omit it rather than send it.
+        ...(params.caseIds && params.caseIds.length > 0
+          ? { caseIds: params.caseIds }
+          : {}),
       },
       { signal },
     );
@@ -404,9 +407,10 @@ export async function fetchEvalDescriptionExperiment(
 
 /**
  * The experiments already attached to a source run, if the collection
- * GET exists. PR-E3 may land this as a list or as the latest document;
- * both shapes are accepted. A dark-ship 404 is `routeUnavailable` so the
- * hook can stay absent until the operator proposes.
+ * GET exists. The body is `{ items: [...] }`; anything else — a missing
+ * body included — is `invalidContract`, never an empty list. A dark-ship
+ * 404 is `routeUnavailable` so the hook can stay absent until the
+ * operator proposes.
  */
 export async function listEvalDescriptionExperimentsForRun(
   params: { projectId: string; runId: string },
@@ -487,18 +491,12 @@ function parseExperimentCollection(
   raw: unknown,
   sourceRunId: string,
 ): EvalDescriptionExperiment[] {
-  if (raw == null) return [];
-  const rows = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === "object" && Array.isArray((raw as { items?: unknown }).items)
+  const rows =
+    raw !== null &&
+    typeof raw === "object" &&
+    Array.isArray((raw as { items?: unknown }).items)
       ? (raw as { items: unknown[] }).items
-      : raw &&
-          typeof raw === "object" &&
-          (raw as { experiment?: unknown }).experiment != null
-        ? [(raw as { experiment: unknown }).experiment]
-        : raw && typeof raw === "object" && typeof (raw as { id?: unknown }).id === "string"
-          ? [raw]
-          : null;
+      : null;
   if (rows === null) {
     throw new EvalDescriptionExperimentError(
       "invalidContract",

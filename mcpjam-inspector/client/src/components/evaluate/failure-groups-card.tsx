@@ -31,15 +31,22 @@ export function FailureGroupsCard({ suiteId }: { suiteId: string }) {
   const [open, setOpen] = useState(false);
 
   const row = groups.latest;
-  const header = failureGroupsHeader(row);
+  // Only a completed row has results. A queued or running row is still
+  // being grouped and a failed one never was; neither carries members a
+  // diagram could be drawn from, and rendering them as though they did
+  // would show an empty flow under a header that promised counts.
+  const completed = row && row.status === "completed" ? row : null;
+  const grouping = row?.status === "queued" || row?.status === "running";
+  const groupingFailed = row?.status === "failed";
+  const header = failureGroupsHeader(completed);
   const busy = failureGroupsBusy(row, groups.inFlight, groups.requesting);
   const sankey = useMemo(
-    () => (row?.grouped ? buildFailureSankey(row) : null),
-    [row],
+    () => (completed?.grouped ? buildFailureSankey(completed) : null),
+    [completed],
   );
   const flat = useMemo(
-    () => (row && !row.grouped ? flatReasonList(row) : []),
-    [row],
+    () => (completed && !completed.grouped ? flatReasonList(completed) : []),
+    [completed],
   );
 
   if (!enabled) return null;
@@ -98,7 +105,23 @@ export function FailureGroupsCard({ suiteId }: { suiteId: string }) {
               Loading failure groups…
             </p>
           ) : null}
-          {row && !row.grouped ? (
+          {grouping ? (
+            <p
+              className="text-[12.5px] text-muted-foreground"
+              data-testid="failure-groups-grouping"
+            >
+              grouping…
+            </p>
+          ) : null}
+          {groupingFailed ? (
+            <p
+              className="text-[12.5px] text-destructive"
+              data-testid="failure-groups-failed"
+            >
+              grouping failed{row?.errorCode ? ` (${row.errorCode})` : ""}
+            </p>
+          ) : null}
+          {completed && !completed.grouped ? (
             <div className="flex flex-col gap-2">
               <p className="text-[12.5px] text-muted-foreground">
                 reasons did not separate into groups — showing the list

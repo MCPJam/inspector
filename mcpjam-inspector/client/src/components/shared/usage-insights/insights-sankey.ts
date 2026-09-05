@@ -140,16 +140,20 @@ const PAD = 10;
  *
  * Recharts' `Sankey` recomputes its own node order and offers no way to keep a
  * stage's themes in the volume order the server sorted them into, which is the
- * one ordering that means the same thing across scenarios. The geometry is four
+ * one ordering that means the same thing across scenarios. The geometry is
  * fixed columns and stacked ribbons — small enough to own, and owning it is
  * what makes the columns predictable.
+ *
+ * `stages` is required: a diagram over custom stages that fell back to the
+ * legacy four laid out nothing, silently. Session-flow callers pass
+ * {@link STAGE_ORDER}.
  */
-export function layoutSankey<S extends string = SankeyStage>(
+export function layoutSankey<S extends string>(
   sankey: InsightsSankey<S>,
   width: number,
   height: number,
   columnX: number[],
-  stages: readonly S[] = STAGE_ORDER as readonly S[],
+  stages: readonly S[],
 ): SankeyLayout<S> {
   const total = stages.reduce(
     (max, stage) =>

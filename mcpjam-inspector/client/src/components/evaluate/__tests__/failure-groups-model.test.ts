@@ -179,6 +179,50 @@ describe("buildFailureSankey", () => {
     expect(columnSum(sankey, "reason")).toBe(members.length);
     expect(sankey.foldedByStage?.case).toBe(3);
   });
+
+  it("keeps a real key that spells a sentinel apart from the sentinel", () => {
+    const sankey = buildFailureSankey(
+      row({
+        members: [
+          member({
+            gradingKey: "o#1",
+            caseKey: SANKEY_OTHER,
+            caseTitle: "A case whose key is __other__",
+            pathKey: SANKEY_UNLABELED,
+            groupIndex: 0,
+          }),
+          member({
+            gradingKey: "u#1",
+            caseKey: "case_b",
+            caseTitle: "Share a diagram",
+            pathKey: "search",
+          }),
+        ],
+      }),
+    );
+    const caseNode = sankey.nodes.find(
+      (node) =>
+        node.stage === "case" && node.label === "A case whose key is __other__",
+    );
+    expect(caseNode).toBeDefined();
+    expect(caseNode?.key).not.toBe(SANKEY_OTHER);
+    expect(caseNode?.clickable).toBe(true);
+    const routeNode = sankey.nodes.find(
+      (node) => node.stage === "route" && node.label === SANKEY_UNLABELED,
+    );
+    expect(routeNode).toBeDefined();
+    expect(routeNode?.key).not.toBe(SANKEY_UNLABELED);
+    expect(routeNode?.clickable).toBe(true);
+    // The true sentinel is still the only unjudged reason.
+    const unjudged = sankey.nodes.filter(
+      (node) => node.key === SANKEY_UNLABELED,
+    );
+    expect(unjudged).toHaveLength(1);
+    expect(unjudged[0]).toMatchObject({ stage: "reason", count: 1 });
+    expect(columnSum(sankey, "case")).toBe(2);
+    expect(columnSum(sankey, "route")).toBe(2);
+    expect(columnSum(sankey, "reason")).toBe(2);
+  });
 });
 
 describe("flatReasonList", () => {
@@ -240,6 +284,64 @@ describe("reasonCount", () => {
     const drawn = sankey.nodes.filter((node) => node.stage === "reason").length;
     expect(reasonCount(grouped)).toBe(3);
     expect(reasonCount(grouped)).toBe(drawn);
+  });
+
+  it("counts the folded Other node once when groups fold past 12", () => {
+    const groups = Array.from(
+      { length: FAILURE_FOLD_PER_STAGE + 4 },
+      (_, i) => ({
+        index: i,
+        label: `Reason ${i}`,
+        memberCount: 1,
+      }),
+    );
+    const members = groups.map((group, i) =>
+      member({
+        gradingKey: `m${i}#1`,
+        caseKey: "case_a",
+        pathKey: "search",
+        groupIndex: group.index,
+      }),
+    );
+    const folded = row({ groups, members });
+    const drawn = buildFailureSankey(folded).nodes.filter(
+      (node) => node.stage === "reason",
+    );
+    expect(drawn).toHaveLength(FAILURE_FOLD_PER_STAGE + 1);
+    expect(reasonCount(folded)).toBe(drawn.length);
+    expect(failureGroupsHeader(folded).summary).toBe(
+      `${members.length} failed trials, ${FAILURE_FOLD_PER_STAGE + 1} reasons`,
+    );
+  });
+
+  it("does not count a group whose members the row dropped", () => {
+    const truncated = row({
+      groups: [
+        { index: 0, label: "A", memberCount: 1 },
+        { index: 1, label: "B", memberCount: 1 },
+        { index: 2, label: "C", memberCount: 1 },
+      ],
+      memberTruncation: { dropped: 1 },
+      members: [
+        member({
+          gradingKey: "a#1",
+          caseKey: "a",
+          pathKey: "s",
+          groupIndex: 0,
+        }),
+        member({
+          gradingKey: "b#1",
+          caseKey: "b",
+          pathKey: "s",
+          groupIndex: 1,
+        }),
+      ],
+    });
+    const drawn = buildFailureSankey(truncated).nodes.filter(
+      (node) => node.stage === "reason",
+    );
+    expect(drawn).toHaveLength(2);
+    expect(reasonCount(truncated)).toBe(2);
   });
 
   it("matches the groups when every member was judged", () => {
@@ -304,6 +406,8 @@ describe("failureGroupsHeader", () => {
           { index: 1, label: "B", memberCount: 5 },
           { index: 2, label: "C", memberCount: 4 },
         ],
+        // One member per group: the header counts the reason nodes drawn,
+        // and a group with no member in the row draws none.
         members: [
           member({
             gradingKey: "a#1",
@@ -311,6 +415,18 @@ describe("failureGroupsHeader", () => {
             pathKey: "search",
             groupIndex: 0,
             novel: true,
+          }),
+          member({
+            gradingKey: "b#1",
+            caseKey: "b",
+            pathKey: "search",
+            groupIndex: 1,
+          }),
+          member({
+            gradingKey: "c#1",
+            caseKey: "c",
+            pathKey: "search",
+            groupIndex: 2,
           }),
         ],
       }),
@@ -329,6 +445,8 @@ describe("failureGroupsHeader", () => {
           { index: 1, label: "B", memberCount: 5 },
           { index: 2, label: "C", memberCount: 4 },
         ],
+        // One member per group: the header counts the reason nodes drawn,
+        // and a group with no member in the row draws none.
         members: [
           member({
             gradingKey: "a#1",
@@ -336,6 +454,18 @@ describe("failureGroupsHeader", () => {
             pathKey: "search",
             groupIndex: 0,
             novel: true,
+          }),
+          member({
+            gradingKey: "b#1",
+            caseKey: "b",
+            pathKey: "search",
+            groupIndex: 1,
+          }),
+          member({
+            gradingKey: "c#1",
+            caseKey: "c",
+            pathKey: "search",
+            groupIndex: 2,
           }),
         ],
       }),
