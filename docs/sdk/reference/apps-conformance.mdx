@@ -23,6 +23,9 @@ import {
   renderConformanceReportJUnitXml,
   renderConformanceReportJson,
   toConformanceReport,
+  // Score helpers
+  scoreFromAppsResult,
+  describeConformanceScore,
 } from "@mcpjam/sdk";
 ```
 
@@ -153,6 +156,7 @@ Available checks:
 | `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
 | `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `target` | `string` | URL or stdio command under test |
+| `protocolVersion` | `string \| undefined` | The revision the connection negotiated. Absent when the connection never succeeded. |
 | `checks` | `MCPAppsCheckResult[]` | Individual check results |
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
@@ -194,6 +198,25 @@ A run reports one of three outcomes, and `passed` is `true` only for the first:
 | `incomplete` | `3` | Nothing failed, but at least one selected check could not be run, so the run does not establish conformance. |
 
 An incomplete run carries a root `incompleteReason` naming the checks that did not run and what to change; non-quiet CLI runs also print it to stderr. For a suite, the exit code is the worst of all runs (failure outranks incomplete).
+
+## Conformance score
+
+Use `scoreFromAppsResult` to compute the 0–100 score for a run:
+
+```typescript
+import { scoreFromAppsResult, describeConformanceScore } from "@mcpjam/sdk";
+
+const result = await new MCPAppsConformanceTest({ url: "..." }).run();
+const score = scoreFromAppsResult(result);
+
+console.log(score.score);   // e.g. 98
+console.log(describeConformanceScore(score));
+// "98/100 — 7/7 applicable checks passed, 2 advisories (−2) [2025-11-25]"
+```
+
+Per-check `warnings` strings count as advisory deductions at the weakest tier (MAY, −1 each). The CLI prints a `Score:` line to stderr after each run (suppressed by `--quiet`). `toConformanceReport` attaches the score to `ConformanceReport.score`, and JUnit XML includes it in a `<properties>` block under each `<testsuite>`.
+
+See [Protocol Conformance SDK](/sdk/reference/protocol-conformance#conformance-score) for the full scoring formula.
 
 ## CI reporting
 
