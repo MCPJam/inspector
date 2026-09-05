@@ -146,7 +146,8 @@ vi.mock("@/lib/toast", () => ({
 // Mock mcp-apps-utils
 vi.mock("@/lib/mcp-ui/mcp-apps-utils", () => ({
   detectUIType: mockDetectUIType,
-  getUIResourceUri: () => null,
+  getUIResourceUri: (_uiType: unknown, metadata: any) =>
+    metadata?.ui?.resourceUri ?? null,
   UIType: {
     OPENAI_SDK: "openai-apps",
     MCP_APPS: "mcp-apps",
@@ -606,7 +607,6 @@ describe("PartSwitch", () => {
           toolRenderOverrides={{
             "call-frozen": {
               frozenScreenshotUrl: "https://storage.example.com/widget.png",
-              resourceUri: "ui://widget/create-view.html",
               widgetCsp: { connectDomains: ["https://api.example.com"] },
               widgetPermissions: { clipboardWrite: {} },
               widgetPermissive: false,

@@ -48,7 +48,7 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@mcpjam/design-system/toggle-group";
-import { CspWorkbench } from "../csp-workbench";
+import { CspWorkbench, type RecordedWidgetPolicy } from "../csp-workbench";
 import { JsonEditor } from "@/components/ui/json-editor";
 import { cn } from "@/lib/chat-utils";
 import {
@@ -65,14 +65,6 @@ import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-t
 
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
-
-export interface RecordedWidgetDiagnostics {
-  resourceUri?: string;
-  csp?: unknown;
-  permissions?: unknown;
-  permissive?: boolean;
-  prefersBorder?: boolean;
-}
 
 export function ToolPart({
   part,
@@ -161,7 +153,7 @@ export function ToolPart({
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
-  recordedWidgetDiagnostics?: RecordedWidgetDiagnostics;
+  recordedWidgetDiagnostics?: RecordedWidgetPolicy;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -846,34 +838,6 @@ export function ToolPart({
     );
   };
 
-  const renderRecordedSandbox = () =>
-    recordedWidgetDiagnostics ? (
-      <div className="space-y-2" data-testid="recorded-widget-diagnostics">
-        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
-          Recorded widget policy
-        </div>
-        <div className="text-[10px] text-muted-foreground">
-          Saved with this eval run; live policy and violations are unavailable.
-        </div>
-        <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
-          <JsonEditor
-            height="100%"
-            viewOnly
-            value={{
-              resourceUri: recordedWidgetDiagnostics.resourceUri ?? null,
-              csp: recordedWidgetDiagnostics.csp ?? null,
-              permissions: recordedWidgetDiagnostics.permissions ?? null,
-              permissive: recordedWidgetDiagnostics.permissive ?? false,
-              prefersBorder: recordedWidgetDiagnostics.prefersBorder ?? null,
-            }}
-            className="p-2 text-[11px]"
-            collapsible
-            defaultExpandDepth={3}
-          />
-        </div>
-      </div>
-    ) : null;
-
   if (needsApproval) {
     return (
       <div className="text-xs">
@@ -1142,8 +1106,12 @@ export function ToolPart({
               )}
               {!hasWidgetDebug &&
                 hasRecordedWidgetDebug &&
-                activeDebugTab === "sandbox" &&
-                renderRecordedSandbox()}
+                activeDebugTab === "sandbox" && (
+                  <CspWorkbench
+                    protocol="mcp-apps"
+                    recordedPolicy={recordedWidgetDiagnostics}
+                  />
+                )}
               {hasWidgetDebug && activeDebugTab === "context" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">

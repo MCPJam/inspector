@@ -27,7 +27,11 @@ import {
   getToolServerId,
   ToolServerMap,
 } from "@/lib/apis/mcp-tools-api";
-import { detectUIType, UIType } from "@/lib/mcp-ui/mcp-apps-utils";
+import {
+  detectUIType,
+  getUIResourceUri,
+  UIType,
+} from "@/lib/mcp-ui/mcp-apps-utils";
 import {
   AnyPart,
   getDataLabel,
@@ -558,7 +562,10 @@ export function PartSwitch({
             recordedWidgetDiagnostics={
               isFrozenWidget
                 ? {
-                    resourceUri: renderOverride?.resourceUri,
+                    resourceUri:
+                      renderOverride?.resourceUri ??
+                      getUIResourceUri(uiType, effectiveToolMeta) ??
+                      undefined,
                     csp: renderOverride?.widgetCsp,
                     permissions: renderOverride?.widgetPermissions,
                     permissive: renderOverride?.widgetPermissive,

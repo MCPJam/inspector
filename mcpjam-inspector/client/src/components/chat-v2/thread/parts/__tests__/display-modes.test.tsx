@@ -68,7 +68,12 @@ vi.mock("@mcpjam/design-system/badge", () => ({
 }));
 
 vi.mock("../../csp-workbench", () => ({
-  CspWorkbench: () => null,
+  CspWorkbench: ({ recordedPolicy }: any) => (
+    <div data-testid="recorded-widget-diagnostics">
+      Saved with this eval run
+      {JSON.stringify(recordedPolicy)}
+    </div>
+  ),
 }));
 
 // Mock JsonEditor to avoid pulling in additional lucide icons
@@ -281,7 +286,7 @@ describe("ToolPart display mode controls", () => {
     expect(screen.getByTestId("recorded-widget-diagnostics")).toHaveTextContent(
       "Saved with this eval run",
     );
-    expect(screen.getByTestId("json-editor")).toHaveTextContent(
+    expect(screen.getByTestId("recorded-widget-diagnostics")).toHaveTextContent(
       "https://api.example.com",
     );
   });
