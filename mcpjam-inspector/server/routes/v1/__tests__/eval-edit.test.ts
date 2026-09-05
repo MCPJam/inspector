@@ -2860,6 +2860,60 @@ describe("v1 eval-edit routes", () => {
   });
 
   /**
+   * `kind` rides the same three-way protocol as `intent`. The point of these
+   * is the silent-drop trap: a v1 body is non-strict on create, so a field
+   * the route forgets to forward vanishes with a 201 — and the CLI's
+   * `--file` sync would then claim a kind the case never got.
+   */
+  describe("per-case kind", () => {
+    const PROMPT_STEP = { id: "s1", kind: "prompt", prompt: "hi" };
+    const CASES_PATH = "/api/v1/projects/p1/eval-suites/suite_1/cases";
+    const CASE_PATH = `${CASES_PATH}/case_1`;
+
+    it("forwards a valid kind on create", async () => {
+      const res = await request("POST", CASES_PATH, {
+        title: "Refund flow",
+        steps: [PROMPT_STEP],
+        kind: "regression",
+      });
+
+      expect(res.status).toBe(201);
+      expect(authoredCaseArgs().kind).toBe("regression");
+    });
+
+    it("forwards a valid kind on PATCH", async () => {
+      const res = await request("PATCH", CASE_PATH, { kind: "capability" });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().kind).toBe("capability");
+    });
+
+    it("omits kind on PATCH when the caller leaves it untouched", async () => {
+      const res = await request("PATCH", CASE_PATH, { title: "Renamed" });
+
+      expect(res.status).toBe(200);
+      expect("kind" in updateArgs()).toBe(false);
+    });
+
+    it("forwards null on PATCH to clear kind", async () => {
+      const res = await request("PATCH", CASE_PATH, { kind: null });
+
+      expect(res.status).toBe(200);
+      expect(updateArgs().kind).toBeNull();
+    });
+
+    it.each(["", "smoke", "CAPABILITY"])(
+      "rejects invalid kind %j on PATCH before mutation",
+      async (kind) => {
+        const res = await request("PATCH", CASE_PATH, { kind });
+
+        expect(res.status).toBe(400);
+        expect(convexMutationMock).not.toHaveBeenCalled();
+      },
+    );
+  });
+
+  /**
    * The per-case IMPORT CLAIM, across every public write and read.
    *
    * Asserted at the TRANSPORT boundary — the exact Convex mutation argument and
