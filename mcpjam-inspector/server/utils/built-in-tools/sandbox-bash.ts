@@ -180,6 +180,16 @@ export function buildSandboxBashTool(
           Math.max(timeoutSeconds ?? DEFAULT_COMMAND_TIMEOUT_S, 1),
           MAX_COMMAND_TIMEOUT_S,
         ) * 1000;
+      // Whether this invocation hands real credentials to the box.
+      //
+      // The stamp itself is the runner's `onEnvsDispatched`, not this function's
+      // return. A timeout or an abort rejects AFTER the box has the values — the
+      // process may still be alive in there holding them — so stamping only on
+      // a clean return recorded exactly that case as never-delivered. Hanging it
+      // off dispatch instead also keeps a failure BEFORE the values move (no
+      // connection, no workdir) from claiming a delivery that never happened.
+      const deliversSecrets =
+        !!opts.secretEnv && Object.keys(opts.secretEnv).length > 0;
       try {
         const result = await runner({
           sandboxId: opts.sandboxId,
@@ -193,15 +203,13 @@ export function buildSandboxBashTool(
           ...(workdir ? { workdir } : {}),
           timeoutMs,
           ...(abortSignal ? { signal: abortSignal } : {}),
-          ...(opts.secretEnv && Object.keys(opts.secretEnv).length > 0
-            ? { envs: opts.secretEnv }
+          ...(deliversSecrets
+            ? {
+                envs: opts.secretEnv,
+                onEnvsDispatched: () => opts.onSecretEnvDelivered?.(),
+              }
             : {}),
         });
-        // The values are now in a real process's environment. Fired AFTER the
-        // call returns, so a command that threw before exec records nothing.
-        if (opts.secretEnv && Object.keys(opts.secretEnv).length > 0) {
-          opts.onSecretEnvDelivered?.();
-        }
         const authUrls = detectAuthUrls(`${result.stdout}\n${result.stderr}`);
         return {
           stdout: truncate(result.stdout, MODEL_OUTPUT_CAP),
