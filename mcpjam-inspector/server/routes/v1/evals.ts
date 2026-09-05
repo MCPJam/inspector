@@ -1828,6 +1828,9 @@ function toCaseDto(testCase: CaseDoc) {
         }
       : {}),
     ...(typeof testCase.intent === "string" ? { intent: testCase.intent } : {}),
+    ...(testCase.kind === "capability" || testCase.kind === "regression"
+      ? { kind: testCase.kind }
+      : {}),
     ...(importClaim ? { import: importClaim } : {}),
     createdAt: testCase.createdAt ?? null,
     updatedAt: testCase.updatedAt ?? null,
@@ -2142,6 +2145,12 @@ const publicCaseBodyShape = {
    * `createCaseSchema` narrows this to the stored (string-only) form below.
    */
   intent: caseIntentUpdateSchema.optional(),
+  /**
+   * Authored case kind (capability | regression). Same three-way protocol as
+   * `intent`: omitted preserves, `null` clears, a literal sets. Metadata plus
+   * an authoring default — nothing in the runner or verdict reads it.
+   */
+  kind: z.enum(["capability", "regression"]).nullable().optional(),
   models: z
     .array(
       z.object({
@@ -2194,6 +2203,8 @@ const createCaseSchema = z.strictObject({
   id: opaqueIdSchema.optional(),
   // A new case has nothing to clear: stored intent is a string or absent.
   intent: caseIntentSchema.optional(),
+  // Likewise for kind: `null` on create has nothing to clear.
+  kind: z.enum(["capability", "regression"]).optional(),
   /** The converter's claim for this case. See {@link publicCaseImportSchema}. */
   import: publicCaseImportSchema.optional(),
 });
@@ -2492,10 +2503,11 @@ const generateCasesSchema = z
  */
 type CaseMutationBody = Omit<
   z.infer<typeof createCaseSchema>,
-  "import" | "intent"
+  "import" | "intent" | "kind"
 > & {
   import?: z.infer<typeof publicCaseImportSchema> | null;
   intent?: z.infer<typeof caseIntentUpdateSchema>;
+  kind?: "capability" | "regression" | null;
 };
 
 function buildCaseMutationArgs(
@@ -2535,6 +2547,8 @@ function buildCaseMutationArgs(
   // clear; string = set. Never use a truthiness check here: it would collapse
   // the explicit clear into omission before Convex can apply it.
   if (body.intent !== undefined) args.intent = body.intent;
+  // Same definedness rule as intent: `null` must reach Convex as the clear.
+  if (body.kind !== undefined) args.kind = body.kind;
   if (body.expectedOutput !== undefined)
     args.expectedOutput = body.expectedOutput;
 

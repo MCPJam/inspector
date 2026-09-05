@@ -1492,6 +1492,20 @@ export function useEvalHandlers({
     [navigateAfterTestCaseMutation]
   );
 
+  // Record = run-once-then-adopt, not the widget recorder. Same unsaved
+  // draft path as Write; the editor focuses the prompt and surfaces adopt
+  // after the first Quick Run.
+  const handleRecordTestCase = useCallback(
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("record"),
+      });
+    },
+    [navigateAfterTestCaseMutation]
+  );
+
   // Handle delete test case - opens confirmation modal
   const handleDeleteTestCase = useCallback(
     (testCaseId: string, testCaseTitle: string) => {
@@ -1812,6 +1826,7 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleRecordTestCase,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,
