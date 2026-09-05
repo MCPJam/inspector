@@ -179,7 +179,7 @@
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@noble/hashes": "^2.3.0",
     "@openrouter/ai-sdk-provider": "^2.2.0",
-    "@xmldom/xmldom": "^0.8.13",
+    "@xmldom/xmldom": "^0.9.12",
     "ai": "^6.0.141",
     "ajv": "^8.17.1",
     "jszip": "^3.10.1",
