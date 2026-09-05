@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useCurrentPathname } from "@/lib/app-navigation";
-import { isProjectIdShape, readProjectPathSegment } from "@/lib/project-route";
+import { readProjectPathSegment } from "@/lib/project-route";
 import {
   resolveProjectRouteState,
   type ProjectRouteState,
 } from "@/lib/project-route-state";
 import {
   trackProjectRouteInaccessible,
+  trackProjectRouteRecovered,
   trackProjectRouteResolved,
   trackProjectRouteScopeMismatch,
 } from "@/lib/project-route-telemetry";
@@ -28,12 +29,13 @@ export interface ProjectRouteCoordinatorInput {
   projects: Record<string, unknown>;
   /** ALL projects the viewer belongs to; undefined while loading. */
   allProjects:
-    | ReadonlyArray<{ _id: string; organizationId?: string }>
-    | undefined;
+    ReadonlyArray<{ _id: string; organizationId?: string }> | undefined;
   activeProjectId: string | null;
   activeOrganizationId: string | undefined;
   setActiveOrganizationId: (organizationId: string | undefined) => void;
   switchProject: (projectId: string) => Promise<void>;
+  /** A confirmed stale sign-in return is recovered by App before it paints. */
+  suppressInaccessibleTelemetryFor?: string | null;
 }
 
 /**
@@ -56,7 +58,7 @@ export interface ProjectRouteCoordinatorInput {
  * someone else's data" behavior being removed.
  */
 export function useProjectRouteCoordinator(
-  input: ProjectRouteCoordinatorInput
+  input: ProjectRouteCoordinatorInput,
 ): ProjectRouteState {
   const {
     isAuthenticated,
@@ -68,13 +70,14 @@ export function useProjectRouteCoordinator(
     activeOrganizationId,
     setActiveOrganizationId,
     switchProject,
+    suppressInaccessibleTelemetryFor,
   } = input;
 
   const pathname = useCurrentPathname();
   const requestedProjectId = readProjectPathSegment(pathname);
 
   const [budgetExceededFor, setBudgetExceededFor] = useState<string | null>(
-    null
+    null,
   );
   /**
    * Bumped when a switch REJECTS, so the effect below runs again.
@@ -89,7 +92,7 @@ export function useProjectRouteCoordinator(
 
   const activeOrgProjectIds = useMemo(
     () => new Set(Object.keys(projects)),
-    [projects]
+    [projects],
   );
 
   const { state, effect } = resolveProjectRouteState({
@@ -113,10 +116,13 @@ export function useProjectRouteCoordinator(
 
   const switchInFlightRef = useRef<string | null>(null);
   const switchAttemptsRef = useRef<{ projectId: string; count: number } | null>(
-    null
+    null,
   );
   const requestedAtRef = useRef<{ projectId: string; at: number } | null>(null);
-  const reportedRef = useRef<string | null>(null);
+  const reportedRef = useRef<{
+    projectId: string;
+    outcome: "ready" | "inaccessible";
+  } | null>(null);
 
   // Reset the per-request bookkeeping whenever the URL asks for a different
   // project — including a return to an unscoped route.
@@ -153,8 +159,8 @@ export function useProjectRouteCoordinator(
     effect.kind === "none"
       ? "none"
       : effect.kind === "switch-organization"
-      ? `org:${effect.organizationId}`
-      : `project:${effect.projectId}:${switchRetry}`;
+        ? `org:${effect.organizationId}`
+        : `project:${effect.projectId}:${switchRetry}`;
   // The effect body reads everything through refs and depends ONLY on the
   // key. `switchProject` in particular is a `useCallback` over the live server
   // map, so its identity changes constantly — as a dependency it would re-run
@@ -213,28 +219,49 @@ export function useProjectRouteCoordinator(
   // Telemetry: once per requested project, never carrying the id itself.
   useEffect(() => {
     if (state.status === "ready") {
-      if (reportedRef.current === state.projectId) return;
-      reportedRef.current = state.projectId;
+      const reported = reportedRef.current;
+      if (
+        reported?.projectId === state.projectId &&
+        reported.outcome === "ready"
+      ) {
+        return;
+      }
+      reportedRef.current = { projectId: state.projectId, outcome: "ready" };
+      if (
+        reported?.projectId === state.projectId &&
+        reported.outcome === "inaccessible"
+      ) {
+        trackProjectRouteRecovered();
+        return;
+      }
       const started = requestedAtRef.current;
       trackProjectRouteResolved(
         started && started.projectId === state.projectId
           ? Date.now() - started.at
-          : 0
+          : 0,
       );
       return;
     }
     if (state.status === "inaccessible") {
-      if (reportedRef.current === state.requestedProjectId) return;
-      reportedRef.current = state.requestedProjectId;
-      trackProjectRouteInaccessible(
-        !isProjectIdShape(state.requestedProjectId)
-          ? "malformed"
-          : budgetExceededFor === state.requestedProjectId
-          ? "timed-out"
-          : "not-a-member"
-      );
+      if (
+        state.reason === "not-a-member" &&
+        suppressInaccessibleTelemetryFor === state.requestedProjectId
+      ) {
+        return;
+      }
+      if (
+        reportedRef.current?.projectId === state.requestedProjectId &&
+        reportedRef.current.outcome === "inaccessible"
+      ) {
+        return;
+      }
+      reportedRef.current = {
+        projectId: state.requestedProjectId,
+        outcome: "inaccessible",
+      };
+      trackProjectRouteInaccessible(state.reason);
     }
-  }, [state, budgetExceededFor]);
+  }, [state, suppressInaccessibleTelemetryFor]);
 
   return state;
 }
