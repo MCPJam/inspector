@@ -72,6 +72,12 @@ export type ServerPickerPanelProps = {
    */
   catalogKnown?: boolean;
   /**
+   * A write the caller started is still in flight. It refuses anything further
+   * until that lands, so the controls stop offering what would be refused —
+   * a refusal the user cannot see reads as a dead control.
+   */
+  busy?: boolean;
+  /**
    * Chips shown before the rest collapse into `+N`.
    *
    * A COUNT, while the design's own overflow looks driven by the width of the
@@ -127,6 +133,7 @@ export function ServerPickerPanel({
   onCreateGroup,
   deriveName,
   catalogKnown = true,
+  busy = false,
   chipLimit = 3,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
@@ -189,6 +196,7 @@ export function ServerPickerPanel({
               <button
                 type="button"
                 onClick={() => onSelectServer(server.id)}
+                disabled={busy}
                 aria-current={selected ? "true" : undefined}
                 className={cn(ROW, "min-w-0 flex-1 text-sm")}
               >
@@ -282,7 +290,8 @@ export function ServerPickerPanel({
                 disabled={
                   draftIds.size === 0 ||
                   draftName.trim().length === 0 ||
-                  submitting
+                  submitting ||
+                  busy
                 }
                 onClick={async () => {
                   setSubmitting(true);
@@ -326,6 +335,7 @@ export function ServerPickerPanel({
               <button
                 type="button"
                 onClick={() => onSelectGroup(group.id)}
+                disabled={busy}
                 aria-current={selected ? "true" : undefined}
                 className={cn(ROW, "min-w-0 flex-1 flex-col !items-start gap-1")}
               >

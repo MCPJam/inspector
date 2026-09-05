@@ -103,14 +103,11 @@ export function ServerPicker({
   triggerTestId,
 }: ServerPickerProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { serverAttachments } = useProjectServerAttachments({
-    isAuthenticated,
-    projectId,
-  });
-  const { servers: catalogRows } = useProjectServers({
-    isAuthenticated,
-    projectId,
-  });
+  const { serverAttachments, isLoading: attachmentsLoading } =
+    useProjectServerAttachments({ isAuthenticated, projectId });
+  const { servers: catalogRows, isLoading: catalogLoading } = useProjectServers(
+    { isAuthenticated, projectId },
+  );
   const appState = useOptionalSharedAppState();
   const actions = useServerActionsOptional();
   const createServerAttachment = useMutation(
@@ -190,9 +187,16 @@ export function ServerPicker({
     [actions],
   );
 
-  // `undefined` until the query answers. Kept apart from an answered-and-empty
-  // catalog so the panel never claims a project has no servers on a guess.
-  const catalogKnown = catalogRows !== undefined;
+  /**
+   * Both hooks flatten `undefined` to an empty list, so "in flight" and
+   * "answered, and empty" arrive identically. `isLoading` is the only thing
+   * that separates them — and it is false for a SKIPPED query, which
+   * `catalogRows === undefined` is not: `useProjectServers` skips for a local
+   * or UUID project id, where reading undefined as in-flight would leave the
+   * tab loading for ever.
+   */
+  const catalogKnown = !catalogLoading;
+  const attachmentsKnown = !attachmentsLoading;
   const catalog = useMemo(() => catalogRows ?? [], [catalogRows]);
   const runtime = appState?.servers ?? null;
 
@@ -200,6 +204,15 @@ export function ServerPicker({
     () => resolvePickerSelection(attachments, value),
     [attachments, value],
   );
+
+  /**
+   * The selection the trigger is entitled to act on. A `dangling` row is one
+   * the list does not hold — which, until the list answers, is every row. The
+   * label already falls back for it; the styling and the clear control have to
+   * agree, or one render says both "nothing is selected" and "something is".
+   */
+  const resolved =
+    selection && selection.kind !== "dangling" ? selection : null;
 
   // Seeded from the selection, then owned by the user for as long as the
   // popover stays open — re-deriving on every render would yank them back to
@@ -250,6 +263,10 @@ export function ServerPicker({
       // Before the reuse branch too: reporting a selection mid-write costs
       // nothing to store, but the pending write's own `onChange` overwrites it.
       if (writing.current) return;
+      // A stand-in for this server may already exist in rows we have not been
+      // handed yet; minting against an unseen list writes the duplicate the
+      // backend then rejects on its name.
+      if (!attachmentsKnown) return;
 
       const existing = findSoloGroup(attachments, serverId);
       if (existing) {
@@ -300,10 +317,12 @@ export function ServerPicker({
   /** Persist a multi-server group from the panel's form, then select it. */
   const handleCreateGroup = useCallback(
     async (name: string, serverIds: string[]) => {
-      // Held for the same reason the server path holds it: the Servers tab
-      // stays clickable while the form is submitting. Refused by throwing
-      // rather than returning, so the panel keeps the draft it was handed.
-      if (writing.current) throw new Error("A server write is already in flight");
+      // A backstop: `busy` disables Create, so this is only reachable if the
+      // panel ever stops honouring it. Say so and throw, which keeps the draft.
+      if (writing.current) {
+        toast.error("Finishing the previous change first.");
+        throw new Error("A server write is already in flight");
+      }
       writing.current = true;
       setCreating(true);
       try {
@@ -365,10 +384,7 @@ export function ServerPicker({
   // A dangling selection (its row was deleted) still reads as the empty label
   // here. The model distinguishes it; surfacing that is deliberately left to
   // its own change rather than folded into this one.
-  const triggerLabel =
-    selection && selection.kind !== "dangling"
-      ? selection.label
-      : emptyTriggerLabel;
+  const triggerLabel = resolved ? resolved.label : emptyTriggerLabel;
 
   return (
     <Popover
@@ -387,7 +403,7 @@ export function ServerPicker({
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-foreground",
             "outline-none transition-colors",
-            selection
+            resolved
               ? "border-border/60 bg-muted/40 hover:bg-muted/60"
               : "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45",
             disabled && "cursor-not-allowed opacity-50",
@@ -401,7 +417,7 @@ export function ServerPicker({
         </button>
       </PopoverTrigger>
 
-      {onClearSelection && selection && !disabled ? (
+      {onClearSelection && resolved && !disabled ? (
         <button
           type="button"
           data-testid="server-picker-clear"
@@ -440,6 +456,7 @@ export function ServerPicker({
           onCreateGroup={handleCreateGroup}
           deriveName={deriveName}
           catalogKnown={catalogKnown}
+          busy={creating || disabled}
         />
       </PopoverContent>
     </Popover>

@@ -413,6 +413,55 @@ describe("ServerPickerPanel — creating a group", () => {
   });
 });
 
+describe("ServerPickerPanel — busy", () => {
+  // The caller refuses a second write while one is in flight. Without a signal
+  // the panel keeps offering the controls, so the refusal reads as a dead
+  // button rather than as "not yet".
+  it("stops offering a server row it cannot act on", async () => {
+    const onSelectServer = vi.fn();
+    render(
+      <ServerPickerPanel {...panelProps({ onSelectServer, busy: true })} />,
+    );
+
+    await userEvent.click(screen.getByTestId("server-status-dot-srv_1"));
+    expect(onSelectServer).not.toHaveBeenCalled();
+  });
+
+  it("stops offering a group row it cannot act on", async () => {
+    const onSelectGroup = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onSelectGroup, busy: true })}
+      />,
+    );
+
+    const row = screen.getByText("Group 1").closest("button")!;
+    await userEvent.click(row);
+    expect(onSelectGroup).not.toHaveBeenCalled();
+  });
+
+  it("disables Create so the refusal is visible rather than silent", async () => {
+    // The caller throws on a second write. Leaving Create enabled turns that
+    // into a button that does nothing and says nothing.
+    const deriveName = () => "New group";
+    const { rerender } = render(
+      <ServerPickerPanel {...panelProps({ tab: "groups", deriveName })} />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Excalidraw (App)" }),
+    );
+    expect(screen.getByRole("button", { name: /^Create$/ })).toBeEnabled();
+
+    rerender(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", deriveName, busy: true })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /^Create$/ })).toBeDisabled();
+  });
+});
+
 describe("ServerPickerPanel — an unanswered catalog", () => {
   it("says it is loading rather than claiming the project is empty", () => {
     // Carried over from the fix to the picker this replaces: `undefined` from

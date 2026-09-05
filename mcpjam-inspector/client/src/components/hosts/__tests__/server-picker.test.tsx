@@ -14,7 +14,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const { mockState } = vi.hoisted(() => ({
   mockState: {
     attachments: [] as any[],
+    attachmentsLoading: false,
     servers: undefined as any[] | undefined,
+    catalogLoading: false,
     runtime: null as Record<string, { connectionStatus: string }> | null,
     createSpy: vi.fn(),
     ensureReady: vi.fn(),
@@ -30,9 +32,12 @@ vi.mock("convex/react", () => ({
 vi.mock("@/hooks/useViews", () => ({
   useProjectServerAttachments: () => ({
     serverAttachments: mockState.attachments,
-    isLoading: false,
+    isLoading: mockState.attachmentsLoading,
   }),
-  useProjectServers: () => ({ servers: mockState.servers }),
+  useProjectServers: () => ({
+    servers: mockState.servers,
+    isLoading: mockState.catalogLoading,
+  }),
 }));
 
 vi.mock("@/state/app-state-context", () => ({
@@ -68,7 +73,9 @@ const CATALOG = [
 beforeEach(() => {
   vi.clearAllMocks();
   mockState.attachments = [];
+  mockState.attachmentsLoading = false;
   mockState.servers = CATALOG;
+  mockState.catalogLoading = false;
   mockState.runtime = { alpha: { connectionStatus: "connected" } };
   mockState.createSpy = vi.fn().mockResolvedValue({ _id: "att_new" });
   mockState.ensureReady = vi.fn().mockResolvedValue({
@@ -625,6 +632,106 @@ describe("ServerPicker — clearing back to no selection", () => {
       />,
     );
     expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+  });
+});
+
+describe("ServerPicker — refusals the user can see", () => {
+  it("disables the rows while its own write is in flight", async () => {
+    // The handlers refuse a second write by returning. Left enabled, the rows
+    // read as broken rather than as busy.
+    mockState.createSpy = vi.fn(() => new Promise(() => {}));
+    open();
+    fireEvent.click(await serverRow("srv_1"));
+
+    await waitFor(() => expect(serverRow("srv_2")).resolves.toBeDisabled());
+  });
+
+  it("hands `disabled` to the panel, not just to the trigger", async () => {
+    // The strip can disable the picker while its popover is already open —
+    // greying the trigger leaves the open rows fully clickable.
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await serverRow("srv_1");
+
+    rerender(
+      <ServerPicker
+        projectId="p_1"
+        value={null}
+        onChange={onChange}
+        disabled
+      />,
+    );
+    expect(await serverRow("srv_1")).toBeDisabled();
+  });
+});
+
+describe("ServerPicker — before the attachment list has answered", () => {
+  // `useProjectServerAttachments` returns `serverAttachments ?? []`, so an
+  // unanswered query is an empty list. Reading that as "no such row" makes a
+  // live selection look deleted — and every action taken on that reading is
+  // taken against a list we have not seen.
+  beforeEach(() => {
+    mockState.attachmentsLoading = true;
+    mockState.attachments = [];
+  });
+
+  it("offers no clear control over a selection it cannot see", () => {
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_solo"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    // The row is not in the list yet, so the X would delete a selection whose
+    // name we cannot even render.
+    expect(screen.queryByTestId("server-picker-clear")).toBeNull();
+  });
+
+  it("does not dress the trigger as though a selection resolved", () => {
+    render(
+      <ServerPicker projectId="p_1" value="att_solo" onChange={vi.fn()} />,
+    );
+    // Solid border is the "this is set" affordance; pairing it with the empty
+    // label says both things at once.
+    expect(screen.getByTestId("server-picker-trigger").className).toContain(
+      "border-dashed",
+    );
+  });
+
+  it("writes nothing, because the row it would reuse may already exist", async () => {
+    const onChange = open();
+    fireEvent.click(await serverRow("srv_1"));
+
+    expect(mockState.createSpy).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("ServerPicker — a catalog query that never runs", () => {
+  it("states the project is empty rather than loading forever", async () => {
+    // `useProjectServers` skips for a local/UUID project id and returns
+    // `undefined` for good. Reading undefined as "in flight" leaves the tab
+    // saying "Loading servers…" with nothing ever arriving.
+    mockState.servers = undefined;
+    mockState.catalogLoading = false;
+    open();
+
+    expect(
+      await screen.findByText("No servers in this project yet."),
+    ).toBeInTheDocument();
+  });
+
+  it("still says loading while the query really is in flight", async () => {
+    mockState.servers = undefined;
+    mockState.catalogLoading = true;
+    open();
+
+    expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
   });
 });
 
