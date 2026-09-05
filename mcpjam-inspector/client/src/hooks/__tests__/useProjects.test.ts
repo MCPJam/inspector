@@ -10,11 +10,13 @@ import {
   type ProjectMember,
 } from "../useProjects";
 
-const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(() => ({
-  mockUseDbUserReady: vi.fn(() => true),
-  mockUseMutation: vi.fn(),
-  mockUseQuery: vi.fn(),
-}));
+const { mockUseDbUserReady, mockUseMutation, mockUseQuery } = vi.hoisted(
+  () => ({
+    mockUseDbUserReady: vi.fn(() => true),
+    mockUseMutation: vi.fn(),
+    mockUseQuery: vi.fn(),
+  }),
+);
 
 vi.mock("convex/react", () => ({
   useMutation: mockUseMutation,
@@ -89,6 +91,31 @@ describe("useProjectQueries", () => {
     expect(result.current.hasProjects).toBe(false);
     expect(result.current.hasAnyProjects).toBe(false);
     expect(mockUseQuery).toHaveBeenCalledWith("projects:getMyProjects", {});
+  });
+
+  it("does not accept an empty project list before user setup finishes", () => {
+    mockUseDbUserReady.mockReturnValue(false);
+    mockUseQuery.mockImplementation((_name, args) =>
+      args === "skip" ? undefined : [],
+    );
+
+    const { result, rerender } = renderHook(() =>
+      useProjectQueries({ isAuthenticated: true }),
+    );
+
+    expect(mockUseQuery).toHaveBeenLastCalledWith(
+      "projects:getMyProjects",
+      "skip",
+    );
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.allProjects).toBeUndefined();
+
+    mockUseDbUserReady.mockReturnValue(true);
+    rerender();
+
+    expect(mockUseQuery).toHaveBeenLastCalledWith("projects:getMyProjects", {});
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.allProjects).toEqual([]);
   });
 });
 
