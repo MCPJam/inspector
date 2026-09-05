@@ -38,7 +38,9 @@ export function FailureGroupsCard({ suiteId }: { suiteId: string }) {
   const completed = row && row.status === "completed" ? row : null;
   const grouping = row?.status === "queued" || row?.status === "running";
   const groupingFailed = row?.status === "failed";
-  const header = failureGroupsHeader(completed);
+  // Memoized like the diagram below: the header counts reason nodes off the
+  // same Sankey build, and a collapsed card must not rebuild it per render.
+  const header = useMemo(() => failureGroupsHeader(completed), [completed]);
   const busy = failureGroupsBusy(row, groups.inFlight, groups.requesting);
   const sankey = useMemo(
     () => (completed?.grouped ? buildFailureSankey(completed) : null),

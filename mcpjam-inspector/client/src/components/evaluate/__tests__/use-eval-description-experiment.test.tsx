@@ -177,6 +177,35 @@ describe("useEvalDescriptionExperiment", () => {
     expect(mocks.get).toHaveBeenCalledTimes(2);
   });
 
+  it.each(["invalidContract", "routeUnavailable"] as const)(
+    "stops polling after a %s read of a non-terminal experiment",
+    async (kind) => {
+      vi.useFakeTimers();
+      mocks.list.mockResolvedValue([experiment({ status: "running" })]);
+      mocks.get.mockRejectedValue(
+        new EvalDescriptionExperimentError(kind, "will not change", {
+          status: 502,
+        }),
+      );
+
+      const { latest } = renderHook();
+      await vi.waitFor(() =>
+        expect(latest().experiment?.status).toBe("running"),
+      );
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      await vi.waitFor(() => expect(latest().status).toBe("error"));
+      expect(latest().error?.kind).toBe(kind);
+      // The last good document stays on screen under the error.
+      expect(latest().experiment?.status).toBe("running");
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+
+      // No re-arm: a condition that will not change is not polled through.
+      await vi.advanceTimersByTimeAsync(20_000);
+      expect(mocks.get).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it("stops polling when the document is gone", async () => {
     vi.useFakeTimers();
     mocks.list.mockResolvedValue([experiment({ status: "running" })]);

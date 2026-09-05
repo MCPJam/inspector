@@ -415,8 +415,14 @@ export type EvalRouteRow = z.infer<typeof routeRowSchema>;
 
 const otherRoutesSchema = z
   .object({
-    /** How many distinct routes were folded, so a reader can say "N other routes". */
-    distinctPaths: z.number().int().min(1),
+    /**
+     * How many distinct routes were folded, so a reader can say "N other
+     * routes". Optional on READ: the builder always writes it, but a row
+     * persisted by a producer that predates the field carries only the
+     * trial counts, and a reader must not refuse the whole document over a
+     * number it can say "and more" without.
+     */
+    distinctPaths: z.number().int().min(1).optional(),
     trials: countSchema,
     passed: countSchema,
     failed: countSchema,

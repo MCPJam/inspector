@@ -98,7 +98,9 @@ describe("frozen arms", () => {
         model: ["claude"],
         engine: "emulated",
       }),
-    ).toBe(" with frozen model and engine; host and catalog not recorded");
+    ).toBe(
+      " with frozen model and engine; host, catalog, and grader not recorded",
+    );
     expect(
       frozenFieldsLabel({
         equal: true,
@@ -107,9 +109,21 @@ describe("frozen arms", () => {
         hostConfigId: "host_1",
         toolSnapshotHash: "snap_1",
       }),
-    ).toBe(" with frozen model, engine, host, and catalog");
+    ).toBe(
+      " with frozen model, engine, host, and catalog; grader not recorded",
+    );
+    expect(
+      frozenFieldsLabel({
+        equal: true,
+        model: ["claude"],
+        engine: "emulated",
+        hostConfigId: "host_1",
+        toolSnapshotHash: "snap_1",
+        judgeConfigHash: "judge_1",
+      }),
+    ).toBe(" with frozen model, engine, host, catalog, and grader");
     expect(frozenFieldsLabel({ equal: true, model: [] })).toBe(
-      "; model, engine, host, and catalog not recorded",
+      "; model, engine, host, catalog, and grader not recorded",
     );
   });
 
@@ -120,13 +134,13 @@ describe("frozen arms", () => {
       engine: "emulated",
     });
     expect(partial).toContain("with frozen model and engine");
-    expect(partial).toContain("host and catalog not recorded");
+    expect(partial).toContain("host, catalog, and grader not recorded");
     expect(partial).not.toContain("frozen model, engine, host, and catalog");
     expect(evidenceCaveat("reproducible", { equal: true })).toContain(
-      "model, engine, host, and catalog not recorded",
+      "model, engine, host, catalog, and grader not recorded",
     );
     expect(evidenceCaveat("reproducible")).toContain(
-      "model, engine, host, and catalog not recorded",
+      "model, engine, host, catalog, and grader not recorded",
     );
   });
 });

@@ -557,6 +557,37 @@ describe("buildEvalRunRouteFacts", () => {
     expect(doc.routeFactsVersion).toBe(ROUTE_FACTS_VERSION);
     expect(evalRunRouteFactsSchema.safeParse(doc).success).toBe(true);
   });
+
+  test("a persisted row whose otherRoutes predates distinctPaths still parses", () => {
+    // The producer that persists rows folds the tail with trial counts only.
+    // The builder writes `distinctPaths`; the reader must not refuse a whole
+    // document over a count it can say "and more" without.
+    const trials = Array.from({ length: MAX_ROUTES_PER_CASE + 2 }, (_, i) =>
+      trial({
+        trialKey: `t${i}`,
+        actualToolCalls: [call(`tool_${i}`)],
+        expectedToolCalls: [call("tool_a")],
+      })
+    );
+    const doc = build(trials);
+    const folded = caseOf(doc).routes.otherRoutes;
+    expect(folded?.distinctPaths).toBe(2);
+    const legacy = {
+      trials: folded!.trials,
+      passed: folded!.passed,
+      failed: folded!.failed,
+    };
+    const payload = {
+      ...doc,
+      cases: doc.cases.map((row) => ({
+        ...row,
+        routes: { ...row.routes, otherRoutes: legacy },
+      })),
+    };
+    const parsed = evalRunRouteFactsSchema.safeParse(payload);
+    expect(parsed.error?.issues ?? []).toEqual([]);
+    expect(parsed.success).toBe(true);
+  });
 });
 
 // ── fixture cohorts ──────────────────────────────────────────────────────────

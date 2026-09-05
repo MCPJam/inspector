@@ -131,7 +131,7 @@ export type InsightsSankeyNode<S extends string = SankeyStage> = {
   clickable: boolean;
 };
 
-export type InsightsSankeyLink<S extends string = SankeyStage> = {
+export type InsightsSankeyLink = {
   source: string;
   target: string;
   count: number;
@@ -145,7 +145,7 @@ export type InsightsSankeyLink<S extends string = SankeyStage> = {
 
 export type InsightsSankey<S extends string = SankeyStage> = {
   nodes: InsightsSankeyNode<S>[];
-  links: InsightsSankeyLink<S>[];
+  links: InsightsSankeyLink[];
   foldedGoalCount: number;
   /**
    * Themes collapsed into `__other__` per stage. Absent on responses from a

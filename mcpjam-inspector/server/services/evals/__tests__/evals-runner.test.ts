@@ -946,10 +946,16 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       preparedDescription?: string;
       suiteHostConfig?: Record<string, unknown>;
       omitOverride?: boolean;
+      /** The prepared catalog does not offer the tool at all. */
+      absentTool?: boolean;
     }) {
-      preparedToolsOverride.current = {
-        search: { description: args.preparedDescription ?? rewriteMarker.description },
-      };
+      preparedToolsOverride.current = args.absentTool
+        ? { other_tool: { description: "unrelated" } }
+        : {
+            search: {
+              description: args.preparedDescription ?? rewriteMarker.description,
+            },
+          };
       await runEvalSuiteWithAiSdk({
         ...buildQuickRunConfig(),
         ...(args.omitOverride
@@ -995,6 +1001,22 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
         proposalHash: "hash_1",
         applied: false,
       });
+    });
+
+    it("stamps applied false when the prepared catalog lacks the tool", async () => {
+      // The case a customer actually hits: the rewrite arm replays against
+      // servers that no longer offer the tool, so nothing was rewritten.
+      const payload = await runWithOverride({ absentTool: true });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+      expect(payload.metadata).not.toHaveProperty(
+        "tools_description_overridden"
+      );
     });
 
     it("does not stamp descriptionExperiment on the original arm", async () => {

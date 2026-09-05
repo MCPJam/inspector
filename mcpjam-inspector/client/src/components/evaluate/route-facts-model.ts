@@ -35,11 +35,17 @@ function readToolNamesFromSnapshot(snapshot: unknown): string[] | null {
   const names: string[] = [];
   const seen = new Set<string>();
   for (const server of servers) {
-    if (!isRecord(server) || !Array.isArray(server.tools)) continue;
+    // A server entry without a tool list, or a tool entry without a name,
+    // is not "a server with no tools": it is a catalog this reader cannot
+    // vouch for. Skipping the entry would hand route facts a `loaded`
+    // catalog with holes in it, and every tool the trials called through
+    // the hole would be filed as `outsideCatalog`.
+    if (!isRecord(server) || !Array.isArray(server.tools)) return null;
     for (const tool of server.tools) {
-      if (!isRecord(tool) || typeof tool.name !== "string") continue;
+      if (!isRecord(tool) || typeof tool.name !== "string") return null;
       const name = tool.name.trim();
-      if (!name || seen.has(name)) continue;
+      if (!name) return null;
+      if (seen.has(name)) continue;
       seen.add(name);
       names.push(name);
     }
@@ -53,7 +59,9 @@ function readToolNamesFromSnapshot(snapshot: unknown): string[] | null {
  *
  * A snapshot that is present but lists no tools is `loaded` with an empty
  * catalog: the server had nothing to offer, which is a fact about the
- * server, not a missing read. Only an absent snapshot is `notLoaded`.
+ * server, not a missing read. An absent snapshot is `notLoaded`, and so is
+ * a malformed one — a server entry with no tool list, a tool with no name —
+ * because a catalog the page cannot read is one it cannot vouch for.
  */
 export function readRunToolCatalog(run: EvalSuiteRun): RouteFactsCatalog {
   const names = readToolNamesFromSnapshot(run.toolSnapshot);
@@ -336,9 +344,11 @@ export function mismatchLines(
       );
     }
     if (facts.mismatch.truncated) {
-      // The document caps each list at MAX_MISMATCH_TOOLS, count-desc, so
-      // what survived is what the most trials touched.
-      lines.push(`showing the ${MAX_MISMATCH_TOOLS} most-seen tools`);
+      // The document caps each list at MAX_MISMATCH_TOOLS. The expected and
+      // unexpected lists keep the most-seen tools; the substitution list is
+      // ordered by name. So the line states the cap and claims nothing about
+      // which rows survived it.
+      lines.push(`mismatch lists capped at ${MAX_MISMATCH_TOOLS} entries each`);
     }
     if (catalogState === "notLoaded") {
       lines.push("catalog not loaded — substitutions were not classified");

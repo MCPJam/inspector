@@ -1944,5 +1944,31 @@ describe("HostRunner", () => {
       const callArgs = mockGenerateText.mock.calls[0][0] as any;
       expect(callArgs.tools.search.description).toBe("Look up a user by email");
     });
+
+    it("rewrites own tools only on the record form, never Object.prototype members", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: {
+          add: "Sum two numbers",
+          toString: "not a tool",
+          constructor: "not a tool",
+        },
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(Object.keys(callArgs.tools).sort()).toEqual(["add", "subtract"]);
+      expect(callArgs.tools.add.description).toBe("Sum two numbers");
+      expect(callArgs.tools.subtract.description).toBe("Subtract two numbers");
+    });
   });
 });

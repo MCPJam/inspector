@@ -222,7 +222,10 @@ function applyToolDescriptionOverridesToRecord<
   if (!overrides || Object.keys(overrides).length === 0) return tools;
   const next: Record<string, { description?: string }> = { ...tools };
   for (const [name, description] of Object.entries(overrides)) {
-    const tool = next[name];
+    // Own properties only: `next` is a plain object, so an override named
+    // `toString` or `constructor` would otherwise find Object.prototype's
+    // member and fabricate a "tool" out of it.
+    const tool = Object.hasOwn(next, name) ? next[name] : undefined;
     if (tool) next[name] = { ...tool, description };
   }
   return next as T;

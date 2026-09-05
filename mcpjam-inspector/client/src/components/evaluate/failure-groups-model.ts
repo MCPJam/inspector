@@ -181,7 +181,7 @@ function addCount(
 }
 
 function addLink(
-  into: Map<string, InsightsSankeyLink<FailureSankeyStage>>,
+  into: Map<string, InsightsSankeyLink>,
   source: string,
   target: string,
 ): void {
@@ -229,7 +229,7 @@ export function buildFailureSankey(row: SuiteFailureGroupsRow): FailureSankey {
     ),
   ];
 
-  const links = new Map<string, InsightsSankeyLink<FailureSankeyStage>>();
+  const links = new Map<string, InsightsSankeyLink>();
   for (const ribbon of ribbons) {
     const caseId = `case:${remapKey(ribbon.caseKey, caseFold.foldedKeys)}`;
     const routeId = `route:${remapKey(ribbon.pathKey, routeFold.foldedKeys)}`;

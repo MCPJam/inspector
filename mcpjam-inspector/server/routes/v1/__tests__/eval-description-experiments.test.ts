@@ -118,6 +118,14 @@ const SOURCE_RUN = {
   configSnapshot: {},
 };
 
+/** `search` under two servers: an override by bare name has no one tool to be about. */
+const SHARED_NAME_SNAPSHOT = {
+  servers: [
+    { serverId: "s_alpha", tools: [{ name: "search" }] },
+    { serverId: "s_beta", tools: [{ name: "search" }] },
+  ],
+};
+
 const SUITE_DOC = {
   _id: SUITE_ID,
   projectId: PROJECT_ID,
@@ -282,6 +290,48 @@ describe("eval description experiments", () => {
         "Eval run not found",
       );
     });
+
+    it("refuses a tool two of the run's servers share before proposing", async () => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshot: SHARED_NAME_SNAPSHOT,
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+        { toolName: "search" },
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS" },
+      });
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:proposeDescriptionRewrite",
+        expect.anything(),
+      );
+    });
+
+    it("proposes a tool one server offers even when another shares no name", async () => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshot: {
+            servers: [
+              { serverId: "s_alpha", tools: [{ name: "search" }] },
+              { serverId: "s_beta", tools: [{ name: "fetch" }] },
+            ],
+          },
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-runs/${RUN_ID}/description-experiments`,
+        { toolName: "search" },
+      );
+      expect(res.status).toBe(202);
+    });
   });
 
   describe("POST …/eval-description-experiments/:e/start", () => {
@@ -364,6 +414,29 @@ describe("eval description experiments", () => {
       for (const release of releaseGates.splice(0)) release();
       await vi.waitFor(() =>
         expect(disconnectAllServers).toHaveBeenCalledTimes(2),
+      );
+    });
+
+    it("refuses a tool two of the run's servers share before taking a slot or moving state", async () => {
+      mockConvex({
+        "testSuites:getTestSuiteRun": () => ({
+          ...SOURCE_RUN,
+          toolSnapshot: SHARED_NAME_SNAPSHOT,
+        }),
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        details: { reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS" },
+      });
+      expect(prepareEvalRunMock).not.toHaveBeenCalled();
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markLaunching",
+        expect.anything(),
       );
     });
 
@@ -452,6 +525,44 @@ describe("eval description experiments", () => {
           experimentId: EXPERIMENT_ID,
           errorCode: "LAUNCH_FAILED",
         }),
+      );
+    });
+
+    it("keeps the recorded pair when recordArms commits but its response is lost", async () => {
+      mockHappyLaunch();
+      let armsAttempted = false;
+      mockConvex({
+        "descriptionExperiments:recordArms": () => {
+          armsAttempted = true;
+          throw new Error("socket hang up");
+        },
+        // The write landed: the read-back carries this request's own arms.
+        "descriptionExperiments:getDescriptionExperiment": () =>
+          armsAttempted
+            ? {
+                ...EXPERIMENT_DOC,
+                status: "running",
+                arms: { original: "run_original", rewrite: "run_rewrite" },
+                runGroupId: EXPERIMENT_ID,
+              }
+            : EXPERIMENT_DOC,
+      });
+      const res = await request(
+        "POST",
+        `/projects/${PROJECT_ID}/eval-description-experiments/${EXPERIMENT_ID}/start`,
+        {},
+      );
+      expect(res.status).toBe(202);
+      expect(((await res.json()) as { status?: string }).status).toBe(
+        "running",
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "testSuites:cancelTestSuiteRun",
+        expect.anything(),
+      );
+      expect(convexMutationMock).not.toHaveBeenCalledWith(
+        "descriptionExperiments:markFailed",
+        expect.anything(),
       );
     });
 

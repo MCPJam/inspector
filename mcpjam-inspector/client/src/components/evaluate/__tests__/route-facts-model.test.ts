@@ -116,6 +116,24 @@ describe("readRunToolCatalog", () => {
       readRunToolCatalog(run({ toolSnapshot: { servers: [{ tools: [] }] } })),
     ).toEqual({ state: "loaded", toolNames: [] });
   });
+
+  it("is notLoaded when a server entry carries no tool list", () => {
+    // Not a server with no tools: a catalog the page cannot read, and one
+    // it must not vouch for by filing every called tool as outsideCatalog.
+    expect(
+      readRunToolCatalog(run({ toolSnapshot: { servers: [{}] } })),
+    ).toEqual({ state: "notLoaded" });
+  });
+
+  it("is notLoaded when a tool entry carries no name", () => {
+    expect(
+      readRunToolCatalog(
+        run({
+          toolSnapshot: { servers: [{ tools: [{ name: "tool_a" }, {}] }] },
+        }),
+      ),
+    ).toEqual({ state: "notLoaded" });
+  });
 });
 
 describe("iterationToRouteTrial", () => {
@@ -341,7 +359,7 @@ describe("copy helpers", () => {
     const lines = mismatchLines(capped, doc!.catalogState);
     expect(lines).toContain("`tool_b` called instead of `tool_a` in 2 trials");
     expect(lines).toContain(
-      `showing the ${MAX_MISMATCH_TOOLS} most-seen tools`,
+      `mismatch lists capped at ${MAX_MISMATCH_TOOLS} entries each`,
     );
   });
 

@@ -5465,6 +5465,92 @@ async function markDescriptionExperimentFailed(
   }
 }
 
+/**
+ * The experiment as it stands after `recordArms` threw, when the throw was
+ * a lost response rather than a refusal. A Convex mutation either committed
+ * or it did not, and from this side the two look the same — so before
+ * anything is cancelled the document is read back. Arms that name this
+ * request's own run ids prove the write landed: the pair is a running
+ * experiment, and stopping it would spend the launch and report nothing.
+ * Returns that document, or null when the arms are not recorded or the
+ * read itself failed — both of which the caller treats as "not recorded".
+ */
+async function readDescriptionExperimentWithArms(
+  convexAuthToken: string,
+  experimentId: string,
+  arms: { original: string; rewrite: string },
+): Promise<Record<string, unknown> | null> {
+  try {
+    const current = (await createConvexReadClient(convexAuthToken).query(
+      "descriptionExperiments:getDescriptionExperiment" as any,
+      { experimentId },
+    )) as Record<string, unknown> | null;
+    const recorded = current?.arms as
+      | { original?: unknown; rewrite?: unknown }
+      | undefined;
+    return current &&
+      recorded?.original === arms.original &&
+      recorded?.rewrite === arms.rewrite
+      ? current
+      : null;
+  } catch (error) {
+    logger.warn(
+      "[v1 evals] could not read back a description experiment after recordArms failed",
+      {
+        experimentId,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return null;
+  }
+}
+
+/**
+ * How many of a run's servers offer `toolName`, read off the run's inline
+ * tool snapshot. A description override applies by bare name — the runner
+ * hands every server the same name-keyed override and then flattens their
+ * tools into one set — so a name two servers share cannot say which tool
+ * the experiment changed, and a report about it would be about neither.
+ * A run with no readable inline snapshot counts 0: the check refuses only
+ * what it can see.
+ */
+function serversOfferingTool(run: unknown, toolName: string): number {
+  const snapshot = (run as { toolSnapshot?: unknown } | null)?.toolSnapshot;
+  const servers =
+    snapshot && typeof snapshot === "object"
+      ? (snapshot as { servers?: unknown }).servers
+      : undefined;
+  if (!Array.isArray(servers)) return 0;
+  let count = 0;
+  for (const server of servers) {
+    const tools = (server as { tools?: unknown } | null)?.tools;
+    if (
+      Array.isArray(tools) &&
+      tools.some(
+        (tool) => (tool as { name?: unknown } | null)?.name === toolName,
+      )
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function throwIfDescriptionOverrideToolAmbiguous(
+  run: unknown,
+  toolName: string,
+): void {
+  const servers = serversOfferingTool(run, toolName);
+  if (servers > 1) {
+    throw new WebRouteError(
+      400,
+      ErrorCode.VALIDATION_ERROR,
+      `Tool "${toolName}" is served by ${servers} of this run's servers. A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
+      { reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS" },
+    );
+  }
+}
+
 // GET /v1/projects/:projectId/eval-runs/:runId/description-experiments
 // Collection for the source run. The Evaluate page keys one read on the
 // run id; a missing list would make a reload look like no experiment
@@ -5557,6 +5643,11 @@ evals.post(
       throw error;
     }
     requireProjectMatch(run, projectId, "Eval run");
+    // Refused at the door, before the proposal spends: the override is
+    // applied by bare name at replay, and the backend keys the experiment on
+    // the first server that has the tool, so a shared name has no one tool
+    // to be about.
+    throwIfDescriptionOverrideToolAmbiguous(run, body.toolName);
 
     const { convexClient } = createConvexClients(token);
     let experiment: Record<string, unknown>;
@@ -5639,6 +5730,27 @@ evals.post(
       );
     }
 
+    // The source run is read HERE, before the slot and before the experiment
+    // leaves `proposed`: a run that is not visible, or a tool two of its
+    // servers share (see propose), is a refusal at the door with nothing to
+    // release or mark. The same document serves the launch below.
+    let sourceRun: RunDoc | null;
+    try {
+      sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
+        runId: String(experiment.sourceRunId),
+      });
+    } catch (error) {
+      if (isConvexNotVisibleError(error)) {
+        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
+      }
+      throw error;
+    }
+    requireProjectMatch(sourceRun, projectId, "Eval run");
+    throwIfDescriptionOverrideToolAmbiguous(
+      sourceRun,
+      String(experiment.toolName),
+    );
+
     // The concurrency slot is taken BEFORE the experiment leaves `proposed`:
     // a rate-limited start is a retry, not a reason to make the developer
     // pay for a second proposal. One org slot for the pair — the two arms
@@ -5702,26 +5814,6 @@ evals.post(
         ? affectedCaseIds
         : undefined;
     const iterationOverride = body.iterationOverride;
-
-    let sourceRun: RunDoc | null;
-    try {
-      sourceRun = await readClient.query("testSuites:getTestSuiteRun" as any, {
-        runId: sourceRunId,
-      });
-    } catch (error) {
-      releaseRemainingGroupSlot(slot);
-      await markDescriptionExperimentFailed(
-        token,
-        experimentId,
-        "LAUNCH_FAILED",
-        error instanceof Error ? error.message : String(error),
-      );
-      if (isConvexNotVisibleError(error)) {
-        throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Eval run not found");
-      }
-      throw error;
-    }
-    requireProjectMatch(sourceRun, projectId, "Eval run");
 
     const snapshot = (sourceRun as { configSnapshot?: Record<string, unknown> })
       ?.configSnapshot;
@@ -5862,6 +5954,17 @@ evals.post(
         rewriteRunId: rewrite.runId,
         error: error instanceof Error ? error.message : String(error),
       });
+      // A lost response reads like a refusal from here, and the two call for
+      // opposite handling: if the write landed, the pair is a running
+      // experiment and nothing below may touch it.
+      const recordedAfterAll = await readDescriptionExperimentWithArms(
+        token,
+        experimentId,
+        { original: original.runId, rewrite: rewrite.runId },
+      );
+      if (recordedAfterAll) {
+        return v1Resource(c, toDescriptionExperimentDto(recordedAfterAll), 202);
+      }
       // Both arms are already running detached. Without the arm ids the
       // experiment can never reach a report, so it does not stay `launching`:
       // the arms are stopped and the experiment marked, each best-effort so

@@ -4035,14 +4035,25 @@ export function registerEvalCommands(program: Command): void {
       },
       command
     ) => {
-      const input = validateOpInput(proposeEvalDescriptionRewriteOperation, {
-        runId: options.run,
-        toolName: options.tool,
-        ...(options.case && options.case.length > 0
-          ? { caseIds: options.case }
-          : {}),
-        ...(options.project === undefined ? {} : { project: options.project }),
-      });
+      // `projectOptional`, like `route-facts`: the operation's schema REQUIRES
+      // `project`, and the cloud CLI fills it from --project/env/link/automatic
+      // AFTER this point. Without the flag, omitting --project would be a
+      // usage error on a command that should resolve a project the way every
+      // sibling does.
+      const input = validateOpInput(
+        proposeEvalDescriptionRewriteOperation,
+        {
+          runId: options.run,
+          toolName: options.tool,
+          ...(options.case && options.case.length > 0
+            ? { caseIds: options.case }
+            : {}),
+          ...(options.project === undefined
+            ? {}
+            : { project: options.project }),
+        },
+        { projectOptional: true }
+      );
       await executeOp(
         proposeEvalDescriptionRewriteOperation as PlatformOperation<
           Record<string, unknown>,

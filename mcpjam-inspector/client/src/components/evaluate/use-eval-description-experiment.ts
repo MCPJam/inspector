@@ -6,10 +6,12 @@
  * experiment attached to the earlier decision must not paint over the new
  * one. Polls every 5 s while status is non-terminal
  * (`proposing` | `launching` | `running` | `reporting`) and stops at
- * `proposed` | `completed` | `failed` | `cancelled`. A poll that fails for
- * any reason other than `notFound` keeps the 5 s cadence: the document is
+ * `proposed` | `completed` | `failed` | `cancelled`. A poll whose call did
+ * not complete (`requestFailed`) keeps the 5 s cadence: the document is
  * still non-terminal, and one bad read must not leave the card frozen on a
- * status the server has since moved past.
+ * status the server has since moved past. A `notFound` clears the card,
+ * and `invalidContract` / `routeUnavailable` stop the cadence with the
+ * error shown — neither will read differently on the next tick.
  *
  * The first read is the collection GET for the source run (latest
  * experiment). After propose / start, polling is GET-by-id. Flag-off
@@ -207,7 +209,13 @@ export function useEvalDescriptionExperiment({
           }
           setError(info);
           setStatus("error");
-          setPollTick((tick) => tick + 1);
+          // Only a call that did not complete is worth another try on the
+          // cadence. A payload the contract rejected, or a deployment that
+          // does not serve the route, will not change in five seconds, and
+          // re-arming on them would poll forever.
+          if (info.kind === "requestFailed") {
+            setPollTick((tick) => tick + 1);
+          }
         }
       })();
     }, DESCRIPTION_EXPERIMENT_POLL_MS);
