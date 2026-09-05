@@ -2,31 +2,50 @@ import type { DriverContext, DriverPage } from "../browser-page";
 import type { CdpLike } from "../webmcp-bridge";
 
 /**
- * A CDP session that records and never answers anything interesting.
+ * A CDP session that records what was sent and answers from a table.
  *
  * The fixture has one by default because a page nobody can WATCH is not a
  * useful stand-in any more: the viewport, and everything the pane does through
- * it, is written against `cdp()`. Tests that care what was sent pass their own.
+ * it, is written against `cdp()`. It ANSWERS because the accessibility tree is
+ * read over CDP too — a session that returned `{}` for everything could only
+ * ever model a page with no tree, which is the one case a11y tests do not care
+ * about.
+ *
+ * A reply may be a value or a function of the params, so a test can model
+ * `DOM.resolveNode` failing for one node and succeeding for another — the
+ * difference between a stale ref and a live one.
  */
-export function fakeCdpSession(): CdpLike & {
+export type CdpReplies = Record<
+  string,
+  unknown | ((params?: Record<string, unknown>) => unknown)
+>;
+
+export function fakeCdpSession(replies: CdpReplies = {}): CdpLike & {
   sent: Array<{ method: string; params?: Record<string, unknown> }>;
   emit(event: string, payload: unknown): void;
+  replies: CdpReplies;
 } {
   const sent: Array<{ method: string; params?: Record<string, unknown> }> = [];
   const handlers = new Map<string, (payload: unknown) => void>();
-  return {
+  const session = {
     sent,
-    async send(method, params) {
+    replies,
+    async send(method: string, params?: Record<string, unknown>) {
       sent.push({ method, ...(params ? { params } : {}) });
-      return {};
+      const reply = session.replies[method];
+      if (typeof reply === "function") {
+        return (reply as (p?: Record<string, unknown>) => unknown)(params) as never;
+      }
+      return (reply ?? {}) as never;
     },
-    on(event, handler) {
+    on(event: string, handler: (payload: unknown) => void) {
       handlers.set(event, handler);
     },
-    emit(event, payload) {
+    emit(event: string, payload: unknown) {
       handlers.get(event)?.(payload);
     },
   };
+  return session as never;
 }
 
 /**
@@ -59,6 +78,7 @@ export interface FakePage extends DriverPage {
    *  that cannot be watched at all. */
   cdpSession?: CdpLike | null;
   setDom(d: string): void;
+  setText(t: string): void;
   pushConsole(entry: { type: string; text: string; at: number }): void;
   readonly calls: {
     goto: string[];
@@ -67,7 +87,7 @@ export interface FakePage extends DriverPage {
     shots: number;
     acts: ActLog;
     front: number;
-    a11yRoots: (string | undefined)[];
+
   };
 }
 
@@ -78,24 +98,34 @@ export function fakePage(init: {
   /** Called inside screenshotBase64 — used to simulate a shift mid-capture. */
   onScreenshot?: (page: { setDom: (d: string) => void; setUrl: (u: string) => void }) => void;
   /**
-   * Called inside `a11ySnapshot` / `webmcp`, before the driver builds its
-   * result. Same purpose as `onScreenshot`: they are the only way to open the
-   * window in which a person takes the browser WHILE a read is in flight,
-   * which is the window every permit re-check exists to close.
+   * Called when the a11y tree is read over CDP, and inside `webmcp`, before
+   * the driver builds its result. Same purpose as `onScreenshot`: they are the
+   * only way to open the window in which a person takes the browser WHILE a
+   * read is in flight, which is the window every permit re-check exists to
+   * close.
    */
   onA11y?: () => void;
   onWebmcp?: () => void;
   /** Make a targeted act fail, as a missing element would. */
   actError?: Error;
-  a11y?: unknown;
-  /** Subtrees reachable by `rootSelector`; anything else "matches nothing". */
-  a11yBySelector?: Record<string, unknown>;
+
+  /** What `observe {mode:"text"}` reads off this page. */
+  text?: string;
+  /**
+   * Called inside `pageText`, for the same reason `onA11y` exists: it is the
+   * only way to open the window in which a person takes the browser WHILE a
+   * read is in flight.
+   */
+  onText?: () => void;
+  /** What this page's CDP session answers (the a11y tree is read over it). */
+  cdpReplies?: CdpReplies;
   console?: Array<{ type: string; text: string; at: number }>;
   webmcp?: DriverPage extends { webmcp(): Promise<infer B | null> } ? B | null : never;
 } = {}): FakePage {
   let url = init.url ?? "about:blank";
   const consoleEntries = [...(init.console ?? [])];
   let dom = init.dom ?? "0BODY";
+  let text = init.text ?? "";
   let closed = false;
   const calls = {
     goto: [] as string[],
@@ -104,10 +134,27 @@ export function fakePage(init: {
     shots: 0,
     acts: [] as ActLog,
     front: 0,
-    a11yRoots: [] as (string | undefined)[],
+
   };
-  const defaultCdp = fakeCdpSession();
+  const defaultCdp = fakeCdpSession({
+    ...(init.cdpReplies ?? {}),
+    // Wrapped so `onA11y` fires at the moment the tree is READ — the window a
+    // person taking the browser mid-observation has to be caught in.
+    ...(init.cdpReplies?.["Accessibility.getFullAXTree"] !== undefined ||
+    init.onA11y
+      ? {
+          "Accessibility.getFullAXTree": (params?: Record<string, unknown>) => {
+            init.onA11y?.();
+            const reply = init.cdpReplies?.["Accessibility.getFullAXTree"];
+            return typeof reply === "function"
+              ? (reply as (p?: Record<string, unknown>) => unknown)(params)
+              : (reply ?? {});
+          },
+        }
+      : {}),
+  });
   const setDom = (d: string) => { dom = d; };
+  const setText = (t: string) => { text = t; };
   const setUrl = (u: string) => { url = u; };
   const act = (entry: string) => {
     calls.acts.push(entry);
@@ -148,15 +195,9 @@ export function fakePage(init: {
     async scrollBy({ dx, dy }) { act(`scroll:${dx},${dy}`); },
     async dragTo(from, to) { act(`drag:${from.x},${from.y}->${to.x},${to.y}`); },
     async selectOption(selector, value) { act(`select:${selector}:${value}`); },
-    async a11ySnapshot(rootSelector?: string) {
-      calls.a11yRoots.push(rootSelector);
-      init.onA11y?.();
-      // Mirrors the live adapter: an unmatched root selector resolves null,
-      // which is what the driver must turn into `unknown_selector`.
-      if (rootSelector !== undefined) {
-        return (init.a11yBySelector?.[rootSelector] ?? null) as never;
-      }
-      return (init.a11y ?? null) as never;
+    async pageText() {
+      init.onText?.();
+      return text;
     },
     consoleEntries: () => consoleEntries,
     dropConsoleSince: (since: number) => {
@@ -174,6 +215,7 @@ export function fakePage(init: {
 
     setUrl,
     setDom,
+    setText,
     pushConsole: (e: { type: string; text: string; at: number }) =>
       consoleEntries.push(e),
     calls,
@@ -196,4 +238,55 @@ export function fakeContext(init: { pages?: FakePage[]; connected?: boolean } = 
     close: async () => { closed = true; },
   };
   return { context, created, setConnected: (v: boolean) => (connected = v), wasClosed: () => closed };
+}
+
+/**
+ * An `Accessibility.getFullAXTree` reply, written as a tree rather than as the
+ * flat id-joined list CDP actually returns.
+ *
+ * The flat form is unreadable in a test — every assertion about nesting would
+ * be an assertion about `childIds` bookkeeping — and getting that bookkeeping
+ * wrong by hand produces a tree that is subtly not the one the test meant.
+ */
+export interface AxSpec {
+  role: string;
+  name?: string;
+  /** The backend node id, i.e. what a ref resolves to. Auto-assigned if absent. */
+  id?: number;
+  ignored?: boolean;
+  props?: Record<string, string | number | boolean>;
+  children?: AxSpec[];
+}
+
+export function axTree(root: AxSpec): { nodes: unknown[] } {
+  const nodes: unknown[] = [];
+  let nextNodeId = 1;
+  let nextBackendId = 1000;
+  const walk = (spec: AxSpec): string => {
+    const nodeId = String(nextNodeId++);
+    const backendDOMNodeId = spec.id ?? nextBackendId++;
+    const childIds = (spec.children ?? []).map(walk);
+    nodes.push({
+      nodeId,
+      backendDOMNodeId,
+      ...(spec.ignored ? { ignored: true } : {}),
+      role: { type: "role", value: spec.role },
+      ...(spec.name !== undefined
+        ? { name: { type: "computedString", value: spec.name } }
+        : {}),
+      properties: Object.entries(spec.props ?? {}).map(([name, value]) => ({
+        name,
+        // CDP types these by what they are; the reader ignores `type` today,
+        // and a fixture that mislabels what it claims to model is a trap for
+        // whoever writes the code that stops ignoring it.
+        value: { type: typeof value, value },
+      })),
+      childIds,
+    });
+    return nodeId;
+  };
+  walk(root);
+  // CDP lists the root first; `readAxTree` relies on that.
+  const rootNode = nodes.find((n) => (n as { nodeId: string }).nodeId === "1");
+  return { nodes: [rootNode, ...nodes.filter((n) => n !== rootNode)] };
 }

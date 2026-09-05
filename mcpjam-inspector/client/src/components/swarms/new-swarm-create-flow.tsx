@@ -1689,6 +1689,7 @@ export function NewSwarmCreateFlow({
       return [
         {
           key: `environment:${environmentId}`,
+          hostId: env.hostId,
           label: environmentLabel(env, { hostName: hostNameById }),
         },
       ];
@@ -1761,6 +1762,7 @@ export function NewSwarmCreateFlow({
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}
             environments={envList}
+            hosts={hosts}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
           />

@@ -30,13 +30,7 @@ export interface PackDigestRecord {
 export const PACK_TREE_DIGESTS: Readonly<
   Record<SupportedLocalHarnessId, Readonly<Partial<Record<LocalPackTarget, string>>>>
 > = {
-  "claude-code": {
-    "darwin-arm64": "sha256:4691b55e3d704e443355bf4e12e1fa2a0dd8d0cd4d38d93fd13bf0d022a92a9a",
-    "darwin-x64": "sha256:6f314d80d2ab3e6361ba52b33a44697085d17d4f2265edafaefae397896ca7e0",
-    "linux-arm64": "sha256:3326079564bafad84322a9d6ea9d7268e1b1fd9a8716d4e3aee4e1058cf53322",
-    "linux-x64": "sha256:9a78a6e369abc0d67ef19c71e751046f48303315cb086098e7728e34f153e3a9",
-    "win32-x64": "sha256:ef8f01c61a4058684c808aee90c063a2d5418337697fec6190ec193041f4e860",
-  },
+  "claude-code": {},
   codex: {},
 };
 
@@ -50,28 +44,7 @@ export const PACK_RECORDS: Readonly<
     Readonly<Partial<Record<LocalPackTarget, PackDigestRecord>>>
   >
 > = {
-  "claude-code": {
-    "darwin-arm64": {
-      packVersion: "3.3.6",
-      treeDigest: "sha256:4691b55e3d704e443355bf4e12e1fa2a0dd8d0cd4d38d93fd13bf0d022a92a9a",
-    },
-    "darwin-x64": {
-      packVersion: "3.3.6",
-      treeDigest: "sha256:6f314d80d2ab3e6361ba52b33a44697085d17d4f2265edafaefae397896ca7e0",
-    },
-    "linux-arm64": {
-      packVersion: "3.3.6",
-      treeDigest: "sha256:3326079564bafad84322a9d6ea9d7268e1b1fd9a8716d4e3aee4e1058cf53322",
-    },
-    "linux-x64": {
-      packVersion: "3.3.6",
-      treeDigest: "sha256:9a78a6e369abc0d67ef19c71e751046f48303315cb086098e7728e34f153e3a9",
-    },
-    "win32-x64": {
-      packVersion: "3.3.6",
-      treeDigest: "sha256:ef8f01c61a4058684c808aee90c063a2d5418337697fec6190ec193041f4e860",
-    },
-  },
+  "claude-code": {},
   codex: {},
 };
 
@@ -82,4 +55,4 @@ export const PACK_RECORDS: Readonly<
  * adapter pin and the same Node version, so a split would mean two different
  * recipes shipped under one release.
  */
-export const EXPECTED_PACK_VERSION = "3.3.6";
+export const EXPECTED_PACK_VERSION = "";

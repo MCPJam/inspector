@@ -123,6 +123,7 @@ export type BrowserAction =
       kind: "observe";
       mode:
         | "screenshot"
+        | "text"
         | "dom"
         | "a11y"
         | "console"
@@ -131,17 +132,53 @@ export type BrowserAction =
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
-       *
-       * This is the retrieval verb the L9 omission marker names. When the
-       * budget drops a subtree it tells the caller to re-observe with
-       * `{mode:"a11y", rootSelector:"<selector>"}`; without this field that
-       * instruction would point at a parameter that does not exist, and an
-       * omitted subtree would be unrecoverable — which is worse than
-       * truncating, because the marker promises otherwise.
        */
       rootSelector?: string;
+      /**
+       * `a11y` only: scope the tree to a ref from THIS tab's last observation.
+       *
+       * The retrieval verb the L9 omission marker names. It used to name
+       * `rootSelector` and a placeholder selector, which an AX node cannot
+       * supply — so the instruction pointed at something the caller could not
+       * type and an omitted subtree was, in practice, unrecoverable. A ref is
+       * the one handle on this tree the caller provably has, because the same
+       * observation handed it out.
+       */
+      rootRef?: string;
+      /**
+       * `a11y` only: `interactive` (default) keeps what can be acted on and the
+       * structure leading to it; `all` keeps the prose too.
+       *
+       * Interactive by default because that is what a tree is FOR here — the
+       * model reads a page's words with `{mode:"text"}`, and a budget spent on
+       * paragraphs is a budget not spent on the controls.
+       */
+      filter?: "interactive" | "all";
     }
-  | { kind: "webmcp_invoke"; toolKey: string; input: unknown }
+  | {
+      kind: "webmcp_invoke";
+      /**
+       * The tool's own name, as `observe {mode:"webmcp_tools"}` reported it.
+       *
+       * A NAME, not a composite key. The daemon resolves it against the live
+       * page, and the V1 layer's own `origin::name` key means nothing here —
+       * sending a composite looks for a tool literally called that, finds
+       * nothing, and answers `webmcp_tool_gone` for a tool sitting right
+       * there. Use `frameId` to disambiguate instead.
+       */
+      toolKey: string;
+      /**
+       * Invoke in THIS frame, when it still offers the tool.
+       *
+       * Name resolution prefers the main frame, so a subframe's tool would
+       * otherwise be shadowed by a same-named main-frame one. Optional, and
+       * safely ignored by an older daemon: resolution by name is the fallback
+       * on both sides, so a new caller works against an old daemon and an old
+       * caller against a new one.
+       */
+      frameId?: string;
+      input: unknown;
+    }
   | { kind: "webmcp_cancel"; invocationId: string };
 
 /**
@@ -310,6 +347,10 @@ export const BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /** A ref this tab's last observation never issued. */
+  "unknown_ref",
+  /** The page could not answer an accessibility tree at all. */
+  "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
   /** A dialog is open and waiting for the person who holds the lease. */

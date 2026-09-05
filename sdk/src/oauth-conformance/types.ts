@@ -150,6 +150,13 @@ export interface OAuthConformanceConfig {
   customHeaders?: Record<string, string>;
   redirectUrl?: string;
   fetchFn?: typeof fetch;
+  /**
+   * Permit private destinations (loopback, RFC 1918, CGNAT, unique-local) for
+   * the outbound metadata fetches this flow makes. Set by the local inspector
+   * and the CLI, where the server under test is routinely on the developer's
+   * own machine. Link-local and cloud-metadata destinations stay refused.
+   */
+  allowPrivateNetwork?: boolean;
   stepTimeout?: number;
   verification?: OAuthVerificationConfig;
   oauthConformanceChecks?: boolean;
@@ -255,6 +262,7 @@ export interface NormalizedOAuthConformanceConfig {
   customHeaders?: Record<string, string>;
   redirectUrl?: string;
   fetchFn: typeof fetch;
+  allowPrivateNetwork: boolean;
   stepTimeout: number;
   verification: OAuthVerificationConfig;
   oauthConformanceChecks: boolean;

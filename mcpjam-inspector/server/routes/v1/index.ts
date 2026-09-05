@@ -34,6 +34,7 @@ import skills from "./skills.js";
 import journeys from "./journeys.js";
 import personas from "./personas.js";
 import secrets from "./secrets.js";
+import traceDestinations from "./trace-destinations.js";
 import swarms from "./swarms.js";
 import swarmInsights from "./swarm-insights.js";
 import swarmGenerateV1 from "./swarm-generate.js";
@@ -162,6 +163,11 @@ v1.route("/", personas);
 // NO entry for `/secrets` — adding one would be the single change that breaks
 // the guarantee).
 v1.route("/", secrets);
+// TRACE DESTINATIONS — where an organization's traces are STREAMED. Header
+// values are WRITE-ONLY: nothing here returns one, ever. Guest-DENIED on the
+// same terms as secrets (`guest-allowed-paths.ts` is default-deny and there is
+// deliberately NO entry for `/trace-destinations`).
+v1.route("/", traceDestinations);
 v1.route("/", swarms);
 // The insights layer over runs: scorecards, findings, wave insights. Reads are
 // ungated (an empty result leaks nothing); REQUESTING wave insights spends

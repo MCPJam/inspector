@@ -18,7 +18,7 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
-import { parseAriaSnapshot } from "./aria-snapshot";
+import { PAGE_TEXT_FN } from "./page-text";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -96,18 +96,7 @@ export type AnyPage = {
     value: string,
     options?: unknown,
   ): Promise<unknown>;
-  ariaSnapshot(options?: unknown): Promise<string>;
-  locator(selector: string): AnyLocator;
   on(event: string, handler: (payload: any) => void): void;
-};
-
-/**
- * The sliver of Playwright's `Locator` the daemon uses: narrow a selector to
- * its first match and take that element's aria snapshot.
- */
-export type AnyLocator = {
-  first(): AnyLocator;
-  ariaSnapshot(options?: unknown): Promise<string>;
 };
 
 /**
@@ -121,13 +110,6 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
-
-/**
- * Accessibility capture timeout. Shorter than an act: an observation that
- * cannot be taken promptly is better answered as "unavailable" than held
- * open, because the caller has a screenshot and a DOM outline to fall back on.
- */
-const A11Y_TIMEOUT_MS = 5_000;
 
 /**
  * JPEG quality for model-facing captures. High enough that text stays legible
@@ -256,22 +238,16 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector?: string) {
-      // `page.accessibility` NO LONGER EXISTS in the pinned Playwright (1.62.1
-      // removed it), so the tree-shaped API this used to call resolved
-      // `undefined` for every page. `ariaSnapshot` is its successor: it answers
-      // YAML, which `parseAriaSnapshot` rebuilds into the tree the L9 budget
-      // needs, and it takes a selector root — which is what makes the omission
-      // marker's `rootSelector` retrieval verb real.
-      const target = rootSelector ? page.locator(rootSelector).first() : page;
+    async pageText() {
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
       try {
-        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
-        return parseAriaSnapshot(yaml);
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
       } catch {
-        // A selector that matches nothing, a detached element, or a page too
-        // busy to answer. `null` is the honest result; the driver turns an
-        // unmatched ROOT selector into an error rather than an empty tree.
-        return null;
+        return "";
       }
     },
     consoleEntries: () => consoleRing,

@@ -10,7 +10,7 @@
  * the adapter; the boundary is deliberately small and clean.
  */
 
-import type { A11yNode, ConsoleEntry } from "./observation-budget";
+import type { ConsoleEntry } from "./observation-budget";
 import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
 
 /**
@@ -21,6 +21,16 @@ import type { CdpLike, WebMcpBridge } from "./webmcp-bridge";
  * the model cannot use.
  */
 export type ActPoint = { x: number; y: number };
+
+/*
+ * NO `a11ySnapshot` HERE. The tree used to be an engine method, because
+ * Playwright had one (`ariaSnapshot`) and Electron had to grow an equivalent.
+ * It is now read from `Accessibility.getFullAXTree` through `cdp()`, by one
+ * function both engines share — which is what makes a ref mean the same thing
+ * on both, and what lets a node id survive from an observation to the act that
+ * uses it. An engine method would have to answer for node identity itself, and
+ * the YAML one of them answered in had none.
+ */
 
 /** One browser tab. Methods mirror the subset of Playwright's Page browserd uses. */
 export interface DriverPage {
@@ -33,7 +43,10 @@ export interface DriverPage {
    * driver turns that into a typed `target_not_found` result rather than
    * letting a Playwright timeout message reach the model.
    */
-  clickAt(point: ActPoint, options?: { button?: "left" | "right" }): Promise<void>;
+  clickAt(
+    point: ActPoint,
+    options?: { button?: "left" | "right" },
+  ): Promise<void>;
   clickSelector(selector: string): Promise<void>;
   hoverAt(point: ActPoint): Promise<void>;
   hoverSelector(selector: string): Promise<void>;
@@ -49,15 +62,14 @@ export interface DriverPage {
   /** Focus this tab in the window (what a human sees, and what `activate_tab` does). */
   bringToFront(): Promise<void>;
   /**
-   * The accessibility tree, uncapped — the driver applies the L9 budget.
+   * The page's readable text, markdown-ish and uncapped — the driver applies
+   * the byte budget.
    *
-   * `rootSelector` scopes the tree to one element, which is how a caller
-   * retrieves a subtree the budget omitted. Resolves `null` when the tree is
-   * unavailable AND when a `rootSelector` matches nothing: the driver
-   * distinguishes those two by whether it asked for a root, and reports an
-   * unmatched selector as an error rather than as an empty page.
+   * One shared in-page function (`PAGE_TEXT_FN`) on every engine, for the same
+   * reason the DOM signal is shared: two engines that describe one page
+   * differently make an observation recorded on one meaningless on the other.
    */
-  a11ySnapshot(rootSelector?: string): Promise<A11yNode | null>;
+  pageText(): Promise<string>;
   /** The console ring buffer this page has accumulated, oldest first. */
   consoleEntries(): readonly ConsoleEntry[];
   /**
@@ -92,7 +104,17 @@ export interface DriverPage {
   requestAnimationFrame(signal: AbortSignal): Promise<void>;
   /** A structural signal of the current DOM, for the L3 state token. */
   domStructureSignal(): Promise<string>;
-  /** A PNG screenshot at the canonical observation viewport, base64-encoded. */
+  /**
+   * A screenshot at the canonical observation viewport, base64-encoded.
+   *
+   * JPEG on every engine. This comment said PNG for a while and no engine ever
+   * produced one: every act and navigate result carries a capture, and a
+   * full-viewport PNG of a real page runs 100-400 KB, which becomes tens of
+   * thousands of tokens once it reaches the model as image content. Consumers
+   * sniff the format from the bytes, so the format is not part of the
+   * contract — but a comment that names the wrong one invites a "fix" that
+   * makes two engines disagree.
+   */
   screenshotBase64(): Promise<string>;
   url(): string;
   close(): Promise<void>;
