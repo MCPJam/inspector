@@ -292,6 +292,29 @@ export type EvalSuite = {
    * than "this suite has none".
    */
   revisionNumber?: number;
+  /**
+   * B9a — the verdict policy this suite's runs are decided under.
+   *
+   * `2` is the fraction-and-validity policy; ABSENT is legacy, decided by
+   * `defaultPassCriteria.minimumPassRate` (a PERCENT) over
+   * `max(case.iterations, minIterations)`. The two are not convertible, which
+   * is why absence is read rather than defaulted — reading a historical
+   * percent as a fraction silently moves every bar by a factor of a hundred.
+   */
+  verdictPolicyVersion?: 2;
+  /**
+   * The v2 defaults a case inherits. FRACTIONS in [0,1], never percents;
+   * a percent exists only in front of a reader.
+   */
+  verdictPolicyDefaults?: {
+    repetitions: number;
+    passThreshold: number;
+    validity?: {
+      minEligibleTrials?: number;
+      minCompletionRate?: number;
+      maxEvaluatorErrorRate?: number;
+    };
+  };
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {
@@ -332,12 +355,24 @@ export type EvalSuite = {
    * run start; the client never derives servers from these ids.
    */
   environmentIds?: string[];
+  /**
+   * Epoch ms of the schedule's next due firing, or absent when nothing is due.
+   * Denormalized on the suite by the scheduler; never computed client-side.
+   */
+  scheduleNextDueAt?: number;
   /** Synthetic-monitor schedule; absent ⇒ never scheduled. */
   schedule?: {
     intervalMinutes: number;
     enabled: boolean;
     state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
     consecutiveFailures?: number;
+    /**
+     * The user a scheduled run executes AS. Its runs spend this person's
+     * access, and the schedule pauses itself (`paused_auth`) when they lose
+     * it — which is why the settings row names them rather than reporting a
+     * boolean.
+     */
+    createdByUserId?: string;
     /**
      * Multi-environment suites pin the schedule to ONE member environment
      * (required by `setSuiteSchedule`); single-env suites may omit it and
@@ -374,6 +409,8 @@ export type EvalCase = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  /** Authored case kind; absent means the editor derives it from matchOptions. */
+  kind?: "capability" | "regression";
   /**
    * Unified authored test steps — the source of truth for execution and the
    * "is this a render check?" detection (`isModelFree(steps)`). Replaces the
@@ -749,10 +786,41 @@ export type EvalSuiteRun = {
      * silently re-render in-flight scoring with new values.
      */
     judgeConfig?: EvalJudgeConfig;
+    /**
+     * Which engine executed the run: `"emulated"` or `"harness:<id>"`.
+     * Absent on pre-attribution rows — treat as unknown, not as emulated.
+     */
+    executionEngine?: string;
+    /**
+     * This run is the REWRITE arm of a description experiment. The catalog
+     * snapshot stays the original; this marker is the only record of the
+     * rewrite the model actually saw.
+     */
+    toolDescriptionOverride?: {
+      toolName: string;
+      serverId?: string;
+      description: string;
+      proposalHash: string;
+      experimentId: string;
+      /** Absent on rows written before the hash was recorded. */
+      originalDescriptionHash?: string;
+    };
   };
+  /**
+   * Which engine executed the run. Sibling of `configSnapshot.executionEngine`
+   * for API-projected rows that lift the field to the top level.
+   */
+  executionEngine?: string;
   status:
     | "pending"
     | "running"
+    /**
+     * Every trial finished; the run is HELD for its gating judge, up to 30
+     * minutes. NOT terminal, and `result` is still `"pending"` — only the
+     * backend's `finalizeAfterJudge` moves it on. Anything that treats this as
+     * done reports a run with no verdict as though it had one.
+     */
+    | "grading"
     | "completed"
     | "failed"
     | "cancelled"
@@ -833,6 +901,15 @@ export type EvalSuiteRun = {
    * "host matrix" view.
    */
   namedHostId?: string;
+  /**
+   * Inline catalog captured at run start. Present on live run docs from the
+   * browser list/detail queries even though older TypeScript omitted it;
+   * archived runs keep only `toolSnapshotHash`. Route facts treat absence as
+   * `catalogState: notLoaded` — no client fetch of snapshots.
+   */
+  toolSnapshot?: unknown;
+  /** Digest of {@link toolSnapshot}. Sibling of the inline catalog, not inside `runInsights`. */
+  toolSnapshotHash?: string;
   /**
    * Client-generated UUID shared by every per-host run from the same
    * multi-host eval launch. The UI groups runs by this id; runs without
@@ -931,12 +1008,31 @@ export type EvalSuiteRun = {
     threshold: number;
     cases: Array<{
       caseKey: string;
+      /**
+       * The case AND ITS REPETITION — `${caseKey}#${iterationNumber}` — which
+       * is the only key that identifies one trial under verdict policy v2. A
+       * join on `caseKey` alone is ambiguous the moment a case runs more than
+       * once, and it silently attributes one trial's verdict to another.
+       * Absent on runs judged before the key existed.
+       */
+      gradingKey?: string;
+      /** The trial this verdict graded, when the backend resolved one. */
+      iterationId?: string;
       /** How fully the final answer satisfied expectedOutput, in [0,1]. */
       score: number;
       /** Advisory pass = score >= threshold. Does NOT gate the run. */
       passed: boolean;
       reason: string;
       rubricHits: string[];
+      /**
+       * Whether the judge actually ANSWERED. An `error` or `skipped` case
+       * carries a score the judge did not produce from evidence, so it is a
+       * non-answer rather than a low grade.
+       */
+      status?: "scored" | "error" | "skipped";
+      /** The rubric this verdict was graded against. */
+      rubricHash?: string;
+      rubricSource?: "expected_output" | "assertions" | "suite_criteria";
     }>;
   };
   // Groundedness judge (second named advisory judge): grades whether each

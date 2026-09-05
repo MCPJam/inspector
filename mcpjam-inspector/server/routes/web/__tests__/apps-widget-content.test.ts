@@ -471,6 +471,7 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
       csp: "listing",
       permissions: "listing",
       prefersBorder: "listing",
+      domain: "none",
     });
   });
 
@@ -499,6 +500,7 @@ describe("hosted /widget-content — SEP-1865 metadata precedence", () => {
       csp: "listing",
       permissions: "none",
       prefersBorder: "content",
+      domain: "none",
     });
   });
 

@@ -71,6 +71,10 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -82,6 +86,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listClientsOperation,
   setClientServersOperation,
@@ -420,8 +425,8 @@ function describeComposeEvalSuiteRun(
         ? "and the composed environment is attached to the suite"
         : "and the composed environments are attached to the suite"
       : n <= 1
-      ? "ephemeral when supported; otherwise attached"
-      : "without attaching them to the suite";
+        ? "ephemeral when supported; otherwise attached"
+        : "without attaching them to the suite";
   if (n <= 1) {
     return (
       `Run eval suite ${suite} on a composed setup${hostNote}` +
@@ -1559,6 +1564,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
   {
+    operation: listEvalSuiteRevisionsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
+    ],
+  },
+  {
     operation: getEvalRunOperation,
     tier: "direct",
     promptNotes: [
@@ -1573,6 +1585,21 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
       "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalRunRouteFactsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` stays notMeasured until a producer exists. Report-only: never a verdict.",
+      "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalDescriptionExperimentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
     ],
   },
   {
@@ -1789,6 +1816,34 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+  {
+    operation: proposeEvalDescriptionRewriteOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+      buttonLabel: "Propose the rewrite",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+    ],
+  },
+  {
+    operation: startEvalDescriptionExperimentOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+      buttonLabel: "Start the experiment",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
     ],
   },
 
@@ -2363,6 +2418,46 @@ export const EXCLUDED_FROM_AGENT: Readonly<Record<string, string>> = {
     "Same as create_secret: a rotation carries the new plaintext as an argument. Available on REST/SDK/CLI.",
   delete_secret:
     "Hard-revokes a credential — the row and the encrypted value both go, and nothing here can put it back; the agent proposes authoring, never destruction.",
+  // TRACE DESTINATIONS — all ten, and the reasons split into three groups.
+  //
+  // The two credential-carrying writes are excluded on the same argument as
+  // `create_secret` above: the header values are ARGUMENTS, so they would
+  // transit model context and this turn's transcript before an approval card
+  // could render, and an approval that fires after the value is already
+  // logged is not an approval.
+  create_trace_destination:
+    "The vendor credentials are arguments, so they would reach model context and the turn transcript before any approval could run. Available on REST/SDK/CLI, where the caller controls where the values come from.",
+  update_trace_destination:
+    "Same as create_trace_destination: rotating a credential carries it as an argument, with the same pre-approval exposure.",
+  // The rest are excluded because observability wiring is an org-admin task
+  // with consequences outside MCPJam entirely — traces land in a third
+  // party's system and cannot be retracted from there. That is a decision for
+  // someone who knows what that vendor holds and who can read it, which is
+  // not a thing a turn can establish.
+  delete_trace_destination:
+    "Discards a live export and its stored credentials; the agent proposes authoring, never destruction.",
+  resume_trace_destination:
+    "Restarts an export a human stopped, usually because something was wrong with it. Restarting before the cause is fixed sends traces to a third party again.",
+  pause_trace_destination:
+    "Stopping an export silently drops the window: nothing is queued while paused, so an unattended pause becomes a permanent gap in a customer's observability.",
+  test_trace_destination:
+    "Sends traffic to a third party's intake. Harmless once, but it is an outbound call to someone else's system on the organization's credentials.",
+  backfill_trace_destination:
+    "Can queue a month of an organization's history at a vendor that bills on ingest — a spend decision whose size the agent cannot see from here.",
+  // The three READS are excluded too, which DEPARTS from the secrets
+  // precedent rather than following it: `list_secrets` and `get_secret` are
+  // `direct` in this same file, because a secret's metadata is project context
+  // an agent legitimately needs to reason about a run. A trace destination is
+  // not context for anything a turn does — it is the organization's vendor
+  // wiring, and an agent that can page through it is doing an admin's job with
+  // an admin's visibility and none of an admin's reason to be looking.
+  // Available on REST/SDK/CLI, where the caller asked.
+  list_trace_destinations:
+    "Organization observability configuration is an admin surface, not a turn concern. Available on REST/SDK/CLI.",
+  get_trace_destination:
+    "Same as list_trace_destinations: admin configuration, available on REST/SDK/CLI.",
+  list_trace_destination_backfills:
+    "Backfill history is operational detail for an admin diagnosing an export. Available on REST/SDK/CLI.",
   archive_journey:
     "Removes a journey from the roster; the agent proposes authoring, never destruction.",
   archive_swarm:

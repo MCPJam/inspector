@@ -3,11 +3,10 @@
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
  * into operations on a persistent, multi-tab browser context.
  *
- * W1 scope is deliberately the navigation + observation subset the wave's exit
- * criteria need ("browserd navigates + screenshots"): navigate / back / reload /
- * observe. The `act` verbs and the `webmcp_*` invocations arrive in W3 with the
- * six `browser_*` model tools; until then they return an explicit
- * `unimplemented` result rather than silently doing nothing.
+ * Every verb in the protocol is implemented here: navigate / back / reload /
+ * observe, the `act` verbs, and the `webmcp_*` invocations. (This header used
+ * to say the last two returned `unimplemented` "until W3" — they have been real
+ * since W3 landed, and the word survived only in this comment.)
  *
  * It is written entirely against the `DriverContext` / `DriverPage` boundary, so
  * every path here is unit-testable with fakes; the live Playwright context is
@@ -26,16 +25,30 @@ import {
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
-import { computeStateToken } from "./state-token";
+import { computeStateToken, shortHash } from "./state-token";
+import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
   capConsole,
+  capText,
   capToolOutput,
   DEFAULT_A11Y_BUDGET,
   DEFAULT_CONSOLE_BUDGET,
   type A11yBudget,
   type ConsoleBudget,
 } from "./observation-budget";
+import {
+  DEFAULT_PAGE_TEXT_MAX_BYTES,
+  PAGE_TEXT_RETRIEVAL_HINT,
+} from "./page-text";
+import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
+import {
+  assignRefs,
+  filterInteractive,
+  parseRef,
+  type RefMap,
+} from "./a11y-refs";
+import { renderA11yTree } from "./a11y-render";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -92,6 +105,8 @@ export interface ChromiumDriverOptions {
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
+  /** Byte budget for one `observe {mode:"text"}` (L9). */
+  pageTextBytes?: number;
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -141,6 +156,7 @@ export class ChromiumDriver implements BrowserDriver {
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly pageTextMaxBytes: number;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -158,6 +174,15 @@ export class ChromiumDriver implements BrowserDriver {
    * encoding JPEGs for a tab nobody is looking at is work done for nobody.
    */
   private readonly viewports = new Map<string, Promise<TabViewport | null>>();
+  /**
+   * The refs the LAST a11y observation of each tab handed out.
+   *
+   * One map per tab, replaced whole on every observation. It is state the
+   * driver must own rather than the model: a ref the model made up, or one it
+   * kept from two observations ago, has to be refusable — and only the side
+   * that minted them can tell the difference.
+   */
+  private readonly refs = new Map<string, RefMap>();
   /**
    * Tab creations already under way, by tabId.
    *
@@ -185,6 +210,7 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -371,9 +397,10 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
   ): Promise<void> {
     const target = action.target;
-    const point = target && "coordinates" in target
-      ? { x: target.coordinates[0], y: target.coordinates[1] }
-      : null;
+    const point =
+      target && "coordinates" in target
+        ? { x: target.coordinates[0], y: target.coordinates[1] }
+        : null;
     if (point && !isPointInViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
@@ -483,6 +510,11 @@ export class ChromiumDriver implements BrowserDriver {
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...(action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
       });
       const { output: capped, omitted } = capToolOutput(
@@ -603,38 +635,64 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
       case "a11y": {
-        // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
-        // a marker naming the retrieval verb), never by cutting one open.
-        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
-        if (action.rootSelector && snapshot === null) {
-          // The retrieval verb the omission marker names must fail LOUDLY when
-          // its selector finds nothing. Returning an empty tree would read as
-          // "that subtree is empty" — the opposite of "your selector was
-          // wrong" — and the caller would believe the page, not retry.
-          return {
-            ok: false,
-            error:
-              `unknown_selector: nothing on this page matches ` +
-              `"${action.rootSelector}"; re-observe the page and pick a ` +
-              `selector from what it shows`,
-          };
-        }
+        // filter → cap → number → render, in that order, and the order is
+        // load-bearing. Filtering first keeps the budget from being spent on
+        // prose the interactive view will not show; numbering after the cap
+        // keeps every ref in the map reachable in the text (a ref stamped on a
+        // node the budget then dropped would be a name for something the model
+        // cannot see); rendering last means the map and the text were built
+        // from one pass over one tree.
+        const raw = await this.readA11y(tabId, entry, action);
+        if (!raw.ok) return raw.error;
+        const filtered =
+          raw.filter === "interactive" && raw.tree
+            ? filterInteractive(raw.tree)
+            : raw.tree;
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          snapshot,
+          filtered,
           this.a11yBudget,
         );
-        return this.observation(
+        const refs = assignRefs(tree);
+        const rendered = renderA11yTree(tree, {
+          interactiveOnly: raw.filter === "interactive",
+        });
+        const result = this.observation(
           tabId,
           entry,
           {
-            a11y: tree,
+            a11y: rendered,
+            refs: Object.fromEntries(
+              [...refs].map(([ref, entryValue]) => [
+                ref,
+                { role: entryValue.role, name: entryValue.name },
+              ]),
+            ),
             ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
           },
           frame,
           permit,
         );
+        // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+        // mid-read discards the result — and refs stored anyway would be names
+        // for a page the model was never shown, guessable afterwards by a model
+        // that never received them. On that path the old map goes too: it
+        // described a page this tab may no longer be on.
+        if (!result.ok) {
+          this.refs.delete(tabId);
+          return result;
+        }
+        // Replaces the per-tab map wholesale: refs are valid for exactly one
+        // observation, and leaving an older map merged underneath is how `e7`
+        // comes to mean two things at once. Bound to the token the observation
+        // carries, so a ref used after the page moved is refused rather than
+        // resolved by name against whatever is there now.
+        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        return result;
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -674,6 +732,64 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
     }
+  }
+
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  private async observeText(
+    tabId: string,
+    entry: TabEntry,
+    permit: () => boolean,
+  ): Promise<BrowserCommandResult> {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text = await entry.page.pageText();
+      const after = await this.snapshot(entry.page);
+      const output = this.cappedText(text);
+      // Both must hold: a same-skeleton client-side route change moves the URL
+      // while `domSignal` does not, and would bind a new-route token to
+      // old-route prose (P1).
+      if (before.url === after.url && before.domSignal === after.domSignal) {
+        return this.observation(tabId, entry, output, after, permit);
+      }
+      before = after;
+    }
+    // Would not hold still within budget: hand the prose back but flag it
+    // unsettled, so nothing pins an act to text the page may have moved past.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false,
+    };
+  }
+
+  /** The text observation's payload, cut to budget with the counted marker. */
+  private cappedText(text: string): Record<string, unknown> {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT,
+    );
+    return { text: capped, ...(capped !== text ? { truncated: true } : {}) };
   }
 
   /**
@@ -987,9 +1103,145 @@ export class ChromiumDriver implements BrowserDriver {
     }
   }
 
+  /**
+   * Read the tree for an a11y observation, rooted where the caller asked.
+   *
+   * Three ways to be rooted and they fail differently, which is the reason
+   * this is not inline: a `rootRef` the driver never issued is the model's
+   * mistake and must say so; a `rootSelector` that matches nothing is the
+   * page's answer and must not read as "that subtree is empty"; a page that
+   * cannot produce a tree at all is neither, and telling a model its selector
+   * was wrong in that case sends it hunting for a bug that is not there.
+   */
+  private async readA11y(
+    tabId: string,
+    entry: TabEntry,
+    action: { rootSelector?: string; rootRef?: string; filter?: "interactive" | "all" },
+  ): Promise<
+    | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
+    | { ok: false; error: BrowserCommandResult }
+  > {
+    const filter = action.filter ?? "interactive";
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page cannot answer an accessibility tree; " +
+            'observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    let rootBackendNodeId: number | undefined;
+    if (action.rootRef !== undefined) {
+      const parsed = parseRef(action.rootRef);
+      const map = this.refs.get(tabId);
+      // The token is the page the refs were minted against. Without this
+      // check a ref survives a navigation, and scoping to it would read a
+      // node id that a DIFFERENT document happens to reuse — or fall through
+      // to name-matching and answer with a same-named element on a page the
+      // model never asked about.
+      if (map && !this.refsStillDescribe(tabId, entry, map)) {
+        this.refs.delete(tabId);
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `stale_ref: ${action.rootRef} was issued for a page this tab has ` +
+              "since left; re-observe and use a ref from the new page",
+          },
+        };
+      }
+      const known = parsed ? map?.entries.get(parsed) : undefined;
+      if (!known?.backendDOMNodeId) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_ref: ${action.rootRef} is not a ref from this tab's last ` +
+              "observation; re-observe and use a ref it names",
+          },
+        };
+      }
+      rootBackendNodeId = known.backendDOMNodeId;
+    } else if (action.rootSelector !== undefined) {
+      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      if (resolved === null) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_selector: nothing on this page matches ` +
+              `"${action.rootSelector}"; re-observe the page and pick a ` +
+              `selector from what it shows`,
+          },
+        };
+      }
+      rootBackendNodeId = resolved;
+    }
+    const read = await readAxTree(cdp, rootBackendNodeId);
+    if (!read.ok) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page could not answer an accessibility " +
+            'tree; observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    if (rootBackendNodeId !== undefined && read.tree === null) {
+      // The root resolved when it was issued and is gone now. An empty tree
+      // here would read as "that subtree is empty" — the model would believe
+      // the page rather than re-observing.
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            `stale_ref: the element ${action.rootRef ?? action.rootSelector} ` +
+            "named is no longer on this page; re-observe and pick one it shows",
+        },
+      };
+    }
+    return { ok: true, tree: read.tree, filter };
+  }
+
+  /**
+   * Do this tab's refs still describe the page it is on?
+   *
+   * Compares page IDENTITY (which navigation, which URL) and not content: a
+   * DOM that mutated under a ref is what `stale_ref` recovery by role and name
+   * exists to survive, and refusing every ref after any mutation would make
+   * them useless on exactly the pages that need them.
+   */
+  private refsStillDescribe(
+    tabId: string,
+    entry: TabEntry,
+    map: RefMap,
+  ): boolean {
+    const minted = map.stateToken;
+    if (!minted) return false;
+    return (
+      minted.tabId === tabId &&
+      minted.navCounter === entry.navCounter &&
+      minted.urlHash === shortHash(entry.page.url())
+    );
+  }
+
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
     this.tabs.delete(tabId);
+    // Refs name nodes in a page that is going away. Left behind, they would be
+    // handed to a recreated tab of the same name and resolve — by role and
+    // name — against a document that never issued them.
+    this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
 

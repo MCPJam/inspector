@@ -441,8 +441,13 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // `requestFailed`/service copy ("could not be loaded"), which reads as a
   // backend outage rather than a missing header, so the panels look broken
   // while the API is fine.
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics|route-facts)$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
+  // Description-experiment reads and the two writes the Evaluate card
+  // issues through authFetch (propose + start). Anchored the same way as
+  // route-facts: id segments in the middle, no blanket /eval- prefix.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-description-experiments\/[^/]+(\/start)?$/,
   // One page of a run's iterations, each carrying its own stage rows — the
   // only read that covers a PASSING trial's chain, which D9's diagnostics
   // exclude by contract.
