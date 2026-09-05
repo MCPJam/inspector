@@ -462,7 +462,9 @@ async function getCollection(
         ? envelope.error.code
         : undefined;
   const code = envelopeCode ?? `HTTP_${response.status}`;
-  const codeSource: "envelope" | "status" = envelopeCode ? "envelope" : "status";
+  const codeSource: "envelope" | "status" = envelopeCode
+    ? "envelope"
+    : "status";
 
   if (isRouteUnavailable(response.status, code, codeSource)) {
     throw new EvalDescriptionExperimentError(
@@ -481,7 +483,7 @@ async function getCollection(
   throw new EvalDescriptionExperimentError(
     "requestFailed",
     typeof (body as { message?: unknown })?.message === "string"
-      ? ((body as { message: string }).message)
+      ? (body as { message: string }).message
       : `Description experiment list failed (${response.status}).`,
     { status: response.status },
   );

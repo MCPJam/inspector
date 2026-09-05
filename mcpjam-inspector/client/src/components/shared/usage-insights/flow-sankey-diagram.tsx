@@ -154,16 +154,11 @@ export function FlowSankeyDiagram<S extends string>({
   }, [sankey, stages]);
 
   const height = useMemo(() => {
-    if (
-      !fillHeight ||
-      chartPaneSize.width <= 0 ||
-      chartPaneSize.height <= 0
-    ) {
+    if (!fillHeight || chartPaneSize.width <= 0 || chartPaneSize.height <= 0) {
       return contentHeight;
     }
     const available = Math.round(
-      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH -
-        HEADER_HEIGHT,
+      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH - HEADER_HEIGHT,
     );
     return Math.max(contentHeight, available);
   }, [fillHeight, chartPaneSize.height, chartPaneSize.width, contentHeight]);
@@ -285,9 +280,7 @@ export function FlowSankeyDiagram<S extends string>({
                     setHovered(null);
                     setReadout(null);
                   }}
-                  onActivate={() =>
-                    onSelectLink?.(link.source, link.target)
-                  }
+                  onActivate={() => onSelectLink?.(link.source, link.target)}
                   focusClass="[&:focus-visible>path]:stroke-foreground [&:focus-visible>path]:stroke-2"
                 >
                   <path

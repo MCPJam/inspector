@@ -55,10 +55,7 @@ function PassBar({
         </span>
       </div>
       <div className="h-1.5 overflow-hidden rounded-full bg-muted">
-        <div
-          className="h-full bg-success/70"
-          style={{ width: `${pct}%` }}
-        />
+        <div className="h-full bg-success/70" style={{ width: `${pct}%` }} />
       </div>
     </div>
   );
@@ -213,7 +210,10 @@ export function RunDescriptionExperimentCard({
                     Per affected case
                   </span>
                   {report.primary.perCase.map((row) => (
-                    <div key={row.aggregationKey} className="flex flex-col gap-1.5">
+                    <div
+                      key={row.aggregationKey}
+                      className="flex flex-col gap-1.5"
+                    >
                       <span className="font-mono text-[12px] text-foreground">
                         {caseLabelFromAggregationKey(row.aggregationKey)}
                       </span>
@@ -311,7 +311,9 @@ export function RunDescriptionExperimentCard({
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>Run this description experiment?</AlertDialogTitle>
+            <AlertDialogTitle>
+              Run this description experiment?
+            </AlertDialogTitle>
             <AlertDialogDescription>
               This launches two replay runs — original catalog and rewritten
               description

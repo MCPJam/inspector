@@ -76,7 +76,9 @@ describe("RouteFactsSection", () => {
     const section = screen.getByTestId("route-facts-section");
     expect(section).toBeInTheDocument();
     const routes = screen.getByText("Routes").closest("details");
-    const mismatch = screen.getByText("Expected vs observed").closest("details");
+    const mismatch = screen
+      .getByText("Expected vs observed")
+      .closest("details");
     expect(routes).not.toHaveAttribute("open");
     expect(mismatch).not.toHaveAttribute("open");
     expect(section).toHaveTextContent("expected `tool_a` not called in 1 of 3");
@@ -134,11 +136,7 @@ describe("RouteFactsSection", () => {
 
   it("notes when the facts were computed on the page", () => {
     render(
-      <RouteFactsSection
-        facts={facts()}
-        catalogState="loaded"
-        computedHere
-      />,
+      <RouteFactsSection facts={facts()} catalogState="loaded" computedHere />,
     );
     expect(screen.getByText("computed here")).toBeInTheDocument();
   });

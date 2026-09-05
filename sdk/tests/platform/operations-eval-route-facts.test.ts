@@ -180,6 +180,8 @@ describe("get_eval_run_route_facts", () => {
       "endedWithQuestion"
     );
     expect(getEvalRunRouteFactsOperation.description).toMatch(/report-only/i);
-    expect(getEvalRunRouteFactsOperation.description).toContain("never a verdict");
+    expect(getEvalRunRouteFactsOperation.description).toContain(
+      "never a verdict"
+    );
   });
 });

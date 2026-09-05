@@ -114,9 +114,9 @@ describe("FailureGroupsCard", () => {
     expect(card).toHaveTextContent("1 new");
     expect(screen.queryByLabelText(/Failed trials from case/)).toBeNull();
 
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: /14 failed trials/ }),
-    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /14 failed trials/ }));
     expect(
       screen.getByRole("group", {
         name: /Failed trials from case through route to reason/,
@@ -146,11 +146,13 @@ describe("FailureGroupsCard", () => {
       inFlight: null,
     };
     render(<FailureGroupsCard suiteId="suite_1" />);
-    await userEvent.setup().click(
-      screen.getByRole("button", { name: /failed trial/ }),
-    );
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: /failed trial/ }));
     expect(
-      screen.getByText(/reasons did not separate into groups — showing the list/),
+      screen.getByText(
+        /reasons did not separate into groups — showing the list/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText("Not judged")).toBeInTheDocument();
     expect(
@@ -210,8 +212,6 @@ describe("FailureGroupsCard", () => {
       inFlight: { status: "queued" },
     };
     render(<FailureGroupsCard suiteId="suite_1" />);
-    expect(
-      screen.getByRole("button", { name: /Grouping/ }),
-    ).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Grouping/ })).toBeDisabled();
   });
 });

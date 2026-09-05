@@ -77,7 +77,8 @@ function experiment(
     status: "proposed",
     originalDescription: "Look up a user by id.",
     proposal: {
-      description: "Fetch the user record for a known id. Prefer this over search_users when the id is already known.",
+      description:
+        "Fetch the user record for a known id. Prefer this over search_users when the id is already known.",
       proposalHash: "p1",
     },
     plan: {
@@ -149,7 +150,9 @@ describe("RunDescriptionExperimentCard", () => {
     const card = screen.getByTestId("description-experiment-card");
     expect(card).toHaveTextContent("not enough trials to say");
     expect(card).not.toHaveTextContent(/at least|at most/);
-    await user.click(screen.getByRole("button", { name: /Description experiment/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
     const expanded = screen.getByTestId("description-experiment-card");
     expect(expanded).toHaveTextContent("not enough trials to say");
     expect(expanded.textContent).not.toMatch(/[+-]?\d+(\.\d+)? points/);
@@ -164,14 +167,14 @@ describe("RunDescriptionExperimentCard", () => {
       }),
     );
     const card = screen.getByTestId("description-experiment-card");
-    expect(card).toHaveTextContent(
-      "rewrite passed 8 of 10, original 3 of 10",
-    );
+    expect(card).toHaveTextContent("rewrite passed 8 of 10, original 3 of 10");
     expect(card).toHaveTextContent("at least +12 points");
     expect(card).toHaveTextContent("Reproducible");
     expect(card).toHaveTextContent("report-only");
 
-    await user.click(screen.getByRole("button", { name: /Description experiment/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
     expect(screen.getByText("no reset")).toBeInTheDocument();
     expect(screen.getByText("catalog catalogh")).toBeInTheDocument();
     expect(screen.getByText("judge judgehas")).toBeInTheDocument();
@@ -192,7 +195,11 @@ describe("RunDescriptionExperimentCard", () => {
             pooled: {
               original: { eligible: 10, passed: 8, failed: 2, exclusions: {} },
               rewrite: { eligible: 10, passed: 3, failed: 7, exclusions: {} },
-              interval: { deltaPoints: -50, lowerPoints: -72, upperPoints: -12.2 },
+              interval: {
+                deltaPoints: -50,
+                lowerPoints: -72,
+                upperPoints: -12.2,
+              },
               verdict: "regressed",
               minSampleSize: 5,
               minEffectSize: 0.05,
@@ -211,8 +218,12 @@ describe("RunDescriptionExperimentCard", () => {
     expect(screen.getByTestId("description-experiment-card")).toHaveTextContent(
       "at most -12 points",
     );
-    await user.click(screen.getByRole("button", { name: /Description experiment/ }));
-    expect(screen.getByText(/1 other case flipped: other_case/)).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
+    expect(
+      screen.getByText(/1 other case flipped: other_case/),
+    ).toBeInTheDocument();
   });
 
   it("labels a controlled experiment and still caveats the upstream server", async () => {
@@ -234,7 +245,9 @@ describe("RunDescriptionExperimentCard", () => {
     expect(screen.getByTestId("description-experiment-card")).toHaveTextContent(
       "Controlled",
     );
-    await user.click(screen.getByRole("button", { name: /Description experiment/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
     expect(screen.getByText("fresh computer per trial")).toBeInTheDocument();
     expect(
       screen.getByText(/upstream server's state was not verified/),
@@ -298,7 +311,9 @@ describe("RunDescriptionExperimentCard", () => {
     const user = userEvent.setup();
     const onStart = vi.fn();
     renderCard(experiment({ status: "proposed" }), onStart);
-    await user.click(screen.getByRole("button", { name: /Description experiment/ }));
+    await user.click(
+      screen.getByRole("button", { name: /Description experiment/ }),
+    );
     await user.click(screen.getByTestId("description-experiment-start"));
     expect(screen.getByText(/20 trials in total/)).toBeInTheDocument();
     expect(screen.getByText(/cap of 200/)).toBeInTheDocument();

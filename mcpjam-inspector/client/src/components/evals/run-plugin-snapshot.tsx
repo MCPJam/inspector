@@ -45,11 +45,7 @@ export function RunPluginSnapshot({
   // about plugins, and the common "without skills" arm pins no plugins at all —
   // so returning early on an empty plugin list used to hide the badge in
   // exactly the case it exists for.
-  if (
-    versions.length === 0 &&
-    !skillsExcluded &&
-    !toolDescriptionOverride
-  ) {
+  if (versions.length === 0 && !skillsExcluded && !toolDescriptionOverride) {
     return null;
   }
 

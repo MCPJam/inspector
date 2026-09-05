@@ -192,7 +192,8 @@ export function layoutSankey<S extends string>(
         x: columnX[stageIndex],
         y,
         height: nodeHeight,
-        share: columnTotal > 0 ? Math.round((node.count / columnTotal) * 100) : 0,
+        share:
+          columnTotal > 0 ? Math.round((node.count / columnTotal) * 100) : 0,
       };
       laid.set(node.id, entry);
       outAt.set(node.id, y);
@@ -203,8 +204,7 @@ export function layoutSankey<S extends string>(
 
   // Ribbons stack in the same order their endpoints do, so bands never cross
   // inside a single node's face.
-  const stageIndexOf = (id: string) =>
-    stages.indexOf(parseNodeId<S>(id).stage);
+  const stageIndexOf = (id: string) => stages.indexOf(parseNodeId<S>(id).stage);
   const orderOf = (id: string) => sankey.nodes.findIndex((n) => n.id === id);
   const ordered = [...sankey.links].sort(
     (a, b) =>

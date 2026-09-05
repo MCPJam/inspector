@@ -128,9 +128,10 @@ function reasonOf(
   };
 }
 
-function foldStage(
-  counts: Map<string, Counted>,
-): { keep: Map<string, Counted>; foldedKeys: Set<string> } {
+function foldStage(counts: Map<string, Counted>): {
+  keep: Map<string, Counted>;
+  foldedKeys: Set<string>;
+} {
   const ranked = [...counts.entries()].sort(
     (a, b) => b[1].count - a[1].count || a[0].localeCompare(b[0]),
   );

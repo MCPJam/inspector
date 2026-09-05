@@ -67,9 +67,7 @@ function Harness({
   return null;
 }
 
-function renderHook(
-  props: Partial<Parameters<typeof Harness>[0]> = {},
-) {
+function renderHook(props: Partial<Parameters<typeof Harness>[0]> = {}) {
   const states: EvalDescriptionExperimentState[] = [];
   const utils = render(
     <Harness {...props} onState={(state) => states.push(state)} />,
@@ -131,7 +129,9 @@ describe("useEvalDescriptionExperiment", () => {
     await vi.waitFor(() => expect(latest().experiment?.status).toBe("running"));
 
     await vi.advanceTimersByTimeAsync(5_000);
-    await vi.waitFor(() => expect(latest().experiment?.status).toBe("completed"));
+    await vi.waitFor(() =>
+      expect(latest().experiment?.status).toBe("completed"),
+    );
     expect(mocks.get).toHaveBeenCalledTimes(1);
 
     await vi.advanceTimersByTimeAsync(20_000);

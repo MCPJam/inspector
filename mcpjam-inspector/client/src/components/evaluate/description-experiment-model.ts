@@ -46,9 +46,7 @@ export function isEmulatedDescriptionExperimentEngine(
 
 export function catalogToolNamesFromRun(run: EvalSuiteRun): Set<string> {
   const catalog = readRunToolCatalog(run);
-  return catalog.state === "loaded"
-    ? new Set(catalog.toolNames)
-    : new Set();
+  return catalog.state === "loaded" ? new Set(catalog.toolNames) : new Set();
 }
 
 export function hash8(value: string | undefined): string | null {
@@ -122,9 +120,7 @@ export function plannedTrialsOf(
   return null;
 }
 
-export function maxTrialsCapOf(
-  experiment: EvalDescriptionExperiment,
-): number {
+export function maxTrialsCapOf(experiment: EvalDescriptionExperiment): number {
   return experiment.plan?.maxTrials ?? 200;
 }
 
@@ -136,10 +132,7 @@ export function maxTrialsCapOf(
 export function descriptionExperimentHeader(
   experiment: EvalDescriptionExperiment,
 ): string {
-  const parts = [
-    "Description experiment",
-    `\`${experiment.toolName}\``,
-  ];
+  const parts = ["Description experiment", `\`${experiment.toolName}\``];
   const report = experiment.report;
   if (report) {
     const { original, rewrite } = report.primary.pooled;
@@ -192,7 +185,9 @@ export function regressionLine(
   }
   if (regression.status === "failed") {
     const n = regression.regressed.length;
-    const names = regression.regressed.map(caseLabelFromAggregationKey).join(", ");
+    const names = regression.regressed
+      .map(caseLabelFromAggregationKey)
+      .join(", ");
     return n === 0
       ? "Other cases flipped on the rewrite arm."
       : `${n} other ${n === 1 ? "case" : "cases"} flipped: ${names}`;

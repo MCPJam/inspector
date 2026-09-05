@@ -96,9 +96,7 @@ describe("readRunToolCatalog", () => {
         run({
           toolSnapshotHash: "hash_1",
           toolSnapshot: {
-            servers: [
-              { tools: [{ name: "tool_a" }, { name: "tool_b" }] },
-            ],
+            servers: [{ tools: [{ name: "tool_a" }, { name: "tool_b" }] }],
           },
         }),
       ),
@@ -145,7 +143,9 @@ describe("copy helpers", () => {
   it("summarises an all-pass single route", () => {
     const doc = buildRunRouteFacts(
       run({
-        toolSnapshot: { servers: [{ tools: [{ name: "tool_a" }, { name: "tool_b" }] }] },
+        toolSnapshot: {
+          servers: [{ tools: [{ name: "tool_a" }, { name: "tool_b" }] }],
+        },
       }),
       [
         iteration({

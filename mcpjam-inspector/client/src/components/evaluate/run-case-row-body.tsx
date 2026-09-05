@@ -248,9 +248,7 @@ function FailureGroup({
                   className="h-8"
                   disabled={disabled || busy}
                   title={
-                    disabled
-                      ? "Not available for harness runs yet"
-                      : undefined
+                    disabled ? "Not available for harness runs yet" : undefined
                   }
                   data-testid={`description-experiment-propose-${toolName}`}
                   onClick={() => descriptionExperiment!.onPropose(toolName)}
@@ -342,8 +340,8 @@ export function RunCaseRowBody({
             iterations={iterations}
             {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
           />
-          ))
-        )}
+        ))
+      )}
 
       {routeFacts?.map((facts) => {
         const label = routeFacts.length > 1 ? variantLabel(facts) : null;

@@ -58,17 +58,21 @@ afterEach(() => {
 });
 
 describe("useSuiteFailureGroups", () => {
-  it("passes \"skip\" and reports not loading when the flag is off", () => {
+  it('passes "skip" and reports not loading when the flag is off', () => {
     const { latest } = renderHook({ suiteId: "suite_1", enabled: false });
     expect(convex.queryCalls.length).toBeGreaterThan(0);
     for (const call of convex.queryCalls) {
       expect(call.name).toBe("evalFailureGroups:getSuiteFailureGroups");
       expect(call.args).toBe("skip");
     }
-    expect(latest()).toMatchObject({ latest: null, inFlight: null, loading: false });
+    expect(latest()).toMatchObject({
+      latest: null,
+      inFlight: null,
+      loading: false,
+    });
   });
 
-  it("passes \"skip\" when there is no suite, even with the flag on", () => {
+  it('passes "skip" when there is no suite, even with the flag on', () => {
     renderHook({ suiteId: null, enabled: true });
     for (const call of convex.queryCalls) {
       expect(call.args).toBe("skip");

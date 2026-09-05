@@ -74,7 +74,10 @@ export function readRunToolCatalog(run: EvalSuiteRun): RouteFactsCatalog {
 function caseIdForIteration(iteration: EvalIteration): string {
   const caseKey = iteration.testCaseSnapshot?.caseKey;
   if (typeof caseKey === "string" && caseKey.length > 0) return caseKey;
-  if (typeof iteration.testCaseId === "string" && iteration.testCaseId.length > 0) {
+  if (
+    typeof iteration.testCaseId === "string" &&
+    iteration.testCaseId.length > 0
+  ) {
     return iteration.testCaseId;
   }
   const title = iteration.testCaseSnapshot?.title;
@@ -164,7 +167,9 @@ function iterationsForRow(
   iterations: readonly EvalIteration[],
 ): EvalIteration[] {
   if (row.testCaseId) {
-    return iterations.filter((iteration) => iteration.testCaseId === row.testCaseId);
+    return iterations.filter(
+      (iteration) => iteration.testCaseId === row.testCaseId,
+    );
   }
   return iterations.filter(
     (iteration) =>

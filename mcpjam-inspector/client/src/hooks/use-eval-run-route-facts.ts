@@ -55,11 +55,7 @@ export interface RouteFactsErrorInfo {
  * run as a malfunction.
  */
 export type EvalRunRouteFactsStatus =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "absent"
-  | "error";
+  "idle" | "loading" | "ready" | "absent" | "error";
 
 export interface EvalRunRouteFactsState {
   status: EvalRunRouteFactsStatus;

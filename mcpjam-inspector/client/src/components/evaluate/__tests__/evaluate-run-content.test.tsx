@@ -746,10 +746,7 @@ describe("EvaluateRunContent", () => {
     toolSnapshot: {
       servers: [
         {
-          tools: [
-            { name: "export_to_excalidraw" },
-            { name: "create_view" },
-          ],
+          tools: [{ name: "export_to_excalidraw" }, { name: "create_view" }],
         },
       ],
     },

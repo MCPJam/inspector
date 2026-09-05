@@ -188,9 +188,9 @@ describe("golden fixture", () => {
     expect(
       caseA.mismatch.unexpected.find((row) => row.tool === "tool_z")?.catalog
     ).toBe("outsideCatalog");
-    expect(caseA.routes.routes.some((row) => row.pathKey === NO_TOOL_PATH_KEY)).toBe(
-      true
-    );
+    expect(
+      caseA.routes.routes.some((row) => row.pathKey === NO_TOOL_PATH_KEY)
+    ).toBe(true);
     expect(
       caseA.routes.routes.some(
         (row) => row.pathKey === `tool_a${PATH_SEPARATOR}tool_b`

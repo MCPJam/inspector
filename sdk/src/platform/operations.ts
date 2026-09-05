@@ -6854,7 +6854,9 @@ const startEvalDescriptionExperimentInput = z.object({
     .string()
     .trim()
     .min(1)
-    .describe("Description-experiment id, as returned by propose_eval_description_rewrite."),
+    .describe(
+      "Description-experiment id, as returned by propose_eval_description_rewrite."
+    ),
   caseScope: z
     .enum(["all", "affected"])
     .optional()
@@ -6867,7 +6869,9 @@ const startEvalDescriptionExperimentInput = z.object({
     .min(1)
     .max(10)
     .optional()
-    .describe("Repetitions per case per arm (1–10). Default is the source run's."),
+    .describe(
+      "Repetitions per case per arm (1–10). Default is the source run's."
+    ),
   maxTrials: z
     .number()
     .int()
@@ -6909,11 +6913,15 @@ export const startEvalDescriptionExperimentOperation: PlatformOperation<
       {
         projectId: project.id,
         experimentId: input.experiment,
-        ...(input.caseScope !== undefined ? { caseScope: input.caseScope } : {}),
+        ...(input.caseScope !== undefined
+          ? { caseScope: input.caseScope }
+          : {}),
         ...(input.iterationOverride !== undefined
           ? { iterationOverride: input.iterationOverride }
           : {}),
-        ...(input.maxTrials !== undefined ? { maxTrials: input.maxTrials } : {}),
+        ...(input.maxTrials !== undefined
+          ? { maxTrials: input.maxTrials }
+          : {}),
       },
       { signal }
     );
@@ -6928,11 +6936,7 @@ const getEvalDescriptionExperimentInput = z.object({
     .min(1)
     .optional()
     .describe(PROJECT_SELECTOR_DESCRIPTION),
-  experiment: z
-    .string()
-    .trim()
-    .min(1)
-    .describe("Description-experiment id."),
+  experiment: z.string().trim().min(1).describe("Description-experiment id."),
 });
 
 export type GetEvalDescriptionExperimentInput = z.infer<

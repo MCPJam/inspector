@@ -112,9 +112,9 @@ describe("buildFailureSankey", () => {
         .reduce((sum, link) => sum + link.count, 0),
     ).toBe(3);
     expect(adjacentOnly(sankey)).toBe(true);
-    expect(sankey.links.every((link) => link.discordantCount === undefined)).toBe(
-      true,
-    );
+    expect(
+      sankey.links.every((link) => link.discordantCount === undefined),
+    ).toBe(true);
   });
 
   it("maps an unjudged trial onto the unlabeled reason", () => {
@@ -153,9 +153,9 @@ describe("buildFailureSankey", () => {
         ],
       }),
     );
-    expect(
-      sankey.nodes.find((node) => node.stage === "route")?.label,
-    ).toBe("called nothing");
+    expect(sankey.nodes.find((node) => node.stage === "route")?.label).toBe(
+      "called nothing",
+    );
   });
 
   it("folds a stage past 12 keys into SANKEY_OTHER and still conserves flow", () => {

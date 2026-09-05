@@ -37,11 +37,7 @@ export interface DescriptionExperimentErrorInfo {
 }
 
 export type EvalDescriptionExperimentReadStatus =
-  | "idle"
-  | "loading"
-  | "ready"
-  | "absent"
-  | "error";
+  "idle" | "loading" | "ready" | "absent" | "error";
 
 export interface EvalDescriptionExperimentState {
   status: EvalDescriptionExperimentReadStatus;
@@ -92,12 +88,10 @@ export function useEvalDescriptionExperiment({
   const active = Boolean(enabled && projectId && sourceRunId);
   const key = active ? `${projectId}:${sourceRunId}:${revision}` : "";
 
-  const [experiment, setExperiment] = useState<EvalDescriptionExperiment | null>(
-    null,
-  );
-  const [status, setStatus] = useState<EvalDescriptionExperimentReadStatus>(
-    "idle",
-  );
+  const [experiment, setExperiment] =
+    useState<EvalDescriptionExperiment | null>(null);
+  const [status, setStatus] =
+    useState<EvalDescriptionExperimentReadStatus>("idle");
   const [error, setError] = useState<DescriptionExperimentErrorInfo | null>(
     null,
   );

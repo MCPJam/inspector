@@ -4,14 +4,15 @@
  * Progressive disclosure only. Flag-off callers must not mount this.
  */
 
-import type { EvalRunRouteFacts, EvalRunRouteFactsCase } from "@mcpjam/sdk/contract";
+import type {
+  EvalRunRouteFacts,
+  EvalRunRouteFactsCase,
+} from "@mcpjam/sdk/contract";
 
 import { EvaluateToolList } from "./evaluate-tool-list";
 import { mismatchLines } from "./route-facts-model";
 
-function namesOf(
-  rows: readonly { tool: string }[] | undefined,
-): string[] {
+function namesOf(rows: readonly { tool: string }[] | undefined): string[] {
   return (rows ?? []).map((row) => row.tool);
 }
 
@@ -87,7 +88,8 @@ export function RouteFactsSection({
             <li className="text-muted-foreground">
               other routes
               <span className="ml-2 tabular-nums">
-                {facts.routes.otherRoutes.passed}/{facts.routes.otherRoutes.trials}
+                {facts.routes.otherRoutes.passed}/
+                {facts.routes.otherRoutes.trials}
               </span>
             </li>
           ) : null}

@@ -224,13 +224,22 @@ describe("applyVisibilityPolicyAndCountSignals", () => {
 describe("applyToolDescriptionOverrides", () => {
   it("rewrites description only and reports missing names", () => {
     const tools = [
-      { name: "search", description: "old", inputSchema: { type: "object" }, _meta: { ui: { visibility: ["model"] } } },
+      {
+        name: "search",
+        description: "old",
+        inputSchema: { type: "object" },
+        _meta: { ui: { visibility: ["model"] } },
+      },
       { name: "get", description: "keep", inputSchema: { type: "object" } },
     ];
-    const { tools: next, applied, missing } = applyToolDescriptionOverrides(
-      tools,
-      { search: "new description", absent: "never" }
-    );
+    const {
+      tools: next,
+      applied,
+      missing,
+    } = applyToolDescriptionOverrides(tools, {
+      search: "new description",
+      absent: "never",
+    });
     expect(applied).toBe(1);
     expect(missing).toEqual(["absent"]);
     expect(next[0]?.description).toBe("new description");
@@ -241,10 +250,11 @@ describe("applyToolDescriptionOverrides", () => {
 
   it("returns the input unchanged when overrides are empty", () => {
     const tools = [{ name: "search", description: "old" }];
-    const { tools: next, applied, missing } = applyToolDescriptionOverrides(
-      tools,
-      {}
-    );
+    const {
+      tools: next,
+      applied,
+      missing,
+    } = applyToolDescriptionOverrides(tools, {});
     expect(applied).toBe(0);
     expect(missing).toEqual([]);
     expect(next).toEqual(tools);
