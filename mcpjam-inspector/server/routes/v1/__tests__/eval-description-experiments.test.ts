@@ -715,7 +715,11 @@ describe("eval description experiments", () => {
         {},
       );
       expect(res.status).toBe(502);
-      expect(await res.json()).toMatchObject({
+      const body = (await res.json()) as {
+        message?: string;
+        details?: Record<string, unknown>;
+      };
+      expect(body).toMatchObject({
         details: {
           reason: "ARMS_RECORD_UNCONFIRMED",
           experimentId: EXPERIMENT_ID,
@@ -723,6 +727,10 @@ describe("eval description experiments", () => {
           rewriteRunId: "run_rewrite",
         },
       });
+      // The only stop this surface offers for unrecorded arms is the run
+      // cancel route, so the guidance names it rather than an experiment
+      // cancel that could not reach them.
+      expect(body.message).toContain("eval-runs/:runId/cancel");
       expect(readBacks).toBe(3);
       // A guess either way could be wrong; the arms and the document keep
       // whatever state the write left them in.

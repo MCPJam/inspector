@@ -6067,13 +6067,18 @@ evals.post(
       }
       if (readBack.state === "indeterminate") {
         // Nothing destructive on an unknown state. If the write landed, the
-        // pair is a running experiment and the next read says so; if it did
-        // not, the experiment is still `launching` and can be cancelled,
-        // which stops the arms with it.
+        // pair is a running experiment and the next read says so. If it did
+        // not, the experiment is still `launching` with two arms it never
+        // recorded, and only the run cancel route can stop them — an
+        // experiment cancel cannot reach arms it does not know about, and
+        // this surface offers none. So the response names both runs. (The
+        // durable fix is the backend's: link each arm to its experiment in
+        // the mutation that creates the arm, so there is no window in which
+        // a launched arm is unrecorded.)
         throw new WebRouteError(
           502,
           ErrorCode.SERVER_UNREACHABLE,
-          "Both arms launched, but whether they were recorded on the experiment could not be confirmed. Read the experiment back: `running` means they were; `launching` means they were not, and cancelling the experiment stops them.",
+          "Both arms launched, but whether they were recorded on the experiment could not be confirmed. Read the experiment back: `running` means they were recorded and nothing more is needed; `launching` means they were not — stop the two runs named in `details` with the eval-run cancel route (POST /projects/:projectId/eval-runs/:runId/cancel), since cancelling the experiment cannot reach arms it never recorded.",
           {
             reason: "ARMS_RECORD_UNCONFIRMED",
             experimentId,
