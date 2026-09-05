@@ -2369,6 +2369,8 @@ When `MCPJAM_API_KEY` is set to an active `sk_` key, `logout` prints a warning t
 | `--api-key <key>` | | MCPJam `sk_` API key (overrides `MCPJAM_API_KEY`). |
 | `--api-url <url>` | `https://app.mcpjam.com/api/v1` | MCPJam API base URL. |
 
+The global `--timeout <ms>` flag applies to `whoami`: the request is cancelled and exits with a `TIMEOUT` error if the API does not respond within the deadline.
+
 ---
 
 ## Exit codes
