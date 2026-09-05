@@ -204,6 +204,32 @@ In suite settings, the **Computer environment** select lets you pin a built Dock
 
 Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
+## GitHub Checks
+
+<Note>
+  GitHub Checks is a beta feature available to organizations with the integration enabled. The section appears in suite settings only when your organization has access.
+</Note>
+
+The **GitHub Checks** section in suite settings lets you connect the current suite to a GitHub repository so it runs as a check on every pull request. This is the point-of-intent entry: you're already looking at the suite you want enforced, so the connection lives here.
+
+### Connecting a repository
+
+1. Open the suite's **Settings** tab.
+2. Scroll to **GitHub Checks**.
+3. Pick a repository from the **Repository** dropdown — only repositories not already bound to another suite are listed.
+4. Click **Connect**.
+
+Each repository runs exactly one suite. If a repository you expect to see is missing, it may already be connected to a different suite. Use **Settings → Integrations → GitHub Checks** to see all connected repositories and manage them.
+
+### What the section shows
+
+- **Connected repositories** — repositories currently running this suite. A **(paused)** label appears next to any repository where checks are paused.
+- **No repositories run this suite yet** — shown when no repositories are connected.
+
+The section intentionally omits pause, disconnect, and retarget controls. Those are repository-level decisions that belong in the full management surface (**Settings → Integrations → GitHub Checks**), where every repository is visible at once.
+
+Click **Manage in Settings → Integrations** to go there directly.
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
