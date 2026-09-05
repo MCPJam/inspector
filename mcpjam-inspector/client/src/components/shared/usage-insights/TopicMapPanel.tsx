@@ -717,14 +717,24 @@ export function TopicMapPanel({
   // in the capture phase before it reaches the canvas's own d3-zoom listener,
   // so the event stays undefaulted and scrolls the page. A modifier (Ctrl/Cmd)
   // or a trackpad pinch (delivered as a ctrlKey wheel) is let through to zoom.
+  //
+  // Passive: this handler only stopPropagation()s and NEVER preventDefault()s
+  // (letting the page scroll is the whole point), so declaring it passive keeps
+  // the browser's async-scroll optimization for the graph subtree — and
+  // stopPropagation still runs on a passive listener.
   useEffect(() => {
     if (!cooperativeWheelZoom || !graphWrapEl) return;
     const onWheelCapture = (event: WheelEvent) => {
       if (!event.ctrlKey && !event.metaKey) event.stopPropagation();
     };
-    graphWrapEl.addEventListener("wheel", onWheelCapture, true);
+    graphWrapEl.addEventListener("wheel", onWheelCapture, {
+      capture: true,
+      passive: true,
+    });
     return () =>
-      graphWrapEl.removeEventListener("wheel", onWheelCapture, true);
+      graphWrapEl.removeEventListener("wheel", onWheelCapture, {
+        capture: true,
+      });
   }, [cooperativeWheelZoom, graphWrapEl]);
   const canvasPalette = useMemo(
     () => topicMapPalette ?? DEFAULT_CANVAS_PALETTE,

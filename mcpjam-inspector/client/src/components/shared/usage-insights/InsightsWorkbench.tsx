@@ -431,6 +431,7 @@ export function InsightsWorkbench({
           onApplyTuning={handleApplyTuning}
           showLinkThreshold
           fillHeight={fillBody}
+          scrollLayout={!fillBody}
           headerActions={viewChrome}
         />
       </div>
@@ -517,6 +518,13 @@ export function InsightsWorkbench({
               selectionOpen
                 ? "absolute inset-0 z-10 bg-background sm:static sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
                 : "hidden",
+              // Scroll layout: the chart row is as tall as the whole diagram,
+              // so a stretched drill-down would run that full height. Pin it to
+              // a bounded, sticky panel that scrolls its own session list while
+              // the diagram scrolls past beside it.
+              selectionOpen &&
+                !fillBody &&
+                "sm:sticky sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
             )}
             data-testid={`${testIdPrefix}-drill-panel`}
             aria-hidden={!selectionOpen}
