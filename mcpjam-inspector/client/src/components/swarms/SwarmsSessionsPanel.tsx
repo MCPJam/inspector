@@ -4,7 +4,7 @@
  * picker narrows to `listSessionsByPersona`. Mirrors the Scenarios Sessions layout.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { usePaginatedQuery } from "convex/react";
+import { usePaginatedQuery, useQuery } from "convex/react";
 import { MessageSquare } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import {
@@ -37,7 +37,9 @@ import {
   groupSwarmSessionsByGoal,
   groupSwarmSessionsByRun,
   journeySessionRowToThread,
+  swarmGroupLabelsFromOverview,
   type JourneySessionRow,
+  type SwarmOverview,
 } from "@/lib/swarm-api";
 
 type SessionsGroupBy = "session" | "run" | "goal";
@@ -113,6 +115,27 @@ export function SwarmsSessionsPanel({
         : loadedRows,
     [loadedRows, runIdSet]
   );
+
+  // Names for the run / goal groups. Callers only know the runs they
+  // launched, so the project's overview window supplies the rest — without it
+  // a fresh page load labels every group with a meaningless id suffix.
+  const overview = useQuery(
+    SWARM_QUERIES.getSwarmOverview as any,
+    projectId ? ({ projectId } as any) : "skip"
+  ) as SwarmOverview | undefined;
+  const { runLabels: resolvedRunLabels, goalLabels: resolvedGoalLabels } =
+    useMemo(() => {
+      const derived = swarmGroupLabelsFromOverview(overview);
+      // Caller-supplied labels win: they name the wave the reader just
+      // launched, including runs newer than the overview window.
+      for (const [runId, label] of runLabels ?? []) {
+        derived.runLabels.set(runId, label);
+      }
+      for (const [goalId, label] of goalLabels ?? []) {
+        derived.goalLabels.set(goalId, label);
+      }
+      return derived;
+    }, [overview, runLabels, goalLabels]);
 
   const [groupBy, setGroupBy] = useState<SessionsGroupBy>("run");
   const [hostFilter, setHostFilter] = useState<string | null>(null);
@@ -401,7 +424,11 @@ export function SwarmsSessionsPanel({
                     threadsById={threadsById}
                     selectedThreadId={selectedThreadId}
                     onSelectThread={setSelectedThreadId}
-                    runLabels={groupBy === "goal" ? goalLabels : runLabels}
+                    runLabels={
+                      groupBy === "goal"
+                        ? resolvedGoalLabels
+                        : resolvedRunLabels
+                    }
                     groupUnit={groupBy === "goal" ? "goal" : "run"}
                   />
                 ) : (
