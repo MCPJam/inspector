@@ -168,6 +168,7 @@ export {
   deriveStageResults,
   isPositiveToolCallPredicateKind,
   isSelectionPredicateKind,
+  projectStageDerivation,
   stageDerivationSchema,
   stageDerivationToMetadata,
   stageReasonSchema,
@@ -566,3 +567,11 @@ export {
   evalRunMeasurementUnitSchema,
   measurementUnitLabel,
 } from "./decision-summary.js";
+
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./tool-path.js";
