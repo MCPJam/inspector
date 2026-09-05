@@ -342,6 +342,17 @@ interface WidgetDebugStore {
     csp: Omit<WidgetSandboxInfo, "violations">,
   ) => void;
 
+  /**
+   * Record the CSP string the proxy actually injected for the current mount
+   * (`mcpjam:csp-applied`). MERGES into the existing `csp` object rather than
+   * replacing it: it arrives after `setWidgetCsp` has already stored the
+   * declared allowlists, and must not clobber them.
+   */
+  setWidgetAppliedCsp: (
+    toolCallId: string,
+    applied: { headerString: string; mode: CspMode },
+  ) => void;
+
   // Add a CSP violation for a widget
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
 
@@ -506,7 +517,56 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: {
           ...csp,
           violations: existing.csp?.violations ?? [],
+          // Deliberately NOT preserved across this call. `setWidgetCsp` runs at
+          // the fetch-commit site, i.e. new HTML is going on screen, which means
+          // a new mount and a new `mcpjam:csp-applied` for it. Carrying the old
+          // header over would label the previous mount's policy as "what the
+          // proxy applied" to bytes it never saw — the exact
+          // assumption-presented-as-fact this panel exists to stop. Same
+          // invariant as the `setFirstCspBlock(null)` reset alongside it.
+          headerString: undefined,
         },
+        updatedAt: Date.now(),
+      });
+      return { widgets };
+    });
+  },
+
+  setWidgetAppliedCsp: (toolCallId, applied) => {
+    set((state) => {
+      const widgets = new Map(state.widgets);
+      const existing = widgets.get(toolCallId);
+      // A permissive widget that declares no csp/permissions/domain never
+      // reaches `setWidgetCsp` (see the guard at its call site), so this can
+      // legitimately be the first writer for `csp`. Seed the required fields
+      // rather than dropping the only ground truth the host ever gets about
+      // the enforced policy.
+      const currentCsp = existing?.csp ?? {
+        mode: applied.mode,
+        connectDomains: [],
+        resourceDomains: [],
+        violations: [],
+      };
+      const nextCsp = {
+        ...currentCsp,
+        headerString: applied.headerString,
+        // The proxy is authoritative about which branch it took: in permissive
+        // mode it never calls buildCSP at all.
+        mode: applied.mode,
+      };
+
+      // Create-if-missing for the same reason as setSandboxApplied.
+      widgets.set(toolCallId, {
+        ...(existing ?? {
+          toolCallId,
+          toolName: "unknown",
+          protocol: "mcp-apps" as const,
+          widgetState: null,
+          globals: { theme: "dark" as const, displayMode: "inline" as const },
+          lifecycle: [],
+          mounts: [],
+        }),
+        csp: nextCsp,
         updatedAt: Date.now(),
       });
       return { widgets };
