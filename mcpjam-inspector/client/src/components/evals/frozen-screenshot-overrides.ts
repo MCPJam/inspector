@@ -44,7 +44,11 @@ export function buildFrozenScreenshotOverrides(
     if (!url) return;
     const prev = latestByTool.get(toolCallId);
     if (!prev || ts > prev.ts) {
-      latestByTool.set(toolCallId, { url, ts, resourceUri });
+      latestByTool.set(toolCallId, {
+        url,
+        ts,
+        resourceUri: resourceUri ?? prev?.resourceUri,
+      });
     }
   };
   for (const obs of observations) {

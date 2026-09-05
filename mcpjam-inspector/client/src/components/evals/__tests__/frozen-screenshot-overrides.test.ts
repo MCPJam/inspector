@@ -158,6 +158,32 @@ describe("buildFrozenScreenshotOverrides", () => {
     expect(out["tc1"]?.frozenScreenshotUrl).toBe("https://s/cart-open.png");
   });
 
+  it("keeps the render resource URI when a later interaction supplies only a screenshot", () => {
+    const out = buildFrozenScreenshotOverrides(
+      {},
+      [
+        obs({
+          toolCallId: "tc1",
+          ts: 1,
+          screenshotUrl: "https://s/initial.png",
+          resourceUri: "ui://widget/view.html",
+        }),
+      ],
+      [
+        interaction({
+          toolCallId: "tc1",
+          ts: 50,
+          screenshotUrl: "https://s/final.png",
+        }),
+      ],
+    );
+
+    expect(out.tc1).toMatchObject({
+      frozenScreenshotUrl: "https://s/final.png",
+      resourceUri: "ui://widget/view.html",
+    });
+  });
+
   it("falls back to the render screenshot when no interaction step has one", () => {
     const out = buildFrozenScreenshotOverrides(
       {},
