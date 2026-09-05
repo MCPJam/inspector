@@ -60,7 +60,7 @@ The Playground is a three-column IDE shell. Each side rail is collapsible — dr
 
 **Right rail — Logs / Shell**
 - **Logs** (always available) — Real-time feed of MCP protocol messages. Search, filter by source server, filter by log level, copy, download, or clear the buffer.
-- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to provision or wake the computer and connect. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
+- **Shell** (shown when the previewed host has a Project Computer) — A live terminal on the computer the harness runs on. Click **Open terminal** to connect. For cloud computers, this provisions or wakes the machine; for local computers, it opens a shell on your own machine. Switching between Logs and Shell keeps both the terminal WebSocket and the log stream alive so neither is dropped.
 
 ## Chat, Trace, and Raw Views
 
@@ -311,7 +311,10 @@ When a search is active and the source filter is hiding matching entries, a bann
 
 ### Shell tab
 
-When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to open a live terminal session:
+
+- **Cloud computer** — provisions or wakes the cloud machine and connects. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
+- **Local computer** — opens a shell on your own machine in the project workspace. The terminal stays idle until you click **Open terminal**, so no shell is spawned on Playground load.
 
 Both tabs stay mounted while you switch between them, so the terminal WebSocket and the log stream are never dropped.
 
