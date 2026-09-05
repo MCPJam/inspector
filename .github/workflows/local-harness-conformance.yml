@@ -212,21 +212,20 @@ jobs:
             exit 1
           fi
 
-  # Windows, and the one job here that is allowed to fail.
+  # Windows. Gating, like the POSIX legs, since `nativePlatforms` lists win32:
+  # this job going green is what earned that entry, and it going red is what
+  # would make the entry a lie. The two are the SAME change and must move
+  # together — `continue-on-error` does not come back without `win32` leaving
+  # the manifest.
   #
-  # `continue-on-error` is not laziness: Windows is REFUSED today
-  # (`nativePlatforms` omits win32, `supportsOwnershipProof('win32')` answers
-  # false without a verified helper), so a red leg here blocks nothing a user
-  # can reach. What it does is make the gap visible on every run instead of in
-  # somebody's memory.
-  #
-  # Removing `continue-on-error` and adding `win32` to `nativePlatforms` are the
-  # SAME change, and this job going green is what earns it.
+  # What it proves that the POSIX legs cannot: whole-tree cleanup through a
+  # Job Object rather than a process group, a FILETIME birth identity read
+  # through PowerShell, the launcher's stdin lifeline, and the adapter's POSIX
+  # path composition surviving contact with a drive letter.
   windows:
-    name: windows-latest scenarios (not yet gating)
+    name: windows-latest scenarios
     needs: unit
     runs-on: windows-latest
-    continue-on-error: true
     defaults:
       run:
         shell: bash
@@ -340,10 +339,11 @@ jobs:
 
   summarize:
     name: conformance version
-    # Deliberately NOT `needs: windows`. A conformance version records the
-    # evidence that exists; Windows is refused, so its leg is informational and
-    # must not hold up a stamp the supported platforms have earned.
-    needs: scenarios
+    # A conformance version records the evidence behind EVERY platform the
+    # manifest calls native. Windows is one of them now, so its leg holds up
+    # the stamp exactly as the POSIX legs do: a version minted without it
+    # would certify a platform whose scenarios had not run.
+    needs: [scenarios, windows]
     runs-on: ubuntu-latest
     outputs:
       conformance_version: ${{ steps.stamp.outputs.version }}

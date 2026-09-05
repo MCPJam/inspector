@@ -360,6 +360,7 @@ export function SuiteIterationsView({
   navigation,
   onSetupCi,
   onCreateTestCase,
+  onRecordTestCase,
   onGenerateTestCases,
   canGenerateTestCases = false,
   isGeneratingTestCases = false,
@@ -417,6 +418,7 @@ export function SuiteIterationsView({
   navigation: SuiteNavigation;
   onSetupCi?: () => void;
   onCreateTestCase?: () => void;
+  onRecordTestCase?: () => void;
   onGenerateTestCases?: () => void;
   canGenerateTestCases?: boolean;
   generateTestCasesDisabledReason?: string;
@@ -1259,6 +1261,7 @@ export function SuiteIterationsView({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      onRecordTestCase={onRecordTestCase}
       hostNamesById={hostNamesById}
       environments={projectEnvironments}
       {...extra}
@@ -1473,6 +1476,9 @@ export function SuiteIterationsView({
                     navigation.toTestEdit(suite._id, newTestCaseId, {
                       replace: true,
                     })
+                  }
+                  onOpenSuiteSettings={() =>
+                    navigation.toSuiteOverview(suite._id)
                   }
                 />
               </motion.div>
@@ -1797,6 +1803,7 @@ export function SuiteIterationsView({
                       }
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
+                      onRecordTestCase={onRecordTestCase}
                       hostNamesById={hostNamesById}
                       environments={projectEnvironments}
                     />
