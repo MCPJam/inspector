@@ -718,6 +718,18 @@ describe("ServerPicker — refusals the user can see", () => {
     await waitFor(() => expect(serverRow("srv_2")).resolves.toBeDisabled());
   });
 
+  it("withholds Delete from a disabled picker, not only the rows", async () => {
+    mockState.attachments = [
+      { _id: "att_p", name: "prod pair", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
+    ];
+    render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} disabled />,
+    );
+    // The trigger is disabled, so drive the panel through a live render and
+    // assert the control is simply not offered.
+    expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
+  });
+
   it("hands `disabled` to the panel, not just to the trigger", async () => {
     // The strip can disable the picker while its popover is already open —
     // greying the trigger leaves the open rows fully clickable.
@@ -781,6 +793,37 @@ describe("ServerPicker — before the attachment list has answered", () => {
 
     expect(mockState.createSpy).not.toHaveBeenCalled();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("SHOWS that it cannot act yet, rather than swallowing the click", async () => {
+    // A refusal the user cannot see reads as a broken control — the same
+    // reason the write paths are gated on `busy` rather than on a silent
+    // early return.
+    open();
+    expect(await serverRow("srv_1")).toBeDisabled();
+  });
+
+  it("withholds Create too, so the guard behind it is a backstop", async () => {
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    // The form itself is unreachable: New group is part of the same list.
+    expect(
+      await screen.findByRole("button", { name: /new group/i }),
+    ).toBeDisabled();
+  });
+
+  it("says it is loading instead of claiming nothing is selected", () => {
+    // The row is not in the list yet, so the selection resolves as dangling
+    // and the label fell back to the empty text — the trigger asserting
+    // "nothing picked" over a live selection is the BB-182 shape again.
+    render(
+      <ServerPicker projectId="p_1" value="att_solo" onChange={vi.fn()} />,
+    );
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      /loading/i,
+    );
   });
 });
 
@@ -1132,6 +1175,68 @@ describe("ServerPicker — a server named like the fallback", () => {
         resolvedServerNames: ["group"],
       }),
     ).toBe(true);
+  });
+});
+
+describe("ServerPicker — one failure, one message", () => {
+  it("raises a single toast when the write itself fails", async () => {
+    mockState.createSpy = vi.fn().mockRejectedValue(new Error("already exists"));
+    open();
+    fireEvent.click(await screen.findByText("alpha"));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    // The nested catch reported and rethrew into the outer one, so every
+    // failed write stacked the friendly wording and the raw text it replaces.
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect((toast.error as any).mock.calls[0][0]).toMatch(
+      /server group named after "alpha" already exists/i,
+    );
+  });
+
+  it("raises a single toast when a GROUP write fails", async () => {
+    mockState.createSpy = vi.fn().mockRejectedValue(new Error("already exists"));
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect((toast.error as any).mock.calls[0][0]).toMatch(
+      /server group named .* already exists/i,
+    );
+  });
+
+  it("does not read a GROUP caller's error as a name collision either", async () => {
+    // The scoping was only pinned on the bare-server path, so the exact
+    // regression this PR names could come back on the group path.
+    const onChange = vi.fn(() =>
+      Promise.reject(new Error(`A suite named "smoke" already exists`)),
+    );
+    render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange as any} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect((toast.error as any).mock.calls[0][0]).not.toMatch(
+      /server group named/i,
+    );
   });
 });
 

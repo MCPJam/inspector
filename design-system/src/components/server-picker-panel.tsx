@@ -170,9 +170,12 @@ export function ServerPickerPanel({
 
   // Follows the picked servers until the user writes their own name.
   useEffect(() => {
-    if (!showForm || nameEdited || !deriveName) return;
+    // Not while a submit is pending: the caller's write changes the names
+    // already taken, which would re-derive this field past the row it just
+    // wrote — and a kept draft carrying that name writes a duplicate.
+    if (!showForm || nameEdited || submitting || !deriveName) return;
     setDraftName(deriveName(draftNames));
-  }, [showForm, nameEdited, deriveName, draftNames]);
+  }, [showForm, nameEdited, submitting, deriveName, draftNames]);
 
   const resetForm = () => {
     setShowForm(false);
@@ -400,7 +403,8 @@ export function ServerPickerPanel({
           <button
             type="button"
             onClick={() => setShowForm(true)}
-            className={cn(ROW, "text-sm hover:bg-accent")}
+            disabled={busy}
+            className={cn(ROW, "text-sm hover:bg-accent disabled:opacity-50")}
           >
             <Plus className="size-3.5 shrink-0 text-muted-foreground" />
             <span>Create new group…</span>

@@ -440,6 +440,44 @@ describe("ServerPickerPanel — a draft emptied by the catalog", () => {
 });
 
 describe("ServerPickerPanel — a submit in flight", () => {
+  it("does not re-name the draft it already sent", async () => {
+    // The caller writes the row, which changes the names already taken, which
+    // re-derives this field — all while the commit is still pending. If that
+    // commit then fails, the kept draft carries a name PAST the row that was
+    // written, so the retry writes a duplicate instead of colliding.
+    let derived = "Pair";
+    const deriveName = () => derived;
+    const { rerender } = render(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          deriveName,
+          onCreateGroup: () => new Promise(() => {}),
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: /new group/i }));
+    await userEvent.click(
+      screen.getByRole("checkbox", { name: "Excalidraw (App)" }),
+    );
+    expect(screen.getByLabelText("Group name")).toHaveValue("Pair");
+
+    await userEvent.click(screen.getByRole("button", { name: /^Create$/ }));
+
+    derived = "Pair 2";
+    rerender(
+      <ServerPickerPanel
+        {...panelProps({
+          tab: "groups",
+          deriveName: () => derived,
+          onCreateGroup: () => new Promise(() => {}),
+        })}
+      />,
+    );
+
+    expect(screen.getByLabelText("Group name")).toHaveValue("Pair");
+  });
+
   it("freezes the draft it already sent", async () => {
     // `onCreateGroup` is handed the name and ids as they were on click. Leaving
     // the controls live means a success then calls `resetForm` over edits the

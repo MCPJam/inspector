@@ -154,14 +154,32 @@ describe("a stand-in whose name had to be suffixed", () => {
     );
   });
 
+  it("anchors at the START, not just the end", () => {
+    // Without `^`, any name ENDING in the server's name plus a number is
+    // claimed — `staging alpha 2` is a group someone named.
+    expect(
+      isServerStandIn(group("g_s", "staging alpha 2", ["srv_1"], ["alpha"])),
+    ).toBe(false);
+  });
+
+  it("refuses a leading zero, which the generator never writes", () => {
+    expect(isServerStandIn(group("g_z", "alpha 02", ["srv_1"], ["alpha"]))).toBe(
+      false,
+    );
+  });
+
   it("escapes a server name that carries regex punctuation", () => {
     // Server names are user text. Unescaped, `a.b` would match `axb 2` and
     // `a+b` would not compile at all.
     const dotted = group("g_d", "axb 2", ["srv_1"], ["a.b"]);
     expect(isServerStandIn(dotted)).toBe(false);
-    expect(
-      isServerStandIn(group("g_p", "a+b 2", ["srv_1"], ["a+b"])),
-    ).toBe(true);
+    // One per metacharacter class, so narrowing the escape set fails here.
+    for (const raw of ["a+b", "a*b", "a?b", "a(b)", "a[b]", "a{b}", "a|b", "a^b", "a$b", "a\\b"]) {
+      expect(
+        isServerStandIn(group("g", `${raw} 2`, ["srv_1"], [raw])),
+        raw,
+      ).toBe(true);
+    }
   });
 
   it("does not swallow a name that merely starts the same way", () => {

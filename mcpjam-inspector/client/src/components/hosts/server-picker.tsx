@@ -9,7 +9,7 @@
  * Storage has no column for a bare server, so picking one resolves to the row
  * holding exactly it — reused when it exists, minted otherwise.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
@@ -123,9 +123,6 @@ export function ServerPicker({
     null,
   );
 
-  // The latch the write paths read. `creating` renders the UI but is only
-  // readable a commit later, and both writes start within one tick of a click.
-  const writing = useRef(false);
 
   /**
    * One list for every reader: the live query plus a row we just minted that it
@@ -212,6 +209,15 @@ export function ServerPicker({
    */
   const catalogKnown = !catalogLoading;
   const attachmentsKnown = !attachmentsLoading;
+
+  /**
+   * One flag, and the only guard the write paths have. It disables every
+   * control that could start a write, so the handlers' own checks are
+   * backstops rather than the mechanism — a refusal the user cannot see reads
+   * as a broken control, which is what three separate silent early-returns
+   * used to produce.
+   */
+  const busy = creating || disabled || !attachmentsKnown;
   const catalog = useMemo(() => catalogRows ?? [], [catalogRows]);
   const runtime = appState?.servers ?? null;
 
@@ -275,13 +281,12 @@ export function ServerPicker({
 
   const handleSelectServer = useCallback(
     async (serverId: string) => {
-      // Before the reuse branch too: reporting a selection mid-write costs
-      // nothing to store, but the pending write's own `onChange` overwrites it.
-      if (writing.current) return;
-      // A stand-in for this server may already exist in rows we have not been
-      // handed yet; minting against an unseen list writes the duplicate the
-      // backend then rejects on its name.
-      if (!attachmentsKnown) return;
+      // Backstops. `busy` disables every control that reaches these, so a
+      // click cannot arrive in either state — but neither is safe to run:
+      // a selection reported mid-write is overwritten by that write's own
+      // `onChange`, and a mint against a list we have not been handed writes
+      // the duplicate the backend then rejects on its name.
+      if (creating || !attachmentsKnown) return;
 
       const existing = findSoloGroup(attachments, serverId);
       if (existing) {
@@ -293,29 +298,22 @@ export function ServerPicker({
       const server = catalog.find((row) => row._id === serverId);
       if (!server) return;
 
-      writing.current = true;
       setCreating(true);
+      // Which half failed. The collision wording belongs to the WRITE: matched
+      // against the caller's commit error it told the user to rename a group
+      // that had just been written, and a rename writes a second one.
+      let wrote = false;
       try {
         const name = deriveServerGroupName(
           [server.name],
           attachments.map((a) => a.name ?? ""),
         );
-        let result: { _id: string };
-        try {
-          result = (await createServerAttachment({
-            projectId,
-            name,
-            serverIds: [serverId],
-          })) as { _id: string };
-        } catch (err) {
-          const raw = err instanceof Error ? err.message : "";
-          toast.error(
-            /already exists/i.test(raw)
-              ? `A server group named after "${server.name}" already exists.`
-              : raw || `Couldn't select ${server.name}`,
-          );
-          throw err;
-        }
+        const result = (await createServerAttachment({
+          projectId,
+          name,
+          serverIds: [serverId],
+        })) as { _id: string };
+        wrote = true;
         const created: EvalServerAttachment = {
           _id: result._id,
           name,
@@ -328,9 +326,12 @@ export function ServerPicker({
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
-        toast.error(raw || `Couldn't select ${server.name}`);
+        toast.error(
+          !wrote && /already exists/i.test(raw)
+            ? `A server group named after "${server.name}" already exists.`
+            : raw || `Couldn't select ${server.name}`,
+        );
       } finally {
-        writing.current = false;
         setCreating(false);
       }
     },
@@ -340,41 +341,25 @@ export function ServerPicker({
   /** Persist a multi-server group from the panel's form, then select it. */
   const handleCreateGroup = useCallback(
     async (name: string, serverIds: string[]) => {
-      // Named against the rows already taken, so a list that has not arrived
-      // derives a name that collides and the backend rejects. Throwing keeps
-      // the draft rather than costing the user what they picked.
+      // A backstop, like the one on the server path: `busy` covers this state
+      // so the form cannot be reached, let alone submitted. If it ever is, a
+      // name derived against a list that has not arrived collides — and
+      // throwing keeps the draft rather than costing the user what they picked.
       if (!attachmentsKnown) {
         toast.error("Still loading this project's server groups.");
         throw new Error("Attachments not loaded");
       }
-      // A backstop: `busy` disables Create, so this is only reachable if the
-      // panel ever stops honouring it. Say so and throw, which keeps the draft.
-      if (writing.current) {
-        toast.error("Finishing the previous change first.");
-        throw new Error("A server write is already in flight");
-      }
-      writing.current = true;
       setCreating(true);
+      // Same split as the bare-server path: the collision wording is the
+      // WRITE's, not the caller's commit's.
+      let wrote = false;
       try {
-        let result: { _id: string };
-        try {
-          result = (await createServerAttachment({
-            projectId,
-            name,
-            serverIds,
-          })) as { _id: string };
-        } catch (err) {
-          // Scoped to the WRITE. Matching the caller's commit error against
-          // the same pattern told the user to rename a group that already
-          // exists, and renaming created a second one.
-          const raw = err instanceof Error ? err.message : "";
-          toast.error(
-            /already exists/i.test(raw)
-              ? `A server group named "${name}" already exists.`
-              : raw || "Failed to create server group",
-          );
-          throw err;
-        }
+        const result = (await createServerAttachment({
+          projectId,
+          name,
+          serverIds,
+        })) as { _id: string };
+        wrote = true;
         const byId = new Map(catalog.map((row) => [row._id, row.name]));
         const created: EvalServerAttachment = {
           _id: result._id,
@@ -393,10 +378,13 @@ export function ServerPicker({
         setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
-        toast.error(raw || "Failed to create server group");
+        toast.error(
+          !wrote && /already exists/i.test(raw)
+            ? `A server group named "${name}" already exists.`
+            : raw || "Failed to create server group",
+        );
         throw err;
       } finally {
-        writing.current = false;
         setCreating(false);
       }
     },
@@ -442,7 +430,7 @@ export function ServerPicker({
    */
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {
-      if (writing.current) return;
+      if (creating) return;
       // Removing what the parent is storing, with no way to tell it, would
       // leave that id pointing at nothing — the picker would read as empty
       // while the surface kept launching against a row that is gone.
@@ -450,7 +438,6 @@ export function ServerPicker({
         toast.error("Pick a different server first — this one is in use here.");
         return;
       }
-      writing.current = true;
       setCreating(true);
       try {
         await deleteServerAttachment({ serverAttachmentId: groupId });
@@ -462,7 +449,6 @@ export function ServerPicker({
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || "Couldn't delete that server group.");
       } finally {
-        writing.current = false;
         setCreating(false);
       }
     },
@@ -471,7 +457,7 @@ export function ServerPicker({
 
   const handleSelectGroup = useCallback(
     (groupId: string) => {
-      if (writing.current) return;
+      if (creating) return;
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
       onChange(group._id, group as EvalServerAttachment);
@@ -483,7 +469,16 @@ export function ServerPicker({
   // A dangling selection (its row was deleted) still reads as the empty label
   // here. The model distinguishes it; surfacing that is deliberately left to
   // its own change rather than folded into this one.
-  const triggerLabel = resolved ? resolved.label : emptyTriggerLabel;
+  /**
+   * While the list is unknown EVERY selection resolves as dangling, so falling
+   * back to the empty label would assert "nothing picked" over a live one —
+   * the same claim BB-182 was about, one query over.
+   */
+  const triggerLabel = resolved
+    ? resolved.label
+    : !attachmentsKnown && value
+      ? "Loading…"
+      : emptyTriggerLabel;
 
   return (
     <Popover
@@ -525,8 +520,7 @@ export function ServerPicker({
       {onClearSelection &&
       selection &&
       attachmentsKnown &&
-      !creating &&
-      !disabled ? (
+      !busy ? (
         <button
           type="button"
           data-testid="server-picker-clear"
@@ -565,7 +559,7 @@ export function ServerPicker({
           onCreateGroup={handleCreateGroup}
           deriveName={deriveName}
           catalogKnown={catalogKnown}
-          busy={creating || disabled}
+          busy={busy}
           onDeleteGroup={
             disabled ? undefined : (id) => void handleDeleteGroup(id)
           }
