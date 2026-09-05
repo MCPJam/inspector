@@ -152,7 +152,7 @@ export function PartSwitch({
     context: {
       content?: ContentBlock[];
       structuredContent?: Record<string, unknown>;
-    }
+    },
   ) => void;
   onAppToolInvocationChange?: (invocation: AppToolInvocationUpdate) => void;
   pipWidgetId: string | null;
@@ -214,18 +214,18 @@ export function PartSwitch({
   );
   const [isEditing, setIsEditing] = useState(false);
   const [editedInput, setEditedInput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   // Manual hand-edits to the Result JSON (null = none).
   const [editedOutput, setEditedOutput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   // The most recent server Run result, kept as the metadata anchor: it becomes
   // the base whose _meta / toolResponseMetadata applies to later manual edits,
   // so "Run, then tweak the result" keeps the latest run's metadata, not the
   // original tool result's.
   const [lastRunOutput, setLastRunOutput] = useState<{ value: unknown } | null>(
-    null
+    null,
   );
   const [isRunning, setIsRunning] = useState(false);
   // Bumped to remount + reseed the JsonEditors on a hard reset (Revert /
@@ -242,16 +242,16 @@ export function PartSwitch({
 
   const handleInputChange = useCallback(
     (value: unknown) => setEditedInput({ value }),
-    []
+    [],
   );
   const handleOutputChange = useCallback(
     (value: unknown) => setEditedOutput({ value }),
-    []
+    [],
   );
   // The input editor reports its parse state on every keystroke (null = valid).
   const handleInputValidityChange = useCallback(
     (valid: boolean) => setInputInvalid(!valid),
-    []
+    [],
   );
   const handleToggleEdit = useCallback(() => setIsEditing((p) => !p), []);
   const handleRevert = useCallback(() => {
@@ -346,10 +346,13 @@ export function PartSwitch({
       Object.prototype.hasOwnProperty.call(renderOverride, "toolOutput");
     const resolvedToolOutput = hasRenderOverrideToolOutput
       ? renderOverride.toolOutput
-      : toolInfo.output ?? toolInfo.rawOutput;
+      : (toolInfo.output ?? toolInfo.rawOutput);
 
     // --- Inline edit: effective values fed to BOTH the editors and the iframe ---
-    const baseInput = (toolInfo.input ?? null) as Record<string, unknown> | null;
+    const baseInput = (toolInfo.input ?? null) as Record<
+      string,
+      unknown
+    > | null;
     // Tool input is an arguments object. Mirror the output normalization: ignore
     // non-object edits (null / array / string) for BOTH the live widget feed and
     // Run, falling back to the original — otherwise the preview could render one
@@ -393,8 +396,7 @@ export function PartSwitch({
     // swapping rawOutput would drop serverId on raw-result-resolved cards.)
     const toolResponseMetadataOverride = lastRunOutput
       ? (readToolResultMeta(lastRunOutput.value) as
-          | Record<string, unknown>
-          | undefined)
+          Record<string, unknown> | undefined)
       : undefined;
     const hasEdits =
       editedInput !== null || editedOutput !== null || lastRunOutput !== null;
@@ -503,22 +505,36 @@ export function PartSwitch({
     // `uiType` checks at view-time, but we still have its capture. The inner
     // ternary below shows the screenshot in place of the live <WidgetReplay>.
     if (widgetSlotShouldRender(shouldRenderWidget, renderOverride)) {
+      const isFrozenWidget = !!renderOverride?.frozenScreenshotUrl;
+      const allowWidgetDisplayModeChanges = interactive && !isFrozenWidget;
       return (
         <>
           <ToolPart
             part={toolPart}
             chatSessionId={chatSessionId}
             uiType={uiType}
-            displayMode={interactive ? displayMode : undefined}
+            displayMode={
+              allowWidgetDisplayModeChanges ? displayMode : undefined
+            }
             pipWidgetId={pipWidgetId}
             fullscreenWidgetId={fullscreenWidgetId}
-            onDisplayModeChange={interactive ? onDisplayModeChange : undefined}
-            onRequestFullscreen={interactive ? onRequestFullscreen : undefined}
-            onExitFullscreen={interactive ? onExitFullscreen : undefined}
-            onRequestPip={interactive ? onRequestPip : undefined}
-            onExitPip={interactive ? onExitPip : undefined}
+            onDisplayModeChange={
+              allowWidgetDisplayModeChanges ? onDisplayModeChange : undefined
+            }
+            onRequestFullscreen={
+              allowWidgetDisplayModeChanges ? onRequestFullscreen : undefined
+            }
+            onExitFullscreen={
+              allowWidgetDisplayModeChanges ? onExitFullscreen : undefined
+            }
+            onRequestPip={
+              allowWidgetDisplayModeChanges ? onRequestPip : undefined
+            }
+            onExitPip={allowWidgetDisplayModeChanges ? onExitPip : undefined}
             appSupportedDisplayModes={
-              interactive ? appSupportedDisplayModes : undefined
+              allowWidgetDisplayModeChanges
+                ? appSupportedDisplayModes
+                : undefined
             }
             allowInlineEdit={allowInlineEdit}
             isEditing={isEditing}
@@ -539,6 +555,17 @@ export function PartSwitch({
             serverId={serverId}
             mcpToolResultImageRendering={mcpToolResultImageRendering}
             rawOutput={rawToolOutput}
+            recordedWidgetDiagnostics={
+              isFrozenWidget
+                ? {
+                    resourceUri: renderOverride?.resourceUri,
+                    csp: renderOverride?.widgetCsp,
+                    permissions: renderOverride?.widgetPermissions,
+                    permissive: renderOverride?.widgetPermissive,
+                    prefersBorder: renderOverride?.prefersBorder,
+                  }
+                : undefined
+            }
             {...approvalProps}
           />
           {renderOverride?.frozenScreenshotUrl ? (
@@ -570,7 +597,7 @@ export function PartSwitch({
                     toolName: toolInfo.toolName,
                     toolCallId: tcid,
                     widgetPromptIndex,
-                  }
+                  },
                 );
                 recorderDebug("part record decision", {
                   toolName: toolInfo.toolName,
@@ -611,7 +638,7 @@ export function PartSwitch({
                     });
                   },
                   onReplayControllerReady: (
-                    replay: ReplayControllerEvent["replay"]
+                    replay: ReplayControllerEvent["replay"],
                   ) => {
                     onReplayControllerReady?.({
                       promptIndex: pi,

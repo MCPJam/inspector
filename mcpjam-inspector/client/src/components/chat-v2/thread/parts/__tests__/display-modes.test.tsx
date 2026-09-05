@@ -249,4 +249,40 @@ describe("ToolPart display mode controls", () => {
       screen.queryByLabelText("Edit input and output"),
     ).not.toBeInTheDocument();
   });
+
+  it("shows recorded Data and CSP without live display or edit controls", async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolPart
+        part={basePart as any}
+        uiType="mcp-apps"
+        recordedWidgetDiagnostics={{
+          resourceUri: "ui://widget/create-view.html",
+          csp: { connectDomains: ["https://api.example.com"] },
+          permissions: { clipboardWrite: {} },
+          permissive: false,
+          prefersBorder: true,
+        }}
+      />,
+    );
+
+    expect(screen.getByLabelText("Data")).toBeInTheDocument();
+    expect(screen.getByLabelText("Sandbox")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Inline")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Edit input and output"),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("test-tool"));
+    expect(screen.getByText("Recorded tool data")).toBeInTheDocument();
+    expect(screen.getAllByTestId("json-editor")).toHaveLength(2);
+
+    await user.click(screen.getByLabelText("Sandbox"));
+    expect(screen.getByTestId("recorded-widget-diagnostics")).toHaveTextContent(
+      "Saved with this eval run",
+    );
+    expect(screen.getByTestId("json-editor")).toHaveTextContent(
+      "https://api.example.com",
+    );
+  });
 });

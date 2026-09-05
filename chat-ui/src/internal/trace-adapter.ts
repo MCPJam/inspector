@@ -132,8 +132,7 @@ export function snapshotsToTraceWidgetSnapshots(
       widgetHtmlUrl: snap.widgetHtmlUrl,
       toolOutput: snap.toolOutput,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
-      injectedOpenAiCompatCapabilities:
-        snap.injectedOpenAiCompatCapabilities,
+      injectedOpenAiCompatCapabilities: snap.injectedOpenAiCompatCapabilities,
     };
   });
 }
@@ -179,8 +178,7 @@ export function buildToolRenderOverridesFromSnapshots(
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
-      injectedOpenAiCompatCapabilities:
-        snap.injectedOpenAiCompatCapabilities,
+      injectedOpenAiCompatCapabilities: snap.injectedOpenAiCompatCapabilities,
     });
     overrides[snap.toolCallId] = replay.renderOverride;
   }
@@ -542,8 +540,7 @@ function createReplayOverride(
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities:
-      snapshot.injectedOpenAiCompatCapabilities,
+    injectedOpenAiCompatCapabilities: snapshot.injectedOpenAiCompatCapabilities,
   }).renderOverride;
 }
 
@@ -558,8 +555,7 @@ function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities:
-      snapshot.injectedOpenAiCompatCapabilities,
+    injectedOpenAiCompatCapabilities: snapshot.injectedOpenAiCompatCapabilities,
   } satisfies ToolRenderOverride;
 }
 
@@ -670,7 +666,7 @@ function buildToolParts(params: {
   }
 
   const traceDisplayAttachment =
-    !isError && params.matchedResult
+    params.toolResultDisplay !== "tool-card" && !isError && params.matchedResult
       ? getTraceDisplayAttachment({
           displayedOutput,
           adaptedOutput,
@@ -717,10 +713,12 @@ function buildToolParts(params: {
   parts.push(toolPart);
 
   if (isError) {
-    parts.push({
-      type: "text",
-      text: `Tool error: ${errorText}`,
-    });
+    if (params.toolResultDisplay !== "tool-card") {
+      parts.push({
+        type: "text",
+        text: `Tool error: ${errorText}`,
+      });
+    }
     return parts;
   }
 

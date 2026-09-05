@@ -66,6 +66,14 @@ import { McpToolResultImagePreviewGrid } from "@/components/chat-v2/shared/mcp-t
 type ApprovalVisualState = "pending" | "approved" | "denied";
 type TraceDisplayMode = "markdown" | "json-markdown";
 
+export interface RecordedWidgetDiagnostics {
+  resourceUri?: string;
+  csp?: unknown;
+  permissions?: unknown;
+  permissive?: boolean;
+  prefersBorder?: boolean;
+}
+
 export function ToolPart({
   part,
   chatSessionId,
@@ -101,6 +109,7 @@ export function ToolPart({
   serverId,
   mcpToolResultImageRendering,
   rawOutput,
+  recordedWidgetDiagnostics,
 }: {
   part: ToolUIPart<UITools> | DynamicToolUIPart;
   chatSessionId?: string;
@@ -152,6 +161,7 @@ export function ToolPart({
   serverId?: string;
   mcpToolResultImageRendering?: McpToolResultImageRenderingPolicy;
   rawOutput?: unknown;
+  recordedWidgetDiagnostics?: RecordedWidgetDiagnostics;
 }) {
   const hasTrackedSkillLoad = useRef(false);
 
@@ -204,7 +214,7 @@ export function ToolPart({
     "data" | "state" | "sandbox" | "context" | null
   >("data");
   const [resultImageMode, setResultImageMode] = useState<"images" | "raw">(
-    "images"
+    "images",
   );
 
   const inputData = (part as any).input;
@@ -225,7 +235,7 @@ export function ToolPart({
     outputValue !== undefined ? outputValue : rawResultData;
   const imagePreviewData = rawResultData;
   const imageRenderPlacement = getMcpToolResultImageRenderPlacement(
-    mcpToolResultImageRendering
+    mcpToolResultImageRendering,
   );
   const showInlineImagePreview = imageRenderPlacement === "inline";
   const showPanelImagePreview = imageRenderPlacement === "collapsed";
@@ -233,7 +243,7 @@ export function ToolPart({
     showInlineImagePreview || (showPanelImagePreview && isExpanded);
   const resultImageState = useMcpToolResultImagePreviews(
     canRenderToolImages ? imagePreviewData : undefined,
-    { serverId, renderingPolicy: mcpToolResultImageRendering }
+    { serverId, renderingPolicy: mcpToolResultImageRendering },
   );
   // Editors render the effective values (what the widget sees) when the parent
   // supplies them; fall back to the raw part data otherwise (non-widget branch).
@@ -250,7 +260,7 @@ export function ToolPart({
     .traceDisplayMode;
   const hasAttachedTraceDisplay = Boolean(
     traceDisplayText &&
-      (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown")
+    (traceDisplayMode === "markdown" || traceDisplayMode === "json-markdown"),
   );
   const hasInput = inputData !== undefined && inputData !== null;
   const paramCount = useMemo(() => {
@@ -266,16 +276,34 @@ export function ToolPart({
   const hasError = state === "output-error" && !!errorText;
   const showRawResult = hasOutput && !hasAttachedTraceDisplay;
 
-  const widgetDebugInfo = useWidgetDebugStore((s) =>
-    toolCallId ? s.widgets.get(toolCallId) : undefined
+  const storedWidgetDebugInfo = useWidgetDebugStore((s) =>
+    toolCallId ? s.widgets.get(toolCallId) : undefined,
   );
+  // A completed eval can retain live store data from the streaming phase.
+  // Once its widget becomes a frozen screenshot, the recorded snapshot is the
+  // source of truth and stale live diagnostics must not leak into the card.
+  const widgetDebugInfo = recordedWidgetDiagnostics
+    ? undefined
+    : storedWidgetDebugInfo;
   const hostContext = useHostContextStore((s) => s.draftHostContext);
   const hostAvailableDisplayModes = useMemo(
     () => extractHostDisplayModes(hostContext),
-    [hostContext]
+    [hostContext],
   );
   const hasWidgetDebug = !!widgetDebugInfo;
-  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebug;
+  const hasRecordedWidgetDebug = !!recordedWidgetDiagnostics;
+  const hasWidgetDebugData = hasWidgetDebug || hasRecordedWidgetDebug;
+  const hasWidgetDebugUI = !hideDiagnosticsUI && hasWidgetDebugData;
+
+  useEffect(() => {
+    if (
+      hasRecordedWidgetDebug &&
+      activeDebugTab !== "data" &&
+      activeDebugTab !== "sandbox"
+    ) {
+      setActiveDebugTab("data");
+    }
+  }, [activeDebugTab, hasRecordedWidgetDebug]);
 
   const showDisplayModeControls =
     displayMode !== undefined &&
@@ -305,12 +333,16 @@ export function ToolPart({
       badge?: number;
     }[] = [{ tab: "data", icon: Database, label: "Data" }];
 
-    if (uiType === UIType.OPENAI_SDK) {
+    if (hasWidgetDebug && uiType === UIType.OPENAI_SDK) {
       options.push({ tab: "state", icon: Box, label: "Widget State" });
     }
 
     // Add model context tab for MCP Apps
-    if (uiType === UIType.MCP_APPS && widgetDebugInfo?.modelContext) {
+    if (
+      hasWidgetDebug &&
+      uiType === UIType.MCP_APPS &&
+      widgetDebugInfo?.modelContext
+    ) {
       options.push({
         tab: "context",
         icon: MessageCircle,
@@ -328,6 +360,7 @@ export function ToolPart({
     return options;
   }, [
     uiType,
+    hasWidgetDebug,
     widgetDebugInfo?.csp?.violations?.length,
     widgetDebugInfo?.modelContext,
   ]);
@@ -396,8 +429,8 @@ export function ToolPart({
                 isDisabled
                   ? "text-muted-foreground/30 cursor-not-allowed"
                   : isActive
-                  ? "bg-background text-foreground shadow-sm cursor-pointer"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
+                    ? "bg-background text-foreground shadow-sm cursor-pointer"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50 cursor-pointer"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -419,18 +452,18 @@ export function ToolPart({
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Context";
+            ? "State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Context";
       const tooltipLabel =
         tab === "data"
           ? "Data"
           : tab === "state"
-          ? "Widget State"
-          : tab === "sandbox"
-          ? "Sandbox"
-          : "Model Context";
+            ? "Widget State"
+            : tab === "sandbox"
+              ? "Sandbox"
+              : "Model Context";
 
       return (
         <Tooltip key={tab}>
@@ -446,8 +479,8 @@ export function ToolPart({
                 activeDebugTab === tab
                   ? "bg-background text-foreground shadow-sm"
                   : badge && badge > 0
-                  ? "text-destructive hover:text-destructive hover:bg-destructive/10"
-                  : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
+                    ? "text-destructive hover:text-destructive hover:bg-destructive/10"
+                    : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-background/50"
               }`}
             >
               <Icon className="h-3.5 w-3.5" />
@@ -534,7 +567,7 @@ export function ToolPart({
               <p className="font-medium">
                 {canRun
                   ? "Re-run tool with edited input"
-                  : runDisabledReason ?? "Re-run tool with edited input"}
+                  : (runDisabledReason ?? "Re-run tool with edited input")}
               </p>
             </TooltipContent>
           </Tooltip>
@@ -755,7 +788,7 @@ export function ToolPart({
   // here — never render `javascript:`/`data:`/etc. as a clickable link.
   const renderAuthUrls = () => {
     const urls = filterSafeExternalLinkUrls(
-      (resultDisplayData as { authUrls?: unknown })?.authUrls
+      (resultDisplayData as { authUrls?: unknown })?.authUrls,
     );
     if (urls.length === 0) return null;
     return (
@@ -813,6 +846,34 @@ export function ToolPart({
     );
   };
 
+  const renderRecordedSandbox = () =>
+    recordedWidgetDiagnostics ? (
+      <div className="space-y-2" data-testid="recorded-widget-diagnostics">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+          Recorded widget policy
+        </div>
+        <div className="text-[10px] text-muted-foreground">
+          Saved with this eval run; live policy and violations are unavailable.
+        </div>
+        <div className="rounded-md border border-border/30 bg-muted/20 max-h-[300px] overflow-auto">
+          <JsonEditor
+            height="100%"
+            viewOnly
+            value={{
+              resourceUri: recordedWidgetDiagnostics.resourceUri ?? null,
+              csp: recordedWidgetDiagnostics.csp ?? null,
+              permissions: recordedWidgetDiagnostics.permissions ?? null,
+              permissive: recordedWidgetDiagnostics.permissive ?? false,
+              prefersBorder: recordedWidgetDiagnostics.prefersBorder ?? null,
+            }}
+            className="p-2 text-[11px]"
+            collapsible
+            defaultExpandDepth={3}
+          />
+        </div>
+      </div>
+    ) : null;
+
   if (needsApproval) {
     return (
       <div className="text-xs">
@@ -823,8 +884,8 @@ export function ToolPart({
               approvalVisualState === "approved"
                 ? "border-success/40 bg-success/10"
                 : approvalVisualState === "denied"
-                ? "border-destructive/40 bg-destructive/10"
-                : "border-border/60 bg-muted/30"
+                  ? "border-destructive/40 bg-destructive/10"
+                  : "border-border/60 bg-muted/30",
             )}
           >
             <span className="inline-flex items-center gap-1.5 text-muted-foreground text-[12px] shrink-0">
@@ -853,7 +914,7 @@ export function ToolPart({
                     <ChevronDown
                       className={cn(
                         "h-3 w-3 transition-transform",
-                        paramsExpanded && "rotate-180"
+                        paramsExpanded && "rotate-180",
                       )}
                     />
                   </button>
@@ -1020,7 +1081,16 @@ export function ToolPart({
         <div className="border-t border-border/40 px-3 py-3">
           {!hideDiagnosticsUI && (
             <>
-              {hasWidgetDebug && activeDebugTab === "data" && renderToolData()}
+              {hasWidgetDebugData && activeDebugTab === "data" && (
+                <div className="space-y-2">
+                  {hasRecordedWidgetDebug && !hasWidgetDebug && (
+                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground/70">
+                      Recorded tool data
+                    </div>
+                  )}
+                  {renderToolData()}
+                </div>
+              )}
               {hasWidgetDebug && activeDebugTab === "state" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1070,6 +1140,10 @@ export function ToolPart({
                   protocol={widgetDebugInfo.protocol}
                 />
               )}
+              {!hasWidgetDebug &&
+                hasRecordedWidgetDebug &&
+                activeDebugTab === "sandbox" &&
+                renderRecordedSandbox()}
               {hasWidgetDebug && activeDebugTab === "context" && (
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
@@ -1080,7 +1154,7 @@ export function ToolPart({
                       <div className="text-[9px] text-muted-foreground/50">
                         Updated:{" "}
                         {new Date(
-                          widgetDebugInfo.modelContext.updatedAt
+                          widgetDebugInfo.modelContext.updatedAt,
                         ).toLocaleTimeString()}
                       </div>
                     )}
@@ -1139,7 +1213,7 @@ export function ToolPart({
                   )}
                 </div>
               )}
-              {!hasWidgetDebug && renderToolData()}
+              {!hasWidgetDebugData && renderToolData()}
             </>
           )}
         </div>

@@ -228,6 +228,96 @@ describe("adaptTraceToUiMessages", () => {
     expect(result.messages[0].parts[0]).not.toHaveProperty("traceDisplayMode");
   });
 
+  it("does not parse large JSON text that the shared tool card renders raw", () => {
+    const largeJsonText = JSON.stringify({ items: ["x".repeat(100_000)] });
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-large",
+              toolName: "read_large_result",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-large",
+              toolName: "read_large_result",
+              result: {
+                content: [{ type: "text", text: largeJsonText }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+    const parseSpy = vi.spyOn(JSON, "parse");
+
+    try {
+      const result = adaptTraceToUiMessages({
+        trace,
+        toolResultDisplay: "tool-card",
+      });
+
+      expect(parseSpy).not.toHaveBeenCalled();
+      expect(result.messages[0].parts).toHaveLength(1);
+    } finally {
+      parseSpy.mockRestore();
+    }
+  });
+
+  it("keeps tool-card errors inside the shared card without a duplicate", () => {
+    const trace: TraceEnvelope = {
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            {
+              type: "tool-call",
+              toolCallId: "call-error-card",
+              toolName: "read_me",
+              input: {},
+            },
+          ],
+        },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call-error-card",
+              toolName: "read_me",
+              result: {
+                isError: true,
+                content: [{ type: "text", text: "Request failed" }],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = adaptTraceToUiMessages({
+      trace,
+      toolResultDisplay: "tool-card",
+    });
+
+    expect(result.messages[0].parts).toEqual([
+      expect.objectContaining({
+        type: "dynamic-tool",
+        state: "output-error",
+        errorText: "Request failed",
+      }),
+    ]);
+  });
+
   // --- Test 2: Multiple tool calls ---
   it("groups multiple tool-calls and results into a single assistant UIMessage", () => {
     const trace: TraceEnvelope = {
@@ -1294,7 +1384,9 @@ describe("adaptTraceToUiMessages", () => {
       connectedServerIds: [],
     });
 
-    expect(result.toolRenderOverrides["call-disconnected-widget"]).toBeDefined();
+    expect(
+      result.toolRenderOverrides["call-disconnected-widget"],
+    ).toBeDefined();
     expect(
       result.toolRenderOverrides["call-disconnected-widget"].toolMetadata,
     ).toEqual({});
