@@ -66,6 +66,7 @@ export interface SuiteDashboardProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  onRecordTestCase?: () => void;
   /**
    * When set, the results split shows this run's detail in its right pane
    * (the rail highlights the run). Drives the folded-in run-detail view; the
@@ -124,6 +125,7 @@ export function SuiteDashboard({
   generateTestCasesDisabledReason,
   isGeneratingTestCases,
   onCreateTestCase,
+  onRecordTestCase,
   selectedRunId,
   runDetailPane,
   onExitRun,
@@ -180,6 +182,7 @@ export function SuiteDashboard({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      onRecordTestCase={onRecordTestCase}
       hostNamesById={hostNamesById}
       environments={environments}
     />
