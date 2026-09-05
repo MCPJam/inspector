@@ -1,10 +1,4 @@
-import {
-  useCallback,
-  useMemo,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useMemo, type ReactNode } from "react";
 import { AlertTriangle, Info, RefreshCw, Target } from "lucide-react";
 import {
   Tooltip,
@@ -18,17 +12,13 @@ import {
 } from "@/hooks/useUsageInsights";
 import { type InsightsSelection } from "@/hooks/scenario-usage-filters";
 import { ClusterTuningControl } from "@/components/shared/usage-insights/ClusterTuningControl";
+import { FlowSankeyDiagram } from "@/components/shared/usage-insights/flow-sankey-diagram";
 import type { ClusterTuning } from "@/lib/cluster-tuning";
 import {
-  SANKEY_NODE_WIDTH,
   STAGE_ORDER,
   STAGE_TITLES,
-  layoutSankey,
   selectionForLink,
   selectionForNode,
-  stageValueLabel,
-  type SankeyLayoutLink,
-  type SankeyLayoutNode,
 } from "@/components/shared/usage-insights/insights-sankey";
 import { cn } from "@/lib/utils";
 
@@ -89,62 +79,6 @@ const STAGE_COLOR: Record<SankeyStage, { node: string; head: string }> = {
   sentiment: { node: "#bda2d8", head: "#7a5da3" },
 };
 
-const VIEW_WIDTH = 1160;
-/** Reserved to the right of the last column for its labels. */
-const LABEL_GUTTER = 260;
-/** Band at the top of the SVG holding the column headers. */
-const HEADER_HEIGHT = 26;
-
-function contentSankeyHeight(nodeCountWidestColumn: number): number {
-  return Math.max(320, nodeCountWidestColumn * 42 + 40);
-}
-
-/**
- * Measure a flex child that should absorb leftover viewport height. Returns
- * zero until the first layout so callers can fall back to content height.
- *
- * A callback ref, not useRef + effect: the pane div only mounts once the
- * breakdown arrives (the loading/empty branches skip it), which is after a
- * mount effect keyed on `enabled` has already run against a null ref — it
- * would observe nothing and never re-attach, leaving the diagram at its
- * content floor inside a full-height pane.
- */
-function usePaneSize(enabled: boolean) {
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  const detachRef = useRef<(() => void) | null>(null);
-
-  const ref = useCallback(
-    (element: HTMLDivElement | null) => {
-      detachRef.current?.();
-      detachRef.current = null;
-      if (!enabled || !element) return;
-
-      const update = () => {
-        const width = Math.round(element.clientWidth);
-        const height = Math.round(element.clientHeight);
-        setSize((current) =>
-          current.width === width && current.height === height
-            ? current
-            : { width, height },
-        );
-      };
-
-      update();
-      if (typeof ResizeObserver === "undefined") {
-        window.addEventListener("resize", update);
-        detachRef.current = () => window.removeEventListener("resize", update);
-        return;
-      }
-      const observer = new ResizeObserver(update);
-      observer.observe(element);
-      detachRef.current = () => observer.disconnect();
-    },
-    [enabled],
-  );
-
-  return { ref, size };
-}
-
 function RebuildButton({
   onRebuild,
   busy,
@@ -189,60 +123,15 @@ export function SessionFlowSankey({
   fillHeight = false,
   scrollLayout = false,
 }: SessionFlowSankeyProps) {
-  const [hovered, setHovered] = useState<string | null>(null);
-  const [readout, setReadout] = useState<string | null>(null);
-  const { ref: chartPaneRef, size: chartPaneSize } = usePaneSize(fillHeight);
-
   const sankey = breakdown?.sankey;
   const scan = breakdown?.scan;
   const signalsVersion = breakdown?.latestRun?.signalsVersion ?? null;
-
-  const contentHeight = useMemo(() => {
-    const widest = Math.max(
-      1,
-      ...STAGE_ORDER.map(
-        (stage) => sankey?.nodes.filter((n) => n.stage === stage).length ?? 0,
-      ),
-    );
-    return contentSankeyHeight(widest);
-  }, [sankey]);
-
-  // When filling the viewport, map the chart pane's CSS box into viewBox
-  // units at VIEW_WIDTH so `meet` can occupy the full pane without
-  // letterboxing. Never shrink below the content floor — overflow instead.
-  const height = useMemo(() => {
-    if (
-      !fillHeight ||
-      chartPaneSize.width <= 0 ||
-      chartPaneSize.height <= 0
-    ) {
-      return contentHeight;
-    }
-    const available = Math.round(
-      (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH -
-        HEADER_HEIGHT,
-    );
-    return Math.max(contentHeight, available);
-  }, [fillHeight, chartPaneSize.height, chartPaneSize.width, contentHeight]);
-
-  const layout = useMemo(() => {
-    if (!sankey || sankey.nodes.length === 0) return null;
-    const usable = VIEW_WIDTH - LABEL_GUTTER;
-    const columnX = STAGE_ORDER.map(
-      (_, index) => 40 + (index * (usable - SANKEY_NODE_WIDTH)) / 3,
-    );
-    return layoutSankey(sankey, VIEW_WIDTH, height, columnX);
-  }, [sankey, height]);
-
   const latestRun = breakdown?.latestRun ?? null;
-  const chartNeedsScroll =
-    fillHeight &&
-    chartPaneSize.height > 0 &&
-    height + HEADER_HEIGHT >
-      (chartPaneSize.width > 0
-        ? (chartPaneSize.height / chartPaneSize.width) * VIEW_WIDTH
-        : 0) +
-        1;
+
+  const titles = useMemo(
+    () => ({ ...STAGE_TITLES, ...stageTitles }),
+    [stageTitles],
+  );
 
   /**
    * The tuning control, rendered in EVERY state including the two that return
@@ -284,7 +173,7 @@ export function SessionFlowSankey({
     );
   }
 
-  if (!sankey || sankey.nodes.length === 0 || !layout) {
+  if (!sankey || sankey.nodes.length === 0) {
     return (
       <div
         className={cn(
@@ -447,276 +336,29 @@ export function SessionFlowSankey({
         </div>
       ) : null}
 
-      <div
-        ref={chartPaneRef}
-        className={cn(
-          "w-full min-w-0",
-          fillHeight && "min-h-0 flex-1",
-          chartNeedsScroll ? "overflow-auto" : "overflow-hidden",
-        )}
-      >
-        <svg
-          viewBox={`0 0 ${VIEW_WIDTH} ${height + HEADER_HEIGHT}`}
-          // Scale to the panel width; viewBox keeps column/header coordinates
-          // aligned. No fixed max-width — the chart should always use the full
-          // horizontal space, at any viewport.
-          // `group`, not `img`: an image is a leaf, so `img` would hide every
-          // node and ribbon button inside it from assistive tech — undoing the
-          // point of making them focusable in the first place.
-          role="group"
-          aria-label="Session flow from goal through behavior and outcome to sentiment"
-          preserveAspectRatio="xMidYMin meet"
-          className={cn(
-            "block w-full",
-            fillHeight && !chartNeedsScroll
-              ? "h-full"
-              : "mt-1 h-auto",
-          )}
-        >
-          {/*
-            Headers live INSIDE the diagram, at the same x as the columns they
-            name. As CSS they were a four-cell grid across the panel while the
-            chart was a fixed-width box, so on a wide panel the last header sat
-            hundreds of pixels from its own column. Sharing one coordinate space
-            is the only way they cannot drift apart.
-          */}
-          <g>
-            {STAGE_ORDER.map((stage, index) => (
-              <text
-                key={stage}
-                x={layout.columnX[index]}
-                y={14}
-                fill={STAGE_COLOR[stage].head}
-                className="text-[10.5px] font-semibold uppercase [letter-spacing:0.13em]"
-              >
-                {stageTitles?.[stage] ?? STAGE_TITLES[stage]}
-              </text>
-            ))}
-          </g>
-
-          <defs>
-            {layout.links.map((link) => (
-              <linearGradient
-                key={gradientId(link)}
-                id={gradientId(link)}
-                x1="0"
-                x2="1"
-                y1="0"
-                y2="0"
-              >
-                <stop
-                  offset="0%"
-                  stopColor={
-                    link.discordant
-                      ? "var(--warning)"
-                      : STAGE_COLOR[link.source.stage].node
-                  }
-                />
-                <stop
-                  offset="100%"
-                  stopColor={
-                    link.discordant
-                      ? "var(--warning)"
-                      : STAGE_COLOR[link.target.stage].node
-                  }
-                />
-              </linearGradient>
-            ))}
-          </defs>
-
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
-            {layout.links.map((link) => {
-              const id = `${link.source.id}→${link.target.id}`;
-              const next = selectionForLink(link.source, link.target);
-              const base = link.discordant ? 0.44 : 0.26;
-              const label = `${stageValueLabel(
-                link.source,
-              )} to ${stageValueLabel(link.target)}, ${link.count} sessions${
-                link.discordant ? ", outcome and sentiment disagree" : ""
-              }`;
-              const describe = () => {
-                setHovered(id);
-                setReadout(
-                  `${stageValueLabel(link.source)} → ${stageValueLabel(
-                    link.target,
-                  )} · ${link.count.toLocaleString()} sessions${
-                    link.discordant ? " · outcome and sentiment disagree" : ""
-                  }`,
-                );
-              };
-              return (
-                <FlowTarget
-                  key={id}
-                  label={label}
-                  selectable={!!next}
-                  onEnter={describe}
-                  onLeave={() => {
-                    setHovered(null);
-                    setReadout(null);
-                  }}
-                  onActivate={() => next && onSelectLink(next)}
-                  focusClass="[&:focus-visible>path]:stroke-foreground [&:focus-visible>path]:stroke-2"
-                >
-                  <path
-                    d={link.path}
-                    fill={`url(#${gradientId(link)})`}
-                    fillOpacity={
-                      hovered === id ? Math.min(base + 0.32, 0.82) : base
-                    }
-                  />
-                </FlowTarget>
-              );
-            })}
-          </g>
-
-          <g transform={`translate(0, ${HEADER_HEIGHT})`}>
-            {layout.nodes.map((node) => {
-              const next = selectionForNode(node);
-              const emphasized = selectedKeys.has(`${node.stage}:${node.key}`);
-              return (
-                <FlowTarget
-                  key={node.id}
-                  label={`${stageValueLabel(node)}, ${node.count} sessions, ${
-                    node.share
-                  } percent of ${node.stage}${next ? "" : ", not selectable"}`}
-                  selectable={!!next}
-                  onEnter={() =>
-                    setReadout(
-                      `${stageValueLabel(
-                        node,
-                      )} · ${node.count.toLocaleString()} sessions · ${
-                        node.share
-                      }% of ${node.stage}`,
-                    )
-                  }
-                  onLeave={() => setReadout(null)}
-                  onActivate={() => next && onSelectNode(next)}
-                  focusClass="[&:focus-visible>rect]:stroke-foreground [&:focus-visible>rect]:stroke-2"
-                >
-                  <FlowNodeShape
-                    node={node}
-                    color={STAGE_COLOR[node.stage]}
-                    emphasized={emphasized}
-                    selectable={!!next}
-                  />
-                </FlowTarget>
-              );
-            })}
-          </g>
-        </svg>
-      </div>
-
-      <div aria-live="polite" className="sr-only">
-        {readout}
-      </div>
-    </div>
-  );
-}
-
-function gradientId(link: SankeyLayoutLink): string {
-  return `flow-${link.source.id}-${link.target.id}`.replace(
-    /[^a-zA-Z0-9_-]/g,
-    "_",
-  );
-}
-
-/**
- * The interactive wrapper every node and ribbon shares.
- *
- * SVG shapes are not controls on their own: without an explicit role, tabindex
- * and key handling, the whole diagram is reachable by mouse only. Anything
- * clickable here is therefore focusable and answers Enter and Space; anything
- * that is not selectable is skipped by the tab order rather than being a focus
- * stop that does nothing.
- */
-function FlowTarget({
-  label,
-  selectable,
-  onEnter,
-  onLeave,
-  onActivate,
-  focusClass,
-  children,
-}: {
-  label: string;
-  selectable: boolean;
-  onEnter: () => void;
-  onLeave: () => void;
-  onActivate: () => void;
-  focusClass: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <g
-      role={selectable ? "button" : "img"}
-      tabIndex={selectable ? 0 : -1}
-      aria-label={label}
-      className={`focus:outline-none ${focusClass}`}
-      style={{ cursor: selectable ? "pointer" : "default" }}
-      onMouseEnter={onEnter}
-      onMouseLeave={onLeave}
-      onFocus={onEnter}
-      onBlur={onLeave}
-      onClick={() => selectable && onActivate()}
-      onKeyDown={(event) => {
-        if (!selectable) return;
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onActivate();
+      <FlowSankeyDiagram
+        sankey={sankey}
+        stages={STAGE_ORDER}
+        stageTitles={titles}
+        stageColors={STAGE_COLOR}
+        unitNoun="sessions"
+        discordantHighlight
+        selectedKeys={selectedKeys}
+        onSelectNode={(node) => {
+          const next = selectionForNode(node);
+          if (next) onSelectNode(next);
+        }}
+        onSelectLink={(source, target) => {
+          const next = selectionForLink(source, target);
+          if (next) onSelectLink(next);
+        }}
+        isSelectable={(node) => selectionForNode(node) !== null}
+        isLinkSelectable={(source, target) =>
+          selectionForLink(source, target) !== null
         }
-      }}
-    >
-      {children}
-    </g>
-  );
-}
-
-function FlowNodeShape({
-  node,
-  color,
-  emphasized,
-  selectable,
-}: {
-  node: SankeyLayoutNode;
-  color: { node: string; head: string };
-  emphasized: boolean;
-  selectable: boolean;
-}) {
-  // Every column labels to the right of its bar, the last one included: the
-  // gutter is reserved for it. Flipping the last column inward put its text on
-  // top of the ribbons arriving at it, which read as a rendering fault.
-  const labelX = node.x + SANKEY_NODE_WIDTH + 10;
-  const anchor = "start";
-
-  return (
-    <>
-      <rect
-        x={node.x}
-        y={node.y}
-        width={SANKEY_NODE_WIDTH}
-        height={node.height}
-        rx={3}
-        fill={emphasized ? color.head : color.node}
-        fillOpacity={selectable ? 1 : 0.45}
+        ariaLabel="Session flow from goal through behavior and outcome to sentiment"
+        fillHeight={fillHeight}
       />
-      <text
-        x={labelX}
-        y={node.y + 12}
-        textAnchor={anchor}
-        className="pointer-events-none fill-foreground text-[12px] font-medium"
-      >
-        {stageValueLabel(node)}
-      </text>
-      {node.height >= 26 ? (
-        <text
-          x={labelX}
-          y={node.y + 27}
-          textAnchor={anchor}
-          className="pointer-events-none fill-muted-foreground text-[10.5px] tabular-nums"
-        >
-          {node.count.toLocaleString()} · {node.share}%
-        </text>
-      ) : null}
-    </>
+    </div>
   );
 }
