@@ -473,7 +473,12 @@ describe("buildEvalRunRouteFacts", () => {
     );
     const routes = rollupCaseRoutes(trials);
     expect(routes.routes).toHaveLength(MAX_ROUTES_PER_CASE);
-    expect(routes.otherRoutes).toEqual({ trials: 3, passed: 0, failed: 3 });
+    expect(routes.otherRoutes).toEqual({
+      distinctPaths: 3,
+      trials: 3,
+      passed: 0,
+      failed: 3,
+    });
   });
 
   test("negative tests stay in routes and leave mismatch excluded", () => {

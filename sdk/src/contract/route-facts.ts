@@ -415,6 +415,8 @@ export type EvalRouteRow = z.infer<typeof routeRowSchema>;
 
 const otherRoutesSchema = z
   .object({
+    /** How many distinct routes were folded, so a reader can say "N other routes". */
+    distinctPaths: z.number().int().min(1),
     trials: countSchema,
     passed: countSchema,
     failed: countSchema,
@@ -773,11 +775,12 @@ function rollupClassifiedRoutes(
     const tail = sortedRoutes.slice(MAX_ROUTES_PER_CASE);
     otherRoutes = tail.reduce(
       (acc, row) => ({
+        distinctPaths: acc.distinctPaths + 1,
         trials: acc.trials + row.trials,
         passed: acc.passed + row.passed,
         failed: acc.failed + row.failed,
       }),
-      { trials: 0, passed: 0, failed: 0 }
+      { distinctPaths: 0, trials: 0, passed: 0, failed: 0 }
     );
   }
 
