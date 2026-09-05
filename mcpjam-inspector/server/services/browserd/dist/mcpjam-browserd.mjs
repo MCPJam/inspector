@@ -49,6 +49,10 @@ var BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /** A ref this tab's last observation never issued. */
+  "unknown_ref",
+  /** The page could not answer an accessibility tree at all. */
+  "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
   /** A dialog is open and waiting for the person who holds the lease. */
@@ -1300,12 +1304,8 @@ function countNodes(node) {
   }
   return total;
 }
-function omissionMarker(node, hiddenNodes) {
-  const label = node.name ? `${node.role ?? "node"} "${node.name}"` : node.role ?? "node";
-  return {
-    role: "omitted",
-    name: `${hiddenNodes} node(s) under ${label} omitted \u2014 re-observe with {mode:"a11y", rootSelector:"<selector for this element>"} to read this subtree`
-  };
+function omissionMarker(_node, hiddenNodes) {
+  return { role: "omitted", hiddenNodes };
 }
 function capA11yTree(root, budget = DEFAULT_A11Y_BUDGET) {
   if (!root) return { tree: null, omittedSubtrees: 0, totalNodes: 0 };
@@ -1530,6 +1530,323 @@ var PAGE_TEXT_FN = `() => {
 }`;
 var DEFAULT_PAGE_TEXT_MAX_BYTES = 16e3;
 var PAGE_TEXT_RETRIEVAL_HINT = 'narrow with observe {mode:"a11y", rootSelector} or scroll and re-read';
+
+// server/services/browserd/daemon/cdp-a11y.ts
+var UNINTERESTING_ROLES = /* @__PURE__ */ new Set([
+  "generic",
+  "none",
+  "presentation",
+  "InlineTextBox",
+  "LineBreak",
+  "StaticText"
+]);
+var TRISTATE_PROPERTIES = /* @__PURE__ */ new Set(["checked", "pressed"]);
+var CARRIED_PROPERTIES = {
+  checked: "checked",
+  disabled: "disabled",
+  expanded: "expanded",
+  focused: "focused",
+  level: "level",
+  pressed: "pressed",
+  readonly: "readonly",
+  required: "required",
+  selected: "selected",
+  url: "url",
+  valuemin: "valueMin",
+  valuemax: "valueMax",
+  valuetext: "valueText"
+};
+function scalar(value) {
+  const raw = value?.value;
+  if (typeof raw === "string") return raw.length > 0 ? raw : void 0;
+  if (typeof raw === "number") return raw;
+  return void 0;
+}
+async function readAxTree(cdp, rootBackendNodeId) {
+  try {
+    await cdp.send("Accessibility.enable");
+    const response = await cdp.send("Accessibility.getFullAXTree");
+    const nodes = response?.nodes;
+    if (!nodes || nodes.length === 0) return { ok: false };
+    const byId = /* @__PURE__ */ new Map();
+    for (const node of nodes) byId.set(node.nodeId, node);
+    const root = rootBackendNodeId ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId) : nodes[0];
+    if (!root) return { ok: true, tree: null };
+    const seen = /* @__PURE__ */ new Set();
+    const built = build(root, byId, seen);
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree: built.length === 1 ? built[0] : { role: "RootWebArea", children: built }
+    };
+  } catch {
+    return { ok: false };
+  }
+}
+function build(node, byId, seen) {
+  if (seen.has(node.nodeId)) return [];
+  seen.add(node.nodeId);
+  const children = [];
+  for (const childId of node.childIds ?? []) {
+    const child = byId.get(childId);
+    if (child) children.push(...build(child, byId, seen));
+  }
+  const role = scalar(node.role);
+  const name = scalar(node.name);
+  if (node.ignored) return children;
+  if (typeof role === "string" && UNINTERESTING_ROLES.has(role)) {
+    if (role === "StaticText" && typeof name === "string") {
+      return [{ role: "text", name }];
+    }
+    return children;
+  }
+  const built = {};
+  if (typeof role === "string") built.role = role;
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
+  if (name !== void 0) built.name = String(name);
+  const value = scalar(node.value);
+  if (value !== void 0) built.value = value;
+  const description = scalar(node.description);
+  if (description !== void 0) built.description = String(description);
+  for (const property of node.properties ?? []) {
+    const key = property.name && CARRIED_PROPERTIES[property.name];
+    if (!key) continue;
+    const raw = property.value?.value;
+    if (raw === void 0 || raw === null || raw === "") continue;
+    built[key] = TRISTATE_PROPERTIES.has(property.name) && (raw === "true" || raw === "false") ? raw === "true" : raw;
+  }
+  if (children.length > 0) built.children = children;
+  return [built];
+}
+async function resolveBackendNodeId(cdp, selector) {
+  try {
+    const doc = await cdp.send("DOM.getDocument", { depth: 0 });
+    const rootNodeId = doc?.root?.nodeId;
+    if (rootNodeId === void 0) return null;
+    const found = await cdp.send("DOM.querySelector", {
+      nodeId: rootNodeId,
+      selector
+    });
+    if (!found?.nodeId) return null;
+    const described = await cdp.send("DOM.describeNode", {
+      nodeId: found.nodeId
+    });
+    return described?.node?.backendNodeId ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// server/services/browserd/daemon/a11y-refs.ts
+var INTERACTIVE_ROLES = /* @__PURE__ */ new Set([
+  "button",
+  "link",
+  "textbox",
+  "checkbox",
+  "radio",
+  "combobox",
+  "listbox",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "option",
+  "searchbox",
+  "slider",
+  "spinbutton",
+  "switch",
+  "tab",
+  "treeitem",
+  "Iframe"
+]);
+var CONTENT_ROLES = /* @__PURE__ */ new Set([
+  "heading",
+  "cell",
+  "gridcell",
+  "columnheader",
+  "rowheader",
+  "listitem",
+  "article",
+  // The landmark set, whole. A named `search` or `contentinfo` is exactly the
+  // sort of thing a model zooms into, and leaving half the landmarks out meant
+  // a named one vanished from the default view unless it happened to contain a
+  // control — which is not a property of the landmark at all.
+  "region",
+  "main",
+  "navigation",
+  "banner",
+  "complementary",
+  "contentinfo",
+  "form",
+  "search"
+]);
+function isRefWorthy(node) {
+  const role = node.role;
+  if (typeof role !== "string") return false;
+  if (INTERACTIVE_ROLES.has(role)) return true;
+  return CONTENT_ROLES.has(role) && typeof node.name === "string" && node.name.length > 0;
+}
+function filterInteractive(root) {
+  const rootKept = [];
+  const stack = [
+    { frame: { node: root, parentKept: rootKept }, kept: [], expanded: false }
+  ];
+  while (stack.length > 0) {
+    const top = stack[stack.length - 1];
+    if (!top.expanded) {
+      top.expanded = true;
+      const children = top.frame.node.children ?? [];
+      for (let i = children.length - 1; i >= 0; i -= 1) {
+        stack.push({
+          frame: { node: children[i], parentKept: top.kept },
+          kept: [],
+          expanded: false
+        });
+      }
+      continue;
+    }
+    stack.pop();
+    const { node, parentKept } = top.frame;
+    const { children: _dropped, ...rest } = node;
+    if (isRefWorthy(node)) {
+      parentKept?.push(
+        top.kept.length > 0 ? { ...rest, children: top.kept } : { ...rest }
+      );
+    } else if (top.kept.length > 0) {
+      parentKept?.push({ ...rest, children: top.kept });
+    }
+  }
+  return rootKept[0] ?? null;
+}
+function assignRefs(root) {
+  const entries = /* @__PURE__ */ new Map();
+  if (!root) return entries;
+  const seen = /* @__PURE__ */ new Map();
+  const count = (node) => {
+    if (isRefWorthy(node)) {
+      const key = `${node.role}:${node.name ?? ""}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
+    }
+    for (const child of node.children ?? []) count(child);
+  };
+  count(root);
+  const position = /* @__PURE__ */ new Map();
+  let next = 1;
+  const visit = (node) => {
+    if (isRefWorthy(node)) {
+      const role = node.role;
+      const name = typeof node.name === "string" ? node.name : "";
+      const key = `${role}:${name}`;
+      const index = position.get(key) ?? 0;
+      position.set(key, index + 1);
+      const ref = `e${next}`;
+      next += 1;
+      node.ref = ref;
+      entries.set(ref, {
+        ...typeof node.backendDOMNodeId === "number" ? { backendDOMNodeId: node.backendDOMNodeId } : {},
+        role,
+        name,
+        ...(seen.get(key) ?? 0) > 1 ? { nth: index } : {}
+      });
+    }
+    for (const child of node.children ?? []) visit(child);
+  };
+  visit(root);
+  return entries;
+}
+function parseRef(raw) {
+  const match = /^(?:@|ref=)?(e\d+)$/.exec(raw.trim());
+  return match ? match[1] : null;
+}
+
+// server/services/browserd/daemon/a11y-render.ts
+var NO_INTERACTIVE_ELEMENTS = "(no interactive elements)";
+var EMPTY_PAGE = "(empty page)";
+var FLAG_ATTRS = [
+  "selected",
+  "disabled",
+  "required",
+  "focused",
+  "readonly"
+];
+var TRISTATE_ATTRS = ["checked", "pressed", "expanded"];
+function isTransparent(node) {
+  const role = node.role;
+  if (typeof role !== "string" || role.length === 0) return true;
+  if (role === "RootWebArea" || role === "WebArea") return true;
+  if (role === "generic" && node.ref === void 0) {
+    return (node.children?.length ?? 0) <= 1;
+  }
+  if (role === "text") {
+    return typeof node.name !== "string" || node.name.trim().length === 0;
+  }
+  return false;
+}
+function attributes(node) {
+  const parts = [];
+  if (typeof node.level === "number") parts.push(`level=${node.level}`);
+  for (const key of TRISTATE_ATTRS) {
+    if (node[key] !== void 0) parts.push(`${key}=${String(node[key])}`);
+  }
+  for (const flag of FLAG_ATTRS) {
+    if (node[flag] === true) parts.push(flag);
+  }
+  for (const [key, label] of [
+    ["valueMin", "min"],
+    ["valueMax", "max"]
+  ]) {
+    const bound = node[key];
+    if (typeof bound === "number" || typeof bound === "string") {
+      parts.push(`${label}=${String(bound)}`);
+    }
+  }
+  if (typeof node.ref === "string") parts.push(`ref=${node.ref}`);
+  if (typeof node.url === "string" && node.url.length > 0) {
+    parts.push(`url=${node.url}`);
+  }
+  return parts.length > 0 ? ` [${parts.join(" ")}]` : "";
+}
+function line(node, indent) {
+  const role = typeof node.role === "string" ? node.role : "node";
+  let text = `${"  ".repeat(indent)}- ${role}`;
+  if (typeof node.name === "string" && node.name.length > 0) {
+    text += ` ${JSON.stringify(node.name)}`;
+  }
+  text += attributes(node);
+  if (typeof node.description === "string" && node.description.length > 0) {
+    text += ` (${JSON.stringify(node.description)})`;
+  }
+  const value = node.valueText ?? node.value;
+  if ((typeof value === "string" || typeof value === "number") && String(value).length > 0 && String(value) !== node.name) {
+    text += `: ${JSON.stringify(String(value))}`;
+  }
+  return text;
+}
+function renderA11yTree(root, options = {}) {
+  const lines = [];
+  const visit = (node, indent, parentRef) => {
+    if (node.role === "omitted") {
+      const hidden = typeof node.hiddenNodes === "number" ? node.hiddenNodes : 0;
+      const retrieval = parentRef ? `; observe {mode:"a11y", rootRef:"${parentRef}"} to read it` : '; narrow with observe {mode:"a11y", rootSelector} or read it with {mode:"text"}';
+      lines.push(
+        `${"  ".repeat(indent)}- \u2026 [${hidden} node(s) omitted${retrieval}]`
+      );
+      return;
+    }
+    const transparent = isTransparent(node);
+    if (!transparent) lines.push(line(node, indent));
+    const ref = typeof node.ref === "string" ? node.ref : parentRef;
+    for (const child of node.children ?? []) {
+      visit(child, transparent ? indent : indent + 1, ref);
+    }
+  };
+  if (root) visit(root, 0);
+  if (lines.length === 0) {
+    return options.interactiveOnly ? NO_INTERACTIVE_ELEMENTS : EMPTY_PAGE;
+  }
+  return lines.join("\n");
+}
 
 // server/services/browserd/daemon/webmcp-bridge.ts
 var WebMcpBridgeError = class extends Error {
@@ -2276,6 +2593,15 @@ var ChromiumDriver = class {
    */
   viewports = /* @__PURE__ */ new Map();
   /**
+   * The refs the LAST a11y observation of each tab handed out.
+   *
+   * One map per tab, replaced whole on every observation. It is state the
+   * driver must own rather than the model: a ref the model made up, or one it
+   * kept from two observations ago, has to be refusable — and only the side
+   * that minted them can tell the difference.
+   */
+  refs = /* @__PURE__ */ new Map();
+  /**
    * Tab creations already under way, by tabId.
    *
    * `context.newPage()` is awaited, so without this two callers arriving
@@ -2624,28 +2950,40 @@ var ChromiumDriver = class {
         return this.observeText(tabId, entry, permit);
       }
       case "a11y": {
-        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
-        if (action.rootSelector && snapshot === null) {
-          return {
-            ok: false,
-            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
-          };
-        }
+        const raw = await this.readA11y(tabId, entry, action);
+        if (!raw.ok) return raw.error;
+        const filtered = raw.filter === "interactive" && raw.tree ? filterInteractive(raw.tree) : raw.tree;
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          snapshot,
+          filtered,
           this.a11yBudget
         );
-        return this.observation(
+        const refs = assignRefs(tree);
+        const rendered = renderA11yTree(tree, {
+          interactiveOnly: raw.filter === "interactive"
+        });
+        const result = this.observation(
           tabId,
           entry,
           {
-            a11y: tree,
+            a11y: rendered,
+            refs: Object.fromEntries(
+              [...refs].map(([ref, entryValue]) => [
+                ref,
+                { role: entryValue.role, name: entryValue.name }
+              ])
+            ),
             ...omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}
           },
           frame,
           permit
         );
+        if (!result.ok) {
+          this.refs.delete(tabId);
+          return result;
+        }
+        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        return result;
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -2976,9 +3314,104 @@ var ChromiumDriver = class {
       this.pendingTabs.delete(tabId);
     }
   }
+  /**
+   * Read the tree for an a11y observation, rooted where the caller asked.
+   *
+   * Three ways to be rooted and they fail differently, which is the reason
+   * this is not inline: a `rootRef` the driver never issued is the model's
+   * mistake and must say so; a `rootSelector` that matches nothing is the
+   * page's answer and must not read as "that subtree is empty"; a page that
+   * cannot produce a tree at all is neither, and telling a model its selector
+   * was wrong in that case sends it hunting for a bug that is not there.
+   */
+  async readA11y(tabId, entry, action) {
+    const filter = action.filter ?? "interactive";
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error: 'a11y_unavailable: this page cannot answer an accessibility tree; observe {mode:"text"} or {mode:"screenshot"} instead'
+        }
+      };
+    }
+    let rootBackendNodeId;
+    if (action.rootRef !== void 0) {
+      const parsed = parseRef(action.rootRef);
+      const map = this.refs.get(tabId);
+      if (map && !this.refsStillDescribe(tabId, entry, map)) {
+        this.refs.delete(tabId);
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error: `stale_ref: ${action.rootRef} was issued for a page this tab has since left; re-observe and use a ref from the new page`
+          }
+        };
+      }
+      const known = parsed ? map?.entries.get(parsed) : void 0;
+      if (!known?.backendDOMNodeId) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error: `unknown_ref: ${action.rootRef} is not a ref from this tab's last observation; re-observe and use a ref it names`
+          }
+        };
+      }
+      rootBackendNodeId = known.backendDOMNodeId;
+    } else if (action.rootSelector !== void 0) {
+      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      if (resolved === null) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error: `unknown_selector: nothing on this page matches "${action.rootSelector}"; re-observe the page and pick a selector from what it shows`
+          }
+        };
+      }
+      rootBackendNodeId = resolved;
+    }
+    const read = await readAxTree(cdp, rootBackendNodeId);
+    if (!read.ok) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error: 'a11y_unavailable: this page could not answer an accessibility tree; observe {mode:"text"} or {mode:"screenshot"} instead'
+        }
+      };
+    }
+    if (rootBackendNodeId !== void 0 && read.tree === null) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error: `stale_ref: the element ${action.rootRef ?? action.rootSelector} named is no longer on this page; re-observe and pick one it shows`
+        }
+      };
+    }
+    return { ok: true, tree: read.tree, filter };
+  }
+  /**
+   * Do this tab's refs still describe the page it is on?
+   *
+   * Compares page IDENTITY (which navigation, which URL) and not content: a
+   * DOM that mutated under a ref is what `stale_ref` recovery by role and name
+   * exists to survive, and refusing every ref after any mutation would make
+   * them useless on exactly the pages that need them.
+   */
+  refsStillDescribe(tabId, entry, map) {
+    const minted = map.stateToken;
+    if (!minted) return false;
+    return minted.tabId === tabId && minted.navCounter === entry.navCounter && minted.urlHash === shortHash(entry.page.url());
+  }
   /** Forget a tab and everything attached to it. */
   async dropTab(tabId) {
     this.tabs.delete(tabId);
+    this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
   /**
@@ -3169,132 +3602,6 @@ function defaultIsAlive(pid) {
   }
 }
 
-// server/services/browserd/daemon/aria-snapshot.ts
-var ROLE_LINE = /^([^\s":]+)(?:\s+"((?:[^"\\]|\\.)*)")?\s*(.*)$/;
-var ATTRIBUTE = /\[([^\]=]+)(?:=([^\]]*))?\]/g;
-function parseAriaSnapshot(yaml) {
-  if (!yaml) return null;
-  const lines = yaml.split("\n");
-  const roots = [];
-  const stack = [];
-  for (let index = 0; index < lines.length; index += 1) {
-    const raw = lines[index];
-    if (raw.trim().length === 0) continue;
-    const parsed = parseLine(raw);
-    if (!parsed) continue;
-    while (stack.length > 0 && stack[stack.length - 1].indent >= parsed.indent) {
-      stack.pop();
-    }
-    const parent = stack[stack.length - 1];
-    if (parent) {
-      (parent.node.children ??= []).push(parsed.node);
-    } else {
-      roots.push(parsed.node);
-    }
-    if (parsed.blockScalar) {
-      const { text, next } = readBlockScalar(lines, index + 1, parsed.indent);
-      if (text) parsed.node.name = text;
-      index = next - 1;
-      continue;
-    }
-    if (parsed.opensChildren) {
-      stack.push({ indent: parsed.indent, node: parsed.node });
-    }
-  }
-  if (roots.length === 0) return null;
-  if (roots.length === 1) return roots[0];
-  return { role: "document", children: roots };
-}
-function parseLine(raw) {
-  const indent = raw.length - raw.trimStart().length;
-  const trimmed = raw.trim();
-  if (!trimmed.startsWith("- ") && trimmed !== "-") return null;
-  let body = trimmed.slice(1).trim();
-  if (body.length === 0) return null;
-  const opensChildren = body.endsWith(":");
-  if (opensChildren) body = body.slice(0, -1).trimEnd();
-  const property = matchProperty(body);
-  if (property) {
-    if (property.value === "|" || property.value === "|-") {
-      return {
-        indent,
-        node: { role: property.key },
-        opensChildren: false,
-        blockScalar: true
-      };
-    }
-    return {
-      indent,
-      node: { role: property.key, name: property.value },
-      opensChildren: false,
-      blockScalar: false
-    };
-  }
-  const match = ROLE_LINE.exec(body);
-  if (!match) {
-    return {
-      indent,
-      node: { role: "text", name: body },
-      opensChildren,
-      blockScalar: false
-    };
-  }
-  const [, role, name, tail] = match;
-  const node = { role };
-  if (name !== void 0) node.name = unescapeName(name);
-  applyAttributes(node, tail);
-  return { indent, node, opensChildren, blockScalar: false };
-}
-function matchProperty(body) {
-  const colon = body.indexOf(": ");
-  const bare = body.endsWith(":") ? body.length - 1 : -1;
-  const at = colon >= 0 ? colon : bare;
-  if (at <= 0) return null;
-  const key = body.slice(0, at);
-  if (key.includes('"') || key.includes(" ")) return null;
-  return { key, value: body.slice(at + 1).trim() };
-}
-function applyAttributes(node, tail) {
-  if (!tail) return;
-  for (const match of tail.matchAll(ATTRIBUTE)) {
-    const key = match[1].trim();
-    if (!key) continue;
-    const value = match[2];
-    if (value === void 0) {
-      node[key] = true;
-      continue;
-    }
-    const trimmed = value.trim();
-    const numeric = Number(trimmed);
-    node[key] = trimmed !== "" && Number.isFinite(numeric) ? numeric : trimmed;
-  }
-}
-function unescapeName(name) {
-  return name.replace(/\\(["\\])/g, "$1");
-}
-function readBlockScalar(lines, from, parentIndent) {
-  const collected = [];
-  let cursor = from;
-  let blockIndent = null;
-  while (cursor < lines.length) {
-    const line = lines[cursor];
-    if (line.trim().length === 0) {
-      collected.push("");
-      cursor += 1;
-      continue;
-    }
-    const indent = line.length - line.trimStart().length;
-    if (indent <= parentIndent) break;
-    blockIndent ??= indent;
-    collected.push(line.slice(Math.min(blockIndent, indent)));
-    cursor += 1;
-  }
-  while (collected.length > 0 && collected[collected.length - 1] === "") {
-    collected.pop();
-  }
-  return { text: collected.join("\n"), next: cursor };
-}
-
 // server/services/browserd/daemon/chromium-launch.ts
 var PAGE_API_PROBE = "!!(document.modelContext ?? navigator.modelContext)";
 var NAV_TIMEOUT_MS = 3e4;
@@ -3319,7 +3626,6 @@ function abortPromise(signal) {
 var CONSOLE_RING_SIZE = 200;
 var CONSOLE_ENTRY_CAPTURE_BYTES = 4e3;
 var ACT_TIMEOUT_MS = 15e3;
-var A11Y_TIMEOUT_MS = 5e3;
 var SCREENSHOT_JPEG_QUALITY = 70;
 function wrapPage(page) {
   const consoleRing = [];
@@ -3410,15 +3716,6 @@ function wrapPage(page) {
       await page.selectOption(selector, value, { timeout: ACT_TIMEOUT_MS });
     },
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector) {
-      const target = rootSelector ? page.locator(rootSelector).first() : page;
-      try {
-        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
-        return parseAriaSnapshot(yaml);
-      } catch {
-        return null;
-      }
-    },
     async pageText() {
       try {
         const text = await page.evaluate(`(${PAGE_TEXT_FN})()`);

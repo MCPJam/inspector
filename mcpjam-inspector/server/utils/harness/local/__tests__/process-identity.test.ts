@@ -204,12 +204,16 @@ describe("terminating a tree we own", () => {
     // The old post-grace re-check went through `isSameProcess`, which folds
     // "gone", "not ours" and "could not look" into one `false` — so a probe
     // failure reported the tree as gracefully stopped.
+    //
+    // `freebsd`, not `win32`: Windows now HAS a primitive (`kill(0)` then
+    // `Get-Process`), so it answers "gone" for a pid nobody holds rather than
+    // "unknown", and this case is about a platform that cannot look at all.
     const outcome = await terminateOwnedProcessGroup({
       pid: 4_242,
-      birthIdentity: "win32:whatever",
+      birthIdentity: "freebsd:whatever",
       graceMs: 10,
       pollMs: 5,
-      platform: "win32",
+      platform: "freebsd",
     });
     expect(outcome.outcome).toBe("unknown");
   });
@@ -437,7 +441,36 @@ describe("probing a process GROUP", () => {
     // which is what makes `terminateOwnedProcessGroup` report the tree gone
     // and what makes the janitor DROP a durable record. A platform with no
     // enumeration must not read as "the group is empty".
-    await expect(probeProcessGroup(4_242, "win32")).resolves.toBe("unknown");
+    //
+    // `freebsd`: Windows now answers this from the Job Object contract (the
+    // root's liveness is the group's), so it is no longer the "no primitive"
+    // example.
+    await expect(probeProcessGroup(4_242, "freebsd")).resolves.toBe("unknown");
+  });
+
+  it("on win32, reads the group's fate from the root: a Job Object dies with its launcher", async () => {
+    // A pid above every OS's ceiling is nobody's, so the cheap `kill(0)` says
+    // gone and the Job Object contract turns that into an EMPTY group — no
+    // PowerShell, no enumeration, and no `unknown` that would leave the
+    // record stranded.
+    await expect(probeProcessGroup(2_147_483_000, "win32")).resolves.toBe(
+      "empty",
+    );
+  });
+
+  it("parses the one line the Windows probe script prints", async () => {
+    const { parseWin32ProbeLine } = await import("../process-identity.js");
+    expect(parseWin32ProbeLine("133721234567890123|node\r\n")).toEqual({
+      fileTime: "133721234567890123",
+      name: "node",
+    });
+    expect(parseWin32ProbeLine("133721234567890123|mcpjam-job-launcher")).toEqual({
+      fileTime: "133721234567890123",
+      name: "mcpjam-job-launcher",
+    });
+    expect(parseWin32ProbeLine("")).toBeNull();
+    expect(parseWin32ProbeLine("not-a-filetime|node")).toBeNull();
+    expect(parseWin32ProbeLine("1337|")).toBeNull();
   });
 
   it("rejects an implausible pid without claiming the group is empty", async () => {
