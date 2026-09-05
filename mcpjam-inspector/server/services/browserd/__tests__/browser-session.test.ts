@@ -27,6 +27,7 @@ import {
   BROWSERD_PORT,
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
+  BrowserSessionInUseError,
   ensureBrowserSession,
   type BrowserSessionDeps,
   type SessionClient,
@@ -108,6 +109,8 @@ interface Fakes {
   bootHandle: BrowserdHandle & { stop: ReturnType<typeof vi.fn> };
   connect: ReturnType<typeof vi.fn>;
   boot: ReturnType<typeof vi.fn>;
+  claimRelaunch: ReturnType<typeof vi.fn>;
+  releaseRelaunch: ReturnType<typeof vi.fn>;
   lookup: ReturnType<typeof vi.fn>;
   record: ReturnType<typeof vi.fn>;
   touch: ReturnType<typeof vi.fn>;
@@ -125,6 +128,11 @@ function makeFakes(over?: {
    */
   leaseAction?: LeaseActionFn;
   recordResult?: BrowserSessionRecordResult;
+  /**
+   * What the control plane says when this replica asks to relaunch. Omitted ⇒
+   * granted, which is the ordinary case.
+   */
+  claim?: { ok: true } | { ok: false; reason: "claimed" | "unavailable" };
   bootError?: Error;
   streamError?: Error;
 }): Fakes {
@@ -176,6 +184,10 @@ function makeFakes(over?: {
       over?.recordResult ?? { status: "recorded", sessionId: "session-new" },
   );
   const touch = vi.fn(async () => ({ counted: true }));
+  const claimRelaunch = vi.fn(
+    async () => over?.claim ?? ({ ok: true } as const),
+  );
+  const releaseRelaunch = vi.fn(async () => {});
   const touchActivity = vi.fn(async () => ({ ok: true }));
   const sendCommand = vi.fn<SessionClient["sendCommand"]>(async () => ({
     status: "ok" as const,
@@ -198,7 +210,13 @@ function makeFakes(over?: {
       sendCommand,
       ...(over?.leaseAction ? { leaseAction: over.leaseAction } : {}),
     })),
-    store: { lookup, record, touch },
+    store: {
+      lookup,
+      record,
+      touch,
+      claimRelaunch,
+      releaseRelaunch,
+    },
     touchActivity,
     bundle: () => new Uint8Array([1, 2, 3]),
     bundleHash: () => HASH,
@@ -210,6 +228,8 @@ function makeFakes(over?: {
     bootHandle,
     connect,
     boot,
+    claimRelaunch,
+    releaseRelaunch,
     lookup,
     record,
     touch,
@@ -460,6 +480,149 @@ describe("ensureBrowserSession — relaunch triggers", () => {
         leaseAction: leaseBackedBy(lease),
       }),
     );
+  });
+
+  it("ASKS A STALE DAEMON who holds it, rather than killing it blind", async () => {
+    // The bundle hash is checked before everything, and every daemon change
+    // rotates it — so right after each deploy the lookup answers `null` for a
+    // box whose Chromium may have somebody signed in on it. Reading that as
+    // "no row, nothing to protect" killed them on the FIRST relaunch after
+    // every release, which is not a corner but the common path.
+    const lease = new HandoffLease();
+    lease.acquire("someone-mid-login", 60_000, "human");
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "bundle_changed",
+          observedSessionId: ROW.sessionId,
+          staleSession: {
+            publicOrigin: ROW.publicOrigin,
+            browserdToken: ROW.browserdToken,
+            bootId: ROW.bootId,
+            contextMode: "persistent",
+          },
+        },
+      ],
+      leaseAction: leaseBackedBy(lease),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).rejects.toBeInstanceOf(BrowserSessionInUseError);
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+  });
+
+  it("relaunches a stale daemon nobody is holding", async () => {
+    // The address is for ASKING, not for refusing. A free lease means the
+    // relaunch proceeds exactly as before.
+    const lease = new HandoffLease();
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "bundle_changed",
+          observedSessionId: ROW.sessionId,
+          staleSession: {
+            publicOrigin: ROW.publicOrigin,
+            browserdToken: ROW.browserdToken,
+            bootId: ROW.bootId,
+            contextMode: "persistent",
+          },
+        },
+      ],
+      leaseAction: leaseBackedBy(lease),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).resolves.toMatchObject({ reused: false });
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+  });
+
+  it("relaunches when the control plane offers no stale address at all", async () => {
+    // Absence means nobody to ask — the box is not serving, or the control
+    // plane predates the field. Either way the relaunch proceeds as it always
+    // did, which is what lets the inspector ship ahead of the backend.
+    const lease = new HandoffLease();
+    lease.acquire("someone-mid-login", 60_000, "human");
+    const f = makeFakes({
+      lookups: [
+        {
+          reachable: true,
+          session: null,
+          stale: "bundle_changed",
+          observedSessionId: ROW.sessionId,
+        },
+      ],
+      leaseAction: leaseBackedBy(lease),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).resolves.toMatchObject({ reused: false });
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+  });
+
+  it("REFUSES when another replica already claimed the relaunch", async () => {
+    // The lease fence cannot cover this: the race that hurts is the one where
+    // there is no daemon yet to hold a lease on — a first boot, or a row the
+    // sweep took — and there the second replica's pkill reaps the daemon the
+    // first has just booted. The record compare-and-swap fires long after the
+    // kill, and the damage is the kill.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      claim: { ok: false, reason: "claimed" },
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).rejects.toBeInstanceOf(BrowserSessionInUseError);
+    // Nothing was killed and nothing was booted.
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("takes the claim BEFORE the kill, and gives it back after", async () => {
+    // Taken after the kill it would protect nothing: the kill is the damage.
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    await ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" });
+    expect(f.claimRelaunch).toHaveBeenCalledTimes(1);
+    const claimOrder = f.claimRelaunch.mock.invocationCallOrder[0]!;
+    const killOrder = f.sandbox.killBrowserd.mock.invocationCallOrder[0]!;
+    expect(claimOrder).toBeLessThan(killOrder);
+    expect(f.releaseRelaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        claimId: f.claimRelaunch.mock.calls[0]![0].claimId,
+      }),
+    );
+  });
+
+  it("gives the claim back even when the relaunch throws", async () => {
+    // Otherwise the next attempt waits out the whole TTL for a replica that
+    // already failed and went away.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      bootError: new Error("chromium would not start"),
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).rejects.toThrow(/chromium/);
+    expect(f.releaseRelaunch).toHaveBeenCalledTimes(1);
+  });
+
+  it("relaunches unclaimed against a control plane that has no claim route", async () => {
+    // The inspector ships before the backend does. `unavailable` must mean
+    // "as before", not "refuse" — otherwise this change bricks every relaunch
+    // in the window between the two deploys.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      claim: { ok: false, reason: "unavailable" },
+    });
+    await expect(
+      ensureBrowserSession(f.deps, { bearer: "b", projectId: "p" }),
+    ).resolves.toMatchObject({ reused: false });
+    expect(f.sandbox.killBrowserd).toHaveBeenCalled();
+    // Nothing to give back.
+    expect(f.releaseRelaunch).not.toHaveBeenCalled();
   });
 
   it("waits for ANOTHER replica's relaunch instead of killing it mid-boot", async () => {
