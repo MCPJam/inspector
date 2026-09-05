@@ -140,6 +140,12 @@ that image — not on your personal computer.
 - **No bash if the image is unavailable.** If the environment's image can't
   boot right now, the scenario loads normally without a `bash` tool — no error,
   and no fallback to your personal computer.
+- **No bash when accessed via a local inspector.** If the chatbox is opened
+  through a share link served by a local inspector (for example, one started
+  with `npx`), that inspector cannot execute disposable cloud sandboxes. Bash
+  is not advertised for the turn, and you'll see a notification: *"This
+  conversation's bash runs in a disposable cloud sandbox, but this inspector
+  can't execute disposable sandboxes. The conversation continues without bash."*
 
 ### What is unchanged
 
