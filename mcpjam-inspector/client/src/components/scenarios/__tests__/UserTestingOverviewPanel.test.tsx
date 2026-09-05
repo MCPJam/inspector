@@ -180,19 +180,25 @@ describe("UserTestingOverviewPanel", () => {
     expect(empty.className).toContain("justify-center");
   });
 
-  it("leads with an illustration, not a stock glyph", () => {
-    // BB-125 asks for an illustration; the frame's bitmap lives in the design
-    // file, so this is one of the project's pixel characters instead.
+  it("leads with the study illustration, not a persona avatar", () => {
+    // BB-125's own bitmap, now that the asset exists. A persona avatar reads as
+    // "a user"; this page is about a study.
     render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
 
     const art = screen.getByTestId("user-testing-empty-illustration");
     expect(art).toBeVisible();
-    const avatar = screen.getByTestId("persona-pixel-avatar");
-    expect(art).toContainElement(avatar);
-    // The scale stays off the avatar, which animates its own transform — they
-    // compose today only because Tailwind emits a standalone `scale`.
-    expect(avatar.className).not.toMatch(/scale-/);
-    expect(avatar.parentElement?.className).toMatch(/scale-/);
+    expect(art).toHaveAttribute("src", "/user-testing-empty.png");
+    // h-28 is 112px: twice the height of the Swarm empty state's characters
+    // (PersonaPixelAvatar "lg" = 19 cells x 2.75px + 4 = 56px). That page
+    // runs four of them side by side, so matching its HEIGHT left this one
+    // reading as a quarter of the picture — the two are matched by area.
+    expect(art.className).toContain("h-28");
+    // Decorative: the heading and body below already say what this is, so a
+    // screen reader announcing the art too would only repeat them.
+    expect(art).toHaveAttribute("alt", "");
+    expect(
+      screen.queryByTestId("persona-pixel-avatar")
+    ).not.toBeInTheDocument();
   });
 
   it("shows a skeleton while the list is loading, not an empty state", () => {
