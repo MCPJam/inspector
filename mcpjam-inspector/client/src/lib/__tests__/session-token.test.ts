@@ -16,6 +16,27 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 describe("session-token module", () => {
   let sessionToken: typeof import("../session-token");
 
+  /**
+   * Run `fn` with `window.location` replaced by a page served from `origin`,
+   * restoring the real location afterwards. Models the self-hosted LAN case
+   * (BB-118) where the page is NOT on localhost.
+   */
+  const withPageOrigin = async (origin: string, fn: () => Promise<void>) => {
+    const realLocation = window.location;
+    Object.defineProperty(window, "location", {
+      configurable: true,
+      value: { ...realLocation, origin, href: `${origin}/` },
+    });
+    try {
+      await fn();
+    } finally {
+      Object.defineProperty(window, "location", {
+        configurable: true,
+        value: realLocation,
+      });
+    }
+  };
+
   beforeEach(async () => {
     // Reset module state by clearing the cache and re-importing
     vi.resetModules();
@@ -122,6 +143,35 @@ describe("session-token module", () => {
       );
 
       expect(result).toBe("/api/mcp/stream?_token=url-token");
+    });
+
+    it("keeps the full URL for an absolute loopback target", () => {
+      const result = sessionToken.addTokenToUrl(
+        "http://127.0.0.1:6274/api/mcp/stream",
+      );
+
+      expect(result).toBe(
+        "http://127.0.0.1:6274/api/mcp/stream?_token=url-token",
+      );
+    });
+
+    it("attaches the token on a same-origin LAN page (self-hosted network access)", async () => {
+      await withPageOrigin("http://192.168.1.50:6274", async () => {
+        expect(sessionToken.addTokenToUrl("/api/mcp/stream")).toBe(
+          "/api/mcp/stream?_token=url-token",
+        );
+        expect(
+          sessionToken.addTokenToUrl("http://192.168.1.50:6274/api/mcp/stream"),
+        ).toBe("/api/mcp/stream?_token=url-token");
+      });
+    });
+
+    it("never attaches the token to a foreign absolute URL", () => {
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const foreign = "https://outstanding-fennec-304.convex.site/web/stream";
+
+      expect(sessionToken.addTokenToUrl(foreign)).toBe(foreign);
+      expect(warnSpy).toHaveBeenCalled();
     });
 
     it("returns original URL when no token is available", async () => {
@@ -346,6 +396,49 @@ describe("session-token module", () => {
           },
         },
       );
+    });
+
+    it("keeps session auth on same-origin API calls from a LAN page (self-hosted network access)", async () => {
+      // The server issued the token to this allowlisted host
+      // (MCPJAM_ALLOWED_HOSTS); the page must be able to send it back to the
+      // same origin, or every call 401s and the feature is a dead end.
+      await withPageOrigin("http://192.168.1.50:6274", async () => {
+        await sessionToken.authFetch("/api/test");
+        await sessionToken.authFetch("http://192.168.1.50:6274/api/test");
+
+        expect(global.fetch).toHaveBeenNthCalledWith(1, "/api/test", {
+          headers: { "X-MCP-Session-Auth": "Bearer fetch-token" },
+        });
+        expect(global.fetch).toHaveBeenNthCalledWith(
+          2,
+          "http://192.168.1.50:6274/api/test",
+          { headers: { "X-MCP-Session-Auth": "Bearer fetch-token" } },
+        );
+      });
+    });
+
+    it("does not add session auth to a different port on the same LAN host", async () => {
+      // Same hostname is not the same origin: another service on the box must
+      // not receive the token.
+      await withPageOrigin("http://192.168.1.50:6274", async () => {
+        await sessionToken.authFetch("http://192.168.1.50:9999/api/test");
+
+        expect(global.fetch).toHaveBeenCalledWith(
+          "http://192.168.1.50:9999/api/test",
+          { headers: {} },
+        );
+      });
+    });
+
+    it("does not add session auth to a non-/api path even on the same origin", async () => {
+      await withPageOrigin("http://192.168.1.50:6274", async () => {
+        await sessionToken.authFetch("http://192.168.1.50:6274/relay/e");
+
+        expect(global.fetch).toHaveBeenCalledWith(
+          "http://192.168.1.50:6274/relay/e",
+          { headers: {} },
+        );
+      });
     });
 
     it("does not add session auth to cross-origin Convex HTTP requests", async () => {

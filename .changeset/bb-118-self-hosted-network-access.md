@@ -17,6 +17,12 @@ inspector reachable off localhost. Tunnel/relay hosts are still vetoed before
 the allowlist in both gates, and wildcard entries are honored for origin
 validation only under `MCPJAM_ALLOW_WILDCARD_ORIGINS`.
 
+The browser now sends the session token on same-origin `/api/*` calls, not
+only loopback ones, so a page served from an allowlisted host can actually use
+the token the server issued it. The token still never leaves for a foreign
+origin, and `addTokenToUrl` (the SSE/EventSource path) now applies the same
+rule instead of appending the token to any absolute URL.
+
 BEHAVIOR CHANGE ON UPGRADE: if you already set `MCPJAM_ALLOWED_HOSTS` in a
 self-hosted deployment (e.g. inherited from a shared `.env`), it was doing
 nothing before and now takes effect — those hosts will receive the session
