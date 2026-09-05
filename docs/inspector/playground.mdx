@@ -320,7 +320,12 @@ Both tabs stay mounted while you switch between them, so the terminal WebSocket 
 Click the **+** button on the left of the chat input to manage servers, attach files, and tune model behavior.
 
 **Servers**
-A list of every server in your project, sorted by status. Each row shows the server name and transport type (`HTTP` or `stdio`, npx/desktop only). Connect, disconnect, or toggle a server on or off for the current conversation. **+ Add server** opens the add-server modal without leaving the Playground.
+
+The server section of the **+** menu adapts based on whether a project environment is active.
+
+- **Without an environment** — A list of every server in your project, sorted by status. Each row shows the server name and transport type (`HTTP` or `stdio`, npx/desktop only). Connect, disconnect, or toggle a server on or off for the current conversation. **+ Add server** opens the add-server modal without leaving the Playground.
+
+- **With an environment active** — The ad-hoc connection rows are replaced by **Environment servers**: the servers resolved by the environment, each shown with a green active indicator and labeled "Connected automatically on every message." The backend connects these servers on every turn, so there is no browser connection to manage and no Connect/Add server controls are shown. Toggle a server off to exclude it from the next turn (a per-turn narrowing override). If you have toggled any servers, a **Modified** badge appears alongside a **Reset to environment** link that restores the environment's default set. Both the toggles and the reset button are disabled while a turn is streaming. If the environment resolves to zero servers and no override is active, the server section is hidden entirely.
 
 **Attach files**
 Add files to the conversation in any of these ways:
