@@ -344,6 +344,29 @@ describe("remapShadowedSelection", () => {
     ).toEqual(["h_mine"]);
   });
 
+  it("picks the host that owns the unsuffixed name, not the first in the array", () => {
+    // The list query returns rows in index order, while display names are
+    // allocated oldest-first. When the two disagree, taking the array's first
+    // host pointed the upgraded column at the client labeled "Claude #2".
+    const outOfOrder = [
+      { hostId: "h_new", name: "Claude", hostStyle: "claude", createdAt: 200 },
+      { hostId: "h_old", name: "Claude", hostStyle: "claude", createdAt: 100 },
+    ];
+    expect(
+      remapShadowedSelection([`${PRESET_HOST_ID_PREFIX}claude`], outOfOrder),
+    ).toEqual(["h_old"]);
+  });
+
+  it("breaks a createdAt tie by id, the same way display names do", () => {
+    const tied = [
+      { hostId: "h_b", name: "Claude", hostStyle: "claude", createdAt: 100 },
+      { hostId: "h_a", name: "Claude", hostStyle: "claude", createdAt: 100 },
+    ];
+    expect(
+      remapShadowedSelection([`${PRESET_HOST_ID_PREFIX}claude`], tied),
+    ).toEqual(["h_a"]);
+  });
+
   it("is a no-op when the user owns nothing", () => {
     const selection = [`${PRESET_HOST_ID_PREFIX}claude`];
     expect(remapShadowedSelection(selection, [])).toEqual(selection);

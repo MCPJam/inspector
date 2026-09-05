@@ -1,6 +1,7 @@
 import type { HostConfigDtoWithCatalogFacts } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
 import { resolveHostStyleByName } from "@/lib/host-logo";
+import { stableClientOrder } from "@/lib/client-display-name";
 import type { HostComparisonSubject } from "@/lib/host-config-field-schema";
 import {
   getCatalogHosts,
@@ -221,16 +222,27 @@ export function remapShadowedSelection<
   T extends Pick<HostListItem, "hostId"> & {
     name?: string;
     hostStyle?: string | null;
+    createdAt?: number;
   },
 >(
   selection: ReadonlyArray<string>,
   liveHosts: ReadonlyArray<T>,
   subjectsByHost: Readonly<Record<string, { hostStyle?: string }>> = {},
 ): string[] {
+  // Oldest first, by the SAME comparator that allocates display names. Taking
+  // whatever the list query returned first would disagree with it whenever the
+  // two orders differ, and the upgraded column would read "Claude #2" with
+  // plain "Claude" sitting beside it.
+  const byNameOwnership = [...liveHosts].sort((left, right) =>
+    stableClientOrder(
+      { hostId: left.hostId, createdAt: left.createdAt ?? 0 },
+      { hostId: right.hostId, createdAt: right.createdAt ?? 0 },
+    ),
+  );
+
   const liveByStyle = new Map<string, string>();
-  for (const host of liveHosts) {
+  for (const host of byNameOwnership) {
     const style = resolveCompareHostStyle(host, subjectsByHost);
-    // First live host of a style wins, matching the order the chips render in.
     if (style && !liveByStyle.has(style)) liveByStyle.set(style, host.hostId);
   }
   if (liveByStyle.size === 0) return [...selection];
