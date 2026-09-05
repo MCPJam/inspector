@@ -98,7 +98,7 @@ export function PlaygroundCenter({
         blockSubmitUntilServerConnected={state.firstRunComposerSeed}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
-        showPostConnectGuide={false}
+        showPostConnectGuide={state.onboarding.isGuidedPostConnect}
         onFirstMessageSent={
           state.onboarding.isGuidedPostConnect
             ? () => {
