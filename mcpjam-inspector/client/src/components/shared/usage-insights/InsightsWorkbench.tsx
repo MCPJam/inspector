@@ -516,15 +516,21 @@ export function InsightsWorkbench({
           <div
             className={cn(
               selectionOpen
-                ? "absolute inset-0 z-10 bg-background sm:static sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
+                ? "z-10 bg-background sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
                 : "hidden",
-              // Scroll layout: the chart row is as tall as the whole diagram,
-              // so a stretched drill-down would run that full height. Pin it to
-              // a bounded, sticky panel that scrolls its own session list while
-              // the diagram scrolls past beside it.
+              // Fill layout: an overlay on mobile, an in-flow static panel
+              // beside the chart on sm+.
+              selectionOpen && fillBody && "absolute inset-0 sm:static",
+              // Scroll layout: the chart row is as tall as the whole diagram, so
+              // a stretched drill-down would run that full height. On mobile,
+              // anchor the panel to the viewport (fixed) so selecting a low node
+              // never opens it off-screen; on sm+ it is a bounded, sticky side
+              // panel that scrolls its own session list while the diagram
+              // scrolls past beside it. `sm:static` is deliberately absent so
+              // `sm:sticky` wins by intent, not by Tailwind emit order.
               selectionOpen &&
                 !fillBody &&
-                "sm:sticky sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
+                "fixed inset-0 z-20 sm:sticky sm:inset-auto sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
             )}
             data-testid={`${testIdPrefix}-drill-panel`}
             aria-hidden={!selectionOpen}
