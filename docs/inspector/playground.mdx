@@ -29,7 +29,7 @@ The Playground is the main workspace for developing against your MCP servers. It
 - **Widget emulator** — Render widgets exposed via `openai/outputTemplate` (ChatGPT Apps) or `ui.resourceUri` (MCP Apps) the same way a real host would, with Inline, Picture-in-Picture, and Fullscreen display modes.
 - **Chat / Trace / Raw views** — Switch between the conversation, a timestamped timeline of every step (with per-step latency and tokens), and the exact JSON payload sent to the model.
 - **Multi-model compare** — Send a single prompt to up to 3 models at once and watch the responses side by side.
-- **Multi-host compare** — Render the same tool call under multiple host configurations (ChatGPT vs Claude, different device sizes, different capability sets) at the same time. New sessions start with ChatGPT, Claude, and Cursor pre-selected so the comparison is immediate.
+- **Multi-host compare** — Render the same tool call under multiple host configurations (ChatGPT vs Claude, different device sizes, different capability sets) at the same time. New sessions start with Claude, ChatGPT, and Cursor pre-selected so the comparison is immediate.
 - **Display context controls** — Device viewport, light/dark theme, host style, locale, timezone, CSP mode, device capabilities, and safe area insets — all live in the toolbar.
 - **Per-widget debugging** — Inspect raw tool input/output, `widgetState`, model context, and CSP violations from icons above each widget.
 - **JSON-RPC logger** — Real-time, filterable feed of every message between the inspector and your servers.
@@ -130,7 +130,7 @@ Send one prompt to up to 3 models simultaneously. Open the model picker, toggle 
 
 Open the host picker (top-left of the center header) to render the same tool calls under different host configurations side by side — for example, ChatGPT vs Claude host style, or desktop vs mobile viewports.
 
-New sessions start with **ChatGPT, Claude, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows — checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
+New sessions start with **Claude, ChatGPT, and Cursor** pre-selected so you land directly in a 3-way compare. To change the lineup, open the host picker and check or uncheck rows — checking a second row immediately adds it to the compare grid; unchecking a row removes it. Your selection is saved per project, so returning users keep whatever lineup they last configured.
 
 One column is designated the **lead host**; chip tooltips in the toolbar say "Editing lead host: \<name\>" so it's clear which column the host controls (theme, device, locale, etc.) currently bind to. Click another column's chip to promote it to lead.
 
