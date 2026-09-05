@@ -1169,6 +1169,9 @@ function EvaluateTabContent({
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
           }
+          onRecordTestCase={() =>
+            handlers.handleRecordTestCase(selectedSuite._id)
+          }
           onGenerateTestCases={() => void handleGenerateMore()}
           canGenerateTestCases={generateState.canGenerate}
           generateTestCasesDisabledReason={generateState.disabledReason}

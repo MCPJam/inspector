@@ -11,6 +11,7 @@ import { TestCasesOverview } from "../test-cases-overview";
 
 const useConvexMock = vi.hoisted(() => vi.fn());
 const useQueryMock = vi.hoisted(() => vi.fn());
+const flagMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("posthog-js", () => ({
   default: {
@@ -30,6 +31,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("convex/react", () => ({
   useConvex: useConvexMock,
   useQuery: useQueryMock,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: flagMock,
 }));
 
 describe("TestCasesOverview", () => {
@@ -73,6 +78,7 @@ describe("TestCasesOverview", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    flagMock.mockReturnValue(false);
   });
 
   it("hydrates saved quick runs from fresh case metadata and iteration queries", async () => {
@@ -635,5 +641,62 @@ describe("TestCasesOverview", () => {
     expect(secondEvent.defaultPrevented).toBe(true);
     expect(checkbox).not.toBeChecked();
     expect(onTestCaseClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps Generate and New case when the simple editor flag is off", () => {
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onCreateTestCase={vi.fn()}
+        onRecordTestCase={vi.fn()}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Generate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New case" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Write" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/mcpjam cloud eval/)).not.toBeInTheDocument();
+  });
+
+  it("shows Generate, Record, and Write plus a CLI import pointer when the flag is on", () => {
+    flagMock.mockReturnValue(true);
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onCreateTestCase={vi.fn()}
+        onRecordTestCase={vi.fn()}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Generate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Write" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New case" })).not.toBeInTheDocument();
+    expect(screen.getByText(/mcpjam cloud eval/)).toBeInTheDocument();
   });
 });

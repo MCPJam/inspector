@@ -58,7 +58,14 @@
  * are re-confined to the session root by `confine`, so a shape that matches
  * still cannot address a path outside the grant.
  */
-import { isAbsolute, normalize, sep } from "node:path";
+// `posix` for every string the ADAPTER wrote, `normalize`/`sep` for every
+// path this module composes for the OS. The adapters emit POSIX text on every
+// platform — `posix.resolve`, forward slashes, `shellQuote` — because in their
+// model the sandbox is a remote Linux machine; on Windows the provider presents
+// the session's roots in that shape too (`adapter-path.ts`). So an operand is
+// judged as POSIX text everywhere, and the host's own path flavour only enters
+// when a result is mapped onto the managed bundle or the session overlay.
+import { normalize, posix, sep } from "node:path";
 import { assertArgvAllowed } from "./argv-policy.js";
 import type { SupportedLocalHarnessId } from "./targets.js";
 
@@ -289,7 +296,7 @@ function assertPlainPathOperand(path: string, command: string): void {
       command,
     );
   }
-  if (!isAbsolute(path)) {
+  if (!posix.isAbsolute(path)) {
     throw new CommandTranslationError(
       `path operand ${JSON.stringify(path)} is not absolute`,
       command,
@@ -306,8 +313,8 @@ function assertPlainPathOperand(path: string, command: string): void {
  * and the command is rejected rather than silently remapped.
  */
 function underBootstrapDir(path: string, bootstrapDir: string): boolean {
-  const p = normalize(path);
-  const root = normalize(bootstrapDir);
+  const p = posix.normalize(path);
+  const root = posix.normalize(bootstrapDir);
   return p === root || p.startsWith(root + "/");
 }
 
@@ -315,8 +322,8 @@ function remapBootstrapPath(
   path: string,
   ctx: CommandTranslationContext,
 ): string {
-  const root = normalize(ctx.adapterBootstrapDir);
-  const normalizedPath = normalize(path);
+  const root = posix.normalize(ctx.adapterBootstrapDir);
+  const normalizedPath = posix.normalize(path);
   // Containment is checked on the NORMALIZED path before any slicing. Slicing
   // first would clamp `/tmp/harness/claude-code/../../etc` (which normalizes
   // to `/tmp/etc`) back onto the bundle root and swallow the traversal
@@ -387,8 +394,8 @@ export function classifyBootstrapPath(
   path: string,
   ctx: CommandTranslationContext,
 ): BootstrapFileTarget {
-  const root = normalize(ctx.adapterBootstrapDir);
-  const normalized = normalize(path);
+  const root = posix.normalize(ctx.adapterBootstrapDir);
+  const normalized = posix.normalize(path);
   if (!underBootstrapDir(normalized, root)) return { kind: "workspace" };
 
   const relative = normalized.slice(root.length).replace(/^\//, "");
@@ -428,8 +435,8 @@ function assertUnderSyntheticHome(
   ctx: CommandTranslationContext,
   command: string,
 ): void {
-  const home = normalize(ctx.syntheticHome);
-  const p = normalize(path);
+  const home = posix.normalize(ctx.syntheticHome);
+  const p = posix.normalize(path);
   if (p === home || !p.startsWith(home + "/")) {
     throw new CommandTranslationError(
       `path operand ${JSON.stringify(path)} is outside the session's synthetic ` +
@@ -500,7 +507,7 @@ async function translateMkdir(
   const paths: string[] = [];
   for (const path of raw) {
     assertPlainPathOperand(path, command);
-    if (underBootstrapDir(path, normalize(ctx.adapterBootstrapDir))) {
+    if (underBootstrapDir(path, posix.normalize(ctx.adapterBootstrapDir))) {
       // The bundle already exists and is read-only by design; creating it is
       // a no-op rather than an error so the adapter's bootstrap sequence
       // completes unchanged.
@@ -583,7 +590,7 @@ async function matchBridgeLaunch(
   const bridgeToken = tokens[0]!;
   assertPlainPathOperand(bridgeToken, command);
   const expectedBridge = `${ctx.adapterBootstrapDir}/bridge.mjs`;
-  if (normalize(bridgeToken) !== normalize(expectedBridge)) {
+  if (posix.normalize(bridgeToken) !== posix.normalize(expectedBridge)) {
     throw new CommandTranslationError(
       `bridge launch names ${JSON.stringify(bridgeToken)}, but the only ` +
         `bridge this session may run is the one in its managed bundle`,
@@ -676,7 +683,7 @@ export async function translateAdapterCommand(
       );
     }
     assertPlainPathOperand(target, command);
-    if (underBootstrapDir(target, normalize(ctx.adapterBootstrapDir))) {
+    if (underBootstrapDir(target, posix.normalize(ctx.adapterBootstrapDir))) {
       return {
         kind: "noop",
         reason:
@@ -695,7 +702,7 @@ export async function translateAdapterCommand(
     const cwd = invocation.workingDirectory;
     if (
       cwd !== undefined &&
-      normalize(cwd) !== normalize(ctx.adapterBootstrapDir)
+      posix.normalize(cwd) !== posix.normalize(ctx.adapterBootstrapDir)
     ) {
       throw new CommandTranslationError(
         `a bootstrap command was issued from ${JSON.stringify(cwd)} rather ` +
