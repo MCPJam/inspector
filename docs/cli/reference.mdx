@@ -1540,6 +1540,52 @@ a run that was retrieved and has no document reports `analyticsState:
 backfill, so a run that finished before stage measurement shipped will never
 gain a funnel.
 
+### `cloud eval route-facts`
+
+Read a run's tool routes and expected-versus-observed mismatch facts per case: which tool sequence each trial took, how many called nothing or looped, and for each expected tool how many trials never called it — with denominators, never a verdict.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+A run that exists but has no persisted document reads as `routeFactsState: "unmeasured"` — permanently, there is no backfill. A run that cannot be retrieved is a run-not-found error.
+
+### `cloud eval description-experiment`
+
+Manage two-arm description-rewrite experiments on a finished eval run. **`propose` and `start` spend credits.**
+
+#### `cloud eval description-experiment propose`
+
+Draft a rewritten description for one tool from a finished run's failed trials. Spends a small model budget; the developer applies the diff in their own server — MCPJam never edits it.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--run <id>` | Yes | Eval run ID (from `eval run`) |
+| `--tool <name>` | Yes | Tool name to propose a rewrite for |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `cloud eval description-experiment start`
+
+Replay the affected cases twice — original description versus the proposed rewrite — with the model, host, and grader held still. Spends eval-iteration credits up to the stated cap.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--experiment <id>` | Yes | Description experiment ID (from `description-experiment propose`) |
+| `--iterations <1-10>` | No | Iterations per arm (default: the source run's iteration count) |
+| `--max-trials <1-400>` | No | Cap on total trials across both arms |
+| `--case-scope <all\|failing>` | No | Which cases to replay: `all` or only `failing` (default: `failing`) |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
+#### `cloud eval description-experiment get`
+
+Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--experiment <id>` | Yes | Description experiment ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+
 ### `cloud eval iterations`
 
 List per-iteration results for an eval run (pass/fail, tool calls, tokens, latency). Results are paginated.
