@@ -137,12 +137,11 @@ describe("the driver over Electron — it does not notice the engine", () => {
 
     expect(result.ok).toBe(true);
     const tree = (result.output as { a11y?: unknown }).a11y;
-    // The `generic` wrapper folds away and its text takes its place, which is
-    // what `ariaSnapshot` does — a tree of `generic > generic` describes
-    // nothing and spends the whole node budget doing it.
-    expect(JSON.stringify(tree)).toContain('"Submit"');
-    expect(JSON.stringify(tree)).toContain('"Hello"');
-    expect(JSON.stringify(tree)).not.toContain("generic");
+    // The `generic` wrapper folds away — a tree of `generic > generic`
+    // describes nothing and spends the whole node budget doing it. The text
+    // node goes with it here because the default view is the INTERACTIVE one;
+    // prose is what `mode:"text"` answers.
+    expect(tree).toBe('- button "Submit" [ref=e1]');
   });
 
   it("carries the console the page wrote", async () => {
