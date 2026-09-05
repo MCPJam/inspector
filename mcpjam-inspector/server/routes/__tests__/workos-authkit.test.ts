@@ -63,7 +63,7 @@ describe("workos authkit local session bridge", () => {
         access_token: "access-token-1",
         refresh_token: "refresh-token-1",
         user: { id: "user_1" },
-      })
+      }),
     );
 
     const res = await app.request(
@@ -77,7 +77,7 @@ describe("workos authkit local session bridge", () => {
           code: "code_123",
           code_verifier: "verifier_123",
         }),
-      }
+      },
     );
 
     expect(res.status).toBe(200);
@@ -94,12 +94,12 @@ describe("workos authkit local session bridge", () => {
     const app = createTestApp();
 
     const res = await app.request(
-      "http://localhost:6274/user_management/authorize?client_id=client_123&code_challenge=abc"
+      "http://localhost:6274/user_management/authorize?client_id=client_123&code_challenge=abc",
     );
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(
-      "https://api.workos.com/user_management/authorize?client_id=client_123&code_challenge=abc"
+      "https://api.workos.com/user_management/authorize?client_id=client_123&code_challenge=abc",
     );
   });
 
@@ -107,15 +107,15 @@ describe("workos authkit local session bridge", () => {
     const app = createTestApp();
 
     const res = await app.request(
-      "http://localhost:6274/user_management/sessions/logout?session_id=session_123"
+      "http://localhost:6274/user_management/sessions/logout?session_id=session_123",
     );
 
     expect(res.status).toBe(302);
     expect(res.headers.get("location")).toBe(
-      "https://api.workos.com/user_management/sessions/logout?session_id=session_123"
+      "https://api.workos.com/user_management/sessions/logout?session_id=session_123",
     );
     expect(res.headers.get("set-cookie")).toContain(
-      "mcpjam_workos_sessions=; Max-Age=0"
+      "mcpjam_workos_sessions=; Max-Age=0",
     );
   });
 
@@ -127,14 +127,14 @@ describe("workos authkit local session bridge", () => {
           access_token: "access-token-1",
           refresh_token: "refresh-token-1",
           user: { id: "user_1" },
-        })
+        }),
       )
       .mockResolvedValueOnce(
         jsonResponse({
           access_token: "access-token-2",
           refresh_token: "refresh-token-2",
           user: { id: "user_1" },
-        })
+        }),
       );
 
     const loginRes = await app.request(
@@ -151,11 +151,11 @@ describe("workos authkit local session bridge", () => {
           code: "code_123",
           code_verifier: "verifier_123",
         }),
-      }
+      },
     );
     const sessionCookie = extractCookie(
       loginRes.headers.get("set-cookie") ?? "",
-      "mcpjam_workos_sessions"
+      "mcpjam_workos_sessions",
     );
 
     const refreshRes = await app.request(
@@ -171,7 +171,7 @@ describe("workos authkit local session bridge", () => {
           client_id: "client_123",
           grant_type: "refresh_token",
         }),
-      }
+      },
     );
 
     expect(refreshRes.status).toBe(200);
@@ -194,7 +194,7 @@ describe("workos authkit local session bridge", () => {
         access_token: "access-token-1",
         refresh_token: "refresh-token-5173",
         user: { id: "user_1" },
-      })
+      }),
     );
 
     const loginRes = await app.request(
@@ -211,11 +211,11 @@ describe("workos authkit local session bridge", () => {
           code: "code_123",
           code_verifier: "verifier_123",
         }),
-      }
+      },
     );
     const sessionCookie = extractCookie(
       loginRes.headers.get("set-cookie") ?? "",
-      "mcpjam_workos_sessions"
+      "mcpjam_workos_sessions",
     );
 
     const refreshRes = await app.request(
@@ -231,7 +231,7 @@ describe("workos authkit local session bridge", () => {
           client_id: "client_123",
           grant_type: "refresh_token",
         }),
-      }
+      },
     );
 
     expect(refreshRes.status).toBe(400);
@@ -240,7 +240,7 @@ describe("workos authkit local session bridge", () => {
     });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(refreshRes.headers.get("set-cookie")).not.toContain(
-      "workos-has-session=; Max-Age=0"
+      "workos-has-session=; Max-Age=0",
     );
   });
 
@@ -256,7 +256,7 @@ describe("workos authkit local session bridge", () => {
           client_id: "client_123",
           grant_type: "refresh_token",
         }),
-      }
+      },
     );
 
     expect(res.status).toBe(400);
@@ -264,6 +264,134 @@ describe("workos authkit local session bridge", () => {
       error_description: "No local WorkOS session",
     });
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  // A refresh that WorkOS could not answer is not a refresh WorkOS refused.
+  // The jar holds the only copy of the token, so the two have to be told
+  // apart here or a blip becomes a sign-out. See `isTransientWorkosFailure`.
+  describe("when WorkOS cannot answer a refresh", () => {
+    async function signIn(app: ReturnType<typeof createTestApp>) {
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse({
+          access_token: "access-token-1",
+          refresh_token: "refresh-token-1",
+          user: { id: "user_1" },
+        }),
+      );
+
+      const res = await app.request(
+        "http://localhost:6274/user_management/authenticate",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Origin: "http://localhost:6274",
+          },
+          body: JSON.stringify({
+            client_id: "client_123",
+            grant_type: "authorization_code",
+            code: "code_123",
+            code_verifier: "verifier_123",
+          }),
+        },
+      );
+
+      return extractCookie(
+        res.headers.get("set-cookie") ?? "",
+        "mcpjam_workos_sessions",
+      );
+    }
+
+    function refresh(
+      app: ReturnType<typeof createTestApp>,
+      sessionCookie: string,
+    ) {
+      return app.request("http://localhost:6274/user_management/authenticate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Origin: "http://localhost:6274",
+          Cookie: `${sessionCookie}; workos-has-session=true`,
+        },
+        body: JSON.stringify({
+          client_id: "client_123",
+          grant_type: "refresh_token",
+        }),
+      });
+    }
+
+    it("keeps the stored token through an outage, so the next attempt recovers", async () => {
+      const app = createTestApp();
+      const sessionCookie = await signIn(app);
+
+      vi.mocked(fetch)
+        .mockResolvedValueOnce(
+          jsonResponse({ error_description: "Service unavailable" }, 503),
+        )
+        .mockResolvedValueOnce(
+          jsonResponse({
+            access_token: "access-token-2",
+            refresh_token: "refresh-token-2",
+            user: { id: "user_1" },
+          }),
+        );
+
+      const failed = await refresh(app, sessionCookie);
+      expect(failed.status).toBe(503);
+      expect(failed.headers.get("set-cookie") ?? "").not.toContain(
+        "mcpjam_workos_sessions=; Max-Age=0",
+      );
+
+      // The point of not clearing: the SAME cookie still carries the token, so
+      // the retry that follows is able to spend it.
+      const recovered = await refresh(app, sessionCookie);
+      expect(recovered.status).toBe(200);
+      expect(
+        JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body)),
+      ).toMatchObject({
+        grant_type: "refresh_token",
+        refresh_token: "refresh-token-1",
+      });
+    });
+
+    it.each([408, 429, 500, 502, 504])(
+      "keeps the stored token on a %i",
+      async (status) => {
+        const app = createTestApp();
+        const sessionCookie = await signIn(app);
+        vi.mocked(fetch).mockResolvedValueOnce(
+          jsonResponse({ error_description: "Try later" }, status),
+        );
+
+        const res = await refresh(app, sessionCookie);
+
+        expect(res.status).toBe(status);
+        expect(res.headers.get("set-cookie") ?? "").not.toContain(
+          "mcpjam_workos_sessions=; Max-Age=0",
+        );
+      },
+    );
+
+    it("still clears the session when WorkOS rejects the token itself", async () => {
+      const app = createTestApp();
+      const sessionCookie = await signIn(app);
+      vi.mocked(fetch).mockResolvedValueOnce(
+        jsonResponse(
+          {
+            error: "invalid_grant",
+            error_description: "Refresh token is invalid",
+          },
+          400,
+        ),
+      );
+
+      const res = await refresh(app, sessionCookie);
+
+      expect(res.status).toBe(400);
+      expect(setCookieFor(res, "mcpjam_workos_sessions")).toContain(
+        "Max-Age=0",
+      );
+    });
   });
 
   // The hosted path. Everything above runs on localhost, where the refresh
@@ -278,7 +406,7 @@ describe("workos authkit local session bridge", () => {
           access_token: "access-token-1",
           refresh_token: "refresh-token-1",
           user: { id: "user_1" },
-        })
+        }),
       );
 
       const res = await app.request(
@@ -292,7 +420,7 @@ describe("workos authkit local session bridge", () => {
             code: "code_123",
             code_verifier: "verifier_123",
           }),
-        }
+        },
       );
 
       expect(res.status).toBe(200);
@@ -321,7 +449,7 @@ describe("workos authkit local session bridge", () => {
           access_token: "access-token-1",
           refresh_token: "refresh-token-1",
           user: { id: "user_1" },
-        })
+        }),
       );
 
       const res = await app.request(
@@ -335,7 +463,7 @@ describe("workos authkit local session bridge", () => {
             code: "code_123",
             code_verifier: "verifier_123",
           }),
-        }
+        },
       );
 
       const hasSessionCookie = setCookieFor(res, "workos-has-session");

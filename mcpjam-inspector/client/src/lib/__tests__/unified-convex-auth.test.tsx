@@ -257,6 +257,32 @@ describe("useUnifiedConvexAuth", () => {
     it("gives up immediately on a dead WorkOS session", async () => {
       // authkit latches to ERROR after this — retrying only re-throws, and a
       // genuine sign-out is not a fault worth reporting.
+      //
+      // Shaped exactly as authkit throws it: `LoginRequiredError` extends
+      // `Error` without ever assigning `name`, so the instance carries
+      // `name: "Error"` and only the message identifies it.
+      const loginRequired = new Error("No access token available");
+      expect(loginRequired.name).toBe("Error");
+      mockState.workos.user = { id: "user-1" };
+      mockState.workos.getAccessToken.mockRejectedValue(loginRequired);
+
+      const result = await mountGuest();
+
+      let token: string | null = "unset";
+      await act(async () => {
+        token = await result.current.getAccessToken();
+      });
+
+      expect(token).toBeNull();
+      expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(1);
+      expect(mockState.reportCaught).not.toHaveBeenCalled();
+      // Retrying cannot help here, so the banner must offer sign-in instead.
+      expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
+    });
+
+    it("gives up immediately when authkit labels the error by name", async () => {
+      // Belt and braces: if a later authkit sets `name`, that must keep
+      // classifying as a dead session even if the message is reworded.
       const loginRequired = new Error("login required");
       loginRequired.name = "LoginRequiredError";
       mockState.workos.user = { id: "user-1" };
@@ -272,7 +298,6 @@ describe("useUnifiedConvexAuth", () => {
       expect(token).toBeNull();
       expect(mockState.workos.getAccessToken).toHaveBeenCalledTimes(1);
       expect(mockState.reportCaught).not.toHaveBeenCalled();
-      // Retrying cannot help here, so the banner must offer sign-in instead.
       expect(useSessionRefreshStore.getState().kind).toBe("signed_out");
     });
 
