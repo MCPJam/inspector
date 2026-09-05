@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import { readAxTree, resolveBackendNodeId } from "../cdp-a11y";
-import type { CdpLike } from "../../daemon/webmcp-bridge";
+import type { A11yNode } from "../observation-budget";
+
+/**
+ * The tree from a read that was expected to SUCCEED.
+ *
+ * The reader answers `{ok}` because "could not read this page" and "this page
+ * has nothing on it" are opposite instructions to a model; most cases here are
+ * about the tree's shape, so they unwrap and let the two failures below assert
+ * the distinction directly.
+ */
+async function treeOf(read: ReturnType<typeof readAxTree>): Promise<A11yNode | null> {
+  const result = await read;
+  if (!result.ok) throw new Error("expected the page to answer a tree");
+  return result.tree;
+}
+import type { CdpLike } from "../webmcp-bridge";
 
 /** A `CdpLike` that answers from a table and records what it was asked. */
 function fakeCdp(replies: Record<string, unknown>) {
@@ -56,7 +71,7 @@ describe("cdp-a11y — the tree says what the page means", () => {
     // the kind of gap nobody notices until an agent confidently clicks a
     // checkbox that was already ticked.
     const { cdp } = fakeCdp({ "Accessibility.getFullAXTree": TREE });
-    const tree = await readAxTree(cdp);
+    const tree = await treeOf(readAxTree(cdp));
 
     const [checkbox, heading, link] = tree?.children ?? [];
     // A BOOLEAN, matching what `ariaSnapshot` gives the Playwright engine.
@@ -80,20 +95,20 @@ describe("cdp-a11y — the tree says what the page means", () => {
         ],
       },
     });
-    expect(await readAxTree(cdp)).toMatchObject({ checked: "mixed" });
+    expect(await treeOf(readAxTree(cdp))).toMatchObject({ checked: "mixed" });
   });
 
   it("keeps a false, because false is an answer", async () => {
     // "not focused" and "not focusable" are different things to a model
     // deciding where to type.
     const { cdp } = fakeCdp({ "Accessibility.getFullAXTree": TREE });
-    const tree = await readAxTree(cdp);
+    const tree = await treeOf(readAxTree(cdp));
     expect(tree?.children?.[0]).toMatchObject({ focused: false });
   });
 
   it("does not leak properties nobody asked for", async () => {
     const { cdp } = fakeCdp({ "Accessibility.getFullAXTree": TREE });
-    const tree = await readAxTree(cdp);
+    const tree = await treeOf(readAxTree(cdp));
     expect(tree?.children?.[0]).not.toHaveProperty("live");
   });
 
@@ -114,7 +129,7 @@ describe("cdp-a11y — the tree says what the page means", () => {
       },
     });
 
-    const tree = await readAxTree(cdp);
+    const tree = await treeOf(readAxTree(cdp));
     // `RootWebArea` is a real role and stays; the `generic` between it and the
     // text is what disappears, so the text becomes the root's own child.
     expect(tree).toMatchObject({
@@ -135,7 +150,7 @@ describe("cdp-a11y — the tree says what the page means", () => {
       },
     });
 
-    expect(await readAxTree(cdp)).toMatchObject({ role: "button", name: "Go" });
+    expect(await treeOf(readAxTree(cdp))).toMatchObject({ role: "button", name: "Go" });
   });
 
   it("does not walk forever on a cyclic tree", async () => {
@@ -148,27 +163,29 @@ describe("cdp-a11y — the tree says what the page means", () => {
       },
     });
 
-    expect(await readAxTree(cdp)).toMatchObject({
+    expect(await treeOf(readAxTree(cdp))).toMatchObject({
       role: "RootWebArea",
       children: [{ role: "list" }],
     });
   });
 
-  it("answers null when there is no tree to be had", async () => {
-    // The driver tells "no tree" from "root selector matched nothing" by
-    // whether it asked for a root, so this must not invent an empty one.
+  it("says it COULD NOT READ, rather than answering an empty page", async () => {
+    // "There is nothing to click here" sends a model elsewhere; "I could not
+    // read this page" sends it back to look again. A reader that collapses
+    // both into an empty tree makes the model confidently wrong about a page
+    // it never read.
     const { cdp } = fakeCdp({ "Accessibility.getFullAXTree": { nodes: [] } });
-    expect(await readAxTree(cdp)).toBeNull();
+    expect(await readAxTree(cdp)).toEqual({ ok: false });
 
     const failing = fakeCdp({
       "Accessibility.getFullAXTree": new Error("target closed"),
     });
-    expect(await readAxTree(failing.cdp)).toBeNull();
+    expect(await readAxTree(failing.cdp)).toEqual({ ok: false });
   });
 
   it("roots the tree at a node when asked", async () => {
     const { cdp } = fakeCdp({ "Accessibility.getFullAXTree": TREE });
-    expect(await readAxTree(cdp, 21)).toMatchObject({ role: "checkbox" });
+    expect(await treeOf(readAxTree(cdp, 21))).toMatchObject({ role: "checkbox" });
   });
 });
 
