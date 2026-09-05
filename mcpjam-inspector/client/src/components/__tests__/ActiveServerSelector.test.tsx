@@ -335,7 +335,7 @@ describe("ActiveServerSelector", () => {
       expect(onServerChange).toHaveBeenCalledWith("server-1");
     });
 
-    it("applies selected styles to selected server", () => {
+    it("gives the panel fill to the selected tab and to nothing else", () => {
       const serverConfigs = {
         "server-1": createServer({ name: "server-1" }),
         "server-2": createServer({ name: "server-2" }),
@@ -349,8 +349,50 @@ describe("ActiveServerSelector", () => {
         />,
       );
 
-      const selectedButton = screen.getByText("server-1").closest("button");
-      expect(selectedButton?.className).toContain("bg-muted");
+      // Only the active tab lifts off the linen chrome. The idle tab and Add
+      // Server stay unfilled — the strip used to be the other way round, with
+      // every tab pale and the selection barely marked.
+      const selected = screen.getByText("server-1").closest("button");
+      expect(selected?.className).toContain("bg-background");
+
+      const idle = screen.getByText("server-2").closest("button");
+      expect(idle?.className).not.toContain("bg-background");
+      expect(idle?.className).toContain("hover:bg-chrome-hover");
+
+      const addServer = screen.getByText("Add Server").closest("button");
+      expect(addServer?.className).not.toContain("bg-background");
+      expect(addServer?.className).toContain("hover:bg-chrome-hover");
+      // Same text weight as the tabs beside it. Muted read as disabled on the
+      // linen ground; the dashed border is what says "not a server".
+      expect(addServer?.className).toContain("text-foreground");
+      expect(addServer?.className).not.toContain("text-muted-foreground");
+    });
+
+    it("keeps a focus indicator on the selected tab, not just the idle ones", () => {
+      // The strip sets `outline-none` on every tab, so without an explicit
+      // ring the selected tab takes keyboard focus with nothing to show for
+      // it — it already carries `bg-background` at rest, so the idle tabs'
+      // `focus-visible:bg-chrome-hover` has nothing to change.
+      const serverConfigs = {
+        "server-1": createServer({ name: "server-1" }),
+        "server-2": createServer({ name: "server-2" }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      for (const name of ["server-1", "server-2"]) {
+        const tab = screen.getByText(name).closest("button");
+        expect(tab?.className).toContain("focus-visible:ring-2");
+        // Inset: the strip scrolls horizontally and would clip an outset ring
+        // on the first and last tab.
+        expect(tab?.className).toContain("focus-visible:ring-inset");
+      }
     });
   });
 

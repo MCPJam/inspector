@@ -76,7 +76,7 @@ import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
-import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
+import { ClientSupportPill } from "@/components/compat/ClientSupportPill";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -912,7 +912,7 @@ export function ServerConnectionCard({
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
-                <HostCompatStrip
+                <ClientSupportPill
                   server={server}
                   onOpenDetails={
                     isDetailModalEnabled
