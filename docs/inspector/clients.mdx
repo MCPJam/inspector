@@ -162,6 +162,16 @@ From the Clients index page:
 - **Duplicate** — Copy a Client when you want a small variant (e.g. `Claude Desktop — strict CSP`) without rebuilding from scratch.
 - **Delete** — Removes the Client. The inspector blocks deletion if any scenario or eval still depends on it; resolve those first, or use force delete if you're sure.
 
+### Keeping clients up to date
+
+When a host preset in the catalog is updated (for example, after a real host ships new capabilities or changes its sandbox policy), the inspector shows a toast notification — **"Client update available"** — for any saved client whose configuration is behind the latest catalog template. The toast includes an **Update to latest** button that applies the newest template in one click and dismisses the notification. A success toast confirms the update.
+
+The check is based on the **saved** client, not unsaved edits in the editor. This means:
+
+- Editing fields in the client editor does not trigger or re-trigger the toast.
+- The toast only appears once per catalog version per client — applying the update (or saving a client that is already current) clears it.
+- If you have unsaved changes to the host style, the toast is suppressed until you save or discard them.
+
 <Tip>
   Keep one Client per host you intend to ship to. Duplicate it to make scoped
   variants for individual debugging sessions instead of editing the original —
