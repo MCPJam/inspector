@@ -40,7 +40,9 @@ export function AgentSidePanelTrigger() {
       <TooltipTrigger asChild>
         <Button
           type="button"
-          variant="ghost"
+          // A chrome control, not a ghost: on the linen ground a fill-less
+          // button had nothing to separate it from the bar.
+          variant="secondary"
           size="sm"
           aria-label="Ask MCPJam"
           aria-pressed={isOpen}
