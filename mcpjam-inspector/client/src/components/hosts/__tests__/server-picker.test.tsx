@@ -19,6 +19,7 @@ const { mockState } = vi.hoisted(() => ({
     catalogLoading: false,
     runtime: null as Record<string, { connectionStatus: string }> | null,
     createSpy: vi.fn(),
+    deleteSpy: vi.fn(),
     ensureReady: vi.fn(),
     navigate: vi.fn(),
   },
@@ -26,7 +27,8 @@ const { mockState } = vi.hoisted(() => ({
 
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
-  useMutation: () => mockState.createSpy,
+  useMutation: (name: string) =>
+    name.includes("delete") ? mockState.deleteSpy : mockState.createSpy,
 }));
 
 vi.mock("@/hooks/useViews", () => ({
@@ -64,6 +66,7 @@ vi.mock("@/lib/app-navigation", () => ({
 
 import { toast } from "@/lib/toast";
 import { ServerPicker } from "../server-picker";
+import { isServerStandIn } from "../server-picker-model";
 
 const CATALOG = [
   { _id: "srv_1", name: "alpha" },
@@ -78,6 +81,7 @@ beforeEach(() => {
   mockState.catalogLoading = false;
   mockState.runtime = { alpha: { connectionStatus: "connected" } };
   mockState.createSpy = vi.fn().mockResolvedValue({ _id: "att_new" });
+  mockState.deleteSpy = vi.fn().mockResolvedValue(undefined);
   mockState.ensureReady = vi.fn().mockResolvedValue({
     readyServerNames: ["alpha"],
     missingServerNames: [],
@@ -343,15 +347,19 @@ describe("ServerPicker — creating a multi-server group", () => {
   });
 
   it("derives the suggested name against the names already taken", async () => {
+    // Deliberately a TWO-server pick. It used to tick one and expect
+    // `alpha 2`, but a one-server group named after its server is what
+    // `isServerStandIn` reads as "not a group", so suggesting that hid the
+    // group the user was making. The collision rule this covers is unchanged.
     mockState.attachments = [
-      { _id: "att_a", name: "alpha", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
+      { _id: "att_a", name: "alpha + 1", serverIds: ["srv_2"], resolvedServerNames: ["beta"] },
     ];
     render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
     await openForm();
     await userEvent.click(screen.getByLabelText("alpha"));
+    await userEvent.click(screen.getByLabelText("beta"));
 
-    // `alpha` is taken by another row, so the rule suffixes it.
-    expect(screen.getByLabelText("Group name")).toHaveValue("alpha 2");
+    expect(screen.getByLabelText("Group name")).toHaveValue("alpha + 1 2");
   });
 
   it("CLOSING the popover mid-draft creates nothing", async () => {
@@ -780,6 +788,96 @@ describe("ServerPicker — a catalog query that never runs", () => {
     open();
 
     expect(await screen.findByText("Loading servers…")).toBeInTheDocument();
+  });
+});
+
+describe("ServerPicker — removing a group", () => {
+  const PAIR = {
+    _id: "att_pair",
+    name: "prod pair",
+    serverIds: ["srv_1", "srv_2"],
+    resolvedServerNames: ["alpha", "beta"],
+  };
+
+  async function openGroups() {
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+  }
+
+  it("removes the row, which nothing in the app could do before", async () => {
+    mockState.attachments = [PAIR];
+    open();
+    await openGroups();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
+    expect(mockState.deleteSpy).toHaveBeenCalledWith({
+      serverAttachmentId: "att_pair",
+    });
+  });
+
+  it("drops the selection when the row it pointed at is gone", async () => {
+    mockState.attachments = [PAIR];
+    const onClearSelection = vi.fn();
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_pair"
+        onChange={vi.fn()}
+        onClearSelection={onClearSelection}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await openGroups();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+
+    await waitFor(() => expect(onClearSelection).toHaveBeenCalled());
+  });
+
+  it("says why the backend refused, rather than looking like nothing happened", async () => {
+    mockState.attachments = [PAIR];
+    mockState.deleteSpy = vi
+      .fn()
+      .mockRejectedValue(new Error("A suite still uses this group"));
+    open();
+    await openGroups();
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    );
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+    expect((toast.error as any).mock.calls[0][0]).toMatch(/suite still uses/i);
+  });
+});
+
+describe("ServerPicker — a group of exactly one server", () => {
+  it("does not suggest a name that would hide the group being made", async () => {
+    // The form pre-fills the name, and for one pick the shared deriver returns
+    // the server's own name — which is precisely the shape `isServerStandIn`
+    // reads as "not a group", so the row would be filtered off the Groups tab
+    // the moment it was created.
+    open();
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    await userEvent.click(
+      await screen.findByRole("button", { name: /new group/i }),
+    );
+    await userEvent.click(await screen.findByRole("checkbox", { name: "alpha" }));
+    fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
+
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalled());
+    const written = mockState.createSpy.mock.calls[0][0];
+    expect(written.serverIds).toEqual(["srv_1"]);
+    expect(isServerStandIn({ ...written, resolvedServerNames: ["alpha"] })).toBe(
+      false,
+    );
   });
 });
 

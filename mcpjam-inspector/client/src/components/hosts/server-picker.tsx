@@ -113,6 +113,9 @@ export function ServerPicker({
   const createServerAttachment = useMutation(
     "serverAttachments:createServerAttachment" as any,
   );
+  const deleteServerAttachment = useMutation(
+    "serverAttachments:deleteServerAttachment" as any,
+  );
 
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -376,15 +379,50 @@ export function ServerPicker({
     [catalog, createServerAttachment, onChange, projectId],
   );
 
-  // Bound to the names already taken in this project — the panel supplies the
-  // picked servers, this supplies the rule.
+  /**
+   * Bound to the names already taken in this project — the panel supplies the
+   * picked servers, this supplies the rule.
+   *
+   * For ONE server the shared deriver returns that server's own name, which is
+   * exactly what `isServerStandIn` reads as "not a group": suggesting it here
+   * would hide the group off the Groups tab the moment it was created. The
+   * bare-server mint still wants that name, and calls the deriver directly.
+   */
   const deriveName = useCallback(
-    (pickedServerNames: string[]) =>
-      deriveServerGroupName(
-        pickedServerNames,
-        attachments.map((a) => a.name ?? ""),
-      ),
+    (pickedServerNames: string[]) => {
+      const taken = attachments.map((a) => a.name ?? "");
+      const derived = deriveServerGroupName(pickedServerNames, taken);
+      if (pickedServerNames.length !== 1) return derived;
+      return deriveServerGroupName([], taken);
+    },
     [attachments],
+  );
+
+  /**
+   * Remove a group. The picker this replaced owned the only call to this
+   * mutation in the app; without it a project accumulates rows — including
+   * the stand-ins every bare-server pick mints — that nothing can clear.
+   *
+   * The backend refuses a group a suite still uses and says which; that
+   * message is worth more than anything phrased here, so it is passed through.
+   */
+  const handleDeleteGroup = useCallback(
+    async (groupId: string) => {
+      if (writing.current) return;
+      writing.current = true;
+      setCreating(true);
+      try {
+        await deleteServerAttachment({ serverAttachmentId: groupId });
+        if (value === groupId) onClearSelection?.();
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : "";
+        toast.error(raw || "Couldn't delete that server group.");
+      } finally {
+        writing.current = false;
+        setCreating(false);
+      }
+    },
+    [deleteServerAttachment, onClearSelection, value],
   );
 
   const handleSelectGroup = useCallback(
@@ -474,6 +512,9 @@ export function ServerPicker({
           deriveName={deriveName}
           catalogKnown={catalogKnown}
           busy={creating || disabled}
+          onDeleteGroup={
+            disabled ? undefined : (id) => void handleDeleteGroup(id)
+          }
         />
       </PopoverContent>
     </Popover>

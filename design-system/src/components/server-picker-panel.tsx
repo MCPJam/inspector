@@ -9,7 +9,7 @@
  * so it imports nothing from the app and needs no Convex mock to test.
  */
 import { useEffect, useId, useMemo, useState } from "react";
-import { Loader2, Plus } from "lucide-react";
+import { Loader2, Plus, Trash2 } from "lucide-react";
 import { Badge } from "./badge";
 import { Button } from "./button";
 import { Checkbox } from "./checkbox";
@@ -78,6 +78,12 @@ export type ServerPickerPanelProps = {
    */
   busy?: boolean;
   /**
+   * Remove a group. Only callers that can perform the write pass it, and only
+   * they get the control — the panel cannot tell a removable row from one the
+   * backend will refuse.
+   */
+  onDeleteGroup?: (groupId: string) => void;
+  /**
    * Chips shown before the rest collapse into `+N`.
    *
    * A COUNT, while the design's own overflow looks driven by the width of the
@@ -134,6 +140,7 @@ export function ServerPickerPanel({
   deriveName,
   catalogKnown = true,
   busy = false,
+  onDeleteGroup,
   chipLimit = 3,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
@@ -339,7 +346,7 @@ export function ServerPickerPanel({
           return (
             <div
               key={group.id}
-              className="flex items-center gap-1 rounded pr-1 hover:bg-accent"
+              className="group flex items-center gap-1 rounded pr-1 hover:bg-accent"
             >
               <button
                 type="button"
@@ -364,6 +371,17 @@ export function ServerPickerPanel({
                 </span>
               </button>
               {selected ? <SelectionDot /> : null}
+              {onDeleteGroup ? (
+                <button
+                  type="button"
+                  aria-label={`Delete ${group.name}`}
+                  disabled={busy}
+                  onClick={() => onDeleteGroup(group.id)}
+                  className="flex size-6 shrink-0 items-center justify-center rounded text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              ) : null}
             </div>
           );
         })}

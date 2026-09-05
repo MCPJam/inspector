@@ -413,6 +413,40 @@ describe("ServerPickerPanel — creating a group", () => {
   });
 });
 
+describe("ServerPickerPanel — removing a group", () => {
+  it("offers no delete where the caller cannot perform one", () => {
+    render(<ServerPickerPanel {...panelProps({ tab: "groups" })} />);
+    expect(screen.queryByRole("button", { name: /^Delete Group 1$/ })).toBeNull();
+  });
+
+  it("reports the group to delete, and does not select it on the way", async () => {
+    const onDeleteGroup = vi.fn();
+    const onSelectGroup = vi.fn();
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onDeleteGroup, onSelectGroup })}
+      />,
+    );
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Delete Group 1" }),
+    );
+    expect(onDeleteGroup).toHaveBeenCalledWith("g_1");
+    // The delete sits inside the row; a click that also picked the group would
+    // select the thing being removed.
+    expect(onSelectGroup).not.toHaveBeenCalled();
+  });
+
+  it("withholds delete while a write is in flight", () => {
+    render(
+      <ServerPickerPanel
+        {...panelProps({ tab: "groups", onDeleteGroup: vi.fn(), busy: true })}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Delete Group 1" })).toBeDisabled();
+  });
+});
+
 describe("ServerPickerPanel — a draft the catalog moved under", () => {
   it("submits only ids it still renders", async () => {
     // Nothing closes the form when `servers` changes, so a draft can outlive
