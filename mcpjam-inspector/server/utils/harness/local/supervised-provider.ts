@@ -45,7 +45,15 @@ import {
   stat,
   symlink,
 } from "node:fs/promises";
-import { basename, dirname, join, posix, resolve, sep } from "node:path";
+import {
+  basename,
+  dirname,
+  isAbsolute,
+  join,
+  posix,
+  resolve,
+  sep,
+} from "node:path";
 import type {
   HarnessV1NetworkSandboxSession,
   HarnessV1SandboxProvider,
@@ -58,6 +66,7 @@ import {
   localBridgeUrl,
 } from "./bridge-endpoint.js";
 import { confinePath } from "./confine.js";
+import { fromAdapterPath, toAdapterPath } from "./adapter-path.js";
 import {
   classifyBootstrapPath,
   translateAdapterCommand,
@@ -111,6 +120,8 @@ export interface SupervisedLocalHarnessProviderOptions {
   onBridgeStarted?: (args: { pid: number; port: number }) => Promise<void>;
   /** Maximum bytes one file API operation may read or write. */
   maxFileBytes?: number;
+  /** Test seam. Production is always the host platform. */
+  platform?: NodeJS.Platform;
 }
 
 /** The `SandboxProcess` shape, synthesized for translations that need no
@@ -348,6 +359,117 @@ async function writeBytesAtomically(
   }
 }
 
+/**
+ * Windows: the Git Bash the vendor CLI's shell tool runs through.
+ *
+ * The child's PATH is System32 only, on purpose, so the CLI cannot find a
+ * shell by searching it. This names one explicitly — the parent's own
+ * `CLAUDE_CODE_GIT_BASH_PATH` if set, else the default Git for Windows
+ * install — and only when that file actually exists. Nothing is guessed into
+ * the child: absent, the CLI reports the missing shell itself.
+ */
+async function resolveGitBashPath(
+  platform: NodeJS.Platform,
+): Promise<string | undefined> {
+  if (platform !== "win32") return undefined;
+  const configured = process.env.CLAUDE_CODE_GIT_BASH_PATH;
+  const candidates = [
+    ...(configured && isAbsolute(configured) ? [configured] : []),
+    join(
+      process.env.ProgramFiles ?? "C:\\Program Files",
+      "Git",
+      "bin",
+      "bash.exe",
+    ),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if ((await stat(candidate)).isFile()) return candidate;
+    } catch {
+      /* not there; next */
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Up to `maxBytes` from the front of a stream, giving up after `budgetMs`.
+ *
+ * For a process that has already been stopped: its streams hold whatever it
+ * said before it died and close behind it, so this drains quickly. The
+ * budget is for the other case, where nothing is coming.
+ */
+async function readHead(
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+  budgetMs: number,
+): Promise<string> {
+  const decoder = new TextDecoder();
+  let head = "";
+  const deadline = Date.now() + budgetMs;
+  const reader = stream.getReader();
+  try {
+    while (head.length < maxBytes) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) break;
+      const next = await Promise.race([
+        reader.read(),
+        new Promise<{ done: true; value?: undefined }>((resolveRace) =>
+          setTimeout(() => resolveRace({ done: true }), remaining),
+        ),
+      ]);
+      if (next.done || next.value === undefined) break;
+      head += decoder.decode(next.value, { stream: true });
+    }
+  } catch {
+    /* nothing more to say */
+  } finally {
+    reader.releaseLock();
+  }
+  return head.slice(0, maxBytes);
+}
+
+/**
+ * What a bridge that never came up has to say for itself.
+ *
+ * Called AFTER the session was stopped, so the process is dead and its
+ * streams are closed: `wait()` resolves at once and the heads drain. A
+ * readiness timeout with no diagnosis was every early Windows failure — a
+ * bridge that crashed on import and one that hung before binding looked
+ * identical from the outside, thirty seconds apart from nothing.
+ */
+async function describeFailedBridge(
+  handle: {
+    stdout: ReadableStream<Uint8Array>;
+    stderr: ReadableStream<Uint8Array>;
+    stderrHead?: () => string;
+    stdoutHead?: () => string;
+  },
+  /** The exit recorded BEFORE the session was stopped, or null if it was
+   *  still running then. A stop on Windows is `TerminateProcess`, which
+   *  reports exit code 1 — indistinguishable from the process's own, so it
+   *  is not read afterwards. */
+  exitBeforeStop: { exitCode: number } | null,
+): Promise<string> {
+  const exit =
+    exitBeforeStop !== null
+      ? `exited on its own with code ${exitBeforeStop.exitCode}`
+      : "was still running when the session was stopped";
+  // The supervisor's own copies first: the adapter holds the streams' reader
+  // locks from the moment it is handed the process, so a read here finds
+  // nothing even when the bridge died with a full stack trace on stderr.
+  const keptErr = handle.stderrHead?.() ?? "";
+  const keptOut = handle.stdoutHead?.() ?? "";
+  const [out, err] = await Promise.all([
+    keptOut.length > 0 ? Promise.resolve(keptOut) : readHead(handle.stdout, 1024, 500),
+    keptErr.length > 0 ? Promise.resolve(keptErr) : readHead(handle.stderr, 2048, 500),
+  ]);
+  const parts = [exit];
+  if (err.trim().length > 0) parts.push(`stderr: ${JSON.stringify(err.trim())}`);
+  if (out.trim().length > 0) parts.push(`stdout: ${JSON.stringify(out.trim())}`);
+  return parts.join("; ");
+}
+
 /** Text view of a byte stream — for process output, never for file content. */
 async function collectStream(
   stream: ReadableStream<Uint8Array>,
@@ -395,6 +517,32 @@ export function createSupervisedLocalHarnessProvider(
   // the two roots the file API allows.
   const workRoot = join(opts.sessionStateDir, "work");
   const WORKSPACE_LINK_NAME = "project";
+  const platform = opts.platform ?? process.platform;
+  // What the ADAPTER is told the roots are. On POSIX these are the native
+  // paths; on Windows they are the MSYS spelling (`/c/Users/…`) the framework's
+  // unconditional POSIX composition can work on, and `confine` maps every
+  // operand back to native before anything touches the disk. The child's own
+  // environment (`HOME`, `PWD`, cwd) stays native: the OS reads that, not the
+  // adapter. See `adapter-path.ts`.
+  const adapterWorkRoot = toAdapterPath(workRoot, platform);
+  const adapterHome = toAdapterPath(syntheticHome, platform);
+
+  /**
+   * Point `<work>/project` at the granted workspace.
+   *
+   * A symlink on POSIX. On Windows a JUNCTION: creating a real symlink there
+   * needs Developer Mode or elevation, which a user running an npx server
+   * does not have, while a junction is an ordinary user's operation — and
+   * `lstat().isSymbolicLink()`, `readlink` and `realpath` all treat it as the
+   * link it is, so confinement is unchanged.
+   */
+  const linkWorkspace = async (link: string): Promise<void> => {
+    await symlink(
+      opts.workspacePath,
+      link,
+      platform === "win32" ? "junction" : undefined,
+    );
+  };
 
   const buildSession = async (
     sessionId: string,
@@ -403,7 +551,7 @@ export function createSupervisedLocalHarnessProvider(
     // Session state first: the synthetic home must exist before a vendor CLI's
     // first write, and it must be owner-only from the moment it exists rather
     // than tightened afterwards.
-    for (const dir of syntheticHomeDirectories(syntheticHome)) {
+    for (const dir of syntheticHomeDirectories(syntheticHome, platform)) {
       await mkdir(dir, { recursive: true, mode: 0o700 });
     }
     await mkdir(bootstrapOverlay, { recursive: true, mode: 0o700 });
@@ -436,16 +584,23 @@ export function createSupervisedLocalHarnessProvider(
           throw error;
         },
       );
-      if (current !== opts.workspacePath || resolved !== opts.workspacePath) {
+      // On Windows the link is a junction, and `readlink` reports its target
+      // in whatever spelling the reparse point holds (a `\??\` prefix, a
+      // trailing separator, the case it was created with). Only the resolved
+      // path is a reliable comparison there; the text check stays on POSIX,
+      // where it catches a link whose target was itself replaced by a link.
+      const textAgrees =
+        platform === "win32" ? true : current === opts.workspacePath;
+      if (!textAgrees || resolved !== opts.workspacePath) {
         logger.warn("[local-harness] repointing a stale workspace link", {
           sessionStateDir: opts.sessionStateDir,
         });
         await rm(workspaceLink, { force: true });
-        await symlink(opts.workspacePath, workspaceLink);
+        await linkWorkspace(workspaceLink);
       }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      await symlink(opts.workspacePath, workspaceLink);
+      await linkWorkspace(workspaceLink);
     }
 
     // The two roots the Inspector file API will touch, and nothing else.
@@ -457,13 +612,22 @@ export function createSupervisedLocalHarnessProvider(
     // is realpath'd when its grant is issued; the state directory is resolved
     // here, after the directories above exist.
     const roots = [await realpath(opts.sessionStateDir), opts.workspacePath];
-    const confine = (path: string) => confinePath(path, { roots });
+    // The ONE place an adapter-facing path becomes a native one. Everything
+    // the translator confines — every operand, the bridge's own argv, the
+    // file API's paths — comes through here, so the mapping cannot be
+    // forgotten at a call site. A path that is not in the adapter's shape
+    // passes through unchanged and is judged by `confinePath` as before.
+    const confine = (path: string) =>
+      confinePath(fromAdapterPath(path, platform), { roots });
 
+    const gitBashPath = await resolveGitBashPath(platform);
     const env = {
       ...buildLocalHarnessEnv({
         syntheticHome,
         sessionRoot: opts.workspacePath,
+        platform,
         ...(opts.scopedEnv ? { scoped: opts.scopedEnv } : {}),
+        ...(gitBashPath !== undefined ? { gitBashPath } : {}),
       }),
       ...opts.launcher.requiredEnv,
     };
@@ -474,7 +638,7 @@ export function createSupervisedLocalHarnessProvider(
       // default working directory — so the translator matches the string the
       // adapters will actually emit.
       adapterBootstrapDir: posix.resolve(
-        workRoot,
+        adapterWorkRoot,
         opts.manifest.adapterBootstrapDir,
       ),
       managedBundleRoot: opts.runtime.rootPath,
@@ -484,9 +648,10 @@ export function createSupervisedLocalHarnessProvider(
       // Launch the pack's loopback wrapper rather than the remapped
       // `bridge.mjs`, which stays byte-identical so the recipe compare holds.
       bridgeLauncherPath: opts.runtime.launcherPath,
-      // The framework's default working directory (and the bridge's cwd).
-      sessionRoot: workRoot,
-      syntheticHome,
+      // The framework's default working directory (and the bridge's cwd), in
+      // the shape the adapter composes with. `confine` turns it native.
+      sessionRoot: adapterWorkRoot,
+      syntheticHome: adapterHome,
       // The same symlink-aware check the file API uses. The translator awaits
       // it for every session-scoped operand, including the bridge's own
       // `--workdir` and `--bridge-state-dir`, which nothing downstream would
@@ -670,6 +835,9 @@ export function createSupervisedLocalHarnessProvider(
             workspaceGrantId: opts.workspaceGrantId,
             targetKind: opts.targetKind,
             sessionStateDir: opts.sessionStateDir,
+            ...(opts.runtime.jobLauncherPath !== undefined
+              ? { jobLauncherPath: opts.runtime.jobLauncherPath }
+              : {}),
             role: "helper",
             ...(abort ? { abortSignal: abort } : {}),
           });
@@ -694,7 +862,7 @@ export function createSupervisedLocalHarnessProvider(
       // session's artefacts stay identifiable inside the user's own checkout.
       // Staged materialization with diff-based apply-back is a separate step
       // and is not pretended here.
-      defaultWorkingDirectory: workRoot,
+      defaultWorkingDirectory: adapterWorkRoot,
       description:
         `Supervised local ${opts.harnessId} process on this machine. ` +
         `Working directory ${opts.workspacePath}. Bridge on loopback port ` +
@@ -843,6 +1011,9 @@ export function createSupervisedLocalHarnessProvider(
             workspaceGrantId: opts.workspaceGrantId,
             targetKind: opts.targetKind,
             sessionStateDir: opts.sessionStateDir,
+            ...(opts.runtime.jobLauncherPath !== undefined
+              ? { jobLauncherPath: opts.runtime.jobLauncherPath }
+              : {}),
             // The first spawned process is the session's root: killing it must
             // take the whole tree, and it is the record the janitor reclaims.
             role: isBridge ? "root" : "helper",
@@ -887,7 +1058,19 @@ export function createSupervisedLocalHarnessProvider(
             // caller has no handle to it, so nothing else would stop it. And
             // release the claim, so a retry is checked as a bridge again.
             releaseBridgeClaim();
+            // Whether it was alive is only knowable BEFORE the stop.
+            const exitBeforeStop = handle.exited?.() ?? null;
             await opts.supervisor.stopSession(sessionId).catch(() => {});
+            // Then, with the process dead and its streams closed, say what it
+            // said. The message is amended in place so the error's TYPE — what
+            // callers and tests distinguish on — survives.
+            if (error instanceof Error) {
+              const said = await describeFailedBridge(
+                handle,
+                exitBeforeStop,
+              ).catch(() => "no diagnosis could be read");
+              error.message = `${error.message} (bridge: ${said})`;
+            }
             throw error;
           }
         }
