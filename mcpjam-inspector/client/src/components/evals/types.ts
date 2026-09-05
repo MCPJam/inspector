@@ -409,6 +409,8 @@ export type EvalCase = {
   isNegativeTest?: boolean; // When true, test passes if NO tools are called
   scenario?: string; // Description of why app should NOT trigger (negative tests only)
   expectedOutput?: string; // The output or experience expected from the MCP server
+  /** Authored case kind; absent means the editor derives it from matchOptions. */
+  kind?: "capability" | "regression";
   /**
    * Unified authored test steps — the source of truth for execution and the
    * "is this a render check?" detection (`isModelFree(steps)`). Replaces the
