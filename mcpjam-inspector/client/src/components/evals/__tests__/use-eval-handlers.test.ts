@@ -2169,6 +2169,37 @@ describe("useEvalHandlers", () => {
       });
     });
   });
+
+  describe("handleCreateTestCase", () => {
+    it("opens a draft case on /evals by default", () => {
+      const { result } = renderHook(() => useEvalHandlers(defaultProps));
+
+      act(() => {
+        result.current.handleCreateTestCase("suite-1");
+      });
+
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/evals/suite/suite-1/test/draft%3Aprompt/edit",
+      );
+    });
+
+    it("stays on /evaluate when the Evaluate (New) tab owns navigation", () => {
+      const { result } = renderHook(() =>
+        useEvalHandlers({
+          ...defaultProps,
+          evalsNavigationContext: "evaluate",
+        }),
+      );
+
+      act(() => {
+        result.current.handleCreateTestCase("suite-1");
+      });
+
+      expect(mockNavigateApp).toHaveBeenCalledWith(
+        "/evaluate/suite/suite-1/test/draft%3Aprompt/edit",
+      );
+    });
+  });
 });
 
 describe("formatEnsureServersReadyError", () => {
