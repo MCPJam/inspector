@@ -998,19 +998,11 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     return () => clearTimeout(id);
   }, [wantsFirstRunSkeleton]);
 
-  const shouldMarkFirstRunNuxShown =
-    firstRunComposerSeed &&
-    onboarding.isGuidedPostConnect &&
-    !isResolvingRemoteCompletion &&
-    !isBootstrappingFirstRunConnection &&
-    !isWaitingForServerSync &&
-    !!serverConfig;
-
-  useEffect(() => {
-    if (shouldMarkFirstRunNuxShown) {
-      onboarding.markOnboardingShown();
-    }
-  }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
+  // The NUX is marked as seen once the user sends their first message (see
+  // PlaygroundCenter's `onFirstMessageSent`), not when it paints. Marking on
+  // paint wrote `status: "seen"` immediately, and `getInitialLocalPhase` reads
+  // that back as "dismissed" — so a reload before the first message retired the
+  // guided run for good (BB-112).
 
   const loadingState: PlaygroundLoadingState =
     wantsFirstRunSkeleton && !firstRunSkeletonTimedOut

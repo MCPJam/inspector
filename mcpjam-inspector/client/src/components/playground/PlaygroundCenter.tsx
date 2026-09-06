@@ -47,6 +47,7 @@ export function PlaygroundCenter({
   onEvalChatHandoffConsumed,
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
+  const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
 
   if (state.loadingState.kind === "skeleton") {
     return (
@@ -98,10 +99,14 @@ export function PlaygroundCenter({
         blockSubmitUntilServerConnected={state.firstRunComposerSeed}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
-        showPostConnectGuide={state.onboarding.isGuidedPostConnect}
+        showPostConnectGuide={false}
+        showPostConnectGuideCopy={isGuidedPostConnect}
         onFirstMessageSent={
-          state.onboarding.isGuidedPostConnect
+          isGuidedPostConnect
             ? () => {
+                // Marking the NUX as seen here rather than on first paint is
+                // what keeps it visible across a reload (BB-112).
+                state.onboarding.markOnboardingShown();
                 state.onboarding.completeOnboarding();
               }
             : undefined

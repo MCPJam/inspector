@@ -1156,6 +1156,19 @@ describe("PlaygroundMain", () => {
       ).toBeInTheDocument();
     });
 
+    it("keeps the logo and swaps the heading for the guide copy during the guided first run", () => {
+      render(
+        <PlaygroundMain {...defaultProps} showPostConnectGuideCopy={true} />
+      );
+
+      expect(screen.getByRole("img", { name: /MCPJam/i })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", {
+          name: /Try asking Excalidraw to draw something./i,
+        })
+      ).toBeInTheDocument();
+    });
+
     it("shows sign up prompt when authentication required", () => {
       mockUseChatSession.disableForAuthentication = true;
       mockUseChatSession.isAuthLoading = false;
