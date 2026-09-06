@@ -142,29 +142,6 @@ export function RunVerdictHero({
           </p>
         ) : null}
 
-        {view.sentence.kind === "brokeAt" &&
-        (view.sentence.expected.length > 0 ||
-          view.sentence.observed.length > 0) ? (
-          <dl className="mt-2.5 flex flex-wrap gap-x-6 gap-y-1 text-[12.5px]">
-            {view.sentence.expected.length > 0 ? (
-              <div className="flex gap-1.5">
-                <dt className="text-muted-foreground">Expected</dt>
-                <dd className="font-mono text-foreground">
-                  {view.sentence.expected.join(", ")}
-                </dd>
-              </div>
-            ) : null}
-            {view.sentence.observed.length > 0 ? (
-              <div className="flex gap-1.5">
-                <dt className="text-muted-foreground">Observed</dt>
-                <dd className="font-mono text-foreground">
-                  {view.sentence.observed.join(", ")}
-                </dd>
-              </div>
-            ) : null}
-          </dl>
-        ) : null}
-
         {actions || canOpenTrace ? (
           <div className="mt-4 flex flex-wrap items-center gap-2">
             {actions}

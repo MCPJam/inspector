@@ -148,6 +148,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     sessionsFixture = [];
     runFixture.status = "running";
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
+    runFixture.hostSummaries![0].targetId = "environment:env-1";
+    runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
     persistedState.trace = null;
     persistedState.loading = false;
     persistedState.error = null;
@@ -156,6 +158,12 @@ describe("NewSwarmRunningStep — session stream pane", () => {
   });
 
   it("shows an empty stream pane until a session is clicked", async () => {
+    runFixture.hostSummaries![0].targetId = "opaque-target";
+    runFixture.snapshot!.hosts[0].targetId = "opaque-target";
+    streamState.cellStatus = {
+      "opaque-target:0": "running",
+      "opaque-target:1": "pending",
+    };
     render(
       <div className="h-[40rem]">
         <NewSwarmRunningStep
@@ -181,18 +189,30 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               revision: 1,
             },
           ]}
+          hosts={[
+            {
+              hostId: "host-1",
+              name: "MCPJam",
+              displayName: "MCPJam #2",
+              hostConfigId: "config-1",
+              modelId: "model-1",
+              serverCount: 0,
+              createdAt: 1,
+              updatedAt: 1,
+            },
+          ]}
           onLeave={vi.fn()}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     await screen.findByTestId("new-swarm-running-step");
     expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
-      "Swarm running 0 of 2 sessions"
+      "Swarm running 0 of 2 sessions",
     );
     expect(
-      screen.getByTestId("new-swarm-running-open-findings")
+      screen.getByTestId("new-swarm-running-open-findings"),
     ).toHaveTextContent("Open findings");
     expect(
       screen.queryByTestId("new-swarm-running-done"),
@@ -202,15 +222,17 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-progress")).toHaveAttribute(
       "aria-valuenow",
-      "0"
+      "0",
     );
     expect(screen.getByText("0%")).toBeInTheDocument();
     expect(
-      screen.queryByText(/select multiple environments/i)
+      screen.queryByText(/select multiple environments/i),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-live-pane-empty")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-running-hero")).toBeInTheDocument();
+    const derivedLabel = await screen.findByText("MCPJam #2");
+    expect(derivedLabel.closest("th")?.querySelector("img")).not.toBeNull();
     expect(
       screen.getByTestId("swarm-running-hero").querySelectorAll("img"),
     ).toHaveLength(3);
@@ -248,7 +270,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={vi.fn()}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     const chips = await screen.findAllByTestId("new-swarm-running-session");
@@ -366,7 +388,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={onLeave}
           onOpenSession={onOpenSession}
         />
-      </div>
+      </div>,
     );
 
     const finding = await screen.findByTestId("new-swarm-running-finding");
@@ -379,8 +401,8 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     ).toBeTruthy();
     expect(
       finding.compareDocumentPosition(
-        screen.getAllByTestId("new-swarm-running-session")[0]!
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
+        screen.getAllByTestId("new-swarm-running-session")[0]!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
@@ -430,7 +452,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={onLeave}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     await screen.findByTestId("new-swarm-running-done");
@@ -451,7 +473,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 0,
         total: 30,
-      })
+      }),
     ).toBe("Swarm running 0 of 30 sessions");
     expect(
       swarmRunningTitle({
@@ -460,7 +482,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 30,
         total: 30,
-      })
+      }),
     ).toBe("Swarm finished 30 of 30 sessions");
     expect(
       swarmRunningTitle({
@@ -469,34 +491,34 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 15,
         total: 15,
-      })
+      }),
     ).toBe("Swarm failed 0 of 15 sessions");
   });
 
   it("leads each cell with the goal, not a score chip", () => {
     expect(swarmRunGoalLabel({ label: "Ada · Refund a charge" })).toBe(
-      "Refund a charge"
+      "Refund a charge",
     );
     expect(
       swarmCellHeadline({
         outcome: "running",
         primary: "running",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Running: Refund a charge");
     expect(
       swarmCellHeadline({
         outcome: "succeeded",
         primary: "3/3 pass",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Run completed: All checks passed");
     expect(
       swarmCellHeadline({
         outcome: "rate_limited",
         primary: "2/3 pass",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Run completed: Goal completion had mixed results");
   });
 });

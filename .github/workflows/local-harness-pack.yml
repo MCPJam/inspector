@@ -129,9 +129,22 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt" \
             -o "$RUNNER_TEMP/SHASUMS256.txt"
           expected="$(grep " ${archive}\$" "$RUNNER_TEMP/SHASUMS256.txt" | cut -d' ' -f1)"
-          actual="$(sha256sum "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
+          # Hashed from STDIN rather than by filename. GNU coreutils escapes a
+          # filename containing a backslash, and signals that it escaped one
+          # with a leading `\` on the line — so on Windows, where RUNNER_TEMP
+          # is `D:\a\_temp`, this read back as `\6cac9ff…` and could never
+          # equal the SHASUMS256.txt hash however correct the download was.
+          # Redirecting makes the name `-`, which has nothing to escape.
+          actual="$(sha256sum < "$RUNNER_TEMP/node-runtime.${ext}" | cut -d' ' -f1)"
           if [ -z "$expected" ] || [ "$expected" != "$actual" ]; then
+            # Both values, because the message alone cannot tell an empty
+            # lookup (the SHASUMS line did not match) from a genuine byte
+            # mismatch, and the two have nothing in common as bugs. The
+            # win32-x64 leg failed here on the 2026-09-02 release with no way
+            # to say which it was.
             echo "nodejs.org archive checksum mismatch for ${archive}" >&2
+            echo "  expected: ${expected:-<no SHASUMS256.txt line matched>}" >&2
+            echo "  actual:   ${actual:-<sha256sum produced nothing>}" >&2
             exit 1
           fi
           echo "NODE_ARCHIVE=$RUNNER_TEMP/node-runtime.${ext}" >> "$GITHUB_ENV"
@@ -148,7 +161,13 @@ jobs:
         # is a workflow whose Windows leg breaks on a change nobody tested on
         # Windows. Git Bash ships on the windows runner image.
         shell: bash
-        run: go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
+        # `-buildvcs=false`: by default `go build` stamps the checkout's
+        # vcs.revision into the binary, and the binary is inside the pack's
+        # tree digest — so the digest changed on every commit to main, and the
+        # committed table was one SHA stale by construction (that is why the
+        # 3.3.6 table was unshipped). The Go toolchain is still the runner
+        # image's; a bump there changes the binary too, and the table with it.
+        run: go build -trimpath -buildvcs=false -ldflags="-s -w" -o "$RUNNER_TEMP/mcpjam-job-launcher.exe" .
 
       # A release that publishes unsigned packs publishes packs no Inspector
       # will install: `verifyPackManifestSignature` refuses a network-sourced

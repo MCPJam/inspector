@@ -25,12 +25,23 @@ export type LeaseState =
   /** Nobody holds it; commands run normally. */
   | { state: "free" }
   /** A person holds it, until `expiresAt`. */
-  | { state: "held"; holder: string; expiresAt: number }
+  | { state: "held"; holder: string; holderKind: LeaseHolderKind; expiresAt: number }
   /**
    * A held lease ran out of time. Commands stay blocked: the person may still
    * be mid-flow, and only an explicit resume can know otherwise.
    */
-  | { state: "parked"; holder: string };
+  | { state: "parked"; holder: string; holderKind: LeaseHolderKind };
+
+/**
+ * WHAT is holding the browser, which the resume note names.
+ *
+ * `human` is someone driving the pane. `script` is a program the user attached
+ * over the CDP endpoint — it blocks the agent exactly as a person does (the
+ * point is that two drivers never share one page), but the model should be
+ * told which, because "a script logged in and left" and "a person logged in
+ * and left" lead to different next moves.
+ */
+export type LeaseHolderKind = "human" | "script";
 
 export interface LeaseOptions {
   /** Injectable clock, so expiry is testable without waiting. */
@@ -60,6 +71,10 @@ export class HandoffLease {
    * window and leave the earliest (most sensitive) entries readable.
    */
   private heldSince: number | undefined;
+  /** The kind of the current (or just-ended) hold; see `LeaseHolderKind`. */
+  private holderKind: LeaseHolderKind = "human";
+  /** The kind of the hold the pending resume note describes. */
+  private resumedHolderKind: LeaseHolderKind | undefined;
   /**
    * Start of the EARLIEST hold that has ended without its console being purged
    * yet, consumed alongside the flag.
@@ -90,7 +105,11 @@ export class HandoffLease {
   state(): LeaseState {
     if (this.current.state === "held" && this.now() >= this.current.expiresAt) {
       // PARK, never free: see the module docstring.
-      this.current = { state: "parked", holder: this.current.holder };
+      this.current = {
+        state: "parked",
+        holder: this.current.holder,
+        holderKind: this.current.holderKind,
+      };
     }
     return this.current;
   }
@@ -100,7 +119,11 @@ export class HandoffLease {
     return this.state().state !== "free";
   }
 
-  acquire(holder: string, ttlMs?: number): LeaseState {
+  acquire(
+    holder: string,
+    ttlMs?: number,
+    kind: LeaseHolderKind = "human",
+  ): LeaseState {
     const state = this.state();
     if (state.state !== "free" && state.holder !== holder) {
       // Someone else is in the middle of something private. Handing the
@@ -112,10 +135,14 @@ export class HandoffLease {
       this.maxTtlMs,
     );
     // Only a hold that starts from `free` opens a new window.
-    if (state.state === "free") this.heldSince = this.now();
+    if (state.state === "free") {
+      this.heldSince = this.now();
+      this.holderKind = kind;
+    }
     this.current = {
       state: "held",
       holder,
+      holderKind: this.holderKind,
       expiresAt: this.now() + ttl,
     };
     return this.current;
@@ -125,7 +152,9 @@ export class HandoffLease {
   heartbeat(holder: string, ttlMs?: number): LeaseState {
     const state = this.state();
     if (state.state !== "held" || state.holder !== holder) return state;
-    return this.acquire(holder, ttlMs);
+    // The kind rides the existing hold: a heartbeat re-acquires, and passing
+    // the default would silently relabel a script's lease as a person's.
+    return this.acquire(holder, ttlMs, state.holderKind);
   }
 
   /**
@@ -144,6 +173,7 @@ export class HandoffLease {
     // in the ring waiting to be dropped. See `resumedHeldSince`.
     if (this.resumedHeldSince === undefined) {
       this.resumedHeldSince = this.heldSince;
+      this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = undefined;
     return this.current;
@@ -180,7 +210,56 @@ export class HandoffLease {
     this.resumedHeldSince = undefined;
     return since;
   }
+
+  /**
+   * What held the browser across the handoff the next observation describes.
+   * Read (not consumed) alongside `consumeResumedDirty`, which owns the
+   * once-only semantics — two independent consume flags would let the note and
+   * its subject come apart.
+   */
+  resumedFromKind(): LeaseHolderKind {
+    return this.resumedHolderKind ?? this.holderKind;
+  }
 }
+
+/**
+ * Why the lease refuses a command, or undefined when it does not.
+ *
+ * Asked TWICE on two different sides of the queue — by the request handler
+ * before a command is admitted, and by `guardLease` when the command reaches
+ * the front of its tab's FIFO — because a command admitted a moment before
+ * someone took the browser would otherwise run under their hands. One
+ * predicate, two evaluation points; a second copy of this reasoning is a
+ * second place for a bypass to appear.
+ *
+ * The command is typed structurally rather than imported, so this module keeps
+ * its "pure state, no dependencies" property.
+ */
+export function leaseRefusalFor(
+  lease: LeaseState,
+  command: { source: string; holder?: string },
+): LeaseRefusal | undefined {
+  if (command.source !== "manual") {
+    if (lease.state === "free") return undefined;
+    return lease.state === "held" ? "lease_held" : "lease_parked";
+  }
+  // A person's own command. It has to belong to a lease: with nobody holding
+  // it the agent may be mid-turn, and two drivers on one page is exactly what
+  // the lease exists to prevent. And it has to belong to THIS one — an
+  // unauthenticated `manual` would let anything that reaches the daemon drive
+  // and observe a browser someone is signing into.
+  if (lease.state === "free") return "lease_required";
+  if (!command.holder || command.holder !== lease.holder) {
+    return "lease_held_by_other";
+  }
+  return undefined;
+}
+
+export type LeaseRefusal =
+  | "lease_held"
+  | "lease_parked"
+  | "lease_required"
+  | "lease_held_by_other";
 
 /**
  * The note a post-handoff observation carries. Deliberately explicit about
@@ -191,3 +270,17 @@ export const RESUMED_AFTER_HANDOFF_NOTE =
   "A person took control of this browser and has handed it back. The page " +
   "state may have changed — including logins, cookies and navigation. This " +
   "observation is fresh; do not rely on anything you saw before the handoff.";
+
+/** The same note for a script that was driving the page over CDP. */
+export const RESUMED_AFTER_SCRIPT_NOTE =
+  "A script took control of this browser over its debugging endpoint and has " +
+  "released it. The page state may have changed — including logins, cookies " +
+  "and navigation. This observation is fresh; do not rely on anything you saw " +
+  "before it ran.";
+
+/** The note for a handoff of this kind. */
+export function handoffNoteFor(kind: LeaseHolderKind): string {
+  return kind === "script"
+    ? RESUMED_AFTER_SCRIPT_NOTE
+    : RESUMED_AFTER_HANDOFF_NOTE;
+}

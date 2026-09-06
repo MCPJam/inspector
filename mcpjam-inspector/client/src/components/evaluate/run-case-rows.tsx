@@ -85,16 +85,7 @@ function Mark({ row }: { row: EvaluateCaseRow }) {
       </span>
     );
   }
-  // No verdict was read for this case. A dash is not a state word, so it
-  // cannot be mistaken for one.
-  return (
-    <span
-      className="inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full border border-dashed border-border text-[11px] text-muted-foreground"
-      aria-label="No verdict read for this case"
-    >
-      –
-    </span>
-  );
+  return null;
 }
 
 const CELL_CLASS: Record<CaseRowIterationCell["outcome"], string> = {
@@ -277,6 +268,7 @@ export function RunCaseRows({
   rows,
   defaultOpenKey,
   pills,
+  routeLines,
   onOpenIteration,
   renderBody,
 }: {
@@ -284,6 +276,8 @@ export function RunCaseRows({
   defaultOpenKey: string | null;
   /** Per-row change pills. A row with no entry gets none, never "Unchanged". */
   pills?: ReadonlyMap<string, RunChangePill>;
+  /** Per-row route one-liners, keyed by `row.key`. Same pattern as `pills`. */
+  routeLines?: ReadonlyMap<string, string>;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -325,9 +319,19 @@ export function RunCaseRows({
               onClick={() => setOpenKey(open ? null : row.key)}
               className="flex w-full items-start gap-3 px-5 py-3 text-left hover:bg-muted/50"
             >
-              <span className="pt-0.5">
-                <Mark row={row} />
+              <span className="pt-0.5" aria-hidden="true">
+                <ChevronRight
+                  className={cn(
+                    "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+                    open && "rotate-90",
+                  )}
+                />
               </span>
+              {row.mark ? (
+                <span className="pt-0.5">
+                  <Mark row={row} />
+                </span>
+              ) : null}
               <span className="min-w-0 flex-1">
                 <span className="flex flex-wrap items-baseline gap-x-2">
                   <span className="text-[14px] font-semibold text-foreground">
@@ -345,6 +349,14 @@ export function RunCaseRows({
                 <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
                   {breakText(row)}
                 </span>
+                {routeLines?.get(row.key) ? (
+                  <span
+                    className="mt-0.5 block text-[12px] text-muted-foreground"
+                    data-testid={`route-line-${row.key}`}
+                  >
+                    {routeLines.get(row.key)}
+                  </span>
+                ) : null}
                 {note ? (
                   <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
                     {note}
@@ -366,12 +378,6 @@ export function RunCaseRows({
               <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
                 {formatRunCaseLatencyMs(row.p50Ms)}
               </span>
-              <ChevronRight
-                className={cn(
-                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform",
-                  open && "rotate-90",
-                )}
-              />
             </button>
             {open ? (
               <div

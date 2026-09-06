@@ -248,50 +248,71 @@ Verify with `feature-flags-test-evaluation-create` against a real distinct id
 before each widening; a flag that evaluates `undefined` is off, which is the
 correct failure but an invisible one.
 
-## What blocks Windows
+## What Windows needed
 
-Windows is refused in three places that agree, and the conformance leg is
-non-gating. That is a decision, not an oversight — but as of this branch it is
-also a *measured* one, because the windows leg now runs far enough to say why.
+Windows is a native platform. It was refused until 2026-09-04, and the
+reasons it was refused were real; each has a specific answer, and the
+`windows-latest` conformance leg — gating, like the POSIX legs — is what
+proves the answers hold against the real pack, the real bridge and the real
+vendor CLI.
 
-The pack builds, installs, digest-verifies and resolves. Availability passes.
-A session is created. It then fails inside the framework's bootstrap recipe:
+**The path problem was ours, not upstream's.** `@ai-sdk/harness` composes
+every path with POSIX string operations on every platform, and an earlier
+version of this section read that as a blocker to be fixed in Vercel's code.
+It is not: the provider supplies `defaultWorkingDirectory` itself, and the
+framework never hands that value to a native OS call — it only resolves and
+concatenates onto it. So the provider presents the session's roots to the
+adapter in the MSYS spelling (`/c/Users/…`, `adapter-path.ts`), every path the
+framework derives stays forward-slashed, the translator's metacharacter check
+is untouched, and `confine` — the one place every operand already crosses into
+a real OS call, the bridge's own argv included — maps back to native. The
+child's environment (`HOME`, `PWD`, cwd) stays native; the OS reads that, not
+the adapter.
 
-```
-CommandTranslationError: path operand
-"/a/inspector/inspector/mcpjam-inspector/C:\Users\runneradmin\.mcpjam\…\work/.harness-bootstrap/claude-code"
-contains a shell metacharacter or glob
-```
+**Whole-tree cleanup is a Job Object.** There is no process group. The
+supervisor spawns the pack's `mcpjam-job-launcher.exe` — digest-verified, so
+`supportsOwnershipProof('win32')` answers false on a pack without it — in
+front of the bridge; the launcher creates a job with `KILL_ON_JOB_CLOSE`,
+starts the bridge suspended, assigns it, and only then resumes it. The
+launcher's exit, by any route, closes the last job handle and the kernel
+terminates every member. That makes the root's liveness the group's liveness,
+which is what `probeProcessGroup` reads on win32, and it is why the
+supervisor's stdin to the launcher is a LIFELINE: a pipe held open and never
+written, whose EOF means the Inspector is gone. The launcher gives the bridge
+`NUL` instead — two readers on one silent pipe hung the bridge before it
+could listen. It also passes its environment through explicitly, because the
+low-level `syscall.StartProcess` treats a nil environment as empty, and a
+Node binary with no `SYSTEMROOT` dies inside OpenSSL before it runs a line
+of JavaScript.
 
-Read that string carefully: a POSIX-looking prefix, then a Windows absolute
-path appended to it rather than replacing it. `@ai-sdk/harness` composes the
-bootstrap directory with
+**Birth identity is a FILETIME.** No `/proc`, no `ps`; `kill(pid, 0)`
+answers liveness without a subprocess (libuv reports an exited process as
+gone even while a handle is held), and only a live pid pays for PowerShell's
+`Get-Process`, whose `StartTime` is the kernel's creation time at 100 ns —
+a stronger discriminator than darwin's second-granular `lstart`. PowerShell
+is started with the parent's environment and stdin closed; a stripped
+environment stalls it past the probe's timeout.
 
-```ts
-posix.isAbsolute(path) ? path : posix.resolve(defaultWorkingDirectory, path)
-```
+**The vendor CLI's shell is named, not searched for.** Claude Code on
+Windows runs its Bash tool through Git for Windows, found on PATH — which the
+child does not have, by design — or in `CLAUDE_CODE_GIT_BASH_PATH`. The
+provider resolves a real `bash.exe` (the parent's own setting, else the
+default install) and names it in the child's environment only if it exists;
+the name is denylisted for scoped values.
 
-unconditionally, on every platform. `posix.isAbsolute("C:\Users\…")` is
-`false`, so on Windows it resolves a native absolute path against the process
-cwd and produces that hybrid. `supervised-provider.ts` mirrors this deliberately
-— the translator has to expect the exact string the adapter will emit — so our
-side is right and must NOT be "fixed" to use win32 resolution. Doing that would
-make the translator stop recognising the adapter's own commands, which is worse
-than the refusal.
+**Known gaps, none of them a cleanup or exposure hole:**
 
-Two things therefore stand between this and Windows support, in order:
-
-1. **Upstream.** The framework's bootstrap recipe is POSIX-only. Until it
-   resolves paths per-platform, no adapter command on Windows carries a path
-   the translator can accept.
-2. **Then ours.** `assertPlainPathOperand` rejects `\` as a shell
-   metacharacter, which is correct on POSIX and wrong on a platform where it is
-   the path separator. Making it platform-aware is a change to a security
-   boundary and wants its own tests: a backslash that separates must be
-   admitted, a backslash that escapes must not.
-
-Neither is a reason to hold the darwin/linux ship. `nativePlatforms` keeps
-refusing win32, and the leg keeps reporting — which is the point of running it.
+- The OS-level loopback corroboration (`lsof`) and the model gateway's
+  peer-pid check return null on win32 and are skipped. The enforcing TCP
+  connect probe runs everywhere.
+- The conformance runner's env-leak check reads `ps -E`; it passes vacuously
+  on win32.
+- The child's PATH is System32 only. `pwd` and the built-ins work; a Bash
+  tool call that needs `git` or a language runtime will not find one until
+  PATH policy is decided for Windows.
+- The first identity probe pays PowerShell's cold start (seconds on CI).
+- The Job Object launcher is built by the runner image's Go toolchain; a
+  toolchain bump changes the binary and therefore the pack digest.
 
 ## Launch / rollback checklist
 
@@ -325,6 +346,16 @@ refusing win32, and the leg keeps reporting — which is the point of running it
       not match what is committed. The table is committed rather than injected
       at build time so the digest a release trusts is reviewed in a diff —
       which is the property the whole verification chain rests on.
+
+      Committing that table is also what **turns the pack build on**:
+      `release.yml` reads `EXPECTED_PACK_VERSION` out of it and skips
+      `build-local-harness-pack` entirely while it is `""`. That is not a
+      convenience — a build carrying no digests refuses every network-sourced
+      pack anyway, so publishing packs alongside it would attach assets nothing
+      can ask for, and the enforcement step above would fail by construction.
+      There is deliberately no separate switch: a release cannot ship digests
+      without building the packs they name, and cannot build packs the shipped
+      build would not accept.
 - [ ] Conformance green on `ubuntu-latest` and `macos-latest`, and
       `lifecycleConformanceVersion` stamped from that run. Empty ⇒ every
       platform refuses, by design.

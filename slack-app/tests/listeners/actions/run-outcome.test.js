@@ -54,6 +54,24 @@ describe('formatRunOutcome', () => {
     assert.ok(!text.includes('see what broke'), 'must not send a reader hunting for a defect');
     assert.ok(!text.includes(':red_circle:'));
   });
+
+  it('formats a run held for its GATING JUDGE as informational, never red', () => {
+    // B10e. A run in `grading` has finished every trial and is waiting for the
+    // judge that may still take a green away — it has no verdict. Left to the
+    // red branch it read ':red_circle: Run grading … see what broke', which is
+    // a defect claim about a run nothing has decided.
+    const text = formatRunOutcome(
+      { status: 'grading', result: 'pending', summary: { passed: 2, total: 2 } },
+      url,
+      'U1',
+    );
+    assert.ok(text.startsWith(':hourglass_flowing_sand:'), 'still in flight, not a verdict');
+    assert.ok(text.includes('Run is being graded by its judge'));
+    assert.ok(!text.includes(':red_circle:'));
+    assert.ok(!text.includes('see what broke'), 'must not blame the server');
+    // NO COUNTS: the pass count is exactly the number the judge may overturn.
+    assert.ok(!text.includes('2/2'));
+  });
 });
 
 describe('the first-break line', () => {

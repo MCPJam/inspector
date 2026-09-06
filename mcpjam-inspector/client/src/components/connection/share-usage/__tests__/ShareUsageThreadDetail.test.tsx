@@ -32,7 +32,7 @@ const {
     artifacts: undefined as unknown,
   },
   mockHydrateTurnTraceSpans: vi.fn(
-    async (..._args: unknown[]) => [] as unknown[]
+    async (..._args: unknown[]) => [] as unknown[],
   ),
   mockTraceViewer: vi.fn(),
   mockTurnTracesState: {
@@ -121,6 +121,7 @@ vi.mock("@/components/chat-v2/thread/message-view", () => ({
 }));
 
 vi.mock("@mcpjam/chat-ui", () => ({
+  hydrateMessageTimestamps: (messages: unknown[]) => messages,
   ReadOnlyTranscript: (props: Record<string, unknown>) => {
     mockReadOnlyTranscript(props);
     return <div data-testid="read-only-transcript" />;
@@ -154,7 +155,7 @@ vi.mock(
         </button>
       </div>
     ),
-  })
+  }),
 );
 
 vi.mock("@/lib/app-navigation", () => ({
@@ -210,13 +211,13 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockAdaptTraceToUiMessages).toHaveBeenCalledWith(
         expect.objectContaining({
           toolResultDisplay: "attached-to-tool",
-        })
+        }),
       );
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
           widgetPolicy: "placeholder",
-        })
+        }),
       );
     });
   });
@@ -228,7 +229,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(mockReadOnlyTranscript).toHaveBeenCalledWith(
         expect.objectContaining({
           reasoningDisplayMode: "collapsible",
-        })
+        }),
       );
     });
   });
@@ -250,7 +251,7 @@ describe("ShareUsageThreadDetail", () => {
       expect(screen.getByRole("button", { name: "Chat" })).toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
   });
 
@@ -292,7 +293,7 @@ describe("ShareUsageThreadDetail", () => {
     // eval replay uses). The per-step interaction timeline now lives on the
     // Trace tab (`Interact · …` spans), not in the Replay tab.
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
     expect(screen.getByTestId("render-observation-card")).toBeInTheDocument();
     expect(screen.queryByText("Computer Use timeline")).toBeNull();
@@ -320,10 +321,10 @@ describe("ShareUsageThreadDetail", () => {
 
     const { rerender } = render(<ShareUsageThreadDetail threadId="thread-1" />);
     await userEvent.click(
-      await screen.findByRole("button", { name: "Replay" })
+      await screen.findByRole("button", { name: "Replay" }),
     );
     expect(
-      await screen.findByTestId("browser-artifacts-view")
+      await screen.findByTestId("browser-artifacts-view"),
     ).toBeInTheDocument();
 
     // The next session has no artifacts (same mounted component instance).
@@ -335,17 +336,17 @@ describe("ShareUsageThreadDetail", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("browser-artifacts-view")
+        screen.queryByTestId("browser-artifacts-view"),
       ).not.toBeInTheDocument();
     });
     expect(
-      screen.queryByRole("button", { name: "Replay" })
+      screen.queryByRole("button", { name: "Replay" }),
     ).not.toBeInTheDocument();
     // Chat content renders instead of a blank panel. findBy: the messages
     // blob re-fetch on thread switch is async — don't depend on the previous
     // thread's messages state being retained (CodeRabbit, PR 2610).
     expect(
-      await screen.findByTestId("read-only-transcript")
+      await screen.findByTestId("read-only-transcript"),
     ).toBeInTheDocument();
   });
 });
@@ -372,7 +373,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
   it("renders for a member on a User Testing session", async () => {
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     expect(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     ).toBeInTheDocument();
   });
 
@@ -381,13 +382,13 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     // Nor does the guest pay for the dialog's project queries.
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
@@ -399,10 +400,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // prop, so asserting its absence would pass even if the button leaked.
     render(<ShareUsageThreadDetail threadId="thread-1" />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
     expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument();
   });
@@ -411,10 +412,10 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     mockThreadState.sourceType = "direct";
     render(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
-      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument()
+      expect(screen.getByRole("button", { name: /Chat/ })).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-promote-to-test-case")
+      screen.queryByTestId("share-usage-promote-to-test-case"),
     ).not.toBeInTheDocument();
   });
 
@@ -429,14 +430,14 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     await user.click(screen.getByTestId("share-usage-promote-to-test-case"));
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     // Default behavior lands the user on the artifact they just created.
     await user.click(screen.getByText("simulate import"));
     await waitFor(() =>
-      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1")
+      expect(mockNavigateApp).toHaveBeenCalledWith("/evals/suite-1/case-1"),
     );
   });
 
@@ -447,11 +448,11 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, onImported }}
-      />
+      />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await user.click(screen.getByText("simulate import"));
 
@@ -459,7 +460,7 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
       expect(onImported).toHaveBeenCalledWith({
         suiteId: "suite-1",
         testCaseId: "case-1",
-      })
+      }),
     );
     // The override REPLACES the default navigation; it must not also fire.
     expect(mockNavigateApp).not.toHaveBeenCalled();
@@ -472,34 +473,34 @@ describe("ShareUsageThreadDetail — promote affordance", () => {
     // user had implicitly dismissed.
     const user = userEvent.setup();
     const { rerender } = render(
-      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />
+      <ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />,
     );
 
     await user.click(
-      await screen.findByTestId("share-usage-promote-to-test-case")
+      await screen.findByTestId("share-usage-promote-to-test-case"),
     );
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("true")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("true"),
     );
 
     rerender(
       <ShareUsageThreadDetail
         threadId="thread-1"
         promote={{ ...PROMOTE, canPromote: false }}
-      />
+      />,
     );
     await waitFor(() =>
-      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument()
+      expect(screen.queryByTestId("promote-dialog")).not.toBeInTheDocument(),
     );
 
     // Restoring the capability must NOT bring the dialog back open.
     rerender(<ShareUsageThreadDetail threadId="thread-1" promote={PROMOTE} />);
     await waitFor(() =>
       expect(
-        screen.getByTestId("promote-dialog").getAttribute("data-open")
-      ).toBe("false")
+        screen.getByTestId("promote-dialog").getAttribute("data-open"),
+      ).toBe("false"),
     );
   });
 });
@@ -619,10 +620,10 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     await openTrace();
 
     await waitFor(() =>
-      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument()
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-span-error")
+      screen.queryByTestId("share-usage-span-error"),
     ).not.toBeInTheDocument();
   });
 
@@ -637,10 +638,10 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     await openTrace();
 
     await waitFor(() =>
-      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument()
+      expect(screen.getByTestId("trace-viewer")).toBeInTheDocument(),
     );
     expect(
-      screen.queryByTestId("share-usage-span-error")
+      screen.queryByTestId("share-usage-span-error"),
     ).not.toBeInTheDocument();
   });
 

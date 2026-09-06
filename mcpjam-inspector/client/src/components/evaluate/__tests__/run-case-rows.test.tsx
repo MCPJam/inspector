@@ -107,10 +107,14 @@ describe("RunCaseRows", () => {
 
     const legacy = screen.getByTestId("run-case-row-g2");
     expect(
-      within(legacy).getByLabelText("No verdict read for this case"),
-    ).toBeInTheDocument();
+      within(legacy).queryByLabelText("No verdict read for this case"),
+    ).toBeNull();
+    expect(within(legacy).queryByLabelText(/Case verdict/)).toBeNull();
     // And it says why, so the missing mark is an answer rather than a gap.
     expect(legacy).toHaveTextContent("counted in iterations");
+    expect(
+      within(legacy).getByRole("button", { name: /Draw a rectangle/ }),
+    ).toHaveAttribute("aria-expanded", "false");
   });
 
   it("hides the fraction for a case that ran once", () => {
@@ -231,5 +235,18 @@ describe("RunCaseRows", () => {
     expect(
       screen.getByText("This run has no cases to show."),
     ).toBeInTheDocument();
+  });
+
+  it("renders a route line under the break text when one is supplied", () => {
+    render(
+      <RunCaseRows
+        rows={[row()]}
+        defaultOpenKey={null}
+        routeLines={new Map([["g1", "7 took `search→get` · 2 called nothing"]])}
+      />,
+    );
+    expect(screen.getByTestId("route-line-g1")).toHaveTextContent(
+      "7 took `search→get` · 2 called nothing",
+    );
   });
 });
