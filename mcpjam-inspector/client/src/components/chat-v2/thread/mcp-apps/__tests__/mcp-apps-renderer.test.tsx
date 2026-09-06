@@ -3236,7 +3236,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
           directive: "script-src-elem",
           effectiveDirective: "script-src-elem",
           blockedUri: "https://esm.sh/react@19",
-          mountId: 7,
+          mountId: "proxy-a:7",
           originalPolicy: "default-src 'none'; script-src 'none'",
           disposition: "enforce",
           ...overrides,
@@ -3258,7 +3258,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       expect(stableStoreFns.addCspViolation).toHaveBeenCalledWith(
         expect.any(String),
         expect.objectContaining({
-          mountId: 7,
+          mountId: "proxy-a:7",
           originalPolicy: "default-src 'none'; script-src 'none'",
           disposition: "enforce",
         }),

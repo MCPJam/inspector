@@ -243,12 +243,15 @@ export interface WidgetMount {
   at: number;
 }
 
+/** New mounts use an opaque string; numbers remain valid for saved data. */
+export type CspMountId = string | number;
+
 export interface CspViolation {
   directive: string;
   effectiveDirective?: string;
   blockedUri: string;
-  /** Proxy-local id of the exact inner iframe mount that emitted this event. */
-  mountId?: number;
+  /** Id of the exact inner iframe mount that emitted this event. */
+  mountId?: CspMountId;
   /** The policy that caused this specific violation. */
   originalPolicy?: string;
   disposition?: "enforce" | "report";
@@ -304,8 +307,8 @@ export interface WidgetSandboxApplied {
    * forced because the frame's document was unreachable).
    */
   viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
-  /** Proxy-local id of the currently displayed inner iframe mount. */
-  mountId?: number;
+  /** Id of the currently displayed inner iframe mount. */
+  mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
   viewUrl?: string;
   /**
@@ -329,7 +332,7 @@ export interface WidgetSandboxInfo {
   };
   headerString?: string;
   /** Latest proxy mount, retained for consumers that show current state. */
-  activeMountId?: number;
+  activeMountId?: CspMountId;
   /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
   appliedPoliciesByMount?: Record<
     string,
@@ -431,7 +434,7 @@ export interface WidgetDebugSink {
   setWidgetAppliedCsp: (
     toolCallId: string,
     applied: {
-      mountId: number;
+      mountId: CspMountId;
       headerString: string;
       mode: "permissive" | "widget-declared";
     }

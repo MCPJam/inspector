@@ -69,6 +69,7 @@ import {
   type WidgetLifecycleEvent,
   type WidgetHostResolvers,
   type WidgetDebugSink,
+  type CspMountId,
 } from "./widget-host";
 
 // The debug sink is OPTIONAL on the contract — a non-inspector host can omit it
@@ -108,6 +109,15 @@ const PIP_MAX_HEIGHT = "min(40vh, 600px)";
  */
 const CSP_BLOCKED_NOTICE_DELAY_MS = 1500;
 const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
+
+function normalizeCspMountId(value: unknown): CspMountId | undefined {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 128 ? trimmed : undefined;
+}
 
 function toSafeOpenInAppUrl(value: string): string | null {
   try {
@@ -1233,7 +1243,7 @@ export function MCPAppsRendererSurface({
   // Where the proxy mounted the view, reported once per mount. Surfaced as the
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
-    mountId: number;
+    mountId?: CspMountId;
     mode: "url" | "srcdoc" | "srcdoc-fallback";
     url: string;
   } | null>(null);
@@ -3840,7 +3850,7 @@ export function MCPAppsRendererSurface({
         directive,
         effectiveDirective,
         blockedUri,
-        mountId: typeof mountId === "number" ? mountId : undefined,
+        mountId: normalizeCspMountId(mountId),
         originalPolicy:
           typeof originalPolicy === "string" ? originalPolicy : undefined,
         disposition:
@@ -3904,19 +3914,19 @@ export function MCPAppsRendererSurface({
     // each violation's `originalPolicy` separately records the policy that
     // caused that specific violation.
     if (data.type === "mcpjam:csp-applied") {
+      const mountId = normalizeCspMountId(data.mountId);
       if (
-        Number.isInteger(data.mountId) &&
-        data.mountId > 0 &&
+        mountId !== undefined &&
         typeof data.csp === "string" &&
         data.csp.length > 0
       ) {
         setWidgetAppliedCspStore(toolCallIdRef.current, {
-          mountId: data.mountId,
+          mountId,
           headerString: data.csp,
           mode: data.mode === "permissive" ? "permissive" : "widget-declared",
         });
         logWidgetDebug("ui-to-host", "debug/csp-applied", {
-          mountId: data.mountId,
+          mountId,
           mode: data.mode,
           headerLength: data.csp.length,
         });
@@ -3931,7 +3941,7 @@ export function MCPAppsRendererSurface({
       const mode = data.mode;
       if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
         const url = typeof data.url === "string" ? data.url : "";
-        const mountId = Number.isInteger(data.mountId) ? data.mountId : 0;
+        const mountId = normalizeCspMountId(data.mountId);
         setViewMount({ mountId, mode, url });
         logWidgetDebug("ui-to-host", "debug/view-mounted", {
           mountId,

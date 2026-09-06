@@ -49,13 +49,11 @@ describe("widget-debug-store — applied CSP", () => {
     store.setWidgetDebugInfo("t2", { toolName: "demo" });
     store.setWidgetCsp("t2", declared);
 
-    useWidgetDebugStore
-      .getState()
-      .setWidgetAppliedCsp("t2", {
-        mountId: 2,
-        headerString: HEADER,
-        mode: "permissive",
-      });
+    useWidgetDebugStore.getState().setWidgetAppliedCsp("t2", {
+      mountId: 2,
+      headerString: HEADER,
+      mode: "permissive",
+    });
 
     expect(useWidgetDebugStore.getState().widgets.get("t2")!.csp!.mode).toBe(
       "permissive",
@@ -122,5 +120,26 @@ describe("widget-debug-store — applied CSP", () => {
         mode: "widget-declared",
       },
     });
+  });
+
+  it("keeps first mounts from recreated proxies separate", () => {
+    const store = useWidgetDebugStore.getState();
+    store.setWidgetAppliedCsp("t6", {
+      mountId: "proxy-a:1",
+      headerString: "frame-src https://one.example",
+      mode: "widget-declared",
+    });
+    store.setWidgetAppliedCsp("t6", {
+      mountId: "proxy-b:1",
+      headerString: "frame-src https://two.example",
+      mode: "widget-declared",
+    });
+
+    const csp = useWidgetDebugStore.getState().widgets.get("t6")!.csp!;
+    expect(csp.activeMountId).toBe("proxy-b:1");
+    expect(Object.keys(csp.appliedPoliciesByMount ?? {})).toEqual([
+      "proxy-a:1",
+      "proxy-b:1",
+    ]);
   });
 });

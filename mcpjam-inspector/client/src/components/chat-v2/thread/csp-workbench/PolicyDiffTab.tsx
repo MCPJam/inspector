@@ -311,6 +311,16 @@ function hostMatches(rowHost: string, target: string): boolean {
   return r === t || r.endsWith("." + t) || "*." + r.replace(/^\*\./, "") === t;
 }
 
+function mountLabel(mountId: string | number | undefined): string {
+  if (mountId === undefined) return "mount unknown";
+  if (typeof mountId === "number") return `mount ${mountId}`;
+  const separator = mountId.lastIndexOf(":");
+  if (separator < 0) return `mount ${mountId}`;
+  const instance = mountId.slice(0, separator);
+  const sequence = mountId.slice(separator + 1);
+  return `mount ${sequence} · instance ${instance.slice(0, 8)}`;
+}
+
 function ViolationPolicyComparison({
   violation,
   input,
@@ -349,7 +359,7 @@ function ViolationPolicyComparison({
         </span>
         <span className={tone}>{label}</span>
         <span className="text-muted-foreground ml-2">
-          · mount {violation.mountId ?? "unknown"} ·{" "}
+          · {mountLabel(violation.mountId)} ·{" "}
           {violation.disposition ?? "disposition unknown"}
         </span>
       </summary>

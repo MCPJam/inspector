@@ -13,6 +13,9 @@ import type {
   OpenAiAppsCapabilities,
 } from "@/lib/client-styles";
 
+/** New mounts use an opaque string; numbers remain valid for saved data. */
+export type CspMountId = string | number;
+
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
   directive: string;
@@ -20,8 +23,8 @@ export interface CspViolation {
   effectiveDirective?: string;
   /** The URI that was blocked */
   blockedUri: string;
-  /** Proxy-local id of the exact inner iframe mount that emitted this event. */
-  mountId?: number;
+  /** Id of the exact inner iframe mount that emitted this event. */
+  mountId?: CspMountId;
   /** The policy that caused this specific violation. */
   originalPolicy?: string;
   disposition?: "enforce" | "report";
@@ -123,8 +126,8 @@ export interface WidgetSandboxApplied {
    * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
    */
   viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
-  /** Proxy-local id of the currently displayed inner iframe mount. */
-  mountId?: number;
+  /** Id of the currently displayed inner iframe mount. */
+  mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
   viewUrl?: string;
   /**
@@ -198,7 +201,7 @@ export interface WidgetSandboxInfo {
   /** Full CSP header string (for advanced users) */
   headerString?: string;
   /** Latest proxy mount, retained for consumers that show current state. */
-  activeMountId?: number;
+  activeMountId?: CspMountId;
   /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
   appliedPoliciesByMount?: Record<
     string,
@@ -364,7 +367,7 @@ interface WidgetDebugStore {
    */
   setWidgetAppliedCsp: (
     toolCallId: string,
-    applied: { mountId: number; headerString: string; mode: CspMode },
+    applied: { mountId: CspMountId; headerString: string; mode: CspMode },
   ) => void;
 
   // Add a CSP violation for a widget

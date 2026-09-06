@@ -84,7 +84,7 @@ interface MountHarness {
  * Rehydrate the proxy's mount helpers against a jsdom document, with the
  * top-level `inner` / `lastMount` bindings they close over.
  */
-function harness(): { dom: JSDOM; h: MountHarness } {
+function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
   const dom = new JSDOM(
     "<!doctype html><html><head></head><body></body></html>",
     {
@@ -103,6 +103,7 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     "document",
     "window",
     "posted",
+    "proxyInstanceId",
     `
     const INNER_STYLE = "width:100%; height:100%; border:none;";
     let inner = null;
@@ -129,8 +130,12 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     document: Document,
     window: unknown,
     posted: Array<[unknown, string]>,
+    proxyInstanceId: string,
   ) => MountHarness;
-  return { dom, h: factory(dom.window.document, win, posted) };
+  return {
+    dom,
+    h: factory(dom.window.document, win, posted, proxyInstanceId),
+  };
 }
 
 const WIDGET = "<!doctype html><html><body><p id='w'>hi</p></body></html>";
@@ -213,7 +218,7 @@ describe("sandbox-proxy mountInner", () => {
       [
         {
           type: "mcpjam:csp-applied",
-          mountId: 1,
+          mountId: "proxy-a:1",
           csp: "default-src 'none'",
           mode: "widget-declared",
         },
@@ -222,7 +227,7 @@ describe("sandbox-proxy mountInner", () => {
       [
         {
           type: "mcpjam:view-mode",
-          mountId: 1,
+          mountId: "proxy-a:1",
           mode: "url",
           // jsdom's document.open() does not adopt the entry document's URL
           // (the browser e2e pins that); what matters here is that the proxy
@@ -241,7 +246,7 @@ describe("sandbox-proxy mountInner", () => {
       [
         {
           type: "mcpjam:csp-applied",
-          mountId: 1,
+          mountId: "proxy-a:1",
           csp: "default-src 'none'",
           mode: "widget-declared",
         },
@@ -250,7 +255,7 @@ describe("sandbox-proxy mountInner", () => {
       [
         {
           type: "mcpjam:view-mode",
-          mountId: 1,
+          mountId: "proxy-a:1",
           mode: "srcdoc",
           url: "about:srcdoc",
         },
@@ -355,7 +360,7 @@ describe("sandbox-proxy blank-reload remount", () => {
       [
         {
           type: "mcpjam:csp-applied",
-          mountId: 1,
+          mountId: "proxy-a:1",
           csp: "default-src 'none'",
           mode: "widget-declared",
         },
@@ -364,13 +369,37 @@ describe("sandbox-proxy blank-reload remount", () => {
       [
         {
           type: "mcpjam:csp-applied",
-          mountId: 2,
+          mountId: "proxy-a:2",
           csp: "default-src 'none'",
           mode: "widget-declared",
         },
         "*",
       ],
     ]);
+  });
+
+  it("does not reuse mount ids when the whole proxy is recreated", () => {
+    const firstProxy = harness("proxy-a").h;
+    const secondProxy = harness("proxy-b").h;
+
+    firstProxy.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+    );
+    secondProxy.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+    );
+
+    const firstApplied = firstProxy.posted[0][0] as { mountId: string };
+    const secondApplied = secondProxy.posted[0][0] as { mountId: string };
+    expect(firstApplied.mountId).toBe("proxy-a:1");
+    expect(secondApplied.mountId).toBe("proxy-b:1");
+    expect(firstApplied.mountId).not.toBe(secondApplied.mountId);
   });
 
   it("leaves the frame alone after its own write (href is the proxy URL)", () => {

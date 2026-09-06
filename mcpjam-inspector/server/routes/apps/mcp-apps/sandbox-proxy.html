@@ -74,6 +74,29 @@
       }
 
       /**
+       * Identify this outer proxy iframe for the lifetime of the document.
+       * The sequence alone is not enough: recreating the whole proxy starts
+       * it at 1 again, which could make a later mount collide with saved
+       * policy/violation evidence from the same tool call.
+       */
+      function createProxyInstanceId() {
+        const cryptoApi = globalThis.crypto;
+        if (typeof cryptoApi?.randomUUID === "function") {
+          return cryptoApi.randomUUID();
+        }
+        if (typeof cryptoApi?.getRandomValues === "function") {
+          const bytes = new Uint8Array(16);
+          cryptoApi.getRandomValues(bytes);
+          return Array.from(bytes, (byte) =>
+            byte.toString(16).padStart(2, "0"),
+          ).join("");
+        }
+        return `${Date.now().toString(36)}-${Math.random()
+          .toString(36)
+          .slice(2)}`;
+      }
+
+      /**
        * Build iframe allow attribute from permissions (SEP-1865)
        * @param {Object} permissions - Permissions metadata (camera, microphone, geolocation, clipboardWrite)
        * @returns {string} Permission Policy allow attribute string
@@ -204,7 +227,7 @@
             typeof cspDirectives === "object" &&
             Object.values(cspDirectives).some(
               (tokens) =>
-                Array.isArray(tokens) && tokens.some(cspDirectiveTokenSurvives)
+                Array.isArray(tokens) && tokens.some(cspDirectiveTokenSurvives),
             );
           if (hasCspOverrides) {
             // Helper: if cspDirectives names this directive, emit ONLY
@@ -286,7 +309,7 @@
           const keepDeclaredConnectDomains =
             !connectSubtypePolicy ||
             ["fetch", "xhr", "websocket"].some(
-              (subtype) => connectSubtypePolicy[subtype] !== false
+              (subtype) => connectSubtypePolicy[subtype] !== false,
             );
 
           // Keep the shared connect-src declaration whenever at least one API
@@ -409,7 +432,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           cspSubtypePolicy && cspSubtypePolicy.cspConnectDomains;
         if (!connectPolicy || typeof connectPolicy !== "object") return "";
         const blocked = ["fetch", "xhr", "websocket"].filter(
-          (subtype) => connectPolicy[subtype] === false
+          (subtype) => connectPolicy[subtype] === false,
         );
         if (blocked.length === 0) return "";
 
@@ -653,14 +676,11 @@ document.addEventListener('securitypolicyviolation', function(e) {
       function buildBrowserStorageGuardScript(browserStorage) {
         if (!browserStorage || typeof browserStorage !== "object") return "";
         const blocked = ["localStorage", "sessionStorage", "indexedDB"].filter(
-          (api) => browserStorage[api] === false
+          (api) => browserStorage[api] === false,
         );
         if (blocked.length === 0) return "";
 
-        const configJson = JSON.stringify({ blocked }).replace(
-          /</g,
-          "\\u003c"
-        );
+        const configJson = JSON.stringify({ blocked }).replace(/</g, "\\u003c");
 
         return `<script>
 (function() {
@@ -806,7 +826,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         if (extraScript) {
           html = html.replace(
             /<meta[^>]+http-equiv\s*=\s*["']?content-security-policy["']?[^>]*>/gi,
-            ""
+            "",
           );
         }
         const cspMeta =
@@ -837,7 +857,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           // Insert after doctype
           return html.replace(
             /(<!DOCTYPE[^>]*>|<!doctype[^>]*>)/i,
-            "$1<head>" + injection + "</head>"
+            "$1<head>" + injection + "</head>",
           );
         } else {
           // Prepend CSP meta tag and listener
@@ -933,7 +953,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         // Scoped to this proxy instance and incremented for every fresh inner
         // frame, including automatic reload remounts. The host uses this id to
         // pair a violation with the policy injected into that exact document.
-        const mountId = ++mountSequence;
+        const mountId = `${proxyInstanceId}:${++mountSequence}`;
         currentMountId = mountId;
         window.parent.postMessage(
           {
@@ -1037,6 +1057,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
       let inner = null;
       // The proxy owns mount identity because it also owns automatic remounts
       // that the React host never sees directly.
+      const proxyInstanceId = createProxyInstanceId();
       let mountSequence = 0;
       let currentMountId = null;
       // Arguments of the most recent mount, replayed when a widget reloads
@@ -1117,7 +1138,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             const recorderScript = buildRecorderScript(recordMode);
             const connectGuardScript = buildConnectGuardScript(
               cspSubtypePolicy,
-              cspDirectives
+              cspDirectives,
             );
             // Storage is independent of CSP mode: a host that serves a
             // permissive CSP can still deny storage, so this guard rides
@@ -1224,7 +1245,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 html,
                 appliedCsp,
                 recorderScript,
-                guardScript
+                guardScript,
               );
 
               const mode = mountInner(
@@ -1316,7 +1337,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           method: "ui/notifications/sandbox-proxy-ready",
           params: {},
         },
-        "*"
+        "*",
       );
     </script>
   </body>
