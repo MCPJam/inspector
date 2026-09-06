@@ -166,3 +166,18 @@ describe("host-compare-selection", () => {
     ).toEqual([...DEFAULT_COMPARE_HOST_IDS]);
   });
 });
+
+describe("reconcileHostCompareSelection deduplicates", () => {
+  // A selection renders one column per id, so a repeat is a duplicated column.
+  it("keeps the first occurrence and drops repeats", () => {
+    expect(
+      reconcileHostCompareSelection(["h_a", "h_b", "h_a"], new Set(["h_a", "h_b"])),
+    ).toEqual(["h_a", "h_b"]);
+  });
+
+  it("still filters ids that are not selectable", () => {
+    expect(
+      reconcileHostCompareSelection(["h_a", "h_gone", "h_a"], new Set(["h_a"])),
+    ).toEqual(["h_a"]);
+  });
+});
