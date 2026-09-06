@@ -493,7 +493,7 @@ export function PolicyDiffTab({
         />
         <PolicyColumn
           title="Applied"
-          subtitle={applied ? "proxy applied" : "widget asked · unverified"}
+          subtitle={applied ? "by MCPJam" : "widget asked · unverified"}
           rows={effectiveRows}
           emptyLabel="No allowlist captured"
           jumpHost={jumpToHost}

@@ -55,6 +55,7 @@ describe("PolicyDiffTab violation evidence", () => {
     render(<PolicyDiffTab input={input} diagnoses={[]} />);
 
     expect(screen.getAllByText("Applied").length).toBeGreaterThan(0);
+    expect(screen.getByText("by MCPJam")).toBeTruthy();
     await userEvent.hover(
       screen.getByLabelText("The CSP MCPJam enforced for this widget."),
     );
