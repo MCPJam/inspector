@@ -28,7 +28,7 @@ import {
   DialogTitle,
 } from "@mcpjam/design-system/dialog";
 import { Label } from "@mcpjam/design-system/label";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { useSwarmDefaultTarget } from "@/components/swarms/use-swarm-default-target";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { joinLabels } from "@/lib/cloud-server-readiness";
@@ -369,7 +369,7 @@ export function GenerateSwarmDialog({
           <div className="flex flex-col gap-1.5">
             <Label>Servers</Label>
             <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <ServerGroupPicker
+              <ServerPicker
                 projectId={projectId}
                 value={targetState.stack.serverAttachmentId}
                 onChange={(serverAttachmentId) =>
@@ -379,6 +379,9 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
+                // The dialog opens with a group already seeded and nothing
+                // gates on it, so without a way back the client's own servers
+                // — what the empty label promises — become unreachable.
                 onClearSelection={() =>
                   setTargetState((prev) => ({
                     ...prev,
@@ -386,8 +389,10 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                emptyTriggerLabel="Server group · client default"
-                infoText="Generation reads these servers' tools to write the goals."
+                // Server-first wording, and the same phrasing the project
+                // environment editor uses: BB-3 was a user who could not find
+                // his servers because every label led with "server group".
+                emptyTriggerLabel="Client default · pick a server or group"
                 triggerTestId="generate-server-group-picker"
                 inModal
               />
@@ -396,7 +401,16 @@ export function GenerateSwarmDialog({
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Connect a client before generating.
               </p>
-            ) : null}
+            ) : (
+              // Carried over from the picker this field used to render, which
+              // took the line as an `infoText` prop. The new picker is a
+              // trigger chip with no room for it, and the explanation is the
+              // field's rather than the control's, so it sits here — under the
+              // more urgent message when there is one.
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Generation reads the tools on these servers to write the goals.
+              </p>
+            )}
           </div>
 
           {noServers ? (
@@ -416,7 +430,7 @@ export function GenerateSwarmDialog({
               >
                 Servers tab
               </button>
-              , or pick a server group above.
+              , or pick a server or group above.
             </p>
           ) : null}
 

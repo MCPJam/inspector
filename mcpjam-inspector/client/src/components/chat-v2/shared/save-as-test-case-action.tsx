@@ -34,7 +34,7 @@ import {
   ClientAttachmentsEditor,
   type HostAttachmentDraft,
 } from "@/components/evals/client-attachments-editor";
-import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { navigateToPromotedTestCase } from "@/components/chat-v2/shared/promote-to-eval-navigation";
 
 type SaveAsTestCaseActionProps = {
@@ -357,11 +357,11 @@ export function SaveAsTestCaseAction({
                         </p>
                       </div>
                       <div className="shrink-0">
-                        <ServerAttachmentPicker
+                        <ServerPicker
                           projectId={projectId}
                           value={serverAttachmentId}
                           onChange={setServerAttachmentId}
-                          onClearSelection={() => setServerAttachmentId(null)}
+                          inModal
                           disabled={submitting}
                         />
                       </div>

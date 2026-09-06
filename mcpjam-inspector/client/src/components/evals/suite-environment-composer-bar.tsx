@@ -40,7 +40,7 @@ import {
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
-import { ServerGroupPicker } from "@/components/hosts/ServerGroupPicker";
+import { ServerPicker } from "@/components/hosts/server-picker";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import {
@@ -351,6 +351,10 @@ function EnvironmentModeBar({
           value={state}
           onChange={(next) => void commit(next)}
           maxTargets={MAX_SUITE_ENVIRONMENTS}
+          // `onUpdateServerAttachment` takes an id, not `id | null`, so there
+          // is nothing to commit a clear to — and the create form gates submit
+          // on the same field.
+          serverOptional={false}
           slots={
             omitComputers
               ? EVALS_COMPOSER_SLOTS.filter((slot) => slot !== "computers")
@@ -504,7 +508,7 @@ function LegacyModeBar({
       {showServers ? (
         <div className="shrink-0">
           {editable && suite.projectId && onUpdateServerAttachment ? (
-            <ServerGroupPicker
+            <ServerPicker
               projectId={suite.projectId}
               value={suite.serverAttachmentId ?? null}
               onChange={onUpdateServerAttachment}

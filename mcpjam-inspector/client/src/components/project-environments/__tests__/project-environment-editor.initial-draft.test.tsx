@@ -32,8 +32,8 @@ vi.mock("@/components/hosts/HostPicker", () => ({
     <div data-testid="host-picker">{value ?? "none"}</div>
   ),
 }));
-vi.mock("@/components/hosts/ServerGroupPicker", () => ({
-  ServerGroupPicker: () => <div />,
+vi.mock("@/components/hosts/server-picker", () => ({
+  ServerPicker: () => <div />,
 }));
 vi.mock("../ProjectEnvironmentSkillsPicker", () => ({
   ProjectEnvironmentSkillsPicker: () => <div />,

@@ -33,7 +33,11 @@ import {
   isOpenAIApp,
   isOpenAIAppAndMCPApp,
 } from "@/lib/mcp-ui/mcp-apps-utils";
-import { getConnectionStatusMeta } from "./server-card-utils";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "./server-card-utils";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
@@ -341,8 +345,11 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
-    getConnectionStatusMeta(server.connectionStatus);
+  /** See ServerConnectionCard: unreadable is not the same claim as offline. */
+  const { label: connectionStatusLabel, indicatorClassName } =
+    isConnectionStatus(server.connectionStatus)
+      ? getConnectionStatusMeta(server.connectionStatus)
+      : UNKNOWN_CONNECTION_STATUS;
 
   useEffect(() => {
     let isCancelled = false;
@@ -608,8 +615,7 @@ export function ServerDetailModal({
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 ) : (
                   <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
+                    className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                   />
                 )}
                 <span>

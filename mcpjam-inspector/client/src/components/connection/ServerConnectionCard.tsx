@@ -46,7 +46,9 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  UNKNOWN_CONNECTION_STATUS,
   getConnectionStatusMeta,
+  isConnectionStatus,
   getServerCommandDisplay,
   getServerUrl,
 } from "./server-card-utils";
@@ -206,12 +208,25 @@ export function ServerConnectionCard({
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
+  /**
+   * A status outside the union means we cannot READ the state, which is not
+   * the same claim as "not connected" — and the helper's fallback makes the
+   * second one. Same distinction the header strip and the picker draw.
+   */
+  /**
+   * A status outside the union means we cannot READ the state, which is not
+   * the same claim as "not connected" — and the helper's fallback makes the
+   * second one. Same distinction the header strip and the picker draw.
+   */
+  const known = isConnectionStatus(server.connectionStatus);
+  const meta = getConnectionStatusMeta(
+    known ? server.connectionStatus : "disconnected",
+  );
   const {
     label: connectionStatusLabel,
-    indicatorColor,
-    Icon: ConnectionStatusIcon,
-    iconClassName,
-  } = getConnectionStatusMeta(server.connectionStatus);
+    indicatorClassName,
+  } = known ? meta : { ...meta, ...UNKNOWN_CONNECTION_STATUS };
+  const { Icon: ConnectionStatusIcon, iconClassName } = meta;
   const commandDisplay = getServerCommandDisplay(server.config);
 
   const initializationInfo = server.initializationInfo;
@@ -637,8 +652,7 @@ export function ServerConnectionCard({
                     <ConnectionStatusIcon className={iconClassName} />
                   ) : (
                     <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: indicatorColor }}
+                      className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                     />
                   )}
                   <span>

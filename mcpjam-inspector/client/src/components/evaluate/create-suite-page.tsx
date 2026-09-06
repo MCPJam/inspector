@@ -405,7 +405,7 @@ export function CreateSuitePage({
                     testIdPrefix="create-suite-servers"
                     slots={EVALS_CREATE_SERVER_SLOTS}
                     emptyServerLabel="No server group · pick one"
-                    serverInfoText="A named set of MCP servers this suite runs against."
+                    serverOptional={false}
                   />
                 </div>
 
