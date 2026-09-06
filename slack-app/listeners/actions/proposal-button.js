@@ -53,12 +53,15 @@ export function announcementFor(outcome, userId) {
       // should still say "Cancelled", not "Approved — follow it here".
       return `:white_check_mark: Cancelled by <@${userId}>.`;
     case 'generate':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the cases are being generated.`;
     case 'schedule':
       // Nothing started. Saying "it's away" here would have the user watching
       // for a run that will not appear until the next interval.
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the schedule is updated.`;
     case 'external':
+      if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
       return `:white_check_mark: Approved by <@${userId}> — the tool ran.`;
     case 'start':
       if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
