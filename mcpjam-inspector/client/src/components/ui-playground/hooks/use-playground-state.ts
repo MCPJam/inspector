@@ -219,10 +219,6 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     onboarding.phase === "connecting_excalidraw" ||
     onboarding.phase === "connected_guided";
 
-  // The gate holds the first message until the guided server is up. Past that
-  // it would strand anyone whose selected server is a different, offline one.
-  const firstRunSubmitBlocked = onboarding.phase === "connecting_excalidraw";
-
   const {
     selectedTool,
     tools,
@@ -1001,6 +997,12 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     );
     return () => clearTimeout(id);
   }, [wantsFirstRunSkeleton]);
+
+  // Holds the first message until the guided server is up. It lifts once that
+  // happened, so a different offline server can't strand the user, and once the
+  // skeleton gives up, so the timeout above stays a real escape.
+  const firstRunSubmitBlocked =
+    onboarding.phase === "connecting_excalidraw" && !firstRunSkeletonTimedOut;
 
   const shouldMarkFirstRunNuxShown =
     firstRunComposerSeed &&

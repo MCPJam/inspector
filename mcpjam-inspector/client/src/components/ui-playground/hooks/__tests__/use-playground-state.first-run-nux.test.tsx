@@ -1,5 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 import { SidebarProvider } from "@/components/ui/sidebar";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { EXCALIDRAW_SERVER_NAME } from "@/lib/excalidraw-quick-connect";
@@ -108,6 +108,41 @@ describe("usePlaygroundState — first-run NUX lifecycle", () => {
     const { result } = renderGuidedFirstRun();
 
     expect(result.current.onboarding.phase).toBe("connected_guided");
+    expect(result.current.firstRunSubmitBlocked).toBe(false);
+  });
+});
+
+describe("usePlaygroundState — first-run submit gate", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    writeOnboardingState({ status: "started", startedAt: Date.now() });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("stops blocking submit once the first-run skeleton gives up", () => {
+    vi.useFakeTimers();
+    const connecting = excalidrawServers("connecting");
+    const { result } = renderHook(
+      () =>
+        usePlaygroundState({
+          servers: connecting,
+          serverName: EXCALIDRAW_SERVER_NAME,
+          serverConfig: connecting[EXCALIDRAW_SERVER_NAME].config,
+        }),
+      { wrapper },
+    );
+
+    expect(result.current.onboarding.phase).toBe("connecting_excalidraw");
+    expect(result.current.firstRunSubmitBlocked).toBe(true);
+
+    act(() => {
+      vi.advanceTimersByTime(12_000);
+    });
+
+    expect(result.current.loadingState.kind).not.toBe("skeleton");
     expect(result.current.firstRunSubmitBlocked).toBe(false);
   });
 });
