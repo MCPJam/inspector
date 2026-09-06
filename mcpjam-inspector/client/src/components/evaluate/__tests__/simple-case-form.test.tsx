@@ -10,7 +10,7 @@ import {
   UNSET_TOOLS_BLOCK_REASON,
 } from "../simple-case/simple-case-model";
 import { adoptRouteFromIteration } from "../simple-case/route-rollup";
-import type { EvalIteration } from "../types";
+import type { EvalIteration } from "../../evals/types";
 
 const promptOnly: TestStep[] = [
   { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
