@@ -153,6 +153,15 @@ The **Sessions** tab in the left rail lists every saved conversation in the curr
 
 Sessions are project-scoped, so teammates in the same project see (and can resume) shared sessions.
 
+### Reopening a conversation
+
+When you open a saved conversation from the Sessions rail (or via a `?conversation=` URL), the host and environment chips in the composer reflect your **current** selection — not necessarily the one the conversation ran under. The Playground says so with a banner above the composer:
+
+- **"As-run configuration unavailable"** — the conversation did not record which host or environment it ran on (the common case for browser Playground sessions). The controls show your current selection.
+- **"This conversation ran somewhere else"** — the conversation recorded a specific environment or host that differs from what is currently selected. The banner names the recorded target.
+
+In both cases, the composer's Send button is disabled until you click **Continue here** in the banner. This is a one-click acknowledgement, not a refusal — continuing on a different target is allowed, but it has to be a deliberate choice. Once acknowledged, the gate clears for the rest of that session. Starting a new chat, forking the thread, or opening a different conversation resets it.
+
 ## Host Context Toolbar
 
 The toolbar above the chat thread controls how the active host renders your widgets. Every change applies to the next tool call and to already-rendered widgets where applicable.
