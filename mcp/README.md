@@ -81,6 +81,7 @@ so results respect the caller's project access.
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
 | `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
+| `get_eval_run_route_facts` | Get one run's tool routes and expected-versus-observed facts per case: which tool sequence each trial took, how many called nothing or looped, and for each expected tool how many trials never called it — with denominators, never a verdict. A run that exists but has no persisted document reads as `routeFactsState: "unmeasured"` — permanently, there is no backfill and nothing is computed locally; a run that cannot be retrieved is a run-not-found error. | — |
 | `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
 | `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
@@ -89,6 +90,9 @@ so results respect the caller's project access.
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
 | `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
+| `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
+| `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
 | `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
 | `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
