@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { NO_TOOL_PATH_KEY } from "@mcpjam/sdk/contract";
-import type { EvalIteration } from "../types";
+import type { EvalIteration } from "../../evals/types";
 import {
   toolsFromIteration,
   summarizeRoutes,
