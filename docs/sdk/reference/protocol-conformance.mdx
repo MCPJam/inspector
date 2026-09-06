@@ -24,6 +24,11 @@ import {
   renderConformanceReportJUnitXml,
   renderConformanceReportJson,
   toConformanceReport,
+  // Score helpers
+  computeConformanceScore,
+  describeConformanceScore,
+  pooledConformanceScore,
+  scoreFromProtocolResult,
 } from "@mcpjam/sdk";
 ```
 
@@ -161,6 +166,7 @@ Check ids:
 | `outcome` | `"passed" \| "failed" \| "incomplete"` | `"failed"` on any violation; `"incomplete"` when nothing failed but a selected check never ran. |
 | `incompleteReason` | `string \| undefined` | Present when `outcome` is `"incomplete"`: which checks did not run and what to change. |
 | `serverUrl` | `string` | Server under test |
+| `protocolVersion` | `McpProtocolVersion \| undefined` | The revision the run was judged against: the caller's pin, or the version the server negotiated. Absent when an unpinned run never connected. |
 | `checks` | `MCPCheckResult[]` | Individual check results |
 | `summary` | `string` | Human-readable summary (`N/M checks passed, X failed, Y could not run, Z not applicable`) |
 | `durationMs` | `number` | Total duration |
@@ -215,6 +221,53 @@ Current readiness checks:
 
 - `readiness-parse-error-handling` — fires when the server accepts an unparseable JSON body as success without returning a JSON-RPC `-32700` parse error. No MCP revision mandates a specific response to malformed input, so this is `MAY` advice rather than a check.
 - `readiness-session-termination` — on 2025-era runs, fires when a session-termination `DELETE` returns a 5xx. On 2026-era runs, fires when `GET` or `DELETE` traffic from an older client is not answered with HTTP 405 (the 2026 backward-compat `SHOULD`).
+
+## Conformance score
+
+Every result carries a 0–100 conformance score. Use `scoreFromProtocolResult` to compute it from a single run, or `pooledConformanceScore` to combine scores across suites:
+
+```typescript
+import {
+  scoreFromProtocolResult,
+  describeConformanceScore,
+} from "@mcpjam/sdk";
+
+const result = await new MCPConformanceTest({ serverUrl: "..." }).run();
+const score = scoreFromProtocolResult(result);
+
+console.log(score.score);          // e.g. 98
+console.log(score.applicable);     // denominator: passed + failed + couldNotRun
+console.log(score.passed);         // checks that passed
+console.log(score.advisories);     // readiness warnings that cost points
+console.log(describeConformanceScore(score));
+// "98/100 — 13/13 applicable checks passed, 1 advisory (−2) [2025-11-25]"
+```
+
+**How the score is calculated:**
+
+- MUSTs own 95 of the 100 points: `95 × passed / applicable`
+- Readiness advice owns the last 5: SHOULD/RECOMMENDED warnings deduct 2 points each, MAY warnings deduct 1, capped at 5 total
+- `not-applicable` checks leave the denominator entirely — a server without auth, a stdio server's HTTP checks, or era-gated checks on the wrong version cost nothing
+- `could-not-run` checks stay in the denominator as unearned points, so an incomplete run cannot reach 100
+- The 95–100 band is reserved for MUST-clean, complete runs; failed or incomplete runs cap at 94
+- 100 means every applicable check passed and nothing was left to advise
+
+`score.score` is `null` when nothing was applicable (zero denominator).
+
+The CLI prints a `Score:` line to stderr after each run (suppressed by `--quiet`):
+
+```
+Score: 98/100 — 13/13 applicable checks passed, 1 advisory (−2) [2025-11-25]
+```
+
+`toConformanceReport` attaches the score to `ConformanceReport.score`. JUnit XML output includes it in a `<properties>` block under each `<testsuite>`:
+
+```xml
+<properties>
+  <property name="mcpjam.conformance.score" value="98"/>
+  <property name="mcpjam.conformance.summary" value="98/100 — ..."/>
+</properties>
+```
 
 ## CI reporting
 
