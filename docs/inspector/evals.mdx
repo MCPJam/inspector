@@ -144,6 +144,23 @@ Judge results are also accessible outside the app. `mcpjam cloud eval status` re
 
 The same judge config and defaults are shared with **Swarm journeys**. When creating a new journey, expand **Advanced → Judge** to set the judge model and enable auto-grade for that journey. Session score badges (showing the verdict and score) appear in the Sessions list and run matrix cells whenever a session has been graded. Sessions with no transcript still expose the on-demand judge entry point so failed or empty sessions can be graded against the journey goal.
 
+### Groundedness judge
+
+The **Groundedness** judge answers a different question from goal completion: *are the factual claims in each case's final answer actually supported by what the tools returned?* It is advisory — it never changes a run's deterministic pass/fail verdict.
+
+Open a completed run and find the **Groundedness** card in the insight rail (below the goal-completion panel). Click **Run judge** to start grading. The judge only runs on an explicit click and never runs automatically.
+
+Results are evidence-first: each failing case leads with the specific **unsupported claims** — the exact phrases in the answer that the tool trajectory does not support — followed by a per-case score and reason. A summary headline (e.g. `1/2 grounded`) appears at the top of the card.
+
+| State | What you see |
+|-------|-------------|
+| Idle | **Run judge** button with a description of what the judge checks. Uses credits. |
+| Pending | Spinner with "Checking claims against tool evidence…" |
+| Results | Headline count, per-case scores, unsupported claims for failures, and a **Re-run judge** button to force a fresh grade. |
+| Failed generation | The error summary and a **Retry** button. |
+
+The card is only shown for completed runs and hides automatically when the backend does not yet support the judge.
+
 ### MCP App widgets in swarm sessions
 
 When a swarm session uses MCP App tools that return widgets, the session viewer replays those widgets as full interactive components — the same rendering you see in the Playground. Widgets are captured per turn as the run executes and are available once the run completes.
