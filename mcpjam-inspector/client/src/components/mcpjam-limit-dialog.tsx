@@ -198,7 +198,9 @@ function GuestCreditWall() {
               height={GUEST_WALL_ILLUSTRATION_SIZE}
               // Explicit intrinsic size reserves the box before the PNG decodes,
               // so the CTAs don't jump up under a reaching cursor when it paints.
-              className="w-full h-auto rounded-lg"
+              // Small, left-aligned hero per Figma 136-92 (DialogContent is a
+              // grid, so justify-self-start pins it left instead of stretching).
+              className="h-auto w-32 justify-self-start"
               // Degrade to no image if the asset hasn't been dropped in yet, so
               // the flag can ship ahead of the design export.
               onError={(event) => {
