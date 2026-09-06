@@ -109,6 +109,113 @@ const ALLOWED: Record<string, string> = {
  * carrying an unbalanced `\)` inside a server row's `.map(` is the narrower
  * risk, and it is left standing knowingly.
  */
+/** Index just past the quoted string opening at `start`, newline-bounded. */
+function endOfQuoted(source: string, start: number): number {
+  const quote = source[start];
+  let j = start + 1;
+  // A newline ends it: an unterminated quote is a typo, and running to the end
+  // of the file on one would blank the rest of the component.
+  while (j < source.length && source[j] !== quote && source[j] !== "\n") {
+    j += source[j] === "\\" ? 2 : 1;
+  }
+  return Math.min(j + 1, source.length);
+}
+
+/**
+ * Index just past the template literal opening at `start`, or -1 if it never
+ * closes.
+ *
+ * `${…}` holds CODE, which can hold its own strings and its own templates, and
+ * the brace that ends the expression is the one this has to find. Counting
+ * bare `}` instead meant `` `${`a}b`}` `` ended the scan at the inner
+ * backtick; everything after it was then read as one unterminated template and
+ * blanked to the end of the file, taking any picker below it with it.
+ */
+function endOfTemplate(source: string, start: number): number {
+  let j = start + 1;
+  while (j < source.length) {
+    const c = source[j];
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (c === "`") return j + 1;
+    if (c === "$" && source[j + 1] === "{") {
+      const after = endOfExpression(source, j + 2);
+      if (after === -1) return -1;
+      j = after;
+      continue;
+    }
+    j += 1;
+  }
+  return -1;
+}
+
+/** Index just past the `}` closing a `${` whose body starts at `start`. */
+function endOfExpression(source: string, start: number): number {
+  let j = start;
+  let depth = 1;
+  while (j < source.length) {
+    const c = source[j];
+    const two = source.slice(j, j + 2);
+    if (c === "\\") {
+      j += 2;
+      continue;
+    }
+    if (two === "//") {
+      const nl = source.indexOf("\n", j);
+      j = nl === -1 ? source.length : nl;
+      continue;
+    }
+    if (two === "/*") {
+      const close = source.indexOf("*/", j + 2);
+      j = close === -1 ? source.length : close + 2;
+      continue;
+    }
+    if (c === '"' || c === "'") {
+      j = endOfQuoted(source, j);
+      continue;
+    }
+    if (c === "`") {
+      const after = endOfTemplate(source, j);
+      if (after === -1) return -1;
+      j = after;
+      continue;
+    }
+    if (c === "{") depth += 1;
+    else if (c === "}") {
+      depth -= 1;
+      if (depth === 0) return j + 1;
+    }
+    j += 1;
+  }
+  return -1;
+}
+
+/**
+ * Blank out everything that is not code, keeping every offset and every
+ * newline, so what follows can count brackets without a comment or a string
+ * lying to it.
+ *
+ * This exists because the paren scan below was silently defeatable. A callback
+ * written `(server) => { … }` sits at depth 1 for its whole body, so ONE
+ * unbalanced `)` in a comment — `// paso 1)`, or a `:)` — closed the call
+ * early, and a `<button onClick>` below it was never seen. The inventory lock
+ * then reported the file as clean. For a guard whose only job is to catch the
+ * next picker, under-detection is the one failure that matters.
+ *
+ * WHEN IN DOUBT, LEAVE IT AS CODE. A construct that never closes is not
+ * blanked at all, because the two ways to be wrong are not equal: over-detect
+ * and somebody adds an allowlist entry with a reason, under-detect and a
+ * picker ships unnoticed. That is the whole point of the guard.
+ *
+ * NOT handled: regex literals. In a `.tsx` file `/` is overwhelmingly a JSX
+ * closing tag — `</span>`, `/>` — and no character-level heuristic separates
+ * those from a regex start. Guessing wrong blanks real code and hides a real
+ * picker, which is the failure this function was written to remove. A regex
+ * carrying an unbalanced `\)` inside a server row's `.map(` is the narrower
+ * risk, and it is left standing knowingly.
+ */
 export function maskNonCode(source: string): string {
   const out = source.split("");
   const blank = (from: number, to: number) => {
@@ -122,54 +229,38 @@ export function maskNonCode(source: string): string {
     const two = source.slice(i, i + 2);
 
     if (two === "//") {
-      const end = source.indexOf("\n", i);
-      const stop = end === -1 ? source.length : end;
+      const nl = source.indexOf("\n", i);
+      const stop = nl === -1 ? source.length : nl;
       blank(i, stop);
       i = stop;
       continue;
     }
 
     if (two === "/*") {
-      const end = source.indexOf("*/", i + 2);
-      const stop = end === -1 ? source.length : end + 2;
+      const close = source.indexOf("*/", i + 2);
+      const stop = close === -1 ? source.length : close + 2;
       blank(i, stop);
       i = stop;
       continue;
     }
 
-    const quote = source[i];
-    if (quote === '"' || quote === "'") {
-      let j = i + 1;
-      // A newline ends it too: an unterminated quote is a typo, and running to
-      // the end of the file on one would blank the rest of the component.
-      while (j < source.length && source[j] !== quote && source[j] !== "\n") {
-        j += source[j] === "\\" ? 2 : 1;
-      }
-      blank(i, Math.min(j + 1, source.length));
-      i = j + 1;
+    const c = source[i];
+    if (c === '"' || c === "'") {
+      const stop = endOfQuoted(source, i);
+      blank(i, stop);
+      i = stop;
       continue;
     }
 
-    if (quote === "`") {
-      let j = i + 1;
-      let depth = 0;
-      while (j < source.length) {
-        const c = source[j];
-        if (c === "\\") {
-          j += 2;
-          continue;
-        }
-        if (depth === 0 && c === "`") break;
-        if (c === "$" && source[j + 1] === "{") {
-          depth += 1;
-          j += 2;
-          continue;
-        }
-        if (depth > 0 && c === "}") depth -= 1;
-        j += 1;
+    if (c === "`") {
+      const stop = endOfTemplate(source, i);
+      if (stop === -1) {
+        // Unresolvable. Leave it alone rather than blanking the rest.
+        i += 1;
+        continue;
       }
-      blank(i, Math.min(j + 1, source.length));
-      i = j + 1;
+      blank(i, stop);
+      i = stop;
       continue;
     }
 
@@ -296,6 +387,52 @@ describe("the scanner behind the inventory lock", () => {
     expect(
       rendersClickableServerList(block("  const hint = `${server.name} :)`;")),
     ).toBe(true);
+  });
+
+  /**
+   * `${…}` holds code, and code holds its own strings, templates, objects and
+   * comments. Counting bare `}` ended the scan at a nested backtick, and the
+   * rest of the file was then read as one unterminated template and blanked —
+   * so a picker BELOW the template vanished from the inventory.
+   */
+  it("finds the end of a template whose expression nests", () => {
+    for (const expr of [
+      "`${`a}b`}`", // a `}` that is literal text in a nested template
+      '`${ "}" }`', // …and in a string
+      "`${ f({ a: 1 }) }`", // …and a real object literal
+      "`${`x${`y}z`}`}`", // two levels deep
+      "`${ /* } */ server.name }`", // …and a comment
+    ]) {
+      expect(
+        rendersClickableServerList(block(`  const k = ${expr};`)),
+        expr,
+      ).toBe(true);
+    }
+  });
+
+  it("blanks a nested template WHOLE, and stops at its real end", () => {
+    // Asserted on the mask itself, not through a detection that the
+    // never-closes guard would rescue anyway. Counting bare `}` ended the
+    // template at the inner backtick and left `}` and a stray backtick behind
+    // as code, so this is what tells the two implementations apart.
+    const prefix = "const k = ";
+    const template = "`${`a}b`}`";
+    const src = `${prefix}${template};\nconst LATER = 1;\n`;
+    const masked = maskNonCode(src);
+
+    expect(masked.slice(prefix.length, prefix.length + template.length)).toBe(
+      " ".repeat(template.length),
+    );
+    expect(masked).toContain(prefix);
+    expect(masked).toContain("const LATER = 1;");
+  });
+
+  it("leaves a construct that never closes alone rather than blanking on", () => {
+    // The two ways to be wrong are not equal. Over-detect and someone adds an
+    // allowlist entry; under-detect and a picker ships unseen. So an
+    // unterminated template masks nothing instead of swallowing the file.
+    const src = "const bad = `abre y no cierra\nconst LATER = 1;\n";
+    expect(maskNonCode(src)).toContain("const LATER = 1;");
   });
 
   it("does not count a picker that only exists in a comment", () => {
