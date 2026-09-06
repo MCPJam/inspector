@@ -517,6 +517,57 @@ describe("prepareChatV2", () => {
     });
   });
 
+  it("forwards description overrides into MCP conversion and changes only description", async () => {
+    const original = {
+      description: "Look up a user by id.",
+      parameters: { jsonSchema: { type: "object", properties: { id: {} } } },
+      _serverId: "srv",
+      _meta: { ui: { visibility: ["model", "app"] } },
+      execute: async () => ({}),
+    };
+    const manager = mockManager({});
+    manager.hasServer = vi.fn((id: string) => id === "srv");
+    manager.getToolsForAiSdk = vi.fn(
+      async (_ids: string[], options?: { toolDescriptionOverrides?: Record<string, string> }) => {
+        const description =
+          options?.toolDescriptionOverrides?.get_user ?? original.description;
+        return {
+          get_user: { ...original, description },
+        };
+      }
+    );
+
+    const rewritten = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    const baseline = await prepareChatV2({
+      mcpClientManager: manager,
+      selectedServers: ["srv"],
+      modelDefinition: { id: "gpt-4.1", provider: "openai" } as any,
+      systemPrompt: "Base prompt.",
+    });
+
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(1, ["srv"], {
+      toolDescriptionOverrides: { get_user: "Find the user record for this id." },
+    });
+    expect(manager.getToolsForAiSdk).toHaveBeenNthCalledWith(
+      2,
+      ["srv"],
+      undefined
+    );
+    const rewrittenTool = rewritten.allTools.get_user as typeof original;
+    const baselineTool = baseline.allTools.get_user as typeof original;
+    expect(rewrittenTool.description).toBe("Find the user record for this id.");
+    expect(baselineTool.description).toBe(original.description);
+    expect(rewrittenTool.parameters).toEqual(baselineTool.parameters);
+    expect(rewrittenTool._serverId).toBe(baselineTool._serverId);
+    expect(rewrittenTool._meta).toEqual(baselineTool._meta);
+  });
+
   describe("progressive discovery", () => {
     function manyToolsManager(count: number) {
       const tools: Record<string, unknown> = {};
