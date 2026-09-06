@@ -54,6 +54,10 @@ describe("PolicyDiffTab violation evidence", () => {
     render(<PolicyDiffTab input={input} diagnoses={[]} />);
 
     expect(screen.getAllByText("Applied").length).toBeGreaterThan(0);
+    expect(
+      screen.getByLabelText("The CSP MCPJam enforced for this widget."),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Applied is parsed from/)).toBeNull();
     expect(screen.getByText("originalPolicy matches Applied")).toBeTruthy();
     expect(screen.getByText("originalPolicy differs from Applied")).toBeTruthy();
     expect(
