@@ -10,6 +10,7 @@ interface PolicyDiffTabProps {
   jumpToHost?: string | null;
   /** Cleared after the jump animation completes. */
   onJumpHandled?: () => void;
+  recorded?: boolean;
 }
 
 type RowState = "allowed" | "blocked" | "stripped" | "cors" | "mismatch";
@@ -24,7 +25,8 @@ interface Row {
 function expressionToHost(expr: string): string | null {
   const trimmed = expr.trim();
   if (!trimmed || trimmed.startsWith("'")) return null;
-  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:") return trimmed;
+  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:")
+    return trimmed;
   if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:$/.test(trimmed)) return trimmed;
   let rest = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, "");
   const slash = rest.indexOf("/");
@@ -45,7 +47,10 @@ function buildRequestedRows(
     }
   };
   pushAll(declared.connectDomains ?? declared.connect_domains, "connect-src");
-  pushAll(declared.resourceDomains ?? declared.resource_domains, "img/script/font/style-src");
+  pushAll(
+    declared.resourceDomains ?? declared.resource_domains,
+    "img/script/font/style-src",
+  );
   pushAll(declared.frameDomains, "frame-src");
   pushAll(declared.baseUriDomains, "base-uri");
   return rows;
@@ -193,7 +198,7 @@ function PolicyColumn({
   const summaryText =
     rows.length === 0
       ? emptyLabel
-      : tone === "warn" && (title === "Observed")
+      : tone === "warn" && title === "Observed"
         ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
         : `${summary.directives} ${summary.directives === 1 ? "directive" : "directives"} · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
 
@@ -278,7 +283,7 @@ function hostMatches(rowHost: string, target: string): boolean {
   if (!target) return false;
   const r = rowHost.toLowerCase();
   const t = target.toLowerCase().replace(/^https?:\/\//, "");
-  return r === t || r.endsWith("." + t) || ("*." + r.replace(/^\*\./, "")) === t;
+  return r === t || r.endsWith("." + t) || "*." + r.replace(/^\*\./, "") === t;
 }
 
 export function PolicyDiffTab({
@@ -286,6 +291,7 @@ export function PolicyDiffTab({
   diagnoses,
   jumpToHost,
   onJumpHandled,
+  recorded = false,
 }: PolicyDiffTabProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -308,11 +314,14 @@ export function PolicyDiffTab({
     [input.widgetDeclared],
   );
   const effectiveRows = useMemo(
-    () => [
-      ...buildEffectiveRows(input.effective, mismatchHosts),
-      ...buildStrippedRows(input.widgetDeclared, input.effective),
-    ],
-    [input.effective, input.widgetDeclared, mismatchHosts],
+    () =>
+      recorded
+        ? []
+        : [
+            ...buildEffectiveRows(input.effective, mismatchHosts),
+            ...buildStrippedRows(input.widgetDeclared, input.effective),
+          ],
+    [input.effective, input.widgetDeclared, mismatchHosts, recorded],
   );
   const observedRows = useMemo(() => buildObservedRows(diagnoses), [diagnoses]);
 
@@ -350,7 +359,7 @@ export function PolicyDiffTab({
           title="Effective"
           subtitle="host granted"
           rows={effectiveRows}
-          emptyLabel="No allowlist captured"
+          emptyLabel={recorded ? "Not recorded" : "No allowlist captured"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
         />
@@ -358,7 +367,7 @@ export function PolicyDiffTab({
           title="Observed"
           subtitle="browser saw"
           rows={observedRows}
-          emptyLabel="No violations"
+          emptyLabel={recorded ? "Not recorded" : "No violations"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
         />
