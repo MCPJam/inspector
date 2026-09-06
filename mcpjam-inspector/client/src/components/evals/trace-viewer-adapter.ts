@@ -35,7 +35,7 @@ export type {
   TraceWidgetSnapshot,
 } from "@mcpjam/chat-ui/trace";
 
-type ToolResultDisplay = "sibling-text" | "attached-to-tool";
+type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
 
 /**
  * Inspector trace envelope: the package's structural trace input plus
