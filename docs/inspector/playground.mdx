@@ -309,6 +309,8 @@ Controls in the logger header:
 
 When a search is active and the source filter is hiding matching entries, a banner appears below the toolbar showing how many matches are hidden. Click **Clear filter** in the banner to reset the source filter to **All** and reveal those entries. The empty state reads **No matches in this view** (rather than **No logs yet**) whenever logs exist but are all filtered out.
 
+When you expand an entry whose payload exceeded the 256 KB per-message log limit, a notice reads **Payload not recorded — over the 256 KB log limit.** The envelope fields (`id`, `method`, `result`/`error`) are still shown so the row stays identifiable; only the large body (for example, a base64 image in a tool result) is replaced.
+
 ### Shell tab
 
 When the previewed host has a Project Computer, a **Shell** tab appears next to **Logs**. Click **Open terminal** to provision or wake the computer and open a live terminal session on the same machine the harness runs on. The computer status chip in the Shell header shows the current state (starting, ready, error, etc.).
