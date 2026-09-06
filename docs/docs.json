@@ -165,6 +165,7 @@
             "icon": "book",
             "pages": [
               "sdk/reference/mcp-client-manager",
+              "sdk/reference/subscription-coordinator",
               "sdk/reference/host-runner",
               "sdk/reference/prompt-result",
               "sdk/reference/eval-test",
