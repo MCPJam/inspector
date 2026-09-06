@@ -22,6 +22,8 @@ function pillClasses(klass: Diagnosis["class"]): string {
       return "bg-purple-500/10 text-purple-600 dark:text-purple-400";
     case "runtime-mismatch":
       return "bg-sky-500/10 text-sky-600 dark:text-sky-400";
+    case "policy-unavailable":
+      return "bg-muted text-muted-foreground";
     case "network":
       return "bg-muted text-muted-foreground";
     case "sandbox":
@@ -35,6 +37,8 @@ function pillLabel(klass: Diagnosis["class"]): string {
       return "HOST-STRIPPED";
     case "runtime-mismatch":
       return "MISMATCH";
+    case "policy-unavailable":
+      return "UNAVAILABLE";
     default:
       return klass.toUpperCase();
   }
@@ -87,10 +91,9 @@ export function BlockedRequestCard({
   };
 
   const handlePreviewHypothesis = () => {
-    toast(
-      "Hypothesis preview recorded · re-run flow coming soon",
-      { duration: 2200 },
-    );
+    toast("Hypothesis preview recorded · re-run flow coming soon", {
+      duration: 2200,
+    });
   };
 
   return (
@@ -166,28 +169,28 @@ export function BlockedRequestCard({
               <strong className="font-medium">
                 Adding this won&apos;t fix the current run.
               </strong>{" "}
-              The host stripped this entry before the browser ever received
-              the policy. Copy the declaration to document your portability
-              intent — and consider self-hosting the resource for this host.
+              The host stripped this entry before the browser ever received the
+              policy. Copy the declaration to document your portability intent —
+              and consider self-hosting the resource for this host.
             </div>
           )}
 
           {isRuntimeMismatch && (
             <div className="rounded-md border border-sky-500/30 bg-sky-500/10 px-3 py-2 text-[11.5px] leading-relaxed">
-              <strong className="font-medium">effective ≠ observed.</strong>{" "}
-              The host reported this origin as allowed, but the browser still
-              blocked it. Possible causes: runtime restriction layered on top
-              of the iframe, browser/extension policy, or
-              evidence-collection lag. Adding to{" "}
-              <span className="font-mono">_meta.ui.csp</span> will not help —
-              investigate the host runtime or compare snapshots in Policy
+              <strong className="font-medium">applied ≠ observed.</strong> The
+              host reported this origin as allowed, but the browser still
+              blocked it. Possible causes: runtime restriction layered on top of
+              the iframe, browser/extension policy, or evidence-collection lag.
+              Adding to <span className="font-mono">_meta.ui.csp</span> will not
+              help — investigate the host runtime or compare snapshots in Policy
               Diff.
             </div>
           )}
 
           {diagnosis.class === "cors" && (
             <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11.5px] leading-relaxed">
-              This is a <strong className="font-medium">fetch / XHR CORS block</strong>,
+              This is a{" "}
+              <strong className="font-medium">fetch / XHR CORS block</strong>,
               not a CSP block. The remote origin must return an{" "}
               <span className="font-mono">Access-Control-Allow-Origin</span>{" "}
               header, or proxy the request through a server you control.
@@ -199,7 +202,9 @@ export function BlockedRequestCard({
               <span className="text-muted-foreground">{`csp: {`}</span>
               {"\n"}
               <span className="block -mx-3 px-3 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                {`+   ${diagnosis.patch!.field}: ${JSON.stringify(diagnosis.patch!.add)},`}
+                {`+   ${diagnosis.patch!.field}: ${JSON.stringify(
+                  diagnosis.patch!.add,
+                )},`}
               </span>
               <span className="text-muted-foreground">{`}`}</span>
             </pre>
@@ -224,25 +229,30 @@ export function BlockedRequestCard({
 
           <div className="flex flex-wrap items-center gap-2 pt-1">
             <span className="flex-1" />
-            {(isHostStripped || isRuntimeMismatch) && onViewPolicyDiff && (
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 px-2 h-7 rounded text-[11px] text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                onClick={() => onViewPolicyDiff(originOf(diagnosis.url))}
-              >
-                View policy diff <ExternalLink className="size-3" />
-              </button>
-            )}
-            {diagnosis.class !== "cors" && diagnosis.class !== "runtime-mismatch" && (
-              <button
-                type="button"
-                title="Coming soon"
-                onClick={handlePreviewHypothesis}
-                className="inline-flex items-center gap-1 px-2.5 h-7 rounded border border-border/60 text-[11px] text-muted-foreground hover:text-foreground hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                Preview hypothesis
-              </button>
-            )}
+            {(isHostStripped ||
+              isRuntimeMismatch ||
+              diagnosis.class === "policy-unavailable") &&
+              onViewPolicyDiff && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 px-2 h-7 rounded text-[11px] text-sky-600 dark:text-sky-400 hover:bg-sky-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onViewPolicyDiff(originOf(diagnosis.url))}
+                >
+                  View policy diff <ExternalLink className="size-3" />
+                </button>
+              )}
+            {diagnosis.class !== "cors" &&
+              diagnosis.class !== "runtime-mismatch" &&
+              diagnosis.class !== "policy-unavailable" && (
+                <button
+                  type="button"
+                  title="Coming soon"
+                  onClick={handlePreviewHypothesis}
+                  className="inline-flex items-center gap-1 px-2.5 h-7 rounded border border-border/60 text-[11px] text-muted-foreground hover:text-foreground hover:border-border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Preview hypothesis
+                </button>
+              )}
             {showPatch && (
               <button
                 type="button"

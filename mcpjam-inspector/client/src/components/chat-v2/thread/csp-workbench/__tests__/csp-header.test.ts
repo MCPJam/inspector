@@ -1,9 +1,36 @@
 import { describe, expect, it } from "vitest";
 import {
+  compareCspPolicies,
   effectiveFromCspHeader,
   parseCspHeader,
   resolveDirective,
 } from "../csp-header";
+
+describe("compareCspPolicies", () => {
+  it("ignores directive order, source order, duplicates, and whitespace", () => {
+    expect(
+      compareCspPolicies(
+        "frame-src https://b.example https://a.example; default-src 'none'",
+        " default-src 'none'; frame-src https://a.example https://b.example https://a.example ",
+      ),
+    ).toEqual({ status: "matching", differingDirectives: [] });
+  });
+
+  it("reports changed directives", () => {
+    expect(
+      compareCspPolicies(
+        "default-src 'none'; frame-src https://a.example",
+        "default-src 'none'; frame-src https://b.example",
+      ),
+    ).toEqual({ status: "different", differingDirectives: ["frame-src"] });
+  });
+
+  it("reports unavailable when either policy was not captured", () => {
+    expect(compareCspPolicies(undefined, "default-src 'none'").status).toBe(
+      "unavailable",
+    );
+  });
+});
 
 // The two policies the sandbox proxy can actually apply, verbatim. The
 // widget-declared one is the output of `buildCSP` for a widget declaring only
@@ -69,13 +96,17 @@ describe("parseCspHeader", () => {
 
 describe("resolveDirective", () => {
   it("falls back to default-src when the directive is absent", () => {
-    const map = parseCspHeader("default-src 'self'; connect-src https://a.example");
+    const map = parseCspHeader(
+      "default-src 'self'; connect-src https://a.example",
+    );
     expect(resolveDirective(map, "connect-src")).toEqual(["https://a.example"]);
     expect(resolveDirective(map, "img-src")).toEqual(["'self'"]);
   });
 
   it("returns undefined — not an empty list — when nothing governs", () => {
-    expect(resolveDirective(parseCspHeader("script-src 'self'"), "img-src")).toBeUndefined();
+    expect(
+      resolveDirective(parseCspHeader("script-src 'self'"), "img-src"),
+    ).toBeUndefined();
   });
 
   it("prefers an explicitly empty directive over default-src", () => {
@@ -106,7 +137,9 @@ describe("effectiveFromCspHeader", () => {
   });
 
   it("applies the default-src fallback when a directive is missing", () => {
-    const e = effectiveFromCspHeader(parseCspHeader("default-src https://a.example"));
+    const e = effectiveFromCspHeader(
+      parseCspHeader("default-src https://a.example"),
+    );
     expect(e.connectDomains).toEqual(["https://a.example"]);
     expect(e.resourceDomains).toEqual(["https://a.example"]);
   });

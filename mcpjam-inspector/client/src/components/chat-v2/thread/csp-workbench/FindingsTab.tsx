@@ -48,7 +48,7 @@ export function FindingsTab({
           <div className="text-[11.5px] text-muted-foreground max-w-md">
             The widget loaded without tripping any{" "}
             <span className="font-mono">securitypolicyviolation</span> events.
-            Check Policy Diff to inspect the declared / effective allowlists.
+            Check Policy Diff to inspect the requested / Applied policies.
           </div>
         </div>
       </div>
@@ -72,6 +72,11 @@ export function FindingsTab({
       label: "mismatch",
       cls: "text-sky-600 dark:text-sky-400",
     },
+    {
+      count: summary.policyUnavailable,
+      label: "unavailable",
+      cls: "text-muted-foreground",
+    },
   ].filter((p) => p.count > 0);
 
   const fixesPart =
@@ -80,7 +85,9 @@ export function FindingsTab({
       : null;
   const declPart =
     summary.declarations > 0
-      ? `${summary.declarations} ${summary.declarations === 1 ? "declaration" : "declarations"}`
+      ? `${summary.declarations} ${
+          summary.declarations === 1 ? "declaration" : "declarations"
+        }`
       : null;
 
   return (

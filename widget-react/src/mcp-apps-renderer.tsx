@@ -69,6 +69,8 @@ import {
   type WidgetLifecycleEvent,
   type WidgetHostResolvers,
   type WidgetDebugSink,
+  type CspMountId,
+  type CspApplicationIntent,
 } from "./widget-host";
 
 // The debug sink is OPTIONAL on the contract — a non-inspector host can omit it
@@ -83,6 +85,7 @@ const NOOP_WIDGET_DEBUG_SINK: WidgetDebugSink = {
   setWidgetCsp: () => {},
   setWidgetAppliedCsp: () => {},
   addCspViolation: () => {},
+  reportCspViolation: () => {},
   clearCspViolations: () => {},
   setWidgetModelContext: () => {},
   setWidgetHtml: () => {},
@@ -107,6 +110,34 @@ const PIP_MAX_HEIGHT = "min(40vh, 600px)";
  */
 const CSP_BLOCKED_NOTICE_DELAY_MS = 1500;
 const SAFE_OPEN_IN_APP_PROTOCOLS = new Set(["http:", "https:"]);
+
+function normalizeCspMountId(value: unknown): CspMountId | undefined {
+  if (typeof value === "number") {
+    return Number.isInteger(value) && value > 0 ? value : undefined;
+  }
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed.length <= 128 ? trimmed : undefined;
+}
+
+function normalizeCspApplicationIntent(
+  value: unknown
+): CspApplicationIntent | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<CspApplicationIntent>;
+  if (typeof candidate.permissive !== "boolean") return undefined;
+  return {
+    csp:
+      candidate.csp && typeof candidate.csp === "object"
+        ? candidate.csp
+        : undefined,
+    cspDirectives:
+      candidate.cspDirectives && typeof candidate.cspDirectives === "object"
+        ? candidate.cspDirectives
+        : undefined,
+    permissive: candidate.permissive,
+  };
+}
 
 function toSafeOpenInAppUrl(value: string): string | null {
   try {
@@ -1232,6 +1263,7 @@ export function MCPAppsRendererSurface({
   // Where the proxy mounted the view, reported once per mount. Surfaced as the
   // Sandbox Stack "View origin" chip.
   const [viewMount, setViewMount] = useState<{
+    mountId?: CspMountId;
     mode: "url" | "srcdoc" | "srcdoc-fallback";
     url: string;
   } | null>(null);
@@ -2185,6 +2217,7 @@ export function MCPAppsRendererSurface({
   const setWidgetCspStore = debug.setWidgetCsp;
   const setWidgetAppliedCspStore = debug.setWidgetAppliedCsp;
   const addCspViolation = debug.addCspViolation;
+  const reportCspViolation = debug.reportCspViolation;
   const clearCspViolations = debug.clearCspViolations;
   const setWidgetModelContext = debug.setWidgetModelContext;
   const setWidgetHtmlStore = debug.setWidgetHtml;
@@ -3110,6 +3143,7 @@ export function MCPAppsRendererSurface({
         restrictTo: sandboxCspPolicy?.restrictTo,
         cspMode: sandboxCspPolicy?.mode,
         permissions: effectiveSandbox.permissions,
+        mountId: viewMount?.mountId,
         viewMode: viewMount?.mode,
         viewUrl: viewMount?.url,
         assignedOrigin: viewAssignedOrigin,
@@ -3816,6 +3850,9 @@ export function MCPAppsRendererSurface({
         lineNumber,
         columnNumber,
         effectiveDirective,
+        mountId,
+        originalPolicy,
+        disposition,
         timestamp,
         subtype,
       } = data;
@@ -3829,16 +3866,25 @@ export function MCPAppsRendererSurface({
         message: data,
       });
 
-      addCspViolation(toolCallId, {
+      const violation = {
         directive,
         effectiveDirective,
         blockedUri,
+        mountId: normalizeCspMountId(mountId),
+        originalPolicy:
+          typeof originalPolicy === "string" ? originalPolicy : undefined,
+        disposition:
+          disposition === "enforce" || disposition === "report"
+            ? disposition
+            : undefined,
         sourceFile,
         lineNumber,
         columnNumber,
         timestamp: timestamp || Date.now(),
         subtype,
-      });
+      };
+      addCspViolation(toolCallId, violation);
+      reportCspViolation(toolCallId, serverId, violation);
 
       // Remember the first block so the render path can explain a View
       // that never boots. Cleared on every reload alongside the debug
@@ -3863,7 +3909,14 @@ export function MCPAppsRendererSurface({
         );
       }
     },
-    [addCspViolation, logUiEvent, minimalMode, serverId, toolCallId]
+    [
+      addCspViolation,
+      logUiEvent,
+      minimalMode,
+      reportCspViolation,
+      serverId,
+      toolCallId,
+    ]
   );
 
   const handleSandboxMessage = (event: MessageEvent) => {
@@ -3877,16 +3930,24 @@ export function MCPAppsRendererSurface({
     }
 
     // The CSP string the proxy injected for this mount. Arrives just before
-    // that mount's `mcpjam:view-mode`. This is the only ground truth the host
-    // gets about the policy the browser is enforcing — everything else it
-    // knows is the widget's request, not the outcome.
+    // that mount's `mcpjam:view-mode`. This records what MCPJam applied;
+    // each violation's `originalPolicy` separately records the policy that
+    // caused that specific violation.
     if (data.type === "mcpjam:csp-applied") {
-      if (typeof data.csp === "string" && data.csp.length > 0) {
+      const mountId = normalizeCspMountId(data.mountId);
+      if (
+        mountId !== undefined &&
+        typeof data.csp === "string" &&
+        data.csp.length > 0
+      ) {
         setWidgetAppliedCspStore(toolCallIdRef.current, {
+          mountId,
           headerString: data.csp,
           mode: data.mode === "permissive" ? "permissive" : "widget-declared",
+          intent: normalizeCspApplicationIntent(data.intent),
         });
         logWidgetDebug("ui-to-host", "debug/csp-applied", {
+          mountId,
           mode: data.mode,
           headerLength: data.csp.length,
         });
@@ -3901,8 +3962,13 @@ export function MCPAppsRendererSurface({
       const mode = data.mode;
       if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
         const url = typeof data.url === "string" ? data.url : "";
-        setViewMount({ mode, url });
-        logWidgetDebug("ui-to-host", "debug/view-mounted", { mode, url });
+        const mountId = normalizeCspMountId(data.mountId);
+        setViewMount({ mountId, mode, url });
+        logWidgetDebug("ui-to-host", "debug/view-mounted", {
+          mountId,
+          mode,
+          url,
+        });
       }
       return;
     }
