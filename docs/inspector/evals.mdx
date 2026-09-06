@@ -207,6 +207,18 @@ In suite settings, the **Computer environment** select lets you pin a built Dock
 
 Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
+### Pinning a sandbox image at the environment level
+
+When the **computers** feature flag is enabled and your deployment uses project environments, the project environment editor includes a **Sandbox image** section. Pinning an image there applies to all eval runs in that environment — each run boots a fresh, isolated sandbox from the chosen image.
+
+- Images that have not finished building are labelled **(not built)**; selecting one will cause runs to fail at launch. Build the image first under **Computer → Images**.
+- Personal draft images are listed but cannot be selected — promote the image to project-shared first.
+- Selecting **None (default image)** uses the provider's default base image.
+
+<Note>
+  The sandbox image pin applies to eval runs only. Playground, chatboxes, and swarms do not use the pinned image yet.
+</Note>
+
 ## Suite execution config
 
 Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
