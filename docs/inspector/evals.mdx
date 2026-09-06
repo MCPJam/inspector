@@ -262,6 +262,10 @@ The delete button in the suite switcher is hidden for any suite that is CI-activ
 
 ## Reading results
 
+### Sharing eval links
+
+Suite and run URLs are shareable. When you paste a link in Slack, a PR description, or anywhere else, the recipient lands on the correct project automatically — the app reads the `?project=` parameter embedded in the URL and switches their active project to match before showing the results. If the recipient doesn't have access to that project, they see a toast and stay on their current project.
+
 ### Suite navigation
 
 Opening the Evaluate tab takes you directly into the most recent suite's dashboard. To switch suites, use the **suite switcher** in the breadcrumb — it lists all your suites and lets you jump to one, create a new suite, or delete the current suite. If no suites exist yet, the empty-state create prompt appears instead.
