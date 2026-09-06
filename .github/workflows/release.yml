@@ -131,7 +131,15 @@ jobs:
               core.info(`Found successful ${workflowId} run ${run.id} for ${context.sha}.`);
             }
 
+      # Behind `skip_verify` alongside the CI gate above: the two answer the
+      # same question ("has this SHA been exercised before it ships"), so one
+      # bypassable and one not meant an urgent release had no way through
+      # without editing this file. Skipping it also skips what
+      # `deploy-webapp`'s `require_staging_green: false` relies on, so a
+      # skip_verify release that also deploys the webapp ships a SHA no staging
+      # run has smoked.
       - name: Require green staging smoke for candidate SHA
+        if: ${{ !fromJSON(inputs.skip_verify) }}
         uses: actions/github-script@v7
         with:
           script: |

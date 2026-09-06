@@ -55,6 +55,7 @@ import {
   type StageState,
   type UserValueStage,
 } from "./chain.js";
+import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
 
 /**
  * Bump when the derivation SEMANTICS change — not when a type moves.
@@ -293,7 +294,9 @@ export type StagePredicateResultLike = {
  * re-reading its point-in-time predicate row here would let a raw residual
  * contradict the adjudicated verdict the matcher path produces.
  */
-const SELECTION_PREDICATE_REASONS: Record<string, StageReason> = {
+const SELECTION_PREDICATE_REASON_BY_KIND: Partial<
+  Record<PredicateKind, StageReason>
+> = {
   /** A required call never happened — the same fact `missing` reports. */
   toolCalledAtLeastOnce: "missingToolCall",
   /** Something else went first: a call we did not expect, in that position. */
@@ -301,6 +304,29 @@ const SELECTION_PREDICATE_REASONS: Record<string, StageReason> = {
   /** A forbidden tool was called. */
   toolNeverCalled: "unexpectedToolCall",
 };
+
+/**
+ * DERIVED from `PREDICATE_STAGE`, not restated beside it.
+ *
+ * Before B7 this table and the settings-page routing were two hand-kept lists
+ * of the same fact, which is one edit away from a suite that renders a grader
+ * under `selection` while the analyzer files its failures at `userValue` —
+ * a disagreement no test would catch because neither list is wrong on its own.
+ * Now the stage comes from the map and only the REASON lives here.
+ *
+ * `toolCalledWith` is filtered out on purpose even though the map routes it to
+ * `selection`: it is matcher-graded, and re-reading its point-in-time
+ * predicate row here would let a raw residual contradict the adjudicated
+ * verdict the matcher path produces.
+ */
+const SELECTION_PREDICATE_REASONS: Record<string, StageReason> =
+  Object.fromEntries(
+    Object.entries(SELECTION_PREDICATE_REASON_BY_KIND).filter(
+      ([kind, reason]) =>
+        reason !== undefined &&
+        PREDICATE_STAGE[kind as PredicateKind] === "selection"
+    )
+  ) as Record<string, StageReason>;
 
 /**
  * Kinds that assert a call WILL happen, so they make `call` applicable.
@@ -1615,5 +1641,52 @@ export function stageDerivationToMetadata(
       ? { failureCategory: derivation.failureCategory }
       : {}),
     stageAnalyzerVersion: derivation.stageAnalyzerVersion,
+  };
+}
+
+/**
+ * Public projection of an iteration's stage evidence.
+ *
+ * `metadata` is an open record; only this whitelist may cross into a
+ * decision-chain assembly. Validated derivations pass through; invalid
+ * rows become `stageResultsUnverified`. Pre-D1 metadata (no
+ * `stageResults`) is omitted so those iterations stay byte-identical.
+ */
+export function projectStageDerivation(
+  metadata: unknown
+): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const record = metadata as Record<string, unknown>;
+  if (!("stageResults" in record)) return {};
+
+  const derivation = stageDerivationSchema.safeParse({
+    stageResults: record.stageResults,
+    ...(record.firstFailedStage !== undefined
+      ? { firstFailedStage: record.firstFailedStage }
+      : {}),
+    ...(record.failureCategory !== undefined
+      ? { failureCategory: record.failureCategory }
+      : {}),
+    stageAnalyzerVersion: record.stageAnalyzerVersion,
+  });
+  if (derivation.success) {
+    return {
+      stageResults: derivation.data.stageResults,
+      ...(derivation.data.firstFailedStage
+        ? { firstFailedStage: derivation.data.firstFailedStage }
+        : {}),
+      ...(derivation.data.failureCategory
+        ? { failureCategory: derivation.data.failureCategory }
+        : {}),
+      stageAnalyzerVersion: derivation.data.stageAnalyzerVersion,
+    };
+  }
+
+  const version = record.stageAnalyzerVersion;
+  return {
+    stageResultsUnverified: true,
+    ...(typeof version === "number" && Number.isInteger(version) && version >= 0
+      ? { stageAnalyzerVersion: version }
+      : {}),
   };
 }

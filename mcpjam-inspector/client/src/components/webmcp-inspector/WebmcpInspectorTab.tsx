@@ -18,7 +18,10 @@ import {
   buildSessionExport,
   exportFilename,
 } from "@/lib/webmcp-inspector/session-export";
-import { WEBMCP_VIEWPORT } from "@/shared/webmcp-inspector-protocol";
+import {
+  parseHostedSessionId,
+  WEBMCP_VIEWPORT,
+} from "@/shared/webmcp-inspector-protocol";
 import {
   createInputForwarder,
   type InputForwarder,
@@ -31,6 +34,8 @@ import type {
 } from "@/shared/webmcp-inspector-protocol";
 import type { WebMcpLiveFrame } from "@/stores/webmcp-inspector-store";
 import { notePainted } from "@/lib/webmcp-inspector/frame-stats";
+import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import { HOSTED_MODE } from "@/lib/config";
 import { copyWebMcpDiagnostics } from "@/lib/webmcp-inspector/diagnostics";
 
 /**
@@ -135,6 +140,18 @@ export function WebmcpInspectorTab() {
       typeof document === "undefined" || document.visibilityState !== "hidden",
   );
   const activeProjectId = useHostContextStore((state) => state.activeProjectId);
+  /**
+   * Whether this viewer can start a hosted session at all.
+   *
+   * `activeProjectId` is the observable half of it. A guest never has one — a
+   * project comes from a verified member session — so this also stands in for
+   * "signed in", which is the OTHER thing the hosted route requires
+   * (`requireVerifiedAuth` refuses a guest bearer outright). Deliberately not
+   * read from a Convex auth hook: this tab renders in surfaces that mount no
+   * Convex provider, and a hard dependency on one to decide a sentence of copy
+   * would trade a real crash for a cosmetic gain.
+   */
+  const hostedReady = Boolean(activeProjectId);
 
   /**
    * Whether the next session should attach to a surface this screen mounts.
@@ -306,6 +323,17 @@ export function WebmcpInspectorTab() {
   }, []);
 
   const live = Boolean(session) && session?.status !== "closed";
+  /**
+   * The project the OPEN session is running on, read off its own id.
+   *
+   * Not `activeProjectId`. That one moves the moment somebody switches
+   * projects in the sidebar, and the browser panel below authorizes against
+   * whatever it is handed — so a switch mid-session would point the viewport
+   * at a different project's computer than the session it claims to be
+   * showing. A hosted session id is `hosted:<projectId>:<computerId>`, so the
+   * session carries the answer and cannot disagree with itself.
+   */
+  const sessionProjectId = parseHostedSessionId(session?.sessionId)?.projectId;
   const transportKind = session?.viewportTransport.kind;
   /** Everything this screen does differently per transport, decided in one place. */
   const behaviour = viewportBehaviour(transportKind);
@@ -417,6 +445,14 @@ export function WebmcpInspectorTab() {
    * server refuses that combination and this avoids sending it at all.
    */
   const startOptions = () => {
+    // Hosted is not a preference here, it is the only thing this deployment
+    // can do — and the server refuses `local`, `display` and `webContentsId`
+    // outright, so sending them would turn a working start into a 400.
+    if (HOSTED_MODE) {
+      return activeProjectId
+        ? { transport: "hosted" as const, projectId: activeProjectId }
+        : undefined;
+    }
     if (hosted && activeProjectId) {
       return { transport: "hosted" as const, projectId: activeProjectId };
     }
@@ -439,6 +475,11 @@ export function WebmcpInspectorTab() {
    * DOM would destroy the guest silently.
    */
   const openBrowser = async () => {
+    // The Enter key in the URL field reaches this too, and it does NOT go
+    // through the button's `disabled`. Without this, hosted-with-no-project
+    // sends a start the server can only refuse, and the person gets an error
+    // banner where the tooltip and the empty state already said what to do.
+    if (HOSTED_MODE && !hostedReady) return;
     if (!useEmbeddedSurface) {
       await startSession(url, startOptions());
       return;
@@ -679,7 +720,7 @@ export function WebmcpInspectorTab() {
             forge ships `.vite` with no node_modules and `playwright` is
             externalized, so launching one always fails. A button that can only
             produce an error is worse than no button. */}
-        {!live && !hosted && !isPackaged ? (
+        {!live && !hosted && !isPackaged && !HOSTED_MODE ? (
           <Button
             size="sm"
             variant="outline"
@@ -697,7 +738,10 @@ export function WebmcpInspectorTab() {
             {inApp ? "In app" : "Chrome window"}
           </Button>
         ) : null}
-        {!live && activeProjectId ? (
+        {/* WHERE the browser runs is a choice only a local inspector has. A
+            hosted replica has no display to open a window on, so offering the
+            toggle would offer an option the server refuses. */}
+        {!live && activeProjectId && !HOSTED_MODE ? (
           <Button
             size="sm"
             variant={hosted ? "default" : "outline"}
@@ -717,7 +761,17 @@ export function WebmcpInspectorTab() {
           <Button
             size="sm"
             onClick={() => void openBrowser()}
-            disabled={starting || openingSurface}
+            // Hosted has nowhere to run a browser without a project: the
+            // machine belongs to one. Disabled rather than hidden, so the
+            // reason can be read off the tooltip instead of guessed at.
+            disabled={
+              starting || openingSurface || (HOSTED_MODE && !hostedReady)
+            }
+            title={
+              HOSTED_MODE && !hostedReady
+                ? "Sign in and pick a project first — the browser runs on that project's computer."
+                : undefined
+            }
           >
             {starting || openingSurface ? "Opening…" : "Open browser"}
           </Button>
@@ -755,6 +809,20 @@ export function WebmcpInspectorTab() {
         />
       ) : null}
 
+      {!live && HOSTED_MODE && !hostedReady ? (
+        <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
+          {/* Names BOTH reasons, because from here they are indistinguishable
+              and only one of them used to be mentioned. A signed-out viewer
+              told to "pick a project" goes looking for a picker that is not
+              there for them; the hosted route refuses their bearer outright,
+              so it is not a nicety. */}
+          A hosted browser runs on your own MCPJam computer, so it needs a
+          signed-in account and a project to run under. Pick a project to get
+          started — and note it cannot reach anything on your own network,
+          including localhost.
+        </p>
+      ) : null}
+
       {live ? (
         <p className="border-b bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
           {/* Never promise a window that does not exist. A headless session has
@@ -784,6 +852,19 @@ export function WebmcpInspectorTab() {
               onNavigate={setUrl}
               onError={setLocalError}
             />
+          ) : live && behaviour.embedsBrowserPanel && sessionProjectId ? (
+            /* The remote browser's own live view, in the pane rather than
+               somewhere else to go and find.
+       
+               Mounted only once the session REPORTS this transport, never
+               before: the panel mints a token for a desktop computer, and
+               asking for one before the session has reserved that computer
+               throws. `ensure={false}` for the same reason the panel refuses
+               to reserve anywhere — a viewport must not be able to provision a
+               machine; the session it is watching already did. */
+            <div className="min-h-0 flex-1 border-b">
+              <BrowserPanel projectId={sessionProjectId} ensure={false} />
+            </div>
           ) : live ? (
             <ViewportPane
               frame={liveFrame}
@@ -1239,7 +1320,53 @@ function StatusBadge({ status }: { status: WebMcpSessionStatus }) {
 /**
  * The failure modes worth spelling out. Each one is a different thing for the
  * reader to do, so each gets its own sentence rather than a generic "error".
+ *
+ * A map rather than a ladder because the hosted transport roughly doubled the
+ * list, and because the cost of a missing entry is invisible: the server's own
+ * sentence still renders, so a code nobody added here reads as "something went
+ * wrong" with no next step, and nothing fails to make that noticeable.
  */
+const ERROR_GUIDANCE: Record<string, string> = {
+  // Local browser problems.
+  "webmcp-unsupported":
+    "The page loaded, but this browser build cannot expose WebMCP tools, so there is nothing to inspect.",
+  "no-display":
+    "Running over SSH or in a container? Restart the inspector with MCPJAM_WEBMCP_HEADLESS=true to inspect tools without a visible window.",
+  "chromium-not-installed":
+    "Chromium could not be found or installed. Run `npx playwright install chromium` and try again.",
+  capacity: "Close an open browser session before starting another.",
+  "session-not-found": "Open the page again to start a new session.",
+
+  // Hosted: what the person can actually do about each one.
+  "hosted-desktop-asleep":
+    "Your computer went to sleep. Open the page again to wake it — this view will not wake it for you, because waking starts billing again.",
+  "hosted-forbidden":
+    "An organization admin can turn Computers on for your organization.",
+  "hosted-at-capacity":
+    "Try again in a few minutes, or close a computer you are not using.",
+  "hosted-reserve-timeout":
+    "Try again — a computer that is starting cold usually comes up on the second attempt.",
+  "hosted-provision-failed":
+    "Your computer could not start. Try again, and if it keeps failing an operator will need to look at it.",
+  "hosted-desktop-deleted":
+    "That computer is gone. Open the page again to get a new one.",
+  "hosted-desktop-unconfigured":
+    "Hosted browsers are not finished being set up on this deployment. An operator needs to configure the desktop runtime.",
+  "hosted-unconfigured":
+    "This server cannot reach MCPJam computers right now. Try again shortly.",
+  "hosted-guest-unsupported":
+    "Sign in to run a browser — it runs on your own MCPJam computer, which a guest session does not have.",
+  "hosted-auth-required": "Sign in again to run a browser on your computer.",
+  "hosted-project-required":
+    "Pick a project first — the browser runs on that project's computer.",
+  "hosted-browser-disabled":
+    "Hosted browsers are turned off on this server right now.",
+  "hosted-local-unsupported":
+    "This inspector only runs browsers on your MCPJam computer. For a browser on this machine, run the inspector locally with `npx @mcpjam/inspector`.",
+  "lease-blocked":
+    "Someone has taken control of this browser. Hand it back from the view above to let tools run again.",
+};
+
 function ErrorBanner({
   message,
   code,
@@ -1249,18 +1376,13 @@ function ErrorBanner({
   code?: string;
   onDismiss: () => void;
 }) {
+  // Own keys only. A server code of `__proto__` or `constructor` otherwise
+  // resolves through the prototype chain to something that is not a string,
+  // and React is handed a child it cannot render.
   const guidance =
-    code === "webmcp-unsupported"
-      ? "The page loaded, but this browser build cannot expose WebMCP tools, so there is nothing to inspect."
-      : code === "no-display"
-        ? "Running over SSH or in a container? Restart the inspector with MCPJAM_WEBMCP_HEADLESS=true to inspect tools without a visible window."
-        : code === "chromium-not-installed"
-          ? "Chromium could not be found or installed. Run `npx playwright install chromium` and try again."
-          : code === "capacity"
-            ? "Close an open browser session before starting another."
-            : code === "session-not-found"
-              ? "Open the page again to start a new session."
-              : undefined;
+    code && Object.prototype.hasOwnProperty.call(ERROR_GUIDANCE, code)
+      ? ERROR_GUIDANCE[code]
+      : undefined;
 
   return (
     <div className="flex items-start gap-3 border-b bg-destructive/10 px-3 py-2 text-sm">
@@ -1311,6 +1433,16 @@ interface ViewportBehaviour {
   notice: string;
   /** The pane's caption when it is a view rather than a surface. */
   viewOnlyCaption: string;
+  /**
+   * The pane IS the Browser panel — a live stream of a browser running
+   * somewhere else, with its own take-control handoff.
+   *
+   * Only a remote browser sets this. It replaces the polled screenshot, which
+   * was proof of life rather than a viewport, and it is what makes a sign-in
+   * on a hosted page possible at all: the person has to be able to type into
+   * that browser, and the panel's lease is how they get to.
+   */
+  embedsBrowserPanel?: boolean;
 }
 
 const NATIVE_WINDOW_BEHAVIOUR: ViewportBehaviour = {
@@ -1347,13 +1479,18 @@ function viewportBehaviour(
     case "remote-interactive-url":
       return {
         ...NATIVE_WINDOW_BEHAVIOUR,
-        // The hosted browser paints somewhere else entirely; there is no
-        // screencast on this side of the daemon to ask for.
-        pollsScreenshots: true,
+        // The remote browser publishes its OWN viewport, and the pane embeds
+        // it. So this side neither streams nor polls: there is no CDP
+        // screencast on this side of the daemon to ask for, and the
+        // once-a-second screenshot it used to fall back to was proof of life
+        // rather than a picture anyone could work with.
+        serverPaints: false,
+        pollsScreenshots: false,
+        embedsBrowserPanel: true,
         notice:
-          "This browser is running on your MCPJam computer, not on this machine. Open the Browser panel to watch it, or to take control when a sign-in needs you.",
+          "This browser is running on your MCPJam computer, not on this machine. It cannot reach anything on your own network, including localhost.",
         viewOnlyCaption:
-          "Snapshots of your MCPJam computer's browser. Open the Browser panel to interact with it.",
+          "A live view of your MCPJam computer's browser. Take control to sign in or answer a challenge.",
       };
     case "frame-stream":
       return {

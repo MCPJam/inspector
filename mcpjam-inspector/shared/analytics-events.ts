@@ -155,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -458,6 +459,10 @@ export const ANALYTICS_EVENTS = {
   //   active project.
   // `project_route_inaccessible`       props: reason (malformed | not-a-member
   //   | timed-out). Never says whether the project exists.
+  // `project_route_recovered`          props: cause (late-ready). A route that
+  //   had already looked inaccessible later resolved without navigation.
+  // `project_route_stale_return_recovered` props: outcome (switched |
+  //   no-fallback). A post-sign-in scoped path named a lost membership.
   // `project_route_scope_mismatch`     props: guard (redirect-loop |
   //   repeated-switch). Redirect-loop protection tripped.
   // `app_signin_return_restored`       props: outcome (restored | absent |
@@ -465,6 +470,8 @@ export const ANALYTICS_EVENTS = {
   project_route_legacy_normalized: { source: "client" },
   project_route_resolved: { source: "client" },
   project_route_inaccessible: { source: "client" },
+  project_route_recovered: { source: "client" },
+  project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;

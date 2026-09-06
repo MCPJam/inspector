@@ -582,7 +582,7 @@ function ToolNameField({
   );
 }
 
-function ToolCalledWithFields({
+export function ToolCalledWithFields({
   predicate,
   onChange,
   availableTools,

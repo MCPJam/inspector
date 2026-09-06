@@ -15,7 +15,9 @@
  *
  * `fallbackBody` is the migration seam. Until the case rows land, the old
  * run-detail pane still renders beneath the verdict, so no information is
- * removed from the page in the commit that adds the headline.
+ * removed from the page in the commit that adds the headline. That pane is
+ * also where the rewrite-arm description disclosure lives (via
+ * `RunPluginSnapshot`); this component does not render a second one.
  */
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import { Copy } from "lucide-react";
@@ -25,7 +27,10 @@ import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
 import { useEvalRunDecisionDetail } from "@/hooks/use-eval-run-decision-summary";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
+import { useEvalRunRouteFacts } from "@/hooks/use-eval-run-route-facts";
 import { useEvalRunStageAnalytics } from "@/hooks/use-eval-run-stage-analytics";
+import { useDescriptionExperimentEnabled } from "@/hooks/useDescriptionExperimentEnabled";
+import { useFailureGroupsEnabled } from "@/hooks/useFailureGroupsEnabled";
 import {
   evalRunDecisionRevision,
   isTerminalEvalRunStatus,
@@ -45,9 +50,22 @@ import {
   summarizeRunChanges,
 } from "./evaluate-run-diff-model";
 import { useEvalRunCompare } from "./use-eval-run-compare";
+import {
+  catalogToolNamesFromRun,
+  isEmulatedDescriptionExperimentEngine,
+  readRunExecutionEngine,
+} from "./description-experiment-model";
+import { FailureGroupsCard } from "./failure-groups-card";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
 import { RunCaseRows } from "./run-case-rows";
+import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
+import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
+import {
+  buildRunRouteFacts,
+  routeFactsForRow,
+  routeLinesByRowKey,
+} from "./route-facts-model";
 import { RunStageStrip } from "./run-stage-strip";
 import { buildStageStrip } from "./run-stage-strip-model";
 import { RunGradingPeek } from "./run-grading-peek";
@@ -142,6 +160,89 @@ export function EvaluateRunContent({
   ]);
 
   const openRowKey = useMemo(() => defaultOpenCaseRow(caseRows), [caseRows]);
+
+  const descriptionExperimentEnabled = useDescriptionExperimentEnabled();
+  const descriptionExperiment = useEvalDescriptionExperiment({
+    projectId,
+    sourceRunId: run._id,
+    revision: evalRunDecisionRevision(run),
+    enabled: descriptionExperimentEnabled && active,
+  });
+  const catalogToolNames = useMemo(
+    () =>
+      descriptionExperimentEnabled
+        ? catalogToolNamesFromRun(run)
+        : new Set<string>(),
+    [descriptionExperimentEnabled, run],
+  );
+  // Absent engine = unknown = refused, with the same note as a harness run.
+  const engineSupported = isEmulatedDescriptionExperimentEngine(
+    readRunExecutionEngine(run),
+  );
+  // The propose CTA exists only where the hook does: a non-terminal run has
+  // no failed trials to draft from, and the hook is `enabled: false` for it.
+  // While the hook has a request out, every button is held, so a second
+  // click cannot draft a second proposal before the first has an id.
+  const proposeProps =
+    descriptionExperimentEnabled && active
+      ? {
+          catalogToolNames,
+          engineSupported,
+          onPropose: (toolName: string) =>
+            descriptionExperiment.propose({ toolName }),
+          ...(descriptionExperiment.status === "loading"
+            ? {
+                requestPending: true,
+                busyToolName:
+                  descriptionExperiment.experiment?.toolName ?? null,
+              }
+            : {}),
+        }
+      : null;
+  const failureGroupsEnabled = useFailureGroupsEnabled();
+  // No flag of its own: route facts read data the page already loaded, spend
+  // nothing, and have no backend gate. `evaluate-enabled` — which gates this
+  // whole page — is the audience gate, and a second one would only be a
+  // second thing to remember to turn on.
+  const persistedRouteFacts = useEvalRunRouteFacts({
+    projectId,
+    runId: run._id,
+    runStatus: run.status,
+    enabled: active,
+  });
+  // The page-local producer stands in for a document that is NOT THERE —
+  // `absent`, or a deployment that does not serve the route yet. It must not
+  // stand in for one that is still loading, and it must not paper over a
+  // document the contract rejected: that is a bug report, and local numbers
+  // in its place would hide it.
+  const routeFactsFallback =
+    persistedRouteFacts.status === "absent" ||
+    (persistedRouteFacts.status === "error" &&
+      persistedRouteFacts.error?.kind === "routeUnavailable");
+  const routeFactsDoc = useMemo(() => {
+    if (persistedRouteFacts.status === "ready") {
+      return persistedRouteFacts.document;
+    }
+    if (!routeFactsFallback) return null;
+    return buildRunRouteFacts(run, iterations);
+  }, [
+    persistedRouteFacts.status,
+    persistedRouteFacts.document,
+    routeFactsFallback,
+    run,
+    iterations,
+  ]);
+  const routeFactsComputedHere = routeFactsFallback && routeFactsDoc !== null;
+  const routeFactsContractError =
+    persistedRouteFacts.status === "error" &&
+    persistedRouteFacts.error?.kind === "invalidContract";
+  const routeLines = useMemo(
+    () =>
+      routeFactsDoc
+        ? routeLinesByRowKey(routeFactsDoc, caseRows, iterations)
+        : undefined,
+    [routeFactsDoc, caseRows, iterations],
+  );
 
   // No second flag. This whole surface is already behind `evaluate-enabled`,
   // and gating the strip again meant it vanished with no way for a reader to
@@ -385,27 +486,67 @@ export function EvaluateRunContent({
         />
       </div>
 
+      {routeFactsContractError ? (
+        <p
+          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+          data-testid="route-facts-error"
+        >
+          routes not shown — the run&apos;s route facts did not match the
+          contract
+        </p>
+      ) : null}
+
       <div className="border-t border-border/40">
         <RunCaseRows
           rows={visibleRows}
           defaultOpenKey={openRowKey}
           pills={rowPills}
+          {...(routeLines ? { routeLines } : {})}
           renderBody={(row) => (
             <RunCaseRowBody
               row={row}
               iterations={iterations}
+              {...(routeFactsDoc
+                ? {
+                    routeFacts: routeFactsForRow(
+                      routeFactsDoc,
+                      row,
+                      iterations,
+                    ),
+                    catalogState: routeFactsDoc.catalogState,
+                    ...(routeFactsComputedHere ? { computedHere: true } : {}),
+                  }
+                : {})}
               {...(onOpenIteration ? { onOpenIteration } : {})}
               {...(onEditCase ? { onEditCase } : {})}
+              {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
             />
           )}
         />
       </div>
+
+      {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
+        <RunDescriptionExperimentCard
+          experiment={descriptionExperiment.experiment}
+          onStart={() => {
+            void descriptionExperiment.start();
+          }}
+          starting={
+            descriptionExperiment.status === "loading" &&
+            descriptionExperiment.experiment.status === "proposed"
+          }
+        />
+      ) : null}
 
       <RunAdvisorySection
         suiteRunId={String(run._id)}
         triageRows={triageRows}
         showActionableFindings={Boolean(serverQuality.result)}
       />
+
+      {failureGroupsEnabled && run.suiteId ? (
+        <FailureGroupsCard suiteId={String(run.suiteId)} />
+      ) : null}
 
       {fallbackBody ? (
         <div className="flex min-h-0 flex-1 flex-col border-t border-border/40">

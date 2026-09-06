@@ -24,7 +24,7 @@ import {
   storeReplayConfig,
 } from "../../services/evals/route-helpers";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime";
-import { isTerminalRunStatus } from "../../services/evals/run-status.js";
+import { isRunPastExecution } from "../../services/evals/run-status.js";
 import {
   checkEvalExecutionAdmission,
   checkEvalHarnessAdmission,
@@ -417,6 +417,37 @@ export const RunEvalsRequestSchema = z.object({
    * unknown keys are stripped silently.
    */
   skillsOverride: z.literal("exclude").optional(),
+  /**
+   * The REWRITE arm of a description-experiment (PR-E3). `{ experimentId }`
+   * only — the backend loads the experiment and copies its proposal onto the
+   * run's `configSnapshot.toolDescriptionOverride`. Caller-supplied
+   * description text is not representable here; a silently-stripped body
+   * would launch an ORIGINAL arm while the caller believed they launched a
+   * rewrite.
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  toolDescriptionOverride: z
+    .object({ experimentId: z.string().min(1) })
+    .strict()
+    .optional(),
+  /**
+   * Snapshot replay of an existing run. Threaded into Convex
+   * `startTestSuiteRun.replayedFromRunId` so the new run copies the source
+   * snapshot rather than the live suite. Used by the description-experiment
+   * two-arm launch (identical args except the rewrite arm's override).
+   *
+   * Must be declared explicitly on every Zod boundary in the wire path;
+   * unknown keys are stripped silently.
+   */
+  replayedFromRunId: z.string().min(1).optional(),
+  /**
+   * When true with `replayedFromRunId`, re-resolve the suite's current
+   * config instead of copying the source snapshot. Description-experiment
+   * arms pass `false` so both arms replay the same frozen source.
+   */
+  useCurrentSuiteConfig: z.boolean().optional(),
   /**
    * Per-run approval of `approximated` imported cases, by HOSTED test-case id.
    *
@@ -1122,12 +1153,19 @@ export type PreparedEvalRun = {
  *
  * FALSE against a backend with no `deduped` field, for the same reason: unknown
  * is not a licence to change behaviour.
+ *
+ * TRUE for a replay of a run held in `grading`, which is why this reads
+ * `isRunPastExecution` rather than `isTerminalRunStatus`. Such a run has run
+ * every trial and is waiting only for its judge; a redelivered claim that
+ * executed it would run the whole suite a second time and bill for it, against
+ * a run whose trials are already recorded — the exact double-spend above, in a
+ * status that is deliberately not terminal.
  */
 export function shouldSkipExecution(prepared: {
   deduped?: boolean;
   status?: string;
 }): boolean {
-  return prepared.deduped === true && isTerminalRunStatus(prepared.status);
+  return prepared.deduped === true && isRunPastExecution(prepared.status);
 }
 
 /**
@@ -1977,6 +2015,9 @@ export async function prepareEvalRun(
     idempotencyKey,
     sourceHash,
     skillsOverride,
+    toolDescriptionOverride,
+    replayedFromRunId,
+    useCurrentSuiteConfig,
     ephemeralEnvironment,
     toolPolicy,
     importApprovals,
@@ -2159,6 +2200,7 @@ export async function prepareEvalRun(
     hostConfig: runHostConfigSnapshot,
     pluginVersions: runEnvironmentPluginVersions = [],
     gradingEngine: runGradingEngine,
+    toolDescriptionOverride: runToolDescriptionOverride,
   } = await startSuiteRunWithRecorder({
     convexClient,
     suiteId: resolvedSuiteId,
@@ -2192,6 +2234,11 @@ export async function prepareEvalRun(
     idempotencyKey,
     ...(sourceHash ? { sourceHash } : {}),
     skillsOverride,
+    ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+    ...(replayedFromRunId ? { replayedFromRunId } : {}),
+    ...(useCurrentSuiteConfig !== undefined
+      ? { useCurrentSuiteConfig }
+      : {}),
     ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
     // Named explicitly, like every other field in this call: `startSuiteRun-
     // WithRecorder` reconstructs the mutation args from its own parameters,
@@ -2592,6 +2639,9 @@ export async function prepareEvalRun(
       ...(extraHeaders ? { extraHeaders } : {}),
       // Likewise by reference: the ledger inside is the RUN's.
       ...(benchmarkWriteGuard ? { benchmarkWriteGuard } : {}),
+      ...(runToolDescriptionOverride
+        ? { toolDescriptionOverride: runToolDescriptionOverride }
+        : {}),
     });
   };
 

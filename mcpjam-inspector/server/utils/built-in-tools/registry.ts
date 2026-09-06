@@ -46,8 +46,11 @@
 import type { ToolSet } from "ai";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import { logger } from "../logger.js";
-import { hostedBrowserEnabled } from "../../config.js";
-import { isHostedBrowserExposable } from "../computers/runtime-config.js";
+import { LOCAL_BROWSER_ENABLED, hostedBrowserEnabled } from "../../config.js";
+import {
+  isHostedBrowserExposable,
+  isHostedBrowserRefused,
+} from "../computers/runtime-config.js";
 import { type ExecutionScope } from "../execution-scope.js";
 import {
   buildExaWebSearchTool,
@@ -112,6 +115,15 @@ export interface BuiltInToolContext {
   executionScope?: ExecutionScope;
   /** Optional chat session, used by Convex for idempotency namespacing. */
   chatSessionId?: string;
+  /**
+   * What THIS unattended run is — an eval iteration id, a simulated session
+   * id. Required for an unattended browser and ignored otherwise: the
+   * throwaway profile is keyed by it, and neither the project nor the swarm
+   * identifies a run (a swarm fans out many, a suite runs many iterations
+   * against one project), so without it two concurrent runs would share one
+   * Chromium and each other's logged-in state.
+   */
+  runKey?: string;
   /**
    * True when the acting identity is a guest. Computer-backed tools are not
    * advertised to guests (the backend also omits `computer` from guest
@@ -448,10 +460,73 @@ export function resolveHostTools(
       continue;
     }
     if (id === BROWSER_BUILT_IN_TOOL_ID) {
-      // Dark switch: the runtime ships behind an env flag so staging can drive
-      // it before the durable backend exposure gate opens (W7). Absent ⇒ the
-      // capability simply is not advertised.
-      if (!hostedBrowserEnabled()) {
+      // WHERE this browser runs, resolved exactly as bash's engine is and at
+      // the same chokepoint: whatever the route asked for, `local` survives
+      // only for a signed-in member's own direct turn — a guest, a scenario, a
+      // journey or a swarm re-resolves to the cloud family here.
+      const requestedEngine =
+        ctx.computerEngine ??
+        resolvePersonalComputerEngine({ localConsentValid: false });
+      const resolvedEngine = coercePersonalEngineForActor(requestedEngine, {
+        isGuest: Boolean(ctx.isGuest),
+        isScenarioSession: Boolean(ctx.isScenarioSession),
+        isJourneySession: Boolean(ctx.isJourneySession),
+        executionScopeKind: ctx.executionScope?.kind,
+      });
+      // `unavailable` is a real answer here, not a synonym for "cloud", and
+      // the distinction matters in exactly one case: the user ASKED for their
+      // own machine and it could not be honored (consent lapsed, kill switch
+      // off, no local engine). Falling through to the hosted browser would
+      // quietly run their session somewhere else — the dishonesty
+      // `resolvePersonalComputerEngine` refuses to commit for bash, in its own
+      // words. Everywhere else `unavailable` only means "no LOCAL engine",
+      // which says nothing about the hosted browser: that has its own gates
+      // below, and reads `config.computer`, not this.
+      if (
+        resolvedEngine === "unavailable" &&
+        ctx.localComputerRequested === true
+      ) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: this machine was requested but is unavailable",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available: this turn asked for the browser on this " +
+            "machine, and this machine cannot serve it — check that local " +
+            "computer consent is still granted.",
+        });
+        continue;
+      }
+      const isLocalBrowser = resolvedEngine === "local";
+
+      // The local engine's own kill switch, read HERE and not only where a
+      // session is started. Every other layer already honors it — the routes
+      // 404, `ensureLocalBrowserSession` refuses — and that is exactly what
+      // made the gap easy to miss. A tool that is advertised and then throws
+      // on its first call is worse than one never offered: the model spends a
+      // turn discovering a capability the operator turned off, and the failure
+      // reads as a broken page rather than a closed door.
+      if (isLocalBrowser && !LOCAL_BROWSER_ENABLED) {
+        logger.warn(
+          "[built-in-tools] browser suppressed: the local browser engine is switched off",
+          { projectId: ctx.projectId },
+        );
+        ctx.onToolSuppressed?.({
+          id,
+          reason:
+            "browser is not available: the browser on this machine is switched " +
+            "off on this server (MCPJAM_LOCAL_BROWSER_ENABLED).",
+        });
+        continue;
+      }
+
+      // The three HOSTED gates. A local browser is not a hosted resource: it
+      // boots no desktop, reserves nothing, and costs no credits, so gating it
+      // on the hosted rollout's env flag and the backend's desktop-template
+      // readiness would refuse a capability neither of them describes.
+      if (!isLocalBrowser && !hostedBrowserEnabled()) {
         logger.debug(
           "[built-in-tools] browser requested while HOSTED_BROWSER_TOOLS_ENABLED is off; skipping",
           { projectId: ctx.projectId },
@@ -461,26 +536,51 @@ export function resolveHostTools(
       // The backend's own gate (catalog entry + desktop template + desktop
       // credit rate). An explicit `false` is honored even with the env flag
       // on: the likeliest reason is an unset desktop rate, which would meter
-      // every hosted browser hour at the terminal rate. Silence (an older
-      // backend, or bootstrap not yet run) is not a refusal — the env flag
-      // above is already dark by default and is what staging drives with.
-      if (isHostedBrowserExposable() === false) {
+      // every hosted browser hour at the terminal rate. On a HOSTED replica
+      // silence is a refusal too — see `isHostedBrowserRefused` — because the
+      // gate the inspector route reads treats it the same way, and two callers
+      // disagreeing about the same silence is how a browser gets exposed that
+      // the other half believes is closed.
+      if (!isLocalBrowser && isHostedBrowserRefused()) {
+        // Said separately, because they are different facts and only one of
+        // them is the backend's answer. A `null` verdict means we never got an
+        // answer — an older backend, or bootstrap not yet run — and reporting
+        // that as "the backend reports it is not exposable" sends whoever
+        // reads this log looking at a setting nobody has set.
+        const answered = isHostedBrowserExposable() === false;
         logger.warn(
-          "[built-in-tools] browser suppressed: the backend reports it is not exposable",
+          answered
+            ? "[built-in-tools] browser suppressed: the backend reports it is not exposable"
+            : "[built-in-tools] browser suppressed: no exposure verdict from the backend yet",
           { projectId: ctx.projectId },
         );
         ctx.onToolSuppressed?.({
           id,
-          reason:
-            "browser is not available on this deployment yet: the backend reports " +
-            "the hosted browser runtime is not fully configured.",
+          reason: answered
+            ? "browser is not available on this deployment yet: the backend reports " +
+              "the hosted browser runtime is not fully configured."
+            : "browser is not available on this deployment yet: this server has no " +
+              "exposure verdict from the backend.",
         });
         continue;
       }
       // Co-tenancy: a shell and a driven browser on ONE box, as one uid. Keep
       // `bash` (behavior-preserving for hosts that already have it) and drop
       // `browser`, unless this deployment accepted the boundary.
-      if (ids.includes(BASH_TOOL_NAME) && !ctx.allowComputerToolCoTenancy) {
+      //
+      // NOT applied locally. The stated risk is that a shell on the box reads
+      // the browser's cookies and its daemon token out of the process
+      // environment — but on the user's own machine the shell is already
+      // running as them, with access to every credential store on it, and the
+      // local daemon's token never enters an environment at all (the client
+      // calls its handler in-process). The boundary here is device consent
+      // plus per-action approval, and refusing the pair would only mean a user
+      // who attached both gets neither of the two things they asked for.
+      if (
+        !isLocalBrowser &&
+        ids.includes(BASH_TOOL_NAME) &&
+        !ctx.allowComputerToolCoTenancy
+      ) {
         const reason =
           "browser is not advertised alongside bash: both drive the same computer as " +
           "the same user, so a shell can read the browser's cookies and its daemon " +
@@ -516,10 +616,29 @@ export function resolveHostTools(
         );
         continue;
       }
+      if (resolvedEngine !== requestedEngine) {
+        logger.warn(
+          "[built-in-tools] local browser engine downgraded for an ineligible actor",
+          {
+            projectId: ctx.projectId,
+            requestedEngine,
+            engine: resolvedEngine,
+            isGuest: Boolean(ctx.isGuest),
+            isScenarioSession: Boolean(ctx.isScenarioSession),
+          },
+        );
+      }
       const browser = buildBrowserTools({
         authHeader,
         projectId: ctx.projectId,
+        engine: isLocalBrowser ? "local" : "hosted",
         ...(ctx.executionScope ? { executionScope: ctx.executionScope } : {}),
+        // The run's own identity, falling back to the chat session when a
+        // surface has one — both name a single run, which is all the ephemeral
+        // profile key needs. Unused on an interactive turn.
+        ...(ctx.runKey ?? ctx.chatSessionId
+          ? { runKey: ctx.runKey ?? ctx.chatSessionId }
+          : {}),
         // ABSENT ⇒ buildBrowserTools advertises nothing. That is what keeps
         // every surface which threads no approval safe without editing it.
         ...(ctx.browserApprovalDelivery

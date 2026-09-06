@@ -310,3 +310,53 @@ describe("convertMCPToolsToVercelTools — SEP-1865 visibility filtering", () =>
     });
   });
 });
+
+describe("convertMCPToolsToVercelTools — description overrides", () => {
+  it("rewrites description only; name, schema and _meta stay identical", async () => {
+    const originalSchema = { type: "object" as const, properties: {} };
+    const originalMeta = { ui: { visibility: ["model"] } };
+    const list: ListToolsResult = {
+      tools: [
+        {
+          name: "model_only",
+          description: "Explicitly model-only",
+          inputSchema: originalSchema,
+          _meta: originalMeta,
+        },
+      ],
+    } as unknown as ListToolsResult;
+
+    const tools = await convertMCPToolsToVercelTools(list, {
+      callTool,
+      toolDescriptionOverrides: { model_only: "Rewritten for the experiment" },
+    });
+
+    expect(tools.model_only).toBeDefined();
+    expect((tools.model_only as { description?: string }).description).toBe(
+      "Rewritten for the experiment"
+    );
+    expect(Object.keys(tools)).toEqual(["model_only"]);
+    expect(typeof (tools.model_only as { execute?: unknown }).execute).toBe(
+      "function"
+    );
+
+    const without = await convertMCPToolsToVercelTools(list, { callTool });
+    const originalJson = JSON.stringify(
+      (without.model_only as { inputSchema?: unknown }).inputSchema
+    );
+    const overriddenJson = JSON.stringify(
+      (tools.model_only as { inputSchema?: unknown }).inputSchema
+    );
+    expect(overriddenJson).toBe(originalJson);
+  });
+
+  it("leaves unmatched tools on their original description", async () => {
+    const tools = await convertMCPToolsToVercelTools(listToolsFixture, {
+      callTool,
+      toolDescriptionOverrides: { no_such_tool: "never applied" },
+    });
+    expect((tools.model_only as { description?: string }).description).toBe(
+      "Explicitly model-only"
+    );
+  });
+});

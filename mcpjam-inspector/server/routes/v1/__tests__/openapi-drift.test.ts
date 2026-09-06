@@ -14,8 +14,8 @@ const here = dirname(fileURLToPath(import.meta.url));
 const spec = JSON.parse(
   readFileSync(
     resolve(here, "../../../../../docs/reference/openapi.json"),
-    "utf8"
-  )
+    "utf8",
+  ),
 ) as {
   security?: unknown[];
   components?: { parameters?: Record<string, { name?: string; in?: string }> };
@@ -60,6 +60,12 @@ const BODYLESS_WRITES = new Set([
   // Scenario-side dismissal, same shape as the swarm-side pair above.
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/dismiss",
   "post /projects/{projectId}/user-testing/scenarios/{scenarioId}/findings/{findingId}/undismiss",
+  // Test, pause and resume are addressed entirely by the path destinationId.
+  // A body here could only carry options none of the three has: a test span is
+  // synthetic and fixed, and a pause has nothing to configure.
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
 ]);
 
 // Routes the v1 router serves that openapi.json deliberately does NOT describe.
@@ -106,6 +112,26 @@ const KNOWN_UNDOCUMENTED = new Set([
   "post /projects/{projectId}/shares/{resourceType}/{resourceId}/rotate-link",
   "put /projects/{projectId}/shares/{resourceType}/{resourceId}/members",
   "delete /projects/{projectId}/shares/{resourceType}/{resourceId}/members/{memberIdOrEmail}",
+  // Trace destinations — continuous OTLP export to an observability vendor.
+  // Availability is decided per organization, and `docs/README.md` is explicit
+  // that such a feature is not documented until the flag comes off ("a feature
+  // that is enforced per organization must not be documented until the flag
+  // comes off", and its routes are "kept out of reference/openapi.json and
+  // listed in the Inspector's KNOWN_UNDOCUMENTED baseline"). Same posture the
+  // harness capability probe above takes, for the same reason. Document the
+  // whole surface — ten routes and six schemas — when the flag comes off; the
+  // SDK and CLI carry it in the meantime, because a caller who HAS been
+  // flagged in needs a client.
+  "get /organizations/{organizationId}/trace-destinations",
+  "post /organizations/{organizationId}/trace-destinations",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "patch /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "delete /organizations/{organizationId}/trace-destinations/{destinationId}",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/test",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/pause",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/resume",
+  "post /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
+  "get /organizations/{organizationId}/trace-destinations/{destinationId}/backfills",
   // The DEPRECATED `/hosts` aliases of the `/clients` surface. Every one is
   // the same handler as its documented `/clients` twin with the pre-rename DTO
   // and the pre-rename (tokenless) write contract, and every response carries
@@ -120,6 +146,17 @@ const KNOWN_UNDOCUMENTED = new Set([
   "delete /projects/{projectId}/hosts/{hostId}",
   "post /projects/{projectId}/hosts/{hostId}/servers",
   "post /projects/{projectId}/hosts/{hostId}/duplicate",
+  // Description-experiment HTTP (PR-E3). The SDK client, CLI, and MCP
+  // catalog advertise these; the hand-authored OpenAPI page follows so a
+  // spec edit does not block the inspector landing. Document them with
+  // the public evals reference update.
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}",
+  // Route-facts GET landed with the contract; the hand-authored spec
+  // has not caught up. Same follow-up as the description-experiment trio.
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts",
 ]);
 
 /**
@@ -190,8 +227,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       newlyUndocumented,
       `New /api/v1 routes missing from openapi.json — document them (or, if intentionally internal, add to KNOWN_UNDOCUMENTED with a reason):\n  ${newlyUndocumented.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
 
     // Keep the baseline honest: a baselined route that is now documented or
@@ -202,8 +239,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       staleBaseline,
       `Stale KNOWN_UNDOCUMENTED entries (now documented or gone) — remove them:\n  ${staleBaseline.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -212,8 +249,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       phantom,
       `openapi.json documents paths/methods with no matching route:\n  ${phantom.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -224,7 +261,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         (entry) =>
           !!entry &&
           typeof entry === "object" &&
-          "bearerAuth" in (entry as Record<string, unknown>)
+          "bearerAuth" in (entry as Record<string, unknown>),
       );
     const globalBearer = hasBearer(spec.security);
     const missing: string[] = [];
@@ -265,20 +302,20 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       missing.sort(),
       `Operations without a bearerAuth security requirement:\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     expect(
       undeclaredPublic.sort(),
       `Operations declaring \`security: []\` (NO AUTH) that are not in PUBLIC_OPERATIONS. Every unauthenticated endpoint is a deliberate decision — add it there with a reason, or give it bearerAuth:\n  ${undeclaredPublic.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     expect(
       notActuallyPublic.sort(),
       `PUBLIC_OPERATIONS entries that no longer declare \`security: []\` — remove them from the list:\n  ${notActuallyPublic.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
     const goneFromSpec = [...PUBLIC_OPERATIONS]
       .filter((key) => !specKeys.has(key))
@@ -286,8 +323,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       goneFromSpec,
       `PUBLIC_OPERATIONS entries for operations the spec no longer describes — remove them, or the list stops meaning "the unauthenticated endpoints":\n  ${goneFromSpec.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -301,7 +338,7 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     }
     expect(
       missing,
-      `Operations missing operationId:\n  ${missing.join("\n  ")}`
+      `Operations missing operationId:\n  ${missing.join("\n  ")}`,
     ).toEqual([]);
   });
 
@@ -319,8 +356,8 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     expect(
       missing,
       `Write operations missing a requestBody (add one, or allowlist a genuinely bodyless action):\n  ${missing.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -338,12 +375,12 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
     // asks the caller for an id the route will never read.
     const shared = spec.components?.parameters ?? {};
     const resolve = (p: { $ref?: string; name?: string; in?: string }) =>
-      p.$ref ? shared[p.$ref.split("/").pop() ?? ""] ?? {} : p;
+      p.$ref ? (shared[p.$ref.split("/").pop() ?? ""] ?? {}) : p;
 
     const problems: string[] = [];
     for (const [path, item] of Object.entries(spec.paths)) {
       const placeholders = new Set(
-        [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!)
+        [...path.matchAll(/\{([^}]+)\}/g)].map((m) => m[1]!),
       );
       const itemLevel = (
         (item as { parameters?: Array<{ $ref?: string }> }).parameters ?? []
@@ -353,19 +390,19 @@ describe("openapi.json ↔ /api/v1 route parity", () => {
         if (!HTTP_METHODS.has(method.toUpperCase())) continue;
         const declared = [...itemLevel, ...(op.parameters ?? []).map(resolve)];
         const named = new Set(
-          declared.filter((p) => p.in === "path").map((p) => p.name)
+          declared.filter((p) => p.in === "path").map((p) => p.name),
         );
         for (const placeholder of placeholders) {
           if (!named.has(placeholder)) {
             problems.push(
-              `${method} ${path}: no parameter for {${placeholder}}`
+              `${method} ${path}: no parameter for {${placeholder}}`,
             );
           }
         }
         for (const name of named) {
           if (name && !placeholders.has(name)) {
             problems.push(
-              `${method} ${path}: declares {${name}}, not in the path`
+              `${method} ${path}: declares {${name}}, not in the path`,
             );
           }
         }

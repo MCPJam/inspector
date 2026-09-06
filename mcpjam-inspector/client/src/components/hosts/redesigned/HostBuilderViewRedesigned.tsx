@@ -41,12 +41,14 @@ import { HostCanvasSelector } from "./HostCanvasSelector";
 import { parseHostVerifyTabParam } from "../host-verify-deep-link";
 import { buildRedesignedHostCanvas } from "./canvas/canvasBuilder";
 import { HostFocusPanel } from "./focus/HostFocusPanel";
+import { emitClientSaveTelemetry } from "./client-save-telemetry";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSkillsEnabled } from "@/hooks/useSkillsEnabled";
 import { HOSTED_MODE } from "@/lib/config";
 import { useComputerStatus } from "@/hooks/useProjectComputer";
 import { useBuiltInToolCatalog } from "@/hooks/useBuiltInToolCatalog";
 import {
+  collectHostAttentionIssues,
   hasBlockingErrors,
   saveDisabledReason as computeSaveDisabledReason,
   useHostDraftValidation,
@@ -143,6 +145,7 @@ export function HostBuilderViewRedesigned({
     null
   );
   const [isSaving, setIsSaving] = useState(false);
+  const saveInFlightRef = useRef(false);
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
   const [focusState, setFocusState] = useState<HostFocusState>({
@@ -433,32 +436,44 @@ export function HostBuilderViewRedesigned({
     [openFocus]
   );
 
-  const handleSave = useCallback(async () => {
-    if (!draftConfig) return;
+  const persistClient = useCallback(async (
+    name: string,
+    config: HostConfigInputV2,
+    showSuccessToast: boolean
+  ): Promise<boolean> => {
+    if (!host || host.hostId !== hostId || saveInFlightRef.current) {
+      return false;
+    }
+    const nextAttention = collectHostAttentionIssues(config, name, {
+      savedModelId: savedConfig?.modelId,
+    });
+    if (hasBlockingErrors(nextAttention)) {
+      toast.error(
+        computeSaveDisabledReason({
+          isDirty: true,
+          isSaving: false,
+          issues: nextAttention,
+        }) ?? "Fix validation errors before saving"
+      );
+      return false;
+    }
+    saveInFlightRef.current = true;
     setIsSaving(true);
     try {
-      const changedFields = savedConfig
-        ? (Object.keys(draftConfig) as Array<keyof HostConfigInputV2>).filter(
-            (key) =>
-              JSON.stringify(draftConfig[key]) !==
-              JSON.stringify(savedConfig[key])
-          )
-        : [];
-      // Reuse the same draft-vs-saved comparison the telemetry diff uses,
-      // rather than introducing a second notion of "changed".
+      // Compare the same persisted and draft snapshots used by save telemetry.
       const cancellationChanged = toolCallCancellationChanged(
         savedConfig,
-        draftConfig
+        config
       );
       const { hostConfigId } = await updateHost({
         hostId,
-        name: draftName,
-        input: draftConfig,
+        name,
+        input: config,
       });
       // The freshly persisted config id arrives via the Convex
       // subscription on the next tick; don't include it in this toast
       // because `host?.config?.id` is still the *previous* saved config here.
-      toast.success("Client saved");
+      if (showSuccessToast) toast.success("Client saved");
       // Tool cancellation is read from the connection's config at CONNECT
       // time, so a saved toggle would otherwise sit inert until the user
       // happened to reconnect — which reads as the switch doing nothing.
@@ -475,32 +490,42 @@ export function HostBuilderViewRedesigned({
       if (cancellationChanged && onReconnect) {
         setPendingCancellationReconnect(hostConfigId);
       }
-      // Telemetry is best-effort: a posthog throw must not bubble into the
-      // shared catch and surface "Failed to save host" after the config
-      // has already been persisted.
-      try {
-        track("client_config_saved", {
-          location: "client_builder",
-          client_id: hostId,
-          client_config_id: hostConfigId,
-          server_count: draftConfig.serverIds?.length ?? 0,
-          changed_fields: changedFields,
+      if (host && savedConfig) {
+        emitClientSaveTelemetry(track, {
+          clientId: hostId,
+          clientConfigId: hostConfigId,
+          savedName: host.name,
+          draftName: name,
+          savedConfig,
+          draftConfig: config,
         });
-      } catch {
-        // swallow — analytics must not block the success path
       }
+      return true;
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to save client");
+      return false;
     } finally {
+      saveInFlightRef.current = false;
       setIsSaving(false);
     }
   }, [
     hostId,
-    draftName,
-    draftConfig,
     savedConfig,
+    host,
     updateHost,
+    onReconnect,
   ]);
+
+  const handleSave = useCallback(async () => {
+    if (!draftConfig) return;
+    await persistClient(draftName, draftConfig, true);
+  }, [draftName, draftConfig, persistClient]);
+
+  const handleSaveLatest = useCallback(
+    (name: string, config: HostConfigInputV2) =>
+      persistClient(name, config, false),
+    [persistClient]
+  );
 
   const handleAddServer = useCallback(
     async (formData: ServerFormData) => {
@@ -725,6 +750,9 @@ export function HostBuilderViewRedesigned({
                     onDraftChange={(updater) =>
                       setDraftConfig((prev) => (prev ? updater(prev) : prev))
                     }
+                    onSaveLatest={handleSaveLatest}
+                    hostLoaded={host !== null}
+                    saveInFlight={isSaving}
                     attention={attention}
                     onClose={closeFocus}
                   />
