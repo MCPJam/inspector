@@ -72,10 +72,18 @@ export function getHostLogoSrc(
     : chatUi.logoSrc;
 }
 
-/** Match a saved host's display name to a built-in style logo when config is unavailable. */
-export function resolveHostLogoByDisplayName(
-  displayName: string,
-  themeMode?: HostThemeMode | null
+/**
+ * Match a saved host's display name to a built-in style ID when config is
+ * unavailable.
+ *
+ * The ID-returning half of {@link resolveHostLogoByDisplayName}, split out so
+ * callers that need to KNOW the style — not just draw it — run the same
+ * comparison. It places ids the logo hint table never lists (`codex`,
+ * `agentcore`, `n8n`), which is exactly the set a hint-table-only resolver
+ * silently misses.
+ */
+export function resolveHostStyleByDisplayName(
+  displayName: string
 ): string | null {
   const needle = displayName.trim().toLowerCase().replace(/\s+/g, "");
   if (!needle) return null;
@@ -87,10 +95,19 @@ export function resolveHostLogoByDisplayName(
       .toLowerCase()
       .replace(/\s+/g, "");
     if (needle === id || needle === label || needle === shortLabel) {
-      return getScenarioHostLogo(style.id, undefined, themeMode);
+      return style.id;
     }
   }
   return null;
+}
+
+/** Match a saved host's display name to a built-in style logo when config is unavailable. */
+export function resolveHostLogoByDisplayName(
+  displayName: string,
+  themeMode?: HostThemeMode | null
+): string | null {
+  const styleId = resolveHostStyleByDisplayName(displayName);
+  return styleId ? getScenarioHostLogo(styleId, undefined, themeMode) : null;
 }
 
 /**
