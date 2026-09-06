@@ -276,6 +276,9 @@ function EvaluateTabContent({
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
+    // Shared handlers default to `/evals`. Without this, Add case / Record /
+    // post-run landing would dump the reader onto the old tab.
+    evalsNavigationContext: "evaluate",
     projectServers,
     isDirectGuest,
     availableModels,

@@ -6,6 +6,7 @@ import { isMCPJamProvidedModel } from "@/shared/types";
 import {
   buildEvalsRunsPath,
   buildEvalsPath,
+  buildEvaluatePath,
   navigateApp,
 } from "@/lib/app-navigation";
 import type { EvalRoute, SuiteOverviewView } from "@/lib/eval-route-types";
@@ -58,9 +59,15 @@ import {
 } from "./single-test-case-runner";
 import type { EnsureServersReadyResult } from "@/hooks/use-app-state";
 
-function navigateEvalRoute(route: EvalRoute, context: "evals" | "ci-evals") {
+type EvalsNavigationContext = "evals" | "ci-evals" | "evaluate";
+
+function navigateEvalRoute(route: EvalRoute, context: EvalsNavigationContext) {
   navigateApp(
-    context === "ci-evals" ? buildEvalsRunsPath(route) : buildEvalsPath(route)
+    context === "ci-evals"
+      ? buildEvalsRunsPath(route)
+      : context === "evaluate"
+        ? buildEvaluatePath(route)
+        : buildEvalsPath(route)
   );
 }
 import type { RemoteServer } from "@/hooks/useProjects";
@@ -223,10 +230,11 @@ interface UseEvalHandlersProps {
   ) => Promise<EnsureServersReadyResult>;
   latestRunBySuiteId?: Map<string, EvalSuiteRun | null>;
   /**
-   * When `ci-evals`, navigation after test-case mutations stays on Runs
-   * mode (`/evals/runs/...`). Defaults to Suites mode (`/evals/...`).
+   * Prefix for handler-driven navigation (create case, duplicate, post-run
+   * landing). `ci-evals` stays on Runs (`/evals/runs/...`); `evaluate` stays
+   * on Evaluate (New) (`/evaluate/...`). Defaults to Suites (`/evals/...`).
    */
-  evalsNavigationContext?: "evals" | "ci-evals";
+  evalsNavigationContext?: EvalsNavigationContext;
   /** For user-facing server labels (names instead of raw Convex ids). */
   projectServers?: RemoteServer[];
   /** When true, this uses the direct-guest eval playground flow. */
