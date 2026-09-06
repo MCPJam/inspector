@@ -66,13 +66,20 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
     selection,
     stageTitles,
     headerActions,
+    fillHeight,
   }: {
     onSelectNode: (selection: InsightsSelection) => void;
     selection?: InsightsSelection | null;
     stageTitles?: Partial<Record<string, string>>;
     headerActions?: React.ReactNode;
+    fillHeight?: boolean;
   }) => (
-    <>
+    // Mirror the real component's `data-fill-height` marker so the workbench's
+    // bodyLayout -> fillHeight wiring is assertable here.
+    <div
+      data-testid="mock-sankey"
+      data-fill-height={fillHeight ? "true" : undefined}
+    >
       <span data-testid="goal-header">{stageTitles?.goal ?? "Goal"}</span>
       <span data-testid="selected-themes">
         {(selection?.themes ?? []).map((theme) => theme.clusterId).join(",")}
@@ -81,7 +88,7 @@ vi.mock("@/components/shared/usage-insights/SessionFlowSankey", () => ({
       <button type="button" onClick={() => onSelectNode(JOURNEY_NODE)}>
         pick journey theme
       </button>
-    </>
+    </div>
   ),
 }));
 
@@ -130,6 +137,7 @@ function renderSwarmWorkbench(props: {
   journeyRunIds?: string[];
   urlSelection?: ReadonlyArray<{ dimension: string; clusterId: string }> | null;
   onSelectionChange?: (themes: unknown) => void;
+  bodyLayout?: "fill" | "scroll";
 } = { projectId: "proj-1" }) {
   const { projectId, journeyRunIds, ...rest } = props;
   return render(
@@ -172,6 +180,25 @@ describe("InsightsWorkbench", () => {
       projectId: "proj-1",
     });
     expect(screen.getByTestId("goal-header")).toHaveTextContent("Goal");
+  });
+
+  // bodyLayout is the contract this surface adds: "fill" (default) locks the
+  // body to the viewport (Sankey fills + clips), "scroll" lets it grow to
+  // content height so the swarm tab owns the scroll. The wiring under test is
+  // that bodyLayout maps to the Sankey's fillHeight.
+  it("fills the Sankey height in the default (fill) body layout", () => {
+    renderSwarmWorkbench({ projectId: "proj-1" });
+    expect(screen.getByTestId("mock-sankey")).toHaveAttribute(
+      "data-fill-height",
+      "true",
+    );
+  });
+
+  it("lets the Sankey grow to content height when bodyLayout is scroll", () => {
+    renderSwarmWorkbench({ projectId: "proj-1", bodyLayout: "scroll" });
+    expect(screen.getByTestId("mock-sankey")).not.toHaveAttribute(
+      "data-fill-height",
+    );
   });
 
   it("does not render the retired criterion scorecard", () => {
