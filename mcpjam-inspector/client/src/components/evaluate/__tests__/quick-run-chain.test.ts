@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
-import type { EvalIteration } from "../types";
+import type { EvalIteration } from "../../evals/types";
 import { chainForQuickRunIteration } from "../simple-case/quick-run-chain";
 
 const verifiedRows = [
