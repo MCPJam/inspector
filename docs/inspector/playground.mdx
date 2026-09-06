@@ -274,6 +274,14 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 - **Blocked requests** — Each violation with the directive and source that was blocked.
 - **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
 
+#### Sandbox Stack tab
+
+The **Sandbox Stack** tab inside the CSP debug panel shows the live state of every iframe layer the inspector uses to sandbox an MCP App view. The **View iframe** card includes a **View origin** chip once the view has mounted:
+
+- **Copyable origin** — When the view runs at a real URL (the normal path), the chip shows the origin (e.g. `http://127.0.0.1:6274`) with a **copy** button. Paste this value into any third-party allowlist that keys on the page URL — a referrer-restricted API key, an OAuth redirect URI, or a `frame-ancestors` policy.
+- **`about:srcdoc · no origin`** — When the view fell back to an `srcdoc` mount it has no URL of its own, so no copy button is shown. There is no origin to allowlist in this case.
+- **Hidden before mount** — The chip does not appear until the sandbox proxy has reported a mount, so you will not see a stale or empty value.
+
 #### Mounts
 
 The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
