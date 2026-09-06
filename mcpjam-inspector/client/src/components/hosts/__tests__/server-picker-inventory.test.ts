@@ -87,10 +87,105 @@ const ALLOWED: Record<string, string> = {
 };
 
 /**
+ * Blank out everything that is not code, keeping every offset and every
+ * newline, so what follows can count brackets without a comment or a string
+ * lying to it.
+ *
+ * This exists because the paren scan below was silently defeatable. A callback
+ * written `(server) => { … }` sits at depth 1 for its whole body, so ONE
+ * unbalanced `)` in a comment — `// paso 1)`, or a `:)` — closed the call
+ * early, and a `<button onClick>` below it was never seen. The inventory lock
+ * then reported the file as clean. For a guard whose only job is to catch the
+ * next picker, under-detection is the one failure that matters.
+ *
+ * A template literal is blanked WHOLE, `${…}` expressions included: whatever
+ * is in there is code, so its brackets already balance, and blanking them
+ * changes no count.
+ *
+ * NOT handled: regex literals. In a `.tsx` file `/` is overwhelmingly a JSX
+ * closing tag — `</span>`, `/>` — and no character-level heuristic separates
+ * those from a regex start. Guessing wrong blanks real code and hides a real
+ * picker, which is the failure this function was written to remove. A regex
+ * carrying an unbalanced `\)` inside a server row's `.map(` is the narrower
+ * risk, and it is left standing knowingly.
+ */
+export function maskNonCode(source: string): string {
+  const out = source.split("");
+  const blank = (from: number, to: number) => {
+    for (let k = from; k < to && k < out.length; k += 1) {
+      if (out[k] !== "\n") out[k] = " ";
+    }
+  };
+
+  let i = 0;
+  while (i < source.length) {
+    const two = source.slice(i, i + 2);
+
+    if (two === "//") {
+      const end = source.indexOf("\n", i);
+      const stop = end === -1 ? source.length : end;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+
+    if (two === "/*") {
+      const end = source.indexOf("*/", i + 2);
+      const stop = end === -1 ? source.length : end + 2;
+      blank(i, stop);
+      i = stop;
+      continue;
+    }
+
+    const quote = source[i];
+    if (quote === '"' || quote === "'") {
+      let j = i + 1;
+      // A newline ends it too: an unterminated quote is a typo, and running to
+      // the end of the file on one would blank the rest of the component.
+      while (j < source.length && source[j] !== quote && source[j] !== "\n") {
+        j += source[j] === "\\" ? 2 : 1;
+      }
+      blank(i, Math.min(j + 1, source.length));
+      i = j + 1;
+      continue;
+    }
+
+    if (quote === "`") {
+      let j = i + 1;
+      let depth = 0;
+      while (j < source.length) {
+        const c = source[j];
+        if (c === "\\") {
+          j += 2;
+          continue;
+        }
+        if (depth === 0 && c === "`") break;
+        if (c === "$" && source[j + 1] === "{") {
+          depth += 1;
+          j += 2;
+          continue;
+        }
+        if (depth > 0 && c === "}") depth -= 1;
+        j += 1;
+      }
+      blank(i, Math.min(j + 1, source.length));
+      i = j + 1;
+      continue;
+    }
+
+    i += 1;
+  }
+
+  return out.join("");
+}
+
+/**
  * The text of the `(...)` that begins at `openIndex`, or "" when it never
  * closes. Used to read a `.map(` callback whole rather than guessing at how
  * many lines of it to look at — a row's `onClick` is routinely 30 lines below
  * the `.map(` that opens it.
+ *
+ * Expects text that has been through `maskNonCode`.
  */
 export function balancedCall(source: string, openIndex: number): string {
   let depth = 0;
@@ -113,7 +208,10 @@ export function balancedCall(source: string, openIndex: number): string {
  * `pendingOAuthServers.map`). Sixty rather than the whole line because these
  * are routinely wrapped by the formatter.
  */
-export function rendersClickableServerList(source: string): boolean {
+export function rendersClickableServerList(rawSource: string): boolean {
+  // Everything below reads the MASKED text: a `.map(` quoted in a comment is
+  // not a list, and a `<button` in commented-out code is not a picker.
+  const source = maskNonCode(rawSource);
   const pattern = /\.map\s*\(/g;
   for (
     let match = pattern.exec(source);
@@ -154,6 +252,71 @@ function collectTsx(dir: string, out: string[] = []): string[] {
 function repoPath(full: string): string {
   return relative(CLIENT_SRC, full).split(sep).join("/");
 }
+
+/**
+ * The scanner itself. A ratchet nobody has tested is a ratchet nobody can
+ * trust — and this one WAS defeatable: every case below with a stray `)`
+ * returned false before `maskNonCode` existed.
+ */
+describe("the scanner behind the inventory lock", () => {
+  const ROW = `<button onClick={() => pick(server.id)}>{server.name}</button>`;
+  const block = (middle: string) =>
+    `{servers.map((server) => {\n${middle}\n  return ${ROW};\n})}`;
+
+  it("sees a plain clickable server row", () => {
+    expect(rendersClickableServerList(block("  const n = server.name;"))).toBe(
+      true,
+    );
+  });
+
+  /**
+   * The shape that defeated it. A block-body callback sits at paren depth 1
+   * for its whole body, so a single unmatched `)` closed the call before the
+   * row was reached.
+   */
+  it("is not fooled by an unmatched ) in a line comment", () => {
+    expect(rendersClickableServerList(block("  // paso 1) elegir"))).toBe(true);
+    expect(rendersClickableServerList(block("  // fácil :)"))).toBe(true);
+  });
+
+  it("is not fooled by an unmatched ) in a block comment", () => {
+    expect(rendersClickableServerList(block("  /* ojo :) */"))).toBe(true);
+  });
+
+  it("is not fooled by an unmatched ) inside a string", () => {
+    expect(
+      rendersClickableServerList(block('  const hint = "elegí uno :)";')),
+    ).toBe(true);
+    expect(
+      rendersClickableServerList(block("  const hint = 'elegí uno :)';")),
+    ).toBe(true);
+  });
+
+  it("is not fooled by an unmatched ) inside a template literal", () => {
+    expect(
+      rendersClickableServerList(block("  const hint = `${server.name} :)`;")),
+    ).toBe(true);
+  });
+
+  it("does not count a picker that only exists in a comment", () => {
+    // The other direction: masking must not turn commented-out code into a
+    // finding, or the allowlist fills up with files that render nothing.
+    const commentedOut = `// {servers.map((server) => (\n//   ${ROW}\n// ))}`;
+    expect(rendersClickableServerList(commentedOut)).toBe(false);
+  });
+
+  it("keeps offsets and lines intact when masking", () => {
+    // Same length and same newlines, so anything reported against the masked
+    // text still points at the right place in the real file.
+    const src = 'const a = "x :)"; // y )\nconst b = 1;';
+    const masked = maskNonCode(src);
+    expect(masked).toHaveLength(src.length);
+    expect(masked.split("\n")).toHaveLength(src.split("\n").length);
+    expect(masked).not.toContain(")");
+    expect(masked).toContain("const a =");
+    expect(masked).toContain("const b = 1;");
+  });
+});
 
 describe("one server picker", () => {
   // Walked ONCE. The sanity check below used to walk the tree a second time

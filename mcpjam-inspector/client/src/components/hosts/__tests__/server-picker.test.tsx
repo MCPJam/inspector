@@ -608,12 +608,14 @@ describe("ServerPicker — a write already in flight", () => {
   });
 
   /**
-   * The latch, made observable.
+   * A selection that reports through an async `onChange` is not finished when
+   * the handler returns, and the picker has to say so.
    *
-   * Its same-tick window is unreachable from jsdom, but the OTHER thing it
-   * holds is not: a selection that reports through an async `onChange` is not
-   * finished when the handler returns, and the latch spans that wait. Both
-   * cases below hang the caller's commit and then try a second pick.
+   * These used to assert the opposite — that `busy` stayed down and only the
+   * ref refused the second click. That WAS the behaviour, and it was the bug:
+   * every control stayed enabled while the latch silently rejected it, which
+   * is the dead control `busy` exists to prevent. Now the wait is visible, and
+   * the ref underneath it is a same-tick backstop that jsdom cannot reach.
    */
   it("holds while a REUSED row's async commit is still in flight", async () => {
     mockState.attachments = [
@@ -641,10 +643,14 @@ describe("ServerPicker — a write already in flight", () => {
 
     fireEvent.click(await serverRow("srv_1"));
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+
+    // The wait is on screen: no write is happening, but the commit this picker
+    // is waiting on is, and the rows say so rather than looking live.
+    await waitFor(async () =>
+      expect(await serverRow("srv_2")).toBeDisabled(),
+    );
     fireEvent.click(await serverRow("srv_2"));
 
-    // Nothing writes here, so `busy` never goes up and the disabled attribute
-    // cannot be what refuses the second click — only the latch can.
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("att_alpha", expect.anything());
   });
@@ -673,7 +679,10 @@ describe("ServerPicker — a write already in flight", () => {
 
     fireEvent.click(await screen.findByText("prod pair"));
     await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
-    fireEvent.click(await screen.findByText("staging pair"));
+
+    const staging = (await screen.findByText("staging pair")).closest("button");
+    await waitFor(() => expect(staging).toBeDisabled());
+    fireEvent.click(staging as HTMLElement);
 
     expect(onChange).toHaveBeenCalledTimes(1);
     expect(onChange).toHaveBeenCalledWith("att_p", expect.anything());

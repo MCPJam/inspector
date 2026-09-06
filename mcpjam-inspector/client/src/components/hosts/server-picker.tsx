@@ -138,13 +138,13 @@ export function ServerPicker({
    * arriving twice. Anything a user could reasonably retry still goes through
    * `busy`, which they can see.
    *
-   * NOT covered by a test, and that is not an oversight. React flushes a
-   * discrete event synchronously, so by the second `fireEvent` the DOM already
-   * carries `disabled` and jsdom fires nothing — the window is unreachable
-   * from jsdom, which is also why the practical risk through a mouse is small.
-   * The double-click test in the suite passes with or without this ref and
-   * says so. Deleting this because "no test fails" would be reading that
-   * backwards.
+   * NOT covered by a test, and that is not an oversight. Every path that takes
+   * this ref now also raises `creating`, so `busy` disables the control and
+   * jsdom — which flushes a discrete event synchronously — never fires the
+   * second click. The window this closes is the one before that flush, and it
+   * is unreachable from a DOM test, which is also why the practical risk
+   * through a mouse is small. Deleting this because "no test fails" would be
+   * reading that backwards.
    */
   const writing = useRef(false);
 
@@ -358,12 +358,21 @@ export function ServerPicker({
           // before it settles releases the latch in the `finally` below while
           // the parent is still writing — reopening the very window the latch
           // was taken to close.
+          //
+          // And `creating` goes up for the wait, so `busy` does too. Holding
+          // only the ref left every control enabled while the latch refused
+          // them: a dead control, which is the thing `busy` exists to prevent.
+          // It also arms `onInteractOutside`, so a click away cannot dismiss
+          // the popover out from under a commit in flight.
+          setCreating(true);
           try {
             await onChange(existing._id, existing as EvalServerAttachment);
             setOpen(false);
           } catch (err) {
             const raw = err instanceof Error ? err.message : "";
             toast.error(raw || `Couldn't select ${existing.name}`);
+          } finally {
+            setCreating(false);
           }
           return;
         }
@@ -578,6 +587,9 @@ export function ServerPicker({
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
       writing.current = true;
+      // Visible for the same reason as the bare-server reuse path: the wait
+      // belongs on screen, not only in a ref nobody can see.
+      setCreating(true);
       try {
         await onChange(group._id, group as EvalServerAttachment);
         setOpen(false);
@@ -585,6 +597,7 @@ export function ServerPicker({
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || `Couldn't select ${group.name}`);
       } finally {
+        setCreating(false);
         writing.current = false;
       }
     },

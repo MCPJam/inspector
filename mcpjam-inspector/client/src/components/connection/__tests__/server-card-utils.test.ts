@@ -50,6 +50,20 @@ describe("getConnectionStatusMeta", () => {
    * hex passed through `style` reads the same in dark mode as in light, which
    * is the bug three separate copies of this vocabulary used to carry.
    */
+  /**
+   * The roles a status dot is allowed to wear. An ALLOWLIST rather than a
+   * shape: `/^bg-[a-z-]+$/` accepted `bg-white` and `bg-black`, which are
+   * exactly the fixed colours this guard exists to reject — they read the
+   * same in both themes, which is the whole defect.
+   */
+  const STATUS_ROLES = [
+    "success",
+    "info",
+    "pending",
+    "destructive",
+    "muted-foreground",
+  ];
+
   it("paints every status from a role token, never a fixed colour", () => {
     const statuses: ConnectionStatus[] = [
       "connected",
@@ -61,8 +75,9 @@ describe("getConnectionStatusMeta", () => {
     for (const status of statuses) {
       const { indicatorClassName, iconClassName } =
         getConnectionStatusMeta(status);
-      expect(indicatorClassName).toMatch(/^bg-[a-z-]+$/);
-      expect(indicatorClassName).not.toMatch(/#|\d/);
+      expect(STATUS_ROLES.map((role) => `bg-${role}`)).toContain(
+        indicatorClassName,
+      );
       // The ICON too. It kept `text-green-500` and friends after the dot beside
       // it moved to a token, so one status was painted from the theme and from
       // a fixed shade at once. Any `text-<name>-<number>` fails here.
@@ -70,7 +85,7 @@ describe("getConnectionStatusMeta", () => {
         .split(" ")
         .find((cls) => cls.startsWith("text-"));
       expect(colour, `${status} icon colour`).toBeDefined();
-      expect(colour).toMatch(/^text-[a-z-]+$/);
+      expect(STATUS_ROLES.map((role) => `text-${role}`)).toContain(colour);
     }
   });
 

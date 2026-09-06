@@ -324,7 +324,13 @@ export function ActiveServerSelector({
                     {isSelected && <Check className="w-3 h-3" />}
                   </div>
                 )}
+                {/* `title` alone is a tooltip, not an accessible name: a
+                    screen reader moving through these tabs never hears the
+                    connection state. `role="img"` + `aria-label` is what the
+                    shared picker panel already does for the same dot. */}
                 <div
+                  role="img"
+                  aria-label={statusMeta.label}
                   className={cn(
                     "w-2 h-2 rounded-full",
                     statusMeta.indicatorClassName,
