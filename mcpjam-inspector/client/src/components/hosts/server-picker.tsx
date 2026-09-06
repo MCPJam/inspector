@@ -335,7 +335,15 @@ export function ServerPicker({
         setCreating(false);
       }
     },
-    [attachments, catalog, createServerAttachment, onChange, projectId],
+    [
+      attachments,
+      attachmentsKnown,
+      catalog,
+      createServerAttachment,
+      creating,
+      onChange,
+      projectId,
+    ],
   );
 
   /** Persist a multi-server group from the panel's form, then select it. */
@@ -452,7 +460,7 @@ export function ServerPicker({
         setCreating(false);
       }
     },
-    [deleteServerAttachment, onClearSelection, value],
+    [creating, deleteServerAttachment, onClearSelection, value],
   );
 
   const handleSelectGroup = useCallback(
@@ -463,7 +471,7 @@ export function ServerPicker({
       onChange(group._id, group as EvalServerAttachment);
       setOpen(false);
     },
-    [attachments, onChange],
+    [attachments, creating, onChange],
   );
 
   // A dangling selection (its row was deleted) still reads as the empty label

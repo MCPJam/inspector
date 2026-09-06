@@ -722,11 +722,23 @@ describe("ServerPicker — refusals the user can see", () => {
     mockState.attachments = [
       { _id: "att_p", name: "prod pair", serverIds: ["srv_1", "srv_2"], resolvedServerNames: ["alpha", "beta"] },
     ];
-    render(
+    // Opened FIRST, then disabled: a disabled trigger cannot be clicked, so
+    // rendering straight into that state leaves the panel unmounted and the
+    // query vacuously null.
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    ).toBeInTheDocument();
+
+    rerender(
       <ServerPicker projectId="p_1" value={null} onChange={vi.fn()} disabled />,
     );
-    // The trigger is disabled, so drive the panel through a live render and
-    // assert the control is simply not offered.
     expect(screen.queryByRole("button", { name: /^Delete / })).toBeNull();
   });
 
@@ -812,6 +824,15 @@ describe("ServerPicker — before the attachment list has answered", () => {
     expect(
       await screen.findByRole("button", { name: /new group/i }),
     ).toBeDisabled();
+  });
+
+  it("does NOT say loading when there is nothing to load a name for", () => {
+    // The empty label is still the right answer with no selection; saying
+    // "Loading…" there would invent a state the user is not in.
+    render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      "Select server",
+    );
   });
 
   it("says it is loading instead of claiming nothing is selected", () => {
@@ -1057,6 +1078,18 @@ describe("ServerPicker — the consequences of a delete", () => {
 });
 
 describe("ServerPicker — clearing a selection the list no longer holds", () => {
+  it("reads as the empty label once the list has answered without it", () => {
+    // Dangling, not loading: the list arrived and does not hold the row, so
+    // "Loading…" would be a claim that never resolves.
+    mockState.attachments = [];
+    render(
+      <ServerPicker projectId="p_1" value="att_deleted" onChange={vi.fn()} />,
+    );
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      "Select server",
+    );
+  });
+
   it("still offers the way out when the row is gone", () => {
     // The label falls back to the empty text, but the parent is still storing
     // the dead id. Hiding the X leaves no way to null it.
