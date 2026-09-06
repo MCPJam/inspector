@@ -1,6 +1,6 @@
 import { useAction, useConvexAuth, useQuery } from "convex/react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertTriangle, Loader2, Plus } from "lucide-react";
 import { toast } from "@/lib/toast";
 import {
   Dialog,
@@ -21,6 +21,7 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
+import { RadioGroup, RadioGroupItem } from "@mcpjam/design-system/radio-group";
 import {
   Alert,
   AlertDescription,
@@ -38,11 +39,11 @@ import {
   useProjectServers,
 } from "@/hooks/useViews";
 import { useHostList } from "@/hooks/useClients";
-import {
-  ClientAttachmentsEditor,
-  type HostAttachmentDraft,
-} from "@/components/evals/client-attachments-editor";
+import type { HostAttachmentDraft } from "@/components/evals/client-attachments-editor";
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
+import { HostPicker } from "@/components/hosts/HostPicker";
+import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
 
@@ -111,13 +112,63 @@ type ConvertSessionDialogCoreProps = {
 
 type DestinationMode = "existing" | "new";
 
+type DestinationCardProps = {
+  value: DestinationMode;
+  title: string;
+  selected: boolean;
+  disabled?: boolean;
+  children: ReactNode;
+};
+
+/**
+ * One "Add to" option: a radio and its fields in the same card, so the
+ * fields visibly belong to the choice that reveals them. The unselected card
+ * is just the radio and its name — the whole point of BB-163 is that the
+ * other branch's inputs are not on screen asking to be filled in.
+ *
+ * The `<label>` deliberately covers only the radio and the title. The fields
+ * are siblings: nesting them inside the label would hand every click on a
+ * select to the radio.
+ */
+function DestinationCard({
+  value,
+  title,
+  selected,
+  disabled = false,
+  children,
+}: DestinationCardProps) {
+  return (
+    <div
+      data-testid={`promote-destination-${value}`}
+      data-selected={selected ? "true" : "false"}
+      className={cn(
+        "rounded-lg border bg-background p-3.5 transition-colors",
+        selected ? "border-primary" : "border-border",
+      )}
+    >
+      <label
+        className={cn(
+          "flex items-center gap-3",
+          disabled ? "cursor-not-allowed" : "cursor-pointer",
+        )}
+      >
+        <RadioGroupItem value={value} disabled={disabled} />
+        <span className="text-sm font-medium text-card-foreground">
+          {title}
+        </span>
+      </label>
+      {selected ? <div className="mt-3 space-y-3">{children}</div> : null}
+    </div>
+  );
+}
+
 /**
  * Presentational/submit core of "Promote to test case". Owns the suite
  * pickers and the `importChatSessionToTestCase` call; per-source adapters
  * (`ConvertChatSessionDialog` for direct history, `ConvertPromotableSessionDialog`
  * for swarm runs) own fetching the summary/detail inputs.
  */
-export function ConvertSessionDialogCore({
+function ConvertSessionDialogCoreInner({
   open,
   summary,
   detail,
@@ -150,30 +201,50 @@ export function ConvertSessionDialogCore({
     isAuthenticated,
     projectId: effectiveProjectId,
   });
-  const { serverAttachments: projectServerAttachments } =
-    useProjectServerAttachments({
-      isAuthenticated: attachmentPickersEnabled,
-      projectId: attachmentPickersEnabled ? effectiveProjectId : null,
-    });
-  const { hosts: projectHosts } = useHostList({
+  const {
+    serverAttachments: projectServerAttachments,
+    isLoading: projectServerAttachmentsLoading,
+  } = useProjectServerAttachments({
+    isAuthenticated: attachmentPickersEnabled,
+    projectId: attachmentPickersEnabled ? effectiveProjectId : null,
+  });
+  const { hosts: projectHosts, isLoading: projectHostsLoading } = useHostList({
     isAuthenticated: attachmentPickersEnabled,
     projectId: attachmentPickersEnabled ? effectiveProjectId : null,
   });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
-    [servers]
+    [servers],
   );
+  const suitesQueryActive = Boolean(open && isUserReady && effectiveProjectId);
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
-    open && isUserReady && effectiveProjectId
-      ? ({ projectId: effectiveProjectId } as any)
-      : "skip"
+    suitesQueryActive ? ({ projectId: effectiveProjectId } as any) : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
+  /**
+   * "We do not yet know what suites this project has" — which is NOT the same
+   * question as `suitesOverview === undefined`.
+   *
+   * `useQuery` returns `undefined` both while loading and while skipped, and
+   * the gate above skips on FOUR paths, not three. Signed out, no project and
+   * closed are all genuinely "there are no suites to choose from". The fourth
+   * — authed, with a project, `users` row still bootstrapping — is unknown,
+   * and reading it as empty seeded the New suite branch and stamped the
+   * default ref before the list could arrive, leaving a project that HAS
+   * suites stuck on New suite for the life of the dialog.
+   */
+  const suitesPending =
+    (suitesQueryActive && suitesOverview === undefined) ||
+    attachmentPickersPending;
   const importChatSession = useAction(
-    "testSuites:importChatSessionToTestCase" as any
+    "testSuites:importChatSessionToTestCase" as any,
   );
 
   const [caseTitle, setCaseTitle] = useState("");
+  // Seeded per-session once the suite list resolves (see the default effect
+  // below): "existing" when the project has suites, "new" when it does not.
+  // The initial value only shows while `suitesPending`, which renders a
+  // spinner instead of either branch.
   const [destinationMode, setDestinationMode] =
     useState<DestinationMode>("new");
   const [selectedSuiteId, setSelectedSuiteId] = useState<string>("");
@@ -188,15 +259,17 @@ export function ConvertSessionDialogCore({
     useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const suiteDefaultsAppliedForSessionId = useRef<string | null>(null);
+  const destinationDefaultAppliedForSessionId = useRef<string | null>(null);
   // New-suite-branch picker state. Only consulted when
   // `attachmentPickersEnabled` is true; defaults seeded from the project's
   // first standalone serverAttachment / `defaultHostId` (falling back to the
   // first project host), mirroring CreateSuiteDialog.
+  const [createHostOpen, setCreateHostOpen] = useState(false);
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null
+    null,
   );
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
-    []
+    [],
   );
 
   const sessionServerDisplay = useMemo(
@@ -212,24 +285,24 @@ export function ConvertSessionDialogCore({
       detail.usedServerIds,
       knownServerNames,
       serversById,
-    ]
+    ],
   );
   const sessionServerLabels = useMemo(
     () => sessionServerDisplay.items.map((item) => item.label),
-    [sessionServerDisplay.items]
+    [sessionServerDisplay.items],
   );
 
   const availableSuites = useMemo(
     () =>
       (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
-    [suitesOverview]
+    [suitesOverview],
   );
 
   const selectedSuiteEntry = useMemo(
     () =>
       availableSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
       null,
-    [availableSuites, selectedSuiteId]
+    [availableSuites, selectedSuiteId],
   );
   const selectedSuiteServerDisplay = useMemo(() => {
     if (!selectedSuiteEntry) {
@@ -238,7 +311,7 @@ export function ConvertSessionDialogCore({
 
     return deriveSessionServerDisplay({
       usedServerRefs: normalizeServerNames(
-        selectedSuiteEntry.suite.environment?.servers
+        selectedSuiteEntry.suite.environment?.servers,
       ),
       selectedServers: [],
       serversById,
@@ -246,15 +319,40 @@ export function ConvertSessionDialogCore({
     });
   }, [knownServerNames, selectedSuiteEntry, serversById]);
 
+  /**
+   * Until `useProjectServers` answers, `knownServerNames` is empty, so every
+   * session ref resolves to its raw id and matches nothing. Every comparison
+   * between the session's servers and a suite's is therefore unanswerable —
+   * not empty — for that window.
+   *
+   * Named once because it governs three things that must agree: both server
+   * comparisons below AND `canSubmit`. Returning `[]` without blocking submit
+   * would trade a false "missing servers" for a silent one, and let a case
+   * through that cannot run.
+   */
+  const serverComparisonPending = projectServersLoading;
+  /**
+   * Display-only union of every project subscription that can hold Promote
+   * dead. Deliberately NOT folded into `serverComparisonPending`: that one
+   * also suppresses the missing-servers comparison and gates submit, and the
+   * host/attachment reads have no bearing on whether a suite's servers can be
+   * compared. This exists so the window is explained on screen, not to change
+   * what is allowed.
+   */
+  const promoteChecksPending =
+    serverComparisonPending ||
+    projectServerAttachmentsLoading ||
+    projectHostsLoading;
+
   const missingServers = useMemo(() => {
-    if (!selectedSuiteEntry) {
+    if (!selectedSuiteEntry || serverComparisonPending) {
       return [];
     }
 
     const suiteServerLabels = new Set(
       (selectedSuiteServerDisplay?.items ?? []).map((item) =>
-        item.label.toLowerCase()
-      )
+        item.label.toLowerCase(),
+      ),
     );
 
     return sessionServerDisplay.items
@@ -264,25 +362,206 @@ export function ConvertSessionDialogCore({
     selectedSuiteEntry,
     selectedSuiteServerDisplay,
     sessionServerDisplay.items,
+    serverComparisonPending,
   ]);
-  const sessionServersDescription =
-    sessionServerDisplay.source === "used"
-      ? "Derived from stored tool activity in this session."
-      : sessionServerDisplay.source === "selected"
-      ? "Falls back to this session's stored server selection."
-      : "Uses stored session metadata when server activity is available.";
+  /**
+   * The standalone server group the suite pins, if any. When one is pinned,
+   * the suite's runs resolve their servers from the GROUP: `startTestSuiteRun`
+   * reads `standaloneAttachmentOverride` and bypasses per-host resolution.
+   */
+  const pinnedGroupServers = useMemo(
+    () => selectedSuiteEntry?.suite.serverAttachment?.resolvedServerNames ?? [],
+    [selectedSuiteEntry],
+  );
+  /**
+   * Whether the suite pins a group AT ALL, which is a different question from
+   * whether that group has servers in it. `resolveStandaloneSelection`
+   * preserves a live-but-empty selection as `[]` rather than falling back to
+   * the per-host pick — an empty group is still the active override, one that
+   * says "no servers". Keying off the LENGTH read that as "no group pinned"
+   * and offered the environment opt-in as though it could help.
+   */
+  const hasPinnedGroup = Boolean(selectedSuiteEntry?.suite.serverAttachment);
 
+  /**
+   * The selected suite's client · server, read-only — they belong to the
+   * SUITE, not the case, so this branch reports the destination instead of
+   * asking for it again (BB-93's "why do I see server selection twice?").
+   */
+  const selectedSuiteSummary = useMemo(() => {
+    if (!selectedSuiteEntry) {
+      return null;
+    }
+
+    const clients = (selectedSuiteEntry.suite.hostAttachments ?? [])
+      .map((attachment) => attachment.hostName)
+      .filter((hostName): hostName is string => Boolean(hostName?.trim()));
+    // What the suite RUNS AGAINST, which for a suite pinning a standalone
+    // server group is that group — not `environment.servers`, which a
+    // group-backed suite leaves empty (`createTestSuite` stores
+    // `args.environment?.servers ?? []`). Reading only the environment showed
+    // "Claude" alone for every modern suite.
+    //
+    // DELIBERATELY a different source from `missingServers` below, which must
+    // keep mirroring `environment.servers`: that is the list the backend gates
+    // the import on and the one the opt-in patches. Pointing the check at the
+    // group instead would have the client pass a suite the server then rejects
+    // outright, replacing a fixable opt-in with a bare submit failure.
+    const servers = hasPinnedGroup
+      ? pinnedGroupServers
+      : (selectedSuiteServerDisplay?.items ?? []).map((item) => item.label);
+
+    const groups = [clients, servers]
+      .filter((group) => group.length > 0)
+      .map((group) => group.join(", "));
+
+    return groups.length > 0 ? groups.join(" · ") : null;
+  }, [
+    hasPinnedGroup,
+    pinnedGroupServers,
+    selectedSuiteEntry,
+    selectedSuiteServerDisplay,
+  ]);
+
+  /**
+   * Session servers the promoted case will not actually reach. Separate from
+   * `missingServers` because they mirror different lists: that one mirrors
+   * `environment.servers`, which `importChatSessionToTestCase` gates on and
+   * the opt-in patches, while this one mirrors the pinned group, which
+   * `startTestSuiteRun` actually runs against. Conflating them let the opt-in
+   * satisfy the gate and still import a case that runs without the server.
+   */
+  const unreachableServers = useMemo(() => {
+    if (!selectedSuiteEntry || !hasPinnedGroup || serverComparisonPending) {
+      // No pinned group: run time and the gate read the same list, so
+      // `missingServers` already covers it and the opt-in genuinely fixes it.
+      return [];
+    }
+    const reachable = new Set(
+      pinnedGroupServers.map((name) => name.trim().toLowerCase()),
+    );
+    return sessionServerDisplay.items
+      .filter((item) => !reachable.has(item.label.toLowerCase()))
+      .map((item) => item.label);
+  }, [
+    hasPinnedGroup,
+    pinnedGroupServers,
+    selectedSuiteEntry,
+    serverComparisonPending,
+    sessionServerDisplay.items,
+  ]);
+
+  const suiteChoiceAvailable = availableSuites.length > 0;
+  // Guards the case where the mode outlives the suites it was picked for (a
+  // reused dialog whose new session belongs to a project with none): the
+  // existing branch is unreachable, so submit must not validate against it.
+  const effectiveDestinationMode: DestinationMode = suiteChoiceAvailable
+    ? destinationMode
+    : "new";
+
+  /** The one client the new-suite branch attaches; see `handleClientChange`. */
+  const selectedHostId = hostAttachments[0]?.namedHostId ?? null;
+
+  /**
+   * Per-SESSION reset, keyed on `sessionId` rather than on the `summary`
+   * object.
+   *
+   * Both adapters build `summary` with `useMemo` over Convex results, so its
+   * identity changes when the promote detail lands and again on every later
+   * subscription push. Depending on the object re-ran this on each of those
+   * and wiped `selectedSuiteId` — which the seeding effect below then refuses
+   * to restore, because its ref is already stamped for this session. The
+   * pre-selected suite fell back to the placeholder with submit dead, and a
+   * suite the user had picked by hand was silently reverted.
+   *
+   * The clear is only destructive because a suite is pre-selected; back when
+   * the picker opened empty there was nothing for it to throw away.
+   */
+  const sessionId = summary?.sessionId ?? null;
   useEffect(() => {
-    if (!open || !summary) {
+    if (!open || !sessionId) {
       return;
     }
 
-    setCaseTitle(summary.title);
-    setDestinationMode("new");
     setSelectedSuiteId("");
     setUpdateSuiteEnvironment(false);
     setContentTransferAcknowledged(false);
-  }, [open, summary]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see above: this
+    // is deliberately keyed on the session, not on the summary object.
+  }, [open, sessionId]);
+
+  /**
+   * Title seeding is separate, and also per-session: re-running it on every
+   * `summary` push clobbered a title the user was part-way through typing.
+   *
+   * Two things have to be true before the latch stamps, and the first round of
+   * this fix had only the latch:
+   *
+   * - `hostDefaultResolved` — on the async adapter `summary.title` starts as
+   *   `buildTitle(null, seedTitle)`, whose own doc calls it a fallback "while
+   *   the detail read is in flight". Latching on that made the placeholder
+   *   permanent: a promoted User Testing session took the visitor's name, or
+   *   "Imported chat", and the real title never landed. The flag defaults
+   *   `true`, so the direct adapter (no async title) is unaffected.
+   * - `caseTitleDirtyForSessionId` — this input renders ABOVE the detail
+   *   spinner and is editable throughout, so the gate alone only narrows the
+   *   window in which a late title overwrites what someone is typing. Held
+   *   per session rather than as a bare boolean so switching sessions inside
+   *   an open dialog still seeds the new one's title.
+   */
+  const titleSeededForSessionId = useRef<string | null>(null);
+  const caseTitleDirtyForSessionId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!open) {
+      titleSeededForSessionId.current = null;
+      caseTitleDirtyForSessionId.current = null;
+      return;
+    }
+    if (!hostDefaultResolved) {
+      return;
+    }
+    if (!summary || titleSeededForSessionId.current === summary.sessionId) {
+      return;
+    }
+    // Stamp either way: a typed title is the answer for this session, and
+    // re-checking it on every later push would re-clobber it.
+    if (caseTitleDirtyForSessionId.current !== summary.sessionId) {
+      setCaseTitle(summary.title);
+    }
+    titleSeededForSessionId.current = summary.sessionId;
+  }, [open, summary, hostDefaultResolved]);
+
+  /**
+   * BB-163: "Existing suite (default if any exist)". The default cannot be a
+   * `useState` initial value because the suite list arrives asynchronously —
+   * seeding it here, once per session and only after the list resolves, is
+   * what keeps a project WITH suites from opening on the new-suite branch and
+   * silently creating a duplicate.
+   *
+   * Also pre-selects the first suite, so the destination is visible (with its
+   * client · server underneath) rather than an empty picker above a disabled
+   * button.
+   */
+  useEffect(() => {
+    if (!open) {
+      destinationDefaultAppliedForSessionId.current = null;
+      return;
+    }
+    if (!summary || suitesPending) {
+      return;
+    }
+    if (destinationDefaultAppliedForSessionId.current === summary.sessionId) {
+      return;
+    }
+
+    if (availableSuites.length > 0) {
+      setDestinationMode("existing");
+      setSelectedSuiteId((current) => current || availableSuites[0].suite._id);
+    } else {
+      setDestinationMode("new");
+    }
+    destinationDefaultAppliedForSessionId.current = summary.sessionId;
+  }, [open, summary, suitesPending, availableSuites]);
 
   useEffect(() => {
     if (!open) {
@@ -297,8 +576,9 @@ export function ConvertSessionDialogCore({
   // Seed picker defaults when the dialog opens against a project that has
   // attachments/hosts available. Mirrors CreateSuiteDialog: pick the first
   // standalone serverAttachment; hosts prefer `defaultHostId` when it names
-  // a live project host. User can swap either via the picker (Create new is
-  // supported inline by both editors).
+  // a live project host. Either can be swapped from its own picker, but only
+  // `ServerGroupPicker` can CREATE from there — `HostPicker` has none, which
+  // is what the empty-state button on the Client column below stands in for.
   useEffect(() => {
     if (!attachmentPickersEnabled) return;
     if (serverAttachmentId === null && projectServerAttachments.length > 0) {
@@ -353,7 +633,7 @@ export function ConvertSessionDialogCore({
     }
 
     setNewSuiteName(
-      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`)
+      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`),
     );
     suiteDefaultsAppliedForSessionId.current = summary.sessionId;
   }, [open, summary, detail.loading, sessionServerLabels]);
@@ -374,13 +654,26 @@ export function ConvertSessionDialogCore({
     (detail.requiresContentTransferAcknowledgement !== true ||
       contentTransferAcknowledged) &&
     !attachmentPickersPending &&
+    // Suppressing the comparison (above) without suppressing SUBMIT would let
+    // a session server slip past the opt-in entirely and write a case that
+    // cannot run — a silent wrong answer in place of a noisy wrong one.
+    !serverComparisonPending &&
     !detail.loading &&
     !detail.error &&
+    // The branch itself is still unknown until the suite list lands, so there
+    // is nothing coherent to validate yet.
+    !suitesPending &&
     caseTitle.trim().length > 0 &&
     !isSubmitting &&
-    (destinationMode === "new"
+    (effectiveDestinationMode === "new"
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
-      : Boolean(selectedSuiteId) &&
+      : // The resolved ENTRY, not the id. A Convex push can drop the
+        // selected suite out from under an open dialog — deleted elsewhere, or
+        // `source` flipped so the `availableSuites` filter stops returning it
+        // — and every other consumer keys off the entry. Gating on the id left
+        // Promote enabled over a picker reading "Choose a suite", for an id
+        // `authorizeForSuite` then rejects.
+        Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const requiresContentTransferAck =
@@ -396,7 +689,7 @@ export function ConvertSessionDialogCore({
       const result = (await importChatSession({
         sessionId: summary.sessionId,
         projectId: effectiveProjectId,
-        ...(destinationMode === "existing"
+        ...(effectiveDestinationMode === "existing"
           ? {
               destinationSuiteId: selectedSuiteId,
               updateSuiteEnvironment,
@@ -430,14 +723,14 @@ export function ConvertSessionDialogCore({
 
       const added = result.addedServers ?? [];
       if (
-        destinationMode === "existing" &&
+        effectiveDestinationMode === "existing" &&
         result.updatedSuiteEnvironment === true &&
         added.length > 0
       ) {
         toast.success(
           `Session promoted to a test case. Added ${added.join(
-            ", "
-          )} to the suite.`
+            ", ",
+          )} to the suite.`,
         );
       } else {
         toast.success("Session promoted to a test case");
@@ -453,6 +746,269 @@ export function ConvertSessionDialogCore({
 
   const sessionTitle = summary?.title ?? "Imported chat";
 
+  /**
+   * One client, chosen in one field. The wire shape stays the backend's
+   * attachment array so the created suite can grow more clients later in
+   * suite settings — but promoting does not make you assemble a fan-out.
+   */
+  const handleClientChange = (hostId: string | null) => {
+    setHostAttachments(
+      hostId ? [{ namedHostId: hostId, enabledOptionalServerIds: [] }] : [],
+    );
+  };
+
+  /**
+   * A promote that cannot happen at all. These REPLACE the form rather than
+   * sitting above a set of fields nobody can submit: neither a session the
+   * backend refuses nor a project-less session has a destination to pick.
+   */
+  const blockingNotice = detail.error ? (
+    <Alert variant="destructive">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Import unavailable</AlertTitle>
+      <AlertDescription>{detail.error}</AlertDescription>
+    </Alert>
+  ) : !effectiveProjectId ? (
+    <Alert variant="destructive">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>Import unavailable</AlertTitle>
+      <AlertDescription>
+        This session is not linked to a shared project yet, so it cannot be
+        promoted to a suite-backed test case.
+      </AlertDescription>
+    </Alert>
+  ) : null;
+
+  const existingSuiteFields = (
+    <>
+      <div className="space-y-2">
+        <Label htmlFor="promote-existing-suite">Suite</Label>
+        <Select
+          value={selectedSuiteId}
+          onValueChange={(next) => {
+            setSelectedSuiteId(next);
+            // The opt-in below records a decision about ONE suite's
+            // environment. Carrying a tick from suite A into suite B would
+            // let a submit patch B on the strength of a confirmation the
+            // user never gave for it.
+            setUpdateSuiteEnvironment(false);
+          }}
+          disabled={isSubmitting}
+        >
+          <SelectTrigger id="promote-existing-suite" className="w-full">
+            <SelectValue placeholder="Choose a suite" />
+          </SelectTrigger>
+          <SelectContent>
+            {availableSuites.map((entry) => (
+              <SelectItem key={entry.suite._id} value={entry.suite._id}>
+                {entry.suite.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+
+      {/* Read-only, because client and server are the suite's, not this
+          case's. Shown rather than re-asked so the destination is still
+          verifiable at a glance. */}
+      {selectedSuiteEntry ? (
+        <p
+          className="text-[13px] leading-[18px] text-muted-foreground"
+          data-testid="promote-existing-suite-summary"
+        >
+          {selectedSuiteSummary ?? "No client or server attached yet."}
+        </p>
+      ) : null}
+
+      {/* A pinned server group is FROZEN by design — "to change the
+          selection, create a new attachment and re-point the suite" — so
+          nothing this dialog can offer will add a server to it, and the
+          opt-in below patches a list the runner does not read. Say that
+          plainly instead of collecting a confirmation that changes nothing. */}
+      {selectedSuiteEntry && unreachableServers.length > 0 ? (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>
+            The suite&apos;s server group is missing servers
+          </AlertTitle>
+          <AlertDescription>
+            This suite runs against a fixed server group, which does not include{" "}
+            {unreachableServers.join(", ")}. The case will still be created, but
+            it will run without{" "}
+            {unreachableServers.length === 1 ? "that server" : "those servers"}{" "}
+            until the group is updated in suite settings.
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      {/* Not in the design because it is not in the happy path: the session
+          used a server the suite does not have, and importing without it
+          would produce a case that cannot run. Kept as a submit-blocking
+          opt-in — the alternative is a green button that writes a broken
+          case. */}
+      {selectedSuiteEntry && missingServers.length > 0 ? (
+        <Alert>
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Suite environment update required</AlertTitle>
+          <AlertDescription className="space-y-3">
+            <p>
+              The selected suite&apos;s recorded environment is missing these
+              servers: {missingServers.join(", ")}.
+            </p>
+            {/* `deriveSessionServerDisplay` falls back to the raw ref when it
+                cannot match a current project server, so this list can be
+                Convex ids. The chip row used to explain that; without a note
+                the user is blocked by a string with no meaning. */}
+            {sessionServerDisplay.unresolvedCount > 0 ? (
+              <p className="text-xs leading-relaxed">
+                Some of those could not be matched to a current project server,
+                so their stored ids are shown.
+              </p>
+            ) : null}
+            <label className="flex items-start gap-3">
+              <Checkbox
+                checked={updateSuiteEnvironment}
+                onCheckedChange={(checked) =>
+                  setUpdateSuiteEnvironment(checked === true)
+                }
+                disabled={isSubmitting}
+                className="mt-0.5"
+              />
+              <span className="text-sm">
+                {hasPinnedGroup
+                  ? "Record these servers on the suite so the import can proceed."
+                  : "Add the missing servers to this suite before importing the case."}
+              </span>
+            </label>
+          </AlertDescription>
+        </Alert>
+      ) : null}
+    </>
+  );
+
+  const newSuiteFields = (
+    <>
+      <div className="space-y-2">
+        <Label htmlFor="promote-new-suite-name">Suite name</Label>
+        <Input
+          id="promote-new-suite-name"
+          value={newSuiteName}
+          onChange={(event) => setNewSuiteName(event.target.value)}
+          placeholder="Imported suite"
+          disabled={isSubmitting}
+        />
+      </div>
+
+      {/* Side by side, and only on this branch: a new suite is the one case
+          where nobody has decided what it runs against yet. Both are
+          pre-filled from the session, so the common path is to read them
+          rather than answer them. */}
+      {attachmentPickersEnabled && effectiveProjectId ? (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="promote-new-suite-client">Client</Label>
+            <HostPicker
+              projectId={effectiveProjectId}
+              value={selectedHostId}
+              onChange={handleClientChange}
+              location="eval_runner"
+              placeholder="Select a client"
+              includeNone={false}
+              disabled={isSubmitting}
+              priorityHostId={defaultHostId ?? undefined}
+              triggerId="promote-new-suite-client"
+              // `SelectTrigger` is `w-fit`; without this the Client control
+              // shrinks to its content while Server fills its grid cell.
+              triggerClassName="w-full"
+            />
+            {/* A project with no clients is otherwise a dead end: the seeding
+                effect needs `projectHosts.length > 0`, so `hostAttachments`
+                stays empty, `newSuiteRequirementsMet` is false, and submit is
+                dead behind an empty dropdown that explains nothing. The editor
+                this replaced carried both an empty state and an inline create;
+                `ServerGroupPicker` still does, so the asymmetry was an
+                oversight, not a decision. */}
+            {!projectHostsLoading && projectHosts.length === 0 ? (
+              <div className="space-y-1.5">
+                {/* Gated on the query, not just on the array: an empty list
+                    mid-flight is indistinguishable from a project with no
+                    clients, and offering Create there invites a duplicate. */}
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  This project has no clients yet. A new suite needs one to run
+                  against.
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCreateHostOpen(true)}
+                  disabled={isSubmitting}
+                  data-testid="promote-create-client"
+                >
+                  <Plus className="mr-1 h-3.5 w-3.5" />
+                  Create a client
+                </Button>
+              </div>
+            ) : null}
+          </div>
+          <div className="min-w-0 space-y-2">
+            <Label htmlFor="promote-new-suite-server">Server</Label>
+            <ServerAttachmentPicker
+              projectId={effectiveProjectId}
+              value={serverAttachmentId}
+              onChange={setServerAttachmentId}
+              onClearSelection={() => setServerAttachmentId(null)}
+              disabled={isSubmitting}
+              variant="field"
+              triggerId="promote-new-suite-server"
+              // The dialog's scroll-lock blocks the wheel on portaled
+              // content, so the group list has to render in place.
+              inModal
+            />
+            {/* Same dead end as the Client column: `newSuiteRequirementsMet`
+                needs a `serverAttachmentId`, so a project with no groups shows
+                a normal-looking field above a Promote that never enables, and
+                explains itself only once the popover is open. No button —
+                unlike `HostPicker` this picker creates inline — but that
+                create needs a server to put in the group, so which of the two
+                sentences below is true depends on the SERVER list, not the
+                group list.
+
+                Hence both gates. `projectServerAttachmentsLoading` keeps a
+                mid-flight empty list from accusing a project that has groups;
+                `projectServersLoading` keeps `knownServerNames`, which is `[]`
+                until that query lands, from being read as "this project has no
+                servers". The window they hide is not silent — the pending line
+                below the form is showing throughout it. */}
+            {!projectServerAttachmentsLoading &&
+            !projectServersLoading &&
+            projectServerAttachments.length === 0 ? (
+              <p
+                className="text-xs leading-relaxed text-muted-foreground"
+                data-testid="promote-no-server-groups"
+              >
+                {knownServerNames.length === 0
+                  ? "This project has no servers yet, so there is no group for a new suite to run against."
+                  : "This project has no server groups yet. Create one from the picker above."}
+              </p>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {/* Attaches the freshly created client straight away, so the create ends
+          in a filled field rather than back at the empty dropdown. */}
+      {effectiveProjectId ? (
+        <CreateHostDialog
+          isOpen={createHostOpen}
+          onClose={() => setCreateHostOpen(false)}
+          projectId={effectiveProjectId}
+          onCreated={handleClientChange}
+        />
+      ) : null}
+    </>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
@@ -460,282 +1016,150 @@ export function ConvertSessionDialogCore({
           <DialogHeader className="space-y-1.5 pr-10">
             <DialogTitle>Promote to test case</DialogTitle>
             <DialogDescription className="text-sm text-muted-foreground">
-              Create a suite-backed test case from this session. The full
-              session is compiled into multi-turn prompt turns.
+              Turn this session into a reusable case.
             </DialogDescription>
           </DialogHeader>
         </div>
 
-        <div className="space-y-6 px-6 py-5">
-          <div className="space-y-2">
-            <Label htmlFor="chat-import-case-title">Case title</Label>
-            <Input
-              id="chat-import-case-title"
-              value={caseTitle}
-              onChange={(event) => setCaseTitle(event.target.value)}
-              placeholder={sessionTitle}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium text-foreground">
-                Session servers
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                {sessionServersDescription}
-              </p>
-            </div>
-            {detail.loading ? (
-              <div className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                Loading session details…
-              </div>
-            ) : detail.error ? (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Import unavailable</AlertTitle>
-                <AlertDescription>{detail.error}</AlertDescription>
-              </Alert>
-            ) : !effectiveProjectId ? (
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Import unavailable</AlertTitle>
-                <AlertDescription>
-                  This session is not linked to a shared project yet, so it
-                  cannot be promoted to a suite-backed test case.
-                </AlertDescription>
-              </Alert>
-            ) : (
+        <div className="space-y-5 px-6 py-5">
+          {blockingNotice ?? (
+            <>
               <div className="space-y-2">
-                <div className="flex min-h-10 flex-wrap content-center gap-1.5">
-                  {sessionServerDisplay.items.length > 0 ? (
-                    sessionServerDisplay.items.map((server) => (
-                      <span
-                        key={`${server.raw}:${server.label}`}
-                        className={cn(
-                          "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
-                          server.unresolved
-                            ? "border-dashed border-border/50 bg-transparent font-mono text-muted-foreground"
-                            : "border-border/50 bg-muted/50 text-foreground"
-                        )}
-                      >
-                        {server.label}
-                      </span>
-                    ))
-                  ) : (
-                    <span className="text-sm text-muted-foreground">
-                      No servers were recorded for this session.
-                    </span>
-                  )}
-                </div>
-                {!projectServersLoading &&
-                sessionServerDisplay.unresolvedCount > 0 ? (
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Some servers could not be resolved to current project names,
-                    so raw ids are shown.
-                  </p>
-                ) : null}
+                <Label htmlFor="promote-test-case-name">Test case name</Label>
+                <Input
+                  id="promote-test-case-name"
+                  value={caseTitle}
+                  onChange={(event) => {
+                    // See the title-seeding effect: this marks the field as
+                    // the user's, so a title arriving from the adapter after
+                    // they started typing does not overwrite it.
+                    caseTitleDirtyForSessionId.current = sessionId;
+                    setCaseTitle(event.target.value);
+                  }}
+                  placeholder={sessionTitle}
+                  disabled={isSubmitting}
+                />
               </div>
-            )}
-          </div>
 
-          <div className="space-y-3">
-            <div className="space-y-0.5">
-              <p className="text-sm font-medium text-foreground">
-                Destination suite
-              </p>
-              <p className="text-xs text-muted-foreground leading-relaxed">
-                Create a new suite or add the case to an existing one.
-              </p>
-            </div>
-
-            <div
-              className="flex rounded-lg border border-border/50 bg-muted/30 p-1"
-              role="group"
-              aria-label="Destination suite"
-            >
-              <Button
-                type="button"
-                variant="ghost"
-                className={cn(
-                  "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
-                  destinationMode === "new"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
-                )}
-                onClick={() => setDestinationMode("new")}
-              >
-                Create new suite
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                disabled={availableSuites.length === 0}
-                className={cn(
-                  "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
-                  destinationMode === "existing"
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
-                )}
-                onClick={() => setDestinationMode("existing")}
-              >
-                Use existing suite
-              </Button>
-            </div>
-
-            {destinationMode === "new" ? (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="chat-import-suite-name">Suite name</Label>
-                  <Input
-                    id="chat-import-suite-name"
-                    value={newSuiteName}
-                    onChange={(event) => setNewSuiteName(event.target.value)}
-                    placeholder="Imported suite"
-                  />
+              {detail.loading || suitesPending ? (
+                <div className="flex min-h-10 items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                  {/* Two different waits, and this branch hides "Add to"
+                      either way — one message left the user unable to tell
+                      "this project has no suites" from "the list hasn't
+                      arrived yet". */}
+                  {detail.loading
+                    ? "Loading session details…"
+                    : "Loading this project's suites…"}
                 </div>
-
-                {attachmentPickersEnabled && effectiveProjectId ? (
-                  <div className="divide-y rounded-lg border bg-muted/20">
-                    <div className="flex items-start justify-between gap-4 p-3">
-                      <div className="min-w-0 space-y-0.5">
-                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Servers
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          Server set all clients run against.
-                        </p>
-                      </div>
-                      <div className="shrink-0">
-                        <ServerAttachmentPicker
-                          projectId={effectiveProjectId}
-                          value={serverAttachmentId}
-                          onChange={setServerAttachmentId}
-                          onClearSelection={() => setServerAttachmentId(null)}
-                          disabled={isSubmitting}
-                        />
-                      </div>
-                    </div>
-                    <div className="space-y-2 p-3">
-                      <div className="space-y-0.5">
-                        <h3 className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Clients
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                          Each attached client fans out into its own run.
-                        </p>
-                      </div>
-                      <ClientAttachmentsEditor
-                        projectId={effectiveProjectId}
-                        value={hostAttachments}
-                        onChange={setHostAttachments}
-                        disabled={isSubmitting}
-                      />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div className="space-y-2">
-                  <Label htmlFor="chat-import-existing-suite">
-                    Existing suite
-                  </Label>
-                  <Select
-                    value={selectedSuiteId}
-                    onValueChange={setSelectedSuiteId}
+              ) : suiteChoiceAvailable ? (
+                <div className="space-y-3">
+                  <p className="text-sm font-medium text-foreground">Add to</p>
+                  <RadioGroup
+                    value={effectiveDestinationMode}
+                    // Radix types this `(value: string) => void`. A cast
+                    // here would narrow an arbitrary string into the
+                    // discriminant that both `canSubmit` and the submit
+                    // payload read.
+                    onValueChange={(next) =>
+                      setDestinationMode(
+                        next === "existing" ? "existing" : "new",
+                      )
+                    }
+                    aria-label="Add to"
+                    className="gap-2"
                   >
-                    <SelectTrigger id="chat-import-existing-suite">
-                      <SelectValue placeholder="Choose a suite" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableSuites.map((entry) => (
-                        <SelectItem
-                          key={entry.suite._id}
-                          value={entry.suite._id}
-                        >
-                          {entry.suite.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                    <DestinationCard
+                      value="existing"
+                      title="Existing suite"
+                      selected={effectiveDestinationMode === "existing"}
+                      disabled={isSubmitting}
+                    >
+                      {existingSuiteFields}
+                    </DestinationCard>
+                    <DestinationCard
+                      value="new"
+                      title="New suite"
+                      selected={effectiveDestinationMode === "new"}
+                      disabled={isSubmitting}
+                    >
+                      {newSuiteFields}
+                    </DestinationCard>
+                  </RadioGroup>
                 </div>
+              ) : (
+                // No suites to choose between, so there is no question to
+                // ask: show the new-suite fields directly. Explicitly NOT a
+                // nested create-suite modal, and not a radio group with one
+                // answer.
+                <div className="space-y-3">{newSuiteFields}</div>
+              )}
 
-                {selectedSuiteEntry && missingServers.length > 0 ? (
+              {/* `serverComparisonPending` blocks submit on purpose, and the
+                comparisons stay quiet rather than accusing a suite over
+                unresolved refs. Both are right, and both are invisible:
+                `projectServersLoading` is its own subscription and can trail
+                the two waits the spinner above covers, leaving a fully
+                populated form over a dead button with nothing saying why.
+
+                All THREE project subscriptions get the line, not just that
+                one. The other two hide the Client and Server columns' own
+                "this project has none" notes (see both gates above) while
+                nothing has seeded `serverAttachmentId` or a host — so
+                `newSuiteRequirementsMet` holds Promote dead through a window
+                that used to have no explanation on screen at all. */}
+              {promoteChecksPending ? (
+                <div
+                  className="flex items-center gap-2 text-xs text-muted-foreground"
+                  data-testid="promote-server-check-pending"
+                >
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
+                  Checking this project&apos;s clients and servers…
+                </div>
+              ) : null}
+
+              {requiresContentTransferAck ? (
+                <div>
                   <Alert>
                     <AlertTriangle className="h-4 w-4" />
-                    <AlertTitle>Suite environment update required</AlertTitle>
+                    <AlertTitle>Someone else wrote this transcript</AlertTitle>
                     <AlertDescription className="space-y-3">
-                      <p>
-                        The selected suite is missing these servers:{" "}
-                        {missingServers.join(", ")}.
+                      <p id="content-transfer-consequence">
+                        This is a real User Testing session. Promoting it copies
+                        a tester&apos;s own words into a test case your project
+                        keeps — outside the User Testing surface they were
+                        written on.
                       </p>
-                      <label className="flex items-start gap-3">
+                      {/* A real `<label htmlFor>` bound to the checkbox's own
+                        id, so the whole sentence is the hit target and the
+                        control is reachable by keyboard alone.
+                        `aria-describedby` points at the consequence, which is
+                        the part worth hearing before the box is ticked. */}
+                      <label
+                        className="flex items-start gap-3"
+                        htmlFor="content-transfer-ack"
+                      >
                         <Checkbox
-                          checked={updateSuiteEnvironment}
+                          id="content-transfer-ack"
+                          checked={contentTransferAcknowledged}
                           onCheckedChange={(checked) =>
-                            setUpdateSuiteEnvironment(checked === true)
+                            setContentTransferAcknowledged(checked === true)
                           }
+                          aria-describedby="content-transfer-consequence"
+                          disabled={isSubmitting}
                           className="mt-0.5"
                         />
                         <span className="text-sm">
-                          Add the missing servers to this suite before importing
-                          the case.
+                          I understand this copies a tester&apos;s content into
+                          a durable test case.
                         </span>
                       </label>
                     </AlertDescription>
                   </Alert>
-                ) : null}
-              </div>
-            )}
-          </div>
-
-          {/* D8f2. Rendered for a real User Testing transcript and nothing
-              else, because the server said so — see
-              `requiresContentTransferAcknowledgement`. Outside the
-              destination branch: whose words these are does not depend on
-              which suite they land in.
-
-              Accessibility: a real <label htmlFor> bound to the checkbox's
-              own id, so the whole sentence is the hit target and the control
-              is reachable and toggleable by keyboard alone. `aria-describedby`
-              points at the consequence, which is the part worth hearing
-              before the box is ticked. */}
-          {requiresContentTransferAck ? (
-            <div className="mt-4">
-              <Alert>
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Someone else wrote this transcript</AlertTitle>
-                <AlertDescription className="space-y-3">
-                  <p id="content-transfer-consequence">
-                    This is a real User Testing session. Promoting it copies a
-                    tester&apos;s own words into a test case your project keeps
-                    — outside the User Testing surface they were written on.
-                  </p>
-                  <label
-                    className="flex items-start gap-3"
-                    htmlFor="content-transfer-ack"
-                  >
-                    <Checkbox
-                      id="content-transfer-ack"
-                      checked={contentTransferAcknowledged}
-                      onCheckedChange={(checked) =>
-                        setContentTransferAcknowledged(checked === true)
-                      }
-                      aria-describedby="content-transfer-consequence"
-                      disabled={isSubmitting}
-                      className="mt-0.5"
-                    />
-                    <span className="text-sm">
-                      I understand this copies a tester&apos;s content into a
-                      durable test case.
-                    </span>
-                  </label>
-                </AlertDescription>
-              </Alert>
-            </div>
-          ) : null}
+                </div>
+              ) : null}
+            </>
+          )}
         </div>
 
         <DialogFooter className="border-t border-border/50 px-6 py-4">
@@ -760,5 +1184,61 @@ export function ConvertSessionDialogCore({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * `convex/react`'s `useQuery` re-throws a REJECTED query during render, so a
+ * suites subscription the backend refuses took the whole tree down with it —
+ * past the "Import unavailable" alert this dialog already builds for exactly
+ * that outcome. The boundary keeps the failure inside the dialog: same shell,
+ * same message, and the surface behind it survives.
+ *
+ * Keyed on open + session so the latch clears. `ErrorBoundary` holds
+ * `hasError` until it unmounts, and without the key one failure would outlive
+ * the close that fixed it and greet the next session too.
+ */
+export function ConvertSessionDialogCore(props: ConvertSessionDialogCoreProps) {
+  return (
+    <ErrorBoundary
+      key={`${props.open ? "open" : "closed"}:${props.summary?.sessionId ?? "none"}`}
+      name="promote-session-dialog"
+      fallback={
+        <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+          <DialogContent className="gap-0 sm:max-w-xl border-border/50 p-0 shadow-sm">
+            <div className="px-6 pt-6">
+              <DialogHeader className="space-y-1.5 pr-10">
+                <DialogTitle>Promote to test case</DialogTitle>
+                <DialogDescription className="text-sm text-muted-foreground">
+                  Turn this session into a reusable case.
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            <div className="px-6 py-5">
+              <Alert variant="destructive">
+                <AlertTriangle className="h-4 w-4" />
+                <AlertTitle>Import unavailable</AlertTitle>
+                <AlertDescription>
+                  This session&apos;s destinations could not be loaded, so there
+                  is nothing to promote into. Close this and try again.
+                </AlertDescription>
+              </Alert>
+            </div>
+            <DialogFooter className="border-t border-border/50 px-6 py-4">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => props.onOpenChange(false)}
+                data-testid="promote-error-close"
+              >
+                Close
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      }
+    >
+      <ConvertSessionDialogCoreInner {...props} />
+    </ErrorBoundary>
   );
 }
