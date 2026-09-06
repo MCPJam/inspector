@@ -786,7 +786,31 @@ export type EvalSuiteRun = {
      * silently re-render in-flight scoring with new values.
      */
     judgeConfig?: EvalJudgeConfig;
+    /**
+     * Which engine executed the run: `"emulated"` or `"harness:<id>"`.
+     * Absent on pre-attribution rows — treat as unknown, not as emulated.
+     */
+    executionEngine?: string;
+    /**
+     * This run is the REWRITE arm of a description experiment. The catalog
+     * snapshot stays the original; this marker is the only record of the
+     * rewrite the model actually saw.
+     */
+    toolDescriptionOverride?: {
+      toolName: string;
+      serverId?: string;
+      description: string;
+      proposalHash: string;
+      experimentId: string;
+      /** Absent on rows written before the hash was recorded. */
+      originalDescriptionHash?: string;
+    };
   };
+  /**
+   * Which engine executed the run. Sibling of `configSnapshot.executionEngine`
+   * for API-projected rows that lift the field to the top level.
+   */
+  executionEngine?: string;
   status:
     | "pending"
     | "running"
@@ -877,6 +901,15 @@ export type EvalSuiteRun = {
    * "host matrix" view.
    */
   namedHostId?: string;
+  /**
+   * Inline catalog captured at run start. Present on live run docs from the
+   * browser list/detail queries even though older TypeScript omitted it;
+   * archived runs keep only `toolSnapshotHash`. Route facts treat absence as
+   * `catalogState: notLoaded` — no client fetch of snapshots.
+   */
+  toolSnapshot?: unknown;
+  /** Digest of {@link toolSnapshot}. Sibling of the inline catalog, not inside `runInsights`. */
+  toolSnapshotHash?: string;
   /**
    * Client-generated UUID shared by every per-host run from the same
    * multi-host eval launch. The UI groups runs by this id; runs without
