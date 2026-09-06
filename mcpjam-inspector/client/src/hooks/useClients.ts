@@ -23,6 +23,14 @@ export interface HostListItem {
   displayName?: string;
   hostConfigId: string;
   modelId: string;
+  /**
+   * The emulated client this host is, from the list query's own config read.
+   * Additive: older backends omit it, so readers must treat absent as unknown
+   * rather than as "no style". Available for EVERY host, which is what lets
+   * Compare reconcile the live list against the catalog presets without
+   * depending on which rows happen to be selected.
+   */
+  hostStyle?: string | null;
   serverCount: number;
   // Additive (PR: standalone hosts). Older backends omit these; readers must
   // treat absent as null/false rather than assume presence.
