@@ -1,7 +1,7 @@
 import { buildPathKey } from "@mcpjam/sdk/contract";
 import type { TestStep } from "@/shared/steps";
-import { groupCaseIterations } from "../runs/group-case-iterations";
-import type { EvalIteration } from "../types";
+import { groupCaseIterations } from "../../evals/runs/group-case-iterations";
+import type { EvalIteration } from "../../evals/types";
 import {
   readSimpleCase,
   writeSimpleCase,
