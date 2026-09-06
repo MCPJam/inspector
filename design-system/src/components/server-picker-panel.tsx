@@ -272,6 +272,10 @@ export function ServerPickerPanel({
                 Group name
               </Label>
               <Input
+                // The button that opened this form unmounts with it, dropping
+                // focus to `<body>`. Keyboard and screen-reader users land on
+                // the first thing they need instead.
+                autoFocus
                 id={fieldId}
                 disabled={submitting || busy}
                 value={draftName}

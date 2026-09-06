@@ -457,6 +457,25 @@ describe("ServerPicker — Connect reports what to fix", () => {
   });
 });
 
+describe("ServerPicker — a row written before resolvedServerNames existed", () => {
+  it("reuses it instead of minting a duplicate", async () => {
+    // The model treats a row it cannot judge as a group, so a legacy stand-in
+    // was invisible to `findSoloGroup` and every pick of that server minted
+    // another. The catalog can name it.
+    mockState.attachments = [
+      { _id: "att_legacy", name: "alpha", serverIds: ["srv_1"] } as any,
+    ];
+    const onChange = vi.fn();
+    render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await screen.findByText("alpha"));
+
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(mockState.createSpy).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith("att_legacy", expect.anything());
+  });
+});
+
 describe("ServerPicker — switching projects", () => {
   it("refuses a write that completes after a round trip away and back", async () => {
     // The id alone cannot see this: leaving p_1 for p_2 and returning makes a

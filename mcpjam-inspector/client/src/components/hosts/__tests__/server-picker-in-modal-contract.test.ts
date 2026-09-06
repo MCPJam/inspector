@@ -88,8 +88,19 @@ export function serverPickers(
   return found;
 };
 
-describe("ServerPicker inside a modal Dialog", () => {
-  it("always receives inModal", () => {
+describe("ServerPicker inside a modal Dialog written in the same file", () => {
+  /**
+   * Two things this does NOT prove, so the name does not claim them:
+   *
+   * - A forwarded `inModal={inModal}` is taken at its word. The variable's
+   *   runtime value is not knowable from the syntax, and refusing the forward
+   *   left most pickers in the app unvouched for — so the looser reading is
+   *   deliberate.
+   * - A composer that renders a picker and is itself placed inside a
+   *   `<DialogContent>` in ANOTHER file passes unexamined. That needs the
+   *   render tree.
+   */
+  it("receives inModal wherever the dialog is written beside it", () => {
     const offenders: string[] = [];
 
     for (const rel of readdirSync(CLIENT_SRC, { recursive: true })) {

@@ -66,6 +66,9 @@ type PendingWrites = {
 
 const NO_PENDING: PendingWrites = { projectId: "", added: [], removed: [] };
 
+/** How `mintAndSelect` reports a write that failed, or one the project left behind. */
+type MintFailure = { wrote: boolean; stale?: true };
+
 export type ServerPickerProps = {
   projectId: string;
   /** The selected `serverAttachments` row id. */
@@ -156,13 +159,17 @@ export function ServerPicker({
    * that started in an earlier visit can never look current.
    */
   const generation = useRef(0);
-  const lastProject = useRef(project);
-  if (lastProject.current !== project) {
-    lastProject.current = project;
+  // Advanced from a COMMITTED effect, never during render: React can discard
+  // an interrupted render, and a bump from one would strand a write started
+  // by the tree that actually committed. Each handler reads the counter when
+  // it begins and compares after every await.
+  useEffect(() => {
     generation.current += 1;
-  }
-  const startedAt = generation.current;
-  const stillCurrent = () => generation.current === startedAt;
+  }, [project]);
+  const sinceNow = () => {
+    const started = generation.current;
+    return () => generation.current === started;
+  };
 
   /**
    * A SAME-TICK backstop for `busy`, and deliberately nothing more.
@@ -198,8 +205,24 @@ export function ServerPicker({
    * Sets, not `includes`: this runs on every render until the query settles.
    */
   const attachments = useMemo(() => {
+    // Rows written before `resolvedServerNames` existed arrive without it, and
+    // the model treats a row it cannot judge as a group — so a legacy
+    // stand-in was never reused and every pick of that server minted another.
+    // The catalog holds the names; use them.
+    const nameById = new Map(
+      (catalogRows ?? []).map((row) => [row._id, row.name]),
+    );
+    const named = (row: EvalServerAttachment): EvalServerAttachment =>
+      row.resolvedServerNames?.length === row.serverIds.length
+        ? row
+        : {
+            ...row,
+            resolvedServerNames: row.serverIds.map(
+              (id, i) => row.resolvedServerNames?.[i] ?? nameById.get(id) ?? "",
+            ),
+          };
     if (pending.added.length === 0 && pending.removed.length === 0) {
-      return serverAttachments;
+      return serverAttachments.map(named);
     }
     const removed = new Set(pending.removed);
     const listed = new Set(serverAttachments.map((a) => a._id));
@@ -208,8 +231,8 @@ export function ServerPicker({
       ...pending.added.filter(
         (row) => !listed.has(row._id) && !removed.has(row._id),
       ),
-    ];
-  }, [serverAttachments, pending]);
+    ].map(named);
+  }, [serverAttachments, pending, catalogRows]);
 
   /**
    * `ensureServersReady` runs with `allowInteractiveOAuthFlow: false`, so a
@@ -394,6 +417,73 @@ export function ServerPicker({
     [attachments],
   );
 
+  /**
+   * Write a `serverAttachments` row, record it locally, and report it as the
+   * selection.
+   *
+   * Both write paths did this identically — the same pending merge, the same
+   * awaited commit, the same close, the same `wrote`-gated collision wording —
+   * so a fix to one was easy to miss in the other.
+   *
+   * Throws `{ wrote }` on failure, after saying so: `wrote` tells the caller
+   * whether the row landed, which is what decides if a retry would duplicate
+   * it. Throws `{ stale: true }` when the project changed mid-flight — not a
+   * failure to report, but it must not RESOLVE either, or the panel reads it
+   * as success and clears a draft that now belongs to another project.
+   */
+  const mintAndSelect = useCallback(
+    async (mint: {
+      name: string;
+      serverIds: string[];
+      resolvedServerNames: string[];
+      collision: string;
+      failure: string;
+    }) => {
+      const isCurrent = sinceNow();
+      let wrote = false;
+      try {
+        const result = (await createServerAttachment({
+          projectId: project,
+          name: mint.name,
+          serverIds: mint.serverIds,
+        })) as { _id: string };
+        wrote = true;
+        const created: EvalServerAttachment = {
+          _id: result._id,
+          name: mint.name,
+          serverIds: mint.serverIds,
+          // Positional, never compacted: the model documents these as parallel
+          // to `serverIds`, and `isServerStandIn` reads index 0. Dropping a
+          // gap shifts every later name onto the wrong id.
+          resolvedServerNames: mint.resolvedServerNames,
+        };
+        if (!isCurrent()) throw { stale: true, wrote } as MintFailure;
+        setPending((prev) => ({
+          projectId: project,
+          removed: prev.projectId === project ? prev.removed : [],
+          added:
+            prev.projectId === project ? [...prev.added, created] : [created],
+        }));
+        // Awaited: `onChange` is typed `=> void`, but bivariance lets a caller
+        // pass an async commit — the suite bar passes an awaited `updateSuite`
+        // — and an un-awaited rejection escapes this catch entirely.
+        await onChange(result._id, created);
+        if (isCurrent()) setOpen(false);
+      } catch (err) {
+        if ((err as MintFailure)?.stale) throw err;
+        const raw = err instanceof Error ? err.message : "";
+        // The collision wording belongs to the WRITE: matched against the
+        // caller's commit error it told the user to rename a group that had
+        // just been written, and a rename writes a second one.
+        toast.error(
+          !wrote && /already exists/i.test(raw) ? mint.collision : raw || mint.failure,
+        );
+        throw { wrote } as MintFailure;
+      }
+    },
+    [createServerAttachment, onChange, project],
+  );
+
   const handleSelectServer = useCallback(
     async (serverId: string) => {
       // Backstops. `busy` disables every control that reaches these, so a
@@ -422,9 +512,10 @@ export function ServerPicker({
           // It also arms `onInteractOutside`, so a click away cannot dismiss
           // the popover out from under a commit in flight.
           setCreating(true);
+          const isCurrent = sinceNow();
           try {
             await onChange(existing._id, existing as EvalServerAttachment);
-            if (stillCurrent()) setOpen(false);
+            if (isCurrent()) setOpen(false);
           } catch (err) {
             const raw = err instanceof Error ? err.message : "";
             toast.error(raw || `Couldn't select ${existing.name}`);
@@ -438,45 +529,20 @@ export function ServerPicker({
         if (!server) return;
 
         setCreating(true);
-        // Which half failed. The collision wording belongs to the WRITE:
-        // matched against the caller's commit error it told the user to
-        // rename a group that had just been written, and a rename writes a
-        // second one.
-        let wrote = false;
         try {
-          const name = deriveServerGroupName(
-            [server.name],
-            attachments.map((a) => a.name ?? ""),
-          );
-          const result = (await createServerAttachment({
-            projectId: project,
-            name,
-            serverIds: [serverId],
-          })) as { _id: string };
-          wrote = true;
-          const created: EvalServerAttachment = {
-            _id: result._id,
-            name,
+          await mintAndSelect({
+            name: deriveServerGroupName(
+              [server.name],
+              attachments.map((a) => a.name ?? ""),
+            ),
             serverIds: [serverId],
             resolvedServerNames: [server.name],
-          };
-          if (!stillCurrent()) return;
-          setPending((prev) => ({
-            projectId: project,
-            removed: prev.projectId === project ? prev.removed : [],
-            added:
-              prev.projectId === project ? [...prev.added, created] : [created],
-          }));
-          // Awaited for the same reason as the group path.
-          await onChange(result._id, created);
-          if (stillCurrent()) setOpen(false);
-        } catch (err) {
-          const raw = err instanceof Error ? err.message : "";
-          toast.error(
-            !wrote && /already exists/i.test(raw)
-              ? `A server group named after "${server.name}" already exists.`
-              : raw || `Couldn't select ${server.name}`,
-          );
+            collision: `A server group named after "${server.name}" already exists.`,
+            failure: `Couldn't select ${server.name}`,
+          });
+        } catch {
+          // Already reported, or the project moved on. Either way this click
+          // has nothing left to do.
         } finally {
           setCreating(false);
         }
@@ -525,47 +591,22 @@ export function ServerPicker({
       setCreating(true);
       // Same split as the bare-server path: the collision wording is the
       // WRITE's, not the caller's commit's.
-      let wrote = false;
+      const byId = new Map(catalog.map((row) => [row._id, row.name]));
       try {
-        const result = (await createServerAttachment({
-          projectId: project,
+        await mintAndSelect({
           name,
           serverIds,
-        })) as { _id: string };
-        wrote = true;
-        const byId = new Map(catalog.map((row) => [row._id, row.name]));
-        const created: EvalServerAttachment = {
-          _id: result._id,
-          name,
-          serverIds,
-          // Positional, never compacted: the model documents these as parallel
-          // to `serverIds`, and `isServerStandIn` reads index 0. Dropping a
-          // gap shifts every later name onto the wrong id.
           resolvedServerNames: serverIds.map((id) => byId.get(id) ?? ""),
-        };
-        if (!stillCurrent()) return;
-        setPending((prev) => ({
-          projectId: project,
-          removed: prev.projectId === project ? prev.removed : [],
-          added:
-            prev.projectId === project ? [...prev.added, created] : [created],
-        }));
-        // Awaited: `onChange` is typed `=> void`, but bivariance lets a caller
-        // pass an async commit — the suite bar passes an awaited `updateSuite`
-        // — and an un-awaited rejection escapes this catch entirely.
-        await onChange(result._id, created);
-        if (stillCurrent()) setOpen(false);
+          collision: `A server group named "${name}" already exists.`,
+          failure: "Failed to create server group",
+        });
       } catch (err) {
-        const raw = err instanceof Error ? err.message : "";
-        toast.error(
-          !wrote && /already exists/i.test(raw)
-            ? `A server group named "${name}" already exists.`
-            : raw || "Failed to create server group",
-        );
-        // Only when the row did NOT land. The panel reads a rejection as
-        // "keep the draft", so rethrowing after a successful write leaves a
-        // filled form whose next Create mints a duplicate.
-        if (!wrote) throw err;
+        const fail = err as MintFailure;
+        // The panel reads a rejection as "keep the draft". Keep it when the
+        // row did NOT land (a retry is the fix) and when the project moved on
+        // (resolving would clear a draft that is now someone else's). Not
+        // when the row landed: the next Create would mint a duplicate.
+        if (fail?.stale || !fail?.wrote) throw err;
       } finally {
         setCreating(false);
         writing.current = false;
@@ -623,13 +664,14 @@ export function ServerPicker({
       }
       writing.current = true;
       setCreating(true);
+      const isCurrent = sinceNow();
       try {
         await deleteServerAttachment({ serverAttachmentId: groupId });
         // Both halves, in one move: drop it from `added` (a row minted and
         // deleted in one sitting was never in the query to begin with) and
         // record it in `removed` (a row the query still returns would
         // otherwise sit on the tab, and stay clickable, until the refetch).
-        if (!stillCurrent()) return;
+        if (!isCurrent()) return;
         setPending((prev) => {
           const mine = prev.projectId === project;
           const removed = mine ? prev.removed : [];
@@ -670,9 +712,10 @@ export function ServerPicker({
       // Visible for the same reason as the bare-server reuse path: the wait
       // belongs on screen, not only in a ref nobody can see.
       setCreating(true);
+      const isCurrent = sinceNow();
       try {
         await onChange(group._id, group as EvalServerAttachment);
-        if (stillCurrent()) setOpen(false);
+        if (isCurrent()) setOpen(false);
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || `Couldn't select ${group.name}`);
