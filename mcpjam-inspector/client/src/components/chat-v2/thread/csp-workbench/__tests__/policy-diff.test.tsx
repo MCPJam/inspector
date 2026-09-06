@@ -77,7 +77,14 @@ describe("PolicyDiffTab violation evidence", () => {
       screen.getByText("Browser-reported policy comparison unavailable"),
     ).toBeTruthy();
     expect(screen.getAllByText("Client-applied policy")).toHaveLength(3);
-    expect(screen.getAllByText("Browser-reported policy")).toHaveLength(3);
+    const originalPolicyLinks = screen.getAllByRole("link", {
+      name: "originalPolicy",
+    });
+    expect(originalPolicyLinks).toHaveLength(3);
+    expect(originalPolicyLinks[0]).toHaveAttribute(
+      "href",
+      "https://developer.mozilla.org/en-US/docs/Web/API/SecurityPolicyViolationEvent/originalPolicy",
+    );
     expect(screen.getByText(/mount unknown/)).toBeTruthy();
   });
 });

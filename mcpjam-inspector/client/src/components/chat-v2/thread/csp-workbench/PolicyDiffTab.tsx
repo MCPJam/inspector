@@ -406,7 +406,19 @@ function ViolationPolicyComparison({
             {applied?.headerString ?? "Not captured"}
           </pre>
         </dd>
-        <dt className="text-muted-foreground">Browser-reported policy</dt>
+        <dt className="text-muted-foreground">
+          Browser-reported policy (
+          <a
+            href="https://developer.mozilla.org/en-US/docs/Web/API/SecurityPolicyViolationEvent/originalPolicy"
+            target="_blank"
+            rel="noreferrer"
+            className="font-mono underline underline-offset-2 hover:text-foreground"
+            onClick={(event) => event.stopPropagation()}
+          >
+            originalPolicy
+          </a>
+          )
+        </dt>
         <dd>
           <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">
             {violation.originalPolicy ?? "Not captured"}
