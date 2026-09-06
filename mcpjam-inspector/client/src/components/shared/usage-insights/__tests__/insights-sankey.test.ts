@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   SANKEY_OTHER,
   SANKEY_UNLABELED,
+  STAGE_ORDER,
   isDiscordantLink,
   layoutSankey,
   parseNodeId,
@@ -158,14 +159,14 @@ describe("layoutSankey", () => {
   it("keeps each stage in the order the server sent", () => {
     // Volume order is the one ordering that means the same thing across
     // scenarios, so the layout must not re-sort.
-    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const laid = layoutSankey(sankey, 400, 200, columnX, STAGE_ORDER);
     expect(
       laid.nodes.filter((n) => n.stage === "goal").map((n) => n.key),
     ).toEqual(["g1", "g2"]);
   });
 
   it("sizes nodes in proportion and reports each one's share of its stage", () => {
-    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const laid = layoutSankey(sankey, 400, 200, columnX, STAGE_ORDER);
     const g1 = laid.nodes.find((n) => n.key === "g1")!;
     const g2 = laid.nodes.find((n) => n.key === "g2")!;
     expect(g1.height).toBeGreaterThan(g2.height);
@@ -174,7 +175,7 @@ describe("layoutSankey", () => {
   });
 
   it("stacks ribbons without overlapping inside a node's face", () => {
-    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const laid = layoutSankey(sankey, 400, 200, columnX, STAGE_ORDER);
     const intoB1 = laid.links.filter((l) => l.target.key === "b1");
     expect(intoB1).toHaveLength(2);
     const total = intoB1.reduce((sum, l) => sum + l.thickness, 0);
@@ -203,7 +204,7 @@ describe("layoutSankey", () => {
       foldedGoalCount: 0,
       foldedByStage: {},
     };
-    const laid = layoutSankey(many, 400, 200, columnX);
+    const laid = layoutSankey(many, 400, 200, columnX, STAGE_ORDER);
     const g1 = laid.nodes.find((n) => n.key === "g1")!;
     const outgoing = laid.links.reduce((sum, l) => sum + l.thickness, 0);
     expect(outgoing).toBeLessThanOrEqual(g1.height + 1e-6);
@@ -214,7 +215,7 @@ describe("layoutSankey", () => {
     // grid across the panel while the chart was a fixed-width box, so on a wide
     // panel the last header sat hundreds of pixels from its own column. One
     // coordinate space is the only thing that keeps them together.
-    const laid = layoutSankey(sankey, 400, 200, columnX);
+    const laid = layoutSankey(sankey, 400, 200, columnX, STAGE_ORDER);
     expect(laid.columnX).toEqual(columnX);
     for (const stage of ["goal", "behavior", "outcome", "sentiment"] as const) {
       const inStage = laid.nodes.filter((n) => n.stage === stage);
@@ -232,7 +233,9 @@ describe("layoutSankey", () => {
         { source: "goal:g1", target: "behavior:ghost", count: 1 },
       ],
     };
-    expect(layoutSankey(orphaned, 400, 200, columnX).links).toHaveLength(4);
+    expect(
+      layoutSankey(orphaned, 400, 200, columnX, STAGE_ORDER).links,
+    ).toHaveLength(4);
   });
 
   it("survives an empty diagram without dividing by zero", () => {
@@ -241,6 +244,7 @@ describe("layoutSankey", () => {
       400,
       200,
       columnX,
+      STAGE_ORDER,
     );
     expect(empty.nodes).toEqual([]);
     expect(empty.links).toEqual([]);
