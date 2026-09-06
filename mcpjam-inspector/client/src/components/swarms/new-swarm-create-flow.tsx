@@ -1082,14 +1082,28 @@ export function NewSwarmCreateFlow({
         return;
       }
 
+      // Claim the in-flight latch BEFORE the first await. `resolveTargets` can
+      // create environment rows, and until it settles the exits (Cancel and the
+      // ← Swarms link) stay live — leaving there would fire the discard toast
+      // while this launch keeps running. `disabled={launching}` only closes that
+      // window if the flag is held for the whole of it, preflight included.
+      inFlightRef.current = true;
+      setLaunching(true);
+
+      // The preflight has two bail-outs — a `resolveTargets` throw, and no
+      // resolvable host — and BOTH must release the latch or the exits stay
+      // disabled forever. `finally` releases it on every exit that doesn't set
+      // `readyToLaunch`, so no early return here (now or added later) can leak
+      // it. The launch path below carries its own finally.
       let envPayload: { environmentIds: string[]; hostIds: string[] } | null =
         null;
-      if (
-        proposed.length > 0 ||
-        composeMode ||
-        targetState.environmentIds.length > 0
-      ) {
-        try {
+      let readyToLaunch = false;
+      try {
+        if (
+          proposed.length > 0 ||
+          composeMode ||
+          targetState.environmentIds.length > 0
+        ) {
           const resolved = await resolveTargets();
           envPayload = resolved
             ? {
@@ -1097,28 +1111,29 @@ export function NewSwarmCreateFlow({
                 hostIds: resolved.hostIds,
               }
             : null;
-        } catch (err) {
+        }
+        if (!envPayload && proposed.length > 0) {
           setErrorMessage(
-            err instanceof SwarmTargetMaterializeError ||
-              err instanceof ComposerResolveError
-              ? err.message
-              : errorMessageOf(
-                  err,
-                  "Could not resolve environments for launch.",
-                ),
+            "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
           );
-          return;
+        } else {
+          readyToLaunch = true;
+        }
+      } catch (err) {
+        setErrorMessage(
+          err instanceof SwarmTargetMaterializeError ||
+            err instanceof ComposerResolveError
+            ? err.message
+            : errorMessageOf(err, "Could not resolve environments for launch."),
+        );
+      } finally {
+        if (!readyToLaunch) {
+          inFlightRef.current = false;
+          setLaunching(false);
         }
       }
-      if (!envPayload && proposed.length > 0) {
-        setErrorMessage(
-          "The selected environments can't be resolved to hosts. Go back and pick an environment or clients with a compatible host.",
-        );
-        return;
-      }
+      if (!readyToLaunch) return;
 
-      inFlightRef.current = true;
-      setLaunching(true);
       setErrorMessage(null);
 
       let firstError: string | null = null;
@@ -1574,6 +1589,12 @@ export function NewSwarmCreateFlow({
   /** Leaving the flow ends it — the draft is for remounts, not for history. */
   const leaveFlow = useCallback(() => {
     clearNewSwarmFlowDraft();
+    // Feedback that the exit registered — a draft thrown away, not a success,
+    // so `toast.info`. Both exits (Cancel and the ← Swarms header link) land
+    // here, so this is the one place to say it. It promises ONLY the draft:
+    // rows a failed launch already persisted are real and stay, and the header
+    // link is disabled mid-launch so this never races handleLaunch's toast.
+    toast.info("New swarm draft discarded");
     onCancel();
   }, [onCancel]);
 
@@ -1641,7 +1662,8 @@ export function NewSwarmCreateFlow({
       <button
         type="button"
         onClick={leaveFlow}
-        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline"
+        disabled={launching}
+        className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
         data-testid="new-swarm-back-to-swarms"
       >
         <ChevronLeft className="size-3.5" />

@@ -431,7 +431,7 @@ beforeEach(() => {
 });
 
 describe("SwarmsTab — New swarm create flow", () => {
-  it("reaches the create flow by its own route, and Cancel leaves it", () => {
+  it("reaches the create flow by its own route, and Cancel leaves it with a confirming toast", () => {
     // A linkable route rather than in-page state, so the browser back button
     // exits the flow and a reload doesn't drop the user back on the list.
     render(<SwarmsTab projectId="proj-1" isAuthenticated />);
@@ -464,6 +464,11 @@ describe("SwarmsTab — New swarm create flow", () => {
     fireEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: leaving silently read as "did my click register?" — the toast is
+    // the acknowledgement. It promises only the draft (info, not success). The
+    // back-link exit (below) is the other call site; the launch test pins that
+    // it never fires when a run actually launches.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
   });
 
   it("keeps the action disabled until there is something to act on, and says why", () => {
@@ -960,6 +965,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     await waitFor(() =>
       expect(navigateMock).toHaveBeenCalledWith(`/swarms/${swarmRunGroupId}`),
     );
+    // BB-64: a launched run leaves via onDone, and neither leaveFlow exit (the
+    // Cancel button or the ← Swarms link) is rendered on Running. This guards
+    // that the discard toast lives in leaveFlow, not in clearNewSwarmFlowDraft
+    // or an unmount effect — either of which would fire it on this successful
+    // exit.
+    expect(toast.info).not.toHaveBeenCalledWith("New swarm draft discarded");
   });
 
   it("removing a persona on Confirm drops its journeys from the launch", async () => {
@@ -1930,6 +1941,9 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-back-to-swarms"));
     expect(navigateMock).toHaveBeenCalledWith("/swarms");
+    // BB-64: the back link is leaveFlow's second exit, so it discards the
+    // draft and acknowledges it just like Cancel does.
+    expect(toast.info).toHaveBeenCalledWith("New swarm draft discarded");
   });
 
   it("names the swarm from the date suggestion, not from the description paragraph", async () => {
