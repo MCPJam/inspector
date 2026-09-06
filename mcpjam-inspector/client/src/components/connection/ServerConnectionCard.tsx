@@ -46,7 +46,9 @@ import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
 import { ErrorCard } from "@/components/ui/error-card";
 import {
+  UNKNOWN_CONNECTION_STATUS,
   getConnectionStatusMeta,
+  isConnectionStatus,
   getServerCommandDisplay,
   getServerUrl,
 } from "./server-card-utils";
@@ -206,12 +208,24 @@ export function ServerConnectionCard({
   const [showTunnelExplanation, setShowTunnelExplanation] = useState(false);
   const [isActionsMenuOpen, setIsActionsMenuOpen] = useState(false);
 
+  /**
+   * A status outside the union means we cannot READ the state, which is not
+   * the same claim as "not connected" — and the helper's fallback makes the
+   * second one. Same distinction the header strip and the picker draw.
+   */
+  const knownStatus = isConnectionStatus(server.connectionStatus);
   const {
     label: connectionStatusLabel,
     indicatorClassName,
     Icon: ConnectionStatusIcon,
     iconClassName,
-  } = getConnectionStatusMeta(server.connectionStatus);
+  } = knownStatus
+    ? getConnectionStatusMeta(server.connectionStatus)
+    : {
+        ...UNKNOWN_CONNECTION_STATUS,
+        Icon: getConnectionStatusMeta("disconnected").Icon,
+        iconClassName: getConnectionStatusMeta("disconnected").iconClassName,
+      };
   const commandDisplay = getServerCommandDisplay(server.config);
 
   const initializationInfo = server.initializationInfo;

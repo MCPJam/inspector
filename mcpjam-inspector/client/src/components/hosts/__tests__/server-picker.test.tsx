@@ -453,6 +453,46 @@ describe("ServerPicker — Connect reports what to fix", () => {
   });
 });
 
+describe("ServerPicker — switching projects", () => {
+  it("does not carry a pending row into the next project", async () => {
+    // The overlay holds rows the query has not listed yet. Those belong to the
+    // project they were written in: carried across, the old project's minted
+    // row shows on the new project's tab and can be selected under a project
+    // that does not hold it.
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(await screen.findByText("alpha"));
+    await waitFor(() => expect(mockState.createSpy).toHaveBeenCalledTimes(1));
+
+    // The query still has not caught up, so the row lives only in the overlay.
+    rerender(
+      <ServerPicker projectId="p_1" value="att_new" onChange={onChange} />,
+    );
+    expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+      "alpha",
+    );
+
+    // Same id, new project. If the overlay came along, the row still resolves
+    // and the trigger names it; reset, the id resolves to nothing and falls
+    // back to the empty label. `value` has to stay set — with `null` the
+    // trigger reads "Select server" either way and the test proves nothing.
+    rerender(
+      <ServerPicker projectId="p_2" value="att_new" onChange={onChange} />,
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId("server-picker-trigger")).toHaveTextContent(
+        "Select server",
+      ),
+    );
+    expect(screen.getByTestId("server-picker-trigger")).not.toHaveTextContent(
+      "alpha",
+    );
+  });
+});
+
 describe("ServerPicker — the window before the query refetches", () => {
   it("names the row it just minted, before it appears in the query", async () => {
     // `onChange` lands before Convex refetches, so a selection resolved only
@@ -1088,9 +1128,10 @@ describe("ServerPicker — the consequences of a delete", () => {
     resolvedServerNames: ["alpha", "beta"],
   };
 
-  it("refuses to delete the SELECTED row when the caller cannot be told", async () => {
-    // Without `onClearSelection` the parent keeps the id it stored, so the
-    // delete would leave it pointing at a row that no longer exists.
+  it("does not OFFER to delete the selected row when the caller cannot be told", async () => {
+    // Without `onClearSelection` the parent keeps the id it stored, so this
+    // delete is refused — and a control offered only to be denied is a dead
+    // control. It used to render, and answer a click with a toast.
     mockState.attachments = [PAIR2];
     render(
       <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
@@ -1099,12 +1140,32 @@ describe("ServerPicker — the consequences of a delete", () => {
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
     );
-    await userEvent.click(
-      await screen.findByRole("button", { name: "Delete prod pair" }),
+    // The row is there — the trigger names it too, hence `getAllByText` —
+    // and only its delete control is withheld.
+    await waitFor(() =>
+      expect(screen.getAllByText("prod pair").length).toBeGreaterThan(0),
     );
-
+    expect(screen.queryByRole("button", { name: "Delete prod pair" })).toBeNull();
     expect(mockState.deleteSpy).not.toHaveBeenCalled();
-    await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  });
+
+  it("still offers it once the caller CAN be told", async () => {
+    mockState.attachments = [PAIR2];
+    render(
+      <ServerPicker
+        projectId="p_1"
+        value="att_p"
+        onChange={vi.fn()}
+        onClearSelection={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Delete prod pair" }),
+    ).toBeInTheDocument();
   });
 
   it("takes the deleted row off the tab before the query catches up", async () => {

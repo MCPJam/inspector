@@ -102,6 +102,13 @@ const ALLOWED: Record<string, string> = {
  * is in there is code, so its brackets already balance, and blanking them
  * changes no count.
  *
+ * JSX TEXT, partly. A `//` in JSX children is not a comment, and telling the
+ * two apart needs to know whether the scan sits inside JSX children — a
+ * parser-level fact. The common carrier is a URL, so `://` is excused, and
+ * the rest is a known blind spot: a bare `//` in JSX text still blanks the
+ * rest of its line. That costs a detection only when the row's own `onClick`
+ * sits after it on that same line.
+ *
  * NOT handled: regex literals. In a `.tsx` file `/` is overwhelmingly a JSX
  * closing tag — `</span>`, `/>` — and no character-level heuristic separates
  * those from a regex start. Guessing wrong blanks real code and hides a real
@@ -162,7 +169,11 @@ function endOfExpression(source: string, start: number): number {
       j += 2;
       continue;
     }
-    if (two === "//") {
+    // `://` is a URL, not a comment. JSX children are raw source, so
+    // `<span>http://host</span>` was blanked to the end of its line, and
+    // anything after it on that line — a `<button onClick>`, or the `)` that
+    // closes the callback — went with it. See the JSX-TEXT note above.
+    if (two === "//" && source[i - 1] !== ":") {
       const nl = source.indexOf("\n", j);
       j = nl === -1 ? source.length : nl;
       continue;
@@ -433,6 +444,25 @@ describe("the scanner behind the inventory lock", () => {
     // unterminated template masks nothing instead of swallowing the file.
     const src = "const bad = `abre y no cierra\nconst LATER = 1;\n";
     expect(maskNonCode(src)).toContain("const LATER = 1;");
+  });
+
+  it("does not read a URL in JSX text as a comment", () => {
+    // JSX children are raw source. Blanking from `//` to end of line took the
+    // row's own `onClick` — and the `)` closing the callback — with it.
+    expect(
+      rendersClickableServerList(
+        "{servers.map((server) => (\n  <span>http://{server.host}</span>\n  " +
+          ROW +
+          "\n))}",
+      ),
+    ).toBe(true);
+    expect(
+      rendersClickableServerList(
+        "{servers.map((server) => (<a href={`https://${server.host}`}>x</a>" +
+          ROW +
+          "))}",
+      ),
+    ).toBe(true);
   });
 
   it("does not count a picker that only exists in a comment", () => {

@@ -29,11 +29,53 @@ export function serverPickerElements(source: string): string[] {
   const opening = /<ServerPicker(?=[\s/>])/g;
   const elements: string[] = [];
   for (let match = opening.exec(source); match; match = opening.exec(source)) {
-    const close = source.indexOf("/>", match.index);
-    if (close === -1) break;
-    elements.push(source.slice(match.index, close + 2));
+    const end = endOfOpeningTag(source, match.index);
+    // Unclosed: skip this one and keep looking, rather than abandoning the
+    // rest of the file and every `<ServerPicker` left in it.
+    if (end === -1) continue;
+    elements.push(source.slice(match.index, end));
   }
   return elements;
+}
+
+/**
+ * Index just past the `>` that ends this element's OPENING tag, or -1.
+ *
+ * Brace depth and quoted values are tracked, because `indexOf("/>")` closed
+ * the element at the FIRST self-closing tag anywhere after it. A prop holding
+ * its own JSX — `renderItem={(s) => <Row />} inModal` — truncated the element
+ * before `inModal` and failed a call site that was correct. It also never
+ * matched the children form `<ServerPicker ...>...</ServerPicker>`, which has
+ * no `/>` at all, so both forms read the same way now.
+ */
+function endOfOpeningTag(source: string, start: number): number {
+  let i = start;
+  let depth = 0;
+  while (i < source.length) {
+    const c = source[i];
+    if (c === '"' || c === "'") {
+      const quote = c;
+      i += 1;
+      while (i < source.length && source[i] !== quote) {
+        i += source[i] === "\\" ? 2 : 1;
+      }
+      i += 1;
+      continue;
+    }
+    if (c === "{") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (c === "}") {
+      depth -= 1;
+      i += 1;
+      continue;
+    }
+    if (depth === 0 && c === ">") return i + 1;
+    i += 1;
+  }
+  return -1;
 }
 
 /**
@@ -64,6 +106,38 @@ function collectTsx(dir: string, out: string[] = []): string[] {
   }
   return out;
 }
+
+describe("reading a <ServerPicker> element out of source", () => {
+  it("does not end the element at a self-closing tag inside a prop", () => {
+    // `indexOf("/>")` stopped at `<Row />` and never saw `inModal`, so a call
+    // site that was correct failed the contract.
+    const src = "<ServerPicker renderItem={(s) => <Row />} inModal />";
+    const [element] = serverPickerElements(src);
+    expect(element).toContain("inModal");
+    expect(disablesPortal(element)).toBe(true);
+  });
+
+  it("reads the children form, which has no /> at all", () => {
+    const src = "<ServerPicker inModal>\n  <Child />\n</ServerPicker>";
+    const [element] = serverPickerElements(src);
+    expect(element).toBeDefined();
+    expect(disablesPortal(element)).toBe(true);
+  });
+
+  it("yields nothing for an element that never closes", () => {
+    // The `-1` path. It cannot be paired with a later, well-formed picker in
+    // one fixture: with no `>` after the broken one, the scan for it runs to
+    // the end of the file and swallows whatever follows. So this pins the
+    // skip, and `continue` rather than `break` is what stops one unreadable
+    // element from ending the search for the whole file.
+    expect(serverPickerElements("<ServerPicker unclosed")).toEqual([]);
+  });
+
+  it("still refuses a picker that never turns portalling off", () => {
+    const [element] = serverPickerElements('<ServerPicker projectId="p" />');
+    expect(disablesPortal(element)).toBe(false);
+  });
+});
 
 describe("ServerPicker inside a modal Dialog", () => {
   it("always receives inModal", () => {

@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
+import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
@@ -125,6 +126,16 @@ export function ServerPicker({
   const [pending, setPending] = useState<PendingWrites>(NO_PENDING);
 
   /**
+   * Pending writes belong to the project they were written in. A surface that
+   * swaps `projectId` without remounting would otherwise carry them across:
+   * the old project's minted rows would show on the new project's tabs, and
+   * one could be selected under a project that does not hold it.
+   */
+  useEffect(() => {
+    setPending(NO_PENDING);
+  }, [projectId]);
+
+  /**
    * A SAME-TICK backstop for `busy`, and deliberately nothing more.
    *
    * `busy` remains the one flag and the mechanism: it disables every control
@@ -212,8 +223,21 @@ export function ServerPicker({
    * or UUID project id, where reading undefined as in-flight would leave the
    * tab loading for ever.
    */
-  const catalogKnown = !catalogLoading;
-  const attachmentsKnown = !attachmentsLoading;
+  /**
+   * …and a query that never RAN is not an answer either. Both hooks skip until
+   * `isUserReady`, and a skipped query reports `isLoading: false` with an empty
+   * list — so during the DB-user bootstrap this read "answered, and empty",
+   * marked a live selection dangling and told the user the project has no
+   * servers. That is the BB-182 defect one layer up.
+   *
+   * `isEnsuringUser`, not `!isUserReady`: the context defaults to
+   * `{ isEnsuringUser: false, isUserReady: false }`, so a picker mounted
+   * outside the provider would otherwise claim to be loading for ever — the
+   * exact failure the skipped-query note above guards against.
+   */
+  const { isEnsuringUser } = useDbUserBootstrapStatus();
+  const catalogKnown = !isEnsuringUser && !catalogLoading;
+  const attachmentsKnown = !isEnsuringUser && !attachmentsLoading;
 
   /**
    * One flag, and the only guard the write paths have. It disables every
@@ -701,6 +725,10 @@ export function ServerPicker({
           onDeleteGroup={
             disabled ? undefined : (id) => void handleDeleteGroup(id)
           }
+          // Without a way to tell the parent, deleting the row it is storing
+          // is refused — so the control is withheld rather than offered and
+          // then denied.
+          canDeleteSelected={Boolean(onClearSelection)}
         />
       </PopoverContent>
     </Popover>

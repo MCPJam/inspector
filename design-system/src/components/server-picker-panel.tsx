@@ -84,6 +84,13 @@ export type ServerPickerPanelProps = {
    */
   onDeleteGroup?: (groupId: string) => void;
   /**
+   * Whether the CURRENTLY SELECTED group can be deleted. Callers that cannot
+   * be told about a clear refuse that delete, and a control offered only to be
+   * denied is a dead control. Defaults true so a caller that never refuses
+   * says nothing.
+   */
+  canDeleteSelected?: boolean;
+  /**
    * Chips shown before the rest collapse into `+N`.
    *
    * A COUNT, while the design's own overflow looks driven by the width of the
@@ -141,6 +148,7 @@ export function ServerPickerPanel({
   catalogKnown = true,
   busy = false,
   onDeleteGroup,
+  canDeleteSelected = true,
   chipLimit = 3,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
@@ -392,7 +400,7 @@ export function ServerPickerPanel({
                 </span>
               </button>
               {selected ? <SelectionDot /> : null}
-              {onDeleteGroup ? (
+              {onDeleteGroup && (canDeleteSelected || !selected) ? (
                 <button
                   type="button"
                   aria-label={`Delete ${group.name}`}
