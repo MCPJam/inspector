@@ -146,6 +146,17 @@ const KNOWN_UNDOCUMENTED = new Set([
   "delete /projects/{projectId}/hosts/{hostId}",
   "post /projects/{projectId}/hosts/{hostId}/servers",
   "post /projects/{projectId}/hosts/{hostId}/duplicate",
+  // Description-experiment HTTP (PR-E3). The SDK client, CLI, and MCP
+  // catalog advertise these; the hand-authored OpenAPI page follows so a
+  // spec edit does not block the inspector landing. Document them with
+  // the public evals reference update.
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}",
+  // Route-facts GET landed with the contract; the hand-authored spec
+  // has not caught up. Same follow-up as the description-experiment trio.
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts",
 ]);
 
 /**

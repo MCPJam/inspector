@@ -255,13 +255,35 @@ export const MCPJAM_HOSTED_ORIGIN =
   process.env.MCPJAM_HOSTED_ORIGIN?.replace(/\/+$/, "") ||
   "https://app.mcpjam.com";
 
-// Allowed hosts for token delivery in hosted mode (comma-separated)
-// These hosts will be allowed to receive session tokens in addition to localhost
-export const ALLOWED_HOSTS = process.env.MCPJAM_ALLOWED_HOSTS
-  ? process.env.MCPJAM_ALLOWED_HOSTS.split(",").map((h) =>
-      h.trim().toLowerCase(),
-    )
-  : [];
+// Admin-controlled host allowlist (comma-separated), honored in BOTH hosted
+// and self-hosted modes. In addition to localhost, these hosts may receive the
+// session token / guest bootstrap and are accepted as request Origins: hosted
+// deployments set their canonical app host(s); self-hosted operators set their
+// own LAN host (e.g. 192.168.x.x) to reach the inspector off-localhost.
+//
+// Note the hosted nuance: `GET /api/session-token` short-circuits to 410 in
+// hosted mode (that endpoint is dev/self-hosted only), so an allowlisted hosted
+// host receives the session token via production HTML injection rather than the
+// endpoint, and the guest bearer via `mayServeGuestBootstrap`. Self-hosted
+// hosts use the `/api/session-token` endpoint. Both paths gate on this list.
+/**
+ * Parse a raw `MCPJAM_ALLOWED_HOSTS` value into normalized entries. Exported so
+ * the token gate (`ALLOWED_HOSTS` below, a module-load snapshot) and the origin
+ * gate (which re-reads `process.env` per request) share ONE parser and can't
+ * silently diverge on how entries are split/normalized.
+ */
+export function parseAllowedHosts(raw: string | undefined): string[] {
+  return raw
+    ? raw
+        .split(",")
+        .map((h) => h.trim().toLowerCase())
+        .filter((h) => h.length > 0)
+    : [];
+}
+
+export const ALLOWED_HOSTS = parseAllowedHosts(
+  process.env.MCPJAM_ALLOWED_HOSTS,
+);
 
 // Vanity domains whose root path ("/") should land on the host-compare
 // showcase ("Can I use" for MCP hosts). Override via env if more are added.
