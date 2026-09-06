@@ -598,6 +598,273 @@ describe("useSharedChatWidgetCapture", () => {
     unmount();
   });
 
+  it("abandons a snapshot whose server left the scenario allowlist instead of retrying it", async () => {
+    // Sentry CONVEX-19N. A transcript outlives the allowlist, so this
+    // toolCallId is re-offered on every sweep and the backend refuses it every
+    // time. `shouldRetryPendingSnapshot` used to arm the ladder anyway (its
+    // `result == null` early return makes the catch path retry on any error),
+    // turning one dead snapshot into six backend calls.
+    const onStaleHostedAccess = vi.fn();
+    class OutsideAllowlistError extends Error {
+      data: { code: string; message: string };
+      constructor() {
+        super("Server is not in the scenario allowlist");
+        this.data = {
+          code: "server_not_in_scenario_allowlist",
+          message: "Server is not in the scenario allowlist",
+        };
+      }
+    }
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot.mockRejectedValue(new OutsideAllowlistError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-outside",
+        hostedScenarioId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-outside",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-gone" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-outside",
+            {
+              toolCallId: "call-outside",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+
+    // The retry ladder tops out around 10s a step; a minute covers all five.
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalledTimes(1);
+    // Nor is it a stale-access case: re-redeeming buys nothing here.
+    expect(onStaleHostedAccess).not.toHaveBeenCalled();
+
+    unmount();
+  });
+
+  it("stops asking for a re-redeem once a queued snapshot turns out to be terminal", async () => {
+    // stale THEN terminal, without an accessVersion bump in between: the
+    // toolCallId is still sitting in the stale-replay queue, so the bounded
+    // backoff would keep asking the parent to redeem on behalf of work that is
+    // never going to run again.
+    const onStaleHostedAccess = vi.fn();
+    class StaleError extends Error {
+      data: { code: string; currentAccessVersion: number };
+      constructor() {
+        super("Scenario access version is stale; client must re-redeem.");
+        this.data = { code: "scenario_access_stale", currentAccessVersion: 7 };
+      }
+    }
+    class OutsideAllowlistError extends Error {
+      data: { code: string };
+      constructor() {
+        super("Server is not in the scenario allowlist");
+        this.data = { code: "server_not_in_scenario_allowlist" };
+      }
+    }
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot
+      .mockRejectedValueOnce(new StaleError())
+      .mockRejectedValue(new OutsideAllowlistError());
+
+    const { unmount } = renderHook(() =>
+      useSharedChatWidgetCapture({
+        enabled: true,
+        chatSessionId: "chat-session-stale-then-terminal",
+        hostedScenarioId: "cbx_1",
+        hostedAccessVersion: 1,
+        onStaleHostedAccess,
+        messages: [
+          {
+            id: "assistant-1",
+            role: "assistant",
+            parts: [
+              {
+                type: "tool-search",
+                toolCallId: "call-mixed",
+                input: { q: "hello" },
+                output: { result: "world", _serverId: "server-gone" },
+              },
+            ],
+          } as any,
+        ],
+      }),
+    );
+
+    const setWidget = (html: string) => {
+      act(() => {
+        useWidgetDebugStore.setState({
+          widgets: new Map([
+            [
+              "call-mixed",
+              {
+                toolCallId: "call-mixed",
+                toolName: "search",
+                protocol: "mcp-apps",
+                widgetState: null,
+                globals: { theme: "dark", displayMode: "inline" },
+                widgetHtml: html,
+                updatedAt: Date.now(),
+              },
+            ],
+          ]),
+        });
+      });
+    };
+
+    setWidget("<div>Widget</div>");
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+    expect(onStaleHostedAccess).toHaveBeenCalled();
+
+    // A new html hash re-arms the sweep, so a second attempt runs without the
+    // accessVersion having moved. That one comes back terminal.
+    setWidget("<div>Widget v2</div>");
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    const refreshCallsAfterTerminal = onStaleHostedAccess.mock.calls.length;
+    const snapshotCallsAfterTerminal =
+      mockCreateWidgetSnapshot.mock.calls.length;
+
+    act(() => {
+      vi.advanceTimersByTime(120_000);
+    });
+    await flushMicrotasks();
+
+    expect(onStaleHostedAccess.mock.calls.length).toBe(refreshCallsAfterTerminal);
+    expect(mockCreateWidgetSnapshot.mock.calls.length).toBe(
+      snapshotCallsAfterTerminal,
+    );
+
+    unmount();
+  });
+
+  it("forgets an abandoned snapshot when the chat identity changes", async () => {
+    // Abandonment is per-scope. A different chat (or scenario) can legitimately
+    // include the same toolCallId against a server that IS in its allowlist.
+    class OutsideAllowlistError extends Error {
+      data: { code: string };
+      constructor() {
+        super("Server is not in the scenario allowlist");
+        this.data = { code: "server_not_in_scenario_allowlist" };
+      }
+    }
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot.mockRejectedValue(new OutsideAllowlistError());
+
+    const messages = [
+      {
+        id: "assistant-1",
+        role: "assistant",
+        parts: [
+          {
+            type: "tool-search",
+            toolCallId: "call-rescoped",
+            input: { q: "hello" },
+            output: { result: "world", _serverId: "server-gone" },
+          },
+        ],
+      } as any,
+    ];
+
+    const { rerender, unmount } = renderHook(
+      (props: { chatSessionId: string }) =>
+        useSharedChatWidgetCapture({
+          enabled: true,
+          chatSessionId: props.chatSessionId,
+          hostedScenarioId: "cbx_1",
+          hostedAccessVersion: 1,
+          onStaleHostedAccess: vi.fn(),
+          messages,
+        }),
+      { initialProps: { chatSessionId: "chat-a" } },
+    );
+
+    act(() => {
+      useWidgetDebugStore.setState({
+        widgets: new Map([
+          [
+            "call-rescoped",
+            {
+              toolCallId: "call-rescoped",
+              toolName: "search",
+              protocol: "mcp-apps",
+              widgetState: null,
+              globals: { theme: "dark", displayMode: "inline" },
+              widgetHtml: "<div>Widget</div>",
+              updatedAt: Date.now(),
+            },
+          ],
+        ]),
+      });
+    });
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    const callsUnderChatA = mockCreateWidgetSnapshot.mock.calls.length;
+    expect(callsUnderChatA).toBeGreaterThanOrEqual(1);
+
+    // Same toolCallId, different chat: the abandonment must not carry over.
+    mockCreateWidgetSnapshot.mockReset();
+    mockCreateWidgetSnapshot.mockResolvedValue("snapshot-rescoped");
+    rerender({ chatSessionId: "chat-b" });
+
+    act(() => {
+      vi.advanceTimersByTime(500);
+    });
+    await flushMicrotasks();
+
+    expect(mockCreateWidgetSnapshot).toHaveBeenCalled();
+
+    unmount();
+  });
+
   it("retries stale snapshots even after the first refresh callback fails to advance accessVersion", async () => {
     // P2 from review: if the parent's /redeem fetch fails, hostedAccessVersion
     // never bumps, so the reset effect never runs. The hook must still fire
