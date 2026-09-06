@@ -280,7 +280,7 @@ The **Runs / Cases** segmented control switches between the run history list and
 
 #### Cross-host matrix
 
-When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
+When a suite has two or more host configurations attached, or has runs from a Project Environment (which resolves to a host automatically), a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. Each column is labelled with the host's display name. A host detached after runs were recorded stays visible, labelled **historical**; a host reached only through an environment-backed run is not labelled historical.
 
 ### Run view
 
