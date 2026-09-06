@@ -20,6 +20,11 @@ export interface CspViolation {
   effectiveDirective?: string;
   /** The URI that was blocked */
   blockedUri: string;
+  /** Proxy-local id of the exact inner iframe mount that emitted this event. */
+  mountId?: number;
+  /** The policy that caused this specific violation. */
+  originalPolicy?: string;
+  disposition?: "enforce" | "report";
   /** Source file where the violation occurred */
   sourceFile?: string | null;
   /** Line number in source file */
@@ -118,6 +123,8 @@ export interface WidgetSandboxApplied {
    * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
    */
   viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** Proxy-local id of the currently displayed inner iframe mount. */
+  mountId?: number;
   /** The view's document URL as reported by the proxy. */
   viewUrl?: string;
   /**
@@ -190,6 +197,13 @@ export interface WidgetSandboxInfo {
   };
   /** Full CSP header string (for advanced users) */
   headerString?: string;
+  /** Latest proxy mount, retained for consumers that show current state. */
+  activeMountId?: number;
+  /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
+  appliedPoliciesByMount?: Record<
+    string,
+    { headerString: string; mode: "permissive" | "widget-declared" }
+  >;
   /** List of CSP violations for this widget */
   violations: CspViolation[];
   /** Widget's actual CSP declaration (null if not declared) */
@@ -350,7 +364,7 @@ interface WidgetDebugStore {
    */
   setWidgetAppliedCsp: (
     toolCallId: string,
-    applied: { headerString: string; mode: CspMode },
+    applied: { mountId: number; headerString: string; mode: CspMode },
   ) => void;
 
   // Add a CSP violation for a widget
@@ -427,7 +441,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         widgetState:
           info.widgetState !== undefined
             ? info.widgetState
-            : (existing?.widgetState ?? null),
+            : existing?.widgetState ?? null,
         globals: info.globals ??
           existing?.globals ?? {
             theme: "dark",
@@ -525,6 +539,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
           // assumption-presented-as-fact this panel exists to stop. Same
           // invariant as the `setFirstCspBlock(null)` reset alongside it.
           headerString: undefined,
+          activeMountId: undefined,
+          appliedPoliciesByMount: {},
         },
         updatedAt: Date.now(),
       });
@@ -550,6 +566,14 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
       const nextCsp = {
         ...currentCsp,
         headerString: applied.headerString,
+        activeMountId: applied.mountId,
+        appliedPoliciesByMount: {
+          ...(currentCsp.appliedPoliciesByMount ?? {}),
+          [String(applied.mountId)]: {
+            headerString: applied.headerString,
+            mode: applied.mode,
+          },
+        },
         // The proxy is authoritative about which branch it took: in permissive
         // mode it never calls buildCSP at all.
         mode: applied.mode,
@@ -609,6 +633,9 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         csp: {
           ...existing.csp,
           violations: [],
+          headerString: undefined,
+          activeMountId: undefined,
+          appliedPoliciesByMount: {},
         },
         updatedAt: Date.now(),
       });
@@ -676,8 +703,8 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
         injectedOpenAiCompatCapabilities:
           injectedOpenAiCompat === false
             ? undefined
-            : (injectedOpenAiCompatCapabilities ??
-              existing?.injectedOpenAiCompatCapabilities),
+            : injectedOpenAiCompatCapabilities ??
+              existing?.injectedOpenAiCompatCapabilities,
         updatedAt: Date.now(),
       });
       return { widgets };

@@ -247,6 +247,11 @@ export interface CspViolation {
   directive: string;
   effectiveDirective?: string;
   blockedUri: string;
+  /** Proxy-local id of the exact inner iframe mount that emitted this event. */
+  mountId?: number;
+  /** The policy that caused this specific violation. */
+  originalPolicy?: string;
+  disposition?: "enforce" | "report";
   sourceFile?: string | null;
   lineNumber?: number | null;
   columnNumber?: number | null;
@@ -299,6 +304,8 @@ export interface WidgetSandboxApplied {
    * forced because the frame's document was unreachable).
    */
   viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** Proxy-local id of the currently displayed inner iframe mount. */
+  mountId?: number;
   /** The view's document URL as reported by the proxy. */
   viewUrl?: string;
   /**
@@ -321,6 +328,13 @@ export interface WidgetSandboxInfo {
     clipboardWrite?: {};
   };
   headerString?: string;
+  /** Latest proxy mount, retained for consumers that show current state. */
+  activeMountId?: number;
+  /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
+  appliedPoliciesByMount?: Record<
+    string,
+    { headerString: string; mode: "permissive" | "widget-declared" }
+  >;
   violations: CspViolation[];
   widgetDeclared?: {
     connect_domains?: string[];
@@ -416,9 +430,18 @@ export interface WidgetDebugSink {
    */
   setWidgetAppliedCsp: (
     toolCallId: string,
-    applied: { headerString: string; mode: "permissive" | "widget-declared" }
+    applied: {
+      mountId: number;
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+    }
   ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
+  reportCspViolation: (
+    toolCallId: string,
+    serverId: string,
+    violation: CspViolation
+  ) => void;
   clearCspViolations: (toolCallId: string) => void;
   setWidgetModelContext: (
     toolCallId: string,

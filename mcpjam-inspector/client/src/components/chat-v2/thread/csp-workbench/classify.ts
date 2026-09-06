@@ -10,7 +10,11 @@
  */
 
 import type { CspViolation } from "@/stores/widget-debug-store";
-import { resolveDirective } from "./csp-header";
+import {
+  effectiveFromCspHeader,
+  parseCspHeader,
+  resolveDirective,
+} from "./csp-header";
 import type {
   ClassifierInput,
   CspField,
@@ -60,7 +64,7 @@ export function directiveToField(directive: string): CspField | null {
  *  (OpenAI Apps SDK shape) and camelCase (MCP Apps spec shape). */
 function readDeclared(
   declared: ClassifierInput["widgetDeclared"] | undefined,
-  field: CspField
+  field: CspField,
 ): string[] | undefined {
   if (!declared) return undefined;
   switch (field) {
@@ -113,7 +117,7 @@ function fieldDirective(field: CspField): string | undefined {
 
 function readEffective(
   effective: ClassifierInput["effective"],
-  field: CspField
+  field: CspField,
 ): string[] | undefined {
   // When the applied policy was captured, read the governing directive from it
   // (with the `default-src` fallback) rather than the flattened arrays: a
@@ -179,7 +183,7 @@ function isConnectSubtype(field: CspField | null): boolean {
 
 function subtypeIsFalse(
   input: ClassifierInput,
-  subtype: CspSubtype | undefined
+  subtype: CspSubtype | undefined,
 ): boolean {
   if (!subtype) return false;
   switch (subtype) {
@@ -203,7 +207,7 @@ function whyForClass(
   // True only when the injected guard did the blocking and the origin is
   // still in the effective CSP. See `guardEnforced` below — a resource
   // subtype really is stripped, so it keeps the stripped wording.
-  guardEnforced = false
+  guardEnforced = false,
 ): string {
   switch (klass) {
     case "csp":
@@ -213,7 +217,9 @@ function whyForClass(
         ? `${directive} — host does not support ${field} requests`
         : `${directive} — host stripped this entry from effective CSP`;
     case "runtime-mismatch":
-      return `Effective CSP allowed ${directive} for this origin; browser blocked anyway`;
+      return `Applied CSP allowed ${directive} for this origin; browser blocked anyway`;
+    case "policy-unavailable":
+      return `Applied policy for this iframe mount was not captured`;
     case "cors":
       return `CSP allowed the request; the remote refused`;
     case "network":
@@ -240,7 +246,7 @@ function extractRisks(
   klass: DiagnosisClass,
   field: CspField | null,
   origin: string,
-  declaredEntry: string | undefined
+  declaredEntry: string | undefined,
 ): string[] {
   const risks: string[] = [];
   if (field === "frameDomains") risks.push("nested iframe");
@@ -260,7 +266,7 @@ function extractRisks(
  *  risk extractor can decide if the developer's entry was a wildcard. */
 function findDeclaredEntry(
   origin: string,
-  declared: string[] | undefined
+  declared: string[] | undefined,
 ): string | undefined {
   if (!declared) return undefined;
   return declared.find((e) => originAllowedByAny(origin, [e]));
@@ -299,13 +305,37 @@ export function classifyDiagnoses(input: ClassifierInput): Diagnosis[] {
     const declared = field
       ? readDeclared(input.widgetDeclared, field)
       : undefined;
-    const effective = field ? readEffective(input.effective, field) : undefined;
+    const matchedPolicy =
+      v.mountId !== undefined
+        ? input.appliedPoliciesByMount?.[String(v.mountId)]
+        : undefined;
+    const matchedEffective = matchedPolicy
+      ? (() => {
+          const directives = parseCspHeader(matchedPolicy.headerString);
+          return {
+            ...effectiveFromCspHeader(directives),
+            directives,
+            source: "applied" as const,
+          };
+        })()
+      : undefined;
+    // Preserve the old classifier for callers that do not provide mount-aware
+    // data. Once the map exists, never fall back to the latest mount.
+    const comparisonAvailable =
+      matchedEffective !== undefined ||
+      (input.appliedPoliciesByMount === undefined &&
+        input.effective.source !== "applied");
+    const effective = field
+      ? readEffective(matchedEffective ?? input.effective, field)
+      : undefined;
 
     const inDeclared = originAllowedByAny(origin, declared);
     const inEffective = originAllowedByAny(origin, effective);
 
     let klass: DiagnosisClass;
-    if (blockedBySubtype && inDeclared) {
+    if (!comparisonAvailable) {
+      klass = "policy-unavailable";
+    } else if (blockedBySubtype && inDeclared) {
       klass = "host-stripped";
     } else if (inEffective) {
       klass = "runtime-mismatch";
@@ -391,7 +421,8 @@ export function summarize(diagnoses: Diagnosis[]) {
     hostStripped = 0,
     runtimeMismatch = 0,
     network = 0,
-    sandbox = 0;
+    sandbox = 0,
+    policyUnavailable = 0;
   let fixes = 0,
     declarations = 0;
 
@@ -411,6 +442,9 @@ export function summarize(diagnoses: Diagnosis[]) {
       case "runtime-mismatch":
         runtimeMismatch++;
         break;
+      case "policy-unavailable":
+        policyUnavailable++;
+        break;
       case "network":
         network++;
         break;
@@ -426,6 +460,7 @@ export function summarize(diagnoses: Diagnosis[]) {
     cors,
     hostStripped,
     runtimeMismatch,
+    policyUnavailable,
     network,
     sandbox,
     fixes,

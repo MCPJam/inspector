@@ -25,6 +25,9 @@ import type { CspViolation } from "@/stores/widget-debug-store";
  *                       (post-host) allows. Cause unknown from policy alone —
  *                       could be runtime restriction, browser/extension layer,
  *                       or evidence-collection lag. No CSP patch will help.
+ * `policy-unavailable`– the violation cannot be paired with an Applied policy
+ *                       from the same iframe mount. No policy conclusion is
+ *                       safe until that evidence exists.
  * `cors`              – CSP allowed it, network refused (Access-Control-*).
  *                       Server-side fix only. **Not classified yet** — we
  *                       have no signal source. Reserved for future use.
@@ -36,6 +39,7 @@ export type DiagnosisClass =
   | "csp"
   | "host-stripped"
   | "runtime-mismatch"
+  | "policy-unavailable"
   | "cors"
   | "network"
   | "sandbox";
@@ -140,6 +144,12 @@ export interface ClassifierInput {
     directives?: CspDirectiveMap;
     source?: "applied" | "declared";
   };
+  /** Applied policies indexed by sandbox mount. When present, violations are
+   * compared only with the policy carrying the same mount ID. */
+  appliedPoliciesByMount?: Record<
+    string,
+    { headerString: string; mode: "permissive" | "widget-declared" }
+  >;
   /** What the server originally declared in `_meta.ui.csp`. */
   widgetDeclared?: {
     connect_domains?: string[];

@@ -917,6 +917,8 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * @param {string} allowValue - Final inner `allow=` value ("" for none)
        * @param {unknown} colorScheme - Host theme for applyColorScheme
        * @param {"write" | "srcdoc" | undefined} mountMode - Mount strategy
+       * @param {string} appliedCsp - CSP injected into this mount
+       * @param {"permissive" | "widget-declared"} appliedCspMode - CSP branch
        * @returns {"url" | "srcdoc" | "srcdoc-fallback"} How the view was mounted
        */
       function mountInner(
@@ -925,7 +927,24 @@ document.addEventListener('securitypolicyviolation', function(e) {
         allowValue,
         colorScheme,
         mountMode,
+        appliedCsp,
+        appliedCspMode,
       ) {
+        // Scoped to this proxy instance and incremented for every fresh inner
+        // frame, including automatic reload remounts. The host uses this id to
+        // pair a violation with the policy injected into that exact document.
+        const mountId = ++mountSequence;
+        currentMountId = mountId;
+        window.parent.postMessage(
+          {
+            type: "mcpjam:csp-applied",
+            mountId,
+            csp: appliedCsp,
+            mode: appliedCspMode,
+          },
+          hostOrigin || "*",
+        );
+
         const next = createInnerFrame(sandboxValue, allowValue);
         // Appending creates the frame's initial about:blank document
         // synchronously, same-origin with this proxy.
@@ -968,7 +987,15 @@ document.addEventListener('securitypolicyviolation', function(e) {
         }
         inner = next;
         next.style.colorScheme = applyColorScheme(colorScheme);
-        lastMount = { html, sandboxValue, allowValue, colorScheme, mountMode };
+        lastMount = {
+          html,
+          sandboxValue,
+          allowValue,
+          colorScheme,
+          mountMode,
+          appliedCsp,
+          appliedCspMode,
+        };
         // Tell the host where the view actually landed. `document.URL` is this
         // proxy's URL, which the written document adopts (see above), so this
         // is the origin a developer allowlists with a third party that keys on
@@ -979,6 +1006,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         window.parent.postMessage(
           {
             type: "mcpjam:view-mode",
+            mountId,
             mode,
             url: mode === "url" ? document.URL : "about:srcdoc",
           },
@@ -999,12 +1027,18 @@ document.addEventListener('securitypolicyviolation', function(e) {
           lastMount.allowValue,
           lastMount.colorScheme,
           lastMount.mountMode,
+          lastMount.appliedCsp,
+          lastMount.appliedCspMode,
         );
       }
 
       // The current inner view frame. Replaced on every mount (see mountInner);
       // the message relay below reads this binding live.
       let inner = null;
+      // The proxy owns mount identity because it also owns automatic remounts
+      // that the React host never sees directly.
+      let mountSequence = 0;
+      let currentMountId = null;
       // Arguments of the most recent mount, replayed when a widget reloads
       // itself (see the nested sandbox-proxy-ready guard in the relay).
       let lastMount = null;
@@ -1169,7 +1203,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
               // The single policy string this mount injects. Hoisted out of
               // the two branches so there is exactly one value to inject and
               // exactly one value to report to the host — the Policy Diff's
-              // "Effective" column is only trustworthy if it reads the same
+              // "Applied" column is only trustworthy if it reads the same
               // string `injectCSP` receives, not a re-derivation of it.
               //
               // Declared branch (SEP-1865): `cspDirectives` is the
@@ -1193,26 +1227,14 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 guardScript
               );
 
-              // Report the policy the host cannot otherwise see. Posted
-              // BEFORE mountInner so the header lands ahead of that mount's
-              // `mcpjam:view-mode`, keeping the host's ordering faithful to
-              // what actually happened. targetOrigin mirrors mountInner: "*"
-              // until host-origin pinning narrows it.
-              window.parent.postMessage(
-                {
-                  type: "mcpjam:csp-applied",
-                  csp: appliedCsp,
-                  mode: permissive ? "permissive" : "widget-declared",
-                },
-                hostOrigin || "*",
-              );
-
               const mode = mountInner(
                 processedHtml,
                 sandboxValue,
                 baseAllow,
                 colorScheme,
                 mountMode,
+                appliedCsp,
+                permissive ? "permissive" : "widget-declared",
               );
               recorderDebug("view mounted", { mode });
             }
@@ -1274,7 +1296,14 @@ document.addEventListener('securitypolicyviolation', function(e) {
               ) {
                 recorderDebug("forward " + data.type);
               }
-              window.parent.postMessage(data, hostOrigin || "*");
+              // Native and synthetic violation messages originate inside the
+              // current view. Stamp them here so the id cannot be forged by a
+              // widget and always names the frame that emitted the event.
+              const outgoing =
+                data.type === "mcp-apps:csp-violation"
+                  ? { ...data, mountId: currentMountId }
+                  : data;
+              window.parent.postMessage(outgoing, hostOrigin || "*");
             }
           }
         }

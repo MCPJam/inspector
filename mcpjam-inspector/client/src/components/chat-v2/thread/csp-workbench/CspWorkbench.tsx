@@ -6,7 +6,7 @@
  * via `widget-debug-store` — no new postMessage, no new backend.
  *
  *   Findings (default) — classified violations + per-class CTAs
- *   Policy Diff         — Requested · Effective · Observed
+ *   Policy Diff         — Requested · Applied · Observed
  *   Sandbox Stack       — outer proxy iframe + inner View iframe
  */
 
@@ -80,11 +80,12 @@ export function CspWorkbench({ sandboxInfo, protocol }: CspWorkbenchProps) {
             baseUriDomains: sandboxInfo?.baseUriDomains,
             source: "declared",
           },
+      appliedPoliciesByMount: sandboxInfo?.appliedPoliciesByMount,
       widgetDeclared: sandboxInfo?.widgetDeclared ?? null,
       subtypePolicy: sandboxInfo?.applied?.cspSubtypePolicy,
       violations: sandboxInfo?.violations ?? [],
     }),
-    [sandboxInfo, appliedDirectives]
+    [sandboxInfo, appliedDirectives],
   );
 
   const diagnoses = useMemo(() => classifyDiagnoses(input), [input]);

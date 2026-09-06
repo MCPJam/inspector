@@ -18,6 +18,11 @@
 
 export type CspDirectiveMap = Record<string, string[]>;
 
+export interface CspPolicyComparison {
+  status: "matching" | "different" | "unavailable";
+  differingDirectives: string[];
+}
+
 /** Directives whose sources the workbench folds into one "resource" column. */
 const RESOURCE_DIRECTIVES = [
   "script-src",
@@ -49,6 +54,38 @@ export function parseCspHeader(header: string): CspDirectiveMap {
     map[name] = tokens.slice(1);
   }
   return map;
+}
+
+/**
+ * Compare policy semantics rather than serialization. Directive order,
+ * whitespace, duplicate sources, and source order do not change a policy.
+ */
+export function compareCspPolicies(
+  appliedPolicy: string | undefined,
+  violationPolicy: string | undefined,
+): CspPolicyComparison {
+  if (!appliedPolicy || !violationPolicy) {
+    return { status: "unavailable", differingDirectives: [] };
+  }
+
+  const applied = parseCspHeader(appliedPolicy);
+  const violation = parseCspHeader(violationPolicy);
+  const directives = Array.from(
+    new Set([...Object.keys(applied), ...Object.keys(violation)]),
+  ).sort();
+  const differingDirectives = directives.filter((directive) => {
+    const left = Array.from(new Set(applied[directive] ?? [])).sort();
+    const right = Array.from(new Set(violation[directive] ?? [])).sort();
+    return (
+      left.length !== right.length ||
+      left.some((value, i) => value !== right[i])
+    );
+  });
+
+  return {
+    status: differingDirectives.length === 0 ? "matching" : "different",
+    differingDirectives,
+  };
 }
 
 /**

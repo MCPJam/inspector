@@ -7,7 +7,7 @@ function v(
   blockedUri: string,
   directive: string,
   ts = 1000,
-  subtype?: CspViolation["subtype"]
+  subtype?: CspViolation["subtype"],
 ): CspViolation {
   return {
     directive,
@@ -108,6 +108,73 @@ describe("classifyDiagnoses", () => {
     expect(out[0].primarySource).toBe("inferred");
   });
 
+  it("never compares a violation with an Applied policy from another mount", () => {
+    const violation = {
+      ...v("https://js.stripe.com/v3", "frame-src"),
+      mountId: 1,
+    };
+    const out = classifyDiagnoses({
+      effective: {
+        ...EMPTY_EFFECTIVE,
+        frameDomains: ["https://js.stripe.com"],
+        source: "applied",
+      },
+      appliedPoliciesByMount: {
+        "2": {
+          headerString: "frame-src https://js.stripe.com",
+          mode: "widget-declared",
+        },
+      },
+      widgetDeclared: { frameDomains: ["https://js.stripe.com"] },
+      violations: [violation],
+    });
+
+    expect(out[0].class).toBe("policy-unavailable");
+    expect(out[0].patch).toBeNull();
+  });
+
+  it("renders legacy violations without comparing them to the latest policy", () => {
+    const out = classifyDiagnoses({
+      effective: {
+        ...EMPTY_EFFECTIVE,
+        frameDomains: ["https://js.stripe.com"],
+        source: "applied",
+      },
+      widgetDeclared: { frameDomains: ["https://js.stripe.com"] },
+      violations: [v("https://js.stripe.com/v3", "frame-src")],
+    });
+
+    expect(out[0].class).toBe("policy-unavailable");
+  });
+
+  it("uses the matching mount's Applied policy instead of the latest one", () => {
+    const violation = {
+      ...v("https://js.stripe.com/v3", "frame-src"),
+      mountId: 1,
+    };
+    const out = classifyDiagnoses({
+      effective: {
+        ...EMPTY_EFFECTIVE,
+        frameDomains: [],
+        source: "applied",
+      },
+      appliedPoliciesByMount: {
+        "1": {
+          headerString: "frame-src https://js.stripe.com",
+          mode: "widget-declared",
+        },
+        "2": {
+          headerString: "frame-src 'none'",
+          mode: "widget-declared",
+        },
+      },
+      widgetDeclared: { frameDomains: ["https://js.stripe.com"] },
+      violations: [violation],
+    });
+
+    expect(out[0].class).toBe("runtime-mismatch");
+  });
+
   it("classifies all false CSP subtypes as host-stripped without a patch", () => {
     const cases: Array<{
       subtype: NonNullable<CspViolation["subtype"]>;
@@ -164,7 +231,7 @@ describe("classifyDiagnoses", () => {
 
     expect(out[0].why).toContain("host does not support fetch requests");
     expect(out[0].evidence[0].note).toContain(
-      "the origin stays in the effective CSP"
+      "the origin stays in the effective CSP",
     );
   });
 

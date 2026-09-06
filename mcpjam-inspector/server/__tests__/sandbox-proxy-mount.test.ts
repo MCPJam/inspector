@@ -66,6 +66,8 @@ interface MountHarness {
     allowValue: string,
     colorScheme: unknown,
     mountMode?: "write" | "srcdoc",
+    appliedCsp?: string,
+    appliedCspMode?: "permissive" | "widget-declared",
   ) => "url" | "srcdoc" | "srcdoc-fallback";
   createInnerFrame: (
     sandboxValue: string,
@@ -104,6 +106,8 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     `
     const INNER_STYLE = "width:100%; height:100%; border:none;";
     let inner = null;
+    let mountSequence = 0;
+    let currentMountId = null;
     let lastMount = null;
     // Pinning is off in this harness; the view-mode post falls back to "*".
     let hostOrigin = null;
@@ -112,7 +116,8 @@ function harness(): { dom: JSDOM; h: MountHarness } {
     ${mountInnerSrc}
     ${remountLastSrc}
     return {
-      mountInner,
+      mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared") =>
+        mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode),
       createInnerFrame,
       getInner: () => inner,
       getLastMount: () => lastMount,
@@ -193,6 +198,8 @@ describe("sandbox-proxy mountInner", () => {
       allowValue: "geolocation *",
       colorScheme: "dark",
       mountMode: undefined,
+      appliedCsp: "default-src 'none'",
+      appliedCspMode: "widget-declared",
     });
   });
 
@@ -205,7 +212,17 @@ describe("sandbox-proxy mountInner", () => {
     expect(h.posted).toEqual([
       [
         {
+          type: "mcpjam:csp-applied",
+          mountId: 1,
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
           type: "mcpjam:view-mode",
+          mountId: 1,
           mode: "url",
           // jsdom's document.open() does not adopt the entry document's URL
           // (the browser e2e pins that); what matters here is that the proxy
@@ -221,7 +238,24 @@ describe("sandbox-proxy mountInner", () => {
     const { h } = harness();
     h.mountInner(WIDGET, "allow-scripts", "", "light", "srcdoc");
     expect(h.posted).toEqual([
-      [{ type: "mcpjam:view-mode", mode: "srcdoc", url: "about:srcdoc" }, "*"],
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: 1,
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
+          type: "mcpjam:view-mode",
+          mountId: 1,
+          mode: "srcdoc",
+          url: "about:srcdoc",
+        },
+        "*",
+      ],
     ]);
   });
 
@@ -313,6 +347,30 @@ describe("sandbox-proxy blank-reload remount", () => {
     expect(before.isConnected).toBe(false);
     expect(after.getAttribute("allow")).toBe("camera *");
     expect(after.contentDocument!.querySelector("#w")!.textContent).toBe("hi");
+    expect(
+      h.posted.filter(
+        ([data]) => (data as { type?: string }).type === "mcpjam:csp-applied",
+      ),
+    ).toEqual([
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: 1,
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+      [
+        {
+          type: "mcpjam:csp-applied",
+          mountId: 2,
+          csp: "default-src 'none'",
+          mode: "widget-declared",
+        },
+        "*",
+      ],
+    ]);
   });
 
   it("leaves the frame alone after its own write (href is the proxy URL)", () => {
@@ -360,6 +418,10 @@ describe("sandbox-proxy nested sandbox-proxy-ready guard", () => {
     expect(guard).toContain("remountLast();");
     expect(guard).toContain("return;");
     expect(guard).not.toContain("window.parent.postMessage");
+  });
+
+  it("stamps forwarded violations with the current mount id", () => {
+    expect(html).toContain("? { ...data, mountId: currentMountId }");
   });
 });
 
@@ -447,7 +509,7 @@ describe("sandbox-proxy host-origin pinning (source contract)", () => {
 
   it("relays to the locked origin rather than any window", () => {
     expect(html).toContain(
-      'window.parent.postMessage(data, hostOrigin || "*")',
+      'window.parent.postMessage(outgoing, hostOrigin || "*")',
     );
     // And the boot handshake, which happens before any host message, is the
     // only postMessage that can still be unaddressed.

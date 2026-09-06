@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import type { ClassifierInput, Diagnosis } from "./types";
+import { compareCspPolicies } from "./csp-header";
 import { extractOrigin, originAllowedByAny } from "./match-source";
 
 interface PolicyDiffTabProps {
@@ -24,7 +25,8 @@ interface Row {
 function expressionToHost(expr: string): string | null {
   const trimmed = expr.trim();
   if (!trimmed || trimmed.startsWith("'")) return null;
-  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:") return trimmed;
+  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:")
+    return trimmed;
   if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:$/.test(trimmed)) return trimmed;
   let rest = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, "");
   const slash = rest.indexOf("/");
@@ -45,7 +47,10 @@ function buildRequestedRows(
     }
   };
   pushAll(declared.connectDomains ?? declared.connect_domains, "connect-src");
-  pushAll(declared.resourceDomains ?? declared.resource_domains, "img/script/font/style-src");
+  pushAll(
+    declared.resourceDomains ?? declared.resource_domains,
+    "img/script/font/style-src",
+  );
   pushAll(declared.frameDomains, "frame-src");
   pushAll(declared.baseUriDomains, "base-uri");
   return rows;
@@ -197,9 +202,11 @@ function PolicyColumn({
   const summaryText =
     rows.length === 0
       ? emptyLabel
-      : tone === "warn" && (title === "Observed")
-        ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
-        : `${summary.directives} ${summary.directives === 1 ? "directive" : "directives"} · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
+      : tone === "warn" && title === "Observed"
+      ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
+      : `${summary.directives} ${
+          summary.directives === 1 ? "directive" : "directives"
+        } · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
 
   return (
     <div className="rounded-md border border-border/40 bg-card min-w-0">
@@ -232,10 +239,10 @@ function PolicyColumn({
               rows.length === 0
                 ? "text-muted-foreground italic"
                 : tone === "warn"
-                  ? title === "Observed"
-                    ? "text-destructive"
-                    : "text-amber-600 dark:text-amber-400"
-                  : "text-foreground"
+                ? title === "Observed"
+                  ? "text-destructive"
+                  : "text-amber-600 dark:text-amber-400"
+                : "text-foreground"
             }`}
           >
             {summaryText}
@@ -243,7 +250,9 @@ function PolicyColumn({
         </div>
         <ChevronDown
           aria-hidden
-          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${
+            isOpen ? "rotate-180" : ""
+          }`}
         />
       </button>
 
@@ -260,7 +269,9 @@ function PolicyColumn({
                   r.state === "mismatch"
                     ? "bg-sky-500/5 border border-sky-500/25 border-l-2 border-l-sky-500/60"
                     : "border border-transparent"
-                } ${matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""} transition-colors motion-reduce:transition-none`}
+                } ${
+                  matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""
+                } transition-colors motion-reduce:transition-none`}
               >
                 <span className={`text-center ${m.cls}`}>{m.glyph}</span>
                 <span
@@ -268,11 +279,15 @@ function PolicyColumn({
                     r.state === "blocked" || r.state === "stripped"
                       ? "text-destructive"
                       : r.state === "cors"
-                        ? "text-amber-600 dark:text-amber-400"
-                        : r.state === "mismatch"
-                          ? "text-sky-600 dark:text-sky-400"
-                          : "text-foreground"
-                  } ${r.state === "stripped" ? "line-through decoration-destructive/60" : ""}`}
+                      ? "text-amber-600 dark:text-amber-400"
+                      : r.state === "mismatch"
+                      ? "text-sky-600 dark:text-sky-400"
+                      : "text-foreground"
+                  } ${
+                    r.state === "stripped"
+                      ? "line-through decoration-destructive/60"
+                      : ""
+                  }`}
                   title={r.host}
                 >
                   {r.host}
@@ -293,7 +308,81 @@ function hostMatches(rowHost: string, target: string): boolean {
   if (!target) return false;
   const r = rowHost.toLowerCase();
   const t = target.toLowerCase().replace(/^https?:\/\//, "");
-  return r === t || r.endsWith("." + t) || ("*." + r.replace(/^\*\./, "")) === t;
+  return r === t || r.endsWith("." + t) || "*." + r.replace(/^\*\./, "") === t;
+}
+
+function ViolationPolicyComparison({
+  violation,
+  input,
+  index,
+}: {
+  violation: ClassifierInput["violations"][number];
+  input: ClassifierInput;
+  index: number;
+}) {
+  const applied =
+    violation.mountId === undefined
+      ? undefined
+      : input.appliedPoliciesByMount?.[String(violation.mountId)];
+  const comparison = compareCspPolicies(
+    applied?.headerString,
+    violation.originalPolicy,
+  );
+  const label =
+    comparison.status === "matching"
+      ? "Matches Applied"
+      : comparison.status === "different"
+      ? "Differs from Applied"
+      : "Comparison unavailable";
+  const tone =
+    comparison.status === "matching"
+      ? "text-emerald-600 dark:text-emerald-400"
+      : comparison.status === "different"
+      ? "text-amber-600 dark:text-amber-400"
+      : "text-muted-foreground";
+
+  return (
+    <details className="rounded-md border border-border/40 bg-card px-3 py-2">
+      <summary className="cursor-pointer text-[11.5px] marker:text-muted-foreground">
+        <span className="font-mono text-muted-foreground mr-2">
+          {String(index + 1).padStart(2, "0")}
+        </span>
+        <span className={tone}>{label}</span>
+        <span className="text-muted-foreground ml-2">
+          · mount {violation.mountId ?? "unknown"} ·{" "}
+          {violation.disposition ?? "disposition unknown"}
+        </span>
+      </summary>
+      <dl className="mt-2 grid grid-cols-[150px_1fr] gap-x-3 gap-y-2 text-[11px]">
+        <dt className="text-muted-foreground">directive</dt>
+        <dd className="font-mono">
+          {violation.effectiveDirective || violation.directive}
+        </dd>
+        {comparison.differingDirectives.length > 0 && (
+          <>
+            <dt className="text-muted-foreground">different directives</dt>
+            <dd className="font-mono break-words">
+              {comparison.differingDirectives.join(", ")}
+            </dd>
+          </>
+        )}
+        <dt className="text-muted-foreground">Applied policy for this mount</dt>
+        <dd>
+          <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">
+            {applied?.headerString ?? "Not captured"}
+          </pre>
+        </dd>
+        <dt className="text-muted-foreground">
+          policy that caused this violation
+        </dt>
+        <dd>
+          <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">
+            {violation.originalPolicy ?? "Not captured"}
+          </pre>
+        </dd>
+      </dl>
+    </details>
+  );
 }
 
 export function PolicyDiffTab({
@@ -339,7 +428,9 @@ export function PolicyDiffTab({
   useEffect(() => {
     if (!jumpToHost || !containerRef.current) return;
     const target = containerRef.current.querySelector(
-      `[data-policy-host="${CSS.escape(jumpToHost.replace(/^https?:\/\//, ""))}"]`,
+      `[data-policy-host="${CSS.escape(
+        jumpToHost.replace(/^https?:\/\//, ""),
+      )}"]`,
     );
     if (target instanceof HTMLElement) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -367,7 +458,7 @@ export function PolicyDiffTab({
           forceOpen={Boolean(jumpToHost)}
         />
         <PolicyColumn
-          title="Effective"
+          title="Applied"
           subtitle={applied ? "proxy applied" : "widget asked · unverified"}
           rows={effectiveRows}
           emptyLabel="No allowlist captured"
@@ -388,19 +479,20 @@ export function PolicyDiffTab({
       <div className="rounded-md border border-dashed border-border/60 bg-card/50 px-3 py-2 text-[11.5px] text-muted-foreground leading-relaxed">
         {applied ? (
           <>
-            <span className="font-medium text-foreground">Effective</span> is
+            <span className="font-medium text-foreground">Applied</span> is
             parsed from the CSP the sandbox proxy reported injecting for this
-            mount — the policy the browser is enforcing, not a prediction of it.
+            mount. It records what MCPJam applied; each violation below carries
+            the policy that caused that specific violation.
           </>
         ) : (
           <>
             <span className="font-medium text-amber-600 dark:text-amber-400">
-              Effective is unconfirmed.
+              Applied is unconfirmed.
             </span>{" "}
             The proxy did not report an applied CSP for this view (an offline
             replay, a saved eval trace, or the mount is still in flight), so
-            this column repeats what the widget requested. It is not evidence of
-            what the browser allowed.
+            this column repeats what the widget requested. It is not an Applied
+            policy reading.
           </>
         )}
       </div>
@@ -409,10 +501,26 @@ export function PolicyDiffTab({
         <div className="rounded-md border border-dashed border-border/60 bg-card/50 px-3 py-2 text-[11.5px] text-muted-foreground leading-relaxed">
           Rows tagged{" "}
           <span className="font-mono text-sky-600 dark:text-sky-400">
-            effective ≠ observed
+            applied ≠ observed
           </span>{" "}
-          are where the host reported the origin as allowed but the browser
-          still blocked it. See Findings for the candidate causes.
+          are where the Applied policy allowed the origin but the browser still
+          blocked it. See Findings for the candidate causes.
+        </div>
+      )}
+
+      {input.violations.length > 0 && (
+        <div className="space-y-2">
+          <h4 className="text-[12px] font-medium">Violation policy evidence</h4>
+          {input.violations.map((violation, index) => (
+            <ViolationPolicyComparison
+              key={`${violation.mountId ?? "legacy"}-${
+                violation.timestamp
+              }-${index}`}
+              violation={violation}
+              input={input}
+              index={index}
+            />
+          ))}
         </div>
       )}
     </div>
