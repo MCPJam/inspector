@@ -163,9 +163,12 @@ export function ServerPickerPanel({
     [servers, draftIds],
   );
 
+  // Read off `draftServers` rather than filtering again: two copies of the
+  // same rule is how the count, the derived name and the submitted ids came
+  // to be able to disagree in the first place.
   const draftNames = useMemo(
-    () => servers.filter((s) => draftIds.has(s.id)).map((s) => s.name),
-    [servers, draftIds],
+    () => draftServers.map((s) => s.name),
+    [draftServers],
   );
 
   // Follows the picked servers until the user writes their own name.
@@ -238,7 +241,11 @@ export function ServerPickerPanel({
                 <button
                   type="button"
                   onClick={server.onConnect}
-                  className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline"
+                  // `busy` freezes every other control in the panel, and this
+                  // was the one that stayed live: a handshake could be started
+                  // from a popover that was refusing all of its own actions.
+                  disabled={busy}
+                  className="shrink-0 rounded px-1.5 py-0.5 text-xs font-medium text-primary hover:underline disabled:opacity-50 disabled:no-underline"
                 >
                   Connect
                 </button>

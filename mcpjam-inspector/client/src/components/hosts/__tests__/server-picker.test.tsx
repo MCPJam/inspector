@@ -244,8 +244,10 @@ describe("ServerPicker — connection state", () => {
   });
 
   it("paints each dot with a role token, never a fixed colour", async () => {
-    // `getConnectionStatusMeta` still names the state, but its colours are
-    // hex and cannot follow the theme.
+    // Both the word and the colour come from `getConnectionStatusMeta`, whose
+    // dot is a role token. The `style` assertion below is the half that keeps
+    // it honest: the helper used to carry a hex painted through inline style,
+    // which reads the same in dark mode as in light.
     mockState.runtime = {
       alpha: { connectionStatus: "connected" },
       beta: { connectionStatus: "failed" },
@@ -265,9 +267,9 @@ describe("ServerPicker — connection state", () => {
 
   it("falls back the DOT the same way the label falls back", async () => {
     // The runtime value is a plain string widened with `as ConnectionStatus`,
-    // so a value outside the union reaches here. `getConnectionStatusMeta`
-    // answers "Disconnected"; a bare record lookup answers `undefined` and
-    // leaves the dot unpainted next to that word.
+    // so a value outside the union reaches here. The helper's own fallback
+    // answers "Disconnected" for both halves at once; reading the word and
+    // the colour from two places is how they came to disagree.
     mockState.runtime = { alpha: { connectionStatus: "reticulating" } };
     open();
 
@@ -389,7 +391,14 @@ describe("ServerPicker — creating a multi-server group", () => {
       key: "Escape",
     });
 
-    await new Promise((r) => setTimeout(r, 50));
+    // Anchored on the close actually landing, not on a stopwatch. A fixed
+    // delay asserts nothing observable: it passes by default, and fails open
+    // the moment a commit is scheduled a tick past whatever window someone
+    // picked. Radix unmounts the content, so its absence IS the transition —
+    // and the commit this guards against was synchronous in the close.
+    await waitFor(() =>
+      expect(screen.queryByLabelText("Group name")).toBeNull(),
+    );
     expect(mockState.createSpy).not.toHaveBeenCalled();
   });
 });
@@ -550,8 +559,16 @@ describe("ServerPicker — the window before the query refetches", () => {
 
 describe("ServerPicker — a write already in flight", () => {
   it("mints once when a row is clicked twice before the write lands", async () => {
-    // `creating` is state, so it is not readable by the second click in the
-    // same tick. Two rows in a row hits the same window.
+    // What stops the second click here is `busy` disabling the row: React
+    // flushes a discrete event synchronously, so the DOM already carries
+    // `disabled` by the time the second `fireEvent` runs, and jsdom does not
+    // fire a click on a disabled button.
+    //
+    // That is worth stating because it means this test does NOT exercise the
+    // `writing` ref — it passes with or without it. The window that ref
+    // closes is two events reaching a handler before React commits, which
+    // this environment cannot produce for exactly the reason above. The ref
+    // is a backstop for the paths that do not go through a disabled control.
     mockState.createSpy = vi.fn(
       () => new Promise(() => {}),
     );
@@ -588,6 +605,78 @@ describe("ServerPicker — a write already in flight", () => {
     fireEvent.click(await serverRow("srv_2"));
 
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The latch, made observable.
+   *
+   * Its same-tick window is unreachable from jsdom, but the OTHER thing it
+   * holds is not: a selection that reports through an async `onChange` is not
+   * finished when the handler returns, and the latch spans that wait. Both
+   * cases below hang the caller's commit and then try a second pick.
+   */
+  it("holds while a REUSED row's async commit is still in flight", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_alpha",
+        name: "alpha",
+        serverIds: ["srv_1"],
+        resolvedServerNames: ["alpha"],
+      },
+      {
+        _id: "att_beta",
+        name: "beta",
+        serverIds: ["srv_2"],
+        resolvedServerNames: ["beta"],
+      },
+    ];
+    mockState.runtime = {
+      alpha: { connectionStatus: "connected" },
+      beta: { connectionStatus: "connected" },
+    };
+    // Never settles: the parent is still writing.
+    const onChange = vi.fn(() => new Promise(() => {}));
+    render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+
+    fireEvent.click(await serverRow("srv_1"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    fireEvent.click(await serverRow("srv_2"));
+
+    // Nothing writes here, so `busy` never goes up and the disabled attribute
+    // cannot be what refuses the second click — only the latch can.
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("att_alpha", expect.anything());
+  });
+
+  it("holds while a GROUP pick's async commit is still in flight", async () => {
+    mockState.attachments = [
+      {
+        _id: "att_p",
+        name: "prod pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+      {
+        _id: "att_s",
+        name: "staging pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
+    const onChange = vi.fn(() => new Promise(() => {}));
+    render(<ServerPicker projectId="p_1" value={null} onChange={onChange} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+
+    fireEvent.click(await screen.findByText("prod pair"));
+    await waitFor(() => expect(onChange).toHaveBeenCalledTimes(1));
+    fireEvent.click(await screen.findByText("staging pair"));
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+    expect(onChange).toHaveBeenCalledWith("att_p", expect.anything());
   });
 
   it("ignores picking a GROUP while a mint is still in flight", async () => {
@@ -1007,6 +1096,37 @@ describe("ServerPicker — the consequences of a delete", () => {
 
     expect(mockState.deleteSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
+  });
+
+  it("takes the deleted row off the tab before the query catches up", async () => {
+    // The query keeps returning the row until it refetches — the mock never
+    // refetches, which is the point: without a bridge the row sits there,
+    // still clickable, and picking it stores an id the backend has dropped.
+    mockState.attachments = [
+      PAIR2,
+      {
+        _id: "att_o",
+        name: "other pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
+    render(<ServerPicker projectId="p_1" value={null} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    await userEvent.click(
+      await screen.findByRole("tab", { name: "Server Groups" }),
+    );
+    expect(await screen.findByText("other pair")).toBeInTheDocument();
+
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Delete other pair" }),
+    );
+
+    await waitFor(() => expect(mockState.deleteSpy).toHaveBeenCalled());
+    // Gone from the tab, and the row that was not deleted is still there —
+    // so this is the delete taking effect, not the panel emptying.
+    await waitFor(() => expect(screen.queryByText("other pair")).toBeNull());
+    expect(screen.getByText("prod pair")).toBeInTheDocument();
   });
 
   it("still deletes a row that is NOT the selection", async () => {

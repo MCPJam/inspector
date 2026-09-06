@@ -389,7 +389,10 @@ export function GenerateSwarmDialog({
                     customized: true,
                   }))
                 }
-                emptyTriggerLabel="Server group · client default"
+                // Server-first wording, and the same phrasing the project
+                // environment editor uses: BB-3 was a user who could not find
+                // his servers because every label led with "server group".
+                emptyTriggerLabel="Client default · pick a server or group"
                 triggerTestId="generate-server-group-picker"
                 inModal
               />
@@ -398,7 +401,16 @@ export function GenerateSwarmDialog({
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Connect a client before generating.
               </p>
-            ) : null}
+            ) : (
+              // Carried over from the picker this field used to render, which
+              // took the line as an `infoText` prop. The new picker is a
+              // trigger chip with no room for it, and the explanation is the
+              // field's rather than the control's, so it sits here — under the
+              // more urgent message when there is one.
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                Generation reads the tools on these servers to write the goals.
+              </p>
+            )}
           </div>
 
           {noServers ? (
@@ -418,7 +430,7 @@ export function GenerateSwarmDialog({
               >
                 Servers tab
               </button>
-              , or pick a server group above.
+              , or pick a server or group above.
             </p>
           ) : null}
 

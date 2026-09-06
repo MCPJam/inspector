@@ -9,7 +9,7 @@
  * Storage has no column for a bare server, so picking one resolves to the row
  * holding exactly it — reused when it exists, minted otherwise.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
@@ -24,7 +24,10 @@ import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { useServerActionsOptional } from "@/state/server-actions-context";
-import { getConnectionStatusMeta } from "@/components/connection/server-card-utils";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+} from "@/components/connection/server-card-utils";
 import type { ConnectionStatus } from "@/state/app-types";
 import type { EvalServerAttachment } from "@/components/evals/types";
 
@@ -43,28 +46,18 @@ import {
 } from "@mcpjam/design-system/server-picker-panel";
 
 /**
- * A dot for a server whose connection state we cannot read. It holds the row's
- * alignment without asserting anything — the opposite of painting it grey,
- * which would read as "disconnected".
+ * Local writes the `serverAttachments` query has not reflected yet.
+ *
+ * `added` are rows written here and not yet listed; `removed` are rows deleted
+ * here and still listed. Nothing else is needed: the query itself says when an
+ * entry can go.
  */
-const UNKNOWN_STATUS = {
-  label: "Connection state unavailable",
-  indicatorClassName: "bg-transparent",
+type PendingWrites = {
+  added: EvalServerAttachment[];
+  removed: string[];
 };
 
-/**
- * The dot's colour, as a role token rather than the hex `getConnectionStatusMeta`
- * carries — the panel renders in both themes and a fixed colour follows neither.
- * The helper still supplies the label, so the two stay in step, including its
- * fall back to `disconnected` for a status outside the union.
- */
-const STATUS_INDICATOR: Record<ConnectionStatus, string> = {
-  connected: "bg-success",
-  connecting: "bg-info",
-  "oauth-flow": "bg-pending",
-  failed: "bg-destructive",
-  disconnected: "bg-muted-foreground",
-};
+const NO_PENDING: PendingWrites = { added: [], removed: [] };
 
 export type ServerPickerProps = {
   projectId: string;
@@ -119,52 +112,64 @@ export function ServerPicker({
 
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
-  const [justCreated, setJustCreated] = useState<EvalServerAttachment | null>(
-    null,
-  );
+  /**
+   * The writes this picker has made that the query has not caught up with.
+   *
+   * ONE overlay, not two bridges. Both halves exist for the same reason — a
+   * Convex query lags the mutation that changed it — and they release on the
+   * same rule: an entry lives exactly as long as the query still disagrees
+   * with it. Splitting that into a row-shaped "just created" and a list-shaped
+   * "just deleted" meant two release effects, two ideas of when a write has
+   * landed, and a third one waiting to be written for the next write kind.
+   */
+  const [pending, setPending] = useState<PendingWrites>(NO_PENDING);
+
+  /**
+   * A SAME-TICK backstop for `busy`, and deliberately nothing more.
+   *
+   * `busy` remains the one flag and the mechanism: it disables every control
+   * that could start a write, so a refusal the user cannot see never has to
+   * happen. But it is React state. Two events dispatched before React commits
+   * that disable both read the pre-write render, and both start a mutation —
+   * two rows minted for one server, or two groups from one Create.
+   *
+   * This closes only that window, and closes it silently on purpose: the
+   * second event is not a choice to refuse and explain, it is the same choice
+   * arriving twice. Anything a user could reasonably retry still goes through
+   * `busy`, which they can see.
+   *
+   * NOT covered by a test, and that is not an oversight. React flushes a
+   * discrete event synchronously, so by the second `fireEvent` the DOM already
+   * carries `disabled` and jsdom fires nothing — the window is unreachable
+   * from jsdom, which is also why the practical risk through a mouse is small.
+   * The double-click test in the suite passes with or without this ref and
+   * says so. Deleting this because "no test fails" would be reading that
+   * backwards.
+   */
+  const writing = useRef(false);
 
 
   /**
-   * One list for every reader: the live query plus a row we just minted that it
-   * has not caught up with. Without it the trigger falls back to the empty
-   * label right after a pick, and a second pick of the same server mints a
-   * duplicate that the backend then rejects on its name.
+   * One list for every reader: the query, corrected by what we know it has not
+   * seen. Without the `added` half the trigger falls back to the empty label
+   * right after a pick and a second pick mints a duplicate; without `removed`
+   * a deleted row sits on the Groups tab, still clickable.
+   *
+   * Sets, not `includes`: this runs on every render until the query settles.
    */
   const attachments = useMemo(() => {
-    if (!justCreated) return serverAttachments;
-    if (serverAttachments.some((a) => a._id === justCreated._id)) {
+    if (pending.added.length === 0 && pending.removed.length === 0) {
       return serverAttachments;
     }
-    return [...serverAttachments, justCreated];
-  }, [serverAttachments, justCreated]);
-
-  // A boolean, not the array: `serverAttachments` is a fresh `[]` on every
-  // render until the query answers, so depending on it rescheduled the timer
-  // below on each render and it never fired.
-  const bridgeLanded = justCreated
-    ? serverAttachments.some((a) => a._id === justCreated._id)
-    : false;
-
-  useEffect(() => {
-    if (!justCreated) return;
-    // Released as soon as the query reflects the row.
-    if (bridgeLanded) {
-      setJustCreated(null);
-      return;
-    }
-    // While it is still what `value` points at, it is the only thing that can
-    // name the trigger — dropping it on a timer would blank a live selection.
-    if (value === justCreated._id) return;
-    /**
-     * `value` has not come back yet, which is the NORMAL state for a caller
-     * that commits through its own mutation before echoing the id — the suite
-     * bar awaits `updateSuite`. So this deadline exists only to stop holding a
-     * row for the life of the mount, and has to outlast a round trip; at 3s it
-     * fired mid-flight and blanked the trigger over a row that was written.
-     */
-    const timer = setTimeout(() => setJustCreated(null), 60_000);
-    return () => clearTimeout(timer);
-  }, [justCreated, bridgeLanded, value]);
+    const removed = new Set(pending.removed);
+    const listed = new Set(serverAttachments.map((a) => a._id));
+    return [
+      ...serverAttachments.filter((row) => !removed.has(row._id)),
+      ...pending.added.filter(
+        (row) => !listed.has(row._id) && !removed.has(row._id),
+      ),
+    ];
+  }, [serverAttachments, pending]);
 
   /**
    * `ensureServersReady` runs with `allowInteractiveOAuthFlow: false`, so a
@@ -218,6 +223,54 @@ export function ServerPicker({
    * used to produce.
    */
   const busy = creating || disabled || !attachmentsKnown;
+
+  /**
+   * The one release rule: an entry goes when the query stops disagreeing with
+   * it. A written row is listed; a deleted row is not.
+   *
+   * Only once the query has ANSWERED — it flattens `undefined` to `[]` while
+   * in flight, and reading that as "the write landed" would drop both halves a
+   * render before the real list arrives, blanking a fresh selection and
+   * resurrecting a deleted row in the same tick.
+   */
+  useEffect(() => {
+    if (!attachmentsKnown) return;
+    if (pending.added.length === 0 && pending.removed.length === 0) return;
+    const listed = new Set(serverAttachments.map((row) => row._id));
+    setPending((prev) => {
+      const added = prev.added.filter((row) => !listed.has(row._id));
+      const removed = prev.removed.filter((id) => listed.has(id));
+      // Same identity when nothing changed, so React bails out of the render
+      // rather than looping on `serverAttachments`, which is a fresh array
+      // every time until the query settles.
+      return added.length === prev.added.length &&
+        removed.length === prev.removed.length
+        ? prev
+        : { added, removed };
+    });
+  }, [serverAttachments, attachmentsKnown, pending]);
+
+  /**
+   * The one deadline, and only for a written row the query never lists.
+   *
+   * That is the NORMAL state for a caller which commits through its own
+   * mutation before echoing the id back — the suite bar awaits `updateSuite`.
+   * A row that is still what `value` points at is exempt: it is the only thing
+   * that can name the trigger, so dropping it on a timer would blank a live
+   * selection. Everything else just stops being held for the life of the
+   * mount. It has to outlast a round trip; at 3s it fired mid-flight.
+   */
+  useEffect(() => {
+    const orphan = pending.added.find((row) => row._id !== value);
+    if (!orphan) return;
+    const timer = setTimeout(() => {
+      setPending((prev) => ({
+        ...prev,
+        added: prev.added.filter((row) => row._id !== orphan._id),
+      }));
+    }, 60_000);
+    return () => clearTimeout(timer);
+  }, [pending, value]);
   const catalog = useMemo(() => catalogRows ?? [], [catalogRows]);
   const runtime = appState?.servers ?? null;
 
@@ -249,17 +302,22 @@ export function ServerPicker({
         );
         const connectionStatus =
           status === null ? null : (status as ConnectionStatus);
+        // Both halves come from the one helper the server cards and the
+        // header strip also read, so a status cannot be worded one way here
+        // and painted another there. Narrowed to the two fields the panel's
+        // contract declares — it has no business seeing the icon.
+        const meta = connectionStatus
+          ? getConnectionStatusMeta(connectionStatus)
+          : null;
         return {
           id: server._id,
           name: server.name,
-          status: connectionStatus
+          status: meta
             ? {
-                label: getConnectionStatusMeta(connectionStatus).label,
-                indicatorClassName:
-                  STATUS_INDICATOR[connectionStatus] ??
-                  STATUS_INDICATOR.disconnected,
+                label: meta.label,
+                indicatorClassName: meta.indicatorClassName,
               }
-            : UNKNOWN_STATUS,
+            : UNKNOWN_CONNECTION_STATUS,
           onConnect:
             canConnect && actions
               ? () => void handleConnect(server.name)
@@ -286,53 +344,72 @@ export function ServerPicker({
       // a selection reported mid-write is overwritten by that write's own
       // `onChange`, and a mint against a list we have not been handed writes
       // the duplicate the backend then rejects on its name.
-      if (creating || !attachmentsKnown) return;
+      if (writing.current || creating || !attachmentsKnown) return;
 
-      const existing = findSoloGroup(attachments, serverId);
-      if (existing) {
-        onChange(existing._id, existing as EvalServerAttachment);
-        setOpen(false);
-        return;
-      }
-
-      const server = catalog.find((row) => row._id === serverId);
-      if (!server) return;
-
-      setCreating(true);
-      // Which half failed. The collision wording belongs to the WRITE: matched
-      // against the caller's commit error it told the user to rename a group
-      // that had just been written, and a rename writes a second one.
-      let wrote = false;
+      // Taken before the branch, not inside the mint: reporting a selection
+      // while a create is in flight is the same defect from the other side —
+      // that create's own `onChange` lands second and overwrites it.
+      writing.current = true;
       try {
-        const name = deriveServerGroupName(
-          [server.name],
-          attachments.map((a) => a.name ?? ""),
-        );
-        const result = (await createServerAttachment({
-          projectId,
-          name,
-          serverIds: [serverId],
-        })) as { _id: string };
-        wrote = true;
-        const created: EvalServerAttachment = {
-          _id: result._id,
-          name,
-          serverIds: [serverId],
-          resolvedServerNames: [server.name],
-        };
-        setJustCreated(created);
-        // Awaited for the same reason as the group path.
-        await onChange(result._id, created);
-        setOpen(false);
-      } catch (err) {
-        const raw = err instanceof Error ? err.message : "";
-        toast.error(
-          !wrote && /already exists/i.test(raw)
-            ? `A server group named after "${server.name}" already exists.`
-            : raw || `Couldn't select ${server.name}`,
-        );
+        const existing = findSoloGroup(attachments, serverId);
+        if (existing) {
+          // AWAITED, like both mint paths. `onChange` is typed `=> void`, but
+          // bivariance lets a caller pass an async commit, and returning here
+          // before it settles releases the latch in the `finally` below while
+          // the parent is still writing — reopening the very window the latch
+          // was taken to close.
+          try {
+            await onChange(existing._id, existing as EvalServerAttachment);
+            setOpen(false);
+          } catch (err) {
+            const raw = err instanceof Error ? err.message : "";
+            toast.error(raw || `Couldn't select ${existing.name}`);
+          }
+          return;
+        }
+
+        const server = catalog.find((row) => row._id === serverId);
+        if (!server) return;
+
+        setCreating(true);
+        // Which half failed. The collision wording belongs to the WRITE:
+        // matched against the caller's commit error it told the user to
+        // rename a group that had just been written, and a rename writes a
+        // second one.
+        let wrote = false;
+        try {
+          const name = deriveServerGroupName(
+            [server.name],
+            attachments.map((a) => a.name ?? ""),
+          );
+          const result = (await createServerAttachment({
+            projectId,
+            name,
+            serverIds: [serverId],
+          })) as { _id: string };
+          wrote = true;
+          const created: EvalServerAttachment = {
+            _id: result._id,
+            name,
+            serverIds: [serverId],
+            resolvedServerNames: [server.name],
+          };
+          setPending((prev) => ({ ...prev, added: [...prev.added, created] }));
+          // Awaited for the same reason as the group path.
+          await onChange(result._id, created);
+          setOpen(false);
+        } catch (err) {
+          const raw = err instanceof Error ? err.message : "";
+          toast.error(
+            !wrote && /already exists/i.test(raw)
+              ? `A server group named after "${server.name}" already exists.`
+              : raw || `Couldn't select ${server.name}`,
+          );
+        } finally {
+          setCreating(false);
+        }
       } finally {
-        setCreating(false);
+        writing.current = false;
       }
     },
     [
@@ -357,6 +434,22 @@ export function ServerPicker({
         toast.error("Still loading this project's server groups.");
         throw new Error("Attachments not loaded");
       }
+      /**
+       * THROWN, not returned: the panel reads a rejection as "keep the draft"
+       * and a resolution as "it landed, clear the form". Resolving here would
+       * throw away the servers the user picked while the first submit — the
+       * one that owns this draft — is still in flight.
+       *
+       * And SAID, because the panel's catch deliberately reports nothing: its
+       * comment reads "The caller reports the reason", so a bare throw leaves
+       * the spinner stopping over a full form with no explanation — the dead
+       * control `busy` exists to avoid.
+       */
+      if (writing.current) {
+        toast.error("Still saving the last change — try again in a moment.");
+        throw new Error("A write is already in flight");
+      }
+      writing.current = true;
       setCreating(true);
       // Same split as the bare-server path: the collision wording is the
       // WRITE's, not the caller's commit's.
@@ -378,7 +471,7 @@ export function ServerPicker({
           // gap shifts every later name onto the wrong id.
           resolvedServerNames: serverIds.map((id) => byId.get(id) ?? ""),
         };
-        setJustCreated(created);
+        setPending((prev) => ({ ...prev, added: [...prev.added, created] }));
         // Awaited: `onChange` is typed `=> void`, but bivariance lets a caller
         // pass an async commit — the suite bar passes an awaited `updateSuite`
         // — and an un-awaited rejection escapes this catch entirely.
@@ -394,6 +487,7 @@ export function ServerPicker({
         throw err;
       } finally {
         setCreating(false);
+        writing.current = false;
       }
     },
     [attachmentsKnown, catalog, createServerAttachment, onChange, projectId],
@@ -438,7 +532,7 @@ export function ServerPicker({
    */
   const handleDeleteGroup = useCallback(
     async (groupId: string) => {
-      if (creating) return;
+      if (writing.current || creating) return;
       // Removing what the parent is storing, with no way to tell it, would
       // leave that id pointing at nothing — the picker would read as empty
       // while the surface kept launching against a row that is gone.
@@ -446,30 +540,53 @@ export function ServerPicker({
         toast.error("Pick a different server first — this one is in use here.");
         return;
       }
+      writing.current = true;
       setCreating(true);
       try {
         await deleteServerAttachment({ serverAttachmentId: groupId });
-        // A delete is a write too, and the bridge is there for the query's
-        // lag after one. Holding a deleted row keeps a ghost on the tab.
-        setJustCreated((row) => (row && row._id === groupId ? null : row));
+        // Both halves, in one move: drop it from `added` (a row minted and
+        // deleted in one sitting was never in the query to begin with) and
+        // record it in `removed` (a row the query still returns would
+        // otherwise sit on the tab, and stay clickable, until the refetch).
+        setPending((prev) => ({
+          added: prev.added.filter((row) => row._id !== groupId),
+          removed: prev.removed.includes(groupId)
+            ? prev.removed
+            : [...prev.removed, groupId],
+        }));
         if (value === groupId) onClearSelection?.();
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
         toast.error(raw || "Couldn't delete that server group.");
       } finally {
         setCreating(false);
+        writing.current = false;
       }
     },
     [creating, deleteServerAttachment, onClearSelection, value],
   );
 
+  /**
+   * Reporting an existing row IS the same operation the bare-server reuse path
+   * performs, so it holds the latch the same way. Reading the flag without
+   * taking it left two group picks — or a group pick followed by a server pick
+   * — free to interleave their `onChange` calls, and the later one wins.
+   */
   const handleSelectGroup = useCallback(
-    (groupId: string) => {
-      if (creating) return;
+    async (groupId: string) => {
+      if (writing.current || creating) return;
       const group = attachments.find((row) => row._id === groupId);
       if (!group) return;
-      onChange(group._id, group as EvalServerAttachment);
-      setOpen(false);
+      writing.current = true;
+      try {
+        await onChange(group._id, group as EvalServerAttachment);
+        setOpen(false);
+      } catch (err) {
+        const raw = err instanceof Error ? err.message : "";
+        toast.error(raw || `Couldn't select ${group.name}`);
+      } finally {
+        writing.current = false;
+      }
     },
     [attachments, creating, onChange],
   );
@@ -563,7 +680,7 @@ export function ServerPicker({
             selection?.kind === "group" ? selection.groupId : null
           }
           onSelectServer={(serverId) => void handleSelectServer(serverId)}
-          onSelectGroup={handleSelectGroup}
+          onSelectGroup={(groupId) => void handleSelectGroup(groupId)}
           onCreateGroup={handleCreateGroup}
           deriveName={deriveName}
           catalogKnown={catalogKnown}

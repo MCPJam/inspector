@@ -168,17 +168,47 @@ describe("a stand-in whose name had to be suffixed", () => {
     );
   });
 
-  it("escapes a server name that carries regex punctuation", () => {
-    // Server names are user text. Unescaped, `a.b` would match `axb 2` and
-    // `a+b` would not compile at all.
-    const dotted = group("g_d", "axb 2", ["srv_1"], ["a.b"]);
-    expect(isServerStandIn(dotted)).toBe(false);
-    // One per metacharacter class, so narrowing the escape set fails here.
+  it("still recognises a server name that carries regex punctuation", () => {
+    // Every metacharacter, as the name a person actually gave a server. These
+    // pin the characters whose UNESCAPED form either stops matching (`a$b`
+    // becomes an impossible pattern) or throws (`a(b)` never closes).
     for (const raw of ["a+b", "a*b", "a?b", "a(b)", "a[b]", "a{b}", "a|b", "a^b", "a$b", "a\\b"]) {
       expect(
         isServerStandIn(group("g", `${raw} 2`, ["srv_1"], [raw])),
         raw,
       ).toBe(true);
+    }
+  });
+
+  /**
+   * The other half, and the half that was missing.
+   *
+   * A metacharacter whose unescaped form still matches its own literal text
+   * survives the loop above untouched: `^a|b 2$` matches `"a|b 2"` through the
+   * `^a` branch, so the assertion passes either way. Only a NEAR MISS — a name
+   * the unescaped pattern matches and the escaped one does not — proves the
+   * escape is load-bearing.
+   *
+   * `{` and `}` appear as a pair on purpose. Dropping one leaves the other
+   * escaped, which keeps `a{2}b` a literal, so neither is falsifiable alone;
+   * together they turn it into the quantifier that matches `aab`.
+   */
+  it("does not let a metacharacter match text the server name never had", () => {
+    const nearMisses: Array<[string, string, string]> = [
+      [".", "a.b", "axb 2"],
+      ["|", "a|b", "ax 2"],
+      ["{ and }", "a{2}b", "aab 2"],
+      ["[ and ]", "a[bc]d", "abd 2"],
+      ["*", "ab*c", "ac 2"],
+      ["+", "ab+c", "abbc 2"],
+      ["?", "ab?c", "ac 2"],
+      ["\\", "a\\db", "a5b 2"],
+    ];
+    for (const [meta, serverName, groupName] of nearMisses) {
+      expect(
+        isServerStandIn(group("g", groupName, ["srv_1"], [serverName])),
+        `${meta}: "${groupName}" is not the stand-in for "${serverName}"`,
+      ).toBe(false);
     }
   });
 
