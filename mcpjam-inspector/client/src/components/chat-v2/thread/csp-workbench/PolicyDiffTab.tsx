@@ -493,13 +493,13 @@ export function PolicyDiffTab({
         />
         <PolicyColumn
           title="Applied"
-          subtitle={applied ? "by MCPJam" : "widget asked · unverified"}
+          subtitle={applied ? "by client" : "widget asked · unverified"}
           rows={effectiveRows}
           emptyLabel="No allowlist captured"
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
           unconfirmed={!applied}
-          info="The CSP MCPJam enforced for this widget."
+          info="The CSP the client applied to this widget."
         />
         <PolicyColumn
           title="Observed"
