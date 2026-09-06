@@ -20,24 +20,41 @@ const streamState = {
   error: null as string | null,
 };
 
+/**
+ * The live SSE envelope, when one exists. Hard-wired to `null` before, which
+ * left the `displayTrace` merge branch unreachable — the very branch where a
+ * completed session still held in the stream buffer decides whether it shows
+ * the persisted spans or nothing at all.
+ */
+const liveTraceState = { trace: null as Record<string, unknown> | null };
+
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
   useJourneyRunStream: () => streamState,
-  liveSessionTrace: () => null,
+  liveSessionTrace: () => liveTraceState.trace,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
 }));
 
+/** Mutable so one test can hand the pane a persisted, clock-anchored trace. */
+const persistedState = {
+  trace: null as Record<string, unknown> | null,
+  loading: false,
+  error: null as string | null,
+  spanError: null as string | null,
+  pluginVersions: [] as unknown[],
+};
+
 vi.mock("@/components/swarms/use-persisted-session-trace", () => ({
-  usePersistedSessionTrace: () => ({
-    trace: null,
-    loading: false,
-    error: null,
-    pluginVersions: [],
-  }),
+  usePersistedSessionTrace: () => persistedState,
 }));
 
+const traceViewerProps = vi.fn();
+
 vi.mock("@/components/evals/trace-viewer", () => ({
-  TraceViewer: () => <div data-testid="trace-viewer-stub" />,
+  TraceViewer: (props: Record<string, unknown>) => {
+    traceViewerProps(props);
+    return <div data-testid="trace-viewer-stub" />;
+  },
 }));
 
 vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
@@ -141,7 +158,50 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
     runFixture.hostSummaries![0].targetId = "environment:env-1";
     runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
+    liveTraceState.trace = null;
+    persistedState.trace = null;
+    persistedState.loading = false;
+    persistedState.error = null;
+    persistedState.spanError = null;
+    traceViewerProps.mockClear();
   });
+
+  /** Render the wizard and open the pane on the first session chip. */
+  const renderPaneAndSelectSession = async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    fireEvent.click(chips[0]!);
+    return chips;
+  };
 
   it("shows an empty stream pane until a session is clicked", async () => {
     runFixture.hostSummaries![0].targetId = "opaque-target";
@@ -165,9 +225,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               goalLabel: "Refund a charge",
             },
           ]}
-          fallbackColumns={[
-            { key: "environment:env-1", label: "Prod-like" },
-          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
           environments={[
             {
               environmentId: "env-1",
@@ -192,25 +250,29 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={vi.fn()}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     await screen.findByTestId("new-swarm-running-step");
     expect(screen.getByTestId("new-swarm-running-title")).toHaveTextContent(
-      "Swarm running 0 of 2 sessions"
+      "Swarm running 0 of 2 sessions",
     );
     expect(
-      screen.getByTestId("new-swarm-running-open-findings")
+      screen.getByTestId("new-swarm-running-open-findings"),
     ).toHaveTextContent("Open findings");
-    expect(screen.queryByTestId("new-swarm-running-done")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-done"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^stop$/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-progress")).toHaveAttribute(
       "aria-valuenow",
-      "0"
+      "0",
     );
     expect(screen.getByText("0%")).toBeInTheDocument();
     expect(
-      screen.queryByText(/select multiple environments/i)
+      screen.queryByText(/select multiple environments/i),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-stream")).toBeInTheDocument();
     expect(screen.getByTestId("swarm-live-pane-empty")).toBeInTheDocument();
@@ -241,9 +303,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               goalLabel: "Refund a charge",
             },
           ]}
-          fallbackColumns={[
-            { key: "environment:env-1", label: "Prod-like" },
-          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
           environments={[
             {
               environmentId: "env-1",
@@ -256,7 +316,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={vi.fn()}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     const chips = await screen.findAllByTestId("new-swarm-running-session");
@@ -265,12 +325,140 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     await waitFor(() => {
       expect(screen.getByTestId("swarm-live-pane")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("swarm-live-pane-empty")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-empty"),
+    ).not.toBeInTheDocument();
     const pane = screen.getByTestId("swarm-live-pane");
     expect(pane).toHaveTextContent(/Session #1/i);
     expect(pane).not.toHaveTextContent(/synth_/);
     expect(pane).not.toHaveTextContent(/Readiness:/i);
     expect(chips[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * The window cubic found: a session whose run just ended is still in the SSE
+   * buffer, so `fallbackTrace` wins the merge — and the swarm stream emits no
+   * `trace_snapshot`, so it carries NO spans. The merge only overlaid browser
+   * artifacts, so the Trace tab was empty and the BB-153 re-anchoring never
+   * reached this pane until the buffer was gone.
+   */
+  it("overlays the persisted spans and clock onto a live trace that has none", async () => {
+    liveTraceState.trace = { traceVersion: 1, messages: [] };
+    persistedState.trace = {
+      traceVersion: 1,
+      messages: [],
+      spans: [
+        { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+      ],
+      traceStartedAtMs: 1_000_000,
+      traceEndedAtMs: 1_012_000,
+    };
+
+    await renderPaneAndSelectSession();
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    const props = traceViewerProps.mock.calls.at(-1)![0] as {
+      trace: { spans?: unknown[] };
+      traceStartedAtMs: number | null;
+    };
+    expect(props.trace.spans).toHaveLength(1);
+    expect(props.traceStartedAtMs).toBe(1_000_000);
+  });
+
+  /**
+   * The banner must describe what is ON SCREEN, not what one fetch did. Gating
+   * it on `spanError` alone let it contradict a timeline drawing real spans
+   * (cubic).
+   */
+  it("stays quiet when the displayed trace has spans despite a span-load failure", async () => {
+    liveTraceState.trace = {
+      traceVersion: 1,
+      messages: [],
+      spans: [
+        { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+      ],
+    };
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    persistedState.spanError = "Could not load the recorded trace";
+
+    await renderPaneAndSelectSession();
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(
+      screen.queryByTestId("swarm-live-pane-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns when the displayed trace has no spans and the load failed", async () => {
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    persistedState.spanError = "Could not load the recorded trace";
+
+    await renderPaneAndSelectSession();
+
+    expect(
+      await screen.findByTestId("swarm-live-pane-span-error"),
+    ).toHaveTextContent("not because none was recorded");
+  });
+
+  /**
+   * BB-153's other half: re-anchored offsets tell you a prompt landed 8s in,
+   * and only the wall-clock anchor tells you WHEN. `ShareUsageThreadDetail`
+   * always passed one; this pane passed nothing, so the swarm view of a
+   * session could say strictly less than the User Testing view of it.
+   *
+   * Read off the DISPLAYED trace, not off `persisted`, so a live stream's own
+   * contiguously packed spans are never labelled with the persisted session's
+   * clock.
+   */
+  it("hands the trace viewer the session's wall-clock anchor", async () => {
+    persistedState.trace = {
+      traceVersion: 1,
+      messages: [],
+      traceStartedAtMs: 1_000_000,
+      traceEndedAtMs: 1_012_000,
+    };
+
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    fireEvent.click(chips[0]!);
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: 1_000_000,
+        traceEndedAtMs: 1_012_000,
+      }),
+    );
   });
 
   /**
@@ -311,21 +499,21 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={onLeave}
           onOpenSession={onOpenSession}
         />
-      </div>
+      </div>,
     );
 
     const finding = await screen.findByTestId("new-swarm-running-finding");
     expect(finding.textContent).toMatch(/never called the refund tool/);
     // Ping sits with the title, not under the matrix.
     expect(
-      screen.getByTestId("new-swarm-running-title").compareDocumentPosition(
-        finding
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
+      screen
+        .getByTestId("new-swarm-running-title")
+        .compareDocumentPosition(finding) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       finding.compareDocumentPosition(
-        screen.getAllByTestId("new-swarm-running-session")[0]!
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
+        screen.getAllByTestId("new-swarm-running-session")[0]!,
+      ) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
 
     fireEvent.click(screen.getByTestId("new-swarm-running-finding-open"));
@@ -375,11 +563,13 @@ describe("NewSwarmRunningStep — session stream pane", () => {
           onLeave={onLeave}
           onOpenSession={vi.fn()}
         />
-      </div>
+      </div>,
     );
 
     await screen.findByTestId("new-swarm-running-done");
-    expect(screen.getByTestId("new-swarm-running-open-findings")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("new-swarm-running-open-findings"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("new-swarm-running-done"));
     expect(onLeave).toHaveBeenCalledTimes(1);
   });
@@ -394,7 +584,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 0,
         total: 30,
-      })
+      }),
     ).toBe("Swarm running 0 of 30 sessions");
     expect(
       swarmRunningTitle({
@@ -403,7 +593,7 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 30,
         total: 30,
-      })
+      }),
     ).toBe("Swarm finished 30 of 30 sessions");
     expect(
       swarmRunningTitle({
@@ -412,34 +602,34 @@ describe("NewSwarmRunningStep — frame copy", () => {
         rateLimited: 0,
         done: 15,
         total: 15,
-      })
+      }),
     ).toBe("Swarm failed 0 of 15 sessions");
   });
 
   it("leads each cell with the goal, not a score chip", () => {
     expect(swarmRunGoalLabel({ label: "Ada · Refund a charge" })).toBe(
-      "Refund a charge"
+      "Refund a charge",
     );
     expect(
       swarmCellHeadline({
         outcome: "running",
         primary: "running",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Running: Refund a charge");
     expect(
       swarmCellHeadline({
         outcome: "succeeded",
         primary: "3/3 pass",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Run completed: All checks passed");
     expect(
       swarmCellHeadline({
         outcome: "rate_limited",
         primary: "2/3 pass",
         goal: "Refund a charge",
-      })
+      }),
     ).toBe("Run completed: Goal completion had mixed results");
   });
 });
