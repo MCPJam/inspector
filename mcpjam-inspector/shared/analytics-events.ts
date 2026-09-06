@@ -155,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -343,6 +344,12 @@ export const ANALYTICS_EVENTS = {
   plan_limit_dialog_dismissed: { source: "client" },
   plan_limit_enterprise_cta_clicked: { source: "client" },
   plan_limit_upgrade_requested: { source: "client" },
+  // Guest credit-wall A/B (BB-133): the treatment modal replaces the single
+  // "Sign in" CTA with a benefit-led create-account primary and a see-plans
+  // secondary. `variant` on the impression/click events lets PostHog compare
+  // sign-in vs create-account conversion across control and treatment.
+  plan_limit_create_account_clicked: { source: "client" },
+  plan_limit_see_plans_clicked: { source: "client" },
   credit_topup_dialog_shown: { source: "client" },
   credit_topup_package_selected: { source: "client" },
   credit_topup_dialog_dismissed: { source: "client" },
@@ -452,6 +459,10 @@ export const ANALYTICS_EVENTS = {
   //   active project.
   // `project_route_inaccessible`       props: reason (malformed | not-a-member
   //   | timed-out). Never says whether the project exists.
+  // `project_route_recovered`          props: cause (late-ready). A route that
+  //   had already looked inaccessible later resolved without navigation.
+  // `project_route_stale_return_recovered` props: outcome (switched |
+  //   no-fallback). A post-sign-in scoped path named a lost membership.
   // `project_route_scope_mismatch`     props: guard (redirect-loop |
   //   repeated-switch). Redirect-loop protection tripped.
   // `app_signin_return_restored`       props: outcome (restored | absent |
@@ -459,6 +470,8 @@ export const ANALYTICS_EVENTS = {
   project_route_legacy_normalized: { source: "client" },
   project_route_resolved: { source: "client" },
   project_route_inaccessible: { source: "client" },
+  project_route_recovered: { source: "client" },
+  project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;

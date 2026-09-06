@@ -206,6 +206,8 @@ export type CreateSwarmDraft = {
   config: { sessionsPerTarget: number; maxTurns: number };
   judgeConfig?: GoalJudgeConfig;
   rubric?: ReturnType<typeof serializeRubricForWire>;
+  /** The launch wave this swarm names — see `swarmRunGroupId` on the runs. */
+  swarmRunGroupId?: string;
   idempotencyKey: string;
 };
 
@@ -1181,6 +1183,10 @@ export function NewSwarmCreateFlow({
               ...(payload.rubric.length > 0
                 ? { rubric: serializeRubricForWire(payload.rubric) }
                 : {}),
+              // Ties the swarm to the wave its runs carry. Without it the
+              // Overview falls back to each journey's authoring swarm, which
+              // for a reused journey names someone else's swarm.
+              swarmRunGroupId,
               idempotencyKey: `${flowId}:swarm`,
             });
           } catch (err) {
@@ -1661,6 +1667,7 @@ export function NewSwarmCreateFlow({
       return [
         {
           key: `environment:${environmentId}`,
+          hostId: env.hostId,
           label: environmentLabel(env, { hostName: hostNameById }),
         },
       ];
@@ -1733,6 +1740,7 @@ export function NewSwarmCreateFlow({
             runs={launchedRuns}
             fallbackColumns={runningFallbackColumns}
             environments={envList}
+            hosts={hosts}
             onLeave={leaveRunning}
             onOpenSession={openRunningSession}
           />

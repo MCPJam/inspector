@@ -477,3 +477,24 @@ describe("SUITE_RUN_HISTORY_PAGE_SIZE", () => {
     expect(SUITE_RUN_HISTORY_PAGE_SIZE).toBe(8);
   });
 });
+
+describe("resolveRunHistoryVerdict — a run held for its judge", () => {
+  it("never reads Ship or Hold off a pre-judge pass rate", () => {
+    // Above threshold AND below threshold both land on the same answer: the
+    // verdict does not exist yet, whatever the rows say so far.
+    expect(
+      resolveRunHistoryVerdict(
+        makeRun({ _id: "r1", status: "grading", result: "pending" }),
+        95,
+        90,
+      ),
+    ).toEqual({ verdict: "running", label: "Grading" });
+    expect(
+      resolveRunHistoryVerdict(
+        makeRun({ _id: "r1", status: "grading", result: "pending" }),
+        40,
+        90,
+      ),
+    ).toEqual({ verdict: "running", label: "Grading" });
+  });
+});

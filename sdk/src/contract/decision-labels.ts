@@ -469,6 +469,14 @@ export const DECISION_LABEL_VOCABULARIES = Object.freeze({
   failureCategories: FAILURE_CATEGORIES,
   stageReasons: STAGE_REASONS,
   verdictDecisionReasons: EVAL_VERDICT_DECISION_REASONS,
+  // NOT listed here: B7's `PREDICATE_STAGE`. This registry holds closed
+  // member LISTS, and its consumer walks the OpenAPI spec asserting that any
+  // enum overlapping one of them matches it exactly. `PREDICATE_STAGE` is a
+  // map from predicate kind to stage, so it has no member list to guard —
+  // and its VALUES are already `stages` above. Adding it would have meant
+  // weakening that check to accommodate a shape it was never about. It is
+  // exported from the contract index directly, which is how consumers reach
+  // it.
   // NOT listed here: the fine-grained exclusion detail. Its vocabulary is a
   // zod object's SHAPE rather than a `const` array, so its totality test reads
   // `evalStageCoverageDetailSchema.shape` directly — a hand-copied list here

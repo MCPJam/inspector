@@ -213,6 +213,7 @@ export type {
   ServerSkillsLogger,
   VerifiedServerSkill,
 } from "./server-skills.js";
+export { cancellationLeafForVersion } from "./host-config/index.js";
 export {
   MCP_PROTOCOL_VERSIONS,
   isKnownProtocolVersion,
@@ -1587,3 +1588,11 @@ export type {
   GetTaskExtResult,
   UpdateTaskExtResult,
 } from "./mcp-client-manager/index.js";
+
+export {
+  NO_TOOL_PATH_KEY,
+  PATH_SEPARATOR,
+  buildPathKey,
+  collapseImmediateRepeats,
+  toolNamesFromPathKey,
+} from "./contract/tool-path.js";

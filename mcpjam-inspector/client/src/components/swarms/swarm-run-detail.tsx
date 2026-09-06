@@ -453,6 +453,7 @@ export function SwarmRunDetail({
         title={
           <h1
             className="truncate text-xl font-bold tracking-tight text-foreground"
+            title={title}
             data-testid="swarm-run-detail-title"
           >
             {title}
@@ -662,8 +663,17 @@ export function SwarmRunDetail({
           </div>
         ) : null}
         {tab === "insights" ? (
-          <div className="flex min-h-0 flex-1 flex-col overflow-hidden px-8 py-4">
-            <div className="min-h-0 flex-1 overflow-hidden">
+          // Scroll the whole Insights tab instead of locking it to the
+          // viewport: the Session-flow Sankey was crushed into a sliver on
+          // shorter windows, and its many themes could only be reached by
+          // dragging a cramped inner scroll. The workbench renders its body at
+          // natural height (bodyLayout="scroll") and this container owns the
+          // one scrollbar.
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-8 py-4">
+            {/* Flex column at least as tall as the scroll viewport, so the
+                workbench grows past it (page scrolls) while its empty state can
+                still take a full-height floor and center. */}
+            <div className="flex min-h-full flex-col">
               <InsightsWorkbench
                 scope={
                   projectId
@@ -682,6 +692,7 @@ export function SwarmRunDetail({
                 urlSelection={urlSelection}
                 onSelectionChange={handleSelectionChange}
                 autoBackfillTopicMap
+                bodyLayout="scroll"
                 emptyState={
                   <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
                     {projectId

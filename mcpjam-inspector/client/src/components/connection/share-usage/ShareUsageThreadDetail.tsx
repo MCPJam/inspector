@@ -6,6 +6,7 @@ import { copyToClipboard } from "@/lib/clipboard";
 import type { ModelDefinition, ModelProvider } from "@/shared/types";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 import {
+  hydrateMessageTimestamps,
   ReadOnlyTranscript,
   type ToolRenderOverride as ChatUiToolRenderOverride,
 } from "@mcpjam/chat-ui";
@@ -71,7 +72,7 @@ export function SwarmJudgeSection({
   goalScore?: SharedChatThread["goalScore"];
 }) {
   const requestJudge = useAction(
-    "swarmJudge:requestSwarmSessionJudge" as never
+    "swarmJudge:requestSwarmSessionJudge" as never,
   ) as unknown as (args: { sessionId: string }) => Promise<unknown>;
   const [requesting, setRequesting] = useState(false);
   const [notGradeable, setNotGradeable] = useState(false);
@@ -120,7 +121,7 @@ export function SwarmJudgeSection({
         if (!isStale()) setRequesting(false);
       }
     },
-    [requestJudge, threadId]
+    [requestJudge, threadId],
   );
 
   useEffect(() => {
@@ -251,7 +252,7 @@ export function SwarmJudgeSection({
  * named seam so future read-only consumers can reuse it.
  */
 function bridgeToolRenderOverrides(
-  overrides: Record<string, unknown> | undefined
+  overrides: Record<string, unknown> | undefined,
 ): Record<string, ChatUiToolRenderOverride> | undefined {
   return overrides as Record<string, ChatUiToolRenderOverride> | undefined;
 }
@@ -295,7 +296,7 @@ const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
  * Fetch span blobs from turn trace URLs and flatten into a single span array.
  */
 async function hydrateSpans(
-  traces: SharedChatTurnTrace[]
+  traces: SharedChatTurnTrace[],
 ): Promise<EvalTraceSpan[]> {
   const results = await Promise.all(
     traces.map(async (trace) => {
@@ -308,7 +309,7 @@ async function hydrateSpans(
       } catch {
         return [];
       }
-    })
+    }),
   );
   return results.flat();
 }
@@ -363,7 +364,7 @@ export function ShareUsageThreadDetail({
         if (err instanceof DOMException && err.name === "AbortError") return;
         console.error("Failed to load thread messages:", err);
         setError(
-          err instanceof Error ? err.message : "Failed to load messages"
+          err instanceof Error ? err.message : "Failed to load messages",
         );
       } finally {
         if (isActive) {
@@ -453,12 +454,16 @@ export function ShareUsageThreadDetail({
   // Adapt trace to UI messages for the chat view
   const adaptedTrace = useMemo(() => {
     if (!messages) return null;
-    return adaptTraceToUiMessages({
+    const adapted = adaptTraceToUiMessages({
       trace: { messages: messages as any, widgetSnapshots },
       toolResultDisplay:
         thread?.sourceType === "scenario" ? "attached-to-tool" : "sibling-text",
     });
-  }, [messages, thread?.sourceType, widgetSnapshots]);
+    return {
+      ...adapted,
+      messages: hydrateMessageTimestamps(adapted.messages, turnTraces),
+    };
+  }, [messages, thread?.sourceType, turnTraces, widgetSnapshots]);
 
   const resolvedModel: ModelDefinition = useMemo(
     () => ({
@@ -466,7 +471,7 @@ export function ShareUsageThreadDetail({
       name: thread?.modelId ?? "Unknown",
       provider: "custom" as ModelProvider,
     }),
-    [thread?.modelId]
+    [thread?.modelId],
   );
 
   // Compute trace timing from turn traces
@@ -483,7 +488,7 @@ export function ShareUsageThreadDetail({
   const canPromoteThread = Boolean(
     promote?.canPromote &&
       thread?.sourceType &&
-      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType)
+      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
   // Reset when the viewer switches sessions, so a dialog opened on one thread
@@ -508,7 +513,7 @@ export function ShareUsageThreadDetail({
       // every surface lands in the same place.
       navigateToPromotedTestCase(result);
     },
-    [promote]
+    [promote],
   );
 
   const handleCopySessionRef = useCallback(async () => {
@@ -517,7 +522,7 @@ export function ShareUsageThreadDetail({
     const ok = await copyToClipboard(text);
     if (ok) {
       toast.success(
-        sessionLink ? "Session link copied" : "Session reference copied"
+        sessionLink ? "Session link copied" : "Session reference copied",
       );
     } else {
       toast.error("Failed to copy");
@@ -603,9 +608,7 @@ export function ShareUsageThreadDetail({
             variant="outline"
             size="sm"
             className="h-8 w-8 rounded-lg px-0"
-            aria-label={
-              sessionLink ? "Copy session link" : "Copy session ID"
-            }
+            aria-label={sessionLink ? "Copy session link" : "Copy session ID"}
             onClick={() => void handleCopySessionRef()}
           >
             <Copy className="size-3.5" />
@@ -660,7 +663,7 @@ export function ShareUsageThreadDetail({
                   messages={adaptedTrace.messages}
                   model={resolvedModel}
                   toolRenderOverrides={bridgeToolRenderOverrides(
-                    adaptedTrace.toolRenderOverrides
+                    adaptedTrace.toolRenderOverrides,
                   )}
                   reasoningDisplayMode={reasoningDisplayMode}
                   widgetPolicy="placeholder"
@@ -673,7 +676,7 @@ export function ShareUsageThreadDetail({
                 messages={adaptedTrace.messages}
                 model={resolvedModel}
                 toolRenderOverrides={bridgeToolRenderOverrides(
-                  adaptedTrace.toolRenderOverrides
+                  adaptedTrace.toolRenderOverrides,
                 )}
                 reasoningDisplayMode={reasoningDisplayMode}
                 widgetPolicy="placeholder"

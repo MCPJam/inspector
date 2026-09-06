@@ -77,10 +77,6 @@ import {
 } from "@mcpjam/sdk";
 import { isMCPAuthError } from "@mcpjam/sdk";
 import { RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/app-bridge";
-import type {
-  McpUiResourceCsp,
-  McpUiResourcePermissions,
-} from "@modelcontextprotocol/ext-apps";
 import { HOSTED_MODE, WEB_STREAM_TIMEOUT_MS } from "../../config.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
 import { streamWebChatTurn } from "../../utils/web-chat-turn.js";
@@ -91,6 +87,8 @@ import {
 import { WEB_SEARCH_TOOL_NAME } from "../../utils/built-in-tools/exa-web-search.js";
 import { resolveHostTools } from "../../utils/built-in-tools/registry.js";
 import { injectOpenAICompat } from "../../utils/widget-helpers.js";
+import { resolveUiResourceMeta } from "../../utils/ui-resource-meta.js";
+import { viewOriginLabel } from "../../utils/view-origin-label.js";
 import { logger } from "../../utils/logger.js";
 import { resolvePlatformMcpUrl } from "../../utils/platform-mcp-url.js";
 import { MCPJAM_PLATFORM_SERVER_ID } from "../../../shared/mcpjam-agent-widgets";
@@ -612,13 +610,12 @@ mcpjamAgent.post("/widget-content", async (c) => {
       }
 
       const resourceMeta = record._meta as Record<string, unknown> | undefined;
-      const uiMeta = (resourceMeta as { ui?: unknown } | undefined)?.ui as
-        | {
-            csp?: McpUiResourceCsp;
-            permissions?: McpUiResourcePermissions;
-            prefersBorder?: boolean;
-          }
-        | undefined;
+      // The shared resolver rather than a local cast, so this route reports
+      // the same normalized fields (and the same `domain`) as the other two
+      // widget-content routes. No listing lookup: these resources come from
+      // MCPJam's own MCP server and a fixed table, so there is no second
+      // source a lower-precedence declaration could arrive from.
+      const uiMeta = resolveUiResourceMeta({ contentMeta: resourceMeta });
       const effectiveCspMode = body.cspMode ?? "permissive";
 
       if (body.injectOpenAiCompat === true) {
@@ -640,11 +637,16 @@ mcpjamAgent.post("/widget-content", async (c) => {
 
       return c.json({
         html,
-        csp: effectiveCspMode === "permissive" ? undefined : uiMeta?.csp,
-        permissions: uiMeta?.permissions,
+        csp: effectiveCspMode === "permissive" ? undefined : uiMeta.csp,
+        permissions: uiMeta.permissions,
         permissive: effectiveCspMode === "permissive",
         cspMode: effectiveCspMode,
-        prefersBorder: uiMeta?.prefersBorder,
+        prefersBorder: uiMeta.prefersBorder,
+        declaredDomain: uiMeta.domain,
+        // A fixed label of its own rather than none: with per-app origins on,
+        // "no label" means the bare sandbox origin, and MCPJam's own widgets
+        // should not be the one thing still rendering there.
+        viewOriginLabel: viewOriginLabel("mcpjam:platform"),
         injectedOpenAiCompat: body.injectOpenAiCompat === true,
         injectedOpenAiCompatCapabilities:
           body.injectOpenAiCompat === true &&

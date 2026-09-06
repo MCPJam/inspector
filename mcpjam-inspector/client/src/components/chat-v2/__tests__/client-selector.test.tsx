@@ -4,14 +4,14 @@ import userEvent from "@testing-library/user-event";
 import { ClientSelector } from "../chat-input/client-selector";
 import type { HostListItem } from "@/hooks/useClients";
 
-const mockResolveHostLogoByDisplayName = vi.hoisted(() => vi.fn());
+const mockResolveHostLogoByName = vi.hoisted(() => vi.fn());
 
 vi.mock("@/components/hosts/CreateHostDialog", () => ({
   CreateHostDialog: () => null,
 }));
 
-vi.mock("@/lib/scenario-client-style", () => ({
-  resolveHostLogoByDisplayName: mockResolveHostLogoByDisplayName,
+vi.mock("@/lib/host-logo", () => ({
+  resolveHostLogoByName: mockResolveHostLogoByName,
 }));
 
 const hosts: HostListItem[] = [
@@ -63,8 +63,8 @@ function renderClientSelector({
 
 describe("ClientSelector", () => {
   beforeEach(() => {
-    mockResolveHostLogoByDisplayName.mockReset();
-    mockResolveHostLogoByDisplayName.mockReturnValue(null);
+    mockResolveHostLogoByName.mockReset();
+    mockResolveHostLogoByName.mockReturnValue("/mcp.svg");
   });
 
   it("keeps Add host reachable by constraining the host list height", async () => {
@@ -79,6 +79,19 @@ describe("ClientSelector", () => {
     expect(list).not.toBeNull();
     expect(list).toHaveStyle({ maxHeight: "220px", overflowY: "auto" });
     expect(screen.getByTestId("client-add-host")).toBeInTheDocument();
+  });
+
+  it("shows a fallback badge wherever a client logo is unavailable", async () => {
+    const user = userEvent.setup();
+    renderClientSelector();
+
+    expect(
+      screen.getByTestId("client-selector-trigger").querySelector("img")
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    expect(
+      screen.getByTestId("client-row-host-0").querySelector("img")
+    ).toHaveAttribute("src", expect.stringContaining("mcp"));
   });
 
   it("uses a shorter scroll area when compare chips are visible", async () => {
@@ -282,18 +295,18 @@ describe("ClientSelector", () => {
       modalThemeMode: "light",
     });
 
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
       "Goose",
       "dark"
     );
 
     await user.click(screen.getByTestId("client-selector-trigger"));
 
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
       "Goose",
       "light"
     );
-    expect(mockResolveHostLogoByDisplayName).toHaveBeenCalledWith(
+    expect(mockResolveHostLogoByName).toHaveBeenCalledWith(
       "Cline",
       "light"
     );
