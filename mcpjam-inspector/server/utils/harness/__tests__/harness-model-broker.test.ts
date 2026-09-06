@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   startHarnessModelBroker,
   revokeHarnessModelBroker,
+  reserveHarnessBox,
+  renewHarnessBoxReservation,
 } from "../harness-model-broker";
 import { buildBrokerDummyAuth } from "../registry";
 
@@ -28,31 +30,39 @@ function mockFetch(impl: (url: string, init: RequestInit) => Response) {
 }
 
 describe("buildBrokerDummyAuth", () => {
-  it("claude-code → dummy anthropic auth pointed at the proxy (no real key)", () => {
+  // Since the @ai-sdk/harness 1.0.x stable line, HarnessAuth is the flat
+  // ENVIRONMENT auth arm (an env-var map), not the canary line's structured
+  // `{ anthropic }` / `{ openaiCompatible }` objects. `toEqual` pins the WHOLE
+  // map: every extra key is a variable the adapter would key credential
+  // forwarding off, so absence is as load-bearing as presence. (The `gateway`
+  // raw-key variant is still gone since COMP-23 — no real credential here.)
+
+  it("claude-code → dummy auth-token env pointed at the proxy (no real key)", () => {
     const auth = buildBrokerDummyAuth(
       "claude-code",
       "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
     );
-    expect(auth.anthropic?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic"
-    );
-    expect(auth.anthropic?.authToken).toBeTruthy();
-    expect(auth.anthropic?.apiKey).toBe("");
-    // (HarnessAuth has no `gateway` variant since COMP-23 — the raw-key path
-    // is gone at the type level.)
-    expect(auth.openaiCompatible).toBeUndefined();
+    expect(auth).toEqual({
+      ANTHROPIC_AUTH_TOKEN: "mcpjam-broker-dummy",
+      ANTHROPIC_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/anthropic",
+    });
+    // ANTHROPIC_API_KEY must be ABSENT, not "": the adapter registers an
+    // `x-api-key` egress rewrite for whichever credential variables are
+    // PRESENT, and the CLI never sends that header on the auth-token path.
+    expect("ANTHROPIC_API_KEY" in auth).toBe(false);
   });
 
-  it("codex → dummy openaiCompatible auth pointed at the proxy", () => {
+  it("codex → dummy OpenAI-compatible env pointed at the proxy", () => {
     const auth = buildBrokerDummyAuth(
       "codex",
       "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
     );
-    expect(auth.openaiCompatible?.baseUrl).toBe(
-      "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1"
-    );
-    expect(auth.openaiCompatible?.apiKey).toBeTruthy();
-    expect(auth.anthropic).toBeUndefined();
+    expect(auth).toEqual({
+      CODEX_API_KEY: "mcpjam-broker-dummy",
+      OPENAI_BASE_URL:
+        "https://harness-model.mcpjam.com/web/harness/model-proxy/openai/v1",
+    });
   });
 });
 
@@ -221,5 +231,54 @@ describe("revokeHarnessModelBroker", () => {
     mockFetch(() => Response.json({ ok: false }, { status: 500 }));
     const result = await revokeHarnessModelBroker({ runId: "r", bearer: "t" });
     expect(result.ok).toBe(false);
+  });
+});
+
+describe("harness box reservation", () => {
+  const box = { kind: "sandbox" as const, sandboxRowId: "sbxrow_1" };
+
+  it("fails closed when the reservation endpoint is missing", async () => {
+    mockFetch(() => Response.json({ ok: false }, { status: 404 }));
+    await expect(
+      reserveHarnessBox({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toEqual({
+      ok: false,
+      status: 404,
+      error: "Couldn't reserve the computer (404)",
+    });
+  });
+
+  it("renews the same box claim and returns the new expiry", async () => {
+    let seenUrl = "";
+    let seenBody: any = {};
+    mockFetch((url, init) => {
+      seenUrl = url;
+      seenBody = JSON.parse(String(init.body));
+      return Response.json({ ok: true, expiresAt: 999 });
+    });
+    await expect(
+      renewHarnessBoxReservation({
+        box,
+        harnessId: "claude-code",
+        modelId: "anthropic/claude-haiku-4.5",
+        runId: "run_1",
+        bearer: "t",
+      })
+    ).resolves.toEqual({ ok: true, expiresAt: 999 });
+    expect(seenUrl).toBe(
+      "https://convex.example.com/web/harness/model-broker/reserve/renew"
+    );
+    expect(seenBody).toEqual({
+      sandboxRowId: "sbxrow_1",
+      harnessId: "claude-code",
+      modelId: "anthropic/claude-haiku-4.5",
+      runId: "run_1",
+    });
   });
 });

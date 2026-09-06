@@ -44,6 +44,7 @@ const mockState = vi.hoisted(() => ({
   sendsBySession: new Map<string, any[]>(),
   nextSessionNumber: 1,
   lastTransportOptions: null as any,
+  onFinish: null as null | ((event: any) => void),
 }));
 
 const baseModel = {
@@ -60,7 +61,7 @@ vi.mock("@/components/chat-v2/shared/model-helpers", () => ({
   buildAvailableModels: vi.fn(() => [baseModel]),
   getDefaultModel: vi.fn(() => baseModel),
   isMCPJamProvidedModelMenuItem: vi.fn((model: { id: string }) =>
-    String(model.id).includes("/")
+    String(model.id).includes("/"),
   ),
 }));
 
@@ -155,73 +156,78 @@ vi.mock("@ai-sdk/react", async () => {
   };
 
   return {
-    useChat: vi.fn(({ id }: { id: string }) => {
-      const currentIdRef = React.useRef(id);
-      currentIdRef.current = id;
-      const getSnapshot = React.useCallback(
-        () => mockState.sessionMessages.get(id) ?? EMPTY_MESSAGES,
-        [id],
-      );
-      const subscribe = React.useCallback(
-        (listener: () => void) => {
-          const listeners = getListeners(id);
-          listeners.add(listener);
-          return () => {
-            listeners.delete(listener);
-          };
-        },
-        [id],
-      );
-      const messages = React.useSyncExternalStore(
-        subscribe,
-        getSnapshot,
-        getSnapshot,
-      );
-      const setMessages = React.useCallback(
-        (updater: any[] | ((messages: any[]) => any[])) => {
-          const activeId = currentIdRef.current;
-          const previousMessages =
-            mockState.sessionMessages.get(activeId) ?? [];
-          const nextMessages =
-            typeof updater === "function" ? updater(previousMessages) : updater;
-          mockState.sessionMessages.set(activeId, nextMessages);
-          for (const listener of getListeners(activeId)) {
-            listener();
-          }
-        },
-        [],
-      );
+    useChat: vi.fn(
+      ({ id, onFinish }: { id: string; onFinish?: (event: any) => void }) => {
+        mockState.onFinish = onFinish ?? null;
+        const currentIdRef = React.useRef(id);
+        currentIdRef.current = id;
+        const getSnapshot = React.useCallback(
+          () => mockState.sessionMessages.get(id) ?? EMPTY_MESSAGES,
+          [id],
+        );
+        const subscribe = React.useCallback(
+          (listener: () => void) => {
+            const listeners = getListeners(id);
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+          [id],
+        );
+        const messages = React.useSyncExternalStore(
+          subscribe,
+          getSnapshot,
+          getSnapshot,
+        );
+        const setMessages = React.useCallback(
+          (updater: any[] | ((messages: any[]) => any[])) => {
+            const activeId = currentIdRef.current;
+            const previousMessages =
+              mockState.sessionMessages.get(activeId) ?? [];
+            const nextMessages =
+              typeof updater === "function"
+                ? updater(previousMessages)
+                : updater;
+            mockState.sessionMessages.set(activeId, nextMessages);
+            for (const listener of getListeners(activeId)) {
+              listener();
+            }
+          },
+          [],
+        );
 
-      // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
-      // `chatRef.current.sendMessage`, a per-instance arrow property
-      // (`node_modules/ai/dist/index.mjs`) on a `Chat` that is recreated
-      // whenever `id` changes (`node_modules/@ai-sdk/react/dist/index.mjs`).
-      // A single identity-stable spy shared across ids would make it impossible
-      // to tell "sent on the branch" from "sent on the pre-branch instance" —
-      // the failure mode `rewindToMessage`'s `sendMessageRef` exists to prevent.
-      const sendMessage = React.useCallback(
-        (payload: any) => {
-          const sends = mockState.sendsBySession.get(id);
-          if (sends) {
-            sends.push(payload);
-          } else {
-            mockState.sendsBySession.set(id, [payload]);
-          }
-          return mockState.sendMessage({ sessionId: id, ...payload });
-        },
-        [id],
-      );
+        // Bound to THIS render's `id`, mirroring the real hook: `useChat` returns
+        // `chatRef.current.sendMessage`, a per-instance arrow property
+        // (`node_modules/ai/dist/index.mjs`) on a `Chat` that is recreated
+        // whenever `id` changes (`node_modules/@ai-sdk/react/dist/index.mjs`).
+        // A single identity-stable spy shared across ids would make it impossible
+        // to tell "sent on the branch" from "sent on the pre-branch instance" —
+        // the failure mode `rewindToMessage`'s `sendMessageRef` exists to prevent.
+        const sendMessage = React.useCallback(
+          (payload: any) => {
+            const sends = mockState.sendsBySession.get(id);
+            if (sends) {
+              sends.push(payload);
+            } else {
+              mockState.sendsBySession.set(id, [payload]);
+            }
+            return mockState.sendMessage({ sessionId: id, ...payload });
+          },
+          [id],
+        );
 
-      return {
-        messages,
-        sendMessage,
-        stop: mockState.stop,
-        status: mockState.status,
-        error: undefined,
-        setMessages,
-        addToolApprovalResponse: mockState.addToolApprovalResponse,
-      };
-    }),
+        return {
+          messages,
+          sendMessage,
+          stop: mockState.stop,
+          status: mockState.status,
+          error: undefined,
+          setMessages,
+          addToolApprovalResponse: mockState.addToolApprovalResponse,
+        };
+      },
+    ),
   };
 });
 
@@ -252,7 +258,38 @@ describe("useChatSession fork preservation", () => {
     mockState.sendsBySession.clear();
     mockState.nextSessionNumber = 1;
     mockState.lastTransportOptions = null;
+    mockState.onFinish = null;
     mockState.status = "ready";
+  });
+
+  it("timestamps a completed assistant without dropping its metadata", async () => {
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const assistant = {
+      id: "assistant-complete",
+      role: "assistant",
+      parts: [{ type: "text", text: "done" }],
+      metadata: { totalTokens: 12 },
+    } as any;
+
+    act(() => result.current.setMessages([assistant]));
+    act(() => {
+      mockState.onFinish?.({ isAbort: false, message: assistant });
+    });
+
+    await waitFor(() => {
+      expect(result.current.messages[0]?.metadata).toMatchObject({
+        totalTokens: 12,
+        timestampMs: expect.any(Number),
+      });
+    });
   });
 
   it("preserves trimmed messages across a fork and updates the hosted transport body", async () => {
@@ -660,10 +697,11 @@ describe("useChatSession fork preservation", () => {
     // loaded messages. The default mock returns [], which would mask the fix
     // because pickTranscriptForLiveTracePreview would have nothing to pick.
     const { convertToModelMessages } = await import("ai");
-    vi.mocked(convertToModelMessages).mockImplementation(async (messages) =>
-      // Pass-through: the rehydrated UIMessages already carry tool-call /
-      // tool-result parts in the shape extractToolData expects.
-      (messages ?? []) as any,
+    vi.mocked(convertToModelMessages).mockImplementation(
+      async (messages) =>
+        // Pass-through: the rehydrated UIMessages already carry tool-call /
+        // tool-result parts in the shape extractToolData expects.
+        (messages ?? []) as any,
     );
 
     const { result } = renderHook(() =>
@@ -696,6 +734,13 @@ describe("useChatSession fork preservation", () => {
       expect(result.current.chatSessionId).toBe("restored-with-tools");
       expect(result.current.messages.length).toBeGreaterThan(0);
     });
+    expect(result.current.messages[0]?.metadata).toMatchObject({
+      timestampMs: 1000,
+    });
+    expect(
+      result.current.messages.find((message) => message.role === "assistant")
+        ?.metadata,
+    ).toMatchObject({ timestampMs: 2000 });
 
     // Trace envelope picks up the rehydrated UI transcript, so timeline lookups
     // by toolCallId hit the tool-call/tool-result parts instead of an empty
@@ -841,12 +886,16 @@ describe("useChatSession fork preservation", () => {
     // carry the branch id with the original history and the response would
     // stream into a store nothing renders.
     expect(mockState.sendsBySession.get(branchChatSessionId)).toEqual([
-      { text: "second, rephrased" },
+      {
+        text: "second, rephrased",
+        metadata: { timestampMs: expect.any(Number) },
+      },
     ]);
     expect(mockState.sendsBySession.has(initialChatSessionId)).toBe(false);
     expect(mockState.sendMessage).toHaveBeenCalledWith({
       sessionId: branchChatSessionId,
       text: "second, rephrased",
+      metadata: { timestampMs: expect.any(Number) },
     });
 
     // The feature's central claim: the original session's transcript is intact.
@@ -982,6 +1031,7 @@ describe("useChatSession fork preservation", () => {
     expect(mockState.sendMessage).toHaveBeenCalledWith({
       sessionId: result.current.chatSessionId,
       text: "retry after failure",
+      metadata: { timestampMs: expect.any(Number) },
     });
   });
 
@@ -1069,6 +1119,130 @@ describe("useChatSession fork preservation", () => {
     expect(outcome).toBeNull();
     expect(result.current.chatSessionId).toBe(initialChatSessionId);
     expect(mockState.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it("detachToLocalFork points subsequent sends at the NEW session, not the detached one", async () => {
+    // The exact production failure this exists to stop: the detach path used to
+    // fire-and-forget `startChatWithMessages`, and post-detach turns kept
+    // writing to the OLD chatSessionId — which is how they reached the ingest
+    // replay heuristic on the old row and got silently dropped.
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+    const detachedChatSessionId = result.current.chatSessionId;
+
+    const user = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    } as any;
+    const assistant = {
+      id: "assistant-1",
+      role: "assistant",
+      parts: [{ type: "text", text: "reply" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([user, assistant]);
+      result.current.syncResumedVersion(7);
+    });
+
+    let bodyAtSend: Record<string, unknown> | undefined;
+    mockState.sendMessage.mockImplementation(() => {
+      bodyAtSend = mockState.lastTransportOptions.body();
+    });
+
+    // Not wrapped in `act(async () => ...)` — resolution rides a
+    // `useLayoutEffect` after commit, which an enclosing async act() would
+    // defer until its own promise settles. See the rewind tests above.
+    const fork = await result.current.detachToLocalFork([user, assistant]);
+
+    expect(fork).not.toBeNull();
+    expect(fork!.chatSessionId).not.toBe(detachedChatSessionId);
+    expect(result.current.chatSessionId).toBe(fork!.chatSessionId);
+    // The transcript rides across so the user keeps seeing their conversation.
+    expect(result.current.messages).toEqual([user, assistant]);
+    // The fork's hydration drops the guard, so its first ingest carries no
+    // expectedVersion against a row it has never written to.
+    expect(result.current.resumedVersion).toBeNull();
+
+    await act(async () => {
+      await result.current.sendMessage({ text: "after the detach" });
+    });
+
+    expect(bodyAtSend).toMatchObject({ chatSessionId: fork!.chatSessionId });
+    // Says WHICH Chat instance ran the send — a stale instance would post the
+    // detached session's own store. The transport body alone cannot show this.
+    expect(mockState.sendsBySession.has(detachedChatSessionId)).toBe(false);
+    expect(mockState.sendsBySession.get(fork!.chatSessionId)).toEqual([
+      {
+        text: "after the detach",
+        metadata: { timestampMs: expect.any(Number) },
+      },
+    ]);
+  });
+
+  it("detachToLocalFork returns null and leaves the interloper's resumedVersion alone", async () => {
+    // A superseded hydration resolves the same promise as a committed one, so
+    // resolution is not proof. When a history-thread load wins the race the
+    // live session is now that thread — clearing ITS optimistic-concurrency
+    // guard would let the next send clobber whatever another tab wrote.
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: "restored-user", role: "user", content: "restored question" },
+          ]),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { result } = renderHook(() =>
+      useChatSession({
+        selectedServers: [],
+        hostedContext: {
+          projectId: "project-1",
+          selectedServerIds: [],
+        },
+      }),
+    );
+
+    const user = {
+      id: "user-1",
+      role: "user",
+      parts: [{ type: "text", text: "hello" }],
+    } as any;
+
+    act(() => {
+      result.current.setMessages([user]);
+    });
+
+    let fork: { chatSessionId: string } | null = null;
+    const detachPromise = result.current.detachToLocalFork([user]).then((r) => {
+      fork = r;
+    });
+    void result.current.loadChatSession({
+      chatSessionId: "restored-session",
+      messagesBlobUrl: "https://storage.test/detach-race.json",
+      version: 7,
+    });
+    await detachPromise;
+
+    await waitFor(() => {
+      expect(result.current.chatSessionId).toBe("restored-session");
+    });
+
+    expect(fork).toBeNull();
+    // Not null: the detach must not tear down the guard belonging to the
+    // session that actually went live.
+    expect(result.current.resumedVersion).toBe(7);
   });
 
   it("refuses to send when a concurrent session switch wins the race", async () => {

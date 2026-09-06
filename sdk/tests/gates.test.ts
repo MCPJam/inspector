@@ -20,6 +20,7 @@ import {
   formatGateReport,
   gateInputFromPlatformRun,
   gateInputFromRunResult,
+  gateOutcomeVerdict,
   passRateFractionFromPercent,
   type GateInput,
   type GatePolicy,
@@ -587,6 +588,118 @@ describe("adapters", () => {
     ).toBe("passed");
   });
 
+  it("refuses to gate a scorerId two cases configured DIFFERENTLY", () => {
+    // Merging across cases can put one id on two definitions — the same judge
+    // graded at 0.7 in one case and 0.9 in another. Resolving to whichever
+    // landed last would grade this run against a threshold nobody chose, and
+    // pooling both cases' rows into one rate is a number with no meaning.
+    const strict: ScoreDefinition = { ...JUDGE, passThreshold: 0.9 };
+    const caseFor = (definition: ScoreDefinition) => ({
+      iterations: 1,
+      successes: 1,
+      failures: 0,
+      results: [true],
+      iterationDetails: [
+        {
+          passed: true,
+          latencies: [],
+          tokens: { total: 1, input: 0, output: 1 },
+          scores: [
+            {
+              ...score("tone", { value: 0.95 }),
+              definitionHash: definitionHash(
+                resolveScoreDefinition(definition)
+              ),
+            },
+          ],
+        },
+      ],
+      tokenUsage: { total: 1, input: 0, output: 1, perIteration: [] },
+      latency: {
+        e2e: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        llm: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        mcp: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 1 },
+        perIteration: [],
+      },
+      evaluationConfig: buildEvaluationConfigSnapshot([definition]),
+    });
+
+    const built = gateInputFromSuiteResult({
+      tests: new Map([
+        ["a", caseFor(JUDGE)],
+        ["b", caseFor(strict)],
+      ]),
+      aggregate: {
+        iterations: 2,
+        successes: 2,
+        failures: 0,
+        accuracy: 1,
+        tokenUsage: { total: 2, perTest: [1, 1] },
+        latency: {
+          e2e: { min: 0, max: 0, mean: 0, p50: 0, p95: 3, count: 2 },
+          llm: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 2 },
+          mcp: { min: 0, max: 0, mean: 0, p50: 0, p95: 0, count: 2 },
+        },
+      },
+    } as never);
+
+    // Both survive the merge — they are genuinely different definitions.
+    expect(built.evaluationConfig?.definitions).toHaveLength(2);
+
+    const report = evaluateGates(built, { minimumScorerPassRate: { tone: 1 } });
+    // A usage error, not `non_gateable`: nothing is missing or unverified, and
+    // the fix is the author's.
+    expect(report.outcome).toBe("usage_error");
+    expect(report.verdicts[0].message).toMatch(/2 different definitions/);
+
+    // …and the same ambiguity blocks a mean-score gate.
+    expect(
+      evaluateGates(built, { minimumMeanScore: { tone: 0.5 } }).outcome
+    ).toBe("usage_error");
+  });
+
+  it("grades a scorer only on rows minted under ITS definition", () => {
+    // A row carrying a known id but an unknown hash came from a different
+    // configuration. Averaging it in would grade this run partly on another
+    // one's evidence; it drops out, and a gate left with nothing says so.
+    const stale = { ...score("refund", { passed: false, value: 0 }), definitionHash: "0".repeat(64) };
+    expect(
+      evaluateGates(input({ scores: [score("refund"), stale] }), {
+        minimumScorerPassRate: { refund: 1 },
+      }).outcome
+    ).toBe("passed");
+    expect(
+      evaluateGates(input({ scores: [stale] }), {
+        minimumScorerPassRate: { refund: 1 },
+      }).outcome
+    ).toBe("incomplete");
+  });
+
+  it("has no token total for an EMPTY iteration page, complete or not", () => {
+    // `every` on an empty array is `true`: an empty-but-complete page would
+    // otherwise sum to zero tokens and pass every cap ever written.
+    const built = gateInputFromPlatformRun(
+      {
+        id: "run_1",
+        suiteId: "s",
+        runNumber: 1,
+        status: "completed",
+        result: "passed",
+        summary: { total: 0, passed: 0 },
+        source: "sdk",
+        notes: null,
+        createdAt: 0,
+        completedAt: 1,
+        scoreIntegrity: "valid",
+      },
+      { complete: true, items: [] }
+    );
+    expect(built.totals?.tokens).toBeUndefined();
+    expect(
+      evaluateGates(built, { maximumTotalTokens: 1 }).outcome
+    ).toBe("incomplete");
+  });
+
   it("drops the token total when ANY iteration lacks one", () => {
     const iteration = (tokensUsed: number | null) => ({
       id: "i",
@@ -681,6 +794,22 @@ describe("assertGate", () => {
   });
 });
 
+describe("gateOutcomeVerdict", () => {
+  it("maps incomplete to inconclusive, never to failed", () => {
+    // The case this guards: a renderer with no explicit verdict falls back
+    // to reading `passed` (false for every non-"passed" outcome), which
+    // would paint an unmeasured gate — a --wait timeout, a cancelled run,
+    // non-gateable score integrity — the same red as a measured regression.
+    expect(gateOutcomeVerdict("incomplete")).toBe("inconclusive");
+  });
+
+  it("maps passed to passed and failed/usage_error to failed", () => {
+    expect(gateOutcomeVerdict("passed")).toBe("passed");
+    expect(gateOutcomeVerdict("failed")).toBe("failed");
+    expect(gateOutcomeVerdict("usage_error")).toBe("failed");
+  });
+});
+
 describe("formatGateReport", () => {
   it("names the outcome and the integrity state", () => {
     const text = formatGateReport(
@@ -716,7 +845,7 @@ describe("evaluateGates — comparative fields fail closed", () => {
       const verdict = report.verdicts.find((row) => row.gate === label);
       expect(verdict?.status).toBe("usage_error");
       // Points at the surface that CAN answer it.
-      expect(verdict?.message).toContain("mcpjam eval compare");
+      expect(verdict?.message).toContain("mcpjam cloud eval compare");
     }
   );
 

@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createWebTestApp, expectJson } from "./helpers/test-app.js";
+import { resolveUserByExternalId } from "../../../services/identity.js";
+import {
+  createWorkosKeyBinding,
+  removeWorkosKeyBinding,
+  WorkosKeyBindingError,
+} from "../../../services/workos-key-bindings.js";
 
 // The session bearer is verified in-route (resolveSessionContext); stub it to
 // a fixed WorkOS user so tests exercise the WorkOS REST flow, not JWT crypto.
@@ -106,6 +112,11 @@ describe("web routes — API key revoke ownership", () => {
 
   beforeEach(() => {
     vi.stubEnv("WORKOS_API_KEY", "sk_test_admin");
+    vi.mocked(removeWorkosKeyBinding).mockClear();
+    vi.mocked(removeWorkosKeyBinding).mockResolvedValue(undefined);
+    vi.mocked(resolveUserByExternalId).mockResolvedValue({
+      _id: "mcpjam_user_1",
+    } as Awaited<ReturnType<typeof resolveUserByExternalId>>);
   });
 
   afterEach(() => {
@@ -174,6 +185,55 @@ describe("web routes — API key revoke ownership", () => {
       message: "Could not verify API key ownership",
     });
     expect(deleted).toEqual([]);
+  });
+
+  it("names the revoking user on the binding delete", async () => {
+    stubWorkOS([{ data: [keyRecord(OWNED_KEY_ID)] }]);
+
+    const { status } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
+
+    expect(status).toBe(200);
+    // The MCPJam user id, not the WorkOS `sub` — the backend validates it as a
+    // Convex document id and 400s the other one.
+    expect(removeWorkosKeyBinding).toHaveBeenCalledWith(
+      OWNED_KEY_ID,
+      "mcpjam_user_1",
+    );
+  });
+
+  it("still revokes, unattributed, when the caller has no MCPJam user row", async () => {
+    vi.mocked(resolveUserByExternalId).mockResolvedValue(
+      null as Awaited<ReturnType<typeof resolveUserByExternalId>>,
+    );
+    const { deleted } = stubWorkOS([{ data: [keyRecord(OWNED_KEY_ID)] }]);
+
+    const { status } = await expectJson(await deleteKey(app, OWNED_KEY_ID));
+
+    // The key is gone either way; an unresolvable actor costs attribution, not
+    // the revoke.
+    expect(status).toBe(200);
+    expect(deleted).toEqual([OWNED_KEY_ID]);
+    expect(removeWorkosKeyBinding).toHaveBeenCalledWith(
+      OWNED_KEY_ID,
+      undefined,
+    );
+  });
+
+  it("keeps the revoke successful when the binding delete is refused", async () => {
+    vi.mocked(removeWorkosKeyBinding).mockRejectedValue(
+      new WorkosKeyBindingError(403, "Binding remove failed (403)"),
+    );
+    const { deleted } = stubWorkOS([{ data: [keyRecord(OWNED_KEY_ID)] }]);
+
+    const { status, data } = await expectJson(
+      await deleteKey(app, OWNED_KEY_ID),
+    );
+
+    // The WorkOS key is already destroyed by this point. Failing the response
+    // would tell the user a revoke did not happen when it did.
+    expect(status).toBe(200);
+    expect(data).toEqual({ ok: true });
+    expect(deleted).toEqual([OWNED_KEY_ID]);
   });
 });
 
@@ -289,6 +349,42 @@ describe("web routes — API key mint readiness", () => {
 
     expect(status).toBe(404);
     expect(data).toMatchObject({ code: "NOT_FOUND" });
+  });
+
+  it("409s when the key id is already bound to a different organization", async () => {
+    mockResolveApiKeyReadiness.mockResolvedValue({
+      ready: true,
+      workosOrganizationId: "org_workos_1",
+    });
+    vi.mocked(createWorkosKeyBinding).mockRejectedValueOnce(
+      new WorkosKeyBindingError(
+        409,
+        "This API key is already bound to a different organization",
+      ),
+    );
+    const deleted: string[] = [];
+    const fetchMock = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = new URL(String(input));
+      if (init?.method === "POST" && url.pathname === USER_KEYS_PATH) {
+        return workosJson(keyRecord("api_key_new"));
+      }
+      if (init?.method === "DELETE" && url.pathname.startsWith("/api_keys/")) {
+        deleted.push(
+          decodeURIComponent(url.pathname.slice("/api_keys/".length)),
+        );
+        return new Response(null, { status: 204 });
+      }
+      return workosJson({ message: "unexpected WorkOS call" }, 500);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { status, data } = await expectJson(await mintKey(app));
+
+    // A conflict, not a 502: the backend was reachable and answered clearly.
+    expect(status).toBe(409);
+    expect(data).toMatchObject({ code: "CONFLICT" });
+    // And the just-minted WorkOS key is destroyed, so no unbindable key lives on.
+    expect(deleted).toEqual(["api_key_new"]);
   });
 
   it("400s when the readiness check reports malformed ids", async () => {

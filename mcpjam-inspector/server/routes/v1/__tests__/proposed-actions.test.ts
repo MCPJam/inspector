@@ -80,6 +80,7 @@ import { gatedEntryFor } from "../agent-op-registry.js";
 import { resetSlackRateLimitForTests } from "../../../middleware/slack-service-auth.js";
 import { IDEMPOTENCY_KEY_HEADER } from "../../../utils/idempotency.js";
 import {
+  installRegistryDirectoryServerOperation,
   runEvalSuiteOperation,
   type PlatformApiClient,
 } from "@mcpjam/sdk/platform";
@@ -312,6 +313,92 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     );
   });
 
+  it("carries an install proposal's PINS through to the operation's execute", async () => {
+    // The mutation-side rejection lives in the backend; what this route owes
+    // the freeze is that the persisted pins reach `operation.execute` intact,
+    // so the backend has something to check.
+    const pinnedInput = {
+      catalogServerId: "cs_1",
+      endpointUrl: "https://mcp.linear.app/mcp",
+      expectedContentHash: "hash_at_propose",
+    };
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: { ...pinnedInput, project: "p1" },
+      })
+    );
+    beginProposedActionMock.mockResolvedValue({
+      ok: true,
+      operation: installRegistryDirectoryServerOperation.name,
+      input: pinnedInput,
+      organizationId: "org_1",
+      projectId: "p1",
+      teamId: "T1",
+    });
+    const executeSpy = vi
+      .spyOn(installRegistryDirectoryServerOperation, "execute")
+      .mockResolvedValue({
+        serverId: "srv_1",
+        serverName: "linear",
+        outcome: "created",
+      } as never);
+
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(200);
+    expect(executeSpy).toHaveBeenCalledWith(
+      {
+        catalogServerId: "cs_1",
+        endpointUrl: "https://mcp.linear.app/mcp",
+        expectedContentHash: "hash_at_propose",
+        project: "p1",
+      },
+      expect.anything()
+    );
+  });
+
+  it("refuses an install whose stored input is missing its pins", async () => {
+    // Defense in depth behind the mint-time refusal: a row minted before the
+    // `requiredFrozenKeys` contract — or a tampered one — must not execute,
+    // because the click would install whatever the registry resolves to NOW
+    // rather than what the approver saw. Retired as failed, never released:
+    // the row is permanently invalid and a release would hand the same broken
+    // button to the next click.
+    getProposedActionMock.mockResolvedValue(
+      storedProposal({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: { catalogServerId: "cs_1", project: "p1" },
+      })
+    );
+    beginProposedActionMock.mockResolvedValue({
+      ok: true,
+      operation: installRegistryDirectoryServerOperation.name,
+      input: { catalogServerId: "cs_1" },
+      organizationId: "org_1",
+      projectId: "p1",
+      teamId: "T1",
+    });
+    const executeSpy = vi.spyOn(
+      installRegistryDirectoryServerOperation,
+      "execute"
+    );
+
+    const res = await executeRequest(makeApp());
+    expect(res.status).toBe(400);
+    await expect(res.json()).resolves.toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(completeProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actionId: "act_1",
+        status: "failed",
+        failureReason: expect.stringContaining("pins"),
+      })
+    );
+    expect(releaseProposedActionMock).not.toHaveBeenCalled();
+  });
+
   it("stamps `proposal:<actionId>:<operation>` as the inner idempotency key", async () => {
     // A redelivered click, or a retry after this process died mid-execution,
     // presents the same key and lands on the same run rather than a second one.
@@ -503,10 +590,15 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
     // builder reaching the operation's catch would re-record it `failed` and
     // answer 500 — telling the user their approved action did not happen, and
     // leaving the lifecycle row contradicting itself over a formatting helper.
-    const entry = gatedEntryFor(runEvalSuiteOperation.name)!;
-    const original = entry.proposal.resource;
-    entry.proposal.resource = () => {
-      throw new Error("bad link");
+    // Aimed at the OPERATION's permalink policy, which is where link
+    // derivation lives now — the registry no longer keeps a builder of its
+    // own. A policy that throws must cost the link and nothing else.
+    const original = runEvalSuiteOperation.permalink;
+    (runEvalSuiteOperation as { permalink: unknown }).permalink = {
+      kind: "derive",
+      resources: () => {
+        throw new Error("bad link");
+      },
     };
     try {
       vi.spyOn(runEvalSuiteOperation, "execute").mockResolvedValue({
@@ -515,7 +607,10 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
       } as never);
       const res = await executeRequest(makeApp());
       expect(res.status).toBe(200);
-      await expect(res.json()).resolves.toMatchObject({ status: "succeeded" });
+      const body = (await res.json()) as Record<string, unknown>;
+      expect(body).toMatchObject({ status: "succeeded" });
+      // The link is what was lost, and only the link.
+      expect(body).not.toHaveProperty("resource");
       expect(completeProposedActionMock).toHaveBeenCalledWith(
         expect.objectContaining({ status: "succeeded" })
       );
@@ -523,7 +618,7 @@ describe("POST /api/v1/projects/:projectId/proposed-actions/:actionId/execute", 
         expect.objectContaining({ status: "failed" })
       );
     } finally {
-      entry.proposal.resource = original;
+      (runEvalSuiteOperation as { permalink: unknown }).permalink = original;
     }
   });
 

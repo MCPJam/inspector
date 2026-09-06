@@ -26,6 +26,7 @@ import { createAuthorizedManager } from "../routes/web/auth.js";
 import {
   prepareEvalRun,
   type PreparedEvalRun,
+  shouldSkipExecution,
 } from "../routes/shared/evals.js";
 import { fetchSuiteRunServerSelection } from "../routes/v1/evals.js";
 import { createConvexClient } from "./evals/route-helpers.js";
@@ -261,6 +262,19 @@ export async function executeClaimedRun(
         triggerId: claimed.triggerId,
         ok: false,
         failureReason: classifyFailure(error),
+      });
+      return;
+    }
+
+    // The trigger id IS this run's idempotency key, so a redelivered trigger
+    // replays the run it already started. If that run has finished, there is
+    // nothing left to do — executing would re-run the suite and bill the
+    // organization a second time for a scheduled run it only asked for once.
+    if (shouldSkipExecution(prepared)) {
+      logger.info("[scheduled-evals] trigger already ran — not re-executing", {
+        ...logContext,
+        runId: prepared.runId,
+        status: prepared.status,
       });
       return;
     }

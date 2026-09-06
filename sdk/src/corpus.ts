@@ -440,6 +440,10 @@ export function evalTestFromPlatformCase(
   }
 
   const config: EvalTestConfig = {
+    // The hosted case's own id IS this case's declared identity — a
+    // materialized case was already id-bearing in spirit, and minting a fresh
+    // one here would give the same case two identities.
+    id: evalCase.id,
     name: options.name ?? evalCase.title,
     test: async (executor: HostExecutor) => {
       for (const prompt of prompts) {
@@ -455,6 +459,9 @@ export function evalTestFromPlatformCase(
     ...(evalCase.expectedOutput !== undefined
       ? { expectedOutput: evalCase.expectedOutput }
       : {}),
+    // Intent is analytics metadata, not semantic case content, but the local
+    // EvalTest must still carry the hosted label onto its reported iterations.
+    ...(evalCase.intent !== undefined ? { intent: evalCase.intent } : {}),
     // Identity ALWAYS rides here, never on the display name.
     externalCaseId: evalCase.id,
   };

@@ -10,7 +10,7 @@
  * Reads only pure data modules on purpose (see `app-routes.ts`).
  */
 import { describe, expect, it } from "vitest";
-import { APP_ROUTES } from "../app-routes";
+import { APP_ROUTES, getAppRouteScope, matchAppRoute } from "../app-routes";
 import {
   APP_SURFACES,
   buildAppAtlas,
@@ -24,10 +24,7 @@ import {
   parseOrganizationSection,
   routePaths,
 } from "../app-navigation";
-import {
-  HOSTED_HASH_ALLOWED_TABS,
-  HOSTED_HASH_BLOCKED_TABS,
-} from "../hosted-tab-policy";
+import { HOSTED_HASH_BLOCKED_TABS } from "../hosted-tab-policy";
 
 const screenRoutes = APP_ROUTES.filter((r) => r.kind === "screen");
 
@@ -155,23 +152,26 @@ describe("surface manifests are model-usable", () => {
 });
 
 describe("hosted tab policy stays consistent with the manifests", () => {
-  it("every hosted policy entry names a real nav segment", () => {
+  it("names a real nav segment for every blocked tab", () => {
     // The policy filters segments; it must not name one that no longer
-    // exists, or it silently stops filtering anything.
+    // exists, or it silently stops filtering anything. This holds by
+    // construction now that the list is derived — the test guards the
+    // derivation, not a hand-kept copy of it.
     const segments = new Set(listAppSurfaceNavSegments());
-    for (const tab of [
-      ...HOSTED_HASH_ALLOWED_TABS,
-      ...HOSTED_HASH_BLOCKED_TABS,
-    ]) {
+    for (const tab of HOSTED_HASH_BLOCKED_TABS) {
       expect(segments.has(tab), `policy tab "${tab}"`).toBe(true);
     }
   });
 
-  it("hostedBlocked manifests match the blocked policy list exactly", () => {
-    const blockedByManifest = APP_SURFACES.filter((s) => s.hostedBlocked)
-      .flatMap((s) => s.navSegments)
-      .sort();
-    expect(blockedByManifest).toEqual([...HOSTED_HASH_BLOCKED_TABS].sort());
+  it("blocks hosted surfaces sparingly", () => {
+    // A growing block list means screens are being written that hosted
+    // cannot serve — worth noticing deliberately rather than by drift.
+    //
+    // `webmcp` came OFF this list: it used to drive a browser on the machine
+    // running the inspector, which a hosted replica cannot do, but a hosted
+    // session drives one on the member's own computer instead. Its visibility
+    // is a feature flag now, not a deployment fact.
+    expect(HOSTED_HASH_BLOCKED_TABS).toEqual(["tracing"]);
   });
 });
 
@@ -197,7 +197,9 @@ describe("buildAppAtlas", () => {
   });
 
   it("is stable across calls (it lives in the cacheable prefix)", () => {
-    expect(buildAppAtlas({ hosted: true })).toBe(buildAppAtlas({ hosted: true }));
+    expect(buildAppAtlas({ hosted: true })).toBe(
+      buildAppAtlas({ hosted: true }),
+    );
   });
 
   it("stays a reasonable size for a system prompt", () => {
@@ -213,5 +215,122 @@ describe("getAppSurface", () => {
     expect(isAppSurfaceId("playground")).toBe(true);
     expect(isAppSurfaceId("nope")).toBe(false);
     expect(isAppSurfaceId(undefined)).toBe(false);
+  });
+});
+
+describe("route scope ↔ surface scope", () => {
+  // The failure this catches: a screen route registered as project-owned
+  // while its manifest says global (or the reverse). The route table decides
+  // where the screen MOUNTS and the manifest decides what agent navigation
+  // and the atlas believe about it; if those disagree, `ui_navigate` sends
+  // the model to a URL the router will not render.
+  it("every screen route agrees with its surface", () => {
+    for (const route of screenRoutes) {
+      const surface = getAppSurface(route.surfaceId);
+      expect(
+        surface?.scope,
+        `route "${route.path}" is ${route.scope}, surface "${route.surfaceId}" is ${surface?.scope}`,
+      ).toBe(route.scope);
+    }
+  });
+
+  it("keeps every manifest path LOGICAL — no literal :projectId", () => {
+    // A concrete project id in a manifest would be unusable: these strings
+    // are what agent navigation and the atlas hand around, and the project is
+    // resolved per viewer at navigation time.
+    for (const surface of APP_SURFACES) {
+      expect(surface.canonicalPath, surface.id).not.toContain(":projectId");
+      expect(surface.canonicalPath, surface.id).not.toMatch(/^\/p\//);
+      for (const pattern of surface.routePatterns) {
+        expect(pattern, surface.id).not.toContain(":projectId");
+      }
+    }
+  });
+
+  it("classifies the surfaces this migration had to decide on", () => {
+    // Spot-checked rather than left to the sweep: each of these reads or
+    // mutates project-owned data despite a generic-sounding name, and getting
+    // one wrong strands a screen outside its project (or prefixes a global
+    // one with a project it must not have).
+    expect(getAppSurface("sessions")?.scope).toBe("project");
+    expect(getAppSurface("registry")?.scope).toBe("project");
+    expect(getAppSurface("computer")?.scope).toBe("project");
+    expect(getAppSurface("tracing")?.scope).toBe("project");
+    expect(getAppSurface("oauth-flow")?.scope).toBe("project");
+    expect(getAppSurface("project-environments")?.scope).toBe("project");
+    // Reclassified by that audit: Learning reads the active project to launch
+    // a lesson's agent session into it, so it is project-owned despite
+    // reading like a docs page.
+    expect(getAppSurface("learning")?.scope).toBe("project");
+    // Global: account-level or organization-level, never a project.
+    expect(getAppSurface("settings")?.scope).toBe("global");
+    expect(getAppSurface("organizations")?.scope).toBe("global");
+    expect(getAppSurface("profile")?.scope).toBe("global");
+    // Compare stays global even though it can overlay the active project's
+    // hosts: one surface, one scope, and this surface also owns the PUBLIC
+    // capability pages (`/capabilities/:slug`) and the chrome-less embed. It
+    // degrades to the preset-only view with no project.
+    expect(getAppSurface("host-compare")?.scope).toBe("global");
+    expect(getAppSurface("support")?.scope).toBe("global");
+  });
+
+  it("keeps share tokens, embeds and callbacks out of project scope", () => {
+    // These are read by people with no session at all. A project prefix on
+    // one would be an authorization change dressed as a URL change.
+    for (const path of [
+      "evals/shared/:token",
+      "conformance/shared/:token",
+      "results/:runToken",
+      "embed/score",
+      "embed/host-compare",
+      "callback",
+      "oauth/callback/*",
+      "login",
+    ]) {
+      const route = APP_ROUTES.find((r) => r.path === path);
+      expect(route?.scope, path).toBe("public");
+    }
+  });
+});
+
+describe("matchAppRoute", () => {
+  it("prefers a static segment over a param", () => {
+    // Same specificity order the router uses: `/user-testing/new` is its own
+    // screen, not a scenario whose id happens to be "new".
+    expect(matchAppRoute("/user-testing/new")?.path).toBe("user-testing/new");
+    expect(matchAppRoute("/user-testing/s_1")?.path).toBe(
+      "user-testing/:scenarioId",
+    );
+  });
+
+  it("matches splat sub-trees", () => {
+    expect(matchAppRoute("/ci-evals/suite/s1/runs/r1")?.path).toBe(
+      "ci-evals/*",
+    );
+    expect(matchAppRoute("/oauth/callback/debug")?.path).toBe(
+      "oauth/callback/*",
+    );
+  });
+
+  it("returns null rather than the catch-all for an unknown path", () => {
+    // "No route" and "the not-found route" are different answers: navigation
+    // must not prefix an unregistered path with a project.
+    expect(matchAppRoute("/nope/nothing/here")).toBeNull();
+    expect(getAppRouteScope("/nope")).toBeNull();
+  });
+
+  it("answers the scope of the paths navigation actually asks about", () => {
+    expect(getAppRouteScope("/")).toBe("project");
+    expect(getAppRouteScope("/servers")).toBe("project");
+    expect(getAppRouteScope("/evals/suite/s1/runs/r1")).toBe("project");
+    expect(getAppRouteScope("/settings/api-keys")).toBe("global");
+    expect(getAppRouteScope("/evals/shared/tok")).toBe("public");
+  });
+
+  it("normalizes empty segments away rather than inventing a param match", () => {
+    // A stray or trailing slash is the same route, not a host whose id is "".
+    expect(matchAppRoute("/hosts//")?.path).toBe("hosts");
+    expect(matchAppRoute("/hosts/")?.path).toBe("hosts");
+    expect(matchAppRoute("/")?.path).toBe("/");
   });
 });

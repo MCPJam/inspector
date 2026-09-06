@@ -5,6 +5,7 @@ import {
   type MouseEvent as ReactMouseEvent,
 } from "react";
 import { toast } from "@/lib/toast";
+import { toastServerConnectionFailure } from "@/lib/server-error-toast";
 import { Card } from "@mcpjam/design-system/card";
 import { Button } from "@mcpjam/design-system/button";
 import { Separator } from "@mcpjam/design-system/separator";
@@ -39,6 +40,7 @@ import {
   AlertCircle,
   FileText,
   FolderInput,
+  Building2,
 } from "lucide-react";
 import { ServerWithName } from "@/hooks/use-app-state";
 import { exportServerApi } from "@/lib/apis/mcp-export-api";
@@ -70,10 +72,11 @@ import {
 } from "@/lib/apis/mcp-tunnels-api";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useConvexAuth } from "convex/react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
 import { HOSTED_MODE } from "@/lib/config";
 import { useExploreCasesPrefetchOnConnect } from "@/hooks/use-explore-cases-prefetch-on-connect";
 import { getOAuthTraceFailureStep } from "@/lib/oauth/oauth-trace";
-import { HostCompatStrip } from "@/components/compat/HostCompatStrip";
+import { ClientSupportPill } from "@/components/compat/ClientSupportPill";
 
 function isHostedInsecureHttpServer(server: ServerWithName): boolean {
   if (!HOSTED_MODE || !("url" in server.config) || !server.config.url) {
@@ -130,6 +133,15 @@ interface ServerConnectionCardProps {
   ) => void | Promise<void>;
   /** True while a move for this server is in flight. */
   isMovingToProject?: boolean;
+  /**
+   * Share this server on the organization's registry shelf. Injected the same
+   * way `onMoveToProject` is — the card knows the server, the parent owns the
+   * dialog and the mutation. When omitted (no organization, guest role, or a
+   * surface with no registry) the item is not rendered at all. Also hidden
+   * when the `registry-enabled` PostHog flag is off, even if a callback is
+   * provided — the flag is the rollout door, not the caller's permission.
+   */
+  onShareToOrgRegistry?: (server: ServerWithName) => void;
 }
 
 export function ServerConnectionCard({
@@ -145,8 +157,10 @@ export function ServerConnectionCard({
   moveTargets,
   onMoveToProject,
   isMovingToProject = false,
+  onShareToOrgRegistry,
 }: ServerConnectionCardProps) {
   useExploreCasesPrefetchOnConnect(projectId ?? null, server, hostedServerId);
+  const registryEnabled = useFeatureFlagEnabled("registry-enabled") === true;
 
   // A pinned protocol version the server doesn't offer is the one connect
   // failure with an exact, one-click fix, so the card offers it instead of
@@ -157,7 +171,7 @@ export function ServerConnectionCard({
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
   const isProtocolPinFailure = isProtocolVersionPinFailure(
     server.lastNormalizedError,
-    server.lastError,
+    server.lastError
   );
   const protocolPinAction = isProtocolPinFailure
     ? {
@@ -356,7 +370,7 @@ export function ServerConnectionCard({
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : "Unknown error";
-      toast.error(`Failed to reconnect to ${server.name}: ${errorMessage}`);
+      toastServerConnectionFailure(server.name, errorMessage);
     } finally {
       setIsReconnecting(false);
     }
@@ -821,6 +835,41 @@ export function ServerConnectionCard({
                         </DropdownMenuSubContent>
                       </DropdownMenuSub>
                     ) : null}
+                    {/*
+                      Remote HTTP only, and only while the registry rollout
+                      flag is on. An org entry carries an ADDRESS, and a
+                      stdio server's address is a command on one machine —
+                      there is nothing to share.
+                    */}
+                    {onShareToOrgRegistry &&
+                    registryEnabled &&
+                    server.config?.url ? (
+                      <DropdownMenuItem
+                        className="text-xs cursor-pointer"
+                        onClick={() => {
+                          track("share_server_to_org_registry_clicked", {
+                            location: "server_connection_card",
+                          });
+                          // Shown-then-refused rather than hidden. "Where did
+                          // the option go?" is a worse answer than a sentence
+                          // saying why, and the why is worth knowing: an org
+                          // entry deliberately carries no secret, and the
+                          // browser never holds these header values anyway —
+                          // a shared entry built from them would be broken as
+                          // well as unsafe.
+                          if (server.hasHeaders || server.hasBearerToken) {
+                            toast.error(
+                              "This server uses credentials that can't be shared. Organization entries carry only the address and how to sign in."
+                            );
+                            return;
+                          }
+                          onShareToOrgRegistry(server);
+                        }}
+                      >
+                        <Building2 className="h-3 w-3 mr-2" />
+                        Add to org registry
+                      </DropdownMenuItem>
+                    ) : null}
                     <Separator />
                     <DropdownMenuItem
                       className="text-destructive text-xs cursor-pointer"
@@ -863,7 +912,7 @@ export function ServerConnectionCard({
           {(isConnected || showTunnelActions) && (
             <div className="mt-3 flex items-center gap-2">
               {isConnected && (
-                <HostCompatStrip
+                <ClientSupportPill
                   server={server}
                   onOpenDetails={
                     isDetailModalEnabled

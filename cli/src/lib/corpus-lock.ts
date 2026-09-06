@@ -35,14 +35,14 @@
  * changed".
  */
 
-import { randomBytes } from "node:crypto";
-import { open, rename, unlink, writeFile } from "node:fs/promises";
+import { open } from "node:fs/promises";
 import path from "node:path";
 import {
   CORPUS_LOCK_VERSION,
   type CorpusDrift,
   type CorpusLock,
 } from "@mcpjam/sdk";
+import { writeFileAtomic } from "./atomic-write.js";
 import { CliError, cliError, normalizeCliError } from "./output.js";
 
 /** The conventional lock filename, resolved against the working directory. */
@@ -220,7 +220,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     if (isMissingFileError(error)) {
       throw incomplete(
         "CORPUS_LOCK_MISSING",
-        `No corpus lock at "${lockPath}". Run \`mcpjam eval pull\` to create ` +
+        `No corpus lock at "${lockPath}". Run \`mcpjam cloud eval pull\` to create ` +
           `one before checking it with --frozen.`
       );
     }
@@ -238,7 +238,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is not valid JSON. Re-create it with ` +
-        `\`mcpjam eval pull\`.`,
+        `\`mcpjam cloud eval pull\`.`,
       { source: error instanceof Error ? error.message : String(error) }
     );
   }
@@ -255,7 +255,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is missing "lockVersion" or "cases". ` +
-        `Re-create it with \`mcpjam eval pull\`.`
+        `Re-create it with \`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -273,7 +273,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
     throw incomplete(
       "CORPUS_LOCK_MALFORMED",
       `The corpus lock at "${lockPath}" is malformed: ${structural}. ` +
-        `Re-create it with \`mcpjam eval pull\`.`
+        `Re-create it with \`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -287,7 +287,7 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
       `The corpus lock at "${lockPath}" is version ${lock.lockVersion}, but ` +
         `this CLI writes version ${CORPUS_LOCK_VERSION}. Hashes are not ` +
         `comparable across lock versions. Re-create it with ` +
-        `\`mcpjam eval pull\`.`
+        `\`mcpjam cloud eval pull\`.`
     );
   }
 
@@ -299,19 +299,15 @@ export async function readCorpusLock(lockPath: string): Promise<CorpusLock> {
  *
  * On ANY failure the temp file is removed and the destination is left exactly
  * as it was. A partially-written lock is the one outcome this must never
- * produce — see the module comment.
+ * produce — see the module comment. The temp-file dance itself is
+ * `writeFileAtomic`; what stays here is the lock's own reading of a failed
+ * write, which is exit 3 ("no comparison happened") and nobody else's.
  */
 export async function writeCorpusLockAtomic(
   lockPath: string,
   lock: CorpusLock
 ): Promise<string> {
   const resolved = path.resolve(process.cwd(), lockPath);
-  // Sibling, so `rename` stays within one filesystem. The random suffix keeps
-  // two concurrent pulls (a developer and a CI job on the same checkout) from
-  // writing the same temp path and corrupting each other's output.
-  const temporary = `${resolved}.${process.pid}-${randomBytes(6).toString(
-    "hex"
-  )}.tmp`;
 
   try {
     // Serialized INSIDE the try. `JSON.stringify` throws on a value it cannot
@@ -319,22 +315,8 @@ export async function writeCorpusLockAtomic(
     // other — it must land on exit 3 with the destination untouched, not
     // escape as a raw TypeError that normalizes to exit 1.
     const body = `${JSON.stringify(lock, null, 2)}\n`;
-    await writeFile(temporary, body, { encoding: "utf8", mode: 0o644 });
-    // Flush before the rename. Without this the rename can be durable while
-    // the bytes it points at are not, which after a crash leaves a lock file
-    // that exists and is empty — the failure mode this whole function exists
-    // to prevent, just moved one layer down.
-    const handle = await open(temporary, "r+");
-    try {
-      await handle.sync();
-    } finally {
-      await handle.close();
-    }
-    await rename(temporary, resolved);
+    return await writeFileAtomic(resolved, body);
   } catch (error) {
-    // Best-effort: the write may have failed before the file existed, and a
-    // cleanup failure must not mask the original error.
-    await unlink(temporary).catch(() => {});
     throw incomplete(
       "CORPUS_LOCK_WRITE_FAILED",
       `Failed to write the corpus lock to "${resolved}". The previous lock, ` +
@@ -342,8 +324,6 @@ export async function writeCorpusLockAtomic(
       { source: error instanceof Error ? error.message : String(error) }
     );
   }
-
-  return resolved;
 }
 
 const DRIFT_LABELS: Record<CorpusDrift["kind"], string> = {
@@ -386,7 +366,7 @@ export function renderCorpusDrift(drift: CorpusDrift[]): string {
     }):`,
     ...lines,
     "",
-    "Run `mcpjam eval pull` to accept these changes, or restore the cases in " +
+    "Run `mcpjam cloud eval pull` to accept these changes, or restore the cases in " +
       "the dashboard.",
   ].join("\n");
 }

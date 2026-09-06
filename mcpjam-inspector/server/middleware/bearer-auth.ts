@@ -119,11 +119,23 @@ export async function bearerAuthMiddleware(
 ): Promise<Response | void> {
   const authHeader = c.req.header("authorization");
   if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // Label the 401 before returning it. Every branch below rejects a caller
+    // who at least presented something; this one rejects a caller who
+    // presented nothing, and that is the only 4xx class that carries no
+    // signal about our own health. Scanners and crawlers generate it in
+    // bulk against the public API, so the storm monitor has to be able to
+    // exclude it — see `credentialPresented` in `log-events.ts`.
+    setRequestLogContext(c, { credentialPresented: false });
     return c.json(
       { code: ErrorCode.UNAUTHORIZED, message: "Bearer token required" },
       401
     );
   }
+
+  // Set once, here, rather than per-branch: everything past this point had a
+  // bearer, so every 401 it produces is somebody's credential failing —
+  // invalid key, unknown user, orphaned key alike.
+  setRequestLogContext(c, { credentialPresented: true });
 
   const token = authHeader.slice("Bearer ".length);
 
@@ -298,15 +310,6 @@ export async function bearerAuthMiddleware(
   try {
     const result = await validateGuestTokenDetailedAsync(token);
     if (result.valid && result.guestId) {
-      if (process.env.MCPJAM_NONPROD_LOCKDOWN === "true") {
-        return c.json(
-          {
-            code: ErrorCode.FORBIDDEN,
-            message: "Guest access is disabled in this environment.",
-          },
-          403
-        );
-      }
       c.set("guestId", result.guestId);
       c.set("authMethod", "guest");
       return next();

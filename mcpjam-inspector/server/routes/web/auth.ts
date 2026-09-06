@@ -4,6 +4,7 @@ import {
   MCPClientManager,
   isKnownProtocolVersion,
   isStatelessProtocolVersion,
+  withSkillsExtensionCapability,
   type McpProtocolVersion,
 } from "@mcpjam/sdk";
 import type {
@@ -58,7 +59,10 @@ import {
   readJsonBody,
   parseWithSchema,
 } from "./errors.js";
-import { buildHostedOAuthUnauthorizedHandler } from "../../utils/hosted-oauth-refresh.js";
+import {
+  buildHostedOAuthUnauthorizedHandler,
+  refreshHostedOAuthAccessTokenWithLocalFallback,
+} from "../../utils/hosted-oauth-refresh.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -114,6 +118,47 @@ export const mcpProtocolVersionsByServerIdSchema = z
   .record(z.string().min(1), mcpProtocolVersionEnum)
   .optional();
 
+/**
+ * The client-conformance knobs as they travel on the wire.
+ *
+ * ONE declaration, spread into every hosted route schema that builds a
+ * connection out of the request body. Zod strips what it does not declare, so
+ * a schema missing one of these does not fail — it silently runs the session
+ * as a fully conforming client, which is indistinguishable from the host
+ * having no opinion at all. That has now shipped three times (mirroring, then
+ * cancellation, then both `toolListChanged` halves): a knob the client
+ * computed correctly and a route schema quietly ate.
+ *
+ * Only the non-default value is ever sent, so an absent field means the
+ * conforming behavior and a host with no opinion sends nothing.
+ *
+ * Spread this rather than re-declaring the fields: a new knob reaches every
+ * body-built surface by being added HERE, once.
+ */
+export const conformanceKnobWireShape = {
+  // SEP-2243 `Mcp-Param-*` mirroring, from
+  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Only `false` is ever
+  // sent: `"mirror"` is the SDK's no-field default.
+  mirrorToolParamHeaders: z.boolean().optional(),
+  // `mcpProfile.paginationTraversal` / `.mrtrSupport`.
+  firstPageOnly: z.boolean().optional(),
+  supportsMrtr: z.boolean().optional(),
+  // `mcpProfile.toolListChanged.listens` / `.refetches`, as the two
+  // suppression switches the SDK reads.
+  suppressListenChannel: z.boolean().optional(),
+  dropToolListChanged: z.boolean().optional(),
+  // `mcpProfile.toolCallCancellation`, per era. Carried as a record because
+  // the era that governs is only known once the connection negotiates:
+  // `extractMcpInitializeOptions` keeps the `false` leaves and the SDK picks
+  // between them after the handshake.
+  toolCallCancellation: z
+    .object({
+      legacy: z.boolean().optional(),
+      modern: z.boolean().optional(),
+    })
+    .optional(),
+} as const;
+
 export const projectServerSchema = z.object({
   projectId: z.string().min(1),
   serverId: z.string().min(1),
@@ -150,18 +195,7 @@ export const projectServerSchema = z.object({
   // and never reach the SDK's open-routing predicate. Absent means
   // "use SDK default (negotiates at request time)".
   mcpProtocolVersion: mcpProtocolVersionEnum.optional(),
-  // SEP-2243 `Mcp-Param-*` mirroring, resolved client-side from
-  // `hostConfig.mcpProfile.toolParamHeaderMirroring`. Declared here for the
-  // same reason as the pins above — Zod strips undeclared fields, and the
-  // client sends it on every hosted route call once the host opts in. Only
-  // `false` is ever sent: `"mirror"` is the SDK's no-field default.
-  mirrorToolParamHeaders: z.boolean().optional(),
-  // Sibling client-conformance knobs. Declared for the SAME reason as the
-  // field above: Zod strips what it does not declare, so a knob the client
-  // faithfully sends would vanish here and the hosted session would execute
-  // as a fully conforming client. Only the non-default value is ever sent.
-  firstPageOnly: z.boolean().optional(),
-  supportsMrtr: z.boolean().optional(),
+  ...conformanceKnobWireShape,
   // Host enterprise-managed authorization policy, resolved client-side from
   // `hostConfig.mcpProfile.extensions`. Declared here (like the pins above)
   // so the wire contract documents it, but VALIDATED by
@@ -210,10 +244,7 @@ export const taskGetSchema = projectServerSchema.extend({
 });
 
 export const taskGetBatchSchema = projectServerSchema.extend({
-  taskIds: z
-    .array(z.string().min(1))
-    .min(1)
-    .max(HOSTED_TASK_BATCH_MAX_SHARED),
+  taskIds: z.array(z.string().min(1)).min(1).max(HOSTED_TASK_BATCH_MAX_SHARED),
 });
 
 export const taskListSchema = projectServerSchema.extend({
@@ -313,6 +344,13 @@ export const hostedChatSchema = z
     // See projectServerSchema — scenario identity is `scenarioId` + `accessVersion`.
     scenarioId: z.string().min(1).optional(),
     accessVersion: z.number().int().nonnegative().optional(),
+    /**
+     * Optimistic-concurrency baseline for a resumed history thread: the session
+     * version the client believes it is continuing from. Validated here rather
+     * than forwarded raw, so a malformed value is a 400 at this boundary
+     * instead of an arg-validation failure deep inside the ingest action.
+     */
+    expectedVersion: z.number().int().nonnegative().optional(),
   })
   .passthrough();
 
@@ -416,6 +454,13 @@ export type ConvexBatchAuthorizeSuccess = {
   role: "owner" | "admin" | "member";
   accessLevel: "project_member" | "shared_chat";
   oauthAccessToken?: string | null;
+  /**
+   * Why there is no `oauthAccessToken`, when the reason is actionable rather
+   * than "nothing stored". Mirrored by hand from the backend
+   * (`BatchAuthorizeSuccess.oauthUnavailableReason` in convex/http.ts); absent
+   * on older backends, which is why every read treats absence as "no idea".
+   */
+  oauthUnavailableReason?: "private_authorization_server";
   permissions: {
     chatOnly: boolean;
   };
@@ -810,6 +855,15 @@ export function toHttpConfig(
      */
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    /**
+     * `mcpProfile.toolListChanged`, forwarded onto
+     * `BaseServerConfig.suppressListenChannel` / `.dropToolListChanged`:
+     * `listens: false` never opens the GET listen stream, `refetches: false`
+     * drops `notifications/tools/list_changed` before the client sees it.
+     */
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   /**
    * A plugin stdio component that IS reachable: a live shim, recorded in
@@ -858,6 +912,15 @@ export function toHttpConfig(
           : {}),
         ...(initializePins?.supportsMrtr === false
           ? { supportsMrtr: false }
+          : {}),
+        ...(initializePins?.suppressListenChannel === true
+          ? { suppressListenChannel: true }
+          : {}),
+        ...(initializePins?.dropToolListChanged === true
+          ? { dropToolListChanged: true }
+          : {}),
+        ...(initializePins?.toolCallCancellation
+          ? { toolCallCancellation: initializePins.toolCallCancellation }
           : {}),
       };
     }
@@ -940,6 +1003,15 @@ export function toHttpConfig(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
+    ...(initializePins?.toolCallCancellation
+      ? { toolCallCancellation: initializePins.toolCallCancellation }
+      : {}),
   };
 }
 
@@ -960,6 +1032,9 @@ function resolveEffectiveInitializePinsForServer(
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   },
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>
 ):
@@ -973,6 +1048,9 @@ function resolveEffectiveInitializePinsForServer(
       mirrorToolParamHeaders?: boolean;
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     }
   | undefined {
   const perServerPin = mcpProtocolVersionsByServerId?.[serverId];
@@ -1006,6 +1084,15 @@ function resolveEffectiveInitializePinsForServer(
     // resolve against.
     ...(initializePins?.firstPageOnly === true ? { firstPageOnly: true } : {}),
     ...(initializePins?.supportsMrtr === false ? { supportsMrtr: false } : {}),
+    ...(initializePins?.suppressListenChannel === true
+      ? { suppressListenChannel: true }
+      : {}),
+    ...(initializePins?.dropToolListChanged === true
+      ? { dropToolListChanged: true }
+      : {}),
+    ...(initializePins?.toolCallCancellation
+      ? { toolCallCancellation: initializePins.toolCallCancellation }
+      : {}),
   };
 
   return Object.keys(resolved).length > 0 ? resolved : undefined;
@@ -1021,6 +1108,25 @@ export async function createAuthorizedManager(
   clientCapabilities?: Record<string, unknown>,
   options?: {
     accessScope?: "project_member" | "chat_v2";
+    /**
+     * Declare `io.modelcontextprotocol/skills` on this manager's DEFAULTS.
+     *
+     * Opt-in, and deliberately not the norm. Most hosted connections EMULATE a
+     * third-party host, and the debugger's promise is that the wire shows what
+     * that host would send — advertising skills on an emulated Cursor persona
+     * would be a lie about Cursor. Surfaces that emulate no persona (MCPJam's
+     * own agent turn) pass this, because they ship the fulfiller: the verified
+     * read path in `server-skills.ts`, merged into the toolset by
+     * `withServerSkills`.
+     *
+     * Set on DEFAULTS rather than per-server `clientCapabilities` on purpose.
+     * The latter is advertised VERBATIM (see `MCPClientManager`'s exact-set
+     * branch), so putting the extension there would replace a connection's
+     * whole declaration — silently dropping elicitation — and would also
+     * override a host config that pinned its own set. Defaults merge, and a
+     * pinned exact set still wins.
+     */
+    advertiseSkillsExtension?: boolean;
     scenarioId?: string;
     accessVersion?: number;
     rpcLogger?: RpcLogger;
@@ -1055,6 +1161,9 @@ export async function createAuthorizedManager(
       /** Client-conformance knobs; host-level, so batch-uniform. */
       firstPageOnly?: boolean;
       supportsMrtr?: boolean;
+      suppressListenChannel?: boolean;
+      dropToolListChanged?: boolean;
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
     };
     /**
      * Per-server `mcpProtocolVersion` overrides keyed by serverId.
@@ -1142,7 +1251,7 @@ export async function createAuthorizedManager(
      * `server/utils/mrtr-hosted-collector.ts`).
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
     /**
      * The turn's execution scope, forwarded to the computer reservation that
@@ -1198,6 +1307,14 @@ export async function createAuthorizedManager(
   // on each server's flow (a re-resolution could drift if the predicate ever
   // gains an input one pass forgets to thread).
   const effectiveAuthByServerId = new Map<string, EffectiveAuthMethod>();
+  // Servers whose authorization server only this machine can reach. Collected
+  // in PASS 1, refreshed in PASS 1b, consumed by PASS 2.
+  const privateAuthorizationServerRecoveries: Array<{
+    serverId: string;
+    displayServerName: string;
+    required: boolean;
+  }> = [];
+  const recoveredOAuthTokens: Record<string, string> = {};
   let confidentialCimdProviderForOrg: ReturnType<
     typeof getConfidentialCimdProviderForOrg
   > = undefined;
@@ -1314,6 +1431,27 @@ export async function createAuthorizedManager(
       }
     }
 
+    // A credential EXISTS but the backend cannot refresh it: its authorization
+    // server is on an address only this machine can reach. Not a verdict at
+    // all — in local mode it is recoverable, so it is deferred to the recovery
+    // pass below rather than decided here. Hosted, it is a real refusal, but
+    // "complete the OAuth flow first" is the wrong thing to say to someone who
+    // already did; the recovery pass raises the actionable message instead.
+    const privateAuthorizationServer =
+      auth.oauthUnavailableReason === "private_authorization_server" &&
+      !(auth.oauthAccessToken ?? oauthTokens?.[serverId]);
+    if (
+      privateAuthorizationServer &&
+      (effectiveAuth === "oauth" || effectiveAuth === "discover")
+    ) {
+      privateAuthorizationServerRecoveries.push({
+        serverId,
+        displayServerName,
+        required: effectiveAuth === "oauth",
+      });
+      continue;
+    }
+
     // Explicit-OAuth server with no stored token: also a synchronous verdict,
     // so it belongs here — leaving it in the concurrent pass let a configured
     // XAA sibling start minting a real token while this one rejected.
@@ -1332,6 +1470,50 @@ export async function createAuthorizedManager(
           serverUrl: auth.serverConfig.url,
         }
       );
+    }
+  }
+
+  // PASS 1b — recover the credentials PASS 1 deferred, still before PASS 2
+  // does anything side-effecting, so "the batch fails before any server mints"
+  // continues to hold.
+  //
+  // This is the same pre-connect refresh `resolveLocalServerForConnect`
+  // performs for /api/mcp. Without it the local fallback only ever covered a
+  // mid-session 401, and the FIRST connect after expiry still failed on every
+  // surface routed through this builder.
+  //
+  // Sequential on purpose: the servers here share one force-refresh budget per
+  // subject, and each recovery is a network round trip to the user's own
+  // machine. There is rarely more than one.
+  for (const recovery of privateAuthorizationServerRecoveries) {
+    try {
+      recoveredOAuthTokens[recovery.serverId] =
+        await refreshHostedOAuthAccessTokenWithLocalFallback(
+          bearerToken,
+          projectId,
+          recovery.serverId,
+          {
+            accessScope: options?.accessScope,
+            scenarioId: options?.scenarioId,
+            accessVersion: options?.accessVersion,
+            serverName: recovery.displayServerName,
+          }
+        );
+    } catch (error) {
+      // A "discover" server was only ever going to try its luck: connecting
+      // unauthenticated is the documented fallback, and a live 401 escalates
+      // client-side from there. Only an explicit-OAuth server has to fail.
+      if (!recovery.required) {
+        logger.debug(
+          "[connect] private authorization server refresh unavailable; connecting unauthenticated",
+          {
+            serverId: recovery.serverId,
+            error: parseErrorMessage(error),
+          }
+        );
+        continue;
+      }
+      throw error;
     }
   }
 
@@ -1359,7 +1541,12 @@ export async function createAuthorizedManager(
         { ok: true }
       >;
 
-      const oauthToken = auth.oauthAccessToken ?? oauthTokens?.[serverId];
+      // `recoveredOAuthTokens` first: it is the freshest, minted moments ago
+      // by PASS 1b for a credential the backend could not refresh itself.
+      const oauthToken =
+        recoveredOAuthTokens[serverId] ??
+        auth.oauthAccessToken ??
+        oauthTokens?.[serverId];
       const displayServerName = serverNamesById?.[serverId] ?? serverId;
       // Resolved in PASS 1 (canonical authMethod wins; "auto" selects XAA
       // when configured or when the host policy forces it, "discover"
@@ -1411,6 +1598,15 @@ export async function createAuthorizedManager(
               effectiveInitializePins?.supportedProtocolVersions,
             firstPageOnly: effectiveInitializePins?.firstPageOnly,
             supportsMrtr: effectiveInitializePins?.supportsMrtr,
+            // Only the drop half reaches a stdio child: there is no GET
+            // listen stream on stdio for `suppressListenChannel` to refuse.
+            dropToolListChanged: effectiveInitializePins?.dropToolListChanged,
+            // Era-scoped, not transport-scoped: a 2026 stdio connection
+            // cancels with `notifications/cancelled` exactly as a 2025 one
+            // does, so a host that cancels on neither must be honored here as
+            // well. `resolveLocalStdioServerConfig` has accepted this since
+            // the knob shipped; only the hand-off was missing.
+            toolCallCancellation: effectiveInitializePins?.toolCallCancellation,
             xaaPolicy: options?.xaaPolicy,
             // The local reread + secret reveal must carry the same scope and
             // delegated identity as the hosted mint path below — a harness
@@ -1484,7 +1680,8 @@ export async function createAuthorizedManager(
       const usesStoredTokenFlow =
         usesOAuthFlow || (effectiveAuth === "discover" && !!oauthToken);
       const onUnauthorized =
-        usesStoredTokenFlow && auth.oauthAccessToken
+        usesStoredTokenFlow &&
+        (auth.oauthAccessToken || recoveredOAuthTokens[serverId])
           ? buildHostedOAuthUnauthorizedHandler({
               bearerToken,
               projectId,
@@ -1494,6 +1691,14 @@ export async function createAuthorizedManager(
               shareToken: (options as { shareToken?: string })?.shareToken,
               scenarioId: options?.scenarioId,
               accessVersion: options?.accessVersion,
+              // Same reasoning as the local resolver's own handler: in local
+              // mode THIS process is the one that can reach a private
+              // authorization server. Without it every surface routed through
+              // here — chat-v2, evals, environments, swarm runs, harness-mcp —
+              // still dies at the first mid-session token expiry against a
+              // localhost OAuth server, while the Servers tab (which goes
+              // through /api/mcp) succeeds against the same server.
+              allowPrivateAuthorizationServerFallback: !HOSTED_MODE,
             })
           : undefined;
 
@@ -1714,6 +1919,9 @@ export async function createAuthorizedManager(
     rpcLogger: options?.rpcLogger,
     httpLogger: options?.httpLogger,
     retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
+    ...(options?.advertiseSkillsExtension
+      ? { defaultCapabilities: withSkillsExtensionCapability({}) }
+      : {}),
     // Auto-negotiation outcome telemetry (always-on negotiation).
     negotiationOutcomeLogger: negotiationTelemetryLogger("hosted-direct"),
     ...(options?.elicitationTimeoutExtensionMs !== undefined
@@ -1832,6 +2040,9 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
     mirrorToolParamHeaders?: boolean;
     firstPageOnly?: boolean;
     supportsMrtr?: boolean;
+    suppressListenChannel?: boolean;
+    dropToolListChanged?: boolean;
+    toolCallCancellation?: { legacy?: boolean; modern?: boolean };
   };
   mcpProtocolVersionsByServerId?: Record<string, McpProtocolVersion>;
 } {
@@ -1867,13 +2078,26 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
   // Same one-explicit-value rule for the sibling knobs.
   const truncatePagination = raw.firstPageOnly === true;
   const disableMrtr = raw.supportsMrtr === false;
+  const suppressListenChannel = raw.suppressListenChannel === true;
+  const dropToolListChanged = raw.dropToolListChanged === true;
+  const rawCancellation =
+    raw.toolCallCancellation && typeof raw.toolCallCancellation === "object"
+      ? (raw.toolCallCancellation as { legacy?: unknown; modern?: unknown })
+      : undefined;
+  const cancellationLeaves: { legacy?: boolean; modern?: boolean } = {};
+  if (rawCancellation?.legacy === false) cancellationLeaves.legacy = false;
+  if (rawCancellation?.modern === false) cancellationLeaves.modern = false;
+  const disableCancellation = Object.keys(cancellationLeaves).length > 0;
   const initializePins =
     initializeClientInfo ||
     initializeSupportedVersions ||
     initializeWireMode ||
     suppressParamMirroring ||
     truncatePagination ||
-    disableMrtr
+    disableMrtr ||
+    suppressListenChannel ||
+    dropToolListChanged ||
+    disableCancellation
       ? {
           ...(initializeClientInfo ? { clientInfo: initializeClientInfo } : {}),
           ...(initializeSupportedVersions
@@ -1884,9 +2108,12 @@ export function extractMcpInitializeOptions(raw: Record<string, unknown>): {
             : {}),
           ...(truncatePagination ? { firstPageOnly: true } : {}),
           ...(disableMrtr ? { supportsMrtr: false } : {}),
-          ...(suppressParamMirroring
-            ? { mirrorToolParamHeaders: false }
+          ...(suppressListenChannel ? { suppressListenChannel: true } : {}),
+          ...(dropToolListChanged ? { dropToolListChanged: true } : {}),
+          ...(disableCancellation
+            ? { toolCallCancellation: cancellationLeaves }
             : {}),
+          ...(suppressParamMirroring ? { mirrorToolParamHeaders: false } : {}),
         }
       : undefined;
 
@@ -2008,8 +2235,10 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
      * connection on today's non-MRTR path.
      */
     mrtrInputCollectorForServer?: (
-      serverId: string,
+      serverId: string
     ) => MrtrInputCollector | undefined;
+    /** See `createAuthorizedManager`'s option of the same name. */
+    advertiseSkillsExtension?: boolean;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -2100,6 +2329,9 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       accessScope,
       scenarioId,
       accessVersion,
+      ...(options?.advertiseSkillsExtension
+        ? { advertiseSkillsExtension: true }
+        : {}),
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
       serverNames,
@@ -2156,7 +2388,7 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
  */
 function forwardLogMessagesInto(
   manager: InstanceType<typeof MCPClientManager>,
-  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined,
+  rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined
 ) {
   return (serverId: string) => {
     if (!rpcCollector) return;
@@ -2209,7 +2441,16 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
 
     return c.json(attachHostedRpcLogs(result, rpcCollector), 200);
   } catch (error) {
-    const routeError = mapRuntimeError(error);
+    // `mapTargetServerError`, not `mapRuntimeError`: every route built on this
+    // helper dials the caller's OWN MCP server, and a connection-class failure
+    // left as `502 SERVER_UNREACHABLE` / `504 TIMEOUT` is exactly what the
+    // hosted edge replaces with its own error page — discarding the JSON
+    // envelope that carries the reason, so the browser was left with a bare
+    // "Request failed (502)" and no way to learn why (BB-48). The downgrade to
+    // 424 still requires the message to positively name an MCP server, so this
+    // helper's other failing hop — `authorizeServer`'s fetch to MCPJam's own
+    // Convex deployment — keeps its 5xx and keeps paging us.
+    const routeError = mapTargetServerError(error);
     return webErrorFromRoute(
       c,
       routeError,

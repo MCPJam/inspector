@@ -61,8 +61,10 @@ type RunResultBadgeKind =
   | "passed"
   | "failed"
   | "running"
+  | "grading"
   | "cancelled"
   | "timed_out"
+  | "inconclusive"
   | "pending";
 
 function runResultBadge(result: RunResultBadgeKind) {
@@ -71,12 +73,22 @@ function runResultBadge(result: RunResultBadgeKind) {
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
       return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+    case "inconclusive":
+      // Amber, never red: the backend refused to call this run either way.
+      return {
+        label: "Inconclusive",
+        className: "bg-warning/50 text-foreground",
+      };
     case "cancelled":
       return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
       return { label: "Running", className: "bg-warning/50 text-foreground" };
+    case "grading":
+      // Amber like `running`: the run is still happening. Green or red would
+      // claim a verdict that does not exist yet.
+      return { label: "Grading", className: "bg-warning/50 text-foreground" };
     default:
       return null;
   }
@@ -106,8 +118,14 @@ interface RunOverviewProps {
   runsViewMode: SuiteOverviewView;
   onViewModeChange: (value: SuiteOverviewView) => void;
   userMap?: Map<string, { name: string; imageUrl?: string }>;
-  /** When false, hides run selection and batch delete (project members without admin). */
+  /** When false, hides run selection and batch delete entirely. */
   canDeleteRuns?: boolean;
+  /**
+   * Per ROW: deleting a run takes the project manage tier OR authorship of
+   * that run, so the answer differs across the list. Omitted means every run
+   * may be deleted — the local/playground case, with no membership to rank.
+   */
+  canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** Show suite delete using the same toolbar pattern as run batch delete. */
   canDeleteSuite?: boolean;
   onDeleteSuite?: () => void;
@@ -248,6 +266,7 @@ export function RunOverview({
   onViewModeChange,
   userMap,
   canDeleteRuns = true,
+  canDeleteRun,
   canDeleteSuite = false,
   onDeleteSuite,
   deletingSuiteId = null,
@@ -413,6 +432,22 @@ export function RunOverview({
     [runs, selectedRunIds]
   );
 
+  /**
+   * Runs in the selection the caller may not delete. The batch action is
+   * disabled while this is non-empty rather than quietly deleting the subset
+   * it can: a Delete button that removes four of the six rows you ticked is a
+   * worse outcome than one that tells you why it will not run.
+   */
+  const undeletableSelectedRuns = useMemo(
+    () =>
+      canDeleteRun
+        ? runs.filter(
+            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run)
+          )
+        : [],
+    [canDeleteRun, runs, selectedRunIds]
+  );
+
   const canCompareSelected =
     selectedRunsForCompare.length === 2 &&
     selectedRunsForCompare.every((run) => run.status === "completed");
@@ -502,7 +537,14 @@ export function RunOverview({
                   size="sm"
                   className={EVAL_DESTRUCTIVE_BUTTON_CLASS}
                   onClick={() => setShowBatchDeleteModal(true)}
-                  disabled={deletingRunId !== null}
+                  disabled={
+                    deletingRunId !== null || undeletableSelectedRuns.length > 0
+                  }
+                  title={
+                    undeletableSelectedRuns.length > 0
+                      ? `${undeletableSelectedRuns.length} selected run(s) were started by someone else — only a project admin can delete those`
+                      : undefined
+                  }
                 >
                   Delete
                 </Button>
@@ -696,19 +738,25 @@ export function RunOverview({
                       ? formatDuration(Date.now() - run.createdAt)
                       : "—";
 
+                  // Status FIRST for a held run: its `result` is the truthy
+                  // "pending", which would otherwise win the `||` below and
+                  // the "grading" badge arm would never be reached.
                   const runResult =
-                    run.result ||
-                    (run.status === "completed" && passRate !== null
-                      ? passRate >= (run.passCriteria?.minimumPassRate ?? 100)
-                        ? "passed"
-                        : "failed"
-                      : run.status === "cancelled"
-                        ? "cancelled"
-                        : run.status === "timed_out"
-                          ? "timed_out"
-                          : run.status === "running"
-                            ? "running"
-                            : "pending");
+                    run.status === "grading"
+                      ? "grading"
+                      : run.result ||
+                        (run.status === "completed" && passRate !== null
+                          ? passRate >=
+                            (run.passCriteria?.minimumPassRate ?? 100)
+                            ? "passed"
+                            : "failed"
+                          : run.status === "cancelled"
+                            ? "cancelled"
+                            : run.status === "timed_out"
+                              ? "timed_out"
+                              : run.status === "running"
+                                ? "running"
+                                : "pending");
                   const badge = runResultBadge(runResult);
                   const runAccent = evalStatusLeftBorderClasses(runResult);
 

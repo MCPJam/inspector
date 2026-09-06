@@ -1,0 +1,2170 @@
+{
+  "__readme": "Shared parity fixtures for the versioned eval SUITE FILE contract. Loaded by sdk/tests/eval-suite-file.test.ts in mcpjam-inspector (Zod: evalSuiteFileSchema in sdk/src/contract/suite-file.ts) and intended to be loaded VERBATIM by the hand-mirrored Convex validators in mcpjam-backend. The backend cannot import @mcpjam/sdk into convex/ default-runtime code, so this file is the only common ground truth — copy it byte for byte, do not re-author it. LOAD RULE: strip EVERY key whose name starts with '__' before handing a row to a validator; they are fixture annotations (__label, __why, __kind, __structural) and every object in this contract is closed, so a row that still carries them would be rejected for the wrong reason — turning an accept row into a false failure and, worse, a reject row into a false success. DISPATCH: '__kind' selects the validator; every row here is 'suiteFile'. '__structural' on a reject row records whether the GENERATED JSON Schema (sdk/src/contract/eval-suite.schema.json) must also reject it: true means the rejection is expressible in JSON Schema, false means it is a cross-field rule only the Zod validator (and a hand-mirrored equivalent) enforces. A false-flagged row is asserted to be ACCEPTED by the JSON Schema, so the flag can never rot into decoration. 'roundTrip' rows are validated, canonicalized, re-parsed and re-validated; they must deep-equal the original, which is what proves no default was materialized. When the contract shape changes, edit the Zod schema, regenerate the JSON Schema, AND edit this fixture in the same PR.",
+  "accept": [
+    {
+      "__kind": "suiteFile",
+      "__label": "minimal — one prompt-step case, nothing optional",
+      "__why": "The floor of the contract: every required field and not one more. If this row ever needs an extra field, a required field was added and every existing file just broke.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "environment-only target with execution config and host attachments",
+      "__why": "A project environment is independently runnable, while host attachments and explicitly authored execution fields must survive export and file launch without invented defaults.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_environment_only",
+        "name": "Environment-backed billing"
+      },
+      "target": {
+        "environment": "production",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing"
+              }
+            ]
+          },
+          {
+            "name": "Cursor",
+            "servers": []
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": "Use the billing tools and keep the answer concise.",
+        "temperature": 0.2,
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_environment_only",
+          "title": "Runs from a named project environment",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "full — all four step kinds, both assertion vocabularies, provenance and every import status",
+      "__why": "Exercises the widget-assertion union AND the predicate union inside `assert` steps (disjoint discriminators, `kind` vs `type`), plus one case per IMPORT_MAPPING_STATUS. A `disabled` case that is still `unsupported` is deliberate: eligibility is runtime policy, not schema.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_8Kd2VnQwLpZ",
+        "name": "Billing — imported from upstream",
+        "description": "Every step kind, both assertion vocabularies, and one case per import mapping status."
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing",
+            "id": "srv_9Fa1"
+          },
+          {
+            "name": "search"
+          }
+        ],
+        "environment": "staging",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing",
+                "id": "srv_9Fa1"
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "provider": "anthropic",
+        "systemPrompt": "Use only evidence returned by the attached servers.",
+        "temperature": 0.2,
+        "repetitions": 25,
+        "passThreshold": 0.9,
+        "validity": {
+          "minEligibleTrials": 20,
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "toolPolicy": {
+          "mode": "readOnly",
+          "allow": ["get_charge", "search_invoices"],
+          "deny": ["delete_customer"]
+        },
+        "captureLevel": "full"
+      },
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "sourceFormatVersion": "0.4",
+        "converter": "mcpjam-import",
+        "converterVersion": "1.0.0",
+        "model": "anthropic/claude-sonnet-4-6",
+        "discoverySnapshotHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+        "importedAt": "2026-08-17T09:30:00.000Z"
+      },
+      "cases": [
+        {
+          "id": "c_exact_widget_flow",
+          "title": "Confirms the refund in the receipt widget",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund charge ch_4471 and show me the receipt."
+            },
+            {
+              "id": "step-2",
+              "kind": "toolCall",
+              "serverId": "srv_9Fa1",
+              "serverName": "billing",
+              "toolName": "render_receipt",
+              "arguments": {
+                "chargeId": "ch_4471"
+              },
+              "renderTimeoutMs": 15000
+            },
+            {
+              "id": "step-3",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {
+                  "testId": "confirm-refund"
+                },
+                "clickType": "left"
+              }
+            },
+            {
+              "id": "step-4",
+              "kind": "assert",
+              "assertion": {
+                "kind": "textVisible",
+                "toolName": "render_receipt",
+                "text": "Refunded"
+              }
+            },
+            {
+              "id": "step-5",
+              "kind": "assert",
+              "assertion": {
+                "type": "toolCalledWith",
+                "toolName": "create_refund",
+                "args": {
+                  "args": {
+                    "chargeId": "ch_4471"
+                  },
+                  "argumentMatching": "partial"
+                }
+              }
+            }
+          ],
+          "assertions": [
+            {
+              "type": "noToolErrors"
+            },
+            {
+              "type": "responseContains",
+              "needle": "refunded",
+              "caseSensitive": false
+            }
+          ],
+          "expectedOutput": "The duplicate charge was refunded.",
+          "model": "anthropic/claude-opus-4-6",
+          "repetitions": 10,
+          "passThreshold": 1,
+          "import": {
+            "status": "exact",
+            "sourceCaseKey": "upstream/refunds/duplicate-charge",
+            "note": "1:1 with the upstream single-turn assertion form."
+          }
+        },
+        {
+          "id": "c_approximated_negative",
+          "title": "Refuses to refund outside the window",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the charge from 2019."
+            }
+          ],
+          "isNegativeTest": true,
+          "import": {
+            "status": "approximated",
+            "sourceCaseKey": "upstream/refunds/out-of-window",
+            "note": "Upstream asserted on a rendered string; mapped to the negative-case rule instead."
+          }
+        },
+        {
+          "id": "c_unsupported_disabled",
+          "title": "Replays a recorded browser session",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Walk through the checkout flow."
+            }
+          ],
+          "disabled": true,
+          "import": {
+            "status": "unsupported",
+            "note": "Upstream drove a real browser; no counterpart here."
+          }
+        },
+        {
+          "id": "c_unresolved_needs_review",
+          "title": "Reconciles a partial refund",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Reconcile the partial refund on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "unresolved",
+            "sourceCaseKey": "upstream/refunds/partial",
+            "note": "Upstream rubric text was ambiguous about what counts as reconciled."
+          }
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "json form — a suite file delivered as JSON rather than YAML",
+      "__why": "The contract is over the DATA, not the serialization. A loader may accept YAML, but nothing in the schema is YAML-shaped.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_json_form",
+        "name": "Parsed from JSON, not YAML"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_json_form_1",
+          "title": "A suite file handed over as JSON",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Say hello."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import bounds — sourceCaseKey and note exactly at their caps",
+      "__why": "The caps are the contract, not a suggestion: a file sitting exactly on them must load, or every converter has to guess whether the bound is inclusive. The reject cohort holds the one-character-over twins.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_at_the_cap",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "exact",
+            "sourceCaseKey": "upstream/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk",
+            "note": "Mapped verbatim from the upstream single-turn assertion form. nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import — every non-exact status with no note at all",
+      "__why": "Only `exact` has to cite a rule. Requiring a note everywhere would push converters to write filler prose on the three statuses whose whole point is that something is unfinished, and filler is worse than silence.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_approximated_bare",
+          "title": "Refuses to refund outside the window",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated"
+          }
+        },
+        {
+          "id": "c_unsupported_bare",
+          "title": "Replays a recorded browser session",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "disabled": true,
+          "import": {
+            "status": "unsupported"
+          }
+        },
+        {
+          "id": "c_unresolved_bare",
+          "title": "Reconciles a partial refund",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "unresolved"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    }
+  ],
+  "reject": [
+    {
+      "__kind": "suiteFile",
+      "__label": "target with neither servers nor environment",
+      "__why": "Host attachments augment a runnable target; they cannot replace the required legacy-server or project-environment selection.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_no_runnable_target",
+        "name": "No runnable target"
+      },
+      "target": {
+        "hosts": [
+          {
+            "name": "Claude Desktop"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_no_runnable_target",
+          "title": "Cannot run without servers or an environment",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "systemPrompt has the wrong type",
+      "__why": "Execution prompts are strings; coercing another type would manufacture a different hosted configuration.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_bad_prompt",
+        "name": "Bad system prompt"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "systemPrompt": 42,
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_bad_prompt",
+          "title": "Rejects a non-string prompt",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "temperature has the wrong type",
+      "__why": "Execution temperature is numeric; a string must not be accepted and forwarded ambiguously.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_bad_temperature",
+        "name": "Bad temperature"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "temperature": "0.2",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_bad_temperature",
+          "title": "Rejects a non-number temperature",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "host attachment carries an unknown field",
+      "__why": "Host target objects are closed like every other suite-file-owned object.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_open_host",
+        "name": "Open host object"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ],
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "transport": "stdio"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_open_host",
+          "title": "Rejects undeclared host configuration",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Look up invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reserved mode \"serverContract\"",
+      "__why": "Reserved values are ERRORS, never accepted-and-ignored — a file declaring a mode the runner does not implement must not run as though it declared nothing.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "serverContract",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reserved reportingMode \"restricted\"",
+      "__why": "Same rule as `mode`: a file asking for restricted reporting and getting standard reporting is a disclosure with a paper trail claiming otherwise.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "restricted",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reserved reportingMode \"summary\"",
+      "__why": "The second reserved reporting level, listed separately so removing one from the reservation list cannot silently keep the other untested.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "summary",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reserved captureLevel \"metadataOnly\"",
+      "__why": "A file that asks for reduced capture and gets full capture is the privacy failure this rule exists to prevent.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "captureLevel": "metadataOnly"
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "reserved captureLevel \"none\"",
+      "__why": "The strongest reserved capture level; accepted-and-ignored here would be the worst case of the same failure.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "captureLevel": "none"
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "mode omitted entirely",
+      "__why": "`mode` is required, not defaulted: a file that never says what kind of evaluation it is must not be guessed at.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown schemaVersion \"2\"",
+      "__why": "Forward policy: a v1 validator refuses a v2 file and says the CLI/SDK needs upgrading, rather than guessing at fields it does not know.",
+      "__structural": true,
+      "schemaVersion": "2",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "passThreshold expressed as a percent (85)",
+      "__why": "Thresholds are FRACTIONS in [0,1]. 85 read as a fraction gates nothing, so a suite authored in percent would report green forever.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 85,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "passThreshold above 1 (1.5)",
+      "__why": "The other side of the same range check: an unsatisfiable threshold fails every case for a reason nobody authored.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 1.5,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "duplicate case ids",
+      "__why": "Two cases sharing one id do not collide visibly — they silently merge into one case's history. JSON Schema cannot express uniqueness over a projected key, so this is zod-only.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        },
+        {
+          "id": "c_refund_duplicate",
+          "title": "A different case, the same id",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "duplicate step ids within one case",
+      "__why": "Step ids carry per-step history and make the round-trip exact; two steps sharing one id makes both ambiguous. Zod-only, same reason as duplicate case ids.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "And confirm it went through."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown top-level field",
+      "__why": "Every object is closed. An importer that invents a field must fail loudly rather than have it dropped on the floor.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ],
+      "retries": 3
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown case field",
+      "__why": "Closed at the case level too — this is where a mis-mapped import field actually lands.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "timeoutMs": 30000
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown field inside a step",
+      "__why": "Closed one level FURTHER down, where a mis-mapped import field actually lands: an agent converting an upstream suite gets step fields wrong more often than top-level ones. Left open, `retries` here would be dropped on the floor by Zod and rejected by the Convex `v.object` mirror — the two validators disagreeing about the same file, discovered at ingest.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471.",
+              "retries": 3
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "unknown field inside a step's nested locator",
+      "__why": "The step union's sub-objects are closed too, not just the four step objects. A locator carrying `xpath` names a reference point the harness cannot resolve; silently dropping it leaves a step that targets whatever the remaining locators happen to match.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {
+                  "testId": "confirm-refund",
+                  "xpath": "//button[1]"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "assertion declaring BOTH discriminators (kind and type)",
+      "__why": "The two assertion vocabularies are disjoint by construction: `kind` is a DOM-level WidgetAssertion, `type` is a transcript Predicate. An object carrying both is ambiguous, and resolving it is worse than refusing it — the widget branch is closed and rejects the stray `type`, while the predicate branch is open and would accept the same object, strip every widget field, and silently turn \"the word 'Refunded' is on screen\" into \"no tool errors occurred\". The second passes almost always, so the eval goes green while checking something nobody asked for.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "assert",
+              "assertion": {
+                "kind": "textVisible",
+                "type": "noToolErrors",
+                "toolName": "render_receipt",
+                "text": "Refunded"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "step with an unknown kind (\"navigate\")",
+      "__why": "Steps are reused VERBATIM from the canonical union; the suite file introduces no dialect of its own.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "navigate",
+              "url": "https://example.com"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "case id outside the opaque-id charset",
+      "__why": "Ids travel in URLs, file paths and CLI arguments; a space or a slash is a bug that surfaces far from where it was authored.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "refund flow/1",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "toolPolicy.mode \"read-only\" (wrong spelling)",
+      "__why": "A misspelled policy mode must not fall back to the permissive default — that would widen the tool surface a suite explicitly narrowed.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {},
+        "toolPolicy": {
+          "mode": "read-only"
+        }
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.status typo (\"approximate\")",
+      "__why": "The mapping status is a closed vocabulary. A typo that fell through would read as an unaudited case claiming nothing at all.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximate"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "provenance missing reportHash",
+      "__why": "The pointer to the detailed mapping report is what makes a claimed status auditable; provenance without it asserts faithfulness while withholding the evidence.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "case carries an import block but the file has no provenance",
+      "__why": "A per-case mapping status with no report to point at is unauditable. Cross-field, so zod-only.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated",
+            "note": "lossy mapping"
+          }
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "empty cases[]",
+      "__why": "A suite with no cases measures nothing and would report a vacuous pass.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": []
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "interact step whose locator names no reference point",
+      "__why": "A locator bundle must carry at least one of role/text/css/testId. Structural: the `.refine()` does not project into JSON Schema on its own, so the generator encodes it as an `anyOf` of `required` — otherwise an editor validating against the published URL would green-light a file the SDK then rejects, which is the worst direction for a divergence.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            },
+            {
+              "id": "step-2",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {}
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "case with empty steps[]",
+      "__why": "A case with no steps runs nothing; graded, it passes vacuously.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": []
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.sourceCaseKey one character over the 512-character cap",
+      "__why": "A source key is lineage, and lineage that silently truncates at ingest points at the wrong upstream case. Bounded here so the file is refused while the author still has the source in front of them.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated",
+            "sourceCaseKey": "upstream/kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.note one character over the 2000-character cap",
+      "__why": "The note is a bounded summary; the full mapping report lives in the author's Git repo. An unbounded note turns the per-case claim into the report's second copy, and the two then disagree.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated",
+            "note": "Mapped verbatim from the upstream single-turn assertion form. nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.status \"exact\" with no note",
+      "__why": "`exact` is the one status that tells a reader to stop looking, and it is a CONVERTER CLAIM rather than an MCPJam verification. A converter with no structural rule to cite has to record `approximated` and say what differs.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "exact"
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import block carries an approval field",
+      "__why": "Approval is a per-run decision the server derives from the authenticated launcher; a file that could carry `approvedBy` would let one person's approval be filed under another's name, and a checked-in approval would outlive the run it was granted for.",
+      "__structural": true,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated",
+            "note": "Mapped to the negative-case rule.",
+            "approvedBy": "user_123",
+            "approvedAt": 1756100000000
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.note that is only whitespace",
+      "__why": "`.min(1)` counts characters, so a blank note satisfies it. For `exact` that is a policy hole rather than a cosmetic one: the note is the cited rule that EARNS the claim, and a case claiming exact while citing nothing runs with no approval at all and counts toward a gateable run.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "exact",
+            "note": "   "
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "import.sourceCaseKey that is only whitespace",
+      "__why": "Lineage that is blank is lineage that is missing, and the platform's own validator rejects it — accepting it here would make a file load locally and fail at ingest.",
+      "__structural": false,
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "approximated",
+            "sourceCaseKey": " \t "
+          }
+        }
+      ],
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae"
+      }
+    }
+  ],
+  "roundTrip": [
+    {
+      "__kind": "suiteFile",
+      "__label": "round trip — minimal",
+      "__why": "Proves the canonical JSON form of a parsed file re-parses to the same value: no `.default()` materialized a field the author never wrote.",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_minimal",
+        "name": "Billing smoke"
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing"
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "repetitions": 5,
+        "passThreshold": 0.8,
+        "validity": {}
+      },
+      "cases": [
+        {
+          "id": "c_refund_duplicate",
+          "title": "Refunds a duplicate charge",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the duplicate charge on invoice 4471."
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "__kind": "suiteFile",
+      "__label": "round trip — full",
+      "__why": "The same proof over every optional field at once, including nested arrays whose element order must be preserved (steps are ORDERED).",
+      "schemaVersion": "1",
+      "mode": "agentWorkflow",
+      "reportingMode": "standard",
+      "suite": {
+        "id": "s_8Kd2VnQwLpZ",
+        "name": "Billing — imported from upstream",
+        "description": "Every step kind, both assertion vocabularies, and one case per import mapping status."
+      },
+      "target": {
+        "servers": [
+          {
+            "name": "billing",
+            "id": "srv_9Fa1"
+          },
+          {
+            "name": "search"
+          }
+        ],
+        "environment": "staging",
+        "hosts": [
+          {
+            "name": "Claude Desktop",
+            "id": "host_claude",
+            "servers": [
+              {
+                "name": "billing",
+                "id": "srv_9Fa1"
+              }
+            ]
+          }
+        ]
+      },
+      "defaults": {
+        "model": "anthropic/claude-sonnet-4-6",
+        "provider": "anthropic",
+        "systemPrompt": "Use only evidence returned by the attached servers.",
+        "temperature": 0.2,
+        "repetitions": 25,
+        "passThreshold": 0.9,
+        "validity": {
+          "minEligibleTrials": 20,
+          "minCompletionRate": 0.8,
+          "maxEvaluatorErrorRate": 0.1
+        },
+        "toolPolicy": {
+          "mode": "readOnly",
+          "allow": ["get_charge", "search_invoices"],
+          "deny": ["delete_customer"]
+        },
+        "captureLevel": "full"
+      },
+      "provenance": {
+        "sourceHash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "sourceFormat": "upstream-evals",
+        "sourceFormatVersion": "0.4",
+        "converter": "mcpjam-import",
+        "converterVersion": "1.0.0",
+        "model": "anthropic/claude-sonnet-4-6",
+        "discoverySnapshotHash": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+        "reportHash": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
+        "importedAt": "2026-08-17T09:30:00.000Z"
+      },
+      "cases": [
+        {
+          "id": "c_exact_widget_flow",
+          "title": "Confirms the refund in the receipt widget",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund charge ch_4471 and show me the receipt."
+            },
+            {
+              "id": "step-2",
+              "kind": "toolCall",
+              "serverId": "srv_9Fa1",
+              "serverName": "billing",
+              "toolName": "render_receipt",
+              "arguments": {
+                "chargeId": "ch_4471"
+              },
+              "renderTimeoutMs": 15000
+            },
+            {
+              "id": "step-3",
+              "kind": "interact",
+              "toolName": "render_receipt",
+              "action": {
+                "kind": "click",
+                "target": {
+                  "testId": "confirm-refund"
+                },
+                "clickType": "left"
+              }
+            },
+            {
+              "id": "step-4",
+              "kind": "assert",
+              "assertion": {
+                "kind": "textVisible",
+                "toolName": "render_receipt",
+                "text": "Refunded"
+              }
+            },
+            {
+              "id": "step-5",
+              "kind": "assert",
+              "assertion": {
+                "type": "toolCalledWith",
+                "toolName": "create_refund",
+                "args": {
+                  "args": {
+                    "chargeId": "ch_4471"
+                  },
+                  "argumentMatching": "partial"
+                }
+              }
+            }
+          ],
+          "assertions": [
+            {
+              "type": "noToolErrors"
+            },
+            {
+              "type": "responseContains",
+              "needle": "refunded",
+              "caseSensitive": false
+            }
+          ],
+          "expectedOutput": "The duplicate charge was refunded.",
+          "model": "anthropic/claude-opus-4-6",
+          "repetitions": 10,
+          "passThreshold": 1,
+          "import": {
+            "status": "exact",
+            "sourceCaseKey": "upstream/refunds/duplicate-charge",
+            "note": "1:1 with the upstream single-turn assertion form."
+          }
+        },
+        {
+          "id": "c_approximated_negative",
+          "title": "Refuses to refund outside the window",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Refund the charge from 2019."
+            }
+          ],
+          "isNegativeTest": true,
+          "import": {
+            "status": "approximated",
+            "sourceCaseKey": "upstream/refunds/out-of-window",
+            "note": "Upstream asserted on a rendered string; mapped to the negative-case rule instead."
+          }
+        },
+        {
+          "id": "c_unsupported_disabled",
+          "title": "Replays a recorded browser session",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Walk through the checkout flow."
+            }
+          ],
+          "disabled": true,
+          "import": {
+            "status": "unsupported",
+            "note": "Upstream drove a real browser; no counterpart here."
+          }
+        },
+        {
+          "id": "c_unresolved_needs_review",
+          "title": "Reconciles a partial refund",
+          "steps": [
+            {
+              "id": "step-1",
+              "kind": "prompt",
+              "prompt": "Reconcile the partial refund on invoice 4471."
+            }
+          ],
+          "import": {
+            "status": "unresolved",
+            "sourceCaseKey": "upstream/refunds/partial",
+            "note": "Upstream rubric text was ambiguous about what counts as reconciled."
+          }
+        }
+      ]
+    }
+  ]
+}

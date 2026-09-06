@@ -1,4 +1,5 @@
 import { ConvexError } from "convex/values";
+import { convexErrMessage } from "@/lib/convex-error";
 import type {
   BillingFeatureName,
   BillingInterval,
@@ -38,6 +39,9 @@ export const BILLING_FEATURE_BY_TAB = {
   // feature — server-side ingest enforces it — it just no longer gates a
   // client route.
   evals: "evals",
+  // Evaluate (New) is the same product behind a flag, so it gates on the same
+  // feature — a preview must not be a way around the paywall.
+  evaluate: "evals",
   scenarios: "scenarios",
   // The agent Swarm surface shares the human Scenario's billing feature.
   swarms: "scenarios",
@@ -402,6 +406,64 @@ export function isComputerStartLimitError(error: unknown): boolean {
   return (payload.limitName ?? payload.limit) === "computerStartsPerDay";
 }
 
+export interface EvalIterationLimitError {
+  allowed: number | null;
+  used: number;
+  resetsAt: number | null;
+  windowKind: "day" | "month";
+}
+
+/**
+ * The server is the authority on the eval-iteration cap. The client's quota
+ * query can be stale — a teammate spending the last iterations while this user
+ * sits on the Run button — so a run can clear the pre-check and still be
+ * rejected. Detected here so that rejection can reach the same upgrade wall as
+ * the pre-check instead of the dead-end toast the wall replaced.
+ */
+export function getEvalIterationLimitFromError(
+  error: unknown
+): EvalIterationLimitError | null {
+  const payload = extractBillingErrorPayload(error);
+  if (!payload || payload.code !== "billing_limit_reached") {
+    return null;
+  }
+  if ((payload.limitName ?? payload.limit) !== "maxEvalIterationsPerMonth") {
+    return null;
+  }
+
+  const allowed =
+    typeof payload.allowedValue === "number" ? payload.allowedValue : null;
+  const used =
+    typeof payload.currentValue === "number"
+      ? payload.currentValue
+      : typeof payload.current === "number"
+      ? payload.current
+      : allowed ?? 0;
+
+  return {
+    allowed,
+    used,
+    resetsAt: typeof payload.resetsAt === "number" ? payload.resetsAt : null,
+    // One limit NAME, two windows: the backend enforces `maxEvalIterationsPerMonth`
+    // as a DAILY cap on Free and a MONTHLY per-seat allowance on Team, and says
+    // which through `windowKind`. The wall renders that word literally ("out of
+    // eval iterations today" vs "this month"), so a payload that omits the field
+    // must not be answered with a constant: hardcoding "month" would tell a Free
+    // user a cap that lifts at the next UTC roll is a month-long block — a wait
+    // sold as an upgrade — and hardcoding "day" mislabels the Team allowance.
+    // The plan is the field the window is derived FROM, so fall back to it; it
+    // also survives payload paths that drop `windowKind` (the v1 route's
+    // `billingDetails` allowlist keeps `plan` and not `windowKind`). Unknown plan
+    // stays "day", the narrower claim: it never overstates how long the block lasts.
+    windowKind:
+      payload.windowKind === "month" || payload.windowKind === "day"
+        ? payload.windowKind
+        : payload.plan === "team" || payload.plan === "enterprise"
+        ? "month"
+        : "day",
+  };
+}
+
 export function getBillingErrorMessage(
   error: unknown,
   fallback: string,
@@ -409,7 +471,10 @@ export function getBillingErrorMessage(
 ): string {
   const payload = extractBillingErrorPayload(error);
   if (!payload) {
-    return error instanceof Error ? error.message : fallback;
+    // Not a billing rejection — a write-boundary validator, say. Its message
+    // lives on `err.data`; `err.message` is the redacted "Server Error"/Request
+    // ID string, which reads as a crash rather than "fix this field".
+    return convexErrMessage(error, fallback);
   }
 
   if (payload.code === "billing_feature_not_included") {
@@ -459,9 +524,14 @@ export function getBillingErrorMessage(
     );
   }
 
-  if (payload.message) {
-    return payload.message;
-  }
-
-  return error instanceof Error ? error.message : fallback;
+  // A payload carrying only a message is not a billing rejection at all —
+  // `extractBillingErrorPayload` wraps every thrown `Error` that way. Shape it
+  // like any other Convex failure so the redacted "[Request ID: …] Server
+  // Error" prefix never reaches the toast. Shape the PARSED message rather than
+  // re-reading the error: for a JSON-encoded `Error.message`, `convexErrMessage`
+  // hands back the raw JSON blob instead of the sentence inside it.
+  const parsed =
+    typeof payload.message === "string" ? payload.message.trim() : "";
+  if (!parsed) return convexErrMessage(error, fallback);
+  return parsed.replace(/^\[.*?\]\s*/, "").slice(0, 400) || fallback;
 }

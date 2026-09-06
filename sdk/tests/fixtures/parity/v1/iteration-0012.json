@@ -1,0 +1,85 @@
+{
+  "id": "hosted-0012",
+  "note": "model-free case: selection does not apply",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_free",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "list_files",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [],
+    "predicateResults": [
+      {
+        "passed": true,
+        "reason": "resource read"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": true,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "notApplicable",
+        "reason": "notAuthored"
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "userValue",
+        "state": "passed",
+        "reason": "observed"
+      }
+    ],
+    "stageAnalyzerVersion": 8
+  }
+}

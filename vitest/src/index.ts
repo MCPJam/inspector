@@ -61,6 +61,16 @@ export type EvalCasePlan = {
   testName: string;
   /** The hosted case id, when this case came from a hosted corpus. */
   scenarioId?: string;
+  /**
+   * The case's DECLARED id (`EvalTestConfig.id`).
+   *
+   * Surfaced so a CI reporter can key a case by its identity rather than by a
+   * title that gets renamed. Deliberately NOT used in the vitest title: the
+   * `[scenarioId]` suffix is the hosted-dashboard grep handle and still rides
+   * `externalCaseId`, so changing what the suffix carries would break the greps
+   * that exist.
+   */
+  caseId?: string;
 };
 
 export type EvalSuitePlan = {
@@ -82,9 +92,15 @@ export function planEvalSuite(
 ): EvalSuitePlan {
   const cases = suite.getAll().map((test): EvalCasePlan => {
     const testName = test.getName();
-    const scenarioId = test.getConfig().externalCaseId;
+    const config = test.getConfig();
+    const scenarioId = config.externalCaseId;
+    // Read defensively: a user can end up with `@mcpjam/vitest` beside an older
+    // `@mcpjam/sdk` copy, where `id` does not exist yet. An absent `caseId` is
+    // a missing convenience; a thrown TypeError would be a broken test run.
+    const caseId = (config as { id?: string }).id;
+    const declared = caseId === undefined ? {} : { caseId };
     if (scenarioId === undefined) {
-      return { title: testName, testName };
+      return { title: testName, testName, ...declared };
     }
     // A corpus already suffixes `[id]` onto cases whose titles collide, so
     // appending unconditionally would render `Title [id] [id]`.
@@ -93,6 +109,7 @@ export function planEvalSuite(
       title: testName.endsWith(suffix) ? testName : `${testName}${suffix}`,
       testName,
       scenarioId,
+      ...declared,
     };
   });
 
@@ -222,6 +239,20 @@ export function describeEvalSuite(
         try {
           // `assertGate` throws on `incomplete` too: a gate that could not be
           // decided has not been satisfied.
+          //
+          // NO WAIVER PATH HERE, and its absence is a decision rather than an
+          // omission. `GateReport` gained a `waived` outcome for the HOSTED
+          // gate, where a waiver is an audited platform record with an
+          // authorized granter, a reason and an expiry behind it. This gate
+          // runs against a local, code-first suite result: there is no such
+          // record to consult, and the only way to express "waive this" would
+          // be a flag in the same file as the assertion — a gate that turns
+          // itself off, which is not a waiver at all. A caller who wants a
+          // policy relaxed here edits the policy, in the open, in git.
+          //
+          // `formatGateReport` below renders a `waived` report correctly if
+          // one ever does reach it, so the widened union is safe to pass
+          // through untouched.
           assertGate(gateInputFromSuiteResult(result), options.gate as GatePolicy);
         } catch (error) {
           throw new Error(gateFailureMessage(error));

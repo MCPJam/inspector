@@ -235,12 +235,14 @@ const CLAUDE_FONTS_CSS = `
 export const HOST_TEMPLATE_IDS = [
   "mcpjam",
   "claude",
+  "claude-desktop",
   "claude-code",
   "chatgpt",
   "mistral",
   "goose",
   "slack",
   "cursor",
+  "cursor-cli",
   "codex",
   "copilot",
   "vscode",
@@ -265,8 +267,8 @@ export interface SeedHostTemplateOptions {
    * `applyHostDefaultsToPlayground`) where flipping to MCPJam's theme on
    * every brand-pill click would be a surprise.
    *
-   * Codex ignores this — its template doesn't set `hostContext` at all
-   * (no rendering surface, so no theme to honor).
+   * Codex currently pins dark, matching the backend catalog's probed host
+   * row. Keep this option for callers that stamp other host templates.
    */
   theme?: HostThemeMode;
   /**
@@ -414,6 +416,11 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // MCP UI extension intact.
       base.clientCapabilities = {
         ...base.clientCapabilities,
+        // MCPJam has both local and hosted bridges for form and URL
+        // elicitation. URL mode is narrowed or rejected on legacy protocol
+        // connections, so this only declares modes the active bridge can
+        // safely handle.
+        elicitation: { form: {}, url: {} },
         extensions: {
           ...(base.clientCapabilities.extensions as Record<string, unknown>),
           [XAA_MCP_EXTENSION]: {},
@@ -573,7 +580,9 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
         platform: "web",
         deviceCapabilities: { touch: false, hover: true },
-        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
+        // the widget iframe is inset from its card rather than flush to it.
+        safeAreaInsets: { top: 12, right: 12, bottom: 12, left: 12 },
         // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
         // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
         // (set below). Variables use CSS `light-dark()` so they pick the
@@ -586,8 +595,19 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-26 on the 2026-07-28 `server/discover` lane: Claude
+        // followed `nextCursor` and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // No `toolListChanged` here: that capture came back `not-deliverable`
+        // (the prober deployment holds no `subscriptions/listen` stream to
+        // publish on), so neither half of the pair was actually asked.
+        mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches what real claude.ai publishes.
           clientInfo: { name: "claude-ai", version: "0.1.0" },
@@ -688,6 +708,323 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // sandbox-proxy.html: inner gets spec-4 only), matching real
             // claude.ai's outer-grants / inner-trims pattern.
             allowFeatures: { fullscreen: "*" },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox. Not an MCP concept — the MCP Apps
+            // spec says nothing about storage.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            // The 2026-09-02 capture reports a uniform 12px inset on every edge.
+            safeAreaInsets: true,
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            hostContextChanged: true,
+            resourceTeardown: true,
+            toolInfo: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            // Claude advertises frameDomains and baseUriDomains and then
+            // blocks the origins it declared there (2026-08-19 probe), so
+            // neither is usable.
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+        },
+      };
+      return base;
+    },
+  },
+  // Claude Desktop — the Electron app. Distinct from the `claude` entry above,
+  // which is claude.ai in a browser. Probed 2026-09-03; everything matched the
+  // web app except display modes, toolInfo, safe-area insets, platform, width
+  // and user agent. Style variables and fonts are shared verbatim.
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    description: "Anthropic-style host, Electron desktop app.",
+    seed: (opts) => {
+      const base = emptyHostConfigInputV2({
+        hostStyle: "claude-desktop",
+        // Canonical id (anthropic/<slug>) so the chat-composer model
+        // picker resolves it. Bare "claude-sonnet-4-5" never matched a
+        // SUPPORTED_MODELS entry → silently fell back to default.
+        // Haiku 4.5 is in MCPJAM_GUEST_ALLOWED_MODEL_IDS, so guests
+        // pick it without an Anthropic key.
+        modelId: "anthropic/claude-haiku-4.5",
+        temperature: 1.0,
+        requireToolApproval: false,
+      });
+      const theme = opts?.theme ?? DEFAULT_SEED_THEME;
+      // clientCapabilities: Real claude.ai publishes only the SDK-default
+      // MCP UI extension (no `experimental` flag). emptyHostConfigInputV2
+      // already seeds that, so no override needed here — distinct from
+      // the ChatGPT template, which adds `experimental.openai/visibility`.
+      //
+      // Override the preset advertise to match what real claude.ai
+      // publishes in ui/initialize. `sandbox` is intentionally omitted —
+      // the canonicalizer strips it from the override (sandbox is per-
+      // resource at runtime per SEP-1865; see mcpProfile.apps.sandbox).
+      // listChanged is advertised here even though the inspector's
+      // renderer doesn't currently forward those notifications (see
+      // host-styles/built-ins.ts:33–37) — kept faithful to real Claude
+      // so apps that gate on it can detect the host. Resolving the
+      // renderer gap is a separate enforcement-side fix.
+      base.hostCapabilitiesOverride = {
+        openLinks: {},
+        downloadFile: {},
+        serverTools: { listChanged: true },
+        serverResources: { listChanged: true },
+        logging: {},
+        updateModelContext: { text: {}, image: {} },
+        message: { text: {} },
+      };
+      // Per-resource environment context claude.ai exposes to MCP apps.
+      // Skips `toolInfo` (per-invocation, fills at runtime).
+      // `containerDimensions` is verbatim from claude.ai — clean policy
+      // values (720px wide chat column, 5000px height cap). Per SEP-1865,
+      // Views interpret `width: 768` as "fill your container with width:
+      // 100vw" intent, not a literal claim about the inspector's iframe
+      // width; widgets render at whatever the iframe is, the value
+      // communicates Claude's layout policy.
+      base.hostContext = {
+        theme,
+        displayMode: "inline",
+        // Desktop advertises inline alone; the web app offers both.
+        availableDisplayModes: ["inline"],
+        containerDimensions: { width: 768, maxHeight: 5000 },
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent:
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Claude/1.40609.1 Chrome/148.0.7778.280 Electron/42.10.0 Safari/537.36",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        // The 2026-09-02 capture reports a uniform 12px inset on every edge;
+        // the widget iframe is inset from its card rather than flush to it.
+        // Zero on every edge, unlike the web app's uniform 12px.
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+        // SEP-1865 hostContext.styles. Anthropic Sans @font-face URLs
+        // require `assets.claude.ai` in apps.sandbox.csp.resourceDomains
+        // (set below). Variables use CSS `light-dark()` so they pick the
+        // right side based on the iframe's `color-scheme` — no JS-side
+        // theme threading required here.
+        styles: {
+          variables: CLAUDE_HOST_STYLE_VARIABLES,
+          css: { fonts: CLAUDE_FONTS_CSS },
+        },
+      };
+      base.mcpProfile = {
+        profileVersion: 1,
+        // Probed 2026-08-26 on the 2026-07-28 `server/discover` lane: Claude
+        // followed `nextCursor` and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // No `toolListChanged` here: that capture came back `not-deliverable`
+        // (the prober deployment holds no `subscriptions/listen` stream to
+        // publish on), so neither half of the pair was actually asked.
+        mcpProtocolVersion: "auto",
+        mrtrModes: {
+          requestState: false,
+          elicitation: false,
+        },
+        initialize: {
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // Base MCP protocol: clientInfo sent to MCP servers during
+          // `initialize`. Matches what real claude.ai publishes.
+          clientInfo: { name: "claude-ai", version: "0.1.0" },
+        },
+        apps: {
+          // MCP Apps extension: hostInfo sent to the View iframe in
+          // `ui/initialize`. Apps that branch on `hostInfo.name === "Claude"`
+          // need this to take that path.
+          uiInitialize: {
+            hostInfo: { name: "Claude", version: "1.0.0" },
+          },
+          sandbox: {
+            csp: {
+              // Honor the view's declared `_meta.ui.csp` as-is — no
+              // host-side `restrictTo`. SEP-1865 makes restrictTo an
+              // intersection with what the view declares, so any
+              // hardcoded allowlist here can only narrow widgets, never
+              // help them. Production hosts (real claude.ai) DO publish
+              // a captured set (anthropic / openai / jsdelivr) — but
+              // mirroring that here propagates a widget-breaking default
+              // (e.g. esm.sh-loading views go silent) without giving
+              // users any protection MCPJam itself owns. Users who want
+              // to model the production allowlist can add it explicitly
+              // in the editor; absence here means "trust the view".
+              mode: "declared",
+              // cspDirectives — verbatim from a live claude.ai inner-iframe
+              // response CSP header (captured 2026-05-18 via DevTools →
+              // Network → Response Headers). These layer on top of
+              // SEP-1865's restrictive baseline via the union merge in
+              // buildCSP (sandbox-proxy.html). Tokens already in the
+              // baseline (`'unsafe-inline'` for script-src/style-src,
+              // `data:`/`blob:` for img/font/media) are omitted to keep
+              // the data set minimal — the merge dedupes regardless.
+              //
+              // 'unsafe-eval' enables `eval()` / `new Function()` — real
+              // Claude allows this; widgets relying on runtime-compiled
+              // templating (Handlebars, Vue full build, etc.) work here
+              // but break in hosts that don't grant it.
+              //
+              // `esm.sh` + `assets.claude.ai` are public CDNs Claude
+              // adds at the proxy layer (NOT in advertised metadata).
+              // Including them here is safe under the union merge rule
+              // (PR 2142) — they can only grant capabilities, never
+              // narrow what a widget declared.
+              cspDirectives: {
+                "script-src": [
+                  "'self'",
+                  "'unsafe-eval'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "style-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "img-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "connect-src": ["'self'", "https://esm.sh"],
+                "font-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "media-src": [
+                  "'self'",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "worker-src": [
+                  "'self'",
+                  "blob:",
+                  "https://esm.sh",
+                  "https://assets.claude.ai",
+                ],
+                "frame-src": ["'self'"],
+                "base-uri": ["'self'"],
+                "form-action": ["'self'"],
+              },
+            },
+            permissions: {
+              mode: "custom",
+              allow: { clipboardWrite: true },
+            },
+            // sandboxAttrs — from live capture of real claude.ai's outer
+            // and inner iframes (both carry `allow-scripts allow-same-origin
+            // allow-forms`). The first two are spec-mandated; `allow-forms`
+            // is the host's addition so `<form>` POSTs work inside widgets.
+            sandboxAttrs: ["allow-forms"],
+            // allowFeatures — non-spec Permissions Policy entries on the
+            // OUTER iframe. Claude's outer grants `fullscreen *; clipboard-
+            // write *`; clipboard-write is the spec permission (lives in
+            // `permissions.allow` above), fullscreen is the non-spec extra
+            // captured here. The inner iframe trims fullscreen out (see
+            // sandbox-proxy.html: inner gets spec-4 only), matching real
+            // claude.ai's outer-grants / inner-trims pattern.
+            allowFeatures: { fullscreen: "*" },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox. Not an MCP concept — the MCP Apps
+            // spec says nothing about storage.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            availableDisplayModes: ["inline"],
+            // `toolInputPartial` is deliberately absent, not false: the
+            // capture carried no `tool-input-partial`, but that notification
+            // only fires while arguments stream and the probe tool takes none.
+            hostContextChanged: true,
+            resourceTeardown: true,
+            // Absent from `hostContext` in a payload received whole, so the
+            // absence is a real observation. The web row carries it.
+            toolInfo: false,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            sandboxPermissions: true,
+            // Claude advertises frameDomains and baseUriDomains and then
+            // blocks the origins it declared there (2026-08-19 probe), so
+            // neither is usable.
+            cspFrameDomains: false,
+            cspBaseUriDomains: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            resourceCacheTtl: true,
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            downloadFile: true,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
           },
         },
       };
@@ -757,16 +1094,25 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // documented catalogue of what that runtime exposes.
       base.mcpProfile = {
         profileVersion: 1,
+        // The 2026-09-03 capture, on the 2026-07-28 `server/discover` lane:
+        // followed `nextCursor` to page two of tools/list, and opened
+        // `subscriptions/listen` — which is how a client listens on that lane,
+        // so the absent standalone GET SSE stream is correct rather than a
+        // miss. `refetches` stays absent: probe-list-changed was never run
+        // against this client, so nothing was published for it to react to.
+        paginationTraversal: "full",
+        toolListChanged: { listens: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          // Verbatim from the same probe. `title` / `description` /
-          // `websiteUrl` land in the pass-through
-          // `Record<string, unknown>` per host-config-v2 (backend
-          // soft-validates name/version only).
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // Capability provenance above is from the v2.1.176 probe. The
+          // 2026-09-03 capture refreshed the version and settled the two
+          // listing knobs above, but not the capability snapshot. `title` /
+          // `description` / `websiteUrl` land in the pass-through
+          // `Record<string, unknown>` per host-config-v2.
           clientInfo: {
             name: "claude-code",
             title: "Claude Code",
-            version: "2.1.176",
+            version: "2.1.246",
             description: "Anthropic's agentic coding tool",
             websiteUrl: "https://claude.com/claude-code",
           },
@@ -784,10 +1130,10 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         hostStyle: "chatgpt",
         // Canonical id (openai/<slug>) so the chat-composer model picker
         // resolves it. Bare "gpt-5" never matched a SUPPORTED_MODELS
-        // entry → silently fell back. `gpt-5-nano` is the smallest free
-        // GPT-5 variant in MCPJAM_GUEST_ALLOWED_MODEL_IDS — guests get
-        // it without an OpenAI key. Bigger GPT-5s (5.4/5.5) are gated.
-        modelId: "openai/gpt-5-nano",
+        // entry → silently fell back. Luna is the current default ChatGPT
+        // model and is hosted (every hosted model is guest-allowed), so
+        // guests still get it without an OpenAI key.
+        modelId: "openai/gpt-5.6-luna",
         temperature: 0.7,
         requireToolApproval: false,
       });
@@ -842,10 +1188,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // an MCP app can never reach a domain ChatGPT itself wouldn't allow.
       base.mcpProfile = {
         profileVersion: 1,
+        mcpProtocolVersion: "auto",
+        // The 2026-08-24 prober capture (2026-07-28 lane) walked `nextCursor`
+        // and fetched page two of tools/list.
+        paginationTraversal: "full",
+        // Same capture: ChatGPT never opened a `subscriptions/listen` stream,
+        // so no server notification can reach it. `refetches` stays absent —
+        // unprovable while nothing is ever delivered.
+        toolListChanged: { listens: false },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          // Base MCP protocol: clientInfo sent to MCP servers during
-          // `initialize`. Matches what real ChatGPT publishes.
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // Stored in the established connection-profile envelope. The
+          // runtime sends initialize only when a 2025 protocol is selected.
           clientInfo: { name: "openai-mcp", version: "1.0.0" },
         },
         apps: {
@@ -856,6 +1210,45 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             hostInfo: { name: "chatgpt", version: "0.0.1" },
           },
+          mcpAppsOverrides: {
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            // One directive, one answer: the declared wss endpoint connected
+            // while an undeclared one took a real connect-src violation
+            // (2026-08-19 probe). The fetch/xhr canary passed because it is in
+            // ChatGPT's own baseline allowlist, carried as `cspDirectives`.
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            // The 2026-08-23 paired probe (captured 2026-08-24Z) declared
+            // fastly.jsdelivr.net, an
+            // origin outside the baseline above, and every declared resource
+            // subtype loaded in the treatment fixture.
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // The 2026-08-24 capture called a tool FROM the widget and
+            // compared fingerprints on the way back: every ContentBlock kind
+            // arrived unchanged and `structuredContent` was forwarded. Widget
+            // axis — distinct from `modelVisibleMcpToolResults` (model) and
+            // `mcpToolResultImageRendering` (mcpjam's own chat UI).
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+          },
           // Vendor compat-runtime shims. Real ChatGPT exposes the
           // OpenAI Apps SDK `window.openai` surface to widget HTML, so
           // emulating it here keeps existing Apps SDK widgets rendering
@@ -863,31 +1256,36 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           // JSON editor surfaces the field on day one — without this,
           // the field would only appear after a manual edit and the
           // injected-globals chip would read "(from preset)".
-          compatRuntime: { openaiApps: true },
+          compatRuntime: {
+            openaiApps: true,
+            // An omitted method is ON; only turn-OFFs belong here.
+            // 2026-09-02: `window.openai.notifyIntrinsicHeight` is gone from
+            // ChatGPT's shim. `notifyIntrinsicWidth` is present in its place,
+            // so this is a rename on ChatGPT's side rather than a dropped
+            // feature — but there is no catalog key for the width form, and a
+            // widget calling the height one now hits `undefined`.
+            openaiAppsOverrides: {
+              notifyIntrinsicHeight: false,
+            },
+          },
           sandbox: {
             csp: {
-              // No host-side `restrictTo` — see the Claude template for
-              // the full rationale. The host-probe resource declared the
-              // captured anthropic / openai / jsdelivr allowlist, so it is
-              // per-resource evidence rather than a global ChatGPT allowlist.
-              // The view's declaration is authoritative.
               mode: "declared",
-              // cspDirectives — verbatim from a live chatgpt response
-              // Content-Security-Policy header (captured 2026-05-18 via
-              // DevTools → Network → oaiusercontent.com response).
-              //
-              // Real ChatGPT's outer-doc CSP is strikingly minimal: only
-              // `frame-ancestors`, `frame-src`, and the CSP `sandbox`
-              // directive are emitted. There is NO `script-src`,
-              // `style-src`, `connect-src` etc. — script and style
-              // execution is effectively unconstrained at the host layer.
-              // `frame-ancestors` is dropped (controls who can embed the
-              // doc — irrelevant for widget runtime); the CSP `sandbox`
-              // directive duplicates `sandboxAttrs` below and is modeled
-              // there. That leaves just `frame-src` as the meaningful
-              // host-emitted constraint on widget behavior.
+              // ChatGPT's own baseline allowlist, merged with the widget's
+              // declared domains. The 2026-08-19 probe loaded these origins
+              // without declaring them, while undeclared frame origins were
+              // blocked. Keep this intentionally limited to what was probed.
               cspDirectives: {
-                "frame-src": ["'self'", "https:", "data:", "blob:"],
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
               },
             },
             permissions: {
@@ -899,6 +1297,15 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               // widget testing in MCPJam-as-ChatGPT actually gets what
               // the production iframe grants.
               allow: { microphone: true, clipboardWrite: true },
+            },
+            // The 2026-08-24 capture read and wrote all three browser
+            // storage APIs from inside the widget sandbox — every one
+            // available, no error. A browser fact, not an MCP one: the MCP
+            // Apps spec never mentions storage.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
             },
             // sandboxAttrs — captured 2026-05-18 from the outer and
             // inner iframe `sandbox=` attributes. There's an asymmetry:
@@ -986,8 +1393,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-25: Le Chat followed `nextCursor` and fetched page
+        // two of tools/list.
+        paginationTraversal: "full",
+        // No `toolListChanged`: probe-list-changed was never run against this
+        // client (verdict `not-sent`), so `refetches` was never asked.
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: { name: "mcp", version: "0.1.0" },
         },
         apps: {
@@ -995,6 +1407,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "Le Chat", version: "1.0.0" },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: true,
             toolCancelled: false,
@@ -1008,8 +1422,35 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             updateModelContext: true,
             message: true,
             sandboxPermissions: true,
-            cspFrameDomains: false,
-            cspBaseUriDomains: false,
+            // Flipped by the 2026-08-25 paired capture. Le Chat ships no
+            // baseline allowlist of its own, so every canary that loaded did
+            // so because the widget declared the origin.
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
@@ -1025,6 +1466,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               allow: { clipboardWrite: true },
             },
             sandboxAttrs: ["allow-forms"],
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
         },
       };
@@ -1120,7 +1568,18 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
-            resourcePrefersBorder: false,
+            cspConnectDomains: {
+              fetch: false,
+              xhr: false,
+            },
+            cspResourceDomains: {
+              script: false,
+              stylesheet: false,
+              image: false,
+              font: false,
+              media: false,
+            },
+            resourcePrefersBorder: true,
             downloadFile: false,
             requestTeardown: false,
             widgetDisplayModeRequests: "accept",
@@ -1165,19 +1624,26 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       // advertises only the MCP UI extension. Preserve that exact surface.
       base.clientCapabilities = {
         extensions: {
+          // Probed 2026-08-26: Slack advertises its own Block Kit extension
+          // alongside the spec's MCP Apps one.
+          "io.slack/block-kit": {
+            mimeTypes: ["application/vnd.slack.blocks+json"],
+          },
           [MCP_UI_EXTENSION_ID]: {
             mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE],
           },
         },
       };
 
-      // Captured from Slackbot's `ui/initialize` response. No
-      // updateModelContext/message/downloadFile claims were present.
+      // Captured from Slack's `ui/initialize` response. Re-probed 2026-08-26:
+      // `message: { text: {} }` IS present; updateModelContext and
+      // downloadFile still are not.
       base.hostCapabilitiesOverride = {
         openLinks: {},
         serverTools: {},
         serverResources: {},
         logging: {},
+        message: { text: {} },
       };
 
       // Per-resource environment context Slackbot exposes to MCP apps.
@@ -1200,8 +1666,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
 
       base.mcpProfile = {
         profileVersion: 1,
+        // Neither paginationTraversal nor toolListChanged is written here: the
+        // 2026-08-26 capture never saw a `tools/list` from Slack, and
+        // probe-list-changed was never run against it.
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          // "Slackbot" is the product name this catalog uses throughout. The
+          // 2026-08-26 capture reports "Slack MCP Client" / "Slack" on the
+          // wire; the established name is kept here deliberately.
           clientInfo: { name: "Slackbot MCP Client", version: "1.0.0" },
         },
         apps: {
@@ -1209,6 +1681,8 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             hostInfo: { name: "Slackbot", version: "1.0.0" },
           },
           mcpAppsOverrides: {
+            // The 2026-09-03 captures (both themes) omit the key entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline", "fullscreen"],
             toolInputPartial: false,
             toolCancelled: false,
@@ -1219,11 +1693,42 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             serverTools: true,
             serverResources: true,
             logging: true,
+            // Confirmed 2026-08-26: the widget's updateModelContext call
+            // came back -32601 Method not found.
             updateModelContext: false,
-            message: false,
+            // Flipped: hostCapabilities advertises `message: { text: {} }`.
+            message: true,
             sandboxPermissions: false,
             cspFrameDomains: false,
             cspBaseUriDomains: false,
+            // Paired capture 2026-08-26: Slack honors the declared list for
+            // fetch, XHR and every resource subtype, and blocks the declared
+            // WebSocket origin — the only host probed where one connect
+            // method diverges from the other two.
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: false,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // Every ContentBlock kind reached the widget with an unchanged
+            // fingerprint and `structuredContent` was forwarded.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: false,
             downloadFile: false,
             requestTeardown: false,
@@ -1248,6 +1753,14 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             // `allow-scripts allow-same-origin allow-forms`. The first two
             // are the renderer baseline; `allow-forms` is Slack's addition.
             sandboxAttrs: ["allow-forms"],
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox — the iframe's own behavior, since
+            // Slack publishes no `sandbox` capability at all.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
         },
       };
@@ -1317,8 +1830,16 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-26 (Cursor 3.14.27): asked for tools/list and never
+        // sent back the `nextCursor` it was handed.
+        paginationTraversal: "firstPageOnly",
+        // Same capture: opened the GET SSE stream, took list_changed on the
+        // call's response stream, and re-issued tools/list 240 ms later.
+        // Written out so the caniuse row reads "supported" rather than the em
+        // dash an absent knob renders as.
+        toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           // Base MCP protocol: clientInfo sent to MCP servers during
           // `initialize`. Matches Cursor's outer-IDE identity.
           clientInfo: { name: "cursor-vscode", version: "1.0.0" },
@@ -1327,9 +1848,41 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
           uiInitialize: {
             // MCP Apps extension: hostInfo sent to the View iframe in
             // `ui/initialize`. Apps that branch on `hostInfo.name === "Cursor"`
-            // need this to take that path. Version pinned to a real probed
-            // build; bump when capturing a fresh probe.
-            hostInfo: { name: "Cursor", version: "3.4.20" },
+            // need this to take that path. The 3.14.27 version is identity
+            // metadata only; the capability notes above remain attributed to
+            // their named probes until a fresh probe updates both.
+            hostInfo: { name: "Cursor", version: "3.14.27" },
+          },
+          mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            // Flipped 2026-08-26: `downloadFile` is absent from Cursor's
+            // hostCapabilities.
+            downloadFile: false,
           },
           sandbox: {
             csp: {
@@ -1344,6 +1897,13 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               mode: "custom",
               allow: { clipboardWrite: true },
             },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
         },
       };
@@ -1353,8 +1913,7 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
   {
     id: "codex",
     label: "Codex",
-    description:
-      "OpenAI Codex CLI. Elicitation-only client, no widget rendering.",
+    description: "OpenAI Codex host with MCP Apps support.",
     seed: () => {
       const base = emptyHostConfigInputV2({
         // Dedicated Codex skin (OpenAI Apps SDK profile + ChatGPT chat
@@ -1376,34 +1935,220 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
         harness: "codex",
         computer: { kind: "personal" },
       });
-      // Codex CLI probe advertises only elicitation. It does NOT advertise
-      // the MCP UI extension (no widget rendering), so we replace the SDK
-      // default clientCapabilities entirely rather than spreading on top —
-      // a spread would leak `extensions["io.modelcontextprotocol/ui"]`
-      // back in and misrepresent Codex as a UI-capable client.
+      // Probed 2026-08-19. Codex advertises MCP Apps, and lists the legacy
+      // ChatGPT mime type alongside the spec one.
       base.clientCapabilities = {
-        elicitation: {},
+        extensions: {
+          [MCP_UI_EXTENSION_ID]: {
+            mimeTypes: [MCP_UI_RESOURCE_MIME_TYPE, "text/html+skybridge"],
+          },
+        },
+        elicitation: { form: {}, url: {} },
       };
-      // Codex is a CLI: it doesn't render MCP Apps views, so no
-      // hostContext (styles/displayMode/containerDimensions are
-      // meaningless without a renderer). Leaving `hostContext` as the
-      // empty object from emptyHostConfigInputV2.
-      //
-      // Same reasoning for hostCapabilitiesOverride: there's no
-      // ui/initialize negotiation, so we don't override what the preset
-      // advertises. The preset's chatgpt advertise is irrelevant in
-      // practice because no widget will ever read it from Codex.
+      base.hostContext = {
+        theme: "dark",
+        displayMode: "inline",
+        availableDisplayModes: ["inline", "fullscreen"],
+        locale: "en-US",
+        timeZone: "America/Los_Angeles",
+        userAgent: "chatgpt",
+        platform: "desktop",
+        deviceCapabilities: { touch: false, hover: true },
+        safeAreaInsets: { top: 0, right: 0, bottom: 0, left: 0 },
+      };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-26: Codex asked for tools/list once and never sent
+        // back the `nextCursor` it was handed.
+        paginationTraversal: "firstPageOnly",
+        // Same capture: Codex opens the standalone GET SSE stream and
+        // list_changed reached it on the call's response stream, but no
+        // tools/list followed.
+        toolListChanged: { listens: true, refetches: false },
         initialize: {
-          supportedProtocolVersions: ["2025-06-18"],
-          // Verbatim from a real Codex CLI probe. `title` lands in the
-          // pass-through `Record<string, unknown>` per host-config-v2
-          // (backend soft-validates name/version only).
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
           clientInfo: {
             name: "codex-mcp-client",
             title: "Codex",
-            version: "0.131.0-alpha.9",
+            // Bumped with the 2026-09-02 re-probe, from 0.148.0-alpha.15.
+            version: "0.150.0-alpha.12.2",
+          },
+        },
+        apps: {
+          sandbox: {
+            // Codex honors the widget's declared CSP lists; the directives
+            // below are its own baseline, merged on top of that declaration.
+            csp: {
+              mode: "declared",
+              cspDirectives: {
+                "connect-src": [
+                  "https://cdn.jsdelivr.net",
+                  "https://unpkg.com",
+                ],
+                "script-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "style-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "img-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "font-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "media-src": ["https://cdn.jsdelivr.net", "https://unpkg.com"],
+                "frame-src": ["'self'", "data:", "blob:"],
+                "base-uri": ["'none'"],
+              },
+            },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox. Not an MCP concept — the MCP Apps
+            // spec says nothing about storage.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
+          },
+          mcpAppsOverrides: {
+            // The 2026-09-01 and 2026-09-02 captures both omit the key entirely.
+            safeAreaInsets: false,
+            availableDisplayModes: ["inline", "fullscreen"],
+            toolInputPartial: true,
+            hostContextChanged: true,
+            openLinks: true,
+            serverTools: true,
+            serverResources: true,
+            logging: true,
+            updateModelContext: true,
+            message: true,
+            toolInfo: false,
+            downloadFile: false,
+            sandboxPermissions: false,
+            cspFrameDomains: true,
+            cspBaseUriDomains: true,
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            // Paired capture 2026-08-26: the treatment fixture declared
+            // fastly.jsdelivr.net, outside the baseline above, and every
+            // declared resource subtype loaded.
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // A widget-initiated tools/call came back with all five
+            // ContentBlock kinds unchanged and `structuredContent` intact.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
+            resourcePrefersBorder: true,
+            toolCancelled: false,
+            resourceTeardown: false,
+            requestTeardown: false,
+            widgetDisplayModeRequests: "accept",
+          },
+          compatRuntime: {
+            openaiApps: true,
+            openaiAppsOverrides: {
+              requestClose: false,
+              requestModal: false,
+              uploadFile: false,
+              selectFiles: false,
+              getFileDownloadUrl: false,
+              requestCheckout: false,
+              setOpenInAppUrl: false,
+              notifyIntrinsicHeight: false,
+            },
+          },
+        },
+      };
+      return base;
+    },
+  },
+  {
+    id: "cursor-cli",
+    label: "Cursor CLI",
+    description:
+      "Cursor's coding CLI (cursor-agent, over ACP). Runs on your own Cursor account; no widget rendering.",
+    seed: () => {
+      const base = emptyHostConfigInputV2({
+        // Its own skin, NOT the emulated `cursor` style: that one mirrors the
+        // Cursor IDE's chat panel, which renders MCP Apps in a webview. This is
+        // a terminal CLI. See CURSOR_CLI_HOST_STYLE in
+        // client-styles/built-ins.ts.
+        hostStyle: "cursor-cli",
+        // A NEUTRAL SENTINEL, not a real provider model. The adapter passes no
+        // model at all: cursor-agent runs on the customer's Cursor account and
+        // Cursor Auto picks. Seeding `anthropic/...` here would put a model id
+        // into traces and eval metadata that nothing ever ran — the one thing
+        // a host template must not fabricate. Matches the backend catalog seed.
+        modelId: "cursor/auto",
+        temperature: 1.0,
+        requireToolApproval: false,
+        // Run the REAL Cursor CLI (the @ai-sdk/harness-cursor adapter) instead
+        // of MCPJam's emulated engine. It executes inside an attached personal
+        // computer, so seed one too — the backend enforces `harness ⇒ computer`
+        // on write.
+        harness: "cursor",
+        computer: { kind: "personal" },
+      });
+      // REPLACED, not spread. A spread would leak the SDK default's
+      // `extensions["io.modelcontextprotocol/ui"]` back in and advertise a
+      // widget-rendering surface a terminal CLI cannot have — the same move the
+      // Claude Code and Codex templates make, and for the same reason.
+      //
+      // Conservative rather than probed: unlike Claude Code's, these are NOT
+      // from a live `start-host-probe` capture. `roots` + `elicitation` is the
+      // floor an ACP client is expected to support; widen it only from a real
+      // capture (the backend catalog row is `provenance: 'assumed'` to match).
+      base.clientCapabilities = {
+        roots: {},
+        elicitation: {},
+      };
+      // The real Cursor CLI owns native tool discovery from the MCP servers
+      // MCPJam feeds its ACP session, so MCPJam's progressive meta-tools stay
+      // off — `search_mcp_tools` must never look like a Cursor built-in.
+      base.progressiveToolDiscovery = false;
+      // CLI client: no widget rendering, so `hostContext` stays empty and the
+      // host-side app advertise is explicitly zeroed. `{}` is "advertise
+      // nothing" (resolveEffectiveHostCapabilities treats it distinctly from
+      // `undefined`/preset-inherit), so the Apps tab shows an honest empty
+      // hostCapabilities instead of inheriting a style preset's claims.
+      base.hostCapabilitiesOverride = {};
+      //
+      // The CLI's native toolset (bash/read/edit/…) is NOT seeded into
+      // `builtInToolIds`: under `harness: "cursor"` those come from the real
+      // runtime inside the sandbox, not MCPJam's built-in tool registry.
+      base.mcpProfile = {
+        profileVersion: 1,
+        initialize: {
+          // ASSUMED, inherited from the same-vendor `cursor` template rather
+          // than measured — kept in lockstep with the backend catalog row.
+          supportedProtocolVersions: ["2025-11-25"],
+          // TODO(cursor-cli probe): capture the real clientInfo the cursor-agent
+          // MCP client sends and replace these.
+          //
+          // `version` is REQUIRED by the canonicalizer (non-empty string), so
+          // it cannot be omitted to signal "unknown". It carries the build
+          // actually OBSERVED during the harness spike — real, not a guess —
+          // but it is NOT a pin: the bootstrap installs via
+          // `curl https://cursor.com/install | bash`, which always fetches the
+          // current build, so most sessions run something newer. That gap is
+          // why the turn records the installed `agent --version` per session
+          // (see `runtimeVersionCommand` in the server registry); do not read
+          // this field as what ran. Kept in lockstep with the backend catalog.
+          clientInfo: {
+            name: "cursor-agent",
+            title: "Cursor CLI",
+            version: "2026.08.31-4057e58",
+            description: "Cursor's agentic coding CLI",
+            websiteUrl: "https://cursor.com/cli",
           },
         },
       };
@@ -1494,13 +2239,38 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-26: followed `nextCursor` and fetched page two.
+        paginationTraversal: "full",
+        // Same capture, and the odd one out: Copilot never opened the GET SSE
+        // stream, yet list_changed still reached it on the tools/call response
+        // stream and a tools/list followed. Hence listens:false + refetches:
+        // true — a real combination, see the note on the field itself.
+        // The re-fetch was 30,496 ms late (VS Code and Cursor: ~200 ms), close
+        // enough to a routine listing that the pairing rule cannot separate
+        // reaction from coincidence.
+        toolListChanged: { listens: false, refetches: true },
+        // Parked: probed but not published (no field, no caniuse row).
+        // 2026-08-26: no tools/call carried `_meta.progressToken` (0/3).
+        // progressToken: "never",
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          // Base MCP protocol: clientInfo sent during MCP `initialize`.
-          // Matches Microsoft's "ms-copilot" identity convention. The
-          // name is an emulation convention and 1.0.1 labels MCPJam's
-          // vendor-doc profile, not a Microsoft product build.
-          clientInfo: { name: "ms-copilot", version: "1.0.1" },
+          // Measured on the wire 2026-08-26: Copilot proposes 2024-11-05, the
+          // oldest MCP revision, not the 2025-11-25 previously assumed.
+          supportedProtocolVersions: [
+            "2024-11-05",
+            "2025-03-26",
+            "2025-06-18",
+            "2025-11-25",
+          ],
+          // The real handshake sends `name: "mcs"` plus Copilot's routing
+          // fields. `agentName`, `appId` and `cdsBotId` are in the capture too
+          // and are deliberately omitted: they identify one tenant's agent.
+          clientInfo: {
+            name: "mcs",
+            version: "1.0.0",
+            channelId: "pva-studio",
+            lcat: "M365_COPILOT_USER",
+            agentAuthenticationMode: "Integrated",
+          },
         },
         apps: {
           uiInitialize: {
@@ -1654,13 +2424,22 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
       };
       base.mcpProfile = {
         profileVersion: 1,
+        // Probed 2026-08-24 (VS Code 1.134.0): followed `nextCursor` and
+        // fetched page two of tools/list.
+        paginationTraversal: "full",
+        // Same capture — the only host probed so far that completes the round
+        // trip: it opened the GET SSE stream, took list_changed on the call's
+        // response stream, and re-issued tools/list 209 ms later. Written out
+        // (rather than left to the default) so the caniuse row reads
+        // "supported" instead of the em dash an absent knob renders as.
+        toolListChanged: { listens: true, refetches: true },
         initialize: {
-          supportedProtocolVersions: ["2025-11-25"],
-          clientInfo: { name: "Visual Studio Code", version: "1.130.0" },
+          supportedProtocolVersions: ["2025-03-26", "2025-06-18", "2025-11-25"],
+          clientInfo: { name: "Visual Studio Code", version: "1.134.0" },
         },
         apps: {
           uiInitialize: {
-            hostInfo: { name: "Visual Studio Code", version: "1.130.0" },
+            hostInfo: { name: "Visual Studio Code", version: "1.134.0" },
           },
           compatRuntime: { openaiApps: false },
           sandbox: {
@@ -1687,8 +2466,17 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
               "local-network-access": "'src'",
               "clipboard-read": "'src'",
             },
+            // All three browser storage APIs were readable and writable from
+            // inside the widget sandbox.
+            browserStorage: {
+              localStorage: true,
+              sessionStorage: true,
+              indexedDB: true,
+            },
           },
           mcpAppsOverrides: {
+            // The 2026-09-02 capture omits `hostContext.safeAreaInsets` entirely.
+            safeAreaInsets: false,
             availableDisplayModes: ["inline"],
             // The handshake probe did not exercise lifecycle, display-request,
             // or resource-metadata behavior. These values deliberately retain
@@ -1707,6 +2495,32 @@ export const HOST_TEMPLATES: readonly HostTemplate[] = [
             sandboxPermissions: true,
             cspFrameDomains: true,
             cspBaseUriDomains: true,
+            // Paired capture 2026-08-24: VS Code emits the widget's declared
+            // origins verbatim and adds no third-party baseline of its own.
+            cspConnectDomains: {
+              fetch: true,
+              xhr: true,
+              websocket: true,
+            },
+            cspResourceDomains: {
+              script: true,
+              stylesheet: true,
+              image: true,
+              font: true,
+              media: true,
+            },
+            // Every ContentBlock kind reached the widget with an unchanged
+            // fingerprint and `structuredContent` was forwarded.
+            toolResult: {
+              structuredContent: true,
+              content: {
+                text: true,
+                image: true,
+                audio: true,
+                resource: true,
+                resourceLink: true,
+              },
+            },
             resourcePrefersBorder: true,
             downloadFile: true,
             requestTeardown: true,

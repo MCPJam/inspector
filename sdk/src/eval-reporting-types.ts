@@ -1,5 +1,12 @@
 import type { MCPClientManager } from "./mcp-client-manager/MCPClientManager.js";
 import type { EvalMatchOptions } from "./matchers.js";
+import type { IterationStatus } from "./contract/chain.js";
+import type { EvalSuiteFileValidity } from "./contract/suite-file.js";
+import type {
+  EvalExecutionVariant,
+  EvalVerdictDecision,
+  EvalVerdictPolicyVersion,
+} from "./contract/verdict-policy.js";
 
 export type EvalExpectedToolCall = {
   toolName: string;
@@ -15,7 +22,13 @@ export type EvalCiMetadata = {
   commitSha?: string;
 };
 
-export type EvalTraceSpanCategory = "step" | "llm" | "tool" | "error";
+export type EvalTraceSpanCategory =
+  | "step"
+  | "llm"
+  | "tool"
+  | "error"
+  | "connection"
+  | "discovery";
 export type EvalTraceSpanStatus = "ok" | "error";
 
 export type EvalTraceSpanInput = {
@@ -47,6 +60,15 @@ export type EvalTraceSpanInput = {
   // MCP server-contract metadata (tool spans). JSON-RPC error code from a
   // failed tools/call (OTel rpc.response.status_code).
   mcpErrorCode?: number;
+  // Harness evidence provenance (tool spans on harness runs): where the
+  // recorded output came from, and whether the wire corroborates it. Mirror of
+  // the inspector's `EvalTraceSpan`; see it for what each field claims. An SDK
+  // producer normally leaves these absent — they describe MCPJam's own proxy
+  // seam, which an externally-executed run does not have.
+  outputSource?: "narration" | "evidence" | "reconstructed";
+  wireCorroborated?: boolean;
+  evidenceRequestId?: string;
+  evidenceStatus?: "complete" | "incomplete";
 };
 
 export type EvalTraceInput =
@@ -104,6 +126,42 @@ export type EvalResultInput = {
   trace?: EvalTraceInput;
   externalIterationId?: string;
   externalCaseId?: string;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`) — the id an author
+   * committed beside the test.
+   *
+   * The backend resolves by this first (`by_testSuite_declaredCaseId`), falling
+   * back to the content-hash key, and ADOPTS: an id-bearing upload that resolves
+   * by hash to a case with no declared id patches the id on without touching the
+   * immutable `caseKey`. That is what lets a renamed test keep its history.
+   *
+   * Must equal `externalCaseId` when both are present — the SDK enforces that at
+   * construction and the backend rejects a mismatch at ingest. Never a silent
+   * precedence between two identity claims.
+   */
+  caseId?: string;
+  /**
+   * The authored analytics grouping label for this case. `null` explicitly
+   * records an unlabelled modern producer; omission remains legacy-compatible.
+   */
+  intent?: string | null;
+  /**
+   * This trial's LIFECYCLE status — what happened to the execution, which is a
+   * different question from `passed` (the task verdict).
+   *
+   * A graded failure is `completed` + `passed: false`: the trial ran, and the
+   * server under test failed it. `failed` means the EXECUTION failed,
+   * `setup_failed` that the environment never came up, `skipped` that the trial
+   * was deliberately not run, `timed_out`/`cancelled` that it was stopped.
+   * `pending`/`running` are non-terminal and rejected at ingest — a finished
+   * trial cannot describe itself as still going.
+   *
+   * Optional ONLY for the legacy wire: a reporter that predates the verdict
+   * policy omits it and the backend's named compatibility adapter derives a
+   * status from the presence of an execution error (never from `passed`). Every
+   * v2 report sends it.
+   */
+  status?: IterationStatus;
   /** Extensible per-iteration metadata; predicate verdicts are nested here. */
   metadata?: Record<string, unknown>;
   isNegativeTest?: boolean;
@@ -179,6 +237,52 @@ export type MCPJamReportingConfig = {
    * ignores it.
    */
   evaluationConfigHash?: string;
+  /**
+   * Verdict-policy v2 run configuration, frozen by the backend at run start.
+   *
+   * PRESENT ⇒ this run is decided under `EVAL_VERDICT_POLICY_VERSION`:
+   * per-case `repetitions`, FRACTIONAL `passThreshold`s in [0,1], and an
+   * explicit validity policy. ABSENT ⇒ the run is decided the legacy way, by
+   * suite-wide {@link MCPJamReportingConfig.passCriteria.minimumPassRate}
+   * PERCENT.
+   *
+   * The two are never mixed: a fraction reinterpreted as a percent (or the
+   * reverse) reports a verdict for a question nobody asked, so the backend
+   * REFUSES a v2 request it cannot honor rather than falling back.
+   */
+  verdictPolicy?: EvalRunVerdictPolicyRequest;
+};
+
+/** One case's v2 policy, as declared on the run-start body. */
+export type EvalRunVerdictPolicyCaseRequest = {
+  /** The case's DECLARED identity — must match the results' `caseId`. */
+  caseId: string;
+  /**
+   * The (model, provider) combinations this case runs under. Each variant owns
+   * its own trials and its own aggregate, so a case that passes on one model
+   * and fails on another cannot average into a single misleading verdict.
+   */
+  executionVariants?: EvalExecutionVariant[];
+  /** Overrides the suite default; a COUNT of trials, not a rate. */
+  repetitions?: number;
+  /** Overrides the suite default. A FRACTION in [0,1], never a percent. */
+  passThreshold?: number;
+};
+
+export type EvalRunVerdictPolicyRequest = {
+  verdictPolicyVersion: EvalVerdictPolicyVersion;
+  defaults: {
+    repetitions: number;
+    /** FRACTION in [0,1]. */
+    passThreshold: number;
+    /**
+     * DECLARED, not resolved: an omitted `minEligibleTrials` is the
+     * "every configured trial attempted" coverage rule, which is a different
+     * claim from any number. The backend resolves and FREEZES it on the run.
+     */
+    validity?: EvalSuiteFileValidity;
+  };
+  cases: EvalRunVerdictPolicyCaseRequest[];
 };
 
 export type ReportEvalResultsInput = MCPJamReportingConfig & {
@@ -217,11 +321,39 @@ export type ReportEvalResultsOutput = {
    */
   projectId?: string;
   status: "completed" | "failed";
-  result: "passed" | "failed";
+  /**
+   * The run's verdict.
+   *
+   * `inconclusive` is a v2 outcome and NOT a synonym for `failed`: it means
+   * nobody could measure the run (no eligible trials, evaluator errors over
+   * the policy's ceiling, evidence outside the run's frozen snapshot). A gate
+   * that collapses it into `failed` reports the server under test as broken
+   * when the harness was.
+   */
+  result: "passed" | "failed" | "inconclusive";
   summary: {
     total: number;
     passed: number;
     failed: number;
     passRate: number;
   };
+  /**
+   * The policy version the backend actually decided under. ABSENT ⇒ legacy
+   * suite-wide percentage aggregation, which is also what an un-upgraded
+   * deployment reports.
+   */
+  verdictPolicyVersion?: EvalVerdictPolicyVersion;
+  /**
+   * The v2 decision, verbatim from the backend: per-case aggregates with their
+   * eligible denominators, the validity outcome, and the exact reasons.
+   *
+   * Consumers RENDER this; they never recompute a verdict from it. The backend
+   * decided against the run's frozen snapshot, and a client re-deriving one
+   * from iteration rows can only disagree with the gate that already ran.
+   */
+  verdictSummary?: EvalVerdictDecision;
+  /**
+   * Why a v2 run could not be decided, set alongside `result: "inconclusive"`.
+   */
+  verdictPolicyIntegrityError?: string;
 };

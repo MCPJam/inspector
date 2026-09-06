@@ -14,6 +14,7 @@ import { useHostContextStore } from "@/stores/client-context-store";
 import { usePlaygroundChatHistoryBridgeStore } from "@/components/playground/playground-chat-history-bridge";
 import { saveSelectedModelId } from "@/lib/selected-model-storage";
 import { invalidateChatHistoryPrefetch } from "@/components/chat-v2/history/chat-history-prefetch";
+import { useAgentToolPromptBridge } from "@/stores/agent-tool-prompt-bridge";
 
 vi.mock("framer-motion", async (importOriginal) => {
   const actual = await importOriginal<typeof import("framer-motion")>();
@@ -35,6 +36,11 @@ const mockChatHistoryAction = vi.hoisted(() => vi.fn());
 // exercise both sides of that gate. Defaults to signed out, which is what every
 // other test in this file has always run as.
 const mockConvexAuthState = vi.hoisted(() => ({ isAuthenticated: false }));
+const mockReactiveHistoryState = vi.hoisted(() => ({
+  session: undefined as any,
+  widgetSnapshots: undefined as any,
+}));
+
 const mockHostQueryState = vi.hoisted(() => ({ result: null as unknown }));
 // Non-null `harnessId` means the chat executes inside a harness runtime
 // (Claude Code, Codex). Default null = an ordinary model host.
@@ -178,6 +184,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
   }),
 }));
 
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
+}));
+
 // Mock convex/react
 vi.mock("convex/react", () => ({
   // useChatSession resolves the Convex client to submit elicitation answers
@@ -193,6 +203,15 @@ vi.mock("convex/react", () => ({
   useQuery: (name: string, args: unknown) => {
     if (args === "skip") return undefined;
     if (name === "hosts:getHost") return mockHostQueryState.result;
+    // The reactive chat-history subscription. `useResumedThreadPersistence`
+    // reconciles a failed/absent persist receipt against this, so it needs a
+    // real cell rather than the blanket null the other queries get.
+    if (name === "directChatHistory:getCurrentSession") {
+      return mockReactiveHistoryState.session;
+    }
+    if (name === "directChatHistory:getCurrentSessionWidgetSnapshots") {
+      return mockReactiveHistoryState.widgetSnapshots;
+    }
     return null;
   },
   useMutation: () => () => Promise.resolve(),
@@ -261,6 +280,9 @@ const mockUseChatSession = {
   resetChat: vi.fn(),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
+  detachToLocalFork: vi.fn(async () => ({ chatSessionId: "forked-session" })),
+  consumePersistReceipt: vi.fn(() => null),
+  consumeTurnAborted: vi.fn(() => false),
   syncResumedVersion: vi.fn(),
   resumedVersion: null,
   restoredToolRenderOverrides: {},
@@ -317,12 +339,20 @@ vi.mock("@/components/chat-v2/thread", () => ({
     loadingIndicatorVariant,
     onEditUserMessage,
     editDisabled,
+    sendFollowUpMessage,
+    onFullscreenChange,
   }: {
     messages: any[];
     isLoading: boolean;
     loadingIndicatorVariant?: string;
     onEditUserMessage?: (message: any, text: string) => void;
     editDisabled?: boolean;
+    // Widget-driven follow-ups bypass the composer, so tests need the handler
+    // itself — a rendered button could never stand in for that path.
+    sendFollowUpMessage?: (text: string) => void;
+    // A widget going fullscreen is what swaps the docked composer for the
+    // pinned overlay; only the widget can report it, so tests drive it here.
+    onFullscreenChange?: (fullscreen: boolean) => void;
   }) =>
     (() => {
       mockThread({
@@ -331,6 +361,8 @@ vi.mock("@/components/chat-v2/thread", () => ({
         loadingIndicatorVariant,
         onEditUserMessage,
         editDisabled,
+        sendFollowUpMessage,
+        onFullscreenChange,
       });
       return (
         <div data-testid="thread">
@@ -372,6 +404,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
     onChangeSkillResults?: (results: unknown[]) => void;
     skillResults?: unknown[];
     onModelSelectorOpenChange?: (open: boolean) => void;
+    notice?: React.ReactNode;
   }) => {
     // Captures the FULL props object (not just the fields this stub renders)
     // so tests can reach into props the rendered markup below never surfaces
@@ -391,6 +424,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
       clientSelector,
       onChangeSkillResults,
       skillResults,
+      notice,
     } = props;
     return (
       <form
@@ -403,6 +437,7 @@ vi.mock("@/components/chat-v2/chat-input", () => ({
           onSubmit(e);
         }}
       >
+        {notice}
         <input
           data-testid="chat-input-field"
           value={value}
@@ -531,11 +566,38 @@ vi.mock(
   })
 );
 
-// Mock FullscreenChatOverlay
+// Mock FullscreenChatOverlay. It renders the `notice` slot and a
+// canSend-driven Send button because the overlay REPLACES the docked
+// composer — a stub that dropped either would hide exactly the dead end
+// these tests exist to catch.
 vi.mock("@/components/chat-v2/fullscreen-chat-overlay", () => ({
-  FullscreenChatOverlay: (props: { loadingIndicatorVariant?: string }) => {
+  FullscreenChatOverlay: (props: {
+    loadingIndicatorVariant?: string;
+    notice?: React.ReactNode;
+    input?: string;
+    onInputChange?: (value: string) => void;
+    canSend?: boolean;
+    onSend?: () => void;
+  }) => {
     mockFullscreenChatOverlay(props);
-    return <div data-testid="fullscreen-overlay">Fullscreen Overlay</div>;
+    return (
+      <div data-testid="fullscreen-overlay">
+        {props.notice}
+        <input
+          data-testid="fullscreen-overlay-input"
+          value={props.input ?? ""}
+          onChange={(e) => props.onInputChange?.(e.target.value)}
+        />
+        <button
+          type="button"
+          data-testid="fullscreen-overlay-send"
+          disabled={!props.canSend}
+          onClick={() => props.onSend?.()}
+        >
+          Send
+        </button>
+      </div>
+    );
   },
 }));
 
@@ -686,6 +748,8 @@ describe("PlaygroundMain", () => {
     localStorage.clear();
     mockConvexAuthState.isAuthenticated = false;
     mockHostQueryState.result = null;
+    mockReactiveHistoryState.session = undefined;
+    mockReactiveHistoryState.widgetSnapshots = undefined;
     mockHarnessState.harnessId = null;
     capturedChatSessionOptions = null;
     usePlaygroundChatHistoryBridgeStore.getState().setBridge(null);
@@ -865,6 +929,97 @@ describe("PlaygroundMain", () => {
         "data-client-selector",
         "false"
       );
+    });
+
+    it("refuses the send but KEEPS the thread when the pre-send sync fails transiently", async () => {
+      // `refreshCurrentHistorySession` returns null for 403/404 — the thread is
+      // gone — and callers detach on that. A network blip or 5xx must NOT be
+      // flattened into the same signal, or a brief history-API outage tears
+      // users off perfectly valid conversations.
+      const session = {
+        _id: "history-1",
+        chatSessionId: "chat-session-1",
+        firstMessagePreview: "Hello",
+        status: "active" as const,
+        directVisibility: "private" as const,
+        messageCount: 2,
+        version: 4,
+        startedAt: 1,
+        lastActivityAt: 1,
+        isPinned: false,
+        manualUnread: false,
+        isUnread: false,
+        messagesBlobUrl: "https://storage.test/blob",
+        resumeConfig: { selectedServers: ["test-server"] },
+      };
+      // The detail cache is module-level and this file clears it per test
+      // rather than in beforeEach; without this, the session ids below stay
+      // cached and shift the next test's mockResolvedValueOnce queue.
+      invalidateChatHistoryPrefetch();
+      // A non-empty transcript, so a detach would take the FORK branch and be
+      // visible as a `detachToLocalFork` call rather than a silent no-op.
+      mockUseChatSession.messages = [
+        { id: "u1", role: "user", parts: [{ type: "text", text: "Hello" }] },
+        { id: "a1", role: "assistant", parts: [{ type: "text", text: "Hi" }] },
+      ];
+      mockGetChatHistoryDetail.mockResolvedValueOnce({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+
+      render(<PlaygroundMain {...defaultProps} />);
+      await waitFor(() => {
+        expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
+          null
+        );
+      });
+
+      await act(async () => {
+        const bridge = usePlaygroundChatHistoryBridgeStore.getState().bridge;
+        await Promise.resolve(bridge?.onSelectThread(session));
+      });
+
+      // A rail-opened conversation records no host or environment, so the
+      // composer discloses that and holds the first reply until the user
+      // accepts the target it will actually run on. Accept it here — this test
+      // is about the pre-send SYNC, not about the target disclosure.
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+
+      // Control: with the sync healthy the send goes through, so the assertions
+      // below are about the failure and not about a submit path that never runs.
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session,
+        widgetSnapshots: [],
+      });
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "first message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+
+      mockGetChatHistoryDetail.mockRejectedValue(new Error("network down"));
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "another message" },
+      });
+      await act(async () => {
+        fireEvent.submit(screen.getByTestId("chat-input"));
+      });
+
+      // Blocked, because a blind send could clobber another writer...
+      expect(mockUseChatSession.sendMessage).toHaveBeenCalledTimes(1);
+      // ...but the conversation is still the user's; nothing was forked away.
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+
+      // Leave the module-level detail cache as this test found it — the ids
+      // above are reused by later tests, which queue their own
+      // `mockResolvedValueOnce` responses and would otherwise be served stale.
+      invalidateChatHistoryPrefetch();
     });
 
     it("keeps active playground thread visibility in sync after sharing", async () => {
@@ -2266,7 +2421,7 @@ describe("PlaygroundMain", () => {
       const hint = screen.getByTestId("playground-send-nux-hint");
       const chatInput = screen.getByTestId("chat-input");
       expect(hint).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
       expect(hint.closest('[data-testid="chat-input"]')).toBeNull();
       expect(
@@ -2291,7 +2446,7 @@ describe("PlaygroundMain", () => {
       );
 
       expect(screen.getByTestId("playground-send-nux-hint")).toHaveTextContent(
-        "Try this prompt with Excalidraw and compare across clients",
+        "Try this prompt with Excalidraw and compare across clients"
       );
     });
 
@@ -2529,7 +2684,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2539,7 +2694,7 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
@@ -2548,12 +2703,12 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(null);
       });
       expect(mockUseChatSession.resetChat).toHaveBeenCalled();
@@ -2616,7 +2771,7 @@ describe("PlaygroundMain", () => {
       window.history.replaceState(
         {},
         "",
-        `/playground?conversation=${savedSession.chatSessionId}`,
+        `/playground?conversation=${savedSession.chatSessionId}`
       );
 
       // This file mocks the chat hook with a bare `vi.fn()` for `resetChat`, so
@@ -2643,7 +2798,7 @@ describe("PlaygroundMain", () => {
 
       await waitFor(() => {
         expect(usePlaygroundChatHistoryBridgeStore.getState().bridge).not.toBe(
-          null,
+          null
         );
       });
 
@@ -2653,7 +2808,7 @@ describe("PlaygroundMain", () => {
       });
       await waitFor(() => {
         expect(
-          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId,
+          usePlaygroundChatHistoryBridgeStore.getState().bridge?.activeSessionId
         ).toBe(savedSession._id);
       });
 
@@ -2665,11 +2820,13 @@ describe("PlaygroundMain", () => {
       fireEvent.click(
         within(screen.getByTestId("confirm-dialog")).getByRole("button", {
           name: "Confirm",
-        }),
+        })
       );
 
       await waitFor(() => {
-        expect(window.location.search).not.toContain(savedSession.chatSessionId);
+        expect(window.location.search).not.toContain(
+          savedSession.chatSessionId
+        );
       });
     });
 
@@ -2769,7 +2926,11 @@ describe("PlaygroundMain", () => {
           provider: "anthropic",
         },
         availableModels: [
-          { id: "claude-fable-5", name: "Claude Fable 5", provider: "anthropic" },
+          {
+            id: "claude-fable-5",
+            name: "Claude Fable 5",
+            provider: "anthropic",
+          },
           { id: "gpt-5-mini", name: "GPT-5 Mini", provider: "openai" },
         ],
         selectedModelIds: [OWN_PROVIDER_MODEL_ID],
@@ -2943,6 +3104,420 @@ describe("PlaygroundMain", () => {
         rerender(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
       });
       expect(mockUseChatSession.setSelectedModel).not.toHaveBeenCalled();
+    });
+  });
+  /**
+   * A reopened conversation renders under the viewer's AMBIENT host and
+   * environment — those live in per-project browser storage, not on the
+   * session — so the composer describes the viewer, not the chat. Left
+   * unlabelled that reads as history, and the reply goes to whatever is
+   * selected: a Cursor-harness transcript answering as Claude.
+   */
+  describe("as-run execution target", () => {
+    const RESTORED_SESSION_ID = "restored-target-session";
+
+    const arriveAtRestoredConversation = (
+      resumeConfig: Record<string, unknown>
+    ) => {
+      window.history.replaceState(
+        {},
+        "",
+        `/playground?conversation=${RESTORED_SESSION_ID}`
+      );
+      mockGetChatHistoryDetail.mockResolvedValue({
+        ok: true,
+        session: {
+          _id: "history-restored-target",
+          chatSessionId: RESTORED_SESSION_ID,
+          firstMessagePreview: "what harness are you",
+          status: "active" as const,
+          directVisibility: "private" as const,
+          version: 3,
+          createdAt: 1,
+          updatedAt: 1,
+          lastActivityAt: 1,
+          isPinned: false,
+          manualUnread: false,
+          isUnread: false,
+          messagesBlobUrl: "https://storage.test/blob",
+          resumeConfig,
+        },
+        widgetSnapshots: [],
+      });
+    };
+
+    /**
+     * Open the conversation and let the chat hook adopt its session id, which
+     * is what binds the disclosure to the thread on screen.
+     */
+    const openRestoredConversation = async (
+      resumeConfig: Record<string, unknown>,
+      extraProps: Record<string, unknown> = {}
+    ) => {
+      arriveAtRestoredConversation(resumeConfig);
+      const props = { ...defaultProps, ...extraProps };
+      const { rerender: rerenderRaw } = render(
+        <PlaygroundMain {...props} syncConversationToUrl />
+      );
+      await waitFor(() => {
+        expect(mockGetChatHistoryDetail).toHaveBeenCalledWith(
+          expect.objectContaining({ chatSessionId: RESTORED_SESSION_ID })
+        );
+      });
+      mockUseChatSession.chatSessionId = RESTORED_SESSION_ID;
+      // Keeps the caller's props on every re-render, so a test that entered
+      // via `displayMode: "fullscreen"` does not silently fall back to the
+      // docked composer on the next flush.
+      const rerender = () =>
+        rerenderRaw(<PlaygroundMain {...props} syncConversationToUrl />);
+      await act(async () => {
+        rerender();
+      });
+      return { rerender };
+    };
+
+    beforeEach(() => {
+      invalidateChatHistoryPrefetch();
+      // The bridge is a module-level store; a request left pending by one test
+      // would fire on the next one's first render.
+      useAgentToolPromptBridge.setState({ pending: null });
+    });
+
+    afterEach(() => {
+      window.history.replaceState({}, "", "/");
+      invalidateChatHistoryPrefetch();
+      useAgentToolPromptBridge.setState({ pending: null });
+      // Module-level store, not reset by the global `beforeEach`; the overlay
+      // tests below change it and every other test assumes the default.
+      mockUIPlaygroundStore.deviceType = "mobile";
+    });
+
+    it("says nothing about a live chat the user started here", () => {
+      render(<PlaygroundMain {...defaultProps} syncConversationToUrl />);
+
+      expect(
+        screen.queryByTestId("conversation-target-notice")
+      ).not.toBeInTheDocument();
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("discloses that a reopened conversation recorded no target, instead of passing the current selection off as history", async () => {
+      // The shape every `origin: "playground"` row has: prompt/servers, no
+      // host and no environment anywhere on the session.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+
+      const notice = await screen.findByTestId("conversation-target-notice");
+      expect(notice).toHaveAttribute("data-disclosure", "unrecorded");
+      expect(notice.textContent).toContain("As-run configuration unavailable");
+    });
+
+    it("blocks the reply until the user accepts the target it will actually run on", async () => {
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+
+      await screen.findByTestId("conversation-target-notice");
+      expect(screen.getByTestId("chat-submit-button")).toBeDisabled();
+
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge")
+      );
+
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("conversation-target-notice")
+        ).not.toBeInTheDocument();
+      });
+      expect(screen.getByTestId("chat-submit-button")).not.toBeDisabled();
+    });
+
+    it("refuses the send outright, not just the button, while the target is unaccepted", async () => {
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.change(screen.getByTestId("chat-input-field"), {
+        target: { value: "what harness are you" },
+      });
+      fireEvent.submit(screen.getByTestId("chat-input"));
+
+      await act(async () => {});
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    it("holds a widget-driven follow-up to the same gate", async () => {
+      // A widget follow-up bypasses the composer entirely, so a disabled Send
+      // button is no protection: it would be the first thing to run on a
+      // target the transcript never used.
+      const { rerender } = await openRestoredConversation({
+        selectedServers: ["deepwiki"],
+      });
+      mockUseChatSession.messages = [
+        { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any;
+      await act(async () => {
+        rerender();
+      });
+
+      const sendFollowUpMessage =
+        mockThread.mock.calls.at(-1)?.[0].sendFollowUpMessage;
+      expect(sendFollowUpMessage).toBeDefined();
+      await act(async () => {
+        sendFollowUpMessage("follow up from a widget");
+      });
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+    });
+
+    // Every remaining way to start a turn. A gate that only covers the
+    // composer is theatre: each of these reaches `sendMessage`,
+    // `queueBroadcastRequest` or `rewindToMessage` without the composer's
+    // Send button ever being pressed.
+    it("holds a starter chip to the same gate, and keeps its prompt as a draft", async () => {
+      // A chip is a one-click SEND from the empty state — the shortest path of
+      // all to running a reopened conversation on the wrong target.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      // Refused, not discarded: the text is waiting in the composer.
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Starter chip prompt",
+      );
+    });
+
+    it("lets the starter chip through once the target is accepted", async () => {
+      // The other half of the gate: it has to open, or the disclosure is a
+      // dead end rather than a decision.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      fireEvent.click(
+        screen.getByTestId("conversation-target-notice-acknowledge"),
+      );
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId("conversation-target-notice"),
+        ).not.toBeInTheDocument();
+      });
+
+      fireEvent.click(screen.getByRole("button", { name: "Starter chip" }));
+
+      await waitFor(() => {
+        expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({ text: "Starter chip prompt" }),
+        );
+      });
+    });
+
+    it("holds an 'Ask agent to run' prompt to the same gate, and keeps it as a draft", async () => {
+      // The Tools rail requests this send from a sibling subtree through the
+      // bridge store, so a disabled Send button is no protection at all.
+      await openRestoredConversation({ selectedServers: ["deepwiki"] });
+      await screen.findByTestId("conversation-target-notice");
+
+      await act(async () => {
+        useAgentToolPromptBridge
+          .getState()
+          .requestRun("Run read_file on /etc/hosts");
+      });
+      await act(async () => {});
+
+      expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+      expect(screen.getByTestId("chat-input-field")).toHaveValue(
+        "Run read_file on /etc/hosts",
+      );
+    });
+
+    it("will not rewind a reopened conversation, and shows the edit action as unavailable", async () => {
+      // A rewind is a send AND a fork: it would run the edited turn on the
+      // ambient target and mint a branch recording that it did.
+      mockConvexAuthState.isAuthenticated = true;
+      const { rerender } = await openRestoredConversation({
+        selectedServers: ["deepwiki"],
+      });
+      mockUseChatSession.messages = [
+        { id: "1", role: "user", parts: [{ type: "text", text: "hi" }] },
+      ] as any;
+      await act(async () => {
+        rerender();
+      });
+      await screen.findByTestId("conversation-target-notice");
+
+      // Disabled, not merely inert: the affordance says so before it is used.
+      expect(screen.getByTestId("edit-first-message")).toBeDisabled();
+
+      // And the handler refuses even when invoked directly, which is what the
+      // real `UserMessageRow` does fire-and-forget from its editor.
+      const onEditUserMessage =
+        mockThread.mock.calls.at(-1)?.[0].onEditUserMessage;
+      expect(onEditUserMessage).toBeDefined();
+      await act(async () => {
+        await onEditUserMessage(mockUseChatSession.messages[0], "edited");
+      });
+
+      expect(mockUseChatSession.rewindToMessage).not.toHaveBeenCalled();
+    });
+
+    /**
+     * The gate must never be reachable from a surface that cannot lift it.
+     * Disabling Send while the only "Continue here" button lives in a composer
+     * the layout has hidden is a worse failure than the one the gate prevents:
+     * it has no exit.
+     */
+    describe("surfaces that replace the docked composer", () => {
+      /**
+       * `displayMode` reaches the component through the host-context draft,
+       * not the prop: `extractEffectiveHostDisplayMode` always resolves to a
+       * concrete mode (defaulting to "inline"), so the prop's `??` fallback
+       * never fires. Every layout below is entered through the store.
+       */
+      const setHostDisplayMode = (mode: string) => {
+        useHostContextStore.setState({
+          draftHostContext: { displayMode: mode },
+        });
+      };
+
+      /** Widget fullscreen on a desktop-ish frame swaps in the pinned overlay. */
+      const enterFullscreenOverlay = async (
+        rerender: () => void,
+      ): Promise<void> => {
+        mockUseChatSession.messages = [
+          { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any;
+        await act(async () => {
+          rerender();
+        });
+        const onFullscreenChange =
+          mockThread.mock.calls.at(-1)?.[0].onFullscreenChange;
+        expect(onFullscreenChange).toBeDefined();
+        await act(async () => {
+          onFullscreenChange(true);
+        });
+      };
+
+      it("moves the acknowledgement into the fullscreen overlay instead of stranding it in the hidden composer", async () => {
+        mockUIPlaygroundStore.deviceType = "fill";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        await screen.findByTestId("conversation-target-notice");
+
+        await enterFullscreenOverlay(rerender);
+
+        // The docked composer really is gone — this is what made it a dead end.
+        expect(screen.getByTestId("fullscreen-overlay")).toBeInTheDocument();
+        expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+
+        // ...and the notice moved with it, rather than disappearing.
+        const notice = screen.getByTestId("conversation-target-notice");
+        expect(screen.getByTestId("fullscreen-overlay")).toContainElement(
+          notice,
+        );
+        expect(screen.getByTestId("fullscreen-overlay-send")).toBeDisabled();
+      });
+
+      it("sends from the overlay once its own acknowledgement is used", async () => {
+        // The "gate opens" direction: the overlay is a decision point, not a
+        // trap. Without a reachable control this test cannot even be written.
+        mockUIPlaygroundStore.deviceType = "fill";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        await screen.findByTestId("conversation-target-notice");
+        await enterFullscreenOverlay(rerender);
+
+        fireEvent.click(
+          screen.getByTestId("conversation-target-notice-acknowledge"),
+        );
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId("conversation-target-notice"),
+          ).not.toBeInTheDocument();
+        });
+
+        fireEvent.change(screen.getByTestId("fullscreen-overlay-input"), {
+          target: { value: "continue here" },
+        });
+        await waitFor(() => {
+          expect(
+            screen.getByTestId("fullscreen-overlay-send"),
+          ).not.toBeDisabled();
+        });
+        fireEvent.click(screen.getByTestId("fullscreen-overlay-send"));
+
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "continue here" }),
+          );
+        });
+      });
+
+      it("pins the acknowledgement over a widget full takeover, which renders no composer at all", async () => {
+        // Mobile/tablet fullscreen hides the footer composer AND forbids the
+        // overlay, yet a widget can still request a follow-up — which the gate
+        // refuses. Nothing on screen would lift it without this.
+        mockUIPlaygroundStore.deviceType = "mobile";
+        setHostDisplayMode("fullscreen");
+        const { rerender } = await openRestoredConversation({
+          selectedServers: ["deepwiki"],
+        });
+        mockUseChatSession.messages = [
+          { id: "m1", role: "user", parts: [{ type: "text", text: "hi" }] },
+        ] as any;
+        await act(async () => {
+          rerender();
+        });
+
+        expect(screen.queryByTestId("chat-input")).not.toBeInTheDocument();
+        expect(
+          screen.queryByTestId("fullscreen-overlay"),
+        ).not.toBeInTheDocument();
+
+        const pinned = await screen.findByTestId(
+          "pinned-conversation-target-notice",
+        );
+        expect(pinned).toContainElement(
+          screen.getByTestId("conversation-target-notice"),
+        );
+
+        // A widget follow-up is refused until it is used, and goes through after.
+        const sendFollowUpMessage =
+          mockThread.mock.calls.at(-1)?.[0].sendFollowUpMessage;
+        await act(async () => {
+          sendFollowUpMessage("follow up from a widget");
+        });
+        expect(mockUseChatSession.sendMessage).not.toHaveBeenCalled();
+
+        fireEvent.click(
+          screen.getByTestId("conversation-target-notice-acknowledge"),
+        );
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId("pinned-conversation-target-notice"),
+          ).not.toBeInTheDocument();
+        });
+        await act(async () => {
+          sendFollowUpMessage("follow up from a widget");
+        });
+        await waitFor(() => {
+          expect(mockUseChatSession.sendMessage).toHaveBeenCalledWith(
+            expect.objectContaining({ text: "follow up from a widget" }),
+          );
+        });
+      });
+    });
+
+    it("names the environment a conversation pinned when the composer points elsewhere", async () => {
+      // `resumeConfig.environmentId` is the one execution target that IS
+      // persisted (Agent Playground turns pin it), and the browser ignored it.
+      await openRestoredConversation({ environmentId: "env_recorded" });
+
+      const notice = await screen.findByTestId("conversation-target-notice");
+      expect(notice).toHaveAttribute("data-disclosure", "mismatch");
+      expect(notice.textContent).toContain("env_recorded");
     });
   });
 });

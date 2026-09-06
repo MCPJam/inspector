@@ -68,6 +68,13 @@ vi.mock("@/components/connection/share-usage/ShareUsageThreadDetail", () => ({
 
 import { SessionsPanel } from "@/components/sessions/SessionsPanel";
 
+/**
+ * A real Convex-id-shaped project id. The path builder refuses to put an
+ * unusable id in the canonical position, so `"p1"` would (correctly) produce
+ * an unscoped path and prove nothing.
+ */
+const PROJECT_ID = "k5700000000000000000000000a";
+
 function setRows(
   results: SessionFeedItem[],
   status: PaginatedResult["status"] = "Exhausted"
@@ -225,6 +232,43 @@ describe("SessionsPanel — rows and detail", () => {
     expect(quick.getByText("Quick Run")).toBeInTheDocument();
   });
 
+  test("renders an API origin chip and falls back for unknown origins", () => {
+    setRows([
+      makeRow({
+        chatSessionId: "cs_api",
+        sourceType: "direct",
+        origin: "api",
+        title: "Agent turn",
+      }),
+      makeRow({
+        chatSessionId: "cs_future",
+        sourceType: "direct",
+        origin: "future_surface",
+        title: "Unknown origin",
+      }),
+      makeRow({
+        chatSessionId: "cs_proto",
+        sourceType: "direct",
+        origin: "constructor",
+        title: "Inherited key",
+      }),
+    ]);
+    render(<SessionsPanel projectId="p1" />);
+
+    const apiRow = within(screen.getByTestId("session-row-cs_api"));
+    expect(apiRow.getByTestId("session-origin-chip")).toHaveTextContent("API");
+
+    const future = within(screen.getByTestId("session-row-cs_future"));
+    expect(future.getByTestId("session-origin-chip")).toHaveTextContent(
+      "future_surface"
+    );
+
+    const proto = within(screen.getByTestId("session-row-cs_proto"));
+    expect(proto.getByTestId("session-origin-chip")).toHaveTextContent(
+      "constructor"
+    );
+  });
+
   test("clicking a row opens the detail pane with the row's `id`, not its chatSessionId", () => {
     setRows([
       makeRow({ id: "doc_abc", chatSessionId: "cs_abc", title: "Pick me" }),
@@ -244,19 +288,21 @@ describe("SessionsPanel — rows and detail", () => {
     // universal permalink fallback: every `/v1/sessions` item carries a link
     // pointing here, so arriving at one must open that session.
     // Starts at a BARE /sessions: the panel must stamp its own projectId
-    // rather than copying the absent param forward.
+    // rather than copying the absent one forward. The project rides in the
+    // PATH now — a query the app consumed and stripped could not survive the
+    // recipient's refresh.
     window.history.replaceState({}, "", "/sessions");
     setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
-    render(<SessionsPanel projectId="p1" />);
+    render(<SessionsPanel projectId={PROJECT_ID} />);
 
     fireEvent.click(screen.getByTestId("session-row-cs_abc"));
 
     const url = new URL(window.location.href);
-    expect(url.pathname).toBe("/sessions");
+    expect(url.pathname).toBe(`/p/${PROJECT_ID}/sessions`);
     expect(url.searchParams.get("session")).toBe("doc_abc");
-    // Dropping `project` would silently move the page to whatever project the
-    // viewer's picker was parked on.
-    expect(url.searchParams.get("project")).toBe("p1");
+    // Dropping the project would silently move the page to whatever project
+    // the viewer's picker was parked on.
+    expect(url.searchParams.get("project")).toBeNull();
   });
 
   test("opens the session named by ?session= on first render", () => {
@@ -274,13 +320,13 @@ describe("SessionsPanel — rows and detail", () => {
   test("hands the detail pane a shareable absolute link for the selection", () => {
     window.history.replaceState({}, "", "/sessions?session=doc_abc");
     setRows([makeRow({ id: "doc_abc", chatSessionId: "cs_abc" })]);
-    render(<SessionsPanel projectId="p1" />);
+    render(<SessionsPanel projectId={PROJECT_ID} />);
 
     const link = mocks.detailSessionLinks.at(-1) ?? "";
-    expect(link).toContain("/sessions?session=doc_abc");
-    // The panel's own projectId, not the URL's — a recipient parked on another
-    // project has to land on this one.
-    expect(link).toContain("project=p1");
+    // The panel's own projectId, in the path — a recipient parked on another
+    // project has to land on this one, and still be on it after a refresh.
+    expect(link).toContain(`/p/${PROJECT_ID}/sessions?session=doc_abc`);
+    expect(link).not.toContain("project=");
     expect(link).toMatch(/^https?:\/\//);
   });
 

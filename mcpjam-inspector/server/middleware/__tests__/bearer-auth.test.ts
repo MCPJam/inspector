@@ -328,4 +328,65 @@ describe("bearerAuthMiddleware — request-local memoization", () => {
     expect(validateApiKeyMock).toHaveBeenCalledTimes(1);
     expect(lookupWorkosKeyBindingMock).toHaveBeenCalledTimes(1);
   });
+  /**
+   * `credentialPresented` is what lets the 4xx storm monitor tell a customer
+   * outage apart from background noise. A scan walks the public API with no
+   * `Authorization` header and produces hundreds of correct 401s; without this
+   * label those are indistinguishable from 401s where somebody's key failed.
+   */
+  const seedLogContext = (app: Hono, sink: { ctx: unknown }) => {
+    app.use("*", async (c, next) => {
+      c.set("requestLogContext", {
+        event: "http.request.completed",
+        timestamp: new Date().toISOString(),
+        environment: "test",
+        release: null,
+        component: "http",
+        requestId: "req_cred",
+        route: "pending",
+        method: "GET",
+        authType: "unknown",
+      } as never);
+      await next();
+      // Runs AFTER the middleware short-circuits, which is the only way to
+      // observe the context on a request that never reached a handler.
+      sink.ctx = c.get("requestLogContext");
+    });
+  };
+
+  it("labels a 401 with credentialPresented false when no bearer was sent", async () => {
+    const sink: { ctx: unknown } = { ctx: null };
+    const app = new Hono();
+    seedLogContext(app, sink);
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/test");
+
+    expect(res.status).toBe(401);
+    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
+      false
+    );
+  });
+
+  it("labels a rejected credential with credentialPresented true", async () => {
+    // An invalid key is a caller whose credential FAILED — the class the
+    // monitor must keep counting, unlike the no-header case above.
+    validateApiKeyMock.mockResolvedValueOnce({ apiKey: null });
+
+    const sink: { ctx: unknown } = { ctx: null };
+    const app = new Hono();
+    seedLogContext(app, sink);
+    app.use("*", bearerAuthMiddleware);
+    app.get("/test", (c) => c.json({ ok: true }));
+
+    const res = await app.request("/test", {
+      headers: { authorization: "Bearer sk_bad" },
+    });
+
+    expect(res.status).toBe(401);
+    expect((sink.ctx as { credentialPresented?: boolean }).credentialPresented).toBe(
+      true
+    );
+  });
 });

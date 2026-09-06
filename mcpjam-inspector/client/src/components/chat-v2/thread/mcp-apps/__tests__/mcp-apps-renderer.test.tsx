@@ -931,7 +931,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(vendorOnly).toEqual({});
   });
 
-  it("flips advertised hostCapabilities when host style switches to chatgpt", async () => {
+  it("uses ChatGPT's current advertised hostCapabilities", async () => {
     render(
       <ScenarioHostStyleProvider value="chatgpt">
         <ScenarioHostThemeProvider value="dark">
@@ -947,13 +947,9 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(appBridgeArgsRef.current?.hostCapabilities).toEqual(
       expect.objectContaining(getHostCapabilitiesForStyle("chatgpt"))
     );
-    // Sanity: profiles differ — switching is observable. Use a
-    // distinguishing key (Claude advertises serverResources / logging;
-    // ChatGPT doesn't) rather than full-blob inequality, which would
-    // false-positive on shared keys.
     const advertised = appBridgeArgsRef.current?.hostCapabilities;
-    expect(advertised).not.toHaveProperty("serverResources");
-    expect(advertised).not.toHaveProperty("logging");
+    expect(advertised).toHaveProperty("serverResources");
+    expect(advertised).toHaveProperty("logging");
   });
 
   it("passes the same effectiveHostCapabilities to the modal as the inline AppBridge advertises", async () => {
@@ -1069,7 +1065,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
     ]);
   });
 
-  it("advertises all three modes on Claude (full surface matrix)", async () => {
+  it("advertises Claude's probed inline and fullscreen modes", async () => {
     render(
       <ScenarioHostStyleProvider value="claude">
         <HostedRenderer {...baseProps} />
@@ -1084,7 +1080,6 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(hostContext?.availableDisplayModes).toEqual([
       "inline",
       "fullscreen",
-      "pip",
     ]);
   });
 
@@ -1201,8 +1196,8 @@ describe("MCPAppsRenderer tool input streaming", () => {
     expect(csp?.resourceDomains).toEqual(["https://cdn.example.com"]);
   });
 
-  it("preserves frameDomains and baseUriDomains on Claude (full surface matrix)", async () => {
-    // Counter-test: same CSP, but Claude's matrix honors both sub-
+  it("preserves frameDomains and baseUriDomains on Cursor", async () => {
+    // Counter-test: same CSP, but Cursor's matrix honors both sub-
     // fields, so they round-trip into the iframe CSP. Guards
     // against the gate over-stripping.
     vi.mocked(authFetch).mockResolvedValueOnce({
@@ -1225,7 +1220,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       headers: new Headers(),
     } as Response);
     render(
-      <ScenarioHostStyleProvider value="claude">
+      <ScenarioHostStyleProvider value="cursor">
         <HostedRenderer {...baseProps} />
       </ScenarioHostStyleProvider>
     );
@@ -1237,6 +1232,142 @@ describe("MCPAppsRenderer tool input streaming", () => {
       | undefined;
     expect(csp?.frameDomains).toEqual(["https://embed.example.com"]);
     expect(csp?.baseUriDomains).toEqual(["https://base.example.com"]);
+  });
+
+  it("forwards one resolved subtype policy to inline and modal sandboxes", async () => {
+    mcpAppsModalPropsRef.current = null;
+    render(
+      <ScenarioHostStyleProvider value="chatgpt">
+        <HostedRenderer {...baseProps} />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.cspSubtypePolicy).toBeDefined();
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // ChatGPT honors the declared connect list (one directive, proven by the
+    // declared wss endpoint connecting while an undeclared one was blocked).
+    // Its resource subtypes were unknown until the 2026-08-23 paired probe
+    // declared `fastly.jsdelivr.net` — outside ChatGPT's baseline allowlist —
+    // and every subtype loaded, so they are now measured-true rather than
+    // absent.
+    const expected = {
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    };
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy).toEqual(
+      expected
+    );
+  });
+
+  it("forwards browserStorage to inline and modal sandboxes, unchanged", async () => {
+    mcpAppsModalPropsRef.current = null;
+    const profile: HostConfigMcpProfileV1 = {
+      profileVersion: 1,
+      apps: { sandbox: { browserStorage: { localStorage: false } } },
+    };
+    render(
+      <ActiveMcpProfileProvider value={profile}>
+        <HostedRenderer {...baseProps} />
+      </ActiveMcpProfileProvider>
+    );
+    await vi.waitFor(() => {
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    // Passed through verbatim: the proxy, not the renderer, decides what a
+    // `false` leaf means. Both surfaces must agree — a widget moved to the
+    // modal cannot regain an API the inline frame denied it.
+    const expected = { localStorage: false };
+    expect(sandboxedIframePropsRef.current.browserStorage).toEqual(expected);
+    expect(mcpAppsModalPropsRef.current?.widgetBrowserStorage).toEqual(
+      expected
+    );
+  });
+
+  it("leaves browserStorage undefined when the profile never mentions it", async () => {
+    render(<HostedRenderer {...baseProps} />);
+    await vi.waitFor(() => {
+      expect(screen.getByTestId("sandboxed-iframe")).toBeInTheDocument();
+    });
+    // Absent must stay absent all the way to the proxy — an empty object
+    // would arm the guard machinery for a host nobody probed.
+    expect(sandboxedIframePropsRef.current.browserStorage).toBeUndefined();
+  });
+
+  it("keeps a permissive replay permissive when the host's subtype policy allows everything", async () => {
+    // Claude and Cursor ship all-true subtype matrices. Those restrict
+    // nothing, so treating the policy's mere presence as a host restriction
+    // flipped `permissive` off and handed the proxy an undefined CSP — which
+    // falls back to the locked-down policy (`connect-src 'none'`,
+    // `img-src data:`) and breaks the replayed widget.
+    render(
+      <ScenarioHostStyleProvider value="claude">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toEqual({
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
+      cspResourceDomains: {
+        script: true,
+        stylesheet: true,
+        image: true,
+        font: true,
+        media: true,
+      },
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(true);
+    expect(sandboxedIframePropsRef.current.csp).toBeUndefined();
+  });
+
+  it("locks a permissive replay down when the host actually blocks a subtype", async () => {
+    // Counter-test: Goose blocks every connect subtype, so the emulation MUST
+    // win over the widget's permissive flag. Guards against the fix above
+    // disabling the feature outright.
+    render(
+      <ScenarioHostStyleProvider value="goose">
+        <HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />
+      </ScenarioHostStyleProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.html).toBe(
+        "<html><body>widget</body></html>"
+      );
+    });
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("bypasses subtype emulation for the explicit Playground permissive toggle", async () => {
+    Object.assign(mockPlaygroundStoreState, {
+      isPlaygroundActive: true,
+      mcpAppsCspMode: "permissive",
+    });
+    render(
+      <WidgetSurfaceProvider value="playground">
+        <ScenarioHostStyleProvider value="chatgpt">
+          <HostedRenderer {...baseProps} />
+        </ScenarioHostStyleProvider>
+      </WidgetSurfaceProvider>
+    );
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.permissive).toBe(true);
+      expect(mcpAppsModalPropsRef.current).not.toBeNull();
+    });
+    expect(sandboxedIframePropsRef.current.cspSubtypePolicy).toBeUndefined();
+    expect(
+      mcpAppsModalPropsRef.current?.widgetCspSubtypePolicy
+    ).toBeUndefined();
   });
 
   it("ignores widget-declared permissions on Copilot (sandboxPermissions: false)", async () => {
@@ -1830,6 +1961,7 @@ describe("MCPAppsRenderer tool input streaming", () => {
       displayMode: "pip",
       deviceType: "desktop",
     });
+    mockPreferencesState.hostStyle = "mcpjam";
 
     render(
       <HostedRenderer
@@ -2449,6 +2581,120 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("records the view mount reported by the sandbox proxy", async () => {
+    // The proxy posts `mcpjam:view-mode` once per mount. It has to land in
+    // two places: the lifecycle list (so the panel shows the view came up)
+    // and `applied` (so the Sandbox Stack chip can show the origin a
+    // developer allowlists with a referrer-restricted third party). The
+    // status is derived from the mode, not a method suffix.
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "url",
+          url: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "ok" }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "url",
+          viewUrl: "http://127.0.0.1:6274/api/apps/mcp-apps/sandbox-proxy?v=1",
+          assignedOrigin: "http://127.0.0.1:6274",
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
+  it("marks a srcdoc mount as a degraded view (no origin to allowlist)", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:view-mode",
+          mode: "srcdoc-fallback",
+          url: "about:srcdoc",
+        },
+      } as MessageEvent);
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.appendLifecycle).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({ kind: "view-mounted", status: "error" }),
+      );
+    });
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setSandboxApplied).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          viewMode: "srcdoc-fallback",
+          // `about:srcdoc` has no origin — the chip must not offer one.
+          assignedOrigin: undefined,
+        }),
+        undefined,
+        null,
+      );
+    });
+  });
+
+  it("publishes a declared ui.domain into the debug store", async () => {
+    // The Workbench's origin card is the only place a developer learns their
+    // `_meta.ui.domain` will not match what MCPJam serves, so the declaration
+    // has to survive the trip from the widget-content response into the store.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          permissive: true,
+          mimeTypeValid: true,
+          declaredDomain: "abc123.claudemcpcontent.com",
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(<HostedRenderer {...baseProps} />);
+
+    await vi.waitFor(() => {
+      expect(stableStoreFns.setWidgetCsp).toHaveBeenCalledWith(
+        "call-1",
+        expect.objectContaining({
+          declaredDomain: "abc123.claudemcpcontent.com",
+          // Permissive, no csp, no permissions: without the declared domain
+          // widening the guard, this record would never be written and the
+          // panel would not render at all.
+          mode: "permissive",
+        }),
+      );
+    });
+  });
+
   it("sends partial tool input during input-streaming", async () => {
     const partialInput = { elements: '[{"type":"rectangle"' };
     render(
@@ -2877,6 +3123,345 @@ describe("MCPAppsRenderer tool input streaming", () => {
     warnSpy.mockRestore();
     errorSpy.mockRestore();
   });
+
+  // ── Scenario surface × declared host profile ────────────────────────────
+  // The "MCP Apps render blank in User Testing" regression. A scenario
+  // surface forces `cspMode: "permissive"`; the server used to answer that
+  // request by withholding the resource's declared CSP. Every host template
+  // seeds `apps.sandbox.csp.mode: "declared"`, so `resolveSandboxCsp` then
+  // ran with `resourceCsp: undefined`, fell back to the empty secure
+  // default, and forced `permissive: false` — the sandbox proxy emitted
+  // `script-src 'unsafe-inline' data: blob:` and every esm.sh module load
+  // in the App was refused. The tester saw an empty bordered box.
+  const declaredCspProfile = (): HostConfigMcpProfileV1 => ({
+    profileVersion: 1,
+    apps: { sandbox: { csp: { mode: "declared" } } },
+  });
+
+  it("keeps the resource-declared CSP on a scenario surface under a 'declared' host profile", async () => {
+    // Server response as it now stands: a scenario surface asks for
+    // permissive, and the route reports the declaration regardless.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: {
+            resourceDomains: ["https://esm.sh"],
+            connectDomains: ["https://esm.sh"],
+          },
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    // Before the fix both lists came back `[]` — the empty secure default.
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+      "https://esm.sh",
+    ]);
+    // The host policy is in force, so the meta-CSP is injected — with the
+    // declared origins in it, which is the whole point.
+    expect(sandboxedIframePropsRef.current.permissive).toBe(false);
+  });
+
+  it("keeps empty domain lists on a scenario surface when the App declares no CSP", async () => {
+    // The inverse, and a spec MUST: "if `ui.csp` is omitted" the host keeps
+    // the restrictive default, and "Host MAY further restrict but MUST NOT
+    // allow undeclared domains." An undeclared App stays blocked — Change 3
+    // makes that legible rather than blank.
+    vi.mocked(authFetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          html: "<html><body>live-widget</body></html>",
+          csp: undefined,
+          permissive: true,
+          mimeTypeValid: true,
+          prefersBorder: true,
+        }),
+      status: 200,
+      headers: new Headers(),
+    } as Response);
+
+    render(
+      <WidgetSurfaceProvider value="scenario">
+        <ActiveMcpProfileProvider value={declaredCspProfile()}>
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      </WidgetSurfaceProvider>
+    );
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.csp).toBeTruthy();
+    });
+
+    expect(sandboxedIframePropsRef.current.csp.resourceDomains).toEqual([]);
+    expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+  });
+
+  // ── Blocked-App notice ──────────────────────────────────────────────────
+  // An App whose own resources are refused never signals ready, so the
+  // iframe stays at `opacity: 0`. Without a notice that is indistinguishable
+  // from a hang — the two-hour-investigation failure mode this replaces.
+  const postCspViolation = (overrides: Record<string, unknown> = {}): void => {
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcp-apps:csp-violation",
+          directive: "script-src-elem",
+          effectiveDirective: "script-src-elem",
+          blockedUri: "https://esm.sh/react@19",
+          ...overrides,
+        },
+      } as MessageEvent);
+    });
+  };
+
+  it("explains a CSP-blocked App that never signals ready", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      // Grace period: the notice must not race a View that is merely slow.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("Content Security Policy");
+      // Names the blocked directive and the first blocked origin — the two
+      // facts that turn this into a five-second diagnosis.
+      expect(notice.textContent).toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps the blocked-App notice plain-language in minimal mode", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} minimalMode={true} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      // Testers get a sentence, not a debug dump.
+      expect(notice.textContent).toContain("couldn't load its resources");
+      expect(notice.textContent).not.toContain("Content Security Policy");
+      expect(notice.textContent).not.toContain("script-src-elem");
+      expect(notice.textContent).toContain("https://esm.sh/react@19");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show the blocked-App notice when the App boots anyway", async () => {
+    // A blocked optional asset (an analytics beacon, a webfont) still
+    // reports a violation. If the View initializes, there is nothing wrong
+    // to report and the notice must never appear.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://analytics.example.com/beacon" });
+      act(() => triggerReady());
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not carry a blocked-App notice onto freshly committed HTML", async () => {
+    // A violation belongs to the bytes that reported it. Once new HTML is
+    // committed the notice must not keep explaining the old ones — it would
+    // misdiagnose the new render outright if that failed for an unrelated
+    // reason. Covers both the resource swap and a refetch under the same
+    // identity, which the identity-keyed reset effect cannot see.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const { rerender } = render(<HostedRenderer {...baseProps} />);
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+
+      postCspViolation({ blockedUri: "https://resource-a.example/app.js" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Same renderer, different live resource.
+      rerender(
+        <HostedRenderer
+          {...baseProps}
+          toolCallId="call-2"
+          resourceUri="mcp-app://other"
+        />
+      );
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Nothing has been reported against the new bytes, so there is nothing
+      // to explain about them.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("explains a block after a TIGHTENED policy breaks a previously-working App", async () => {
+    // End-to-end guard on the case the notice most needs to cover: the App
+    // boots fine, the policy is then narrowed, and the reloaded App can't
+    // initialize. This works because `effectiveSandboxKey` is a dependency
+    // of the bridge-connect effect, which resets readiness when it re-runs —
+    // pinning that here so a refactor that decouples the two (leaving
+    // `isReady` true across a policy reload) turns the notice back into a
+    // silent blank surface.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      const { rerender } = render(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      act(() => triggerReady());
+
+      // Narrow the policy — the iframe reloads and the App is now blocked.
+      rerender(renderTree([]));
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+      });
+
+      postCspViolation({ blockedUri: "https://api.example.com/data" });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      const notice = screen.getByTestId("mcp-app-csp-blocked-notice");
+      expect(notice.textContent).toContain("https://api.example.com/data");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears a stale blocked-App notice when the sandbox policy changes", async () => {
+    // Widening a profile to unblock an App re-posts the resource-ready
+    // payload (SandboxedIframe keys it on the resolved csp), so the View
+    // boots again. A violation recorded against the PREVIOUS policy must not
+    // keep naming an origin that is now allowed.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const renderTree = (connectDomains: string[]) => (
+        <ActiveMcpProfileProvider
+          value={{
+            profileVersion: 1,
+            apps: {
+              sandbox: {
+                csp: { mode: "declared", restrictTo: { connectDomains } },
+              },
+            },
+          }}
+        >
+          <HostedRenderer {...baseProps} />
+        </ActiveMcpProfileProvider>
+      );
+
+      // `restrictTo` INTERSECTS the declared baseline, so the widened value
+      // must be one the baseline actually contains — otherwise the resolved
+      // policy is unchanged and no reload happens.
+      const { rerender } = render(renderTree([]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current?.onMessage).toBeTruthy();
+      });
+      expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([]);
+
+      postCspViolation();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByTestId("mcp-app-csp-blocked-notice")).toBeTruthy();
+
+      // Profile edit → new resolved CSP → iframe reload.
+      rerender(renderTree(["https://api.example.com"]));
+
+      await vi.waitFor(() => {
+        expect(sandboxedIframePropsRef.current.csp.connectDomains).toEqual([
+          "https://api.example.com",
+        ]);
+      });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+
+      // Stale violation dropped: nothing has been reported against the new
+      // policy yet, so there is nothing to explain.
+      expect(screen.queryByTestId("mcp-app-csp-blocked-notice")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 // ── Host capability gating ─────────────────────────────────────────────────
@@ -3149,7 +3734,7 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
     mockHostContextStoreState.draftHostContext = {};
     Object.assign(mockPreferencesState, {
       themeMode: "light",
-      hostStyle: "claude",
+      hostStyle: "mcpjam",
     });
     Object.assign(mockPlaygroundStoreState, {
       isPlaygroundActive: true,
@@ -3271,7 +3856,7 @@ describe("MCPAppsRenderer display-mode requests after a user close", () => {
   ) {
     render(
       <ActiveMcpProfileProvider value={profileWith(policy)}>
-        <ScenarioHostStyleProvider value="claude">
+        <ScenarioHostStyleProvider value="mcpjam">
           <ControlledHost />
         </ScenarioHostStyleProvider>
       </ActiveMcpProfileProvider>

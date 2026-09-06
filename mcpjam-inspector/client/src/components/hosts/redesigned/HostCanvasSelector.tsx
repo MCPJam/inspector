@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router";
 import { ChevronsUpDown, Plus, Trash2 } from "lucide-react";
 import { useConvexAuth } from "convex/react";
 import { toast } from "@/lib/toast";
@@ -14,13 +13,14 @@ import { cn } from "@/lib/utils";
 import { useHostList, useHostMutations } from "@/hooks/useClients";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
-import { buildHostsPath } from "@/lib/app-navigation";
+import { buildHostsPath, useAppNavigate } from "@/lib/app-navigation";
 import { getHostLogoSrc } from "@/lib/host-ui-metadata";
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { track } from "@/lib/analytics";
 import { CreateHostDialog } from "@/components/hosts/CreateHostDialog";
 import { getCatalogHost } from "@mcpjam/sdk/host-compat";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * Client selector for the Connect host canvas, mounted in the canvas nav row
@@ -61,7 +61,7 @@ export function HostCanvasSelector({
   projectId,
   activeHostId,
 }: HostCanvasSelectorProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const { isAuthenticated } = useConvexAuth();
   const catalogState = useHostCatalog();
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -128,7 +128,7 @@ export function HostCanvasSelector({
     setIsDeleting(true);
     try {
       await deleteHost({ hostId });
-      toast.success(`Host "${host.name}" deleted`);
+      toast.success(`Host "${clientDisplayName(host)}" deleted`);
       // Deleting the host the canvas is rendering would leave it pointing
       // at a dead id until HostsTab's reconcile kicks the user back to the
       // browse view — jump to a surviving host instead.
@@ -258,7 +258,7 @@ export function HostCanvasSelector({
                 className="size-4 shrink-0 object-contain"
               />
               <span className="max-w-[10rem] truncate text-sm font-semibold">
-                {active.name}
+                {clientDisplayName(active)}
               </span>
               <span className="shrink-0 rounded-full border border-border/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground">
                 {activeIndex + 1} / {sortedHosts.length}
@@ -293,12 +293,12 @@ export function HostCanvasSelector({
                     className="flex-1 truncate"
                     data-testid={`host-canvas-label-${host.hostId}`}
                   >
-                    {host.name}
+                    {clientDisplayName(host)}
                   </span>
                   <span className="ml-2 flex shrink-0 items-center opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[highlighted]:opacity-100">
                     <button
                       type="button"
-                      aria-label={`Delete ${host.name}`}
+                      aria-label={`Delete ${clientDisplayName(host)}`}
                       data-testid={`host-canvas-delete-${host.hostId}`}
                       disabled={isDeleting || !canDelete}
                       title={!canDelete ? LAST_HOST_DELETE_REASON : undefined}

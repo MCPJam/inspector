@@ -41,6 +41,7 @@ import type {
 } from "@mcpjam/sdk/public-api";
 import {
   AGENT_API_GATED_OPERATIONS,
+  executedActionResource,
   gatedEntryFor,
 } from "./agent-op-registry.js";
 import { resolveSurfaceActor } from "./approval-surface.js";
@@ -250,6 +251,42 @@ proposedActions.post(
       return v1Error(c, "NOT_FOUND", "That approval is no longer available.");
     }
 
+    // DEFENSE IN DEPTH for the mint-time freeze. An entry that declares
+    // `requiredFrozenKeys` (the registry installs) can only be minted with
+    // its pins present, so a stored input missing one is a row minted before
+    // that contract — or a tampered one — and executing it would install
+    // whatever the registry resolves to NOW, not what the approver saw.
+    // Completed as FAILED rather than released: the row is permanently
+    // invalid, and a release would just hand the same broken button to the
+    // next click.
+    const requiredPins =
+      gatedEntryFor(operation.name)?.proposal.requiredFrozenKeys ?? [];
+    const missingPins = requiredPins.filter(
+      (key) => claim.input[key] === undefined
+    );
+    if (missingPins.length > 0) {
+      // Declared 400, not a thrown catch-site: `reportRouteFailure` would
+      // still page unless we mint a fake 4xx error object. `logger.error`
+      // with no Error argument captures `new Error(message)` on every stale
+      // click. Same warn as the unknown-operation refusal above.
+      logger.warn("[v1/proposed-actions] refused an unpinned proposal", {
+        operation: operation.name,
+        missing: missingPins,
+      });
+      await completeProposedAction({
+        actionId,
+        status: "failed",
+        failureReason: `input is missing required pins: ${missingPins.join(
+          ", "
+        )}`,
+      }).catch(() => {});
+      return v1Error(
+        c,
+        "VALIDATION_ERROR",
+        "That approval was recorded without the details a click must pin down. Ask again and I'll propose it fresh."
+      );
+    }
+
     // From here the claim is HELD. Every exit must either complete it or
     // release it, or the proposal is stranded `executing` and the sweep will
     // deliberately refuse to reap it.
@@ -332,10 +369,11 @@ proposedActions.post(
       });
 
       // What the caller renders from, and what the org's activity row links
-      // to. `kind` and `resource` are derived SERVER-SIDE from the registry: a
-      // host that synthesised the URL itself would have to know each
-      // operation's result shape, and would silently link to nothing the
-      // moment one changed.
+      // to. `kind` comes from the registry; `resource` comes from the
+      // OPERATION's own permalink policy. Either way it is derived
+      // SERVER-SIDE: a host that synthesised the URL itself would have to
+      // know each operation's result shape, and would silently link to
+      // nothing the moment one changed.
       //
       // Built HERE, before the completion call, and isolated from the
       // operation's own try/catch on purpose. The work is DONE; a throw in a
@@ -347,7 +385,9 @@ proposedActions.post(
       const meta = gatedEntryFor(operation.name)?.proposal;
       let resource: ExecutedActionResource | undefined;
       try {
-        resource = meta?.resource?.(result, { projectId: claim.projectId });
+        resource = executedActionResource(operation, result, input, {
+          projectId: claim.projectId,
+        });
       } catch (error) {
         logger.warn("[v1/proposed-actions] could not build the result link", {
           operation: operation.name,

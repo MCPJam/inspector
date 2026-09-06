@@ -29,7 +29,6 @@ import { GoalOutcomeDrilldown } from "@/components/shared/usage-insights/GoalOut
 import { TopicMapPanel } from "@/components/shared/usage-insights/TopicMapPanel";
 import { InsightsViewToggle } from "@/components/shared/usage-insights/InsightsViewToggle";
 import { InsightsFreshnessChip } from "@/components/shared/usage-insights/InsightsFreshnessChip";
-import { CriterionScorecard } from "@/components/shared/usage-insights/CriterionScorecard";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   Collapsible,
@@ -63,12 +62,10 @@ interface InsightsWorkbenchProps {
    */
   bannerSlot?: ReactNode;
   /**
-   * Pattern recommendations under the scorecard (expandable rows). Rendered
-   * as a distinct subsection inside Findings when present.
+   * Pattern recommendations (expandable rows). Rendered as a distinct
+   * subsection inside Findings when present.
    */
   recommendationsSlot?: ReactNode;
-  /** Extra content shown below the rubric scorecard section (e.g. findings). */
-  checksExtras?: ReactNode;
   /**
    * Queue one rebuild when the Clusters view opens on a completed run whose
    * topic map was never built. The server mutation dedupes in-flight runs; the
@@ -82,13 +79,22 @@ interface InsightsWorkbenchProps {
    * surface: Swarms want "sign in", User Testing wants "share the link".
    */
   emptyState?: ReactNode;
-  /**
-   * Fired when the workbench swaps between the empty state and the filled
-   * body. Owning pages use this to hide chrome that the empty panel already
-   * covers (e.g. User Testing's header share strip).
-   */
-  onEmptyChange?: (empty: boolean) => void;
   className?: string;
+  /**
+   * How the body fills its space.
+   *
+   * `"fill"` (default) is the locked, viewport-filling layout: the whole
+   * workbench is `h-full` and every region clips, so the Sankey/topic map fit
+   * the pane and scroll internally. User Testing mounts the workbench inside an
+   * `absolute inset-0` box and relies on this.
+   *
+   * `"scroll"` lets the body grow to its natural height and the OWNING
+   * container scroll — the Sankey renders at full content height (no internal
+   * scroll), so on a swarm with many themes the whole diagram is reachable by
+   * scrolling the page instead of dragging a cramped inner window. The owner
+   * must make its container scrollable (`overflow-y-auto`).
+   */
+  bodyLayout?: "fill" | "scroll";
   /**
    * Prefix for every `data-testid` this renders, so each surface keeps the
    * ids its own suites already assert (`swarm-insights-*`, `scenario-insights-*`).
@@ -97,22 +103,31 @@ interface InsightsWorkbenchProps {
 }
 
 /**
- * Collapsible parent for the scorecard and recommendations rail. Hidden when
+ * Collapsible parent for recommendations and supporting findings. Hidden when
  * both subsections render nothing, so a provided-but-empty slot does not
  * leave a Findings shell. Expanded by default; the trigger is a real button
  * (aria-expanded, focus ring) rather than hover-only.
  *
- * The body is one scrollable card. Subsections (scorecard, recommendations)
- * sit inside it and are separated by a divider — they must not bring their
- * own card chrome, or Findings reads as two stacked modules on the page.
+ * The body is one scrollable card. Subsections sit inside it and are separated
+ * by a divider — they must not bring their own card chrome, or Findings reads
+ * as two stacked modules on the page.
  */
 function InsightsFindings({
   testId,
+  fillBody,
   children,
 }: {
   testId: string;
+  /**
+   * Whether the workbench body fills the viewport. The height cap lives here,
+   * next to the rail it constrains: a share of the viewport in the fill layout
+   * (`max-h-[42%]`), and a fixed height the rail scrolls within while the page
+   * scrolls past it in the scroll layout.
+   */
+  fillBody: boolean;
   children: ReactNode;
 }) {
+  const maxHeightClass = fillBody ? "max-h-[42%]" : "max-h-[26rem]";
   const [open, setOpen] = useState(true);
 
   return (
@@ -120,7 +135,8 @@ function InsightsFindings({
       open={open}
       onOpenChange={setOpen}
       className={cn(
-        "group/findings flex max-h-[42%] min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        "group/findings flex min-h-0 shrink-0 flex-col gap-1 overflow-hidden",
+        maxHeightClass,
         "[&:not(:has([data-slot=findings-body]>*))]:hidden",
       )}
       data-testid={testId}
@@ -153,8 +169,8 @@ function InsightsFindings({
  * The Insights workbench: one body for Swarms and User Testing.
  *
  * Exclusive toggle between Session flow (Sankey) and Clusters (topic map),
- * a Findings rail (scorecard + recommendations) above both, a chip row for
- * dismissible filters, and a session drill-down beside the flow chart.
+ * a Findings rail (recommendations + supporting findings) above both, a chip
+ * row for dismissible filters, and a session drill-down beside the flow chart.
  * Everything surface-specific arrives as a prop — the scope the queries
  * read, the slots Findings renders, the filter policy, the empty state,
  * and the testid prefix.
@@ -172,8 +188,8 @@ function InsightsFindings({
  *    version passed the raw filter, which on a surface with an augment would
  *    have shown rows the list beside it excludes.
  *  - Only the fill-viewport layout survives. The scroll-area path had no
- *    production caller. The rubric scorecard and Run insights banner are
- *    their own sections above the session flow (not chip popovers).
+ *    production caller. The Findings rail and Run insights banner are their
+ *    own sections above the session flow (not chip popovers).
  *  - A topic-map dot click clears the filter on BOTH surfaces before opening
  *    the session: an active cluster chip can otherwise hide the very session
  *    the click asked for.
@@ -190,13 +206,13 @@ export function InsightsWorkbench({
   onOpenSessionsTab,
   bannerSlot,
   recommendationsSlot,
-  checksExtras,
   autoBackfillTopicMap = false,
   emptyState,
-  onEmptyChange,
   className,
+  bodyLayout = "fill",
   testIdPrefix,
 }: InsightsWorkbenchProps) {
+  const fillBody = bodyLayout === "fill";
   const flow = useInsightsFlowController({
     cohortKey,
     ...(augmentFilter ? { augmentFilter } : {}),
@@ -319,13 +335,18 @@ export function InsightsWorkbench({
   const nothingToShow =
     scope === null || (!userFiltered && breakdown?.totalSessions === 0);
   const showingEmpty = Boolean(emptyState && nothingToShow);
-  useEffect(() => {
-    onEmptyChange?.(showingEmpty);
-  }, [showingEmpty, onEmptyChange]);
   if (showingEmpty) {
     return (
       <div
-        className={cn("flex h-full min-h-0 flex-col", className)}
+        className={cn(
+          "flex flex-col",
+          // Fill layout clips to the viewport. In the scroll layout the owning
+          // container has auto height, so `h-full` would collapse and the
+          // empty message would ride the top instead of centering — take a
+          // full-height floor and grow into the flex column instead.
+          fillBody ? "h-full min-h-0" : "min-h-full flex-1",
+          className,
+        )}
         data-testid={`${testIdPrefix}-panel`}
       >
         {emptyState}
@@ -393,8 +414,13 @@ export function InsightsWorkbench({
     ) : null;
 
   const sankeyBlock = (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
-      <div className="min-h-0 flex-1 overflow-hidden">
+    <div
+      className={cn(
+        "flex flex-col",
+        fillBody && "h-full min-h-0 overflow-hidden",
+      )}
+    >
+      <div className={fillBody ? "min-h-0 flex-1 overflow-hidden" : undefined}>
         <SessionFlowSankey
           breakdown={breakdown}
           selection={flow.flowSelection}
@@ -404,7 +430,8 @@ export function InsightsWorkbench({
           rebuildBusy={rebuildBusy}
           onApplyTuning={handleApplyTuning}
           showLinkThreshold
-          fillHeight
+          fillHeight={fillBody}
+          scrollLayout={!fillBody}
           headerActions={viewChrome}
         />
       </div>
@@ -423,9 +450,16 @@ export function InsightsWorkbench({
   const mapFilter = removeChipsByKeys(flow.filter, flow.flowOwnedKeys);
 
   const clustersBlock = (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className={cn("flex flex-col", fillBody && "h-full min-h-0")}>
       {chipRow}
-      <div className="min-h-0 flex-1">
+      {/* The topic map is a canvas that measures its container: it needs a
+          definite height. `flex-1` supplies one in the fill layout; in the
+          scroll layout the column has no bounded height, so give it 36rem —
+          but cap it at 70vh so a short window keeps both the map and the
+          Findings rail on screen instead of pushing the map past the fold. */}
+      <div className={fillBody ? "min-h-0 flex-1" : "h-[min(36rem,70vh)]"}>
+        {/* In the scroll layout the map sits mid-page, so let a bare wheel
+            scroll past it and reserve zoom for Ctrl/Cmd+wheel or pinch. */}
         <TopicMapPanel
           scope={scope}
           {...(journeyRunIds ? { journeyRunIds } : {})}
@@ -436,20 +470,20 @@ export function InsightsWorkbench({
           rebuildBusy={rebuildBusy}
           onOpenSession={handleOpenSessionFromMap}
           headerActions={viewChrome}
+          cooperativeWheelZoom={!fillBody}
         />
       </div>
     </div>
   );
 
   const selectionOpen = flow.flowSelection !== null;
-  const criterionFacets = breakdown?.criterionBreakdown ?? [];
-  const hasScorecard =
-    criterionFacets.length > 0 || Boolean(checksExtras);
+  const hasFindings = Boolean(recommendationsSlot);
 
   return (
     <div
       className={cn(
-        "flex h-full min-h-0 flex-col gap-2 overflow-hidden",
+        "flex flex-col gap-2",
+        fillBody && "h-full min-h-0 overflow-hidden",
         className,
       )}
       data-testid={`${testIdPrefix}-panel`}
@@ -459,34 +493,44 @@ export function InsightsWorkbench({
           {bannerSlot}
         </div>
       ) : null}
-      {hasScorecard || recommendationsSlot ? (
-        <InsightsFindings testId={`${testIdPrefix}-findings`}>
-          {hasScorecard ? (
-            <div
-              data-testid={`${testIdPrefix}-scorecard`}
-              aria-label="Scorecard"
-            >
-              <CriterionScorecard
-                facets={criterionFacets}
-                filter={flow.filter}
-                onToggleChip={flow.handleToggleChip}
-              />
-              {checksExtras}
-            </div>
-          ) : null}
+      {hasFindings ? (
+        <InsightsFindings testId={`${testIdPrefix}-findings`} fillBody={fillBody}>
           {recommendationsSlot}
         </InsightsFindings>
       ) : null}
-      <div className="relative flex min-h-0 flex-1 overflow-hidden">
-        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        className={cn(
+          "relative flex",
+          fillBody && "min-h-0 flex-1 overflow-hidden",
+        )}
+      >
+        <div
+          className={cn(
+            "flex min-w-0 flex-1 flex-col",
+            fillBody && "overflow-hidden",
+          )}
+        >
           {flow.view === "clusters" ? clustersBlock : sankeyBlock}
         </div>
         {flow.view === "flow" ? (
           <div
             className={cn(
               selectionOpen
-                ? "absolute inset-0 z-10 bg-background sm:static sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
+                ? "z-10 bg-background sm:w-[22rem] lg:w-[24rem] sm:shrink-0 sm:border-l sm:border-border/40"
                 : "hidden",
+              // Fill layout: an overlay on mobile, an in-flow static panel
+              // beside the chart on sm+.
+              selectionOpen && fillBody && "absolute inset-0 sm:static",
+              // Scroll layout: the chart row is as tall as the whole diagram, so
+              // a stretched drill-down would run that full height. On mobile,
+              // anchor the panel to the viewport (fixed) so selecting a low node
+              // never opens it off-screen; on sm+ it is a bounded, sticky side
+              // panel that scrolls its own session list while the diagram
+              // scrolls past beside it. `sm:static` is deliberately absent so
+              // `sm:sticky` wins by intent, not by Tailwind emit order.
+              selectionOpen &&
+                !fillBody &&
+                "fixed inset-0 z-20 sm:sticky sm:inset-auto sm:top-4 sm:self-start sm:h-[min(70vh,40rem)]",
             )}
             data-testid={`${testIdPrefix}-drill-panel`}
             aria-hidden={!selectionOpen}

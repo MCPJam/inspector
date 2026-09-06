@@ -25,18 +25,18 @@ Use the host default when you want every server in a Client to speak the same ve
 
 ### Host default (client-level) dropdown
 
-| Option                    | Stored pin         | Transport                                       | Use it when                                                                                                                                 |
+| Option                    | Stored value       | Transport                                       | Use it when                                                                                                                                 |
 | ------------------------- | ------------------ | ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Automatic**             | none               | HTTP + stdio: `server/discover`, then legacy fallback | Detect 2026 support from the server; otherwise use the version negotiated by `initialize`. This is the default.                        |
+| **Automatic**             | `"auto"`           | HTTP + stdio: `server/discover`, then legacy fallback | Detect 2026 support from the server; otherwise use the version negotiated by `initialize`. This is the default.                        |
 | **Latest (2026-07-28)**   | `2026-07-28`       | HTTP in MCPJam's preview (Streamable HTTP POST) | You want to test your server against the newest stateless revision — no `initialize` handshake, `server/discover` for capabilities, per-request `_meta`. |
 | **2025-11-25**            | `2025-11-25`       | HTTP, STDIO, SSE                                | Pin to the 2025-11-25 stateful release. The initialize handshake offers only this version.                                                  |
 | **2025-06-18**            | `2025-06-18`       | HTTP, STDIO, SSE                                | Test against the June 2025 stable revision.                                                                                                 |
 | **2025-03-26**            | `2025-03-26`       | HTTP, STDIO, SSE                                | Test against the March 2025 stable revision.                                                                                                |
 | **Host default** _(per-server only)_ | —     | —                                               | Inherit whatever the Client's MCP Protocol tab is set to.                                                                                   |
 
-**Automatic** stores no pin — the absence of a pin is the meaning, not a hidden default. Picking any other option stores that exact version literal and narrows the `initialize` handshake's accept-list to that single revision.
+**Automatic** is stored as the selection policy `"auto"` — it is not a wire literal and is never sent to the server. At connect time the SDK negotiates the era with the server rather than announcing a specific version up front. Picking any other option stores that exact version literal and pins the connection to that single revision.
 
-When Automatic falls back to the legacy `initialize` handshake, it uses the MCP SDK's complete built-in supported-version list. Persisted per-client accept-lists are ignored in Automatic mode so reconnecting cannot accidentally narrow negotiation; choose an explicit version when you want a strict protocol pin.
+When Automatic falls back to the legacy `initialize` handshake, it respects the client's **Supported protocol versions** list (if set). The SDK negotiates only within that list and rejects a server that counter-offers a version outside it. If no list is set, the SDK's built-in defaults apply. Choose an explicit version pin when you want strict, list-independent control.
 
 **Latest** is derived, not hardcoded: it always labels the newest version in the SDK's known-version list. Every other known revision is shown as a bare date.
 
@@ -57,7 +57,7 @@ The 2026 RC applies the stateless model across transports. MCPJam's initial prev
 2. Pick the Client you want to edit (or create a new one).
 3. Open the **MCP Protocol** tab.
 4. In the **Protocol version** dropdown, pick a version:
-   - **Automatic** — no pin stored; the SDK picks the version at connect time (default).
+   - **Automatic** — stored as `"auto"`; the SDK negotiates the era at connect time (default).
    - **Latest (2026-07-28)** — pin to the newest stateless revision.
    - **2025-11-25** — pin to the 2025-11-25 stateful release.
    - **2025-06-18** or **2025-03-26** — pin to an earlier stable revision.
@@ -128,7 +128,7 @@ The 2026 RC client is a **preview**. A handful of pieces from the SEP family are
 - `subscriptions/listen` (long-lived notification stream)
 - Server-initiated requests via MRTR / `InputRequiredResult` for sampling and listRoots embedded in responses (elicitation via `input_required` is supported — see [Multi-round input](#multi-round-input-mcp-2026-07-28-input_required))
 - Resumption tokens
-- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake. An explicit 2026 pin remains exact and does not fall back.
+- Automatic detection (HTTP and stdio) falls back to the legacy `initialize` handshake when `server/discover` is not available. An explicit 2026 pin remains exact and does not fall back.
 
 For everything else — `tools/list`, `tools/call`, `resources/*`, `prompts/*`, OAuth refresh, custom headers, progress notifications — the RC client behaves like the legacy one.
 

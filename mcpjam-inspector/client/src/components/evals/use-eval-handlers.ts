@@ -33,11 +33,16 @@ import { draftTestCaseId } from "./draft-test-case";
 import { isModelFree, promptTurnsToSteps } from "@/shared/steps";
 import type { useEvalMutations } from "./use-eval-mutations";
 import { authFetch } from "@/lib/session-token";
-import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import {
+  getBillingErrorMessage,
+  getEvalIterationLimitFromError,
+} from "@/lib/billing-entitlements";
+import { usePlanLimitDialogStore } from "@/stores/plan-limit-dialog-store";
 import type { ModelDefinition } from "@/shared/types";
 import {
   buildEvalConvexAuthPayload,
   getEvalApiEndpoints,
+  rethrowIfBillingError,
   runEvals,
   runEvalTestCase,
   type GenerationOptions,
@@ -188,12 +193,30 @@ export type HandleGenerateEvalTestsOptions = {
   generationOptions?: GenerationOptions;
 };
 
+/**
+ * Worth opening the limit wall for: an eval-iteration cap, and not a
+ * retry-able environment-drift 409 — that one has its own, better message and
+ * no upgrade to offer.
+ *
+ * A fan-out settles per target, so a cap can be one rejection among several.
+ * Callers scan the whole failure list with this rather than trusting the first.
+ */
+function isEvalIterationCap(error: unknown): boolean {
+  return (
+    getEnvironmentConflictMessage(error) === null &&
+    getEvalIterationLimitFromError(error) !== null
+  );
+}
+
 interface UseEvalHandlersProps {
   mutations: ReturnType<typeof useEvalMutations>;
   selectedSuiteEntry: EvalSuiteOverviewEntry | null;
   selectedSuiteId: string | null;
   selectedTestId: string | null;
   projectId?: string | null;
+  /** Owner of the eval-iteration quota. Lets a server-side cap rejection open
+   * the same upgrade wall as the client-side pre-check. */
+  organizationId?: string | null;
   connectedServerNames?: Set<string>;
   ensureServersReady?: (
     serverNames: string[]
@@ -221,6 +244,7 @@ export function useEvalHandlers({
   selectedSuiteId,
   selectedTestId,
   projectId = null,
+  organizationId = null,
   connectedServerNames,
   ensureServersReady,
   latestRunBySuiteId,
@@ -230,6 +254,35 @@ export function useEvalHandlers({
   availableModels,
 }: UseEvalHandlersProps) {
   const convex = useConvex();
+  /**
+   * The client-side quota pre-check in EvalsTab can pass on a stale read — a
+   * teammate spends the last iterations while this user sits on Run — and the
+   * server then rejects the start. That rejection is the same wall, so it gets
+   * the same decision surface instead of the dead-end toast.
+   *
+   * Returns whether the wall took the error; callers keep their own toast for
+   * everything else.
+   */
+  const openEvalIterationWall = useCallback(
+    (error: unknown): boolean => {
+      if (!organizationId) return false;
+      if (getEnvironmentConflictMessage(error)) return false;
+      const limit = getEvalIterationLimitFromError(error);
+      if (!limit) return false;
+
+      usePlanLimitDialogStore.getState().open({
+        kind: "evalIterations",
+        organizationId,
+        used: limit.used,
+        allowed: limit.allowed,
+        resetsAt: limit.resetsAt,
+        windowKind: limit.windowKind,
+        origin: "evals",
+      });
+      return true;
+    },
+    [organizationId]
+  );
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
@@ -524,6 +577,17 @@ export function useEvalHandlers({
 
         if (!response.ok) {
           const errorText = await response.text();
+          // Same unwrapping the buffered eval paths get from
+          // `postEvalRequest`: the cap payload rides under `details`, so
+          // throwing the body whole hides it from the limit-wall parser and
+          // from `getBillingErrorMessage`. No-op for every other failure.
+          let errorBody: unknown = null;
+          try {
+            errorBody = JSON.parse(errorText);
+          } catch {
+            // Not JSON; fall through to the generic error below.
+          }
+          rethrowIfBillingError(errorBody);
           throw new Error(errorText || "Failed to replay eval run");
         }
 
@@ -557,12 +621,17 @@ export function useEvalHandlers({
         });
       } catch (error) {
         console.error("Failed to replay evals:", error);
-        toast.error(
-          getBillingErrorMessage(error, "Failed to replay eval run"),
-          {
-            id: replayToastId,
-          }
-        );
+        if (openEvalIterationWall(error)) {
+          // The wall carries the message now; leave no orphaned loading toast.
+          toast.dismiss(replayToastId);
+        } else {
+          toast.error(
+            getBillingErrorMessage(error, "Failed to replay eval run"),
+            {
+              id: replayToastId,
+            }
+          );
+        }
       } finally {
         setReplayingRunId(null);
       }
@@ -573,6 +642,7 @@ export function useEvalHandlers({
       selectedSuiteEntry,
       getSuiteExecutionContext,
       getAccessToken,
+      openEvalIterationWall,
     ]
   );
 
@@ -697,7 +767,7 @@ export function useEvalHandlers({
       const runGroupId = runPlans.length > 1 ? crypto.randomUUID() : undefined;
 
       // Show toast immediately when user clicks rerun
-      toast.success(
+      const runStartedToastId = toast.success(
         runPlans.length > 1
           ? `Starting ${runPlans.length} runs across ${
               isEnvironmentSuite ? "environments" : "hosts"
@@ -867,6 +937,21 @@ export function useEvalHandlers({
             );
           }
         } else if (failures.length < runPlans.length) {
+          // A cap can reject one target while others launch. This branch never
+          // throws, so the outer catch — and the wall with it — would never
+          // see it. Scan every failure, not just the first.
+          if (
+            openEvalIterationWall(
+              failures.find((failure) => isEvalIterationCap(failure.reason))
+                ?.reason
+            )
+          ) {
+            // "Starting N runs…" fired before any of them were accepted, so it
+            // overstates the moment the wall says one was refused. The
+            // failure-count toast below is the accurate version — it names how
+            // many of the N actually launched.
+            toast.dismiss(runStartedToastId);
+          }
           const failedHostNames = failures
             .map(
               (failure) =>
@@ -891,20 +976,35 @@ export function useEvalHandlers({
           // partial-failure branch above does: throwing `failures[0]` blind
           // would bury a retry-able ENVIRONMENT_REVISION_CONFLICT carried by a
           // later plan behind whatever generic error happened to come first.
+          // A cap outranks a drift 409: the 409 is retry-able, the cap is not,
+          // and only the cap has a next step (upgrade or wait for the reset).
+          // Without this it could sit at index 2 behind a generic error and
+          // never reach the wall.
+          const capFailure = failures.find((failure) =>
+            isEvalIterationCap(failure.reason)
+          );
           const conflictFailure = failures.find(
             (failure) => getEnvironmentConflictMessage(failure.reason) !== null
           );
-          const firstError = (conflictFailure ?? failures[0])?.reason;
+          const firstError = (capFailure ?? conflictFailure ?? failures[0])
+            ?.reason;
           throw firstError instanceof Error
             ? firstError
             : new Error(String(firstError ?? `All ${targetNoun} runs failed`));
         }
       } catch (error) {
         console.error("Failed to rerun evals:", error);
-        toast.error(
-          getEnvironmentConflictMessage(error) ??
-            getBillingErrorMessage(error, "Failed to start eval run")
-        );
+        if (openEvalIterationWall(error)) {
+          // The optimistic "Run started" toast above fired before the server
+          // rejected the launch; leaving it up next to the wall would claim
+          // the run is on its way.
+          toast.dismiss(runStartedToastId);
+        } else {
+          toast.error(
+            getEnvironmentConflictMessage(error) ??
+              getBillingErrorMessage(error, "Failed to start eval run")
+          );
+        }
       } finally {
         setRerunningSuiteId(null);
       }
@@ -922,6 +1022,7 @@ export function useEvalHandlers({
       getSuiteExecutionContext,
       handleReplayRun,
       evalsNavigationContext,
+      openEvalIterationWall,
     ]
   );
 
@@ -1152,6 +1253,14 @@ export function useEvalHandlers({
           ...failedRuns,
         ];
 
+        // Each per-model rejection is caught inside the map above, so a
+        // server-side cap rejection lands here instead of the outer catch.
+        // Give it the same wall the suite rerun gets; `some` stops at the
+        // first failure the wall takes.
+        const evalIterationWallOpened = totalFailedRuns.some((failure) =>
+          openEvalIterationWall(failure.error)
+        );
+
         if (!options?.suppressCompletionToasts) {
           if (successfulRuns.length === totalModelsRequested) {
             toast.success(
@@ -1160,12 +1269,14 @@ export function useEvalHandlers({
                 : "Test completed successfully!"
             );
           } else if (successfulRuns.length > 0) {
+            // Kept even when the wall opened: it reports how many models did
+            // land, which the wall doesn't say.
             toast.error(
               `${successfulRuns.length}/${totalModelsRequested} model${
                 totalModelsRequested === 1 ? "" : "s"
               } completed successfully.`
             );
-          } else {
+          } else if (!evalIterationWallOpened) {
             toast.error(
               getBillingErrorMessage(
                 totalFailedRuns[0]?.error,
@@ -1173,7 +1284,7 @@ export function useEvalHandlers({
               )
             );
           }
-        } else if (successfulRuns.length === 0) {
+        } else if (successfulRuns.length === 0 && !evalIterationWallOpened) {
           toast.error(
             getBillingErrorMessage(
               totalFailedRuns[0]?.error,
@@ -1197,7 +1308,9 @@ export function useEvalHandlers({
         return successfulRuns[0]?.data ?? null;
       } catch (error) {
         console.error("Failed to run test case:", error);
-        toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        if (!openEvalIterationWall(error)) {
+          toast.error(getBillingErrorMessage(error, "Failed to run test case"));
+        }
         return null;
       } finally {
         setRunningTestCaseId(null);
@@ -1213,6 +1326,7 @@ export function useEvalHandlers({
       ensureServersReady,
       projectServers,
       isDirectGuest,
+      openEvalIterationWall,
     ]
   );
 
@@ -1373,6 +1487,20 @@ export function useEvalHandlers({
         type: "test-edit",
         suiteId,
         testId: draftTestCaseId("prompt"),
+      });
+    },
+    [navigateAfterTestCaseMutation]
+  );
+
+  // Record = run-once-then-adopt, not the widget recorder. Same unsaved
+  // draft path as Write; the editor focuses the prompt and surfaces adopt
+  // after the first Quick Run.
+  const handleRecordTestCase = useCallback(
+    (suiteId: string) => {
+      navigateAfterTestCaseMutation({
+        type: "test-edit",
+        suiteId,
+        testId: draftTestCaseId("record"),
       });
     },
     [navigateAfterTestCaseMutation]
@@ -1698,6 +1826,7 @@ export function useEvalHandlers({
     directDeleteRun,
     confirmDeleteRun,
     handleCreateTestCase,
+    handleRecordTestCase,
     handleDeleteTestCase,
     directDeleteTestCase,
     confirmDeleteTestCase,

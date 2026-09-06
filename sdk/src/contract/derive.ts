@@ -138,17 +138,31 @@ export function buildEvaluationConfigSnapshot(
   // ambiguous join is one where a gating policy can silently resolve to an
   // advisory twin. Caught here, at construction, rather than downstream where
   // the snapshot merely fails validation and the run loses its scores.
-  const seen = new Set<string>();
+  //
+  // Only ids that disagree are an error. Two definitions with the same id and
+  // the same CONTENT are the same definition described twice — two identical
+  // anonymous predicate scorers mint one content-derived id by design — and
+  // nothing about them is ambiguous, so they collapse to a single entry rather
+  // than failing a run that is merely redundant. Every score row minted by
+  // either one carries that entry's hash and still joins.
+  const seen = new Map<string, string>();
+  const unique: ResolvedScoreDefinition[] = [];
   for (const definition of resolved) {
-    if (seen.has(definition.scorerId)) {
+    const hash = definitionHash(definition);
+    const previous = seen.get(definition.scorerId);
+    if (previous === undefined) {
+      seen.set(definition.scorerId, hash);
+      unique.push(definition);
+      continue;
+    }
+    if (previous !== hash) {
       throw new Error(
-        `Duplicate scorerId "${definition.scorerId}" in the evaluation config. ` +
-          `Scorer ids must be unique within a run.`
+        `Duplicate scorerId "${definition.scorerId}" in the evaluation config ` +
+          `with different settings. Scorer ids must be unique within a run.`
       );
     }
-    seen.add(definition.scorerId);
   }
-  return { hash: evaluationConfigHash(resolved), definitions: resolved };
+  return { hash: evaluationConfigHash(unique), definitions: unique };
 }
 
 /**
@@ -330,5 +344,116 @@ export function finalizeScoreResult(
     ...(model ? { model } : {}),
     ...(outcome.promptHash ? { promptHash: outcome.promptHash } : {}),
     ...(scope ? { scope } : {}),
+  };
+}
+
+/**
+ * Does the GATING evidence in this iteration's score rows say it passed?
+ *
+ * This is the arithmetic the score contract becomes AUTHORITATIVE with (grading
+ * mode `enforce`): the inspector derives an iteration's `result` from it, and
+ * the backend re-derives from the persisted rows and downgrades the iteration
+ * if the two disagree. It lives here, in the contract's only sanctioned
+ * derivation module, because two implementations of "did the gates hold" is
+ * precisely how a hosted run and a CI gate end up disagreeing about the same
+ * rows. `convex/lib/scoreContract.ts` in the backend hand-mirrors it, pinned by
+ * the shared parity fixtures.
+ *
+ * ── The rule ────────────────────────────────────────────────────────────────
+ *
+ * An iteration passes when EVERY gating definition resolved, and every gating
+ * definition that resolved to a verdict passed. Stated as its two failure
+ * modes, which are deliberately reported separately:
+ *
+ *   - `disagreeingScorerIds` — a gating scorer RAN and said no. A real failure.
+ *   - `unresolvedScorerIds`  — a gating scorer produced no usable verdict: no
+ *     row at all, or a row whose status its own `onError`/`onSkipped` policy
+ *     says must fail. ABSENCE of evidence, and it does not pass. Zero evidence
+ *     never passes — that is the whole reason the resolved defaults for a
+ *     gating definition are `fail`/`fail`.
+ *
+ * The separation is what lets one function serve both consumers. The authority
+ * path (`enforce`) reads `passed` and treats an unresolved gate as a failure,
+ * conservatively matching what the legacy boolean pipeline does with an
+ * unscorable criterion. The SHADOW comparison reads `disagreeingScorerIds`
+ * alone (see `shadowVerdictFromScores` in the inspector's `score-rows.ts`), so
+ * an honest error row cannot manufacture a mismatch out of a criterion nobody
+ * could score.
+ *
+ * ── What cannot influence it ────────────────────────────────────────────────
+ *
+ *   - **Advisory rows.** Only `role: "gating"` definitions are iterated at all,
+ *     which is what makes the judge structurally incapable of gating rather
+ *     than conventionally excluded from it.
+ *   - **`not_applicable` rows.** They are excluded from every denominator —
+ *     that is what the status means — so a definition whose only rows are
+ *     `not_applicable` neither fails nor counts as missing.
+ *   - **Rows that do not join.** The join is by `definitionHash`, like every
+ *     other contract consumer: matching on `scorerId` would grade a row against
+ *     whichever definition landed last when a merged iteration carries the same
+ *     id under two hashes. A row whose hash matches no definition is already
+ *     quarantined at ingest (`validateScorePayload`), so accepted rows always
+ *     join.
+ */
+export function allGatingScorersPassed(
+  scores: readonly ScoreResult[],
+  config: EvaluationConfigSnapshot
+): {
+  passed: boolean;
+  disagreeingScorerIds: string[];
+  unresolvedScorerIds: string[];
+} {
+  const disagreeingScorerIds: string[] = [];
+  const unresolvedScorerIds: string[] = [];
+
+  for (const definition of config.definitions) {
+    if (definition.role !== "gating") continue;
+    const hash = definitionHash(definition);
+    const joined = scores.filter((score) => score.definitionHash === hash);
+    // `not_applicable` is excluded from EVERY denominator — that is what the
+    // status means — so it is dropped here and NOT read as missing evidence.
+    // The distinction from an absent row is the whole reason the status exists:
+    // "this scorer does not apply to this iteration" is an answer, and "nobody
+    // scored this gate" is not.
+    const rows = joined.filter((score) => score.status !== "not_applicable");
+    if (rows.length === 0) {
+      if (joined.length === 0) unresolvedScorerIds.push(definition.scorerId);
+      continue;
+    }
+    let failed = false;
+    let unresolved = false;
+    for (const row of rows) {
+      if (row.status === "scored") {
+        // RE-DERIVED AGAINST THE DEFINITION, never read off the row. A row's
+        // `passed` is only checked to be internally consistent with the row's
+        // OWN `passThreshold`, which is a field the row supplies; the
+        // threshold with authority is the one on the definition this row
+        // joined to, because that is what the definition hash was taken over.
+        // See the mirror in `convex/lib/scoreContract.ts` for the full note.
+        // Conservative in BOTH directions: the row must assert a pass AND the
+        // definition's own threshold must agree.
+        const passed =
+          row.passed !== false &&
+          typeof row.value === "number" &&
+          row.value >= definition.passThreshold;
+        if (!passed) failed = true;
+        continue;
+      }
+      // `error` / `skipped`: the DEFINITION's own policy decides, so an author
+      // who wrote `onError: "ignore"` gets the opt-out they asked for rather
+      // than a gate this function invented.
+      const policy =
+        row.status === "error" ? definition.onError : definition.onSkipped;
+      if (policy === "fail") unresolved = true;
+    }
+    if (failed) disagreeingScorerIds.push(definition.scorerId);
+    else if (unresolved) unresolvedScorerIds.push(definition.scorerId);
+  }
+
+  return {
+    passed:
+      disagreeingScorerIds.length === 0 && unresolvedScorerIds.length === 0,
+    disagreeingScorerIds,
+    unresolvedScorerIds,
   };
 }

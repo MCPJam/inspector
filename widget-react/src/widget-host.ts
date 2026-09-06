@@ -7,6 +7,10 @@
 //
 // These types are STRUCTURAL replicas of the inspector shapes (the profile/store
 // systems stay in the inspector by design, so the package can't import them).
+import type {
+  BrowserStoragePolicy,
+  ToolResultPolicy,
+} from "@mcpjam/sdk/widget-runtime";
 // Drift-safety is enforced by the inspector's `use-widget-host.ts` adapter:
 // it builds the host from the real stores/resolvers and returns it typed as this
 // contract, so any source-shape drift fails typecheck there.
@@ -102,6 +106,29 @@ export type ResolvedHostInfo = Record<string, unknown> | undefined;
 /** Required form of the OpenAI Apps compat surface. */
 export type ResolvedOpenAiAppsCapabilities = Required<OpenAiAppsCapabilities>;
 
+export type McpAppsCspConnectDomains = {
+  fetch?: boolean;
+  xhr?: boolean;
+  websocket?: boolean;
+};
+
+export type McpAppsCspResourceDomains = {
+  script?: boolean;
+  stylesheet?: boolean;
+  image?: boolean;
+  font?: boolean;
+  media?: boolean;
+};
+
+export type CspSubtypePolicy = {
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
+};
+
+export type CspSubtype =
+  | keyof McpAppsCspConnectDomains
+  | keyof McpAppsCspResourceDomains;
+
 /** resolveEffectiveCompatRuntime result. */
 export type EffectiveCompatRuntime =
   | { injected: false }
@@ -124,6 +151,13 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
+  /**
+   * Which halves of a tool result reach a widget. Optional like the CSP
+   * subtype records above: absent means the host forwards everything.
+   */
+  toolResult?: ToolResultPolicy;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
@@ -178,6 +212,17 @@ export interface WidgetSurfaceInfo {
   /** SANDBOX_ORIGIN (VITE_MCPJAM_SANDBOX_ORIGIN); "" when unset. */
   sandboxOrigin: string;
   /**
+   * VIEW_MOUNT_MODE (VITE_MCPJAM_VIEW_MOUNT) — how the sandbox proxy mounts
+   * the view. Absent means `"write"`, which is what gives the view a real URL.
+   */
+  viewMountMode?: "write" | "srcdoc";
+  /**
+   * VIEW_SUBDOMAINS_ENABLED (VITE_MCPJAM_VIEW_SUBDOMAINS) — serve each
+   * server's views from their own origin. Requires wildcard DNS and a
+   * certificate for the sandbox apex, so it is off unless a deploy has them.
+   */
+  viewSubdomainsEnabled?: boolean;
+  /**
    * Playground CSP-mode selection (useUIPlaygroundStore.mcpAppsCspMode) — an
    * INPUT, not the effective mode. The renderer derives the effective sandbox
    * CSP mode from `kind` + this + the per-widget `minimalMode` prop (kept as an
@@ -206,6 +251,7 @@ export interface CspViolation {
   lineNumber?: number | null;
   columnNumber?: number | null;
   timestamp: number;
+  subtype?: CspSubtype;
 }
 
 export interface WidgetLifecycleEvent {
@@ -219,7 +265,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -229,6 +276,7 @@ export interface WidgetSandboxApplied {
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
   cspDirectives?: Record<string, string[]>;
+  cspSubtypePolicy?: CspSubtypePolicy;
   permissive: boolean;
   hostPolicyApplied: boolean;
   restrictTo?: {
@@ -244,6 +292,20 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the proxy mounted the view. `"url"` means it was written into a blank
+   * same-origin frame and runs at the proxy's URL; the srcdoc values mean it
+   * has no URL of its own (`"srcdoc"` was asked for, `"srcdoc-fallback"` was
+   * forced because the frame's document was unreachable).
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — what a developer allowlists with a third party that
+   * keys on the page URL. Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 export interface WidgetSandboxInfo {
@@ -268,6 +330,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -330,16 +399,16 @@ export interface WidgetDebugSink {
   recordMount: (toolCallId: string, reason: string) => void;
   setWidgetDebugInfo: (
     toolCallId: string,
-    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>,
+    info: Partial<Omit<WidgetDebugInfo, "toolCallId" | "updatedAt">>
   ) => void;
   setWidgetState: (toolCallId: string, state: unknown) => void;
   setWidgetGlobals: (
     toolCallId: string,
-    globals: Partial<WidgetGlobals>,
+    globals: Partial<WidgetGlobals>
   ) => void;
   setWidgetCsp: (
     toolCallId: string,
-    csp: Omit<WidgetSandboxInfo, "violations">,
+    csp: Omit<WidgetSandboxInfo, "violations">
   ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
   clearCspViolations: (toolCallId: string) => void;
@@ -348,24 +417,21 @@ export interface WidgetDebugSink {
     context: {
       content?: unknown[];
       structuredContent?: Record<string, unknown>;
-    } | null,
+    } | null
   ) => void;
   setWidgetHtml: (
     toolCallId: string,
     html: string,
     injectedOpenAiCompat?: boolean,
-    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities,
+    injectedOpenAiCompatCapabilities?: OpenAiAppsCapabilities
   ) => void;
   setSandboxApplied: (
     toolCallId: string,
     applied: WidgetSandboxApplied,
     hostProfileId?: string,
-    hostInfo?: { name: string; version: string } | null,
+    hostInfo?: { name: string; version: string } | null
   ) => void;
-  appendLifecycle: (
-    toolCallId: string,
-    event: WidgetLifecycleEvent,
-  ) => void;
+  appendLifecycle: (toolCallId: string, event: WidgetLifecycleEvent) => void;
   /** useTrafficLogStore.addLog */
   addTrafficLog: (event: Omit<UiLogEvent, "id" | "timestamp">) => void;
 }
@@ -402,7 +468,7 @@ export interface WidgetCheckoutProps {
   onCancel: () => void;
   onCallTool: (
     toolName: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown>
   ) => Promise<unknown>;
 }
 
@@ -442,6 +508,13 @@ export interface WidgetHostProfileSandbox {
   permissions?: SandboxPermissionsPolicy;
   sandboxAttrs?: string[];
   allowFeatures?: Record<string, string>;
+  /**
+   * Probe-measured browser-storage availability inside the widget iframe.
+   * Absent or `true` = available; `false` makes the sandbox proxy throw
+   * `SecurityError` on access. This projection is minimal by design, so a
+   * field missing here silently disappears before reaching the renderer.
+   */
+  browserStorage?: BrowserStoragePolicy;
 }
 
 /**
@@ -507,17 +580,17 @@ export interface WidgetHostResolvers {
   getHostStyleOrDefault: (id: string | null | undefined) => ResolvedHostStyle;
   DEFAULT_HOST_STYLE: ResolvedHostStyle;
   extractHostTheme: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => "light" | "dark" | undefined;
   extractHostDisplayMode: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => DisplayMode | undefined;
   extractHostDisplayModes: (
-    hostContext?: Record<string, unknown>,
+    hostContext?: Record<string, unknown>
   ) => DisplayMode[];
   clampDisplayModeToAvailableModes: (
     displayMode: DisplayMode | undefined,
-    availableDisplayModes: DisplayMode[],
+    availableDisplayModes: DisplayMode[]
   ) => DisplayMode;
   stableStringifyJson: (value: unknown) => string;
 }
@@ -551,6 +624,19 @@ export interface FetchWidgetContentResponse {
   mimeTypeWarning?: string;
   mimeTypeValid?: boolean;
   prefersBorder?: boolean;
+  /**
+   * `_meta.ui.domain` — the dedicated origin the server ASKED for. Advisory:
+   * MCPJam derives the origin it serves the view from, and reports this only
+   * so the Workbench can say whether the declaration matches.
+   */
+  declaredDomain?: string;
+  /**
+   * Subdomain label for this server's dedicated view origin
+   * (`<label>.sandbox.mcpjam.com`), derived from the server's identity. Absent
+   * when the server identifies nothing to derive from; the view then renders
+   * on the default sandbox origin.
+   */
+  viewOriginLabel?: string;
   injectedOpenAiCompat?: boolean;
   injectedOpenAiCompatCapabilities?: ResolvedOpenAiAppsCapabilities;
 }
@@ -577,23 +663,23 @@ export type ListResourcesResult = {
  */
 export interface WidgetHostServices {
   fetchWidgetContent: (
-    req: FetchWidgetContentRequest,
+    req: FetchWidgetContentRequest
   ) => Promise<FetchWidgetContentResponse>;
   // Mirrors the inspector api fn (returns `Promise<any>`); the bridge handler
   // treats the resource payload opaquely.
   readResource: (
     serverId: string,
     uri: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<any>;
   listResources: (
     serverId: string,
     cursor?: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<ListResourcesResult>;
   listPrompts: (
     serverId: string,
-    opts?: { forceHosted?: boolean },
+    opts?: { forceHosted?: boolean }
   ) => Promise<MCPPrompt[]>;
   listResourceTemplates: (serverId: string) => Promise<MCPResourceTemplate[]>;
   /**
@@ -602,7 +688,10 @@ export interface WidgetHostServices {
    * file-upload bridge (`openai:uploadFile`); plain static/cached fetches use
    * the global `fetch` directly.
    */
-  authFetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+  authFetch: (
+    input: RequestInfo | URL,
+    init?: RequestInit
+  ) => Promise<Response>;
 }
 
 // --- The seam ----------------------------------------------------------------

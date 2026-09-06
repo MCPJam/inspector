@@ -83,6 +83,7 @@ describe("server replay config auto-save wiring", () => {
   it("auto-infers replay configs for EvalTest uploads when the agent provides them", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
+      id: "c_replay_1",
       name: "list-projects",
       test: async (evalAgent) => {
         await evalAgent.run("Show me my projects");
@@ -116,6 +117,7 @@ describe("server replay config auto-save wiring", () => {
     const suite = new EvalSuite({ name: "Asana suite" });
     suite.add(
       new EvalTest({
+        id: "c_replay_2",
         name: "asana-get-user",
         test: async (evalAgent) => {
           await evalAgent.run("Who am I in Asana?");
@@ -151,6 +153,7 @@ describe("server replay config auto-save wiring", () => {
   it("falls back to all inferred replay configs when serverNames is omitted", async () => {
     const agent = createReplayAwareAgent();
     const test = new EvalTest({
+      id: "c_replay_3",
       name: "list-projects",
       test: async (evalAgent) => {
         await evalAgent.run("Show me my projects");

@@ -37,51 +37,90 @@ so results respect the caller's project access.
 | `delete_project_server` | Soft-delete a saved MCP server from a project. | — |
 | `connect_project_server` | Connect an MCP server URL to a project: discover its auth, save it, and return a private authorization link when a person must finish in a browser. | — |
 | `get_project_server_connection_status` | Check a connection request started by `connect_project_server`. | — |
+| `cancel_project_server_connection` | Cancel a pending connection request, releasing the concurrent-connection slot it holds. | — |
 | `diagnose_server` | Diagnose a saved MCP server's connection: probe the URL, connect, initialize, and report capabilities and what failed. | — |
 | `list_server_tools` | List the tools a saved MCP server exposes: names, descriptions, and input schemas. | — |
 | `call_server_tool` | Execute a tool on a saved MCP server and return its result. | — |
+| `render_server_widget` | Call an MCP App tool and mount its `ui://` widget in real headless Chromium, then report whether it rendered, what it logged, what it was blocked from fetching, and the widget as an accessibility tree with addressable elements. Returns the tree by default and the screenshot only on request. Executes the tool. | — |
 | `list_server_prompts` | List the prompts a saved MCP server exposes: names, descriptions, and arguments. | — |
 | `get_server_prompt` | Render a prompt from a saved MCP server with the given arguments and return its messages. | — |
 | `list_server_resources` | List the resources a saved MCP server exposes: uris, names, and mime types. | — |
 | `read_server_resource` | Read one resource from a saved MCP server by uri and return its contents. | — |
+| `list_server_skills` | List the Agent Skills a saved MCP server serves over the skills extension (SEP-2640), including ones MCPJam declines to load and why. | — |
+| `get_server_skill` | Fetch one skill from a saved MCP server by uri, verified against its manifest digest, advertised frontmatter, and uri identity before any content is returned. | — |
+| `read_server_skill_file` | Read one supporting file of a server-served skill, checked against that skill's own manifest for byte length and digest. | — |
 | `check_host_compatibility` | Check whether a saved MCP server's tools and widgets work on each AI host (Claude, ChatGPT, Cursor, Copilot, Codex, Goose, Mistral, n8n, Perplexity, Cline). | — |
+| `start_claude_readiness_run` | Grade a saved MCP server against Anthropic's connector-directory rules. Starts a durable run and returns its id; poll for the verdict. | — |
+| `start_openai_readiness_run` | Grade a saved MCP server against OpenAI's app-directory rules. Requires an explicit submission mode; starts a durable run and returns its id. | — |
+| `get_readiness_run` | Read one readiness run: whether it finished, what it graded, and whether the optional model pass ran. | — |
+| `list_readiness_runs` | List a project's readiness runs, newest first, optionally narrowed to one publisher or server. | — |
+| `cancel_readiness_run` | Stop a readiness run that is still going. | — |
+| `get_readiness_report` | Read a finished readiness run's findings, ordered most-consequential-first and capped. | — |
+| `start_conformance_run` | Run protocol/apps/tasks conformance on a saved HTTP server. Starts a durable run and returns its id; poll for the verdict. | — |
+| `get_conformance_run` | Read one conformance run: whether it finished, the outcome, score, and pending count. | — |
+| `list_conformance_runs` | List a project's conformance runs, newest first, optionally narrowed to one saved server. | — |
+| `get_conformance_report` | Read a finished conformance run's failing checks, capped, with per-suite profile stamps. | — |
 | `list_eval_suites` | List the eval suites saved in an MCPJam project, with latest-run summaries and pass-rate trends. | ✅ |
 | `list_eval_suite_runs` | List recent runs of an eval suite, newest first, with status, pass/fail result, and summary counts. | ✅ |
 | `run_eval_case` | Start an asynchronous run of ONE case in an existing eval suite — a persisted, fully-queryable run scoped to just that case (inspect it with get_eval_run / list_eval_run_iterations / get_eval_run_steps, same as a full run). | — |
-| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite. | — |
+| `run_eval_suite` | Start an asynchronous rerun of an existing eval suite, against one target or several. Fan-out is explicit: a suite with several attached targets refuses with TARGET_REQUIRED unless you name targets or pass allAttached, and each target is one PAID run. | — |
 | `create_eval_suite` | Create a runnable eval suite from authored test cases. | — |
-| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge, schedule. | — |
-| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge. | — |
+| `get_eval_suite` | Fetch one eval suite's full settings: environment (servers), execution config (model/system prompt/temperature), hosts, match options, checks, LLM-as-judge (resolved: enabled, model, autoRun, threshold), schedule. | — |
+| `get_eval_run_disclosure` | What a suite run would disclose before you launch it: which models it calls and where they route, which LLM analyzers/judges can fire and where their evidence goes, capture/retention/region facts, and the subprocessors engaged. Keyed by the same target a launch selects — pass `environment` or `host` to disclose for that plan. Read-only, never launches or gates a run. | — |
+| `update_eval_suite` | Edit an eval suite's settings: name, description, environment servers, execution config (model/system prompt/temperature), hosts, minimum accuracy, match options, checks, and LLM-as-judge (`autoRun` is what makes grading happen; `enabled` alone only makes the judge available). | — |
+| `list_eval_suite_revisions` | List a suite's settings history, newest first: who committed each edit, which stored fields moved, the note they left, and how many runs were launched against it. | — |
 | `delete_eval_suite` | Permanently delete an eval suite and all its cases and runs. | — |
 | `set_eval_suite_schedule` | Enable or disable automatic scheduled runs for a suite, and set the interval. | — |
 | `set_eval_suite_environments` | Attach project environments to an eval suite, replacing whatever it had. | — |
 | `list_eval_cases` | List the test cases in an eval suite, with their ids and configuration. | — |
 | `get_eval_case` | Fetch one eval test case's full definition. | — |
 | `create_eval_case` | Add one test case to an eval suite. | — |
+| `create_eval_cases` | Add several test cases to an eval suite in one call. | — |
 | `update_eval_case` | Edit an eval test case. | — |
 | `delete_eval_case` | Permanently delete one test case from an eval suite. | — |
 | `generate_eval_cases` | AI-generate test cases from the suite's server tools and persist them into the suite. | — |
 | `get_eval_run` | Get the status, pass/fail result, and summary counts of an eval run. | ✅ |
+| `get_eval_run_stage_analytics` | Get one run's user-value chain funnel: per stage, how many trials it applied to, reached it, were measured there, passed, failed, and were excluded and why — overall and by intent, model and host. Counts only; a zero denominator means not measured, never 0. | — |
+| `get_eval_run_route_facts` | Get one run's tool routes and expected-versus-observed facts per case: which tool sequence each trial took, how many called nothing or looped, and for each expected tool how many trials never called it — with denominators, never a verdict. A run that exists but has no persisted document reads as `routeFactsState: "unmeasured"` — permanently, there is no backfill and nothing is computed locally; a run that cannot be retrieved is a run-not-found error. | — |
+| `list_eval_suite_stage_analytics` | List a suite's chain funnels newest-first, one document per run — a trend series, never an aggregate. Partition on the parity fields before claiming a trend; runs that do not share them are separate observations. | — |
 | `compare_eval_run` | Compare an eval run against a baseline run: per-case status (regressed, fixed, new, removed, changed), per-scorer pass-rate and mean deltas from the evaluation contract, and whether the evaluation config changed. | — |
+| `get_eval_gate_waiver` | Read the audited override in force over an eval run's release gate — who granted it, why, and until when — or null. Available to anyone who can view the run. | — |
 | `list_eval_run_iterations` | List per-iteration results for an eval run: pass/fail, expected vs actual tool calls, token usage, and latency. | ✅ |
 | `get_eval_iteration_trace` | Fetch the full trace for one eval iteration: the complete message history plus expected-vs-actual tool-call analysis. | — |
 | `get_eval_run_steps` | Fetch one row per authored test step for an eval iteration, in order: each step's status (ok / fail / skipped / pending), the reason, and evidence (screenshot/video URLs, widget tool calls). | — |
 | `cancel_eval_run` | Cancel an in-flight eval run. | — |
+| `request_eval_run_judge` | Run LLM-as-judge grading over a finished eval run: each case's final answer is scored against its expected output. SPENDS the organization's model budget; read the results from `get_eval_run`'s `judges.goalCompletion`. | — |
+| `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
+| `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
+| `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
+| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
+| `ensure_adhoc_environment` | Get or create an unnamed, content-addressed environment for a composed stack (host plus optional model, sandbox image, server group, and pinned skills). Repeating the same stack reuses one row. Promote it with `name_environment` only when the user asks to keep it. | — |
+| `list_sandbox_images` | List the custom Computer sandbox images (blueprints) in a project — the choices for a suite's `environment.computerEnvironment`. | — |
+| `get_sandbox_image` | Show one sandbox image's blueprint, sharing, and latest build status. | — |
 | `list_project_plugins` | List the live Agent Plugins installed in a project: name, display name, enabled state, and active version id. | — |
 | `get_plugin_version` | Show one imported plugin version: status, component counts, and per-component summaries (servers with placement and auth timing, skills with their namespaced refs). | — |
+| `list_project_skills` | List the Cloud Skills visible to you in a project, with the IDs that environments and eval runs pin. Each row reports whether it is eligible to be pinned, and why not if it isn't. | — |
+| `get_project_skill` | Show one Cloud Skill including its SKILL.md body. | — |
 | `list_scenarios` | List the scenarios published from an MCPJam project: name, access mode, attached servers, and share link. | ✅ |
 | `get_scenario` | Get one scenario's read-only settings: model, system prompt, temperature, tool-approval policy, and resolved servers. | ✅ |
 | `list_chat_sessions` | List chat sessions visible to the caller, most recent activity first. | — |
 | `search_sessions` | Search a project's sessions across every surface (Playground, user testing, evals, swarms), ranked by relevance. `scope=titles` searches titles and opening messages; `scope=transcripts` searches what was said. Every result carries a link. | — |
+| `send_chat_message` | Send one message to a project's MCP servers and get the reply plus the raw tool calls, per-call latency and token usage. SPENDS model credits. Pass the returned `sessionId` back to continue. Tools default to `read_only`; `toolMode=auto` may cause real side effects. `idempotencyKey` is required and must be stable across retries. | — |
+| `get_chat_session` | Read a session's metadata and a window of its raw messages, indexed by absolute transcript position — the same indices the trace spans reference. | — |
+| `get_chat_session_trace` | Read a session's per-turn spans: tool latency, token usage, transcript indices. Returns the latest turn by default; page older turns with `afterPromptIndex`, or pass `includeSpans=false` for summaries. | — |
 | `get_capabilities` | Your role, which betas this organization has, your plan's limits, and a `can` block of booleans. Ask this before planning work that authors, launches or publishes — the tool list is the same for every caller and cannot tell you a beta is off. | — |
 | `list_personas` | List the project's reusable synthetic characters — the cast Swarms journeys run as. | — |
 | `get_persona` | Get one persona in full, including its behavioural notes. | — |
 | `create_persona` | Create a reusable synthetic character for Swarms to run as. | — |
 | `update_persona` | Edit a persona's name, role or notes. Finished runs keep the persona they ran as. | — |
 | `delete_persona` | Remove a persona from the roster. Soft: history keeps resolving it. | — |
+| `list_secrets` | List the project's credentials as metadata only — name, delivery mode, host binding, sharing. No value is ever returned. | — |
+| `get_secret` | One secret's metadata: how it is delivered, where it is bound, when it was last handed to a run. Never its value. | — |
+| `delete_secret` | Delete a stored credential. Hard: the row and the encrypted value both go, and delivery stops. Does not revoke the key at its provider. | — |
 | `generate_personas` | Draft candidate personas with a model, grounded in what the project's servers do. Saves nothing; spends. | — |
 | `list_journeys` | List the project's journeys — a persona, a goal, and the environments to pursue it against. | — |
 | `get_journey` | Get one journey in full, including the execution config that determines how many sessions a run produces. | — |
@@ -127,6 +166,20 @@ so results respect the caller's project access.
 | `upsert_user_testing_member` | Grant one person access to a scenario by email. | — |
 | `remove_user_testing_member` | Revoke one person's access. | — |
 | `rebind_user_testing_scenario` | Swap the environment behind a scenario, keeping its link, members and history. | — |
+| `list_clients` | List a project's clients — the named, reusable configurations that define how MCPJam connects to and talks to your MCP servers. Returns each client's `configId`, the token every write takes. | — |
+| `get_client` | One client's full settings: resolved config, `configId` (echo it back as `expectedConfigId`), and `impact` — what a config edit would follow. The first step of every edit. | — |
+| `create_client` | Create a client from a built-in template or a full config. Additive: nothing that exists changes. | — |
+| `update_client` | Edit a client's name and/or config. `set` changes named fields, `config` replaces everything. Requires `expectedConfigId` for a config edit and `expectedName` for a rename. | — |
+| `set_client_servers` | Replace a client's required and optional server attachments. A REPLACEMENT — omitted servers are detached. Requires `expectedConfigId`. | — |
+| `duplicate_client` | Create a new client carrying the selected client's current config. The source is untouched. | — |
+| `search_registry_directory` | Search scraped MCP directories (Claude, ChatGPT, and any future source). `source` is a free string; omit it or pass `all` to search every source. | — |
+| `get_registry_directory_server` | Fetch one scraped directory row by catalogServerId, or by name (optionally with source). | — |
+| `list_registry_directory_sources` | Discover directory source ids for `search_registry_directory`. Sources are data, not an enum. | — |
+| `list_registry_servers` | List global curated cards and the project's organization registry cards. | — |
+| `list_registry_connections` | List directory and card installs already in a project (provenance rows whose server still exists). | — |
+| `install_registry_directory_server` | Install writes a project `servers` row and provenance and stops — it is not a live connection. | — |
+| `install_registry_server` | Install a curated registry card into a project. Writes a `servers` row and provenance; not a live connection. | — |
+| `uninstall_registry_server` | Remove a curated or org registry-card install from a project. Directory uninstall is `delete_project_server`. | — |
 
 <!-- The rows above are the CATALOG, not a hand-written summary: they are
      checked against `PLATFORM_CATALOG_OPERATIONS` by
@@ -176,9 +229,24 @@ can run against instead of a loose server selection. Attach them to a suite
 with `set_eval_suite_environments`; from then on `run_eval_suite` /
 `run_eval_case` take an `environment` (name or ID) naming which one to use.
 A suite with exactly one attached environment uses it automatically; a suite
-with several requires the argument, and the error names the candidates.
+with several refuses with `TARGET_REQUIRED` and names every candidate, rather
+than guessing how much to spend. `run_eval_suite` also takes `environments`
+(several, one paid run each), `host`/`hosts` for a suite with attached hosts,
+and `allAttached` to fan out across every attached target on ONE axis —
+environments if the suite has any, otherwise hosts, never a cross product.
 `environment` and `servers` are mutually exclusive — an environment supplies a
-closed server set that an override cannot change.
+closed server set that an override cannot change — and so are the environment
+and host axes.
+
+Instead of NAMING a target, `compose` builds one (or several): a host plus
+optional models, sandbox image, server group and pinned skills becomes
+unnamed, content-addressed environment cells (the same rows
+`ensure_adhoc_environment` returns). Default is ephemeral — the cells are
+minted and launched without attaching them to the suite. Pass `saveTargets`
+to append them. `models` replaces the client default; add
+`includeClientDefault` to keep the inherit cell alongside the explicit
+picks. Promote such a row to a named environment in place with
+`name_environment`.
 
 An environment-backed run records the environment and the exact revision it
 executed against, and `get_eval_run` reports that triple — so an agent can
@@ -186,10 +254,34 @@ confirm *which* configuration produced a result long after the environment has
 been edited. A run that used a saved server selection has no environment to
 record, and reports `environment: null`.
 
-The environment tools other than `set_eval_suite_environments` are read-only.
-Creating, editing, and archiving environments stays CLI-only for now:
-those writes are revision-guarded (`expectedRevision`), and giving an agent a
-safe path through optimistic concurrency is a separate design question.
+`ensure_adhoc_environment` is the one environment WRITE on this surface: it
+mints a content-addressed, unnamed row (the same row `run_eval_suite`'s
+`compose` produces). Creating, renaming, editing, and archiving named
+environments stays CLI-only for now: those writes are revision-guarded
+(`expectedRevision`), and giving an agent a safe path through optimistic
+concurrency is a separate design question.
+
+## Skills over MCP (SEP-2640)
+
+This worker serves MCPJam's own Agent Skills alongside its tools, so an agent that connects gets the tools **and** the how-to knowledge for them without a separate install step. It declares:
+
+```json
+{ "capabilities": { "extensions": { "io.modelcontextprotocol/skills": {} } } }
+```
+
+and implements `skills/list`, `skills/get`, and `resources/read` for every URI in a skill's manifest. `resources/directory/read` is **not** implemented, so `directoryRead` is not declared — the manifest already enumerates every file.
+
+The catalog is `run-mcpjam-evals`, `mcpjam-eval-import`, `create-mcp-eval`, and `explore-to-sdk-evals`. Only the first teaches this server's *tools* — the eval-run loop, what bills, and how to triage a failure. The other three teach authoring the eval files and suites those tools then operate on, which is the adjacency that matters for a caller working on evals. `mcp-inspector` is excluded because its subject is interpreting probe / doctor / OAuth / conformance output, and this server exposes none of those tools. `mcpjam-eval-import` is served by both venues deliberately: it spans them, producing a suite the platform tools run.
+
+**The bundle is generated and committed.** `scripts/generate-skills-bundle.mjs` reads the SKILL.md sources, computes SHA-256 digests and byte sizes, and writes `src/generated/SkillsBundle.generated.ts`. After editing a skill, run `npm run bundle:skills -w @mcpjam/mcp` and commit the result; `tests/skillsBundleDrift.test.ts` fails if you forget. The generator is not a build hook because `build:ui` and `deploy` do not build `@mcpjam/sdk`, which it imports on purpose — it must parse frontmatter with the same function a host re-parses with, or we manufacture our own `frontmatter_drift`.
+
+The generator refuses to emit anything MCPJam's own host would refuse: it runs `checkSkillIdentity`, enforces the draft's 512-entry / 16 MiB per-skill limits, and fails the build rather than warning.
+
+### Two behaviours worth knowing
+
+**Unknown `skill://` reads answer `-32602`, not `-32002`.** Both era codecs rewrite `ResourceNotFoundError` to Invalid params, so this worker cannot emit `-32002` even deliberately. That is what `isSkillNotFoundError` looks for anyway, but it differs from `sdk/tests/support/skills-fixture.ts`, which serves `-32002`.
+
+**The extension is always advertised.** The worker is stateless, so the declaration cannot be gated on the client's own `extensions`. This is correct — SEP-2133 negotiates connection-level and the client half of the gate is the client's to enforce — but it is the same shape of deviation documented at the top of `src/tools/sessionToolRegistrar.ts`.
 
 ## Auth
 

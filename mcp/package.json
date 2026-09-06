@@ -7,6 +7,7 @@
   "scripts": {
     "build:ui": "vite build --config vite.config.ts",
     "bundle:ui:html": "node scripts/bundle-mcp-app-html.mjs",
+    "bundle:skills": "node scripts/generate-skills-bundle.mjs",
     "test": "npm run build -w @mcpjam/sdk && vitest run",
     "test:fast": "vitest run",
     "ui:watch": "vite build --config vite.config.ts --watch --mode development",
@@ -32,7 +33,7 @@
     "zod": "^4.2.0"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4.1.11",
+    "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
@@ -41,7 +42,7 @@
     "typescript": "^5.9.3",
     "vite": "^7.1.10",
     "vite-plugin-singlefile": "^2.3.0",
-    "vitest": "^3.2.4",
-    "wrangler": "^4.67.0"
+    "vitest": "^3.2.7",
+    "wrangler": "^4.127.1"
   }
 }

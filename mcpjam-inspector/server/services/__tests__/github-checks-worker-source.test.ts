@@ -63,6 +63,7 @@ describe("defaultRunEvalSuite provenance", () => {
         projectId: "proj-1",
         createdByExternalId: "user_x",
         suiteId: "suite-1",
+        repoPrivate: false,
       },
       bearer: "bearer-token",
       serverId: "srv-1",
@@ -91,7 +92,9 @@ describe("defaultRunEvalSuite provenance", () => {
     prepareEvalRun.mockResolvedValue({ runId: "run-9", recorder, execute });
     const mutation = vi.fn().mockResolvedValue(undefined);
     createConvexClient.mockReturnValue({
-      query: vi.fn().mockResolvedValue({ configSnapshot: { environment: null } }),
+      query: vi
+        .fn()
+        .mockResolvedValue({ configSnapshot: { environment: null } }),
       mutation,
     });
 
@@ -107,6 +110,7 @@ describe("defaultRunEvalSuite provenance", () => {
           projectId: "proj-1",
           createdByExternalId: "user_x",
           suiteId: "suite-1",
+          repoPrivate: false,
         },
         bearer: "bearer-token",
         serverId: "srv-1",

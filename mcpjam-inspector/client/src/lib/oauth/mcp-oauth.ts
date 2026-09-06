@@ -12,6 +12,7 @@ import {
   getSupportedRegistrationStrategies,
   EMPTY_OAUTH_FLOW_STATE,
   isLoopbackOAuthUrl,
+  isNeverDialableHost,
   isPrivateHost,
   isStatelessProtocolVersion,
   projectOAuthTraceSnapshot,
@@ -44,6 +45,7 @@ import {
   writeIssuerKeyed,
 } from "./issuer-keyed-storage";
 import { authFetch } from "@/lib/session-token";
+import { INVALID_GRANT_PATTERN } from "@/lib/hosted-oauth-failure";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE, SANITIZE_OAUTH_TRACES } from "@/lib/config";
 import {
@@ -616,6 +618,7 @@ async function executeRequestViaProxy(
     response.headers.get(OAUTH_UPSTREAM_URL_HEADER) ?? undefined,
     {
       allowLoopback: isLoopbackOAuthUrl(serverUrl),
+      allowPrivateNetwork: !HOSTED_MODE,
     }
   );
 
@@ -672,7 +675,7 @@ function createTraceResponseFromResult(
  */
 function assertFinalResponseUrlAllowed(
   finalUrl: string | undefined,
-  options: { allowLoopback?: boolean } = {}
+  options: { allowLoopback?: boolean; allowPrivateNetwork?: boolean } = {}
 ): void {
   if (!finalUrl) return;
   if (options.allowLoopback && isLoopbackOAuthUrl(finalUrl)) {
@@ -684,6 +687,16 @@ function assertFinalResponseUrlAllowed(
   } catch {
     return;
   }
+  // The never-dialable floor is checked first and ignores every opt-in: a
+  // response that came back from cloud metadata is not one to consume, in any
+  // mode. (The proxy refuses to make that request at all; this is the
+  // browser-side half for a direct fetch.)
+  if (isNeverDialableHost(host)) {
+    throw new Error(
+      `Refusing OAuth response from link-local or cloud-metadata host "${host}" (possible SSRF via redirect)`
+    );
+  }
+  if (options.allowPrivateNetwork) return;
   if (isPrivateHost(host)) {
     throw new Error(
       `Refusing OAuth response from private/reserved host "${host}" (possible SSRF via redirect)`
@@ -719,6 +732,7 @@ function createOAuthRequestExecutor(fetchFn: typeof fetch, serverUrl?: string) {
         : directResponse.url;
       assertFinalResponseUrlAllowed(finalUrl, {
         allowLoopback: isLoopbackOAuthUrl(serverUrl),
+        allowPrivateNetwork: !HOSTED_MODE,
       });
       response = {
         status: directResponse.status,
@@ -2759,6 +2773,10 @@ export async function initiateOAuth(
       // itself loopback does the SSRF guard permit loopback metadata fetches
       // (a public server can never steer one at the user's own 127.0.0.1).
       allowLoopbackMetadataFetch: isLoopbackOAuthUrl(options.serverUrl),
+      // Outside hosted mode the fetch runs on the developer's own machine, so
+      // the wider private allowance applies: a server on their LAN, or an
+      // authorization server named for loopback, is the ordinary local case.
+      allowPrivateMetadataFetch: !HOSTED_MODE,
       allowPathScopedIssuer: options.allowPathScopedIssuer,
       hasClientSecret: Boolean(options.clientSecret || options.hasClientSecret),
       sanitizeTrace: SANITIZE_OAUTH_TRACES,
@@ -2920,14 +2938,52 @@ export async function initiateOAuth(
   }
 }
 
-function formatOAuthCallbackError(error: unknown): string {
-  const errorMessage =
+const INVALID_GRANT_COPY =
+  "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match.";
+
+/**
+ * The authorization server's own explanation, when the message carries one.
+ *
+ * `describeTokenRequestFailure` goes to some trouble to append the server's
+ * `error_description` to the flow error, so dropping it here would throw away
+ * the only part of the message that names the actual cause — "Token is not
+ * active" says something the canned copy cannot. Only the text right after the
+ * matched code is taken, and only from its first line: what follows a Convex
+ * `InvalidGrantError` is a stack, which is the noise this formatter exists to
+ * remove.
+ */
+function invalidGrantReason(message: string): string | undefined {
+  const match = message.match(
+    new RegExp(`(?:${INVALID_GRANT_PATTERN.source})\\s*[:-]\\s*(.+)`, "i")
+  );
+  const reason = match?.[1]?.split("\n")[0]?.trim();
+  return reason && !/^at\s/.test(reason) ? reason : undefined;
+}
+
+export function formatOAuthCallbackError(error: unknown): string {
+  const rawMessage =
     error instanceof Error
       ? error.message
       : typeof error === "string"
       ? error
-      : "Unknown callback error";
+      : error && typeof error === "object" && "message" in error
+      ? (error as { message: unknown }).message
+      : undefined;
+  const errorMessage =
+    rawMessage == null ||
+    (typeof rawMessage === "string" && rawMessage.trim() === "")
+      ? "Unknown callback error"
+      : String(rawMessage);
 
+  // `invalid_grant` is tested FIRST because the `client_id` check below is a
+  // bare substring match, and the standard description for a rejected code
+  // ("was issued to another client_id") contains it. Ordered the other way,
+  // the most common token-exchange failure is reported as a registration
+  // problem and sends the user to re-check a client ID that is fine.
+  if (INVALID_GRANT_PATTERN.test(errorMessage)) {
+    const reason = invalidGrantReason(errorMessage);
+    return reason ? `${INVALID_GRANT_COPY} Server response: ${reason}` : INVALID_GRANT_COPY;
+  }
   if (
     errorMessage.includes("invalid_client") ||
     errorMessage.includes("client_id")
@@ -2936,9 +2992,6 @@ function formatOAuthCallbackError(error: unknown): string {
   }
   if (errorMessage.includes("unauthorized_client")) {
     return "Client not authorized for token exchange. The client ID may not match the one used for authorization.";
-  }
-  if (errorMessage.includes("invalid_grant")) {
-    return "Authorization code invalid or expired. Please try the OAuth flow again.";
   }
 
   return errorMessage;
@@ -3241,16 +3294,8 @@ export async function completeHostedOAuthCallback(
       oauthResourceUrl,
     };
   } catch (error) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : typeof error === "object" &&
-          error !== null &&
-          "message" in error &&
-          typeof (error as { message?: unknown }).message === "string"
-        ? (error as { message: string }).message
-        : String(error);
-    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, message, {
+    const callbackError = formatOAuthCallbackError(error);
+    failOAuthTraceStep(callbackTrace, callbackTrace.currentStep, callbackError, {
       message: "OAuth callback failed.",
     });
     const backendTrace =
@@ -3272,7 +3317,7 @@ export async function completeHostedOAuthCallback(
     }
     return {
       success: false,
-      error: formatOAuthCallbackError(message),
+      error: callbackError,
       oauthTrace: mergedTrace,
     };
   } finally {
@@ -3560,6 +3605,8 @@ export async function handleOAuthCallback(
         // Exact-origin loopback allowance (see initiate path): opt in only for a
         // user-configured loopback server, never for a public/remote one.
         allowLoopbackMetadataFetch: isLoopbackOAuthUrl(serverUrl),
+        // See the initiate path.
+        allowPrivateMetadataFetch: !HOSTED_MODE,
         allowPathScopedIssuer: storedSession.allowPathScopedIssuer,
         sanitizeTrace: SANITIZE_OAUTH_TRACES,
         requestExecutor,
@@ -3690,6 +3737,9 @@ export async function handleOAuthCallback(
       oauthTrace: mergedRecoveryTrace,
     };
   } catch (error) {
+    // Classified once: the trace step and the returned error are the same
+    // failure, and formatting twice lets them drift apart.
+    const callbackError = formatOAuthCallbackError(error);
     const callbackTrace = buildOAuthTraceFromFlowState({
       source: "callback",
       serverName: serverName ?? undefined,
@@ -3701,7 +3751,7 @@ export async function handleOAuthCallback(
       state: {
         ...cloneEmptyFlowState(),
         currentStep: "received_authorization_code",
-        error: formatOAuthCallbackError(error),
+        error: callbackError,
       },
     });
     const mergedTrace = serverName
@@ -3712,7 +3762,7 @@ export async function handleOAuthCallback(
     }
     return {
       success: false,
-      error: formatOAuthCallbackError(error),
+      error: callbackError,
       oauthTrace: mergedTrace,
     };
   } finally {

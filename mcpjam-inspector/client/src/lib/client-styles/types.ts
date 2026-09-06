@@ -250,6 +250,38 @@ export type EffectiveCompatRuntime =
  *   - `resourcePrefersBorder` — gate whether the renderer honors
  *     `_meta.ui.prefersBorder` when rendering the iframe chrome.
  */
+export type McpAppsCspConnectDomains = {
+  fetch?: boolean;
+  xhr?: boolean;
+  websocket?: boolean;
+};
+
+export type McpAppsCspResourceDomains = {
+  script?: boolean;
+  stylesheet?: boolean;
+  image?: boolean;
+  font?: boolean;
+  media?: boolean;
+};
+
+/**
+ * Which halves of an MCP Tool Result the host relays to a widget that called
+ * a tool. Named (not inlined) because BOTH the authoring surface
+ * (`McpAppsCapabilities`) and the resolved surface
+ * (`ResolvedMcpAppsCapabilities`) carry it, and the merge function converts
+ * one into the other — inlining it twice is how they drift apart.
+ */
+export type McpAppsToolResultPolicy = {
+  structuredContent?: boolean;
+  content?: {
+    text?: boolean;
+    image?: boolean;
+    audio?: boolean;
+    resource?: boolean;
+    resourceLink?: boolean;
+  };
+};
+
 export type McpAppsCapabilities = {
   /** Allow-list of display modes advertised in HostContext. */
   availableDisplayModes?: ("inline" | "fullscreen" | "pip")[];
@@ -267,9 +299,25 @@ export type McpAppsCapabilities = {
   sandboxPermissions?: boolean;
   cspFrameDomains?: boolean;
   cspBaseUriDomains?: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder?: boolean;
   downloadFile?: boolean;
   requestTeardown?: boolean;
+  /**
+   * Whether the host sends `hostContext.safeAreaInsets` at all. Optional
+   * under SEP-1865, and hosts split: Claude reports 12px on every edge,
+   * while Slackbot, Cursor, VS Code, Codex and Le Chat omit the key, so a
+   * widget reading `insets.top` gets `undefined` rather than a zero.
+   */
+  safeAreaInsets?: boolean;
+  /**
+   * Probe-measured MCP Tool Result relay behavior for widget-initiated tool
+   * calls. Shares storage with the app bridge overrides but is not an
+   * `app.*` capability — it shapes the VALUE a live handler returns rather
+   * than gating whether a handler exists.
+   */
+  toolResult?: McpAppsToolResultPolicy;
   /**
    * Host policy for `ui/request-display-mode` originating from the widget.
    * SEP-1865 permits the host to decline these requests; this row exposes
@@ -284,7 +332,8 @@ export type McpAppsCapabilities = {
 
 /**
  * Fully-resolved per-dimension matrix — preset merged with user overrides,
- * no undefineds. Returned by `resolveEffectiveMcpAppsCapabilities`.
+ * no undefineds except the optional probe-derived CSP subtype leaves.
+ * Returned by `resolveEffectiveMcpAppsCapabilities`.
  * `availableDisplayModes` is non-empty (resolver coerces to `["inline"]`
  * if a user override would otherwise empty it).
  *
@@ -323,10 +372,19 @@ export type ResolvedMcpAppsCapabilities = {
   sandboxPermissions: boolean;
   cspFrameDomains: boolean;
   cspBaseUriDomains: boolean;
+  cspConnectDomains?: McpAppsCspConnectDomains;
+  cspResourceDomains?: McpAppsCspResourceDomains;
   resourcePrefersBorder: boolean;
   downloadFile: boolean;
   requestTeardown: boolean;
+  safeAreaInsets: boolean;
   widgetDisplayModeRequests: "accept" | "user-initiated-only" | "decline";
+  /**
+   * Optional like the CSP subtype records above: absent means the host
+   * forwards the whole tool result. `mergeMcpAppsCapabilities` resolves it
+   * and `host-app-bridge` enforces it on every result relayed to a widget.
+   */
+  toolResult?: McpAppsToolResultPolicy;
 };
 
 /**

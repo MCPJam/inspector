@@ -3,7 +3,7 @@ name: Feature Request
 about: "Suggest a new feature for MCPJam "
 title: "[FEATURE]"
 labels: ""
-assignees: matteo8p
+assignees: chelojimenez
 ---
 
 # Feature

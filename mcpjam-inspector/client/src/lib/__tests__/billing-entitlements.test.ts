@@ -6,6 +6,7 @@ import {
   formatPremiumnessGateKey,
   getBillingErrorMessage,
   getDisplayPriceCentsForPlan,
+  getEvalIterationLimitFromError,
   getPremiumnessGateForTab,
   getRequiredBillingFeatureForTab,
   isGateAccessDenied,
@@ -72,6 +73,57 @@ describe("getBillingErrorMessage", () => {
     );
   });
 
+  // Anything that is not a billing rejection goes through `convexErrMessage`,
+  // so a write-boundary validator's own message reaches the toast instead of
+  // the redacted "[Request ID: …] Server Error" string.
+  it("surfaces a non-billing ConvexError payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new ConvexError(
+          "Invalid steps: interact step requires a non-empty toolName" as never,
+        ),
+        "fallback",
+      ),
+    ).toBe("Invalid steps: interact step requires a non-empty toolName");
+  });
+
+  it("surfaces the message of a non-billing object payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new ConvexError({ message: "Pick an element target." } as never),
+        "fallback",
+      ),
+    ).toBe("Pick an element target.");
+  });
+
+  // A non-billing payload can arrive JSON-encoded inside `Error.message`
+  // (thrown, then stringified). The toast must show the sentence, not the blob.
+  it("surfaces the message of a JSON-encoded Error payload", () => {
+    expect(
+      getBillingErrorMessage(
+        new Error(JSON.stringify({ message: "Pick an element target." })),
+        "fallback",
+      ),
+    ).toBe("Pick an element target.");
+  });
+
+  it("surfaces the message of a raw string error", () => {
+    expect(getBillingErrorMessage("Pick an element target.", "fallback")).toBe(
+      "Pick an element target.",
+    );
+  });
+
+  it("strips the request-id prefix off a plain Error", () => {
+    expect(
+      getBillingErrorMessage(new Error("[Request ID: abc] boom"), "fallback"),
+    ).toBe("boom");
+  });
+
+  it("falls back when the error carries nothing readable", () => {
+    expect(getBillingErrorMessage(null, "fallback")).toBe("fallback");
+    expect(getBillingErrorMessage(new Error(""), "fallback")).toBe("fallback");
+  });
+
   it("formats backend limit payloads for non-billing-admin users", () => {
     const message = getBillingErrorMessage(
       new Error(
@@ -107,6 +159,27 @@ describe("getBillingErrorMessage", () => {
     expect(message).toMatch(
       /^This organization has reached its eval iteration limit \(25\)\. Resets /
     );
+    // The 402 payload doesn't say who is reading, and this toast reaches
+    // members too. No next step beats naming one they can't take.
+    expect(message).not.toMatch(/Upgrade to continue now/);
+    expect(message).not.toMatch(/Ask an organization owner/);
+  });
+
+  it("keeps the eval reset message role-neutral for either reader", () => {
+    // A capped-until-reset message names no next step for anyone: the owner
+    // doesn't need one, and the member can't act on the one we'd give them.
+    for (const canManageBilling of [true, false]) {
+      const message = formatBillingLimitReachedMessage(
+        "maxEvalIterationsPerMonth",
+        25,
+        canManageBilling,
+        { resetsAt: Date.UTC(2026, 5, 2), windowKind: "day" }
+      );
+
+      expect(message).toMatch(/Resets /);
+      expect(message).not.toMatch(/Upgrade to continue now/);
+      expect(message).not.toMatch(/Ask an organization owner/);
+    }
   });
 
   it("ignores invalid eval reset timestamps", () => {
@@ -534,5 +607,68 @@ describe("formatPremiumnessGateKey", () => {
     for (const key of gateKeys) {
       expect(formatPremiumnessGateKey(key), key).not.toBe(key);
     }
+  });
+});
+
+describe("getEvalIterationLimitFromError", () => {
+  const evalLimitError = (extra: Record<string, unknown>) =>
+    new ConvexError({
+      code: "billing_limit_reached",
+      limit: "maxEvalIterationsPerMonth",
+      allowedValue: 25,
+      currentValue: 25,
+      ...extra,
+    } as never);
+
+  it("takes the window the backend sent, on either plan", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "free", windowKind: "day" })
+      )?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(
+        evalLimitError({ plan: "team", windowKind: "month" })
+      )?.windowKind
+    ).toBe("month");
+  });
+
+  it("falls back to the plan when the payload omits the window", () => {
+    // One limit NAME, two windows — daily on Free, monthly per seat on Team —
+    // and the wall prints the word ("out of eval iterations today" vs "this
+    // month"). A constant would be wrong for one of the two plans every time,
+    // and wrong toward "month" is the costlier direction: it sells a wait that
+    // ends at the next UTC roll as a month-long block.
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "free" }))
+        ?.windowKind
+    ).toBe("day");
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ plan: "team" }))
+        ?.windowKind
+    ).toBe("month");
+  });
+
+  it("keeps the narrower claim when neither window nor plan is known", () => {
+    expect(getEvalIterationLimitFromError(evalLimitError({}))?.windowKind).toBe(
+      "day"
+    );
+    expect(
+      getEvalIterationLimitFromError(evalLimitError({ windowKind: "week" }))
+        ?.windowKind
+    ).toBe("day");
+  });
+
+  it("ignores errors that are not this cap", () => {
+    expect(
+      getEvalIterationLimitFromError(
+        new ConvexError({
+          code: "billing_limit_reached",
+          limit: "insightsPerDay",
+          allowedValue: 25,
+        } as never)
+      )
+    ).toBeNull();
+    expect(getEvalIterationLimitFromError(new Error("boom"))).toBeNull();
   });
 });

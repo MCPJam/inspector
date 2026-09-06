@@ -85,6 +85,7 @@ describe("Asana MCP Evals", () => {
   // Single-turn eval
   test("list workspaces > 80% accuracy", async () => {
     const evalTest = new EvalTest({
+      id: "c_list_workspaces",
       name: "list-workspaces",
       test: async (runner) => {
         const result = await runner.run("Show me all my Asana workspaces");
@@ -103,6 +104,7 @@ describe("Asana MCP Evals", () => {
   // Multi-turn eval
   test("get user then list projects > 80% accuracy", async () => {
     const evalTest = new EvalTest({
+      id: "c_user_then_projects",
       name: "user-then-projects",
       test: async (runner) => {
         const r1 = await runner.run("Who am I in Asana?");
@@ -126,6 +128,7 @@ describe("Asana MCP Evals", () => {
   // Validating tool arguments
   test("search tasks passes correct workspace_gid", async () => {
     const evalTest = new EvalTest({
+      id: "c_search_args",
       name: "search-args",
       test: async (runner) => {
         const result = await runner.run(
@@ -173,6 +176,7 @@ const host = new Host({
 const runtime = host.withManager(manager, { apiKey: process.env.OPENAI_API_KEY! });
 
 const evalTest = new EvalTest({
+  id: "c_add",
   name: "add",
   test: async (runner) => (await runner.run("Add 2 and 3")).hasToolCall("add"),
 });
@@ -517,6 +521,7 @@ Runs a single test scenario with multiple iterations.
 
 ```ts
 const test = new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (runner) => {
     const result = await runner.run("Add 2 and 3");
@@ -556,6 +561,7 @@ const suite = new EvalSuite({ name: "Math Operations" });
 
 suite.add(
   new EvalTest({
+    id: "c_addition",
     name: "addition",
     test: async (runner) => {
       const r = await runner.run("Add 2+3");
@@ -566,6 +572,7 @@ suite.add(
 
 suite.add(
   new EvalTest({
+    id: "c_multiply",
     name: "multiply",
     test: async (runner) => {
       const r = await runner.run("Multiply 4*5");

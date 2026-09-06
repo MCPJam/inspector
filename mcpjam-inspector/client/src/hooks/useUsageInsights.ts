@@ -1,5 +1,5 @@
-import { useCallback } from "react";
-import { useMutation, useQuery } from "convex/react";
+import { useCallback, useMemo } from "react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import type {
   SessionOutcome,
   SessionSentiment,
@@ -14,13 +14,27 @@ export type InsightsSourceType = "scenario";
 /**
  * Which surface the insights read from. Scenario insights key on the scenario;
  * swarm insights key on the project (and optionally a wave's journey-run ids),
- * because swarm sessions belong to a project, not a scenario. The two scopes
- * hit different Convex queries over the same substrate, so everything
- * downstream of the hook is scope-blind.
+ * because swarm sessions belong to a project, not a scenario; benchmark
+ * insights key on the RUN, because a benchmark's cohort is exactly the traces
+ * one exam produced and nothing else. The three scopes hit different Convex
+ * queries over the same substrate, so everything downstream of the hook is
+ * scope-blind.
+ *
+ * The benchmark scope is deliberately narrower than the other two:
+ *
+ *   - It has no thread list. There is no benchmark Sessions browser, and a
+ *     benchmark's traces are read through its own run detail.
+ *   - It has no TOPIC MAP. A neighbour graph over one exam's repetitions draws
+ *     "these two runs of the same case are similar" and nothing else, so the
+ *     backend does not build one and the client must not ask for one.
+ *   - It has no per-selection drill-down query yet. A benchmark node click is
+ *     inert rather than pointed at the swarm query, which would silently
+ *     narrow a PROJECT's sessions and present them as this run's.
  */
 export type InsightsScope =
   | { kind: "scenario"; scenarioId: string }
-  | { kind: "swarm"; projectId: string; journeyRunIds?: string[] };
+  | { kind: "swarm"; projectId: string; journeyRunIds?: string[] }
+  | { kind: "benchmark"; benchmarkRunId: string };
 
 export type FeedbackBucketCount = {
   segment: string;
@@ -103,10 +117,10 @@ export const SIGNALS_VERSION_WITH_THEMES = 3;
 
 export type SankeyStage = "goal" | "behavior" | "outcome" | "sentiment";
 
-export type InsightsSankeyNode = {
+export type InsightsSankeyNode<S extends string = SankeyStage> = {
   /** `${stage}:${key}` — unique across stages, whose keys can collide. */
   id: string;
-  stage: SankeyStage;
+  stage: S;
   key: string;
   label: string;
   count: number;
@@ -129,8 +143,8 @@ export type InsightsSankeyLink = {
   discordantCount?: number;
 };
 
-export type InsightsSankey = {
-  nodes: InsightsSankeyNode[];
+export type InsightsSankey<S extends string = SankeyStage> = {
+  nodes: InsightsSankeyNode<S>[];
   links: InsightsSankeyLink[];
   foldedGoalCount: number;
   /**
@@ -138,7 +152,7 @@ export type InsightsSankey = {
    * server that only folded the goal column — read `foldedGoalCount` then, or
    * the disclosure disappears while a fold is still in effect.
    */
-  foldedByStage?: Partial<Record<SankeyStage, number>>;
+  foldedByStage?: Partial<Record<S, number>>;
 };
 
 export type OutcomeCounts = Record<SessionOutcome, number>;
@@ -262,6 +276,114 @@ export function toServerFilters(state: UsageFilterState) {
   };
 }
 
+/**
+ * The one key that names a scope's cohort, in the arg shape its queries take.
+ *
+ * Written once and shared by the breakdown and the drill-down rather than
+ * spelled out at each call site: with three scopes, a `kind === "swarm" ? … :
+ * …` ternary silently sends a benchmark scope down the SCENARIO arm, which
+ * queries with `scenarioId: undefined` and answers about a cohort nobody
+ * asked for. A `switch` over the union is what makes a fourth scope a compile
+ * error instead of a wrong answer.
+ */
+function scopeKeyArgs(scope: InsightsScope): Record<string, unknown> {
+  switch (scope.kind) {
+    case "swarm":
+      return {
+        projectId: scope.projectId,
+        ...(scope.journeyRunIds?.length
+          ? { journeyRunIds: scope.journeyRunIds }
+          : {}),
+      };
+    case "benchmark":
+      return { benchmarkRunId: scope.benchmarkRunId };
+    case "scenario":
+      return { scenarioId: scope.scenarioId };
+  }
+}
+
+/** The one id a scope is bound to, for memo keys. Never sent to a query. */
+function scopeIdentity(scope: InsightsScope): string {
+  switch (scope.kind) {
+    case "swarm":
+      return scope.projectId;
+    case "benchmark":
+      return scope.benchmarkRunId;
+    case "scenario":
+      return scope.scenarioId;
+  }
+}
+
+/**
+ * The benchmark analyzer's own state, as `getBenchmarkUsageBreakdown` reports
+ * it. Its statuses are its own (`generating | ready | failed`) and its counts
+ * are traces rather than sessions.
+ */
+type InferredExperienceState = {
+  status: "generating" | "ready" | "failed";
+  traceCount?: number;
+  failureCode?: string | null;
+  generatedAt?: number;
+  /**
+   * False when the stored pass read a different set of traces than the query
+   * just scanned. The backend WITHHOLDS the inferred columns in that case, so
+   * the honest state is "not analyzed" — offering another pass is right, and
+   * showing a stale reading as current would not be.
+   */
+  current?: boolean;
+};
+
+/**
+ * Present a benchmark's `inferredExperience` as the `latestRun` every consumer
+ * already reads. Any other scope is returned untouched.
+ *
+ * `signalsVersion` and `tuning` are deliberately left absent: they belong to
+ * the clustering pipeline the other two scopes tune, and the themes-rebuild
+ * prompt keyed on `signalsVersion` must stay off for a benchmark rather than
+ * offering a knob that does nothing here.
+ */
+export function adaptBenchmarkAnalysisState(
+  breakdown: UsageBreakdown | null | undefined
+): UsageBreakdown | null | undefined {
+  if (!breakdown) return breakdown;
+  const analysis = (
+    breakdown as unknown as { inferredExperience?: InferredExperienceState | null }
+  ).inferredExperience;
+  // Only the benchmark scope carries this key at all.
+  if (analysis === undefined) return breakdown;
+  if (analysis === null || analysis.current === false) {
+    return { ...breakdown, latestRun: null } as UsageBreakdown;
+  }
+  const status: ClusterRunStatus =
+    analysis.status === "generating"
+      ? "running"
+      : analysis.status === "failed"
+        ? "failed"
+        : "done";
+  return {
+    ...breakdown,
+    latestRun: {
+      _id: `benchmark-flow-${analysis.generatedAt ?? 0}`,
+      status,
+      startedAt: analysis.generatedAt ?? 0,
+      finishedAt: status === "running" ? null : (analysis.generatedAt ?? null),
+      sessionCount: analysis.traceCount ?? 0,
+      clusterCount: 0,
+      errorMessage: analysis.failureCode ?? null,
+      // A stale pass was already mapped to `null` above, so anything that
+      // reaches here read the traces this query scanned.
+      isStale: false,
+    } satisfies ClusterRunState,
+  } as UsageBreakdown;
+}
+
+/** The breakdown query each scope reads. Same substrate, three cohorts. */
+const BREAKDOWN_QUERIES: Record<InsightsScope["kind"], string> = {
+  scenario: "chatSessions:getUsageBreakdown",
+  swarm: "chatSessions:getSwarmUsageBreakdown",
+  benchmark: "chatSessions:getBenchmarkUsageBreakdown",
+};
+
 export function useUsageInsights({
   sourceId = null,
   scope,
@@ -290,7 +412,6 @@ export function useUsageInsights({
 
   const effectiveScope: InsightsScope | null =
     scope ?? (sourceId ? { kind: "scenario", scenarioId: sourceId } : null);
-  const isSwarm = effectiveScope?.kind === "swarm";
 
   // The thread list is a scenario-surface concern; the swarm Sessions browser
   // has its own project-scoped listing, so a swarm scope never subscribes.
@@ -311,14 +432,7 @@ export function useUsageInsights({
   const breakdownArgs =
     wantBreakdown && effectiveScope
       ? ({
-          ...(effectiveScope.kind === "swarm"
-            ? {
-                projectId: effectiveScope.projectId,
-                ...(effectiveScope.journeyRunIds?.length
-                  ? { journeyRunIds: effectiveScope.journeyRunIds }
-                  : {}),
-              }
-            : { scenarioId: effectiveScope.scenarioId }),
+          ...scopeKeyArgs(effectiveScope),
           filters: toServerFilters(filters),
         } as any)
       : "skip";
@@ -330,12 +444,26 @@ export function useUsageInsights({
   // `getUsageBreakdown` already carries `themes` + `latestRun`, so we don't
   // subscribe to `listClustersByScenario` — the themes chips, the freshness
   // chip, and the rebuild button all read what they need from `breakdown`.
-  const breakdown = useQuery(
-    (isSwarm
-      ? "chatSessions:getSwarmUsageBreakdown"
-      : "chatSessions:getUsageBreakdown") as any,
+  const rawBreakdown = useQuery(
+    BREAKDOWN_QUERIES[effectiveScope?.kind ?? "scenario"] as any,
     breakdownArgs
   ) as UsageBreakdown | null | undefined;
+
+  /**
+   * The benchmark scope reports its analysis state as `inferredExperience`;
+   * the scenario and swarm scopes report theirs as `latestRun`, and every
+   * component downstream reads `latestRun`. Left unadapted, a benchmark looks
+   * permanently un-analyzed: it never shows the in-flight pass and keeps
+   * offering to pay for another one after the columns are already drawn.
+   *
+   * Adapted HERE rather than in the chart, so "same substrate, scope-blind"
+   * stays true of everything below this hook — a benchmark-only prop on the
+   * shared Sankey would make every future consumer handle two shapes.
+   */
+  const breakdown = useMemo(
+    () => adaptBenchmarkAnalysisState(rawBreakdown),
+    [rawBreakdown]
+  );
 
   const rebuildScenario = useMutation(
     "chatSessions:rebuildScenarioInsights" as any
@@ -352,6 +480,20 @@ export function useUsageInsights({
     /** All three knobs — swarm rebuilds materialize a topic map. */
     tuning?: ClusterTuning;
   }) => Promise<RebuildResult>;
+  /**
+   * An ACTION, not a mutation, and the only paid one here.
+   *
+   * The benchmark diagram's first column is pinned metadata read at query time
+   * and costs nothing; this buys the other three. It takes no tuning — there
+   * is no topic map to materialize — and it can refuse, which the adapter
+   * below turns into an explicit failure rather than a silent no-op.
+   */
+  const generateBenchmarkFlow = useAction(
+    "scenarioClusters:generateBenchmarkFlowInsights" as any
+  ) as unknown as (args: { benchmarkRunId: string }) => Promise<
+    | { status: "ready" | "generating"; traceDigest: string; traceCount: number }
+    | { status: "unavailable"; reason: string }
+  >;
 
   // Scope-bound so callers don't restate the key the hook already holds — the
   // caller restating it is exactly how a swarm surface would accidentally
@@ -360,6 +502,26 @@ export function useUsageInsights({
     async (args?: { force?: boolean; tuning?: ClusterTuning }) => {
       if (!effectiveScope) {
         throw new Error("No insights scope to rebuild");
+      }
+      if (effectiveScope.kind === "benchmark") {
+        const outcome = await generateBenchmarkFlow({
+          benchmarkRunId: effectiveScope.benchmarkRunId,
+        });
+        if (outcome.status === "unavailable") {
+          // Thrown rather than returned as a `RebuildResult`: every field of
+          // that shape would be a fiction here, and reporting a refusal as
+          // "rebuild queued" is how a caller ends up waiting for a pass that
+          // was never started.
+          throw new Error(outcome.reason);
+        }
+        // A reading already paid for comes back `ready` from the cache and is
+        // NOT a fresh run, which is exactly what `alreadyRunning` means to
+        // every caller of this hook.
+        return {
+          runId: outcome.traceDigest,
+          status: outcome.status === "ready" ? "done" : "running",
+          alreadyRunning: outcome.status === "ready",
+        } satisfies RebuildResult;
       }
       if (effectiveScope.kind === "swarm") {
         return rebuildSwarm({
@@ -373,9 +535,8 @@ export function useUsageInsights({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- scope identity is its key fields
     [
       effectiveScope?.kind,
-      effectiveScope?.kind === "swarm"
-        ? effectiveScope.projectId
-        : effectiveScope?.scenarioId,
+      effectiveScope ? scopeIdentity(effectiveScope) : null,
+      generateBenchmarkFlow,
       rebuildScenario,
       rebuildSwarm,
     ]
@@ -425,17 +586,14 @@ export function useGoalOutcomeDrilldown({
   before?: number;
   enabled?: boolean;
 }) {
+  // A benchmark scope has no drill-down query of its own yet. It SKIPS rather
+  // than borrowing the swarm one: that query narrows a PROJECT's sessions, and
+  // answering a benchmark node click with them would present another cohort's
+  // rows as this run's traces.
   const args =
-    enabled && scope
+    enabled && scope && scope.kind !== "benchmark"
       ? ({
-          ...(scope.kind === "swarm"
-            ? {
-                projectId: scope.projectId,
-                ...(scope.journeyRunIds?.length
-                  ? { journeyRunIds: scope.journeyRunIds }
-                  : {}),
-              }
-            : { scenarioId: scope.scenarioId }),
+          ...scopeKeyArgs(scope),
           ...(clusterId ? { clusterId } : {}),
           // `undefined` means "any outcome"; `null` means "no outcome
           // recorded". They are different selections, so the distinction has to
@@ -456,6 +614,12 @@ export function useGoalOutcomeDrilldown({
 
   return {
     drilldown: result,
-    isLoading: enabled && !!scope && result === undefined,
+    // A skipped scope is never loading. Without the exclusion a benchmark
+    // scope reports a permanent spinner over a query that was never issued.
+    isLoading:
+      enabled &&
+      !!scope &&
+      scope.kind !== "benchmark" &&
+      result === undefined,
   };
 }

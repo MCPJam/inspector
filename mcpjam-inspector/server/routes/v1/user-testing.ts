@@ -46,6 +46,7 @@ import { v1PageJson, v1Resource } from "./envelope.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { loadInsightsEnvelope } from "./insights-envelope-load.js";
+import { readCapped } from "./blob-read.js";
 
 const userTesting = new Hono();
 
@@ -447,47 +448,6 @@ const TRANSCRIPT_FETCH_TIMEOUT_MS = 10_000;
  * about us, not a reason to take the process down.
  */
 const TRANSCRIPT_MAX_BLOB_BYTES = 8 * 1024 * 1024;
-
-/**
- * Read a response body as text, giving up once `maxBytes` have arrived.
- *
- * Returns `null` when the body is over the ceiling or cannot be streamed, so
- * the caller reports `transcriptUnavailable` rather than a silent truncation —
- * a transcript cut mid-array would either fail to parse or, worse, parse into a
- * conversation that stops early with no sign that it did.
- *
- * The counting is on RECEIVED bytes. Checking `content-length` instead would
- * miss the two cases that matter: a chunked response has no such header, and a
- * present one is a claim, not a measurement.
- */
-async function readCapped(
-  response: Response,
-  maxBytes: number,
-): Promise<string | null> {
-  const body = response.body;
-  if (!body) return null;
-  const reader = body.getReader();
-  const chunks: Uint8Array[] = [];
-  let total = 0;
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-      total += value.byteLength;
-      if (total > maxBytes) {
-        // Stop the transfer rather than draining a body we have already
-        // decided not to use.
-        await reader.cancel();
-        return null;
-      }
-      chunks.push(value);
-    }
-  } finally {
-    reader.releaseLock();
-  }
-  return Buffer.concat(chunks).toString("utf8");
-}
 
 type RawMessage = {
   role?: unknown;

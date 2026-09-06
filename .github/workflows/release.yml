@@ -17,13 +17,13 @@ on:
         required: false
         default: false
         type: boolean
-      promote_production:
-        description: "Deploy inspector production after publish"
+      deploy_webapp:
+        description: "Deploy the webapp to production after publish"
         required: false
         default: false
         type: boolean
       skip_verify:
-        description: "Skip npm run verify during preflight"
+        description: "Skip the green-CI (Tests + Build and Test) preflight gates"
         required: false
         default: false
         type: boolean
@@ -45,6 +45,7 @@ jobs:
       publish_cli: ${{ steps.plan.outputs.publish_cli }}
       publish_inspector: ${{ steps.plan.outputs.publish_inspector }}
       build_inspector_artifacts: ${{ steps.plan.outputs.build_inspector_artifacts }}
+      build_harness_pack: ${{ steps.plan.outputs.build_harness_pack }}
       inspector_version: ${{ steps.plan.outputs.inspector_version }}
       release_tag: ${{ steps.plan.outputs.release_tag }}
       scope: ${{ steps.plan.outputs.scope }}
@@ -66,15 +67,79 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Verify workspace
+      # This used to be `npm run verify` (typecheck && test && build:inspector),
+      # a serial ~5-8 min re-run of work `test.yml` and `lint.yml` already did
+      # on this exact commit when it landed on main — and it built the SDK three
+      # times over. Gating on those workflows' results instead takes seconds and
+      # covers strictly more: `lint.yml` runs typecheck, typecheck:client,
+      # build:inspector and a production boot; `test.yml` runs the suites.
+      # BOTH are required — neither alone covers what `verify` did.
+      - name: Require green CI for candidate SHA
         if: ${{ !fromJSON(inputs.skip_verify) }}
-        run: npm run verify
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Fetch without branch/status filters — GitHub's search index can
+            // lag minutes behind, causing false negatives on recent runs.
+            // JS-side filtering on head_sha + conclusion is authoritative.
+            //
+            // Paged with an early exit rather than github.paginate(): that
+            // helper walks EVERY historical run before filtering, which cost
+            // ~67s in this job and grows with repo age. Runs come back
+            // newest-first, so a match is nearly always on page 1; the page cap
+            // bounds the miss case at roughly a month of main pushes.
+            const findGreenRun = async (workflowId) => {
+              const iterator = github.paginate.iterator(
+                github.rest.actions.listWorkflowRuns,
+                {
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: workflowId,
+                  per_page: 100,
+                }
+              );
+              let pages = 0;
+              for await (const { data: runs } of iterator) {
+                const match = runs.find(
+                  (run) => run.head_sha === context.sha && run.conclusion === "success"
+                );
+                if (match) return match;
+                if (++pages >= 5) break;
+              }
+              return null;
+            };
 
+            for (const workflowId of ["test.yml", "lint.yml"]) {
+              const run = await findGreenRun(workflowId);
+
+              if (!run) {
+                core.setFailed(
+                  `No successful ${workflowId} run found for ${context.sha}. ` +
+                    `That workflow runs on every push to main, so this usually means ` +
+                    `it is still running, failed, or was cancelled because a newer ` +
+                    `commit superseded this one. Re-run it for this SHA, or release ` +
+                    `the newer HEAD.`
+                );
+                return;
+              }
+
+              core.info(`Found successful ${workflowId} run ${run.id} for ${context.sha}.`);
+            }
+
+      # Behind `skip_verify` alongside the CI gate above: the two answer the
+      # same question ("has this SHA been exercised before it ships"), so one
+      # bypassable and one not meant an urgent release had no way through
+      # without editing this file. Skipping it also skips what
+      # `deploy-webapp`'s `require_staging_green: false` relies on, so a
+      # skip_verify release that also deploys the webapp ships a SHA no staging
+      # run has smoked.
       - name: Require green staging smoke for candidate SHA
+        if: ${{ !fromJSON(inputs.skip_verify) }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -84,16 +149,20 @@ jobs:
             // Fetch without branch/status filters — GitHub's search index
             // can lag minutes behind, causing false negatives on recent runs.
             // JS-side filtering on head_sha + conclusion is authoritative.
-            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
-              owner,
-              repo,
-              workflow_id: workflowId,
-              per_page: 100,
-            });
-
-            const matchingRun = runs.find(
-              (run) => run.head_sha === headSha && run.conclusion === "success"
+            // Paged with an early exit (see the CI gate above for why).
+            const iterator = github.paginate.iterator(
+              github.rest.actions.listWorkflowRuns,
+              { owner, repo, workflow_id: workflowId, per_page: 100 }
             );
+
+            let matchingRun = null;
+            let pages = 0;
+            for await (const { data: runs } of iterator) {
+              matchingRun = runs.find(
+                (run) => run.head_sha === headSha && run.conclusion === "success"
+              );
+              if (matchingRun || ++pages >= 5) break;
+            }
 
             if (!matchingRun) {
               core.setFailed(
@@ -112,7 +181,7 @@ jobs:
         env:
           RELEASE_SCOPE: ${{ inputs.scope }}
           DEPLOY_BACKEND_PROD: ${{ inputs.deploy_backend_prod }}
-          PROMOTE_PRODUCTION: ${{ inputs.promote_production }}
+          DEPLOY_WEBAPP: ${{ inputs.deploy_webapp }}
         run: |
           node <<'NODE'
           const fs = require("node:fs");
@@ -165,11 +234,41 @@ jobs:
           }
 
           if (
-            process.env.PROMOTE_PRODUCTION === "true" &&
+            process.env.DEPLOY_WEBAPP === "true" &&
             !selected.inspector
           ) {
             throw new Error(
-              "promote_production=true requires an inspector release in the selected scope."
+              "deploy_webapp=true requires an inspector release in the selected scope. To deploy production without cutting a release, dispatch deploy-webapp.yml directly."
+            );
+          }
+
+          // Whether this release builds and publishes local-harness runtime
+          // packs, read from the digest table the Inspector build itself
+          // carries rather than from a dispatch input.
+          //
+          // `pack-digests.generated.ts` is written from a dispatched pack build
+          // and committed (docs/local-harness.md). Until that happens
+          // EXPECTED_PACK_VERSION is "", every `expectedPackFor` answers null,
+          // and the local harness is inert in the shipped build — so packs
+          // would be assets nothing can ask for, on a job whose enforcement
+          // step ("the committed digest table matches the packs this build
+          // produced") must fail by construction.
+          //
+          // Deriving it from the table means committing the digests IS the
+          // reintroduction: there is no second switch to remember, and no way
+          // to ship a build naming digests without building the packs they
+          // name — the failure direction this whole gate exists to prevent.
+          const packDigestsPath =
+            "mcpjam-inspector/server/utils/harness/local/pack-digests.generated.ts";
+          const packVersionMatch = fs
+            .readFileSync(packDigestsPath, "utf8")
+            .match(/EXPECTED_PACK_VERSION\s*=\s*"([^"]*)"/);
+          // A shape change there must update this script, not silently stop
+          // building the packs — a release that quietly skips them is exactly
+          // the state this file cannot detect on its own.
+          if (!packVersionMatch) {
+            throw new Error(
+              `Could not read EXPECTED_PACK_VERSION from ${packDigestsPath}.`
             );
           }
 
@@ -182,6 +281,9 @@ jobs:
             publish_cli: String(selected.cli),
             publish_inspector: String(selected.inspector),
             build_inspector_artifacts: String(selected.inspector),
+            build_harness_pack: String(
+              selected.inspector && packVersionMatch[1] !== ""
+            ),
             inspector_version: inspectorVersion,
             release_tag: inspectorVersion ? `v${inspectorVersion}` : "",
           };
@@ -228,11 +330,34 @@ jobs:
       apply_release_patch: true
     secrets: inherit
 
+  # The local-harness runtime pack. Not a desktop artifact — it is downloaded
+  # on demand by both distributions — but it is published on the same release,
+  # so it is built alongside them.
+  #
+  # Gated more narrowly than they are, though: on `build_harness_pack` rather
+  # than `build_inspector_artifacts`, because a release whose Inspector carries
+  # no pack digests has no pack to publish. See preflight for why that is read
+  # from the committed table.
+  build-local-harness-pack:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
+    uses: ./.github/workflows/local-harness-pack.yml
+    with:
+      pack_version: ${{ needs.preflight.outputs.inspector_version }}
+      # A release must publish packs the committed digest table already names.
+      # Otherwise the desktop artifacts — built in parallel from the checked-in
+      # table — would ship digests that match nothing, `expectedPackFor` would
+      # answer `null`, and every published pack would be rejected as
+      # unsupported: artifacts that exist and cannot be installed.
+      enforce_committed_digests: true
+    secrets: inherit
+
   artifact-gate:
     needs:
       - preflight
       - build-mac
       - build-windows
+      - build-local-harness-pack
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -257,19 +382,134 @@ jobs:
             exit 1
           fi
 
+          # A release whose packs did not build would ship an Inspector whose
+          # manifest names digests for assets that are not there, and every
+          # install would fail verification with nothing to point at.
+          #
+          # `skipped` is a legitimate result here — the pack job runs only when
+          # the committed digest table names a pack — so this asks preflight
+          # what it decided rather than reading the raw job result, which would
+          # read a deliberate skip as a failure.
+          if [ "${{ needs.preflight.outputs.build_harness_pack }}" = "true" ] \
+            && [ "${{ needs.build-local-harness-pack.result }}" != "success" ]; then
+            echo "Local harness runtime pack build failed." >&2
+            exit 1
+          fi
+
+  # Building and smoke-testing the npm tarballs needs nothing from the desktop
+  # builds or the backend deploy, so it runs alongside them instead of behind
+  # them. Only the `changeset publish` call itself has to wait for the backend
+  # (see publish-packages), and this job moves ~4 min of build + smoke off that
+  # gated path.
+  build-packages:
+    needs: preflight
+    if: ${{ fromJSON(needs.preflight.outputs.publish_any) }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Without the patch this builds the PRE-bump versions, and the tarballs
+      # would disagree with what changeset publish then tries to publish.
+      - name: Download release patch
+        uses: actions/download-artifact@v4
+        with:
+          name: release-plan
+          path: .release-plan
+
+      - name: Apply release patch
+        run: git apply --binary .release-plan/release.patch
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Build SDK
+        if: |
+          fromJSON(needs.preflight.outputs.publish_sdk) ||
+          fromJSON(needs.preflight.outputs.publish_cli) ||
+          fromJSON(needs.preflight.outputs.publish_inspector)
+        run: npm run build -w @mcpjam/sdk
+
+      - name: Build CLI
+        if: fromJSON(needs.preflight.outputs.publish_cli)
+        run: npm run build -w @mcpjam/cli
+
+      - name: Build Inspector package
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
+        run: npm run build -w @mcpjam/inspector
+        env:
+          # This tarball is the bundle every `npx @mcpjam/inspector` user runs,
+          # and it reports to Sentry under the app version like every other
+          # build. It had no token here, so `sentryVitePlugin` injected debug
+          # ids and uploaded nothing, and those events symbolicated against
+          # whatever artifacts another build had published for the same
+          # release. (The globs were broken too — see client/vite.config.ts —
+          # so a token alone would not have been enough.) The upload itself is
+          # best-effort: the plugin reports upload failures without failing the
+          # build, and Sentry being down must not fail a release. The assert
+          # below is what is allowed to.
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          MCPJAM_BUILD_SURFACE: npm
+
+      # The plugin above treats a sourcemap glob that matched nothing as a
+      # warning, which is how 2.47.0 published with its maps still in the
+      # tarball and its Sentry frames pointing at another build. Fail here
+      # instead. This asserts the maps were PROCESSED, not that Sentry stored
+      # them — see the script.
+      - name: Assert client source maps were processed
+        if: fromJSON(needs.preflight.outputs.publish_inspector)
+        run: node .github/scripts/assert-client-sourcemaps-processed.mjs
+
+      - name: Smoke packed npm packages
+        run: node .github/scripts/smoke-packed-npm-packages.mjs
+        env:
+          PUBLISH_SDK: ${{ needs.preflight.outputs.publish_sdk }}
+          PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
+          PUBLISH_INSPECTOR: ${{ needs.preflight.outputs.publish_inspector }}
+
+      # @mcpjam/inspector has no prepublishOnly hook, so the dist that reaches
+      # npm is THIS one — publish-packages cannot rebuild it. sdk/cli do rebuild
+      # via prepublishOnly; theirs are carried anyway so the publish job can
+      # assert it has a complete, already-smoked package set.
+      - name: Upload built package dists
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-dists
+          path: |
+            sdk/dist
+            cli/dist
+            mcpjam-inspector/dist
+          if-no-files-found: error
+          retention-days: 7
+
   publish-packages:
     needs:
       - preflight
       - artifact-gate
+      - build-packages
       - deploy-backend-prod
     # Publishing is gated on the backend deployment because a released client
     # can start sending a new field the moment it lands on npm. Shipping the
     # Convex schema first means the window where a fresh client talks to a
     # backend that does not understand it yet never opens.
+    #
+    # `always()` is required so a SKIPPED deploy-backend-prod (the common case:
+    # deploy_backend_prod=false) does not skip this job — but it also disables
+    # normal failed-dependency propagation, so every other need is checked
+    # explicitly below. Dropping the build-packages clause would let a failed
+    # package build publish.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
       needs.artifact-gate.result == 'success' &&
+      needs.build-packages.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
@@ -294,32 +534,47 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           registry-url: "https://registry.npmjs.org"
+          cache: npm
 
       - name: Install dependencies
         run: npm ci --legacy-peer-deps
 
-      - name: Build SDK
-        if: |
-          fromJSON(needs.preflight.outputs.publish_sdk) ||
-          fromJSON(needs.preflight.outputs.publish_cli) ||
-          fromJSON(needs.preflight.outputs.publish_inspector)
-        run: npm run build -w @mcpjam/sdk
+      - name: Download built package dists
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-dists
+          path: .
 
-      - name: Build CLI
-        if: fromJSON(needs.preflight.outputs.publish_cli)
-        run: npm run build -w @mcpjam/cli
-
-      - name: Build Inspector package
-        if: fromJSON(needs.preflight.outputs.publish_inspector)
-        run: npm run build -w @mcpjam/inspector
-
-      - name: Smoke packed npm packages
-        run: node .github/scripts/smoke-packed-npm-packages.mjs
+      # `npm publish` does NOT fail when a `files` entry is missing — it packs a
+      # tarball without it. @mcpjam/inspector has no prepublishOnly to rebuild
+      # its dist, so a mis-pathed artifact download would silently ship an empty
+      # package. Fail here instead.
+      - name: Verify package dists are present
         env:
           PUBLISH_SDK: ${{ needs.preflight.outputs.publish_sdk }}
           PUBLISH_CLI: ${{ needs.preflight.outputs.publish_cli }}
           PUBLISH_INSPECTOR: ${{ needs.preflight.outputs.publish_inspector }}
+        run: |
+          fail() { echo "::error::$1" >&2; exit 1; }
 
+          if [ "$PUBLISH_SDK" = "true" ] || [ "$PUBLISH_CLI" = "true" ] || [ "$PUBLISH_INSPECTOR" = "true" ]; then
+            [ -f sdk/dist/index.js ] || fail "sdk/dist is missing from the npm-dists artifact."
+          fi
+
+          if [ "$PUBLISH_CLI" = "true" ]; then
+            [ -f cli/dist/index.js ] || fail "cli/dist is missing from the npm-dists artifact."
+          fi
+
+          if [ "$PUBLISH_INSPECTOR" = "true" ]; then
+            [ -f mcpjam-inspector/dist/client/index.html ] \
+              || fail "mcpjam-inspector/dist/client is missing — publishing now would ship an inspector with no UI."
+          fi
+
+      # NOTE: sdk's `prepublishOnly: npm run build` re-runs during the publish
+      # below, overwriting these injected debug ids in the packed tarball. That
+      # is a pre-existing bug (it predates this job split) and is tracked
+      # separately — the real fix is to inject inside the sdk's own prepack.
+      # Left in place so behavior matches what shipped before.
       - name: Inject SDK sourcemap debug ids
         if: fromJSON(needs.preflight.outputs.publish_sdk)
         run: npx @sentry/cli sourcemaps inject ./sdk/dist
@@ -347,14 +602,23 @@ jobs:
   deploy-backend-prod:
     needs:
       - preflight
-      - artifact-gate
-    # Runs ahead of publish-packages. `publish_any` is still required so a run
-    # that publishes nothing does not deploy the backend on its own — that was
-    # the effect of the old gate on publish-packages having succeeded.
+    # Runs ahead of publish-packages, and now ALONGSIDE the desktop builds
+    # rather than behind them — it consumes no build artifact, and waiting cost
+    # ~12 min on the critical path of every full release.
+    #
+    # The tradeoff that buys: a desktop build failing after this job has already
+    # promoted the backend leaves prod backend at a newer SHA with no client
+    # release. That is the safe direction and the one this pipeline deliberately
+    # engineers for everywhere else (it is exactly why publish-packages waits on
+    # this job) — a backend that understands more than any shipped client is
+    # indistinguishable from an ordinary backend promote between releases.
+    #
+    # `publish_any` is still required so a run that publishes nothing does not
+    # deploy the backend on its own. No scope check is needed here: preflight's
+    # plan script already throws on deploy_backend_prod=true with scope != full.
     if: |
       always() &&
       needs.preflight.result == 'success' &&
-      needs.artifact-gate.result == 'success' &&
       needs.preflight.outputs.publish_any == 'true' &&
       fromJSON(inputs.deploy_backend_prod)
     runs-on: ubuntu-latest
@@ -382,7 +646,7 @@ jobs:
             });
 
             const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-            for (let attempt = 0; attempt < 40; attempt += 1) {
+            for (let attempt = 0; attempt < 120; attempt += 1) {
               await sleep(15000);
               const { data } = await github.rest.actions.listWorkflowRuns({
                 owner,
@@ -397,7 +661,7 @@ jobs:
               );
 
               if (!matchingRun) {
-                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/40).`);
+                core.info(`No backend production workflow run found yet (attempt ${attempt + 1}/120).`);
                 continue;
               }
 
@@ -419,115 +683,83 @@ jobs:
 
             core.setFailed("Timed out waiting for backend production deployment to finish.");
 
-  promote-production:
+  # The production deploy itself lives in deploy-webapp.yml so it can also be
+  # dispatched on its own — a release is not the only reason to ship or roll
+  # back the webapp. `require_staging_green` is false here because preflight
+  # already gated this exact SHA on a green staging run.
+  deploy-webapp:
     needs:
       - preflight
       - publish-packages
       - deploy-backend-prod
     if: |
       always() &&
-      fromJSON(inputs.promote_production) &&
+      fromJSON(inputs.deploy_webapp) &&
       needs.preflight.result == 'success' &&
       needs.publish-packages.result == 'success' &&
       (
         !fromJSON(inputs.deploy_backend_prod) ||
         needs.deploy-backend-prod.result == 'success'
       )
-    runs-on: ubuntu-latest
-    environment:
-      name: production
-      url: ${{ vars.PRODUCTION_APP_URL || 'https://mcpjam.com' }}
-    env:
-      RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
-      RAILWAY_PROJECT_ID: ${{ vars.RAILWAY_PROJECT_ID }}
-      RAILWAY_INSPECTOR_SERVICE: ${{ vars.RAILWAY_INSPECTOR_SERVICE }}
-      RAILWAY_PRODUCTION_ENVIRONMENT: ${{ vars.RAILWAY_PRODUCTION_ENVIRONMENT }}
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    uses: ./.github/workflows/deploy-webapp.yml
+    with:
+      apply_release_patch: true
+      require_staging_green: false
+    secrets: inherit
 
-      - name: Download release patch
-        uses: actions/download-artifact@v4
-        with:
-          name: release-plan
-          path: .release-plan
-
-      - name: Apply release patch
-        run: git apply --binary .release-plan/release.patch
-
-      # Pinned to match deploy-staging.yml and pr-preview.yml. An unpinned
-      # install picks up whatever shipped that morning, on the one workflow
-      # where a CLI regression is most expensive.
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli@4.57.1
-
-      # Capture the newest deployment id before we trigger a new one so the
-      # wait step below can tell *our* deploy from the previous-good one.
-      - name: Snapshot latest deployment id
-        id: previous_deploy
-        run: |
-          PREV=$(.github/scripts/railway-wait-deploy.sh --latest \
-            -s "$RAILWAY_INSPECTOR_SERVICE" \
-            -e "$RAILWAY_PRODUCTION_ENVIRONMENT")
-          echo "id=$PREV" >> "$GITHUB_OUTPUT"
-          echo "Previous deployment: ${PREV:-<none>}"
-
-      # `--detach` uploads and returns immediately. See railway-wait-deploy.sh
-      # for why `--ci`'s build-log stream is not a usable success signal.
-      - name: Deploy inspector to Railway production
-        run: |
-          .github/scripts/railway-retry.sh railway up \
-            --detach \
-            --project "$RAILWAY_PROJECT_ID" \
-            --environment "$RAILWAY_PRODUCTION_ENVIRONMENT" \
-            --service "$RAILWAY_INSPECTOR_SERVICE"
-
-      - name: Wait for Railway production deploy to finish
-        timeout-minutes: 20
-        env:
-          PREVIOUS_DEPLOY_ID: ${{ steps.previous_deploy.outputs.id }}
-        run: |
-          .github/scripts/railway-wait-deploy.sh \
-            -s "$RAILWAY_INSPECTOR_SERVICE" \
-            -e "$RAILWAY_PRODUCTION_ENVIRONMENT" \
-            -p "$PREVIOUS_DEPLOY_ID"
-
-  # The two Railway satellites. Their own workflows already redeploy on
-  # ordinary main pushes touching their paths; these jobs make a RELEASE
-  # redeploy them too, ordered AFTER the inspector promote — both render the
-  # server's contract, so they must never ship ahead of it. A same-SHA
-  # push-triggered run may queue behind these (per-service concurrency
-  # groups, cancel-in-progress: false); the duplicate deploy is idempotent.
+  # The Slack bot renders the server's envelope, so a release redeploys it
+  # ordered AFTER the webapp — it must never ship ahead of the server whose
+  # contract it renders. Its own workflow also redeploys it on ordinary main
+  # pushes touching its paths; a same-SHA push-triggered run queues behind this
+  # one (per-service concurrency group, cancel-in-progress: false) and the
+  # duplicate deploy is idempotent.
+  #
+  # Soundcheck used to sit here too, as "the other Railway satellite". It does
+  # not belong: it talks only to api.github.com, never to the inspector server,
+  # so the ordering rationale above does not apply to it. It was also the
+  # slowest job in this tail (~3.5 min vs ~1 min) and it deployed TWICE per
+  # release — once here, then again from finalize's version commit, which
+  # touches root package-lock.json, a path in its own push trigger. That push
+  # trigger still redeploys it after every release; this job was the redundant
+  # half.
   deploy-slack-app:
     needs:
       - preflight
-      - promote-production
+      - deploy-webapp
     if: |
       always() &&
-      fromJSON(inputs.promote_production) &&
-      needs.promote-production.result == 'success'
+      fromJSON(inputs.deploy_webapp) &&
+      needs.deploy-webapp.result == 'success'
     uses: ./.github/workflows/deploy-slack-app.yml
     secrets: inherit
 
-  deploy-soundcheck:
-    needs:
-      - preflight
-      - promote-production
-    if: |
-      always() &&
-      fromJSON(inputs.promote_production) &&
-      needs.promote-production.result == 'success'
-    uses: ./.github/workflows/deploy-soundcheck.yml
-    secrets: inherit
-
+  # These `needs` look like dead weight — the `if` below never required the
+  # deploy jobs, and with `always()` this runs even when they fail. They are
+  # NOT dead weight, and removing them breaks the satellite ordering invariant:
+  #
+  # This job pushes the version commit, which touches `package-lock.json` — a
+  # path in BOTH satellite workflows' `push:` triggers (soundcheck's included,
+  # even though it no longer has a job here). If the push lands while
+  # deploy-webapp is still running, those push-triggered runs find the
+  # `slack-app` / `soundcheck` concurrency groups free and deploy AHEAD of the
+  # server whose contract they render.
+  #
+  # `deploy-slack-app` is the load-bearing entry: waiting for it means that by
+  # the time the push happens, the slack-app group has already been through
+  # this release's deploy, so the push-triggered run is an idempotent duplicate
+  # landing after. Waiting for `deploy-webapp` covers soundcheck, whose only
+  # release-time deploy IS that push-triggered run — the server is live before
+  # the push, so it cannot land early.
+  #
+  # Note this costs nothing when deploy_webapp=false: those jobs are skipped,
+  # and `always()` lets this one proceed the moment publish-packages is done.
   finalize:
     needs:
       - preflight
       - publish-packages
       - deploy-backend-prod
-      - promote-production
+      - deploy-webapp
       - deploy-slack-app
-      - deploy-soundcheck
     if: |
       always() &&
       needs.preflight.result == 'success' &&
@@ -621,6 +853,16 @@ jobs:
           name: inspector-windows-${{ needs.preflight.outputs.inspector_version }}
           path: .release-assets/windows
 
+      # Every platform's pack, its signed manifest, its signature and its
+      # sha256 — this is where the installer downloads from.
+      - name: Download local harness runtime packs
+        if: ${{ fromJSON(needs.preflight.outputs.build_harness_pack) }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: .release-assets/runtime
+          merge-multiple: true
+
       - name: Create GitHub release
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
@@ -633,3 +875,4 @@ jobs:
           files: |
             .release-assets/macos/**
             .release-assets/windows/**
+            .release-assets/runtime/**

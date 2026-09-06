@@ -16,32 +16,37 @@ import {
 
 function byMethod(
   exchanges: RawExchange[],
-  method: string,
+  method: string
 ): RawExchange | undefined {
-  return exchanges.find((e) => getWireField(e.request.json, "method") === method);
+  return exchanges.find(
+    (e) => getWireField(e.request.json, "method") === method
+  );
 }
 
-/**
- * Connect a modern-pinned client to the fixture in-process, capturing every
- * frame. `handler.fetch` serves the request without a socket — the URL is
- * never dialed.
- */
-async function connectModern() {
+async function connectFixture(mode?: "auto" | { pin: "2026-07-28" }) {
   const handler = createFixtureHandler();
   const cap = createCapturingFetch((input, init) =>
-    handler.fetch(new Request(input as string | URL, init)),
+    handler.fetch(new Request(input as string | URL, init))
   );
   const client = new Client(
     { name: "dual-era-fixture-test", version: "1.0.0" },
-    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+    mode === undefined
+      ? undefined
+      : {
+          supportedProtocolVersions: ["2025-11-25", "2026-07-28"],
+          versionNegotiation: { mode },
+        }
   );
   const transport = new StreamableHTTPClientTransport(
     new URL("http://fixture.local/mcp"),
-    { fetch: cap.fetch },
+    { fetch: cap.fetch }
   );
   await client.connect(transport);
   return { client, cap };
 }
+
+const connectModern = () => connectFixture({ pin: "2026-07-28" });
+const connectAutomatic = () => connectFixture("auto");
 
 /**
  * Connect a default (legacy) client to the SAME handler. `createMcpHandler`
@@ -49,17 +54,7 @@ async function connectModern() {
  * client runs the ordinary `initialize` handshake.
  */
 async function connectLegacy() {
-  const handler = createFixtureHandler();
-  const cap = createCapturingFetch((input, init) =>
-    handler.fetch(new Request(input as string | URL, init)),
-  );
-  const client = new Client({ name: "dual-era-fixture-test", version: "1.0.0" });
-  const transport = new StreamableHTTPClientTransport(
-    new URL("http://fixture.local/mcp"),
-    { fetch: cap.fetch },
-  );
-  await client.connect(transport);
-  return { client, cap };
+  return connectFixture();
 }
 
 describe("dual-era fixture — modern (2026-07-28)", () => {
@@ -71,7 +66,9 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
     expect(tools.tools.map((t) => t.name)).toContain("echo");
 
     const resources = await client.listResources();
-    expect(resources.resources.map((r) => r.uri)).toContain(FIXTURE_GREETING_URI);
+    expect(resources.resources.map((r) => r.uri)).toContain(
+      FIXTURE_GREETING_URI
+    );
 
     const prompts = await client.listPrompts();
     expect(prompts.prompts.map((p) => p.name)).toContain("welcome");
@@ -94,16 +91,21 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
     await client.listTools();
     const readResult = await client.readResource({ uri: FIXTURE_GREETING_URI });
     expect(
-      Array.isArray(readResult.contents) ? readResult.contents[0]?.text : undefined,
+      Array.isArray(readResult.contents)
+        ? readResult.contents[0]?.text
+        : undefined
     ).toBe("hello from the fixture");
 
     // server/discover fired during connect (SEP-2575).
     expect(byMethod(cap.exchanges, "server/discover")).toBeDefined();
+    expect(byMethod(cap.exchanges, "initialize")).toBeUndefined();
 
     // resultType is REQUIRED on every modern result (SEP-2322).
     const list = byMethod(cap.exchanges, "tools/list");
     expect(list, "tools/list exchange captured").toBeDefined();
-    expect(getWireField(list!.response.json, "result.resultType")).toBe("complete");
+    expect(getWireField(list!.response.json, "result.resultType")).toBe(
+      "complete"
+    );
 
     // CacheableResult: ttlMs + cacheScope on list/read results (SEP-2549). The
     // server always emits both on the modern era (defaulting to 0 / 'private').
@@ -121,7 +123,7 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
         "params",
         "_meta",
         "io.modelcontextprotocol/protocolVersion",
-      ]),
+      ])
     ).toBe("2026-07-28");
 
     // No sessions in the modern era (SEP-2567): the server must never mint one.
@@ -133,6 +135,16 @@ describe("dual-era fixture — modern (2026-07-28)", () => {
   });
 });
 
+describe("dual-era fixture — automatic selection", () => {
+  it("selects modern via server/discover without initialize", async () => {
+    const { client, cap } = await connectAutomatic();
+    expect(client.getProtocolEra()).toBe("modern");
+    expect(byMethod(cap.exchanges, "server/discover")).toBeDefined();
+    expect(byMethod(cap.exchanges, "initialize")).toBeUndefined();
+    await client.close();
+  });
+});
+
 describe("dual-era fixture — legacy (2025-era)", () => {
   it("serves the same handler over the legacy era with no modern wire members", async () => {
     const { client, cap } = await connectLegacy();
@@ -140,6 +152,7 @@ describe("dual-era fixture — legacy (2025-era)", () => {
 
     const tools = await client.listTools();
     expect(tools.tools.map((t) => t.name)).toContain("echo");
+    expect(byMethod(cap.exchanges, "initialize")).toBeDefined();
 
     // The legacy era carries no `resultType` on the wire — the modern-only
     // member must not leak onto a 2025-era result.

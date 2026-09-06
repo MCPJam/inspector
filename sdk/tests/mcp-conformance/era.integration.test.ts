@@ -85,6 +85,16 @@ const isModernOnly = (id: MCPCheckId) =>
   id.startsWith("modern-") || MODERN_ONLY_UNPREFIXED.includes(id);
 
 // Phase 7 §15.3 modern MUST checks the conforming beta.4 fixture satisfies.
+//
+// `modern-logs-require-log-level` is deliberately ABSENT. This run configures
+// no `logProbe`, so the check has no request the server is known to log about
+// and reports `could-not-run` (see the could-not-run assertion above). Listing
+// it here asserted the opposite — that an unprobed run establishes the MUST —
+// which is exactly the free pass the check used to hand out.
+//
+// `modern-no-session-id` stays: this fixture completes the modern handshake, so
+// its responses are real exchanges the server could have attached a session to,
+// and their silence is a verdict rather than an artifact of a dead session.
 const MODERN_MUST_PASSING: MCPCheckId[] = [
   "modern-client-handshake",
   "modern-server-discover",
@@ -96,7 +106,6 @@ const MODERN_MUST_PASSING: MCPCheckId[] = [
   "modern-unsupported-version-error",
   "modern-removed-methods-not-found",
   "modern-resource-not-found-invalid-params",
-  "modern-logs-require-log-level",
   "modern-no-session-id",
 ];
 
@@ -150,11 +159,15 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
 
     // Exit gate: no false failures, no crash.
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // NOT `passed`: four modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, and a graceful subscription close is server-initiated and
-    // cannot be induced by a client-side probe. Both report `could-not-run`,
-    // so the run is honestly `incomplete` rather than green.
+    // configure, a declared outputSchema can only be graded against a real
+    // `tools/call` result and so needs a safe-to-execute fixture, a graceful
+    // subscription close is server-initiated and cannot be induced by a
+    // client-side probe, and the log-level gate needs a `logProbe` naming a
+    // tool that actually logs — without one, silence proves nothing. All four
+    // report `could-not-run`, so the run is honestly `incomplete` rather than
+    // green.
     expect(result.outcome).toBe("incomplete");
     expect(
       result.checks
@@ -162,7 +175,9 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .map((c) => c.id)
         .sort(),
     ).toEqual([
+      "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
+      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
 
@@ -261,11 +276,15 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
     }).run();
 
     expect(result.checks.filter((c) => c.status === "failed")).toEqual([]);
-    // NOT `passed`: two modern obligations cannot be exercised here — the
+    // NOT `passed`: four modern obligations cannot be exercised here — the
     // -32021 path needs an `inputRequiredProbe` this fixture does not
-    // configure, and a graceful subscription close is server-initiated and
-    // cannot be induced by a client-side probe. Both report `could-not-run`,
-    // so the run is honestly `incomplete` rather than green.
+    // configure, a declared outputSchema can only be graded against a real
+    // `tools/call` result and so needs a safe-to-execute fixture, a graceful
+    // subscription close is server-initiated and cannot be induced by a
+    // client-side probe, and the log-level gate needs a `logProbe` naming a
+    // tool that actually logs — without one, silence proves nothing. All four
+    // report `could-not-run`, so the run is honestly `incomplete` rather than
+    // green.
     expect(result.outcome).toBe("incomplete");
     expect(
       result.checks
@@ -273,7 +292,9 @@ describe("MCP conformance × era-awareness against the dual-era fixture", () => 
         .map((c) => c.id)
         .sort(),
     ).toEqual([
+      "modern-logs-require-log-level",
       "modern-subscription-graceful-close",
+      "modern-tool-output-schema-conformant",
       "modern-undeclared-capability-error",
     ]);
     for (const id of LEGACY_ONLY) {

@@ -11,6 +11,7 @@ import { TestCasesOverview } from "../test-cases-overview";
 
 const useConvexMock = vi.hoisted(() => vi.fn());
 const useQueryMock = vi.hoisted(() => vi.fn());
+const flagMock = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock("posthog-js", () => ({
   default: {
@@ -30,6 +31,10 @@ vi.mock("@/lib/PosthogUtils", () => ({
 vi.mock("convex/react", () => ({
   useConvex: useConvexMock,
   useQuery: useQueryMock,
+}));
+
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: flagMock,
 }));
 
 describe("TestCasesOverview", () => {
@@ -73,6 +78,7 @@ describe("TestCasesOverview", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    flagMock.mockReturnValue(false);
   });
 
   it("hydrates saved quick runs from fresh case metadata and iteration queries", async () => {
@@ -124,6 +130,95 @@ describe("TestCasesOverview", () => {
       "testSuites:listTestIterations",
       { testCaseId: "case-1" },
     );
+  });
+
+  /**
+   * The per-case import badge.
+   *
+   * The COPY is the assertion. `exact` is a converter claim, never an MCPJam
+   * verification, so the badge must say "claimed exact" — and must not say
+   * "verified" or "accepted" anywhere near it. Asserting the exact string is
+   * the only thing that stops a well-meaning wording change from turning an
+   * unverified claim into an apparent guarantee.
+   */
+  describe("import claim badge", () => {
+    function renderCases(cases: Array<Record<string, unknown>>) {
+      useConvexMock.mockReturnValue({ query: vi.fn(async () => null) });
+      useQueryMock.mockImplementation(() => undefined);
+      renderWithProviders(
+        <TestCasesOverview
+          suite={suite}
+          cases={cases as never}
+          allIterations={[]}
+          runsViewMode="test-cases"
+          onViewModeChange={vi.fn()}
+          onTestCaseClick={vi.fn()}
+          runTrendData={[]}
+          modelStats={[]}
+          runsLoading={false}
+        />,
+      );
+    }
+
+    it('says "claimed exact", never "verified" or "accepted"', async () => {
+      renderCases([
+        {
+          ...baseCase,
+          import: { status: "exact", note: "1:1 with the upstream form." },
+        },
+      ]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      expect(within(row).getByText("claimed exact")).toBeInTheDocument();
+      expect(within(row).queryByText(/verified/i)).not.toBeInTheDocument();
+      expect(within(row).queryByText(/accepted/i)).not.toBeInTheDocument();
+    });
+
+    it.each([
+      ["approximated", "approximated"],
+      ["unsupported", "unsupported"],
+      ["unresolved", "unresolved"],
+    ] as const)("renders the %s badge", async (status, label) => {
+      renderCases([{ ...baseCase, import: { status } }]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      expect(
+        within(row).getByTestId(`import-claim-${status}`),
+      ).toHaveTextContent(label);
+    });
+
+    it("renders no badge at all for a natively authored case", async () => {
+      renderCases([baseCase]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      // Absence of a claim is not a status. A "native" chip on every
+      // hand-authored case would be noise on the surface where hand-authored
+      // cases are the norm.
+      expect(within(row).queryByText("claimed exact")).not.toBeInTheDocument();
+      expect(
+        within(row).queryByTestId(/^import-claim-/),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders nothing for a null claim, without throwing", async () => {
+      // A stored `null` and an absent field mean the same thing — this case was
+      // authored here — and a badge component that only guarded `undefined`
+      // would crash the whole overview on the first row a PATCH had cleared.
+      renderCases([{ ...baseCase, import: null }]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      expect(
+        within(row).queryByTestId(/^import-claim-/),
+      ).not.toBeInTheDocument();
+    });
+
+    it("renders nothing for a status this build does not recognize", async () => {
+      renderCases([
+        { ...baseCase, import: { status: "probably-fine" } },
+      ]);
+      const row = await screen.findByTestId("test-case-row-case-1");
+      // A made-up label for an unrecognized claim would read as an assertion
+      // MCPJam never made.
+      expect(
+        within(row).queryByTestId(/^import-claim-/),
+      ).not.toBeInTheDocument();
+    });
   });
 
   it("uses the latest iteration by updatedAt for Last run", async () => {
@@ -546,5 +641,62 @@ describe("TestCasesOverview", () => {
     expect(secondEvent.defaultPrevented).toBe(true);
     expect(checkbox).not.toBeChecked();
     expect(onTestCaseClick).not.toHaveBeenCalled();
+  });
+
+  it("keeps Generate and New case when the simple editor flag is off", () => {
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onCreateTestCase={vi.fn()}
+        onRecordTestCase={vi.fn()}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Generate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "New case" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Record" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Write" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/mcpjam cloud eval/)).not.toBeInTheDocument();
+  });
+
+  it("shows Generate, Record, and Write plus a CLI import pointer when the flag is on", () => {
+    flagMock.mockReturnValue(true);
+    useConvexMock.mockReturnValue({ query: vi.fn() });
+    useQueryMock.mockReturnValue(undefined);
+    renderWithProviders(
+      <TestCasesOverview
+        suite={suite}
+        cases={[]}
+        allIterations={[]}
+        runsViewMode="test-cases"
+        onViewModeChange={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        hideViewModeSelect
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onCreateTestCase={vi.fn()}
+        onRecordTestCase={vi.fn()}
+        runTrendData={[]}
+        modelStats={[]}
+        runsLoading={false}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Generate" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Record" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Write" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "New case" })).not.toBeInTheDocument();
+    expect(screen.getByText(/mcpjam cloud eval/)).toBeInTheDocument();
   });
 });

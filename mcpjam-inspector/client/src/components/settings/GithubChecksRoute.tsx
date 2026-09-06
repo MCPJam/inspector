@@ -1,11 +1,22 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Navigate } from "react-router";
 import { useConvexAuth } from "convex/react";
 import { ChevronLeft, Github, Plus, Trash2 } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { useAppNavigate } from "@/lib/app-navigation";
+import { Badge } from "@mcpjam/design-system/badge";
 import { Button } from "@mcpjam/design-system/button";
 import { Switch } from "@mcpjam/design-system/switch";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import {
   Select,
   SelectContent,
@@ -14,12 +25,36 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useOrganizationQueries } from "@/hooks/useOrganizations";
+import {
+  OutagePolicyExplainer,
+  OutagePolicySelectItems,
+} from "./github-checks-outage-policy";
 import { SettingsSection } from "../setting/SettingsSection";
 import { SettingsPageShell } from "./SettingsPageShell";
 import {
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE,
+  githubChecksWriteErrorMessage,
+  githubFeedbackCommentsErrorMessage,
+  GITHUB_BINDING_STATUS_COPY,
+  GITHUB_CONNECTION_STATUS_COPY,
+  GITHUB_CONNECTION_STATUS_LABEL,
+  GITHUB_FEEDBACK_COMMENTS_COPY,
+  GITHUB_UNBIND_CONFIRMATION,
+} from "@/lib/github-checks-errors";
+import { redirectToGithub } from "@/lib/github-external-redirect";
+import {
+  findRepoByPickerValue,
+  installationBindingsKey,
+  pickerLabelFor,
+  pickerValueFor,
+  shouldShowAccountLabels,
+  verifiedConnectArgs,
+} from "@/lib/github-repo-picker";
+import {
   useGithubChecksSettings,
+  type GithubCheckFeedbackComments,
+  type GithubCheckOutagePolicy,
   type GithubCheckRepoConfigRow,
+  type GithubInstallationBinding,
   type InstallationRepo,
   type SuiteOption,
 } from "@/hooks/useGithubChecksSettings";
@@ -62,6 +97,116 @@ function RepoCheckState({ enabled }: { enabled: boolean }) {
   );
 }
 
+/**
+ * Live GitHub visibility, or nothing.
+ *
+ * `undefined` is UNKNOWN, and it arrives four ways: GitHub omitted the flag,
+ * the repository is not in the current installation listing, the listing has
+ * not loaded yet, or the listing failed. None of those is evidence that a
+ * repository is public, so none of them renders a badge. Guessing wrong here
+ * labels somebody's private repository as public on their own settings page.
+ */
+function RepoVisibilityBadge({ isPrivate }: { isPrivate?: boolean }) {
+  if (isPrivate === undefined) return null;
+  return (
+    <Badge variant="outline" className="shrink-0">
+      {isPrivate ? "Private" : "Public"}
+    </Badge>
+  );
+}
+
+/**
+ * Whether this connection is actually ready, and what to do if it is not.
+ *
+ * The status is DERIVED BY THE BACKEND from three facts this app never sees —
+ * a verified repository identity, an active org ↔ installation binding, and
+ * per-repository access. It is deliberately NOT inferred from the visibility
+ * badge above: absence there means "GitHub did not tell us", which is a
+ * different thing from "something is wrong", and conflating them would put a
+ * scary warning on a perfectly healthy repository whose `private` flag GitHub
+ * happened to omit.
+ *
+ * `verified` renders nothing at all. A badge saying "fine" on every healthy row
+ * is noise that makes the three rows that need attention harder to find.
+ */
+function RepoConnectionState({
+  status,
+}: {
+  status: GithubCheckRepoConfigRow["connectionStatus"];
+}) {
+  const label = GITHUB_CONNECTION_STATUS_LABEL[status];
+  if (!label) return null;
+  return (
+    <Badge variant="outline" className="shrink-0">
+      {label}
+    </Badge>
+  );
+}
+
+function RepoConnectionExplainer({
+  status,
+}: {
+  status: GithubCheckRepoConfigRow["connectionStatus"];
+}) {
+  const copy = GITHUB_CONNECTION_STATUS_COPY[status];
+  if (!copy) return null;
+  return <span className="text-xs text-muted-foreground">{copy}</span>;
+}
+
+/**
+ * One GitHub account this workspace has connected.
+ *
+ * `accountLogin` is DISPLAY ONLY — GitHub allows renames, and nothing on either
+ * side of this decides anything from it. The raw GitHub installation id is
+ * never rendered and never received: `installationRef` is an opaque row id.
+ */
+function InstallationRow({
+  binding,
+  onUnbind,
+  disabled,
+}: {
+  binding: GithubInstallationBinding;
+  onUnbind: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div
+      className="flex items-center justify-between gap-4 px-4 py-3"
+      data-testid={`installation-row-${binding.accountLogin}`}
+    >
+      <div className="flex items-center gap-3 min-w-0">
+        <div className="size-8 rounded-md bg-primary/10 flex items-center justify-center shrink-0">
+          <Github className="size-4 text-primary" aria-hidden />
+        </div>
+        <div className="flex flex-col min-w-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-sm font-medium truncate">
+              {binding.accountLogin}
+            </span>
+            <Badge variant="outline" className="shrink-0">
+              {binding.accountType === "Organization"
+                ? "Organization"
+                : "Personal"}
+            </Badge>
+          </div>
+          <span className="text-xs text-muted-foreground">
+            {GITHUB_BINDING_STATUS_COPY[binding.status]}
+          </span>
+        </div>
+      </div>
+      <Button
+        variant="outline"
+        size="sm"
+        disabled={disabled}
+        onClick={onUnbind}
+        aria-label={`Disconnect ${binding.accountLogin}`}
+      >
+        Disconnect
+      </Button>
+    </div>
+  );
+}
+
 export function GithubChecksRoute({
   activeOrganizationId,
 }: GithubChecksRouteProps = {}) {
@@ -70,11 +215,18 @@ export function GithubChecksRoute({
     availability,
     repos,
     suites,
-    connectRepo,
+    bindings,
+    connectVerifiedRepo,
     setRepoEnabled,
     setRepoSuite,
+    setRepoOutagePolicy,
+    setRepoConformance,
+    setRepoFeedbackComments,
     disconnectRepo,
     listInstallationRepos,
+    startInstallation,
+    startDirectClaim,
+    unbindInstallation,
   } = useGithubChecksSettings(activeOrganizationId);
 
   // `activeOrganizationId` arrives asynchronously during app bootstrap, and the
@@ -106,8 +258,48 @@ export function GithubChecksRoute({
   const [pendingToggles, setPendingToggles] = useState<ReadonlySet<string>>(
     () => new Set()
   );
+  // Policy writes are tracked SEPARATELY from `pendingToggles`: they are
+  // different writes on the same row, and one set would have a policy change
+  // disable the enable switch (and vice versa) for no reason the user can see.
+  const [pendingPolicies, setPendingPolicies] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  const [pendingConformance, setPendingConformance] = useState<
+    ReadonlySet<string>
+  >(() => new Set());
+  // Its own set, for the same reason the policy writes have one: three
+  // different writes land on one row, and a shared set would grey out a control
+  // the admin has no reason to think is busy.
+  const [pendingFeedback, setPendingFeedback] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+  // The picker's value is the repository's NUMERIC ID as a string, not its
+  // name. Two accounts can both have a `widgets`, and the id is what the connect
+  // is actually keyed on — selecting by name would make the disambiguation the
+  // account label provides purely cosmetic.
   const [pickerRepo, setPickerRepo] = useState<string>("");
+  // Which binding action is in flight, so the buttons can be disabled without
+  // one spinner standing in for all three.
+  const [bindingBusy, setBindingBusy] = useState(false);
+  // The binding an admin has asked to disconnect, held until they confirm.
+  const [pendingUnbind, setPendingUnbind] =
+    useState<GithubInstallationBinding | null>(null);
   const [pickerSuite, setPickerSuite] = useState<string>("");
+  // `""` is "not chosen", and it is the only initial value this may have. A
+  // preselected policy would record a decision the administrator never made —
+  // the exact thing the unstamped legacy rows below exist to warn about.
+  const [pickerPolicy, setPickerPolicy] = useState<
+    GithubCheckOutagePolicy | ""
+  >("");
+
+  // The organization a completion belongs to. `activeOrganizationId` is a prop
+  // and this component stays mounted across a switch, so an in-flight connect
+  // resolves against whatever org is active WHEN IT LANDS — which is not
+  // necessarily the one it was submitted for.
+  const organizationIdRef = useRef(activeOrganizationId);
+  useEffect(() => {
+    organizationIdRef.current = activeOrganizationId;
+  }, [activeOrganizationId]);
 
   /**
    * A write refused as unavailable means the surface flipped off underneath
@@ -115,45 +307,151 @@ export function GithubChecksRoute({
    * response — the next render redirects if it is genuinely off now.
    */
   const handleWriteError = useCallback((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("not currently available")) {
-      toast.error(GITHUB_CHECKS_UNAVAILABLE_MESSAGE);
-      return;
-    }
-    toast.error(message);
+    toast.error(githubChecksWriteErrorMessage(error));
   }, []);
 
+  /**
+   * The signal that says the offerable repositories have gone stale.
+   *
+   * `listInstallationRepos` is an action — a one-shot read that nothing re-runs
+   * on its own — while `bindings` is a live query. Deriving one stable string
+   * from the other is what lets the listing follow a bind without a reload; see
+   * `installationBindingsKey` for why it is a key rather than the array.
+   */
+  const bindingsKey = useMemo(
+    () => installationBindingsKey(bindings),
+    [bindings]
+  );
+
+  // Switching organizations must not carry a selection across: the connect
+  // sends the CURRENT org id, so a picked repository left over from the
+  // previous org would be submitted against an org it does not belong to.
+  //
+  // Deliberately SEPARATE from the listing effect below, which now also runs
+  // when the bindings change. Connecting an account, or one being suspended
+  // elsewhere, is not a reason to throw away a half-made choice — the
+  // organization it belongs to has not changed. And a repository that
+  // disappears from the refreshed listing cannot be submitted anyway:
+  // `handleConnect` re-resolves the picked value against the listing and
+  // refuses when it no longer resolves.
   useEffect(() => {
-    // Switching orgs must not let the previous org's in-flight result land on
-    // the new one: `connectRepo` sends the CURRENT org id, so a stale selection
-    // would be submitted against an org that repo does not belong to. Reset the
-    // picker and ignore any completion after cleanup.
-    let cancelled = false;
-    setInstallationRepos(null);
-    setInstallationReposFailed(false);
     setPickerRepo("");
     setPickerSuite("");
+    setPickerPolicy("");
+  }, [activeOrganizationId]);
 
+  /**
+   * What the listing on screen (or in flight) was fetched for.
+   *
+   * The effect below now runs for two different reasons, and only one of them
+   * is a reason to ask GitHub again. `bindings` is not queried until
+   * availability says `enabled` (see `useGithubChecksSettings`), so it is still
+   * `undefined` on the render that starts the FIRST fetch and answers a round
+   * trip later — reading that first answer as a change would double every cold
+   * load, for installations the fetch already in flight had read anyway.
+   */
+  const listedForRef = useRef<{
+    organizationId: string | null | undefined;
+    bindingsKey: string | null;
+  } | null>(null);
+
+  /**
+   * Which listing request the page is still willing to accept.
+   *
+   * A GENERATION rather than a per-run `cancelled` flag, because the two are
+   * not the same rule and the difference is load-bearing: a re-run that only
+   * adopts the bindings' first answer must leave the request already in flight
+   * alone, while a re-run that supersedes it — a different organization, an
+   * actual change in the bindings, availability going away — must make sure its
+   * answer can never land. Only the second bumps this.
+   */
+  const listingGenerationRef = useRef(0);
+
+  // Nothing that was asked for on behalf of THIS instance may land after it is
+  // gone. `handleWriteError` toasts, and `toast` is global: a failure for a page
+  // the user has left is noise they cannot act on. Clearing the record as well
+  // is what lets React 18 StrictMode's mount-cleanup-mount fetch again rather
+  // than trust a listing that was thrown away.
+  useEffect(
+    () => () => {
+      listingGenerationRef.current += 1;
+      listedForRef.current = null;
+    },
+    []
+  );
+
+  useEffect(() => {
     if (availability?.state !== "enabled") {
-      return () => {
-        cancelled = true;
-      };
+      listingGenerationRef.current += 1;
+      listedForRef.current = null;
+      setInstallationRepos(null);
+      setInstallationReposFailed(false);
+      // The surface going away takes the selection with it, as it always did.
+      // Nothing renders it in this state, but coming back with a repository
+      // chosen from a listing that is no longer on screen would be a choice
+      // made against nothing.
+      setPickerRepo("");
+      setPickerSuite("");
+      setPickerPolicy("");
+      return;
     }
+
+    const listedFor = listedForRef.current;
+    if (listedFor && listedFor.organizationId === activeOrganizationId) {
+      // Same organization, so this run is about the bindings.
+      if (bindingsKey === null || bindingsKey === listedFor.bindingsKey) {
+        // Either the query has not answered, or it re-delivered rows that
+        // describe the same installations in the same states. Nothing the
+        // listing depends on has moved.
+        return;
+      }
+      if (listedFor.bindingsKey === null) {
+        // The listing was requested before the query had answered, so its first
+        // answer is not a change: it describes the installations that request
+        // was already made against. Adopt it as the baseline — comparing
+        // against it is what makes the NEXT bind a change — and deliberately do
+        // not bump the generation, so the request in flight still lands.
+        listedForRef.current = {
+          organizationId: activeOrganizationId,
+          bindingsKey,
+        };
+        return;
+      }
+    }
+
+    // Switching orgs must not let the previous org's in-flight result land on
+    // the new one: `connectVerifiedRepo` sends the CURRENT org id, so a stale
+    // selection would be submitted against an org that repo does not belong to.
+    const generation = (listingGenerationRef.current += 1);
+    listedForRef.current = {
+      organizationId: activeOrganizationId,
+      bindingsKey,
+    };
+    setInstallationRepos(null);
+    setInstallationReposFailed(false);
 
     void listInstallationRepos()
       .then((repositories) => {
-        if (!cancelled) setInstallationRepos(repositories);
+        if (listingGenerationRef.current !== generation) return;
+        setInstallationRepos(repositories);
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (listingGenerationRef.current !== generation) return;
         setInstallationReposFailed(true);
         handleWriteError(error);
       });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [availability?.state, listInstallationRepos, handleWriteError]);
+    // `activeOrganizationId` is listed for the same reason it always was: the
+    // org IS what this effect re-reads for, and depending only on the
+    // callback's identity would tie that to a memoization detail of the hook
+    // rather than to the switch itself. The body reads it now as well, to tell
+    // an org switch apart from a change in the bindings.
+  }, [
+    activeOrganizationId,
+    availability?.state,
+    bindingsKey,
+    listInstallationRepos,
+    handleWriteError,
+  ]);
 
   // Without an active organization the availability query never runs, so
   // treating that as "still loading" would leave the page blank forever. But
@@ -178,26 +476,84 @@ export function GithubChecksRoute({
   const suiteById = (suiteId: string) =>
     suiteOptions.find((s) => s._id === suiteId);
 
+  /**
+   * Send the admin to GitHub to install, or to authorize a claim.
+   *
+   * Both start server-side — the URL carries a one-time state whose hash the
+   * backend stored — so this only follows what it is handed, through a helper
+   * that refuses anything not on github.com.
+   */
+  const beginBindingFlow = async (kind: "install" | "claim") => {
+    setBindingBusy(true);
+    try {
+      const { url } =
+        kind === "install"
+          ? await startInstallation().then((r) => ({ url: r.installUrl }))
+          : await startDirectClaim().then((r) => ({ url: r.authorizeUrl }));
+      redirectToGithub(url);
+    } catch (error) {
+      handleWriteError(error);
+      // Only cleared on failure: on success the browser is already leaving, and
+      // re-enabling the button would invite a second click that burns a second
+      // link session.
+      setBindingBusy(false);
+    }
+  };
+
+  const handleUnbindConfirmed = async () => {
+    const binding = pendingUnbind;
+    if (!binding) return;
+    setPendingUnbind(null);
+    setBindingBusy(true);
+    try {
+      await unbindInstallation({ installationRef: binding.installationRef });
+      toast.success(`Disconnected ${binding.accountLogin}.`);
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setBindingBusy(false);
+    }
+  };
+
   const handleConnect = async () => {
     const suite = suiteById(pickerSuite);
-    if (!pickerRepo || !suite?.projectId) {
-      toast.error("Pick a repository and a suite first.");
+    const repo = findRepoByPickerValue(connectableRepos, pickerRepo);
+    // The same three-way rule the button enforces, enforced again here. The
+    // disabled attribute is a hint to a person; this is the invariant, and the
+    // policy half of it is why: a connect that quietly omitted `outagePolicy`
+    // would store a row nobody chose a policy for — the legacy state this whole
+    // screen exists to stop creating.
+    if (!repo || !suite?.projectId || !pickerPolicy) {
+      toast.error("Pick a repository, a suite, and an outage policy first.");
       return;
     }
+    // Which org this submission belongs to. Compared against the ref after the
+    // await, because the user can switch orgs while GitHub is being asked.
+    const submittedForOrganization = activeOrganizationId;
     setConnecting(true);
     try {
       // The project is DERIVED from the suite, never picked separately: the
       // backend requires them to agree, so offering two controls would only
       // create a way to get it wrong.
-      await connectRepo({
-        repoFullName: pickerRepo,
-        projectId: suite.projectId,
-        suiteId: suite._id,
-      });
+      await connectVerifiedRepo(
+        verifiedConnectArgs(repo, {
+          projectId: suite.projectId,
+          suiteId: suite._id,
+          outagePolicy: pickerPolicy,
+        })
+      );
+      // A completion for the PREVIOUS org lands on a page that is now showing a
+      // different one. Clearing selections there would wipe a fresh choice, and
+      // the success toast would credit the wrong organization.
+      if (organizationIdRef.current !== submittedForOrganization) return;
       setPickerRepo("");
       setPickerSuite("");
+      setPickerPolicy("");
       toast.success("Repository connected.");
     } catch (error) {
+      // Same rule for the failure: an error about an org the user has already
+      // left is noise they cannot act on.
+      if (organizationIdRef.current !== submittedForOrganization) return;
       handleWriteError(error);
     } finally {
       setConnecting(false);
@@ -241,6 +597,90 @@ export function GithubChecksRoute({
     }
   };
 
+  const handlePolicyChange = async (
+    row: GithubCheckRepoConfigRow,
+    outagePolicy: GithubCheckOutagePolicy
+  ) => {
+    // Same reason as the enable toggle: the select stays bound to the server
+    // snapshot until the list refreshes, so a second change made before the
+    // first settles would be sent against a row state that is already moving.
+    if (pendingPolicies.has(row._id)) return;
+    setPendingPolicies((current) => new Set(current).add(row._id));
+    try {
+      // `{ changed: false }` is a successful no-op — the stored policy already
+      // said this. Nothing to announce; only a throw is worth a toast.
+      await setRepoOutagePolicy({ configId: row._id, outagePolicy });
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setPendingPolicies((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
+  const handleConformanceToggle = async (row: GithubCheckRepoConfigRow) => {
+    if (pendingConformance.has(row._id)) return;
+    setPendingConformance((current) => new Set(current).add(row._id));
+    try {
+      await setRepoConformance({
+        configId: row._id,
+        conformanceEnabled: row.conformanceEnabled !== true,
+      });
+    } catch (error) {
+      handleWriteError(error);
+    } finally {
+      setPendingConformance((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
+  const handleFeedbackCommentsToggle = async (
+    row: GithubCheckRepoConfigRow
+  ) => {
+    if (pendingFeedback.has(row._id)) return;
+    // ABSENT IS `on`. Only a stored `off` turns the comment off, so the flip of
+    // an untouched row is `off` — the same reading the switch below renders.
+    // Deriving the next value from `=== "on"` instead would send `on` for every
+    // repository that has never been touched, which is every repository, and
+    // the first click would appear to do nothing.
+    const next: GithubCheckFeedbackComments =
+      row.feedbackComments === "off" ? "on" : "off";
+    setPendingFeedback((current) => new Set(current).add(row._id));
+    try {
+      const result = await setRepoFeedbackComments({
+        configId: row._id,
+        feedbackComments: next,
+      });
+      // Announced, unlike the policy select: this write changes what MCPJam
+      // writes on OTHER PEOPLE'S pull requests, and the switch alone does not
+      // say that the check itself is unaffected.
+      //
+      // But ONLY on a real change, which is the policy select's rule and the
+      // reason it announces nothing. `{ changed: false }` is a successful
+      // no-op — the stored value already said this — and it is reachable
+      // whenever the row is stale: another tab, or a write that landed before
+      // this list refetched. Announcing then would tell an admin MCPJam "will
+      // stop commenting" on a repository whose setting nobody moved.
+      if (result?.changed) {
+        toast.success(GITHUB_FEEDBACK_COMMENTS_COPY[next]);
+      }
+    } catch (error) {
+      toast.error(githubFeedbackCommentsErrorMessage(error));
+    } finally {
+      setPendingFeedback((current) => {
+        const next = new Set(current);
+        next.delete(row._id);
+        return next;
+      });
+    }
+  };
+
   const handleDisconnect = async (row: GithubCheckRepoConfigRow) => {
     try {
       await disconnectRepo({ configId: row._id });
@@ -249,12 +689,27 @@ export function GithubChecksRoute({
     }
   };
 
-  // Both sides lowercased. The backend stores the canonical lowercase form, so
-  // today only the candidate strictly needs it — but relying on that means a
-  // contract change silently reintroduces duplicate offers, and normalizing
-  // both is free.
+  // ONE normalization for every repository-name comparison on this page, on
+  // both sides of every join. The backend stores the canonical lowercase form,
+  // so today only the candidate strictly needs it — but two spellings of "the
+  // same repository" is exactly how a padded listing entry earns a visibility
+  // badge from one comparison while slipping past the already-connected filter
+  // beside it, landing in the picker as an offer the submit then refuses.
+  const normalizeRepoName = (fullName: string) => fullName.trim().toLowerCase();
+
+  // Live visibility. Only an explicit boolean is recorded: a repository GitHub
+  // returned without `private`, one that is not in this listing at all, and a
+  // listing that has not loaded or has failed all fall through to `undefined`,
+  // which renders no badge.
+  const visibilityByRepo = new Map<string, boolean>();
+  for (const repo of installationRepos ?? []) {
+    if (typeof repo.private === "boolean") {
+      visibilityByRepo.set(normalizeRepoName(repo.fullName), repo.private);
+    }
+  }
+
   const alreadyConnected = new Set(
-    rows.map((row) => row.repoFullName.toLowerCase())
+    rows.map((row) => normalizeRepoName(row.repoFullName))
   );
   // Offer nothing until the connected list has actually loaded. `rows` is `[]`
   // while `repos` is undefined, so filtering then would advertise repositories
@@ -263,8 +718,17 @@ export function GithubChecksRoute({
     repos === undefined
       ? []
       : (installationRepos ?? []).filter(
-          (repo) => !alreadyConnected.has(repo.fullName.toLowerCase())
+          (repo) => !alreadyConnected.has(normalizeRepoName(repo.fullName))
         );
+
+  // Selection and labelling live in `@/lib/github-repo-picker`, shared with the
+  // suite's own picker: which value selects a repository, and what the verified
+  // connect is told about it, are a contract with the backend rather than a
+  // presentation detail, and two copies drift the first time either side gains
+  // a field.
+  const showAccountLabels = shouldShowAccountLabels(connectableRepos);
+
+  const bindingRows: GithubInstallationBinding[] = bindings ?? [];
 
   return (
     <SettingsPageShell
@@ -289,8 +753,85 @@ export function GithubChecksRoute({
       <p className="text-sm text-muted-foreground">
         Connect a repository to run an eval suite as a GitHub check on every
         pull request. The check runs the suite you pick here against the PR's
-        head commit and reports back as a status check.
+        preview server. Conformance is a second, opt-in check on the same build
+        — existing repositories stay eval-only until you turn it on.
       </p>
+
+      <SettingsSection title="GitHub accounts">
+        {bindings === undefined ? (
+          <div className="flex items-center justify-center px-4 py-8 text-sm text-muted-foreground">
+            Loading…
+          </div>
+        ) : bindingRows.length === 0 ? (
+          <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
+            <p>
+              No GitHub accounts connected yet. Install the MCPJam app on the
+              account whose repositories you want checked — or, if somebody has
+              already installed it from GitHub, claim that installation for this
+              workspace.
+            </p>
+          </div>
+        ) : (
+          bindingRows.map((binding) => (
+            <InstallationRow
+              key={binding.installationRef}
+              binding={binding}
+              disabled={bindingBusy}
+              onUnbind={() => setPendingUnbind(binding)}
+            />
+          ))
+        )}
+
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          <Button
+            disabled={bindingBusy}
+            onClick={() => void beginBindingFlow("install")}
+          >
+            <Github className="mr-2 size-4" aria-hidden /> Install on a GitHub
+            account
+          </Button>
+          <Button
+            variant="outline"
+            disabled={bindingBusy}
+            onClick={() => void beginBindingFlow("claim")}
+          >
+            Claim an existing installation
+          </Button>
+        </div>
+        <p className="px-4 pb-3 text-xs text-muted-foreground">
+          Claiming is for an installation somebody already added from GitHub's
+          side. You will be asked to sign in to GitHub so we can confirm you
+          administer that account — installing the app is not on its own proof
+          that it is yours to connect here.
+        </p>
+      </SettingsSection>
+
+      {/* Explicit confirmation, and the copy says the LIMIT of the consequence
+          as well as the consequence: disconnecting stops checks now, and keeps
+          every suite and policy choice, so reconnecting is not a rebuild. */}
+      <AlertDialog
+        open={pendingUnbind !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingUnbind(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Disconnect {pendingUnbind?.accountLogin}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {GITHUB_UNBIND_CONFIRMATION}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it connected</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void handleUnbindConfirmed()}>
+              Disconnect
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <SettingsSection title="Connected repositories">
         {repos === undefined ? (
@@ -300,9 +841,9 @@ export function GithubChecksRoute({
         ) : rows.length === 0 ? (
           <div className="space-y-3 px-4 py-8 text-sm text-muted-foreground">
             <p>
-              No repositories connected yet. Install the MCPJam GitHub App on a
-              repository, then connect it below to start running checks on its
-              pull requests.
+              No repositories connected yet. Connect a GitHub account above,
+              then connect one of its repositories below to start running checks
+              on its pull requests.
             </p>
             <p>
               A repository can declare its check recipe in a{" "}
@@ -334,10 +875,41 @@ export function GithubChecksRoute({
                   <Github className="size-4 text-primary" aria-hidden />
                 </div>
                 <div className="flex flex-col min-w-0">
-                  <span className="text-sm font-medium truncate">
-                    {row.repoFullName}
-                  </span>
+                  <div className="flex items-center gap-2 min-w-0">
+                    <span className="text-sm font-medium truncate">
+                      {row.repoFullName}
+                    </span>
+                    <RepoVisibilityBadge
+                      isPrivate={visibilityByRepo.get(
+                        normalizeRepoName(row.repoFullName)
+                      )}
+                    />
+                    <RepoConnectionState status={row.connectionStatus} />
+                  </div>
                   <RepoCheckState enabled={row.enabled} />
+                  <RepoConnectionExplainer status={row.connectionStatus} />
+                  {/* Always shown, on every row. This is what MCPJam writes
+                      on somebody else's pull request, and a line that only
+                      appeared once it was switched off would be an explanation
+                      arriving after the decision. */}
+                  <span
+                    id={`feedback-comments-note-${row._id}`}
+                    className="text-xs text-muted-foreground"
+                  >
+                    MCPJam posts one comment per pull request and updates it in
+                    place. Turning this off stops the comments and changes
+                    nothing else.
+                  </span>
+                  {row.outagePolicy === undefined ? (
+                    /* Not the same statement as "fail open": the backend does
+                       behave that way for an unstamped row, but nobody chose
+                       it, and saying so is what lets an administrator tell the
+                       two apart. */
+                    <span className="text-xs text-muted-foreground">
+                      No outage policy chosen — effectively fails open, so the
+                      check reports neutral during an MCPJam outage or pause.
+                    </span>
+                  ) : null}
                 </div>
               </div>
 
@@ -361,11 +933,58 @@ export function GithubChecksRoute({
                   </SelectContent>
                 </Select>
 
+                {/* `?? ""` shows the placeholder rather than a value. Binding
+                    this to `fail_open` for an unstamped row would render the
+                    administrator's screen as though they had already chosen
+                    the default — a claim the stored row does not make. */}
+                <Select
+                  value={row.outagePolicy ?? ""}
+                  disabled={pendingPolicies.has(row._id)}
+                  onValueChange={(value) =>
+                    void handlePolicyChange(
+                      row,
+                      value as GithubCheckOutagePolicy
+                    )
+                  }
+                >
+                  <SelectTrigger
+                    className="w-44"
+                    aria-label={`Outage policy for ${row.repoFullName}`}
+                  >
+                    <SelectValue placeholder="Policy not chosen" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <OutagePolicySelectItems />
+                  </SelectContent>
+                </Select>
+
                 <Switch
                   checked={row.enabled}
                   disabled={pendingToggles.has(row._id)}
                   onCheckedChange={() => void handleToggle(row)}
                   aria-label={`Enable checks for ${row.repoFullName}`}
+                />
+
+                <Switch
+                  checked={row.conformanceEnabled === true}
+                  disabled={pendingConformance.has(row._id) || !row.enabled}
+                  onCheckedChange={() => void handleConformanceToggle(row)}
+                  aria-label={`Enable conformance check for ${row.repoFullName}`}
+                />
+
+                {/* `!== "off"` — ABSENT IS ON. Every row connected before
+                    this existed, and every row nobody has touched since, is a
+                    repository MCPJam comments on; rendering those off would
+                    tell an admin the opposite of what is happening on their
+                    pull requests. Not gated on `row.enabled` the way
+                    conformance is: this is a policy about what MCPJam may
+                    write, and it stays answerable while checks are paused. */}
+                <Switch
+                  checked={row.feedbackComments !== "off"}
+                  disabled={pendingFeedback.has(row._id)}
+                  onCheckedChange={() => void handleFeedbackCommentsToggle(row)}
+                  aria-label={`Post feedback comments on pull requests for ${row.repoFullName}`}
+                  aria-describedby={`feedback-comments-note-${row._id}`}
                 />
 
                 <Button
@@ -384,14 +1003,21 @@ export function GithubChecksRoute({
 
       <SettingsSection title="Connect a repository">
         <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+          {/* Keyed and valued by REPOSITORY ID. Two connected accounts can
+              each have a `widgets`, and the id is what the connect is actually
+              keyed on — selecting by name would make the account label below
+              purely decorative and let one pick resolve to the other repo. */}
           <Select value={pickerRepo} onValueChange={setPickerRepo}>
-            <SelectTrigger className="w-64" aria-label="Repository">
+            <SelectTrigger className="w-72" aria-label="Repository">
               <SelectValue placeholder="Select a repository" />
             </SelectTrigger>
             <SelectContent>
               {connectableRepos.map((repo) => (
-                <SelectItem key={repo.fullName} value={repo.fullName}>
-                  {repo.fullName}
+                <SelectItem
+                  key={repo.repositoryId}
+                  value={pickerValueFor(repo)}
+                >
+                  {pickerLabelFor(repo, showAccountLabels)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -410,13 +1036,40 @@ export function GithubChecksRoute({
             </SelectContent>
           </Select>
 
+          <Select
+            value={pickerPolicy}
+            onValueChange={(value) =>
+              setPickerPolicy(value as GithubCheckOutagePolicy)
+            }
+          >
+            <SelectTrigger className="w-52" aria-label="Outage policy">
+              <SelectValue placeholder="Select an outage policy" />
+            </SelectTrigger>
+            <SelectContent>
+              <OutagePolicySelectItems />
+            </SelectContent>
+          </Select>
+
           <Button
             onClick={() => void handleConnect()}
-            disabled={connecting || !pickerRepo || !pickerSuite}
+            disabled={
+              connecting || !pickerRepo || !pickerSuite || !pickerPolicy
+            }
           >
             <Plus className="mr-2 size-4" aria-hidden /> Connect
           </Button>
         </div>
+
+        <OutagePolicyExplainer className="space-y-1 px-4 pb-3 text-xs text-muted-foreground" />
+
+        {/* The consent moment. Connecting starts MCPJam writing on pull
+            requests in somebody else's repository, so the page says so HERE,
+            before the click, rather than only on the row it creates. */}
+        <p className="px-4 pb-3 text-xs text-muted-foreground">
+          MCPJam will also post a comment on each pull request in this
+          repository, updated in place as new commits land. You can turn that
+          off per repository after connecting.
+        </p>
 
         {installationReposFailed ? (
           <div className="px-4 pb-4 text-sm text-muted-foreground">
@@ -425,8 +1078,9 @@ export function GithubChecksRoute({
           </div>
         ) : installationRepos !== null && installationRepos.length === 0 ? (
           <div className="px-4 pb-4 text-sm text-muted-foreground">
-            No repositories available. Install the MCPJam GitHub App on the
-            repositories you want checked, then reload this page.
+            {bindingRows.length === 0
+              ? "No repositories available. Connect a GitHub account above first."
+              : "No repositories available. Give the MCPJam app access to the repositories you want checked on GitHub, then reload this page."}
           </div>
         ) : null}
       </SettingsSection>

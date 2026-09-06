@@ -184,6 +184,141 @@ export interface ScriptedStepResult {
   note?: string;
 }
 
+/**
+ * One interactive element the caller can address, in the SAME vocabulary
+ * `runScriptedStep` accepts.
+ *
+ * The point is that a snapshot is ACTIONABLE, not merely descriptive: an
+ * agent reads `{role: {role: "button", name: "Submit"}}` here and posts it
+ * straight back as a step target. A snapshot that described the DOM in some
+ * other vocabulary would still leave the caller guessing which locator this
+ * harness would accept.
+ */
+export interface SnapshotElement {
+  /**
+   * `exact` is always TRUE on a generated target, and that is load-bearing:
+   * Playwright's `getByRole` name matching is substring and case-insensitive
+   * by default, so a widget with `Save` and `Save as` buttons would emit two
+   * unambiguous-looking targets, and posting `{ name: "Save" }` back would
+   * match both and fail the step with a strict-mode violation. The names here
+   * come from the ARIA tree and are already complete, so exact matching is
+   * both correct and what makes them usable.
+   */
+  role?: { role: string; name?: string; exact?: boolean };
+  testId?: string;
+  /** Visible text, when neither an accessible name nor a test id is available. */
+  text?: string;
+  /**
+   * Which occurrence this is, when a `(role, name)` pair repeats. Present
+   * exactly when `ambiguous` is — a target the caller must disambiguate is
+   * given the means to do it in the same object.
+   */
+  nth?: number;
+  /** True when more than one element matched — use `nth` to disambiguate. */
+  ambiguous?: true;
+}
+
+/**
+ * A text view of the mounted widget, for callers that cannot see pixels.
+ *
+ * WHY THIS EXISTS. Every other way to drive a widget here is COORDINATE-based
+ * (`executeAction` takes `[x, y]`), which silently assumes a multimodal
+ * caller: a text-only model can be handed a screenshot and still have nothing
+ * to click. Chrome DevTools MCP hit the same wall and solved it the same way —
+ * pair the pixels with an accessibility tree carrying addressable handles.
+ * Without this, half the agents that could debug an MCP App cannot reach it.
+ */
+export interface WidgetSnapshot {
+  mode: "a11y";
+  /** Playwright ARIA snapshot (YAML-ish) of the widget frame. */
+  tree: string;
+  /** Interactive elements, ready to use as `runScriptedStep` targets. */
+  elements: SnapshotElement[];
+  /** The tree hit the character ceiling and was clipped. */
+  truncated?: true;
+  capturedAt: number;
+  /** `"no_rendered_widget"` when nothing is mounted. */
+  note?: string;
+}
+
+/**
+ * Ceiling on a captured tree.
+ *
+ * A snapshot is handed to a model, so its cost is tokens. A deeply nested
+ * widget can produce an enormous tree, and an unbounded one would blow the
+ * caller's context on the one call that was supposed to make the widget
+ * legible.
+ */
+const SNAPSHOT_MAX_CHARS = 32_000;
+/** How many addressable elements to list. Beyond this the tree is the answer. */
+const SNAPSHOT_MAX_ELEMENTS = 100;
+/** Roles worth listing: the ones a scripted step can actually act on. */
+const SNAPSHOT_INTERACTIVE_ROLES = [
+  "button",
+  "link",
+  "textbox",
+  "checkbox",
+  "radio",
+  "combobox",
+  "slider",
+  "switch",
+  "tab",
+  "menuitem",
+  "option",
+  "searchbox",
+  "spinbutton",
+] as const;
+
+/** Per-element attribute lookup budget while enriching a snapshot. */
+const SNAPSHOT_ATTRIBUTE_TIMEOUT_MS = 1_000;
+
+/**
+ * Pull addressable `(role, name)` pairs out of a Playwright ARIA snapshot.
+ *
+ * The snapshot is line-oriented YAML-ish: `- button "Submit"`, `- textbox`,
+ * `- link "Docs" [ref=e3]`. Only the roles a scripted step can act on are
+ * listed, because a target the caller cannot use is noise they still pay
+ * tokens for.
+ *
+ * A `(role, name)` pair seen more than once is marked `ambiguous` on EVERY
+ * occurrence — including the first, which only the second sighting proves —
+ * so a caller knows to add `nth` before using it rather than discovering the
+ * collision when the step fails.
+ */
+export function parseSnapshotElements(tree: string): SnapshotElement[] {
+  const roles = new Set<string>(SNAPSHOT_INTERACTIVE_ROLES);
+  const elements: SnapshotElement[] = [];
+  const counts = new Map<string, number>();
+  for (const line of tree.split("\n")) {
+    if (elements.length >= SNAPSHOT_MAX_ELEMENTS) break;
+    // `- <role>` optionally followed by a quoted accessible name. Anything
+    // after (refs, state flags like `[checked]`) is deliberately ignored.
+    const match = /^\s*-\s+([a-z]+)(?:\s+"((?:[^"\\]|\\.)*)")?/.exec(line);
+    if (!match) continue;
+    const role = match[1]!;
+    if (!roles.has(role)) continue;
+    const name = match[2]
+      ? match[2].replace(/\\(["\\])/g, "$1")
+      : undefined;
+    const key = `${role}\u0000${name ?? ""}`;
+    const occurrence = counts.get(key) ?? 0;
+    counts.set(key, occurrence + 1);
+    elements.push({
+      role: { role, ...(name ? { name, exact: true } : {}) },
+      // Carried on every element and only KEPT below for the ambiguous ones —
+      // an unambiguous target reads cleaner without it, and `nth` on a unique
+      // match adds nothing.
+      nth: occurrence,
+    });
+  }
+  for (const element of elements) {
+    const key = `${element.role!.role}\u0000${element.role!.name ?? ""}`;
+    if ((counts.get(key) ?? 0) > 1) element.ambiguous = true;
+    else delete element.nth;
+  }
+  return elements;
+}
+
 export interface HarnessBudgets {
   /** Per-rendered-widget cap on `executeAction` calls before forced dismiss. */
   maxBrowserStepsPerWidget: number;
@@ -1193,6 +1328,40 @@ export class McpAppBrowserHarness {
         note: "no_rendered_widget",
       };
     }
+    // The SAME per-widget budget `executeAction` enforces, and for the same
+    // reason: a scripted step drives the page and captures a frame, so a
+    // caller that only ever posts semantic steps would otherwise drive a
+    // runaway widget forever — refreshing the session TTL on every call —
+    // while the coordinate path next door is capped at twelve. This became
+    // reachable when the step path was exposed as its own route; before that
+    // only the eval runner drove it, with its own bounded step list.
+    const stepBudgetExceeded =
+      widget.actionCount >= this.budgets.maxBrowserStepsPerWidget;
+    // The screenshot budget is per-ITERATION and shared across widgets, so a
+    // scripted step can exhaust it even on a widget with steps to spare —
+    // every successful step captures a frame. Checked with the same split
+    // `executeAction` uses: the step cap DISMISSES the widget (terminal, per
+    // its contract), the screenshot cap only refuses further steps on it.
+    const screenshotBudgetExceeded =
+      this.screenshotCount >= this.budgets.totalScreenshotsPerIteration;
+    if (stepBudgetExceeded) {
+      await this.unmount(input.toolCallId);
+    }
+    if (stepBudgetExceeded || screenshotBudgetExceeded) {
+      return {
+        step,
+        ok: false,
+        reason: stepBudgetExceeded
+          ? "per-widget step budget exhausted"
+          : "per-iteration screenshot budget exhausted",
+        widgetToolCalls: [],
+        followUps: [],
+        elapsedMs: Date.now() - started,
+        note: stepBudgetExceeded
+          ? "step_budget_exceeded"
+          : "screenshot_budget_exceeded",
+      };
+    }
     widget.actionCount += 1;
     this.toolCallBuffer = [];
     this.followUpBuffer = [];
@@ -1439,6 +1608,108 @@ export class McpAppBrowserHarness {
       `screenshot exceeds byte budget after re-encoding ` +
         `(${jpeg.byteLength} > ${this.budgets.screenshotMaxBytes} bytes)`
     );
+  }
+
+  /**
+   * Capture a TEXT view of the mounted widget: its accessibility tree plus
+   * the interactive elements a scripted step can target.
+   *
+   * Read-only and cheap — it does not count against `maxBrowserStepsPerWidget`,
+   * because looking is not acting and a caller forced to spend its interaction
+   * budget on looking would interact blind to save steps.
+   *
+   * Failure returns a snapshot with a `note`, never a throw. A snapshot is
+   * diagnostic; making it able to fail an interaction session would let the
+   * observability break the thing it observes.
+   */
+  async captureSnapshot(toolCallId?: string): Promise<WidgetSnapshot> {
+    const capturedAt = Date.now();
+    const mounted =
+      toolCallId !== undefined
+        ? this.mounted.get(toolCallId)
+        : this.mounted.size > 0;
+    if (!mounted || !this.page) {
+      return {
+        mode: "a11y",
+        tree: "",
+        elements: [],
+        capturedAt,
+        note: "no_rendered_widget",
+      };
+    }
+    const frame = this.widgetFrame();
+    let tree = "";
+    let truncated = false;
+    try {
+      tree = await frame
+        .locator("body")
+        .ariaSnapshot({ timeout: SCRIPTED_STEP_TIMEOUT_MS });
+    } catch (error) {
+      return {
+        mode: "a11y",
+        tree: "",
+        elements: [],
+        capturedAt,
+        note: `snapshot_failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      };
+    }
+    if (tree.length > SNAPSHOT_MAX_CHARS) {
+      // Clipped VISIBLY and flagged. A silently shortened tree would read as a
+      // complete description of a smaller widget, and the caller would conclude
+      // the control it wanted does not exist.
+      tree = `${tree.slice(0, SNAPSHOT_MAX_CHARS)}\n… [truncated]`;
+      truncated = true;
+    }
+
+    // ELEMENTS ARE DERIVED FROM THE TREE, not from DOM attributes.
+    //
+    // The first cut read `aria-label` and fell back to `innerText`, which is
+    // wrong for most real forms: a control named through `<label for>`,
+    // `aria-labelledby`, an `alt`, or a `title` has no `aria-label` and often
+    // no text of its own, so it came back role-only and ambiguous — while the
+    // tree printed directly above it showed the name perfectly well. The
+    // snapshot contradicted itself, and the read-a-control-and-post-it-back
+    // workflow this exists for broke on exactly the widgets people build.
+    //
+    // Playwright's ARIA snapshot already carries the COMPUTED accessible name,
+    // which is the same string `getByRole(role, { name })` matches on. Parsing
+    // it means the elements can only ever agree with the tree beside them.
+    const elements = parseSnapshotElements(tree);
+    // Test ids are not in the tree, so they are looked up only for the
+    // elements already selected — bounded work, and purely additive: a target
+    // is usable without one.
+    for (const element of elements) {
+      if (!element.role?.name) continue;
+      try {
+        const matches = frame.getByRole(
+          element.role.role as Parameters<FrameLocator["getByRole"]>[0],
+          { name: element.role.name, exact: true },
+        );
+        // THIS occurrence, not `.first()`. Reading the first match for every
+        // sibling of an ambiguous pair labelled them all with the first one's
+        // test id — actively misleading precisely when the caller is reaching
+        // for a test id to tell them apart.
+        const testId = await matches
+          .nth(element.nth ?? 0)
+          .getAttribute("data-testid", {
+            timeout: SNAPSHOT_ATTRIBUTE_TIMEOUT_MS,
+          });
+        if (testId) element.testId = testId;
+      } catch {
+        // A detached element simply has no test id listed. It is still
+        // addressable by role, name and nth.
+      }
+    }
+
+    return {
+      mode: "a11y",
+      tree,
+      elements,
+      ...(truncated ? { truncated: true as const } : {}),
+      capturedAt,
+    };
   }
 
   /**

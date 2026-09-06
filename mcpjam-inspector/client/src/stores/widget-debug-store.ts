@@ -7,7 +7,11 @@
 
 import { create } from "zustand";
 import type { CspMode } from "./ui-playground-store";
-import type { OpenAiAppsCapabilities } from "@/lib/client-styles";
+import type {
+  McpAppsCspConnectDomains,
+  McpAppsCspResourceDomains,
+  OpenAiAppsCapabilities,
+} from "@/lib/client-styles";
 
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
@@ -24,6 +28,16 @@ export interface CspViolation {
   columnNumber?: number | null;
   /** Timestamp of the violation */
   timestamp: number;
+  /** API/resource subtype when host emulation blocked the request. */
+  subtype?:
+    | "fetch"
+    | "xhr"
+    | "websocket"
+    | "script"
+    | "stylesheet"
+    | "image"
+    | "font"
+    | "media";
 }
 
 /**
@@ -53,6 +67,10 @@ export interface WidgetSandboxApplied {
    * allowlist directives.
    */
   cspDirectives?: Record<string, string[]>;
+  cspSubtypePolicy?: {
+    cspConnectDomains?: McpAppsCspConnectDomains;
+    cspResourceDomains?: McpAppsCspResourceDomains;
+  };
   /**
    * `true` when the surface bypassed the host CSP resolver entirely
    * (permissive surface with no hardening signals). Drives the
@@ -91,6 +109,23 @@ export interface WidgetSandboxApplied {
     geolocation?: {};
     clipboardWrite?: {};
   };
+  /**
+   * How the sandbox proxy mounted the view. `"url"` means it was written into
+   * a blank same-origin frame and runs at the proxy's URL; the srcdoc values
+   * mean it has no URL of its own (`"srcdoc"` was asked for via the build-time
+   * mount switch, `"srcdoc-fallback"` was forced because the frame's document
+   * was unreachable). Twin of the same field in
+   * `@mcpjam/widget-react`'s `widget-host.ts` — edit both.
+   */
+  viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** The view's document URL as reported by the proxy. */
+  viewUrl?: string;
+  /**
+   * Origin of `viewUrl` — the origin a developer allowlists with a third party
+   * that keys on the page URL (a referrer-restricted API key, an OAuth
+   * redirect URI). Absent on the srcdoc paths, which have no origin.
+   */
+  assignedOrigin?: string;
 }
 
 /**
@@ -128,7 +163,8 @@ export interface WidgetLifecycleEvent {
     | "bridge-connect-ready"
     | "bridge-connect-error"
     | "bridge-connect-skipped"
-    | "app-initialized";
+    | "app-initialized"
+    | "view-mounted";
   status: "ok" | "error" | "pending";
   message?: string;
   timestamp: number;
@@ -167,6 +203,13 @@ export interface WidgetSandboxInfo {
     frameDomains?: string[];
     baseUriDomains?: string[];
   } | null;
+  /**
+   * `_meta.ui.domain` as declared by the server, or null when it declared
+   * none. Compared against the origin MCPJam actually serves the view from;
+   * a mismatch is informational, since each host's domain format differs and
+   * a server can only declare one string.
+   */
+  declaredDomain?: string | null;
 }
 
 export interface WidgetGlobals {
@@ -349,10 +392,7 @@ interface WidgetDebugStore {
    * setSandboxApplied (the renderer's first widget-content-requested event
    * fires before the init effect).
    */
-  appendLifecycle: (
-    toolCallId: string,
-    event: WidgetLifecycleEvent,
-  ) => void;
+  appendLifecycle: (toolCallId: string, event: WidgetLifecycleEvent) => void;
 
   /**
    * Append one mount entry. Create-if-missing for the same reason as

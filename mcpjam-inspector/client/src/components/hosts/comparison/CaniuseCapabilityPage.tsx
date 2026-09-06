@@ -2,7 +2,6 @@ import { useMemo, type ReactNode } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { ChevronLeft } from "lucide-react";
 import { getScenarioHostLogo } from "@/lib/scenario-client-style";
-import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { cn } from "@/lib/utils";
@@ -16,6 +15,7 @@ import {
   buildCaniuseCapabilityPath,
   getCaniuseCapabilityBySlug,
   getCaniuseSupportLabel,
+  caniuseFieldHasPresetData,
   getCaniuseSupportLevel,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
@@ -30,26 +30,36 @@ interface CaniuseCapabilityPageProps {
 export function CaniuseCapabilityPage({
   capabilitySlug,
 }: CaniuseCapabilityPageProps) {
-  const capability = getCaniuseCapabilityBySlug(capabilitySlug);
+  const resolvedCapability = getCaniuseCapabilityBySlug(capabilitySlug);
   const themeMode = usePreferencesStore((s) => s.themeMode);
-  const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const catalogState = useHostCatalog();
   const compareCatalog = catalogState.catalog ?? bundledHostCompatCatalog();
-  const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<string>();
-    if (!claudeCodeEnabled) excluded.add("claude-code");
-    return excluded;
-  }, [claudeCodeEnabled]);
+  // No feature-flag gate here. `claude-code-host-enabled` / `codex-host-enabled`
+  // gate the New Host template picker while those profiles are iterated on;
+  // this page is public reference data about what a third-party host supports,
+  // which is a different question from whether MCPJam will let you create one.
+  // Consulting the flags also hid both hosts from every anonymous visitor: the
+  // hooks read an unresolved flag as off, and the flags are @mcpjam.com-scoped.
   const presets = useMemo(
-    () =>
-      buildPresetCompareEntries(compareCatalog, {
-        excludedTemplateIds: excludedPresetTemplateIds,
-      }),
-    [compareCatalog, excludedPresetTemplateIds]
+    () => buildPresetCompareEntries(compareCatalog),
+    [compareCatalog]
   );
   const hosts = useMemo(
     () => sortCaniusePresetHosts(presets.hosts),
     [presets.hosts]
+  );
+  // A capability nobody has measured has no page: every column would read
+  // "Not yet tested", which is a question rather than an answer, and a
+  // permalink to it would outlive the reason it was empty. Treated as an
+  // unknown slug so the not-found branch below handles it — the page appears
+  // by itself once the first host value lands.
+  const capability = useMemo(
+    () =>
+      resolvedCapability &&
+      caniuseFieldHasPresetData(resolvedCapability.field, presets.subjects)
+        ? resolvedCapability
+        : null,
+    [resolvedCapability, presets.subjects]
   );
 
   // Agent bridge: SNAPSHOT-ONLY (no tools). This is the `host-compare` surface
@@ -177,7 +187,18 @@ export function CaniuseCapabilityPage({
                   </span>
                 </div>
                 <div>
-                  <SupportChip level={level} label={label} truncateLabel />
+                  {level === "unknown" ? (
+                    // Not probed yet. An em dash rather than a chip: a chip
+                    // reads as a verdict, and we have not measured this host.
+                    <span
+                      className="text-muted-foreground"
+                      title="Not yet tested"
+                    >
+                      —
+                    </span>
+                  ) : (
+                    <SupportChip level={level} label={label} truncateLabel />
+                  )}
                 </div>
                 <div className="text-xs tabular-nums text-muted-foreground">
                   {CANIUSE_LAST_VERIFIED_DATE}

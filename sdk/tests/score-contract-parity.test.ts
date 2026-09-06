@@ -28,6 +28,7 @@ import {
   scoreResultSchema,
 } from "../src/contract/schemas.js";
 import {
+  allGatingScorersPassed,
   definitionHash,
   evaluationConfigHash,
   resolveScoreDefinition,
@@ -59,6 +60,20 @@ type FixturesFile = {
   __digests: {
     definitions: DigestDefinitionRow[];
     configs: DigestConfigRow[];
+  };
+  __verdicts: {
+    __readme: string;
+    cases: Array<{
+      __label: string;
+      __why?: string;
+      definitions: Record<string, unknown>[];
+      rows: Record<string, unknown>[];
+      expected: {
+        passed: boolean;
+        disagreeing: string[];
+        unresolved: string[];
+      };
+    }>;
   };
 };
 
@@ -272,4 +287,54 @@ describe("score contract pinned digests — cross-runtime hash parity", () => {
   it("a changed role in the set DOES change the config digest", () => {
     expect(configDigestFor("C3")).not.toBe(configDigestFor("C1"));
   });
+});
+
+// =============================================================================
+// Cross-runtime VERDICT parity — `allGatingScorersPassed` (B3b).
+//
+// The arithmetic the score contract becomes authoritative with. THIS copy
+// DECIDES an iteration's result at grading mode `enforce`; the backend's
+// hand-mirror in `convex/lib/scoreContract.ts` VERIFIES that decision against
+// the rows it persisted. Both sides run these fixture cases, because a verifier
+// using different arithmetic from the deriver is checking the wrong thing —
+// and would downgrade honest runs.
+// =============================================================================
+describe("cross-runtime verdict parity — allGatingScorersPassed", () => {
+  for (const fixture of data.__verdicts.cases) {
+    it(`derives the pinned verdict: ${fixture.__label}`, () => {
+      const definitions = stripAnnotations(fixture.definitions).map((entry) =>
+        resolveScoreDefinition(entry as never)
+      );
+      // The join is BY HASH, so each row is stamped with the hash its NAMED
+      // definition resolves to. A row naming no definition stays unjoinable —
+      // a case the fixtures cover deliberately.
+      const byScorerId = new Map(
+        definitions.map((definition) => [
+          definition.scorerId,
+          definitionHash(definition),
+        ])
+      );
+      const scores = stripAnnotations(fixture.rows).map(
+        (row) =>
+          ({
+            ...row,
+            definitionHash:
+              byScorerId.get((row as { scorerId: string }).scorerId) ??
+              "unjoinable",
+          }) as never
+      );
+
+      const verdict = allGatingScorersPassed(scores, {
+        hash: evaluationConfigHash(definitions),
+        definitions,
+      });
+      expect(verdict.passed).toBe(fixture.expected.passed);
+      expect([...verdict.disagreeingScorerIds].sort()).toEqual(
+        fixture.expected.disagreeing
+      );
+      expect([...verdict.unresolvedScorerIds].sort()).toEqual(
+        fixture.expected.unresolved
+      );
+    });
+  }
 });

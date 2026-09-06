@@ -9,7 +9,7 @@ npm install -D @mcpjam/vitest vitest
 
 ## The flagship: gate a hosted corpus in CI
 
-Pull your hosted suite once with `mcpjam eval pull`, commit the lock, and run
+Pull your hosted suite once with `mcpjam cloud eval pull`, commit the lock, and run
 it locally on every change. The lock is the reproducibility record — the same
 cases, graded the same way, until you pull again.
 
@@ -65,10 +65,35 @@ given — a final `it` for the policy.
 
 The single-test seat, for a file that owns one eval and wants no suite.
 
+```ts
+import { EvalTest } from "@mcpjam/sdk";
+import { mintCaseId } from "@mcpjam/sdk/contract";
+import { testEval } from "@mcpjam/vitest";
+
+// `id` is the case's identity and is required. Mint it ONCE (`mintCaseId()`
+// prints one) and commit the literal — a case renamed from "Refund flow" to
+// "Refunds" keeps its history because the id, not the name, is what history
+// joins on. Never call `mintCaseId()` inline: an id regenerated on every run
+// is not an identity.
+testEval(
+  new EvalTest({
+    id: "c_V1StGXR8Z5jdHi6Bmy",
+    name: "refunds a duplicate charge",
+    test: async (executor) => {
+      const result = await executor.run("refund the duplicate charge");
+      return result.hasToolCall("create_refund");
+    },
+  }),
+  { factory: () => buildExecutor(), run: { iterations: 25 } }
+);
+```
+
 ### `planEvalSuite(suite, options)`
 
 Pure. Returns the titles that *would* be registered — useful for asserting your
-own naming, or for building a different harness on the same rules.
+own naming, or for building a different harness on the same rules. Each entry
+also carries `caseId` (the case's declared id) so a custom reporter can key on
+identity rather than on a title that gets renamed.
 
 ### `runAndAssertCase(run, testName, failureReport?)` · `gateFailureMessage(error)`
 
@@ -95,7 +120,11 @@ latency or score-integrity gate. Giving the policy a named test means CI shows
 *which* question failed instead of a bare non-zero exit.
 
 **Scenario ids are explicit.** A case's title gets ` [caseId]` only when the
-test carries an `externalCaseId` — never inferred from the test name.
+test carries an `externalCaseId` — never inferred from the test name. The
+declared `id` is deliberately *not* what the suffix shows: that suffix is the
+handle people grep the hosted dashboard with, so it keeps carrying
+`externalCaseId`. The declared id is exposed on `planEvalSuite`'s `caseId`
+instead.
 
 ## Supported vitest versions
 

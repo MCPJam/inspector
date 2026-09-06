@@ -1,6 +1,6 @@
 /**
- * Paginated iteration fetch, shared by `mcpjam eval gate` and
- * `mcpjam eval compare`.
+ * Paginated iteration fetch, shared by `mcpjam cloud eval gate` and
+ * `mcpjam cloud eval compare`.
  *
  * Extracted VERBATIM from `commands/eval.ts` — same bound, same
  * `complete` semantics — because both commands need the same "did we see the
@@ -8,6 +8,7 @@
  * confident verdict about page one is exactly the drift worth avoiding.
  */
 
+import { calculateLatencyStats } from "@mcpjam/sdk";
 import type { PlatformApiClient } from "@mcpjam/sdk/platform";
 import type { PlatformEvalIteration } from "@mcpjam/sdk/platform";
 
@@ -44,4 +45,24 @@ export async function fetchAllIterations(
     cursor = result.nextCursor;
   }
   return { items, complete: false };
+}
+
+/**
+ * p95 over a COMPLETE iteration walk; `undefined` from a partial one.
+ *
+ * Shared by `eval compare` and `eval gate --baseline`: both need a p95 for a
+ * side of a comparison, and a single missing duration makes the p95 describe
+ * a different set than the run — absent beats approximate.
+ */
+export function p95Of(
+  iterations: FetchedIterations | undefined
+): number | undefined {
+  if (!iterations?.complete) return undefined;
+  const durations = iterations.items
+    .map((iteration) => iteration.durationMs)
+    .filter((ms): ms is number => typeof ms === "number");
+  if (durations.length === 0 || durations.length !== iterations.items.length) {
+    return undefined;
+  }
+  return calculateLatencyStats(durations).p95;
 }

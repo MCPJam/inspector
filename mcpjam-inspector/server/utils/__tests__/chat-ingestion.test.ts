@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Context } from "hono";
 import {
   buildDirectHostConfig,
+  buildPersistReceiptData,
   persistChatSessionToConvex,
   stampSenderUserIdsOnSessionMessages,
+  writePersistReceipt,
 } from "../chat-ingestion";
+import { PERSIST_RECEIPT_PART_TYPE } from "../../../shared/persist-receipt";
 import type { RequestLogContext } from "../log-events";
 
 const mockLogger = vi.hoisted(() => ({
@@ -107,6 +110,33 @@ describe("chat-ingestion", () => {
     expect(body.surface).toBe("share_link");
   });
 
+  it("keeps the sent prompt and the resume prompt as separate fields", async () => {
+    // Two different questions, and merging them breaks one of the two:
+    // `systemPrompt` is EVIDENCE of what the model was given (turn-injected
+    // sections included), `resumeConfig.systemPrompt` is what a resumed turn
+    // replays. Replaying turn-injected content — a skills catalog for servers
+    // that may no longer be connected, or a "your sandbox was reset" notice —
+    // is the confabulation the raw resume prompt exists to prevent.
+    await persistChatSessionToConvex({
+      chatSessionId: "session-2",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      sourceType: "direct",
+      origin: "playground",
+      systemPrompt: "HOST PROMPT\n\n## Skills from MCP servers\n\n- **acme/refunds**",
+      resumeConfig: { systemPrompt: "HOST PROMPT" },
+      startedAt: 1,
+      lastActivityAt: 2,
+    });
+
+    const request = (global.fetch as any).mock.calls[0]?.[1];
+    const body = JSON.parse((request?.body as string) ?? "{}");
+
+    expect(body.systemPrompt).toContain("## Skills from MCP servers");
+    expect(body.resumeConfig.systemPrompt).toBe("HOST PROMPT");
+  });
+
   it("serializes rewind lineage for an edited branch", async () => {
     await persistChatSessionToConvex({
       chatSessionId: "branch-session",
@@ -197,21 +227,25 @@ describe("chat-ingestion", () => {
   });
 
   it("logs a bounded sanitized response preview on ingest failures", async () => {
-    global.fetch = vi.fn().mockResolvedValue(
-      new Response(
-        [
-          "token=super-secret-token",
-          "contact support@example.com",
-          "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
-          "message=".concat("x".repeat(300)),
-        ].join("\n"),
-        {
-          status: 500,
-        }
-      )
-    );
+    vi.useFakeTimers();
+    // A fresh Response per call: 5xx is retried, and a real fetch never hands
+    // back the same already-consumed body twice.
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          [
+            "token=super-secret-token",
+            "contact support@example.com",
+            "Authorization: Bearer abcdefghijklmnopqrstuvwxyz",
+            "message=".concat("x".repeat(300)),
+          ].join("\n"),
+          {
+            status: 500,
+          }
+        )
+    ) as typeof fetch;
 
-    await persistChatSessionToConvex({
+    const persistPromise = persistChatSessionToConvex({
       chatSessionId: "session-2",
       modelId: "openai/gpt-oss-120b",
       modelSource: "mcpjam",
@@ -219,6 +253,8 @@ describe("chat-ingestion", () => {
       origin: "playground",
       startedAt: 1,
     });
+    await vi.advanceTimersByTimeAsync(5_000);
+    await persistPromise;
 
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.stringContaining(
@@ -276,9 +312,11 @@ describe("chat-ingestion", () => {
       timeoutMs: 50,
     });
 
-    await vi.advanceTimersByTimeAsync(50);
-    await persistPromise;
+    // Long enough to cover all three attempts and both backoffs.
+    await vi.advanceTimersByTimeAsync(5_000);
+    const outcome = await persistPromise;
 
+    expect(outcome).toEqual({ outcome: "failed", failureKind: "timeout" });
     expect(global.fetch).toHaveBeenCalledWith(
       "https://test-convex.example.com/ingest-chat",
       expect.objectContaining({
@@ -291,6 +329,101 @@ describe("chat-ingestion", () => {
         timeoutMs: 50,
       }
     );
+    // Logged once at the end, not once per attempt.
+    expect(mockLogger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives each retry its own AbortController", async () => {
+    // A single controller shared across attempts stays aborted forever, so
+    // every retry would fail instantly with the timeout that killed the first.
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    global.fetch = vi
+      .fn()
+      .mockImplementation(async (_input, init?: RequestInit) => {
+        const signal = init?.signal as AbortSignal;
+        signals.push(signal);
+        if (signals.length < 3) {
+          return await new Promise<Response>((_resolve, reject) => {
+            signal.addEventListener("abort", () => {
+              reject(
+                Object.assign(new Error("aborted"), { name: "AbortError" })
+              );
+            });
+          });
+        }
+        return new Response(JSON.stringify({ ok: true, version: 4 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch;
+
+    const persistPromise = persistChatSessionToConvex({
+      chatSessionId: "session-retry",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      timeoutMs: 50,
+    });
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(await persistPromise).toEqual({ outcome: "saved", version: 4 });
+    expect(signals).toHaveLength(3);
+    expect(signals[0]).not.toBe(signals[2]);
+    expect(signals[2].aborted).toBe(false);
+  });
+
+  it("does not retry a 409", async () => {
+    global.fetch = vi.fn().mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify({
+            ok: false,
+            error: "VERSION_CONFLICT",
+            currentVersion: 9,
+          }),
+          { status: 409, headers: { "Content-Type": "application/json" } }
+        )
+    ) as typeof fetch;
+
+    const outcome = await persistChatSessionToConvex({
+      chatSessionId: "session-409",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      expectedVersion: 3,
+    });
+
+    expect(outcome).toEqual({ outcome: "conflict", currentVersion: 9 });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a 4xx that is not a conflict", async () => {
+    global.fetch = vi
+      .fn()
+      .mockImplementation(
+        async () => new Response("bad request", { status: 400 })
+      ) as typeof fetch;
+
+    const outcome = await persistChatSessionToConvex({
+      chatSessionId: "session-400",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+    });
+
+    expect(outcome).toEqual({
+      outcome: "failed",
+      failureKind: "http_error",
+      status: 400,
+    });
+    expect(global.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("logs version conflicts explicitly", async () => {
@@ -415,7 +548,7 @@ describe("chat-ingestion", () => {
       },
       c
     );
-    await vi.advanceTimersByTimeAsync(50);
+    await vi.advanceTimersByTimeAsync(5_000);
     await p;
 
     expect(mockLogger.event).toHaveBeenCalledWith(
@@ -424,6 +557,7 @@ describe("chat-ingestion", () => {
       expect.objectContaining({ failureKind: "timeout" }),
       undefined
     );
+    expect(mockLogger.event).toHaveBeenCalledTimes(1);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -450,6 +584,332 @@ describe("chat-ingestion", () => {
       expect.objectContaining({ error: expect.any(Error) })
     );
     expect(mockLogger.warn).not.toHaveBeenCalled();
+  });
+
+  describe("outcome mapping", () => {
+    const jsonResponse = (body: unknown, status = 200) =>
+      new Response(JSON.stringify(body), {
+        status,
+        headers: { "Content-Type": "application/json" },
+      });
+
+    const persist = () =>
+      persistChatSessionToConvex({
+        chatSessionId: "outcome-session",
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam",
+        authHeader: "Bearer bearer-token",
+        origin: "playground",
+        startedAt: 1,
+      });
+
+    it("maps a committed write to saved", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ ok: true, skipped: false, version: 12 })
+        ) as typeof fetch;
+
+      expect(await persist()).toEqual({ outcome: "saved", version: 12 });
+    });
+
+    it("maps a recognized duplicate turn to duplicate, not skipped", async () => {
+      // A retry whose first response was lost. As good as saved — the client
+      // must not be told its turn went missing.
+      global.fetch = vi.fn().mockResolvedValue(
+        jsonResponse({
+          ok: true,
+          skipped: true,
+          duplicateTurn: true,
+          version: 12,
+        })
+      ) as typeof fetch;
+
+      expect(await persist()).toEqual({ outcome: "duplicate", version: 12 });
+    });
+
+    it("maps a bare skip to skipped — a possible lost turn", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          jsonResponse({ ok: true, skipped: true, version: 5 })
+        ) as typeof fetch;
+
+      expect(await persist()).toEqual({ outcome: "skipped", version: 5 });
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("replay")
+      );
+    });
+
+    it("maps a 2xx with no version to protocol_error, never a fabricated save", async () => {
+      // The client syncs its concurrency baseline from this version; inventing
+      // one would hand it a baseline that 409s on the very next send.
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(jsonResponse({ ok: true })) as typeof fetch;
+
+      expect(await persist()).toEqual({
+        outcome: "failed",
+        failureKind: "protocol_error",
+        status: 200,
+      });
+    });
+
+    it("maps an unparseable 2xx body to protocol_error", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response("not json at all", { status: 200 })
+        ) as typeof fetch;
+
+      expect(await persist()).toEqual({
+        outcome: "failed",
+        failureKind: "protocol_error",
+        status: 200,
+      });
+    });
+
+    it("retries a 2xx whose body read is cut off by the attempt timeout", async () => {
+      // The abort signal covers body streaming, so a slow 2xx body can be cut
+      // off mid-read. That is a timeout worth retrying, not a malformed
+      // response — the write may well have committed.
+      vi.useFakeTimers();
+      let attempt = 0;
+      global.fetch = vi.fn().mockImplementation(async () => {
+        attempt += 1;
+        if (attempt === 1) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => {
+              throw Object.assign(new Error("aborted"), {
+                name: "AbortError",
+              });
+            },
+          } as unknown as Response;
+        }
+        return new Response(JSON.stringify({ ok: true, version: 3 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }) as typeof fetch;
+
+      const persistPromise = persistChatSessionToConvex({
+        chatSessionId: "abort-body",
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam",
+        authHeader: "Bearer bearer-token",
+        origin: "playground",
+        startedAt: 1,
+      });
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      expect(await persistPromise).toEqual({ outcome: "saved", version: 3 });
+      expect(attempt).toBe(2);
+    });
+
+    it("keeps the response preview on a 4xx so the failure is diagnosable", async () => {
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response("modelId is required", { status: 400 })
+        ) as typeof fetch;
+
+      await persistChatSessionToConvex({
+        chatSessionId: "bad-request",
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam",
+        authHeader: "Bearer bearer-token",
+        origin: "playground",
+        startedAt: 1,
+      });
+
+      expect(mockLogger.warn).toHaveBeenCalledWith(
+        expect.stringContaining("modelId is required"),
+        expect.objectContaining({ status: 400 })
+      );
+    });
+
+    it("carries the 4xx preview into the typed event too", async () => {
+      // The request-context path is what production actually logs through, so
+      // the detail has to survive there and not just in the fallback logger.
+      global.fetch = vi
+        .fn()
+        .mockResolvedValue(
+          new Response("modelId is required", { status: 400 })
+        ) as typeof fetch;
+      const c = makeTestContext();
+
+      await persistChatSessionToConvex(
+        {
+          chatSessionId: "bad-request",
+          modelId: "openai/gpt-oss-120b",
+          modelSource: "mcpjam",
+          authHeader: "Bearer bearer-token",
+          origin: "playground",
+          startedAt: 1,
+        },
+        c
+      );
+
+      expect(mockLogger.event).toHaveBeenCalledWith(
+        "chat.session.persist.failed",
+        expect.any(Object),
+        expect.objectContaining({
+          failureKind: "http_error",
+          statusCode: 400,
+          responsePreview: expect.stringContaining("modelId is required"),
+        }),
+        undefined
+      );
+    });
+
+    it("reports not-attempted without a session id, auth, or Convex URL", async () => {
+      const base = {
+        modelId: "openai/gpt-oss-120b",
+        modelSource: "mcpjam" as const,
+        origin: "playground" as const,
+        startedAt: 1,
+      };
+
+      expect(
+        await persistChatSessionToConvex({
+          ...base,
+          chatSessionId: "",
+          authHeader: "Bearer t",
+        })
+      ).toEqual({ outcome: "not-attempted", reason: "no-session-id" });
+
+      expect(
+        await persistChatSessionToConvex({ ...base, chatSessionId: "s" })
+      ).toEqual({ outcome: "not-attempted", reason: "no-auth" });
+
+      delete process.env.CONVEX_HTTP_URL;
+      expect(
+        await persistChatSessionToConvex({
+          ...base,
+          chatSessionId: "s",
+          authHeader: "Bearer t",
+        })
+      ).toEqual({ outcome: "not-attempted", reason: "no-convex-url" });
+      expect(global.fetch).not.toHaveBeenCalled();
+    });
+  });
+
+  it("sends the turn trace's turnId as the top-level idempotency key", async () => {
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
+    await persistChatSessionToConvex({
+      chatSessionId: "turnid-session",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace: {
+        turnId: "turn-abc",
+        promptIndex: 0,
+        startedAt: 1,
+        endedAt: 2,
+        spans: [],
+        modelId: "openai/gpt-oss-120b",
+      },
+    });
+
+    const body = JSON.parse(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+        .body as string
+    );
+    expect(body.turnId).toBe("turn-abc");
+    expect(body.turnTrace.turnId).toBe("turn-abc");
+  });
+
+  it("carries the turn's skill/environment provenance on the wire", async () => {
+    // The provenance rides INSIDE `turnTrace`, which `buildIngestBody`
+    // serializes whole — so this reaches the backend with no edit to the body
+    // builder's field spread. If someone "fixes" that by adding the fields
+    // there too, this test still passes and the duplication is dead weight;
+    // what it guards is that the fields arrive at all.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
+    const turnTrace = {
+      turnId: "turn-prov",
+      promptIndex: 0,
+      startedAt: 1,
+      endedAt: 2,
+      spans: [],
+      modelId: "openai/gpt-oss-120b",
+      skillsAtTurn: [
+        {
+          skillId: "sk_1",
+          projectSkillVersionNumber: 3,
+          versionPinned: true,
+          name: "refunds",
+          contentHash: "h1",
+          sharing: "project",
+          channels: ["environment"],
+        },
+      ],
+      environmentAtTurn: {
+        environmentId: "env_1",
+        name: "Pinned arm",
+        revision: 4,
+      },
+    };
+
+    await persistChatSessionToConvex({
+      chatSessionId: "prov-session",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+      turnTrace,
+    });
+
+    const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock
+      .calls;
+    const body = JSON.parse(calls[0][1].body as string);
+    expect(body.turnTrace.skillsAtTurn).toEqual(turnTrace.skillsAtTurn);
+    expect(body.turnTrace.environmentAtTurn).toEqual(
+      turnTrace.environmentAtTurn
+    );
+  });
+
+  it("omits turnId for a traceless payload so the legacy path is unchanged", async () => {
+    // Its own fetch mock: reading `mock.calls[0]` off an inherited one makes the
+    // assertion depend on suite order rather than on this request.
+    global.fetch = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ ok: true, version: 2 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      })
+    ) as typeof fetch;
+
+    await persistChatSessionToConvex({
+      chatSessionId: "traceless-session",
+      modelId: "openai/gpt-oss-120b",
+      modelSource: "mcpjam",
+      authHeader: "Bearer bearer-token",
+      origin: "playground",
+      startedAt: 1,
+    });
+
+    const body = JSON.parse(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls[0][1]
+        .body as string
+    );
+    expect(body).not.toHaveProperty("turnId");
   });
 
   it("forwards hostConfig verbatim when present on direct chats", async () => {
@@ -692,5 +1152,84 @@ describe("buildDirectHostConfig", () => {
       requireToolApproval: false,
     });
     expect(config.hostStyle).toBe("chatgpt");
+  });
+});
+
+describe("persist receipt", () => {
+  const context = { chatSessionId: "session-1", turnId: "turn-1" };
+
+  it("maps each outcome onto the wire shape the client reads", () => {
+    expect(
+      buildPersistReceiptData({ outcome: "saved", version: 4 }, context)
+    ).toEqual({
+      outcome: "saved",
+      chatSessionId: "session-1",
+      turnId: "turn-1",
+      version: 4,
+    });
+    expect(
+      buildPersistReceiptData({ outcome: "duplicate", version: 4 }, context)
+    ).toMatchObject({ outcome: "duplicate", version: 4 });
+    expect(
+      buildPersistReceiptData(
+        { outcome: "conflict", currentVersion: 9 },
+        context
+      )
+    ).toMatchObject({ outcome: "conflict", currentVersion: 9 });
+    expect(
+      buildPersistReceiptData(
+        { outcome: "failed", failureKind: "timeout" },
+        context
+      )
+    ).toMatchObject({ outcome: "failed", failureKind: "timeout" });
+  });
+
+  it("emits nothing for not-attempted", () => {
+    // Nothing was tried, so there is nothing to report; a receipt here would
+    // make the client believe a save was evaluated when it never happened.
+    expect(
+      buildPersistReceiptData(
+        { outcome: "not-attempted", reason: "no-auth" },
+        context
+      )
+    ).toBeNull();
+
+    const writer = { write: vi.fn() };
+    writePersistReceipt(
+      writer,
+      { outcome: "not-attempted", reason: "no-auth" },
+      context
+    );
+    expect(writer.write).not.toHaveBeenCalled();
+  });
+
+  it("writes a transient data part", () => {
+    const writer = { write: vi.fn() };
+    writePersistReceipt(writer, { outcome: "saved", version: 2 }, context);
+
+    expect(writer.write).toHaveBeenCalledWith({
+      type: PERSIST_RECEIPT_PART_TYPE,
+      data: {
+        outcome: "saved",
+        chatSessionId: "session-1",
+        turnId: "turn-1",
+        version: 2,
+      },
+      transient: true,
+    });
+  });
+
+  it("swallows a write into an already-closed stream", () => {
+    // Finalization must not reject because the client hung up; a missing
+    // receipt degrades to the client's subscription fallback.
+    const writer = {
+      write: vi.fn(() => {
+        throw new Error("stream closed");
+      }),
+    };
+
+    expect(() =>
+      writePersistReceipt(writer, { outcome: "saved", version: 2 }, context)
+    ).not.toThrow();
   });
 });

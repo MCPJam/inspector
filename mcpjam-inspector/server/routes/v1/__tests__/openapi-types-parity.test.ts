@@ -77,18 +77,25 @@ const PAIRS: Readonly<Record<string, string>> = {
   EvalRun: "PlatformEvalRun",
   EvalRunEnvironment: "PlatformEvalRunEnvironment",
   EvalRunCreated: "PlatformEvalRunCreated",
+  EvalRunGroupCreated: "PlatformEvalRunGroupCreated",
   EvalSuiteCreated: "PlatformEvalSuiteCreated",
   EvalSuite: "PlatformEvalSuite",
   EvalSuiteSchedule: "PlatformEvalSuiteSchedule",
+  EvalSuiteComputerEnvironment: "PlatformEvalSuiteComputerEnvironment",
   EvalSuiteDetail: "PlatformEvalSuiteDetail",
+  EvalSuiteRevision: "PlatformEvalSuiteRevision",
+  EvalSuiteFromFileSynced: "PlatformFileOwnedEvalSuiteSynced",
   EvalIteration: "PlatformEvalIteration",
   EvalCase: "PlatformEvalCase",
   EvalDeleted: "PlatformEvalSuiteDeleted",
-  Host: "PlatformHost",
-  HostDetail: "PlatformHostDetail",
-  HostDeleted: "PlatformHostDeleted",
+  Client: "PlatformClient",
+  ClientDetail: "PlatformClientDetail",
+  ClientDeleted: "PlatformClientDeleted",
   EnvironmentSkillSelection: "PlatformEnvironmentSkillSelection",
   ProjectEnvironment: "PlatformEnvironment",
+  AdhocEnvironment: "PlatformAdhocEnvironment",
+  AdhocEnvironmentEnsured: "PlatformAdhocEnvironmentEnsured",
+  EvalSuiteEnvironmentAttached: "PlatformEvalSuiteEnvironmentAttached",
   ProjectEnvironmentCapabilities: "PlatformEnvironmentCapabilities",
   ProjectEnvironmentResolved: "PlatformEnvironmentResolved",
   Plugin: "PlatformPlugin",
@@ -172,6 +179,14 @@ const PAIRS: Readonly<Record<string, string>> = {
   ActionableFindingEvidence: "PlatformActionableFindingEvidence",
   ScenarioInsightsRequested: "PlatformUserTestingInsightsRequested",
   EvalRunInsightsRequested: "PlatformEvalRunInsightsRequested",
+  EvalRunJudgeRequested: "PlatformEvalRunJudgeRequested",
+  EvalRunJudges: "PlatformEvalRunJudges",
+  EvalRunJudgeState: "PlatformEvalRunJudgeState",
+  EvalRunGoalCompletionJudge: "PlatformEvalRunGoalCompletionJudge",
+  EvalRunGroundednessJudge: "PlatformEvalRunGroundednessJudge",
+  EvalRunJudgeCase: "PlatformEvalRunJudgeCase",
+  EvalRunGoalCompletionCase: "PlatformEvalRunGoalCompletionCase",
+  EvalRunGroundednessCase: "PlatformEvalRunGroundednessCase",
   ProjectCapabilities: "PlatformCapabilities",
 };
 
@@ -257,6 +272,18 @@ function parseSdkInterfaces(): Map<string, SdkInterface> {
     let nullable = false;
     const root = unwrapTypeNode(node);
     let members: ts.TypeNode[] = [root];
+
+    // A field typed EXACTLY `null` (not `X | null`) is nullable too. Without
+    // this the parser sees only the union form, so a field whose sole type is
+    // null reads as non-nullable and disagrees with a spec that correctly says
+    // it is — a false positive on the honest description.
+    if (
+      root.kind === ts.SyntaxKind.NullKeyword ||
+      (ts.isLiteralTypeNode(root) &&
+        root.literal.kind === ts.SyntaxKind.NullKeyword)
+    ) {
+      return { nullable: true, enumValues: null, refName: null, isArray: false };
+    }
 
     if (ts.isUnionTypeNode(root)) {
       members = root.types.map(unwrapTypeNode).filter((t) => {

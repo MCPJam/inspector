@@ -1,0 +1,1105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://mcpjam.com/schemas/eval-suite/v1.json",
+  "title": "MCPJam eval suite file (schemaVersion 1)",
+  "description": "Structural contract for an MCPJam eval suite file. Generated from the zod source in @mcpjam/sdk (src/contract/suite-file.ts). Describes what is ACCEPTED (zod io:input), so a file this schema accepts is one the SDK validator also accepts structurally. The zod validator remains the authoritative superset: it additionally enforces cross-field rules (unique case ids, unique step ids within a case, a per-case import block requiring top-level provenance, and a per-case import note being required when the claimed status is exact) and a serialized-size cap on tool-call arguments, none of which JSON Schema can express. The authored intent label's already-trimmed invariant is encoded as a boundary pattern in the schema. Objects the suite file and the step union declare are closed (additionalProperties: false). A tool call's own `arguments` object and the reused predicate union stay open in both validators: their keys are owned by the server's input schema and by a separate contract module respectively.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": { "type": "string", "const": "1" },
+    "mode": { "type": "string", "const": "agentWorkflow" },
+    "reportingMode": { "type": "string", "const": "standard" },
+    "suite": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "name": { "type": "string", "minLength": 1, "maxLength": 200 },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "name"],
+      "additionalProperties": false
+    },
+    "target": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "servers": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+              }
+            },
+            "environment": { "type": "string", "minLength": 1 },
+            "hosts": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "servers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        }
+                      },
+                      "required": ["name"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["servers"],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "servers": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+              }
+            },
+            "environment": { "type": "string", "minLength": 1 },
+            "hosts": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128,
+                    "pattern": "^[A-Za-z0-9_-]+$"
+                  },
+                  "servers": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 200
+                        },
+                        "id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128,
+                          "pattern": "^[A-Za-z0-9_-]+$"
+                        }
+                      },
+                      "required": ["name"],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": ["name"],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": ["environment"],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "defaults": {
+      "type": "object",
+      "properties": {
+        "model": { "type": "string", "minLength": 1 },
+        "provider": { "type": "string", "minLength": 1 },
+        "systemPrompt": { "type": "string" },
+        "temperature": { "type": "number" },
+        "repetitions": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "passThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+        "validity": {
+          "type": "object",
+          "properties": {
+            "minEligibleTrials": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "minCompletionRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "maxEvaluatorErrorRate": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "toolPolicy": {
+          "type": "object",
+          "properties": {
+            "mode": { "type": "string", "enum": ["default", "readOnly"] },
+            "allow": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            },
+            "deny": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 }
+            }
+          },
+          "required": ["mode"],
+          "additionalProperties": false
+        },
+        "captureLevel": { "type": "string", "const": "full" }
+      },
+      "required": ["model", "repetitions", "passThreshold", "validity"],
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "properties": {
+        "sourceHash": { "type": "string", "minLength": 1 },
+        "sourceFormat": { "type": "string", "minLength": 1 },
+        "sourceFormatVersion": { "type": "string", "minLength": 1 },
+        "converter": { "type": "string", "minLength": 1 },
+        "converterVersion": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "discoverySnapshotHash": { "type": "string", "minLength": 1 },
+        "reportHash": { "type": "string", "minLength": 1 },
+        "importedAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+        }
+      },
+      "required": ["sourceHash", "sourceFormat", "reportHash"],
+      "additionalProperties": false
+    },
+    "cases": {
+      "minItems": 1,
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 128,
+            "pattern": "^[A-Za-z0-9_-]+$"
+          },
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "intent": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^\\S(?:[\\s\\S]*\\S)?$"
+              },
+              { "type": "null" }
+            ]
+          },
+          "kind": {
+            "anyOf": [
+              { "type": "string", "enum": ["capability", "regression"] },
+              { "type": "null" }
+            ]
+          },
+          "steps": {
+            "minItems": 1,
+            "maxItems": 200,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string", "const": "prompt" },
+                    "prompt": { "type": "string" }
+                  },
+                  "required": ["id", "kind", "prompt"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string", "const": "toolCall" },
+                    "serverId": { "type": "string", "minLength": 1 },
+                    "serverName": { "type": "string", "minLength": 1 },
+                    "toolName": { "type": "string", "minLength": 1 },
+                    "arguments": {
+                      "type": "object",
+                      "propertyNames": { "type": "string" },
+                      "additionalProperties": {}
+                    },
+                    "renderTimeoutMs": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 120000
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind",
+                    "serverName",
+                    "toolName",
+                    "arguments"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string", "const": "interact" },
+                    "toolName": { "type": "string", "minLength": 1 },
+                    "action": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": { "type": "string", "const": "click" },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "role": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "name": { "type": "string" },
+                                    "exact": { "type": "boolean" }
+                                  },
+                                  "required": ["role"],
+                                  "additionalProperties": false
+                                },
+                                "text": { "type": "string", "minLength": 1 },
+                                "css": { "type": "string", "minLength": 1 },
+                                "testId": { "type": "string", "minLength": 1 },
+                                "nth": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "additionalProperties": false,
+                              "anyOf": [
+                                { "required": ["role"] },
+                                { "required": ["text"] },
+                                { "required": ["css"] },
+                                { "required": ["testId"] }
+                              ]
+                            },
+                            "clickType": {
+                              "type": "string",
+                              "enum": ["left", "double", "right"]
+                            }
+                          },
+                          "required": ["kind", "target"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": { "type": "string", "const": "type" },
+                            "target": {
+                              "type": "object",
+                              "properties": {
+                                "role": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "name": { "type": "string" },
+                                    "exact": { "type": "boolean" }
+                                  },
+                                  "required": ["role"],
+                                  "additionalProperties": false
+                                },
+                                "text": { "type": "string", "minLength": 1 },
+                                "css": { "type": "string", "minLength": 1 },
+                                "testId": { "type": "string", "minLength": 1 },
+                                "nth": {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                }
+                              },
+                              "additionalProperties": false,
+                              "anyOf": [
+                                { "required": ["role"] },
+                                { "required": ["text"] },
+                                { "required": ["css"] },
+                                { "required": ["testId"] }
+                              ]
+                            },
+                            "text": { "type": "string", "maxLength": 5000 }
+                          },
+                          "required": ["kind", "target", "text"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": { "type": "string", "const": "key" },
+                            "key": { "type": "string", "minLength": 1 }
+                          },
+                          "required": ["kind", "key"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": { "type": "string", "const": "scroll" },
+                            "direction": {
+                              "type": "string",
+                              "enum": ["up", "down"]
+                            },
+                            "amount": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          },
+                          "required": ["kind", "direction"],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "object",
+                          "properties": {
+                            "kind": { "type": "string", "const": "wait" },
+                            "ms": {
+                              "type": "integer",
+                              "exclusiveMinimum": 0,
+                              "maximum": 30000
+                            }
+                          },
+                          "required": ["kind", "ms"],
+                          "additionalProperties": false
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["id", "kind", "toolName", "action"],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": { "type": "string" },
+                    "kind": { "type": "string", "const": "assert" },
+                    "assertion": {
+                      "anyOf": [
+                        {
+                          "oneOf": [
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "textVisible"
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "text": {
+                                  "type": "string",
+                                  "minLength": 1,
+                                  "maxLength": 5000
+                                }
+                              },
+                              "required": ["kind", "toolName", "text"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "elementVisible"
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "object",
+                                      "properties": {
+                                        "role": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "name": { "type": "string" },
+                                        "exact": { "type": "boolean" }
+                                      },
+                                      "required": ["role"],
+                                      "additionalProperties": false
+                                    },
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "css": { "type": "string", "minLength": 1 },
+                                    "testId": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "nth": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
+                                }
+                              },
+                              "required": ["kind", "toolName", "target"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "elementHidden"
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "object",
+                                      "properties": {
+                                        "role": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "name": { "type": "string" },
+                                        "exact": { "type": "boolean" }
+                                      },
+                                      "required": ["role"],
+                                      "additionalProperties": false
+                                    },
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "css": { "type": "string", "minLength": 1 },
+                                    "testId": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "nth": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
+                                }
+                              },
+                              "required": ["kind", "toolName", "target"],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "inputValue"
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "target": {
+                                  "type": "object",
+                                  "properties": {
+                                    "role": {
+                                      "type": "object",
+                                      "properties": {
+                                        "role": {
+                                          "type": "string",
+                                          "minLength": 1
+                                        },
+                                        "name": { "type": "string" },
+                                        "exact": { "type": "boolean" }
+                                      },
+                                      "required": ["role"],
+                                      "additionalProperties": false
+                                    },
+                                    "text": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "css": { "type": "string", "minLength": 1 },
+                                    "testId": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "nth": {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "additionalProperties": false,
+                                  "anyOf": [
+                                    { "required": ["role"] },
+                                    { "required": ["text"] },
+                                    { "required": ["css"] },
+                                    { "required": ["testId"] }
+                                  ]
+                                },
+                                "equals": {
+                                  "type": "string",
+                                  "maxLength": 5000
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "toolName",
+                                "target",
+                                "equals"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "const": "widgetToolCalled"
+                                },
+                                "toolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                },
+                                "calledToolName": {
+                                  "type": "string",
+                                  "minLength": 1
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "toolName",
+                                "calledToolName"
+                              ],
+                              "additionalProperties": false
+                            }
+                          ]
+                        },
+                        {
+                          "allOf": [
+                            {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "toolCalledWith"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "args": {
+                                      "type": "object",
+                                      "properties": {
+                                        "args": {
+                                          "type": "object",
+                                          "propertyNames": { "type": "string" },
+                                          "additionalProperties": {}
+                                        },
+                                        "argumentMatching": {
+                                          "type": "string",
+                                          "enum": ["exact", "partial", "ignore"]
+                                        }
+                                      },
+                                      "required": ["args"]
+                                    },
+                                    "minCount": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["type", "toolName", "args"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "toolCalledAtLeastOnce"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type", "toolName"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "toolNeverCalled"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type", "toolName"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "firstToolWas"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type", "toolName"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "responseContains"
+                                    },
+                                    "needle": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "caseSensitive": { "type": "boolean" }
+                                  },
+                                  "required": ["type", "needle"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "responseMatches"
+                                    },
+                                    "pattern": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type", "pattern"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "noToolErrors"
+                                    }
+                                  },
+                                  "required": ["type"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "finalAssistantMessageNonEmpty"
+                                    }
+                                  },
+                                  "required": ["type"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "tokenBudgetUnder"
+                                    },
+                                    "tokens": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["type", "tokens"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "widgetRendered"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "widgetRenderLatencyUnder"
+                                    },
+                                    "ms": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type", "ms"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "widgetNoConsoleErrors"
+                                    },
+                                    "toolName": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    }
+                                  },
+                                  "required": ["type"]
+                                },
+                                {
+                                  "type": "object",
+                                  "properties": {
+                                    "type": {
+                                      "type": "string",
+                                      "const": "turnCountUnder"
+                                    },
+                                    "turns": {
+                                      "type": "integer",
+                                      "exclusiveMinimum": 0,
+                                      "maximum": 9007199254740991
+                                    }
+                                  },
+                                  "required": ["type", "turns"]
+                                }
+                              ]
+                            },
+                            {
+                              "type": "object",
+                              "properties": { "kind": { "not": {} } }
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  },
+                  "required": ["id", "kind", "assertion"],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "assertions": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "toolCalledWith" },
+                    "toolName": { "type": "string", "minLength": 1 },
+                    "args": {
+                      "type": "object",
+                      "properties": {
+                        "args": {
+                          "type": "object",
+                          "propertyNames": { "type": "string" },
+                          "additionalProperties": {}
+                        },
+                        "argumentMatching": {
+                          "type": "string",
+                          "enum": ["exact", "partial", "ignore"]
+                        }
+                      },
+                      "required": ["args"]
+                    },
+                    "minCount": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["type", "toolName", "args"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "toolCalledAtLeastOnce"
+                    },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type", "toolName"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "toolNeverCalled" },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type", "toolName"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "firstToolWas" },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type", "toolName"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "responseContains" },
+                    "needle": { "type": "string", "minLength": 1 },
+                    "caseSensitive": { "type": "boolean" }
+                  },
+                  "required": ["type", "needle"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "responseMatches" },
+                    "pattern": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type", "pattern"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "noToolErrors" }
+                  },
+                  "required": ["type"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "finalAssistantMessageNonEmpty"
+                    }
+                  },
+                  "required": ["type"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "tokenBudgetUnder" },
+                    "tokens": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["type", "tokens"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "widgetRendered" },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "widgetRenderLatencyUnder"
+                    },
+                    "ms": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type", "ms"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": {
+                      "type": "string",
+                      "const": "widgetNoConsoleErrors"
+                    },
+                    "toolName": { "type": "string", "minLength": 1 }
+                  },
+                  "required": ["type"]
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "type": { "type": "string", "const": "turnCountUnder" },
+                    "turns": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    }
+                  },
+                  "required": ["type", "turns"]
+                }
+              ]
+            }
+          },
+          "expectedOutput": { "type": "string" },
+          "isNegativeTest": { "type": "boolean" },
+          "model": { "type": "string", "minLength": 1 },
+          "repetitions": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "passThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+          "disabled": { "type": "boolean" },
+          "import": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string",
+                "enum": ["exact", "approximated", "unsupported", "unresolved"]
+              },
+              "sourceCaseKey": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 512
+              },
+              "note": { "type": "string", "minLength": 1, "maxLength": 2000 }
+            },
+            "required": ["status"],
+            "additionalProperties": false
+          }
+        },
+        "required": ["id", "title", "steps"],
+        "additionalProperties": false
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "mode",
+    "reportingMode",
+    "suite",
+    "target",
+    "defaults",
+    "cases"
+  ],
+  "additionalProperties": false
+}

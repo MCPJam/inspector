@@ -6,18 +6,16 @@ icon: "circle-check"
 
 When you connect an MCP server, MCPJam automatically evaluates how well it will work in each major host and shows the result directly on the server card. No extra steps required — the data comes from what the inspector already captures at connect time.
 
-## The compat strip
+## The support pill
 
-Once a server is connected, a **compat strip** appears on its card: a row of host logos (Claude, ChatGPT, Cursor, Copilot, Codex), each with a colored status dot, and a one-line summary such as "works in 4 · degraded in 1."
+Once a server is connected, a **support pill** appears at the bottom of its card. It shows a supporter count ("Supported by N") alongside up to three client logos — ChatGPT and Claude lead the stack when they support the server, since they're what most people are checking for first.
 
-| Dot color | Verdict | Meaning |
-|-----------|---------|---------|
-| Green | **Works** | Every requirement the server expresses is supported by this host. |
-| Amber | **Degraded** | The server connects and runs, but some features are lost — for example, a widget falls back to plain text, or prompts aren't surfaced. |
-| Red | **Blocked** | A hard blocker prevents the server from working in this host — for example, the host can't reach a local stdio server. |
-| Gray | **Unknown** | The report doesn't have enough information to produce a verdict for this host yet. |
+- **Supported** — the pill shows the count and up to three client logos.
+- **No supporters** — once analysis has settled, the pill reads "No clients support this server" in a red-tinted style. Mid-analysis ("Checking compatibility…") and failed checks ("Compatibility checks unavailable") are shown instead when the result isn't known yet.
 
-Hover any logo to see a tooltip with the verdict and the first finding. Click the strip to open the **Clients** tab in the server detail modal for the full report.
+A client counts as a supporter when its compat status is green — meaning the host profile covers all of the server's relevant requirements. A `works` verdict that carries a blocking or protocol-mismatch finding is not counted.
+
+Click the pill to open the **Clients** tab in the server detail modal for the full per-host breakdown.
 
 ## The Clients tab
 
@@ -85,7 +83,7 @@ Transport and auth blockers (for example, a local stdio server that a cloud host
 
 The report doesn't have enough information. This happens when:
 
-- The tool list hasn't loaded yet (the strip shows "checking…" briefly after connect).
+- The tool list hasn't loaded yet (the pill shows "Checking compatibility…" briefly after connect).
 - Every `resources/read` call for the server's widgets failed, so the capability scan couldn't run.
 
 Unknown is not the same as Works — the report withholds a verdict rather than guess.
@@ -97,7 +95,7 @@ Host profiles are best-effort. The provenance label on each verdict tells you ho
 | Provenance | Source | Confidence |
 |------------|--------|------------|
 | Vendor doc | Published capability table (e.g. Microsoft's Copilot MCP Apps table) | High |
-| Probe | Captured from a live client session (e.g. Cursor 3.4.17) | High, but versioned |
+| Probe | Captured from a live client session (e.g. Cursor 3.14.27) | High, but versioned |
 | Assumed | Best-effort preset judgment | Lower — treat as a starting point |
 
 The copy in the Clients tab always says "prototype · static checks" to make clear this is not a live test against the real host. Use the **Test** button to open the Playground and verify behavior under the host's emulated environment.
@@ -111,7 +109,7 @@ If a widget is degraded because the host doesn't render its bridge, the finding 
 - **MCP Apps widget on an OpenAI-only host** — add an `openai/outputTemplate` key alongside `_meta.ui.resourceUri` so the tool has both bridges.
 - **OpenAI Apps widget on an MCP-Apps-only host** — add a `_meta.ui.resourceUri` key alongside `openai/outputTemplate`.
 
-After updating your server, reconnect and the compat strip will re-evaluate.
+After updating your server, reconnect and the support pill will re-evaluate.
 
 ### Test in an emulated host
 

@@ -11,11 +11,11 @@
  * `assertValidResolvedTestCaseState`. v1 invariant: a tool renders at most one
  * widget per turn (a second render fails closed; see browser-session-context).
  *
- * Locators are intentionally a BUNDLE of semantic reference points
- * (role / text / css / testId) rather than coordinates: the widget authored
- * against (client preview render) and the widget executed against (headless
- * harness render) are different render instances, so only semantic locators
- * transfer. Resolved in order for v1 (self-healing deferred).
+ * `elementLocatorSchema` and the text/wait caps now live in
+ * `@mcpjam/sdk/contract` (the SDK's suite-file schema reuses them) and are
+ * re-exported below — see that module for why a locator is a BUNDLE of semantic
+ * reference points rather than coordinates. Resolved in order for v1
+ * (self-healing deferred).
  *
  * Mirrored by the Convex validator in mcpjam-backend
  * `convex/lib/scriptedSteps.ts` (same hand-mirroring arrangement as
@@ -23,41 +23,29 @@
  */
 
 import { z } from "zod";
+import {
+  elementLocatorSchema,
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+  type ElementLocator,
+} from "@mcpjam/sdk/contract";
 
 /** Max scripted steps per turn — keeps snapshotted rows bounded. */
 export const MAX_SCRIPTED_STEPS = 50;
-/** Max chars for a step's free text (`type` text, assertion text/value). */
-export const MAX_SCRIPTED_STEP_TEXT_CHARS = 5_000;
-/** Max explicit `wait` duration (ms). */
-export const MAX_SCRIPTED_WAIT_MS = 30_000;
 
 /**
- * A bundle of semantic locators for one target element. At least one of
- * role/text/css/testId must be present; they are resolved in priority order
- * (testId → role → text → css) by the harness. `nth` disambiguates when a
- * locator matches multiple elements.
+ * The locator bundle and the two text/wait caps now live in the SDK contract
+ * (`@mcpjam/sdk/contract`), because the suite-file schema published from the
+ * SDK reuses them and the SDK cannot import this directory. Re-exported here so
+ * every existing importer of `shared/scripted-steps` is unchanged — this is a
+ * re-export, NOT a second copy.
  */
-export const elementLocatorSchema = z
-  .object({
-    // ARIA role + optional accessible name — getByRole(role, { name, exact }).
-    // `role` is the ARIA role string ("button"); `name` is separate.
-    role: z
-      .object({
-        role: z.string().min(1),
-        name: z.string().optional(),
-        exact: z.boolean().optional(),
-      })
-      .optional(),
-    text: z.string().min(1).optional(),
-    css: z.string().min(1).optional(),
-    testId: z.string().min(1).optional(),
-    nth: z.number().int().nonnegative().optional(),
-  })
-  .refine((loc) => !!(loc.role || loc.text || loc.css || loc.testId), {
-    message: "locator must specify at least one of role/text/css/testId",
-  });
-
-export type ElementLocator = z.infer<typeof elementLocatorSchema>;
+export {
+  elementLocatorSchema,
+  MAX_SCRIPTED_STEP_TEXT_CHARS,
+  MAX_SCRIPTED_WAIT_MS,
+};
+export type { ElementLocator };
 
 /**
  * An assertion evaluated against the live widget after the preceding steps.
@@ -140,14 +128,25 @@ export function hasScriptedAssertion(
   return !!widgetChecks?.some((g) => g.steps.some((s) => s.kind === "assert"));
 }
 
+/**
+ * Read a step's string field defensively. `normalizeSteps` and the legacy
+ * `widgetChecks` bridge both cast stored blobs to the step types without
+ * checking leaf fields, so a field the type promises can still arrive missing
+ * or non-string — and both the editors (during render) and the save-time
+ * completeness checks below read them, where a `.trim()` on `undefined` would
+ * blank the pane instead of reporting the gap.
+ */
+export const trimmedField = (value: unknown): string =>
+  typeof value === "string" ? value.trim() : "";
+
 /** A locator has at least one usable reference point (no empty strings). */
 export function isLocatorComplete(loc: ElementLocator | undefined): boolean {
   if (!loc) return false;
   return !!(
-    loc.testId ||
-    (loc.role && loc.role.role) ||
-    loc.text ||
-    loc.css
+    trimmedField(loc.testId) ||
+    trimmedField(loc.role?.role) ||
+    trimmedField(loc.text) ||
+    trimmedField(loc.css)
   );
 }
 
@@ -160,14 +159,15 @@ export function isStepComplete(step: ScriptedStep): boolean {
     case "type":
       return isLocatorComplete(step.target);
     case "key":
-      return step.key.trim().length > 0;
+      return trimmedField(step.key).length > 0;
     case "scroll":
     case "wait":
       return true;
     case "assert": {
       const a = step.assertion;
-      if (a.type === "textVisible") return a.text.trim().length > 0;
-      if (a.type === "widgetToolCalled") return a.toolName.trim().length > 0;
+      if (a.type === "textVisible") return trimmedField(a.text).length > 0;
+      if (a.type === "widgetToolCalled")
+        return trimmedField(a.toolName).length > 0;
       return isLocatorComplete(a.target);
     }
   }
@@ -185,7 +185,7 @@ export function sanitizeWidgetChecks(
   if (!widgetChecks?.length) return undefined;
   const cleaned = widgetChecks
     .map((g) => ({ ...g, steps: g.steps.filter(isStepComplete) }))
-    .filter((g) => g.toolName.trim().length > 0 && g.steps.length > 0);
+    .filter((g) => trimmedField(g.toolName).length > 0 && g.steps.length > 0);
   return cleaned.length > 0 ? cleaned : undefined;
 }
 

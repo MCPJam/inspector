@@ -83,7 +83,7 @@ export function TraceViewModeTabs({
           ? "bg-background font-medium text-foreground ring-1 ring-inset ring-border/60"
           : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
         : active
-        ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+        ? "bg-accent font-medium text-accent-foreground"
         : "text-muted-foreground hover:text-foreground"
     );
 
@@ -236,6 +236,7 @@ export function ChatTraceViewModeHeaderBar({
       <div className="px-4 py-2.5">
         <TraceViewModeTabs
           layout="fullWidth"
+          appearance="segment"
           mode={mode}
           onModeChange={onModeChange}
           showToolsTab={false}

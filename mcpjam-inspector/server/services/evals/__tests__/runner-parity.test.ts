@@ -3,11 +3,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 // PR0 of the runner-unification (plan: we-need-robustness-and-jaunty-toast.md).
 // Golden-output parity harness: pins the *persisted Convex payload* and the
 // *emitted EvalStreamEvent sequence* of every runner path BEFORE the four
-// runners are merged into one engine. Later PRs (1-6) must keep these snapshots
-// byte-stable (PR3 normalizes the intermediate finishParams `error` field, which
-// is cosmetic — `finalizeEvalIteration` forwards error/details to Convex
-// unconditionally — so these Convex-payload snapshots stay unchanged; PR5 adds
-// NEW streaming-pinned snapshots).
+// runners are merged into one engine. Later PRs (1-6) should keep these
+// snapshots byte-stable unless they intentionally extend the durable contract.
+// B5c is one such extension: every observed stage now carries additive
+// `stageMeasurements`, and setup signals include scrubbed duration fields.
+// PR3 normalizes the intermediate finishParams `error` field, which is
+// cosmetic — `finalizeEvalIteration` forwards error/details to Convex
+// unconditionally — so those Convex-payload snapshots stay unchanged; PR5
+// adds NEW streaming-pinned snapshots.
 //
 // We snapshot a NORMALIZED projection (timestamps + volatile ids scrubbed), not
 // raw payloads, so the contract is the durable shape, not wall-clock noise.
@@ -199,6 +202,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
   };
   const mcpClientManager = {
     getToolsForAiSdk: vi.fn(),
+    listTools: vi.fn(),
+    getConnectionStatus: vi.fn(),
     listServers: vi.fn(),
     getAllToolsMetadata: vi.fn().mockReturnValue({}),
     // Pinned (`toolCall`) turns execute directly; inert for prompt-only cases.
@@ -218,6 +223,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     convexClient.query.mockResolvedValue({ status: "running" });
     convexClient.action.mockResolvedValue(undefined);
     mcpClientManager.getToolsForAiSdk.mockResolvedValue({});
+    mcpClientManager.listTools.mockResolvedValue({ tools: [] });
+    mcpClientManager.getConnectionStatus.mockReturnValue("connected");
     mcpClientManager.listServers.mockReturnValue(["srv-1"]);
     streamTextMock.mockReturnValue({
       consumeStream: async () => {},
@@ -313,6 +320,8 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     modelApiKeys?: Record<string, string>;
     /** Extra top-level test fields (e.g. `isNegativeTest`, `matchOptions`). */
     extra?: Record<string, unknown>;
+    /** Run-level headers stamped on every per-step backend request. */
+    extraHeaders?: Record<string, string>;
   }) {
     return runEvalSuiteWithAiSdk({
       suiteId: "suite-1",
@@ -341,6 +350,7 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
       convexAuthToken: "token",
       mcpClientManager: mcpClientManager as any,
       testCaseId: "case-1",
+      ...(args.extraHeaders ? { extraHeaders: args.extraHeaders } : {}),
     } as any);
   }
 
@@ -435,6 +445,35 @@ describe("runner parity (golden Convex payload + event sequence)", () => {
     expect(summarizeConvexActions(convexClient.action)).toMatchSnapshot(
       "convex"
     );
+  });
+
+  it("hosted-batch: run-level extraHeaders reach the backend request", async () => {
+    // The bench worker's `x-mcpjam-benchmark-grant` carrier, asserted at the
+    // far end of the chain it travels: run options → iteration params → step
+    // handlers → the engine → this fetch. Every hop is optional and silently
+    // droppable, and a grant that does not arrive means `/stream` bills the
+    // caller's own wallet instead of the benchmark's budget.
+    fetchMock.mockResolvedValue(backendStreamResponse());
+    await batchSuite({
+      model: HOSTED_MODEL,
+      promptTurns: PROMPT_ONLY,
+      extraHeaders: { "x-mcpjam-benchmark-grant": "grant-token" },
+    });
+
+    const init = fetchMock.mock.calls[0][1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-mcpjam-benchmark-grant"]).toBe("grant-token");
+  });
+
+  it("hosted-batch: a run with no extraHeaders sends none", async () => {
+    fetchMock.mockResolvedValue(backendStreamResponse());
+    await batchSuite({ model: HOSTED_MODEL, promptTurns: PROMPT_ONLY });
+
+    const init = fetchMock.mock.calls[0][1] as {
+      headers: Record<string, string>;
+    };
+    expect(init.headers["x-mcpjam-benchmark-grant"]).toBeUndefined();
   });
 
   it("local-batch model-free pinned (setup failure: server not connected): convex payload + status", async () => {

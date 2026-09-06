@@ -1,0 +1,150 @@
+---
+title: "Okta SSO & SCIM"
+description: "Sign in to MCPJam with Okta via SAML 2.0, and automate user provisioning and deprovisioning with SCIM"
+icon: "key-round"
+---
+
+<Note>
+Single sign-on and SCIM provisioning are enterprise features, configured per
+organization. Ask us to enable them for yours and we'll send you a setup link —
+or, where it's enabled, use **Settings → Organization → Configure SSO**.
+</Note>
+
+MCPJam supports **SAML 2.0** single sign-on and **SCIM 2.0** user provisioning
+with Okta. Your Okta admin does the setup once, in a guided flow, and after
+that your directory is the source of truth: assigning someone to MCPJam in Okta
+gives them access, and unassigning them takes it away.
+
+Setup takes about 10–15 minutes.
+
+## Before you start
+
+- **An MCPJam organization** on a plan that includes SSO, and a setup link for
+  it. Your MCPJam contact provides one; each link is specific to your
+  organization.
+- **Okta admin access**, enough to add an app integration and configure
+  provisioning.
+- Your email domain **verified** on your MCPJam organization. We do this for
+  you when you're onboarded — it's what lets us route your users to Okta and
+  manage their accounts.
+
+## Part 1 — Single sign-on
+
+<Steps>
+<Step title="Open the setup link and choose Okta">
+The setup portal shows two values for your organization: an **ACS URL** and an
+**SP Entity ID**. Keep this tab open — you'll come back to it in step 4.
+</Step>
+
+<Step title="Add MCPJam in Okta">
+In the Okta Admin Console, go to **Applications → Browse App Catalog**, search
+for **MCPJam**, and add it.
+
+In the app's SAML setup, paste the values from step 1:
+
+| MCPJam setup portal | Okta field |
+| --- | --- |
+| ACS URL | Single Sign-On URL |
+| SP Entity ID | Audience URI (SP Entity ID) |
+</Step>
+
+<Step title="Check the attribute mappings">
+The catalog integration preconfigures the attributes MCPJam needs. Confirm they
+are present:
+
+| Name | Value |
+| --- | --- |
+| `email` | `user.email` |
+| `firstName` | `user.firstName` |
+| `lastName` | `user.lastName` |
+
+Optionally add a `groups` attribute if you want Okta groups to drive MCPJam
+roles.
+</Step>
+
+<Step title="Send Okta's metadata back to MCPJam">
+On the app's **Sign On** tab, copy the **Metadata URL**. Paste it into the
+MCPJam setup portal from step 1 and finish. The connection goes active
+immediately.
+</Step>
+
+<Step title="Assign users and test">
+Assign users or groups to the MCPJam app in Okta. Assigned users can now sign
+in — from the Okta dashboard, or by entering their work email on the MCPJam
+sign-in page, which redirects them to Okta.
+
+Accounts are created automatically on first sign-in, with membership in your
+MCPJam organization. Nobody needs to be invited by hand.
+</Step>
+</Steps>
+
+## Part 2 — Provisioning (SCIM)
+
+SCIM is optional but recommended: it keeps MCPJam in sync with your directory
+and, importantly, **removes access immediately** when someone is offboarded
+rather than when their session happens to expire.
+
+<Steps>
+<Step title="Open the provisioning setup link">
+Choose Okta. The portal shows a **SCIM endpoint** and a **bearer token**.
+</Step>
+
+<Step title="Enable provisioning in Okta">
+In the MCPJam app, open **Provisioning → Configure API Integration**. Paste the
+endpoint and token, then enable:
+
+- **Create Users**
+- **Update User Attributes**
+- **Deactivate Users**
+</Step>
+
+<Step title="Assign users or groups">
+Okta now manages the lifecycle:
+
+- assigning someone provisions their MCPJam account and organization
+  membership;
+- profile changes sync automatically;
+- unassigning or deactivating someone deactivates their MCPJam membership and
+  **revokes their active sessions immediately**.
+</Step>
+</Steps>
+
+## Roles
+
+MCPJam organizations separate **owner**, **admin**, and **member** access.
+Admins manage members and organization settings; members work in the product
+without administrative access. Owners additionally control ownership and
+billing.
+
+Users signing in through Okta are members by default. Map an Okta group to the
+admin role if you want your Okta groups to decide who administers MCPJam.
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Sign-in fails with an audience or recipient mismatch">
+The **Single Sign-On URL** or **Audience URI** in Okta doesn't match the values
+from the MCPJam setup portal. Re-copy both from the portal — they are unique to
+your organization.
+</Accordion>
+
+<Accordion title="Users sign in but land somewhere unexpected">
+Their email domain may not be verified on your MCPJam organization, so we can't
+tell which organization they belong to. Contact us and we'll verify it.
+</Accordion>
+
+<Accordion title="Provisioning shows errors in Okta">
+Re-check the SCIM endpoint and bearer token — tokens are specific to one
+directory connection. If you removed and re-created the connection, the old
+token stops working.
+</Accordion>
+
+<Accordion title="A deprovisioned user still appears in MCPJam">
+Deactivated members are retained for audit purposes, without access — their
+sessions are revoked and they cannot sign in.
+</Accordion>
+</AccordionGroup>
+
+## Support
+
+Email [support@mcpjam.com](mailto:support@mcpjam.com) or your MCPJam contact.

@@ -28,7 +28,33 @@ import { RecipeResolutionError, type ResolvedRecipe } from "./types";
 export const MCPJAM_YAML_MAX_BYTES = 32 * 1024;
 
 /** Keys the v1 `checks:` section understands. Anything else is a typo. */
-const CHECKS_KEYS = new Set(["transport", "build", "start", "port", "path"]);
+const CHECKS_KEYS = new Set([
+  "transport",
+  "build",
+  "start",
+  "port",
+  "path",
+  "env",
+]);
+
+/**
+ * Bounds on `checks.env`, MIRRORED FROM THE BACKEND (`github/recipeCache.ts`).
+ *
+ * They are duplicated rather than imported because the two live in different
+ * deployments, and the duplication is deliberate in one direction: the backend
+ * rejects an out-of-bounds `env` at the plan route, but it does so with a 400
+ * about a `recipe.env` the author never wrote — pointing at a plan payload
+ * rather than at the file. So the parser fails FIRST, at the field, in the
+ * file's own vocabulary. If the two ever drift, the resolver tests are where
+ * that surfaces.
+ *
+ * The key shape is the shape POSIX environment variables actually take; a key
+ * that cannot be exported has no business travelling as far as a plan row.
+ */
+export const MCPJAM_ENV_MAX_KEYS = 20;
+export const MCPJAM_ENV_KEY_MAX_CHARS = 64;
+export const MCPJAM_ENV_VALUE_MAX_CHARS = 1_024;
+const MCPJAM_ENV_KEY_PATTERN = /^[A-Z][A-Z0-9_]*$/;
 
 // Messages name the requirement only — the formatter below prepends the
 // `checks.<field>:` path, so embedding it here too would double it.
@@ -72,6 +98,85 @@ function clampForError(value: unknown): string {
     text = "[unserializable value]";
   }
   return text.replace(/`/g, "'").replace(/[\r\n]+/g, " ").slice(0, 80);
+}
+
+/**
+ * Parse `checks.env` — the DECLARED ENVIRONMENT CHANNEL.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * THESE ARE NON-SECRET CONFIGURATION LITERALS. NEVER PUT A CREDENTIAL HERE.
+ *
+ * The map comes out of a file COMMITTED to the repository — readable by anyone
+ * who can read the repo, including every fork and every pull request author —
+ * and it is persisted VERBATIM in the backend's durable plan rows. Nothing
+ * redacts it, nothing expires it, and nothing scopes it to one check. It is for
+ * the flags a server needs in order to boot (`LOG_LEVEL`, `FIXTURE_MODE`), and
+ * for nothing that would matter if it were printed in public.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Returns `undefined` for both an absent map and an EMPTY one. `env: {}` and no
+ * `env:` at all describe the same server, so they get the same wire shape —
+ * otherwise an empty object would travel to the backend, join the plan row, and
+ * become part of a candidate's identity there, making two identical recipes
+ * look like two different ones.
+ *
+ * Everything out of bounds is REJECTED, never truncated or coerced: a shortened
+ * value, or a `8080` quietly read as `"8080"`, is a different configuration from
+ * the one the author committed, and starting a server with it would report a
+ * verdict about something nobody wrote.
+ */
+function parseChecksEnv(raw: unknown): Record<string, string> | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    invalid("checks.env: must be a mapping of NAME: value pairs");
+  }
+
+  const source = raw as Record<string, unknown>;
+  const keys = Object.keys(source);
+  if (keys.length === 0) return undefined;
+  if (keys.length > MCPJAM_ENV_MAX_KEYS) {
+    // The COUNT, not the keys: naming twenty-one of them would be a wall of
+    // author-controlled text in a check summary to say one number.
+    invalid(
+      `checks.env: has ${keys.length} entries; at most ${MCPJAM_ENV_MAX_KEYS} are allowed`,
+    );
+  }
+
+  // Built fresh, own validated keys only, so nothing the YAML node carries —
+  // prototype included — travels on with the recipe.
+  const env: Record<string, string> = {};
+  for (const key of keys) {
+    // Keys are echoed (the author needs to see which one is wrong) and clamped
+    // for exactly the reasons `clampForError` exists. VALUES ARE NEVER ECHOED:
+    // they are the payload, and a check summary is a public page.
+    const named = clampForError(key);
+    if (key.length > MCPJAM_ENV_KEY_MAX_CHARS) {
+      invalid(
+        `checks.env.${named}: name exceeds ${MCPJAM_ENV_KEY_MAX_CHARS} characters (${key.length})`,
+      );
+    }
+    if (!MCPJAM_ENV_KEY_PATTERN.test(key)) {
+      invalid(
+        `checks.env.${named}: name must match ${String(MCPJAM_ENV_KEY_PATTERN)} ` +
+          "(an uppercase environment variable name)",
+      );
+    }
+    const value = source[key];
+    if (typeof value !== "string") {
+      invalid(
+        `checks.env.${named}: must be a string — quote it if it is a number, ` +
+          "a boolean, or empty",
+      );
+    }
+    if (value.length > MCPJAM_ENV_VALUE_MAX_CHARS) {
+      invalid(
+        `checks.env.${named}: exceeds ${MCPJAM_ENV_VALUE_MAX_CHARS} characters (${value.length})`,
+      );
+    }
+    env[key] = value;
+  }
+
+  return env;
 }
 
 /**
@@ -162,11 +267,21 @@ export function parseMcpjamYaml(raw: string | null): ResolvedRecipe | null {
     );
   }
 
+  // Parsed from the RAW section, not from `parsed.data`: the zod schema above
+  // describes the executable fields, and adding a record to it would express the
+  // shape without any of the bounds. Validated after it, so a file missing
+  // `build` is told about `build` rather than about an environment typo.
+  const env = parseChecksEnv(checksRecord.env);
+
   const recipe: CheckRecipe = {
     build: parsed.data.build,
     start: parsed.data.start,
     port: parsed.data.port,
     mcpPath: parsed.data.path,
+    // Spread so an absent environment leaves NO `env` key at all — `env:
+    // undefined` is a property, and it would survive into the plan payload as
+    // one. See `parseChecksEnv` for why empty and absent are the same thing.
+    ...(env ? { env } : {}),
   };
 
   return {

@@ -65,6 +65,7 @@ console.log(result.e2eLatencyMs());    // 1234
 
 // Run statistical evaluation
 const test = new EvalTest({
+  id: "c_addition",
   name: "addition",
   test: async (runner) => {
     const r = await runner.run("Add 2+3");
@@ -103,6 +104,7 @@ const runtime = host.withManager(manager, {
 });
 
 const test = new EvalTest({
+  id: "c_add",
   name: "add",
   test: async (runner) => (await runner.run("Add 2+3")).hasToolCall("add"),
 });

@@ -92,9 +92,7 @@ export function PlaygroundCenter({
         onDeviceTypeChange={state.setDeviceType}
         playgroundServerSelectorProps={playgroundServerSelectorProps}
         initialInput={
-          state.firstRunComposerSeed
-            ? PLAYGROUND_FIRST_RUN_PROMPT
-            : undefined
+          state.firstRunComposerSeed ? PLAYGROUND_FIRST_RUN_PROMPT : undefined
         }
         initialInputTypewriter={state.firstRunComposerSeed}
         blockSubmitUntilServerConnected={state.firstRunComposerSeed}

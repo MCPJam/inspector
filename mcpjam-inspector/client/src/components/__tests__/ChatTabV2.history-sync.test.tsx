@@ -4,6 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { errorToastMessage } from "@/test/utils";
 import { track } from "@/lib/analytics";
 import { ChatTabV2 } from "../ChatTabV2";
+import {
+  NO_RECEIPT_RECONCILE_WINDOW_MS,
+  RECEIPT_RECONCILE_WINDOW_MS,
+} from "@/hooks/use-resumed-thread-persistence";
 
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockGetChatHistoryDetail = vi.hoisted(() => vi.fn());
@@ -125,6 +129,10 @@ vi.mock("@/hooks/useViews", () => ({
 
 vi.mock("@/lib/config", () => ({
   HOSTED_MODE: true,
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => true,
 }));
 
 vi.mock("@/lib/session-token", () => ({
@@ -418,6 +426,11 @@ const mockUseChatSession = {
   addToolApprovalResponse: vi.fn(),
   resetChat: vi.fn(),
   startChatWithMessages: vi.fn(),
+  detachToLocalFork: vi.fn(async () => ({
+    chatSessionId: "forked-session",
+  })),
+  consumePersistReceipt: vi.fn(() => null as any),
+  consumeTurnAborted: vi.fn(() => false),
   loadChatSession: vi.fn(async () => undefined),
   rewindToMessage: vi.fn(),
   syncResumedVersion: vi.fn((version: number | null) => {
@@ -454,6 +467,16 @@ vi.mock("@/hooks/use-chat-session", () => ({
         mockUseChatSession.startChatWithMessages(...args);
         const options = args[1] as { resetReason?: string } | undefined;
         chatSessionOnResetRef.current?.(options?.resetReason ?? "fork");
+      },
+      detachToLocalFork: async (...args: unknown[]) => {
+        const result = await mockUseChatSession.detachToLocalFork(...args);
+        chatSessionOnResetRef.current?.("fork");
+        // The real fork's hydration is what drops the optimistic-concurrency
+        // guard, so a confirmed fork — and only a confirmed fork — clears it.
+        if (result) {
+          mockUseChatSession.syncResumedVersion(null);
+        }
+        return result;
       },
       loadChatSession: async (...args: unknown[]) => {
         const result = await mockUseChatSession.loadChatSession(...args);
@@ -495,6 +518,8 @@ describe("ChatTabV2 history sync", () => {
     convexQueryCallsRef.current = [];
     mockReactiveHistoryState.session = undefined;
     mockReactiveHistoryState.widgetSnapshots = undefined;
+    mockUseChatSession.consumePersistReceipt.mockReset().mockReturnValue(null);
+    mockUseChatSession.consumeTurnAborted.mockReset().mockReturnValue(false);
     Object.assign(mockUseChatSession, {
       messages: [
         {
@@ -689,81 +714,197 @@ describe("ChatTabV2 history sync", () => {
     expect(mockUseChatSession.loadChatSession).not.toHaveBeenCalled();
   });
 
-  it("detaches a resumed thread after the refreshed version never advances", async () => {
+  /**
+   * Post-stream outcome handling. These replace a suite that pinned the old
+   * REST version poll — four detail fetches inside a 1s window, then a detach
+   * whenever the version had not moved. That poll could not tell a failed save
+   * from a real concurrent edit, so it reported the far commoner failure as a
+   * concurrency alarm and took the user's thread away over it.
+   */
+  describe("post-stream persist outcome", () => {
     const detailResponse = {
       ok: true,
       session: {
         ...mockHistorySession,
         messagesBlobUrl: "https://storage.test/blob",
-        resumeConfig: {
-          selectedServers: ["server-1"],
-        },
+        resumeConfig: { selectedServers: ["server-1"] },
       },
       widgetSnapshots: [],
     };
 
-    mockGetChatHistoryDetail
-      .mockResolvedValueOnce(detailResponse)
-      .mockResolvedValue(detailResponse);
+    /** Select the history thread, then run a turn to completion. */
+    async function resumeThreadAndStream() {
+      mockGetChatHistoryDetail
+        .mockResolvedValueOnce(detailResponse)
+        .mockResolvedValue(detailResponse);
 
-    const view = render(<ChatTabV2 {...defaultProps} />);
+      const view = render(<ChatTabV2 {...defaultProps} />);
+      fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
+      fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+      await flushMicrotasks();
 
-    fireEvent.click(screen.getByRole("button", { name: "Show sessions" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select thread" }));
+      expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
 
-    await flushMicrotasks();
+      mockUseChatSession.status = "submitted";
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      mockUseChatSession.status = "ready";
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+      return view;
+    }
 
-    expect(mockUseChatSession.loadChatSession).toHaveBeenCalledTimes(1);
-    expect(screen.getByTestId("history-rail")).toHaveAttribute(
-      "data-active-session-id",
-      "history-1"
-    );
+    it("syncs the version from a saved receipt and stays attached", async () => {
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "saved",
+        chatSessionId: "chat-session-1",
+        version: 5,
+      });
 
-    mockUseChatSession.status = "submitted";
-    view.rerender(<ChatTabV2 {...defaultProps} />);
+      await resumeThreadAndStream();
 
-    mockUseChatSession.status = "ready";
-    view.rerender(<ChatTabV2 {...defaultProps} />);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
+      // The NEXT send's expectedVersion comes from here.
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(5);
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(screen.getByTestId("history-rail")).toHaveAttribute(
+        "data-active-session-id",
+        "history-1"
+      );
     });
-    await flushMicrotasks();
 
-    expect(mockGetChatHistoryDetail).toHaveBeenCalledTimes(4);
-    expect(screen.getByTestId("history-rail")).toHaveAttribute(
-      "data-active-session-id",
-      "none"
-    );
+    it("treats a duplicate receipt as saved", async () => {
+      // A retried ingest the backend recognized. The turn IS committed.
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "duplicate",
+        chatSessionId: "chat-session-1",
+        version: 6,
+      });
 
-    expect(mockUseChatSession.startChatWithMessages).toHaveBeenCalledWith(
-      [
-        {
-          id: "1",
-          role: "user",
-          parts: [{ type: "text", text: "Hello" }],
-        },
-        {
-          id: "2",
-          role: "assistant",
-          parts: [{ type: "text", text: "Hi" }],
-        },
-      ],
-      {
-        toolRenderOverrides: {
-          "tool-call-1": {
-            uiType: "mcp-apps",
-          },
-        },
-      }
-    );
-    expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(null);
-    expect(mockToastError).toHaveBeenCalledWith(
-      errorToastMessage(
-        "This chat changed elsewhere. This reply stayed local, and your next send will continue in a new thread."
-      ),
-      { duration: 8000 }
-    );
+      await resumeThreadAndStream();
+
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(6);
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+      expect(mockToastError).not.toHaveBeenCalled();
+    });
+
+    it("detaches with accurate copy only on a real conflict", async () => {
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "conflict",
+        chatSessionId: "chat-session-1",
+        currentVersion: 9,
+      });
+
+      await resumeThreadAndStream();
+
+      expect(mockUseChatSession.detachToLocalFork).toHaveBeenCalled();
+      expect(mockToastError).toHaveBeenCalledWith(
+        errorToastMessage(
+          "Someone else updated this chat while you were replying. Your reply stayed here; your next message will start a new thread."
+        ),
+        { duration: 8000 }
+      );
+      expect(screen.getByTestId("history-rail")).toHaveAttribute(
+        "data-active-session-id",
+        "none"
+      );
+    });
+
+    it("reports an unsaved reply honestly and keeps the thread attached", async () => {
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "failed",
+        chatSessionId: "chat-session-1",
+        failureKind: "timeout",
+      });
+
+      const view = await resumeThreadAndStream();
+
+      // Ambiguous until reconciliation gives up: a timed-out ingest may still
+      // have committed, so nothing is said yet.
+      expect(mockToastError).not.toHaveBeenCalled();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RECEIPT_RECONCILE_WINDOW_MS + 500);
+      });
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+
+      expect(mockToastError).toHaveBeenCalledWith(
+        errorToastMessage(
+          "This reply couldn't be saved to your chat history. It's still visible here."
+        ),
+        { duration: 8000 }
+      );
+      // The whole point: no forced new thread over a save failure.
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+      expect(screen.getByTestId("history-rail")).toHaveAttribute(
+        "data-active-session-id",
+        "history-1"
+      );
+    });
+
+    it("reconciles a failed receipt to saved when the version advances", async () => {
+      // The write landed after the ingest call gave up on it.
+      mockUseChatSession.consumePersistReceipt.mockReturnValue({
+        outcome: "failed",
+        chatSessionId: "chat-session-1",
+        failureKind: "timeout",
+      });
+
+      const view = await resumeThreadAndStream();
+
+      mockReactiveHistoryState.session = {
+        ...mockHistorySession,
+        version: 5,
+        messagesBlobUrl: null,
+      };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(5);
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(RECEIPT_RECONCILE_WINDOW_MS + 2_000);
+      });
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the subscription when no receipt arrives", async () => {
+      // Deploy skew: this bundle against an inspector server that predates the
+      // receipt part. Never auto-detach without positive evidence.
+      mockUseChatSession.consumePersistReceipt.mockReturnValue(null);
+
+      const view = await resumeThreadAndStream();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(
+          NO_RECEIPT_RECONCILE_WINDOW_MS - 1_000
+        );
+      });
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+
+      // Past the receipt window but still inside the longer no-receipt one —
+      // silence from an old server is not evidence of anything yet.
+      expect(mockToastError).not.toHaveBeenCalled();
+
+      mockReactiveHistoryState.session = {
+        ...mockHistorySession,
+        version: 5,
+        messagesBlobUrl: null,
+      };
+      mockReactiveHistoryState.widgetSnapshots = [];
+      view.rerender(<ChatTabV2 {...defaultProps} />);
+      await flushMicrotasks();
+
+      expect(mockUseChatSession.syncResumedVersion).toHaveBeenCalledWith(5);
+      expect(mockToastError).not.toHaveBeenCalled();
+      expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
+    });
   });
 
   it("keeps the active resumed thread selected when servers change", async () => {
@@ -800,6 +941,7 @@ describe("ChatTabV2 history sync", () => {
       "history-1"
     );
     expect(mockUseChatSession.startChatWithMessages).not.toHaveBeenCalled();
+    expect(mockUseChatSession.detachToLocalFork).not.toHaveBeenCalled();
     expect(mockUseChatSession.syncResumedVersion).not.toHaveBeenCalledWith(
       null
     );

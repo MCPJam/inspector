@@ -32,6 +32,7 @@ vi.mock("sonner", () => ({
 }));
 
 import { ProtocolTab } from "../ProtocolTab";
+import { buildHostCompatProfiles } from "@/lib/host-compat/profiles";
 
 function Harness({ initial }: { initial: HostConfigInputV2 }) {
   const [draft, setDraft] = useState(initial);
@@ -66,11 +67,11 @@ describe("ProtocolTab protocol-version dropdown", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
 
     expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent)
+      (await screen.findAllByRole("option")).map((o) => o.textContent),
     ).toEqual([
       "Automatic",
       "Latest (2026-07-28)",
@@ -85,7 +86,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
 
     // Exactly one option may carry the Latest marker, and it must be the
@@ -102,7 +103,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-11-25" }));
 
@@ -110,39 +111,37 @@ describe("ProtocolTab protocol-version dropdown", () => {
     expect(screen.getByTestId("pin").textContent).toBe("2025-11-25");
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
     expect(screen.getByTestId("pin").textContent).toBe("2025-06-18");
   });
 
-  it("defaults an unpinned host to Automatic and stores no pin", () => {
+  it("renders a legacy unpinned host as Automatic without rewriting it", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     expect(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     ).toHaveTextContent("Automatic");
     expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
   });
 
-  it("selecting Latest pins 2026-07-28; returning to Automatic clears it", async () => {
+  it("selecting Latest pins 2026-07-28; returning to Automatic stores auto", async () => {
     const user = userEvent.setup();
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: /Latest/i }));
     expect(screen.getByTestId("pin").textContent).toBe("2026-07-28");
 
-    // Back to Automatic must restore ABSENCE, not a 2025 literal — a stored
-    // literal would churn the canonical config hash against every
-    // pre-feature row.
+    // Automatic is an explicit selection policy, not a wire protocol literal.
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "Automatic" }));
-    expect(screen.getByTestId("pin").textContent).toBe("<undefined>");
+    expect(screen.getByTestId("pin").textContent).toBe("auto");
   });
 
   it("shows a stored legacy pin as itself instead of collapsing it", () => {
@@ -154,7 +153,7 @@ describe("ProtocolTab protocol-version dropdown", () => {
     // Previously every non-RC literal rendered as the single unpinned entry,
     // so a genuinely pinned host misreported itself as unpinned.
     expect(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     ).toHaveTextContent("2025-06-18");
   });
 
@@ -170,37 +169,57 @@ describe("ProtocolTab protocol-version dropdown", () => {
     // No option exists for an unknown literal; Radix would render a blank
     // trigger if we handed it an unmatched value.
     expect(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     ).toHaveTextContent("Automatic");
   });
 });
 
 /**
- * The backend (`canonicalizeMcpProfile`) refuses to store a STATEFUL pin that
+ * The backend (`canonicalizeMcpProfile`) refuses to store a concrete pin that
  * is absent from `initialize.supportedProtocolVersions` —
  * `ConflictingProtocolVersionPin`. Preset-backed clients carry that list, so
  * offering the full set on them produced choices that failed at Save with an
  * opaque "Server Error". Offer only what saves.
  */
+const NARROW_HOST_STYLE = "notion";
+const NARROW_HOST_LABEL = "Notion";
+
 describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
   beforeEach(() => {
     vi.mocked(toast.warning).mockClear();
   });
 
+  // Every case below assumes the chosen host is catalogued at exactly
+  // 2025-11-25. When that stops being true the seven assertions fail with
+  // opaque option-list diffs; this one fails saying what actually changed.
+  it("uses a host still catalogued at a single version", () => {
+    // Same source the component reads, so this cannot drift from it.
+    const profile = buildHostCompatProfiles().find(
+      (item) => item.id === NARROW_HOST_STYLE,
+    );
+    expect(profile?.supportedProtocolVersions).toEqual(["2025-11-25"]);
+  });
+
+  // Needs a host whose catalog row is a SINGLE version, so the dropdown is
+  // constrained by the row and not by the draft. That premise is asserted
+  // above — this file has now had to move twice as rows widened (ChatGPT ->
+  // Cursor after the 2026-08-19 ladder probe, Cursor -> Notion after the
+  // 2026-09-02 sweep), which is why the premise is a test rather than a
+  // comment.
   it("warns, but still switches, for an old client not verified for the chosen version", async () => {
     const user = userEvent.setup();
     const initial = emptyHostConfigInputV2({
-      hostStyle: "chatgpt",
+      hostStyle: NARROW_HOST_STYLE,
     } as Partial<HostConfigInputV2>);
     render(<Harness initial={initial} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-03-26" }));
 
     expect(toast.warning).toHaveBeenCalledWith(
-      "ChatGPT is not verified to support 2025-03-26."
+      `${NARROW_HOST_LABEL} is not verified to support 2025-03-26.`,
     );
     expect(screen.getByTestId("pin")).toHaveTextContent("2025-03-26");
   });
@@ -210,7 +229,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     render(<Harness initial={withAdvertised(["2025-11-25"])} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     await user.click(screen.getByRole("option", { name: "2025-11-25" }));
 
@@ -219,10 +238,13 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
 
   function withAdvertised(
     supportedProtocolVersions: string[],
-    mcpProtocolVersion?: string
+    mcpProtocolVersion?: string,
   ): HostConfigInputV2 {
     return emptyHostConfigInputV2({
-      hostStyle: "claude",
+      // The row lists only 2025-11-25, so the advertised list is the only
+      // thing constraining the dropdown here. A client whose catalog row spans
+      // both eras (Claude) would widen it on purpose.
+      hostStyle: NARROW_HOST_STYLE,
       mcpProfile: {
         profileVersion: 1,
         initialize: { supportedProtocolVersions },
@@ -237,13 +259,13 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     render(<Harness initial={withAdvertised(["2025-11-25"])} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
 
     // Both are stateful and unadvertised, so pinning either could only ever
     // fail at Save.
     const labels = (await screen.findAllByRole("option")).map(
-      (o) => o.textContent
+      (o) => o.textContent,
     );
     expect(labels).not.toContain("2025-06-18");
     expect(labels).not.toContain("2025-03-26");
@@ -254,16 +276,14 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     render(<Harness initial={withAdvertised(["2025-11-25"])} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
 
-    // The backend WOULD accept a stateless pin here (it only validates
-    // stateful ones), but accepting it is not the same as the client speaking
-    // it: offering 2026-07-28 to a client that never advertised it emulates a
-    // capability the real product does not have. Only Automatic — which claims
-    // nothing — survives alongside the advertised revision.
+    // Every concrete pin is constrained by the advertised support list,
+    // including the stateless 2026 revision. Automatic remains available as
+    // the negotiation policy.
     expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent)
+      (await screen.findAllByRole("option")).map((o) => o.textContent),
     ).toEqual(["Automatic", "2025-11-25"]);
   });
 
@@ -274,10 +294,10 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     // Listing the revision IS how a client declares it speaks it — there is no
     // separate stateless-support flag.
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent)
+      (await screen.findAllByRole("option")).map((o) => o.textContent),
     ).toEqual(["Automatic", "Latest (2026-07-28)", "2025-11-25"]);
   });
 
@@ -288,7 +308,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     render(<Harness initial={emptyHostConfigInputV2()} />);
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
 
     expect(await screen.findAllByRole("option")).toHaveLength(5);
@@ -306,11 +326,11 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
             initialize: { supportedProtocolVersions: ["2025-11-25"] },
           },
         } as Partial<HostConfigInputV2>)}
-      />
+      />,
     );
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     expect(await screen.findAllByRole("option")).toHaveLength(5);
     await user.click(screen.getByRole("option", { name: "2025-06-18" }));
@@ -327,14 +347,14 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     render(<Harness initial={withAdvertised(["2025-11-25"], "2025-03-26")} />);
 
     expect(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     ).toHaveTextContent("2025-03-26");
 
     await user.click(
-      screen.getByRole("combobox", { name: "MCP protocol version" })
+      screen.getByRole("combobox", { name: "MCP protocol version" }),
     );
     expect(
-      (await screen.findAllByRole("option")).map((o) => o.textContent)
+      (await screen.findAllByRole("option")).map((o) => o.textContent),
     ).toContain("2025-03-26");
   });
 
@@ -344,7 +364,7 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
     // A short dropdown with no explanation reads as a broken control — the
     // list doing the filtering is invisible unless the JSON editor is open.
     expect(
-      screen.getByText(/This client advertises 2025-11-25/)
+      screen.getByText(/This client advertises 2025-11-25/),
     ).toBeInTheDocument();
   });
 
@@ -363,16 +383,16 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
       <Harness
         initial={withAdvertised(
           ["2025-11-25", "2025-06-18", "2026-07-28"],
-          "2025-03-26"
+          "2025-03-26",
         )}
-      />
+      />,
     );
 
     expect(screen.queryByText(/This client advertises/)).toBeNull();
     expect(
       screen.getByText(
-        /Pinned to 2025-03-26, which this client does not advertise/
-      )
+        /Pinned to 2025-03-26, which this client does not advertise/,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -381,24 +401,30 @@ describe("ProtocolTab dropdown vs. the client's advertised versions", () => {
 
     expect(
       screen.getByText(
-        /Pinned to 2025-03-26, which this client does not advertise/
-      )
+        /Pinned to 2025-03-26, which this client does not advertise/,
+      ),
     ).toBeInTheDocument();
   });
 
   it("does not warn on an advertised or stateless pin", () => {
     // Advertised pin: fine.
     const { unmount } = render(
-      <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />
+      <Harness initial={withAdvertised(["2025-11-25"], "2025-11-25")} />,
     );
     expect(screen.queryByText(/does not advertise/)).toBeNull();
     unmount();
 
-    // Stateless pin: the dropdown no longer OFFERS an unadvertised stateless
-    // version, but a config that already carries one still saves — the backend
-    // rule never reaches it. The warning speaks only to save failure, so it
-    // must stay silent here rather than crying wolf.
-    render(<Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />);
+    // A stateless pin skips `initialize`, so it never has to appear in that
+    // accept-list — both canonicalizers save this shape. Warning here would
+    // promise a failure that never comes.
+    const second = render(
+      <Harness initial={withAdvertised(["2025-11-25"], "2026-07-28")} />,
+    );
     expect(screen.queryByText(/does not advertise/)).toBeNull();
+    second.unmount();
+
+    // A stateful pin outside the list still throws at Save, so it still warns.
+    render(<Harness initial={withAdvertised(["2025-11-25"], "2025-06-18")} />);
+    expect(screen.getByText(/does not advertise/)).toBeInTheDocument();
   });
 });

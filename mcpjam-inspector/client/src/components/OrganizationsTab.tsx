@@ -1,4 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
+import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useConvexAuth } from "convex/react";
 import { useAuth } from "@workos-inc/authkit-react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
@@ -76,6 +77,7 @@ import {
   getBillingUpsellTeaser,
 } from "@/lib/billing-upsell";
 import { OrganizationAuditLog } from "./organization/OrganizationAuditLog";
+import { OrganizationSharingPolicyCard } from "./organization/OrganizationSharingPolicyCard";
 import { OrganizationBillingSection } from "./organization/OrganizationBillingSection";
 import { OrganizationCurrentPlanPanel } from "./organization/OrganizationCurrentPlanPanel";
 import { OrganizationMemberRow } from "./organization/OrganizationMemberRow";
@@ -92,11 +94,15 @@ import {
 } from "./organization/discord/DiscordAgentSettingsSection";
 import { useSlackAgentSettingsEnabled } from "@/hooks/useSlackAgentSettingsEnabled";
 import { useDiscordAgentEnabled } from "@/hooks/useDiscordAgentEnabled";
+import { useTraceDestinationsEnabled } from "@/hooks/useTraceDestinationsEnabled";
+import { TraceDestinationsSection } from "./organization/observability/TraceDestinationsSection";
+import { ErrorBoundary } from "@/components/ui/error-boundary";
 import {
   useAppNavigate,
   useCurrentSearchParam,
   buildOrganizationPath,
 } from "@/lib/app-navigation";
+import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface OrganizationsTabProps {
   organizationId?: string;
@@ -141,19 +147,19 @@ function formatBillingIntervalLabel(interval: BillingInterval): string {
 
 function formatPlanDescriptor(
   plan: OrganizationPlan,
-  billingInterval: BillingInterval | null
+  billingInterval: BillingInterval | null,
 ): string {
   if (billingInterval == null) {
     return formatPlanName(plan);
   }
 
   return `${formatPlanName(plan)} ${formatBillingIntervalLabel(
-    billingInterval
+    billingInterval,
   )}`;
 }
 
 function getScheduledBillingChangeCancellationState(
-  billingStatus: OrganizationBillingStatus | undefined
+  billingStatus: OrganizationBillingStatus | undefined,
 ): ScheduledBillingChangeCancellationState | null {
   if (
     !billingStatus?.canManageBilling ||
@@ -185,14 +191,14 @@ function getScheduledBillingChangeCancellationState(
   }
 
   const currentIntervalLabel = formatBillingIntervalLabel(
-    currentBillingInterval
+    currentBillingInterval,
   );
   const scheduledIntervalLabel = formatBillingIntervalLabel(
-    scheduledBillingInterval
+    scheduledBillingInterval,
   );
   const currentPlanName = formatPlanName(currentPlan);
   const effectiveDate = formatBillingDate(
-    billingStatus.stripeScheduledEffectiveAt
+    billingStatus.stripeScheduledEffectiveAt,
   );
   const keepCurrentPlanLabel = `Keep ${currentPlanName} ${currentIntervalLabel} plan`;
   const effectiveDateSuffix = effectiveDate ? ` on ${effectiveDate}` : "";
@@ -226,31 +232,66 @@ function PendingSeatPaymentNotice({
   onFinish: () => void;
   onCancel: () => void;
 }) {
+  const needsRetry = intent.needsRetry === true;
+  const cleanupPending = intent.status === "cleanup_pending";
+
   return (
     <Alert
-      className="border-primary/20 bg-primary/[0.04]"
-      data-testid="pending-seat-payment-notice"
+      className={
+        needsRetry
+          ? "border-destructive/30 bg-destructive/[0.04]"
+          : "border-primary/20 bg-primary/[0.04]"
+      }
+      data-testid={
+        needsRetry
+          ? "failed-seat-payment-notice"
+          : "pending-seat-payment-notice"
+      }
     >
-      <CreditCard className="size-4 text-primary" />
-      <AlertTitle>Seat payment required</AlertTitle>
+      <CreditCard
+        className={
+          needsRetry ? "size-4 text-destructive" : "size-4 text-primary"
+        }
+      />
+      <AlertTitle>
+        {needsRetry
+          ? "Seat payment didn't go through"
+          : "Seat payment required"}
+      </AlertTitle>
       <AlertDescription className="space-y-3">
         <p>
-          Finish payment to add {intent.email}. They will not get access or
-          credits until payment succeeds.
+          {cleanupPending ? (
+            <>
+              Stripe is closing {intent.email}'s declined invoice. Retry will
+              unlock as soon as cleanup is confirmed.
+            </>
+          ) : needsRetry ? (
+            <>
+              We couldn't charge for {intent.email}'s seat. They won't get
+              access or credits until it's paid.
+            </>
+          ) : (
+            <>
+              Finish payment to add {intent.email}. They will not get access or
+              credits until payment succeeds.
+            </>
+          )}
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
             type="button"
             size="sm"
             onClick={onFinish}
-            disabled={isFinishingSeatPayment || isCancelingSeatPayment}
+            disabled={
+              cleanupPending || isFinishingSeatPayment || isCancelingSeatPayment
+            }
           >
-            {isFinishingSeatPayment ? (
+            {cleanupPending || isFinishingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : (
               <CreditCard className="mr-2 size-4" />
             )}
-            Finish payment
+            {needsRetry ? "Retry payment" : "Finish payment"}
           </Button>
           <Button
             type="button"
@@ -262,7 +303,7 @@ function PendingSeatPaymentNotice({
             {isCancelingSeatPayment ? (
               <Loader2 className="mr-2 size-4 animate-spin" />
             ) : null}
-            Cancel
+            {needsRetry ? "Remove invite" : "Cancel"}
           </Button>
         </div>
       </AlertDescription>
@@ -460,7 +501,16 @@ export function OrganizationsTab({
           Members, models, and billing live on your organization. Sign in to
           manage them.
         </p>
-        <Button onClick={() => signIn()}>Sign in</Button>
+        <Button
+          onClick={() => {
+            // Remember where they were, so WorkOS returns them here rather
+            // than to the app's front door.
+            captureAppSignInReturnPath();
+            signIn(permalinkSignInOptions());
+          }}
+        >
+          Sign in
+        </Button>
       </OrganizationStateShell>
     );
   }
@@ -567,7 +617,7 @@ function OrganizationPage({
   } = useOrganizationMutations();
 
   const currentMember = activeMembers.find(
-    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase()
+    (m) => m.email.toLowerCase() === currentUserEmail?.toLowerCase(),
   );
   const currentRole: OrganizationMembershipRole | null = currentMember
     ? resolveOrganizationRole(currentMember)
@@ -599,17 +649,22 @@ function OrganizationPage({
     openIntervalChangePortal,
     cancelScheduledBillingChange,
     finishSeatPayment,
+    retrySeatPayment,
     cancelSeatPayment,
   } = useOrganizationBilling(organization._id, {
     enabled: isAuthenticated,
     includeSeatPaymentIntent: true,
   });
   const billingEntitlementsUiEnabled = useFeatureFlagEnabled(
-    "billing-entitlements-ui"
+    "billing-entitlements-ui",
   );
   const billingUiEnabled = billingEntitlementsUiEnabled === true;
   const slackAgentSettingsEnabled = useSlackAgentSettingsEnabled();
   const discordAgentEnabled = useDiscordAgentEnabled();
+  // The client flag decides whether to ADVERTISE the section. The section
+  // itself re-checks the server's answer, which is the one that governs
+  // access; see the hook's docblock for why this component cannot ask.
+  const traceDestinationsEnabled = useTraceDestinationsEnabled();
   // One `?tab=` param, read once and resolved per section — each resolver
   // falls back to its own Connections, so a Slack tab id in a Discord URL
   // lands somewhere real instead of on a blank panel.
@@ -618,17 +673,20 @@ function OrganizationPage({
     section === "models"
       ? "models"
       : section === "billing"
-      ? "billing"
-      : // Flag OFF collapses the Slack section back to the overview rather
-      // than rendering an empty page: a user who kept the URL from a
-      // flagged-in session should land somewhere real.
-      section === "slack" && slackAgentSettingsEnabled
-      ? "slack"
-      : // Same collapse for Discord, and it matters more here: the agent is
-      // dark, so nearly everyone hitting this URL is flagged OFF.
-      section === "discord" && discordAgentEnabled
-      ? "discord"
-      : "overview";
+        ? "billing"
+        : // Flag OFF collapses the Slack section back to the overview rather
+          // than rendering an empty page: a user who kept the URL from a
+          // flagged-in session should land somewhere real.
+          section === "slack" && slackAgentSettingsEnabled
+          ? "slack"
+          : // Same collapse for Discord, and it matters more here: the agent is
+            // dark, so nearly everyone hitting this URL is flagged OFF.
+            section === "discord" && discordAgentEnabled
+            ? "discord"
+            : // Same collapse again for Observability.
+              section === "observability" && traceDestinationsEnabled
+              ? "observability"
+              : "overview";
   // The sub-tab lives in `?tab=` — views of one settings section, not separate
   // org routes. Read from the URL rather than component state so a link to a
   // specific tab works, and through the router's location context so switching
@@ -652,7 +710,7 @@ function OrganizationPage({
     intent: "members",
   });
   const memberUpsellCtaLabel = getBillingUpsellCtaLabel(
-    memberInviteGate.upgradePlan
+    memberInviteGate.upgradePlan,
   );
 
   const canRemoveMember = (member: OrganizationMember): boolean => {
@@ -683,7 +741,7 @@ function OrganizationPage({
   const [inviteEmail, setInviteEmail] = useState("");
   const [isInviting, setIsInviting] = useState(false);
   const [roleUpdatingEmail, setRoleUpdatingEmail] = useState<string | null>(
-    null
+    null,
   );
   const [transferTargetMember, setTransferTargetMember] =
     useState<OrganizationMember | null>(null);
@@ -721,7 +779,7 @@ function OrganizationPage({
   };
 
   const handleLogoFileChange = async (
-    e: React.ChangeEvent<HTMLInputElement>
+    e: React.ChangeEvent<HTMLInputElement>,
   ) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -783,7 +841,8 @@ function OrganizationPage({
     }
     if (memberInviteGate.isDenied) {
       toast.error(
-        memberInviteGate.denialMessage ?? "Upgrade required to add more members"
+        memberInviteGate.denialMessage ??
+          "Upgrade required to add more members",
       );
       return;
     }
@@ -801,7 +860,7 @@ function OrganizationPage({
       }
       if (result.isPending) {
         toast.success(
-          `Invitation sent to ${email}. They'll get access once they sign up.`
+          `Invitation sent to ${email}. They'll get access once they sign up.`,
         );
       } else {
         toast.success(`${email} added to the organization.`);
@@ -812,8 +871,8 @@ function OrganizationPage({
         getBillingErrorMessage(
           error,
           "Failed to invite member",
-          billingStatus?.canManageBilling ?? false
-        )
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     } finally {
       setIsInviting(false);
@@ -822,7 +881,7 @@ function OrganizationPage({
 
   const handleFinishSeatPayment = async (
     seatPaymentIntentId?: string,
-    email?: string
+    email?: string,
   ) => {
     try {
       const result = await finishSeatPayment(seatPaymentIntentId);
@@ -830,28 +889,90 @@ function OrganizationPage({
         toast.success(
           `${
             email ?? activeSeatPaymentIntent?.email ?? "Member"
-          } added to the organization.`
+          } added to the organization.`,
         );
       }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Payment was not completed. The member was not added."
+          : "Payment was not completed. The member was not added.",
+      );
+    }
+  };
+
+  const seatInviteRemovalInFlightRef = useRef(false);
+  const [isRemovingSeatInvite, setIsRemovingSeatInvite] = useState(false);
+
+  const handleRetrySeatPayment = async () => {
+    if (activeSeatPaymentIntent?.status === "cleanup_pending") return;
+    try {
+      const result = await retrySeatPayment();
+      if (result?.status === "paid") {
+        toast.success(
+          `${activeSeatPaymentIntent?.email ?? "Member"} added to the organization.`,
+        );
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Payment was not completed. The member was not added.",
       );
     }
   };
 
   const handleCancelSeatPayment = async () => {
+    // For a terminal charge the button says "Remove invite", and that is what
+    // it has to do: cancelSeatPayment returns immediately for anything not
+    // still active, so calling it here left the invite and the notice exactly
+    // where they were while claiming success.
+    const isInviteRemoval = activeSeatPaymentIntent?.needsRetry === true;
+    // Removal has no spinner of its own — the shared one belongs to
+    // cancelSeatPayment, which this path never calls — so a second click would
+    // fire a concurrent removeMember that finds no row and reports "Member not
+    // found" on top of the first one's success. The state below disables the
+    // button and is what normally prevents that; the ref keeps the handler
+    // self-guarding rather than depending on its own button being disabled.
+    if (isInviteRemoval) {
+      if (seatInviteRemovalInFlightRef.current) return;
+      seatInviteRemovalInFlightRef.current = true;
+      setIsRemovingSeatInvite(true);
+    }
     try {
-      await cancelSeatPayment();
-      toast.success("Pending seat payment canceled.");
+      if (isInviteRemoval && activeSeatPaymentIntent) {
+        await removeMember({
+          organizationId: organization._id,
+          email: activeSeatPaymentIntent.email,
+        });
+        toast.success(`Invite for ${activeSeatPaymentIntent.email} removed.`);
+        return;
+      }
+      const result = await cancelSeatPayment();
+      if (result.outcome === "canceled") {
+        toast.success("Pending seat payment canceled.");
+      } else if (result.outcome === "deferred") {
+        toast.error(
+          "Stripe could not confirm cancellation yet. The payment is still pending; try again.",
+        );
+      } else if (result.outcome === "paid") {
+        toast.success(
+          "Payment completed before cancellation; the member was added.",
+        );
+      } else {
+        toast.error("This seat payment is no longer active.");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel pending seat payment"
+          : "Failed to cancel pending seat payment",
       );
+    } finally {
+      if (isInviteRemoval) {
+        seatInviteRemovalInFlightRef.current = false;
+        setIsRemovingSeatInvite(false);
+      }
     }
   };
 
@@ -867,15 +988,15 @@ function OrganizationPage({
         getBillingErrorMessage(
           error,
           "Failed to remove member",
-          billingStatus?.canManageBilling ?? false
-        )
+          billingStatus?.canManageBilling ?? false,
+        ),
       );
     }
   };
 
   const handleChangeMemberRole = async (
     member: OrganizationMember,
-    role: "admin" | "member" | "guest"
+    role: "admin" | "member" | "guest",
   ) => {
     if (!isOwner) return;
 
@@ -918,7 +1039,7 @@ function OrganizationPage({
       setTransferTargetMember(null);
     } catch (error) {
       toast.error(
-        (error as Error).message || "Failed to transfer organization ownership"
+        (error as Error).message || "Failed to transfer organization ownership",
       );
     } finally {
       setIsTransferringOwnership(false);
@@ -960,16 +1081,19 @@ function OrganizationPage({
     ...(discordAgentEnabled
       ? ([{ id: "discord", label: "Discord" }] as const)
       : []),
+    ...(traceDestinationsEnabled
+      ? ([{ id: "observability", label: "Observability" }] as const)
+      : []),
     { id: "billing", label: "Billing" },
   ];
   const navigateToSlackTab = (tab: SlackSettingsTabId) => {
     appNavigate(
-      `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`
+      `${buildOrganizationPath(organization._id, "slack")}?tab=${tab}`,
     );
   };
   const navigateToDiscordTab = (tab: DiscordSettingsTabId) => {
     appNavigate(
-      `${buildOrganizationPath(organization._id, "discord")}?tab=${tab}`
+      `${buildOrganizationPath(organization._id, "discord")}?tab=${tab}`,
     );
   };
   const handleViewBilling = () => navigateToSection("billing");
@@ -986,16 +1110,16 @@ function OrganizationPage({
 
       window.open(url, "_blank", "noopener,noreferrer");
     },
-    [navigateBillingInSameTab]
+    [navigateBillingInSameTab],
   );
 
   const getBillingReturnUrl = useCallback(
     () =>
       `${window.location.origin}${buildOrganizationPath(
         organization._id,
-        "billing"
+        "billing",
       )}`,
-    [organization._id]
+    [organization._id],
   );
 
   const handleManageBilling = async () => {
@@ -1004,32 +1128,34 @@ function OrganizationPage({
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to open billing portal"
+        error instanceof Error
+          ? error.message
+          : "Failed to open billing portal",
       );
     }
   };
 
   const handleChangeBillingInterval = async (
-    targetBillingInterval: BillingInterval
+    targetBillingInterval: BillingInterval,
   ) => {
     try {
       const billingUrl = await openIntervalChangePortal(
         getBillingReturnUrl(),
-        targetBillingInterval
+        targetBillingInterval,
       );
       openBillingUrl(billingUrl);
     } catch (error) {
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to open billing interval change"
+          : "Failed to open billing interval change",
       );
     }
   };
 
   const handleDowngradePlan = async (
     targetPlan: OrganizationPlan,
-    _targetBillingInterval: BillingInterval
+    _targetBillingInterval: BillingInterval,
   ) => {
     const currentPlan = billingStatus?.plan;
 
@@ -1062,7 +1188,7 @@ function OrganizationPage({
       toast.error(
         error instanceof Error
           ? error.message
-          : "Failed to cancel scheduled billing change"
+          : "Failed to cancel scheduled billing change",
       );
     }
   };
@@ -1078,7 +1204,7 @@ function OrganizationPage({
       setPendingDowngradeConfirmation(null);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan"
+        error instanceof Error ? error.message : "Failed to change plan",
       );
     }
   };
@@ -1086,19 +1212,19 @@ function OrganizationPage({
   const executeManualPlanChange = async (
     tier: "team",
     billingInterval: "monthly" | "annual",
-    options: CheckoutNavigationOptions = {}
+    options: CheckoutNavigationOptions = {},
   ) => {
     try {
       const result = await startPlanChange(
         getBillingReturnUrl(),
         tier,
         billingInterval,
-        { confirmPaidPlanChange: true }
+        { confirmPaidPlanChange: true },
       );
 
       if (result.kind === "updated") {
         toast.success(
-          `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`
+          `Plan updated to ${formatPlanName(result.subscription.plan ?? tier)}.`,
         );
         return;
       }
@@ -1114,7 +1240,7 @@ function OrganizationPage({
       openBillingUrl(billingUrl, options.navigation);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Failed to change plan"
+        error instanceof Error ? error.message : "Failed to change plan",
       );
     }
   };
@@ -1122,24 +1248,24 @@ function OrganizationPage({
   const handlePlanChange = async (
     tier: "team",
     billingInterval: "monthly" | "annual",
-    options: CheckoutNavigationOptions = {}
+    options: CheckoutNavigationOptions = {},
   ) => {
     await executeManualPlanChange(tier, billingInterval, options);
   };
 
   const pendingDowngradeEffectiveDate = formatBillingDate(
-    billingStatus?.stripeCurrentPeriodEnd ?? null
+    billingStatus?.stripeCurrentPeriodEnd ?? null,
   );
   const pendingDowngradeTargetLabel = pendingDowngradeConfirmation
     ? formatPlanDescriptor(
         pendingDowngradeConfirmation.targetPlan,
-        pendingDowngradeConfirmation.targetBillingInterval
+        pendingDowngradeConfirmation.targetBillingInterval,
       )
     : null;
   const pendingDowngradeCurrentLabel = pendingDowngradeConfirmation
     ? formatPlanDescriptor(
         pendingDowngradeConfirmation.currentPlan,
-        pendingDowngradeConfirmation.currentBillingInterval
+        pendingDowngradeConfirmation.currentBillingInterval,
       )
     : null;
 
@@ -1150,14 +1276,14 @@ function OrganizationPage({
           getBillingReturnUrl(),
           tier,
           billingInterval,
-          { confirmPaidPlanChange: false }
+          { confirmPaidPlanChange: false },
         );
 
         if (result.kind === "updated") {
           toast.success(
             `Plan updated to ${formatPlanName(
-              result.subscription.plan ?? tier
-            )}.`
+              result.subscription.plan ?? tier,
+            )}.`,
           );
           return;
         }
@@ -1172,14 +1298,12 @@ function OrganizationPage({
         onCheckoutIntentNavigationStarted?.();
         openBillingUrl(billingUrl, "same-tab");
       } catch (error) {
-        if (
-          !(
-            error instanceof Error &&
-            error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
-          )
-        ) {
+        if (!(
+          error instanceof Error &&
+          error.message === PAID_PLAN_CHANGE_CONFIRMATION_REQUIRED_MESSAGE
+        )) {
           toast.error(
-            error instanceof Error ? error.message : "Failed to change plan"
+            error instanceof Error ? error.message : "Failed to change plan",
           );
         }
         throw error;
@@ -1190,7 +1314,7 @@ function OrganizationPage({
       onCheckoutIntentNavigationStarted,
       openBillingUrl,
       startPlanChange,
-    ]
+    ],
   );
 
   const pendingSeatPaymentNotice =
@@ -1199,8 +1323,12 @@ function OrganizationPage({
         intent={activeSeatPaymentIntent}
         isFinishingSeatPayment={isFinishingSeatPayment}
         isCompletingSeatPayment={isCompletingSeatPayment}
-        isCancelingSeatPayment={isCancelingSeatPayment}
-        onFinish={() => void handleFinishSeatPayment()}
+        isCancelingSeatPayment={isCancelingSeatPayment || isRemovingSeatInvite}
+        onFinish={() =>
+          void (activeSeatPaymentIntent.needsRetry
+            ? handleRetrySeatPayment()
+            : handleFinishSeatPayment())
+        }
         onCancel={() => void handleCancelSeatPayment()}
       />
     ) : null;
@@ -1301,6 +1429,13 @@ function OrganizationPage({
           tab={discordTab}
           onTabChange={navigateToDiscordTab}
         />
+      ) : activeSection === "observability" ? (
+        <ErrorBoundary name="organization_observability">
+          <TraceDestinationsSection
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
+        </ErrorBoundary>
       ) : activeSection === "billing" ? (
         <>
           {pendingSeatPaymentNotice}
@@ -1535,6 +1670,11 @@ function OrganizationPage({
             </CardContent>
           </Card>
 
+          <OrganizationSharingPolicyCard
+            organizationId={organization._id}
+            isAdmin={canEdit}
+          />
+
           <Card className="border-border/60">
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-xl">
@@ -1687,8 +1827,8 @@ function OrganizationPage({
             >
               {isCancelingScheduledBillingChange
                 ? "Saving..."
-                : scheduledBillingChangeCancellation?.confirmLabel ??
-                  "Keep current plan"}
+                : (scheduledBillingChangeCancellation?.confirmLabel ??
+                  "Keep current plan")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -1753,8 +1893,8 @@ function OrganizationPage({
               {isStartingPlanChange || isOpeningPortal
                 ? "Saving..."
                 : pendingDowngradeConfirmation?.targetPlan === "free"
-                ? "Open cancellation flow"
-                : "Schedule downgrade"}
+                  ? "Open cancellation flow"
+                  : "Schedule downgrade"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

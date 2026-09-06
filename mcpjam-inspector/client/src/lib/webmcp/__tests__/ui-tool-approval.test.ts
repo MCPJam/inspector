@@ -15,6 +15,11 @@ import {
   handleUiToolCall,
 } from "../ui-tool-executor";
 import {
+  __resetPageToolDispatchForTests,
+  setAdvertisedPageTools,
+} from "@/lib/webmcp-inspector/chat-dispatch";
+import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
+import {
   useUiToolsRegistry,
   type UiToolDefinition,
 } from "../ui-tools-registry";
@@ -59,6 +64,7 @@ describe("createUiAwareApprovalResponseHandler", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __resetUiToolExecutorForTests();
+    __resetPageToolDispatchForTests();
     useUiToolsRegistry.setState({
       tools: new Map(),
       shippedNames: new Set(),
@@ -166,6 +172,58 @@ describe("createUiAwareApprovalResponseHandler", () => {
     await flushMicrotasks();
 
     expect(onNavigationToolCall).toHaveBeenCalledWith("ui_navigate");
+  });
+
+  it("approves a WebMCP page tool by fulfilling it in the browser", async () => {
+    const invoke = vi.fn(async () => ({ state: "succeeded", output: "added" }));
+    const initial = useWebmcpInspectorStore.getState();
+    vi.spyOn(useWebmcpInspectorStore, "getState").mockReturnValue({
+      ...initial,
+      session: { sessionId: "session-1" } as typeof initial.session,
+      invokeToolForResult: invoke as never,
+    });
+    setAdvertisedPageTools([
+      {
+        alias: "page_1a2b3c4d",
+        sessionId: "session-1",
+        toolKey: "https://shop.test::add_to_cart",
+        rawName: "add_to_cart",
+        origin: "https://shop.test",
+      },
+    ]);
+    const addToolApprovalResponse = vi.fn();
+    const addToolOutput = vi.fn();
+    const handler = createUiAwareApprovalResponseHandler({
+      getMessages: () => [
+        {
+          id: "m-page",
+          role: "assistant",
+          parts: [
+            {
+              type: "dynamic-tool",
+              toolName: "page_1a2b3c4d",
+              toolCallId: "tc-page",
+              state: "approval-requested",
+              input: { sku: "ABC-123" },
+              approval: { id: "appr-page" },
+            },
+          ],
+        } as any,
+      ],
+      addToolApprovalResponse,
+      addToolOutput,
+    });
+
+    handler({ id: "appr-page", approved: true });
+    await flushMicrotasks();
+
+    expect(invoke).toHaveBeenCalledWith("https://shop.test::add_to_cart", {
+      sku: "ABC-123",
+    });
+    expect(addToolOutput).toHaveBeenCalledWith(
+      expect.objectContaining({ tool: "page_1a2b3c4d", toolCallId: "tc-page" }),
+    );
+    expect(addToolApprovalResponse).not.toHaveBeenCalled();
   });
 });
 

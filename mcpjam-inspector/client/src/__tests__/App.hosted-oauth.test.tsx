@@ -7,6 +7,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast as sonnerToast } from "sonner";
 import App from "../App";
 import {
   clearHostedOAuthPendingState,
@@ -28,6 +29,7 @@ import {
   writeScenarioSignInReturnPath,
   writeScenarioSession,
 } from "../lib/scenario-session";
+import { writeAppSignInReturnPath } from "../lib/app-signin-return-path";
 
 const existingConvexUser = {
   _id: "user-1",
@@ -121,10 +123,7 @@ const {
     mockHandleOAuthCallback: vi.fn(),
     mockHostedShellGateState: {
       value: "ready" as
-        | "ready"
-        | "auth-loading"
-        | "project-loading"
-        | "logged-out",
+        "ready" | "auth-loading" | "project-loading" | "logged-out",
     },
     mockMCPSidebar: vi.fn(() => <div />),
     mockOAuthFlowTabState: {
@@ -181,7 +180,7 @@ function mockFreshGuestUser() {
           // Fresh guest cookie/user rows have not seen first-run NUX yet.
           hasSeenOnboarding: false,
         }
-      : undefined
+      : undefined,
   );
 }
 
@@ -196,7 +195,7 @@ function mockSeenGuestUser() {
           isAnonymous: true,
           hasSeenOnboarding: true,
         }
-      : undefined
+      : undefined,
   );
 }
 
@@ -235,6 +234,9 @@ vi.mock("posthog-js/react", () => ({
   }),
   useFeatureFlagEnabled: (...args: unknown[]) =>
     mockUseFeatureFlagEnabled(...args),
+  // MCPJamLimitDialog (mounted app-wide) reads the guest credit-wall variant.
+  // These tests don't exercise that wall, so control (undefined) is fine.
+  useFeatureFlagVariantKey: () => undefined,
 }));
 
 vi.mock("@/lib/analytics", () => ({
@@ -283,7 +285,6 @@ vi.mock("../hooks/usePostHogOrgContext", () => ({
 
 vi.mock("../lib/config", () => ({
   HOSTED_MODE: true,
-  NON_PROD_LOCKDOWN: false,
 }));
 
 vi.mock("../lib/theme-utils", () => ({
@@ -487,7 +488,7 @@ describe("App hosted OAuth callback handling", () => {
     localStorage.clear();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "completed", completedAt: Date.now() })
+      JSON.stringify({ status: "completed", completedAt: Date.now() }),
     );
     sessionStorage.clear();
     vi.stubGlobal("__APP_VERSION__", "test");
@@ -505,7 +506,7 @@ describe("App hosted OAuth callback handling", () => {
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReset();
     mockUseQuery.mockImplementation((ref: string) =>
-      ref === "users:getCurrentUser" ? existingConvexUser : undefined
+      ref === "users:getCurrentUser" ? existingConvexUser : undefined,
     );
     mockHostedShellGateState.value = "ready";
     mockConvexAuthState.isAuthenticated = true;
@@ -533,13 +534,14 @@ describe("App hosted OAuth callback handling", () => {
     mockOAuthFlowTabState.lastProps = undefined;
     mockPosthogCapture.mockReset();
     mockTrack.mockReset();
+    vi.mocked(sonnerToast.error).mockReset();
     mockPlaygroundTabMounts.mockReset();
     mockPlaygroundTabProps.mockReset();
     mockCompleteHostedOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
     mockHandleOAuthCallback.mockImplementation(
-      () => new Promise<never>(() => {})
+      () => new Promise<never>(() => {}),
     );
 
     writeScenarioSession({
@@ -595,7 +597,7 @@ describe("App hosted OAuth callback handling", () => {
 
     expect(screen.getByTestId("hosted-oauth-loading")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" })
+      screen.queryByRole("button", { name: "Authorize" }),
     ).not.toBeInTheDocument();
     await waitFor(() => {
       expect(mockCompleteHostedOAuthCallback).toHaveBeenCalledWith(
@@ -606,7 +608,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -619,7 +621,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/oauth-flow");
     mockOAuthFlowTabState.shouldThrow = true;
     mockOAuthFlowTabState.error = new Error(
-      "token exchange failed client_secret=super-secret Bearer access-token"
+      "token exchange failed client_secret=super-secret Bearer access-token",
     );
     const writeText = vi.fn().mockResolvedValue(undefined);
     vi.stubGlobal("navigator", {
@@ -630,13 +632,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      await screen.findByText("OAuth Debugger crashed")
+      await screen.findByText("OAuth Debugger crashed"),
     ).toBeInTheDocument();
     expect(mockTrack).toHaveBeenCalledWith(
       "oauth_debugger_error_boundary",
       expect.objectContaining({
         message: expect.stringContaining("[redacted]"),
-      })
+      }),
     );
     expect(JSON.stringify(mockTrack.mock.calls)).not.toContain("super-secret");
 
@@ -644,7 +646,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith(
-        expect.not.stringContaining("super-secret")
+        expect.not.stringContaining("super-secret"),
       );
     });
     expect(writeText.mock.calls[0]?.[0]).toContain("[redacted]");
@@ -669,7 +671,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer guest-bearer",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -706,7 +708,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: undefined,
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
   });
@@ -719,7 +721,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(readHostedOAuthResumeMarker("scenario")?.errorMessage).toBe(
-        "Your guest session expired. Reopen the swarm link and try again."
+        "Your guest session expired. Reopen the swarm link and try again.",
       );
     });
     expect(mockCompleteHostedOAuthCallback).not.toHaveBeenCalled();
@@ -749,7 +751,7 @@ describe("App hosted OAuth callback handling", () => {
         expect.objectContaining({
           authorizationHeader: "Bearer workos-token",
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
     expect(mockGetGuestBearerToken).not.toHaveBeenCalled();
@@ -773,7 +775,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     expect(
-      screen.queryByTestId("hosted-oauth-loading")
+      screen.queryByTestId("hosted-oauth-loading"),
     ).not.toBeInTheDocument();
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
     expect(screen.getByText("Servers Tab")).toBeInTheDocument();
@@ -802,10 +804,12 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("callback-auth-timeout")
+      screen.queryByTestId("callback-auth-timeout"),
     ).not.toBeInTheDocument();
     expect(mockWorkOsAuthState.signIn).not.toHaveBeenCalled();
-    expect(readScenarioSignInReturnPath()).toBe("/user-testing/asana/token-123");
+    expect(readScenarioSignInReturnPath()).toBe(
+      "/user-testing/asana/token-123",
+    );
   });
 
   it("clears stale client auth state before retrying a timed-out callback", async () => {
@@ -832,7 +836,7 @@ describe("App hosted OAuth callback handling", () => {
           guestId: "guest_123",
           token: "guest-token",
           expiresAt: Date.now() + 60_000,
-        })
+        }),
       );
       writeHostedOAuthPendingMarker({
         surface: "project",
@@ -859,7 +863,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(screen.getByTestId("callback-auth-timeout")).toBeInTheDocument();
 
       fireEvent.click(
-        screen.getByRole("button", { name: "Try sign in again" })
+        screen.getByRole("button", { name: "Try sign in again" }),
       );
 
       await act(async () => {
@@ -890,13 +894,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
+      ([name]) => name === "billing:getOrganizationEntitlements",
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
+      ([name]) => name === "billing:getOrganizationPremiumness",
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -922,13 +926,13 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const entitlementsCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationEntitlements"
+      ([name]) => name === "billing:getOrganizationEntitlements",
     );
     const orgPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getOrganizationPremiumness"
+      ([name]) => name === "billing:getOrganizationPremiumness",
     );
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(entitlementsCall?.[1]).toBe("skip");
@@ -969,7 +973,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
@@ -1029,7 +1033,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toBe("skip");
@@ -1089,7 +1093,7 @@ describe("App hosted OAuth callback handling", () => {
         "oauth-code",
         expect.objectContaining({
           onTraceUpdate: expect.any(Function),
-        })
+        }),
       );
     });
 
@@ -1403,7 +1407,7 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-3");
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseAppState.mockImplementation(() => ({
       ...createAppStateMock(),
@@ -1539,7 +1543,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/callback?code=oauth-code");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1582,9 +1586,178 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(replaceStateSpy).toHaveBeenCalledWith({}, "", "/");
-      expect(screen.getByText("Servers Tab")).toBeInTheDocument();
+      // The restoration NAVIGATES now rather than writing history behind the
+      // router's back, so the screen follows the URL it just restored: `/`
+      // is Home. (It used to leave the app rendering Servers under a `/` it
+      // had silently rewritten — the mismatch this migration removes.)
+      expect(screen.getByTestId("home-tab")).toBeInTheDocument();
     });
     expect(readBillingSignInReturnPath()).toBeNull();
+  });
+
+  it("recovers a stale scoped sign-in return without painting the unavailable screen", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/evals?view=runs#case-3`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(`${window.location.pathname}${window.location.search}`).toBe(
+        `/p/${currentProjectId}/evals?view=runs`,
+      );
+      expect(window.location.hash).toBe("#case-3");
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(sonnerToast.error).mock.calls[0]?.[0]).toMatchObject({
+      props: { text: "Project not found. Switched to Default Project." },
+    });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("recovers when AuthKit restores the project URL before App sees the callback", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    const currentProjectId = "k5700000000000000000000000b";
+    const stalePath = `/p/${staleProjectId}/servers?view=grid#tools`;
+    writeAppSignInReturnPath(stalePath);
+    window.history.replaceState({}, "", stalePath);
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: currentProjectId,
+      projects: {
+        [currentProjectId]: {
+          id: currentProjectId,
+          name: "Default Project",
+          sharedProjectId: currentProjectId,
+          organizationId: "org-1",
+          servers: {},
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      },
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: currentProjectId,
+            name: "Default Project",
+            organizationId: "org-1",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        `${window.location.pathname}${window.location.search}${window.location.hash}`,
+      ).toBe(`/p/${currentProjectId}/servers?view=grid#tools`);
+    });
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(mockTrack).toHaveBeenCalledWith("app_signin_return_restored", {
+      location: "signin-return",
+      outcome: "restored",
+    });
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "switched" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
+  });
+
+  it("returns a no-project account home without claiming it switched projects", async () => {
+    clearScenarioSession();
+    const staleProjectId = "k5700000000000000000000000a";
+    writeAppSignInReturnPath(`/p/${staleProjectId}/playground?model=test#chat`);
+    window.history.replaceState({}, "", "/callback?code=oauth-code");
+    mockWorkOsAuthState.user = { id: "workos-user-1" };
+    mockUseAppState.mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeProjectId: "none",
+      projects: {},
+    }));
+    mockUseQuery.mockImplementation((name: string) => {
+      if (name === "users:getCurrentUser") return existingConvexUser;
+      if (name === "projects:getMyProjects") return [];
+      return undefined;
+    });
+
+    render(<App />);
+
+    await waitFor(() => expect(window.location.pathname).toBe("/"));
+    expect(window.location.search).toBe("");
+    expect(window.location.hash).toBe("");
+    expect(
+      screen.queryByTestId("project-route-inaccessible"),
+    ).not.toBeInTheDocument();
+    expect(sonnerToast.error).not.toHaveBeenCalled();
+    expect(mockTrack).toHaveBeenCalledWith(
+      "project_route_stale_return_recovered",
+      { location: "signin-return", outcome: "no-fallback" },
+    );
+    expect(mockTrack).not.toHaveBeenCalledWith(
+      "project_route_inaccessible",
+      expect.anything(),
+    );
   });
 
   it("keeps a persisted billing resume alive when /billing returns without query params", async () => {
@@ -1595,7 +1768,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1640,8 +1813,8 @@ describe("App hosted OAuth callback handling", () => {
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
   });
 
@@ -1662,7 +1835,7 @@ describe("App hosted OAuth callback handling", () => {
       expect(replaceStateSpy).toHaveBeenCalledWith(
         {},
         "",
-        "/user-testing/demo/token-123"
+        "/user-testing/demo/token-123",
       );
     });
   });
@@ -1673,7 +1846,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1720,8 +1893,8 @@ describe("App hosted OAuth callback handling", () => {
           (props as { checkoutIntent?: { plan?: string } }).checkoutIntent
             ?.plan === "team" &&
           (props as { checkoutIntent?: { interval?: string } }).checkoutIntent
-            ?.interval === "annual"
-      )
+            ?.interval === "annual",
+      ),
     ).toBe(true);
   });
 
@@ -1731,7 +1904,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1758,7 +1931,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Consume checkout intent
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1772,7 +1945,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay")
+        screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
   });
@@ -1783,7 +1956,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1810,7 +1983,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Start checkout navigation
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1818,7 +1991,7 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(screen.getByTestId("billing-handoff-overlay")).toBeInTheDocument();
       expect(
-        screen.getByTestId("start-checkout-navigation")
+        screen.getByTestId("start-checkout-navigation"),
       ).toBeInTheDocument();
     });
 
@@ -1826,7 +1999,7 @@ describe("App hosted OAuth callback handling", () => {
 
     await waitFor(() => {
       expect(
-        screen.queryByTestId("billing-handoff-overlay")
+        screen.queryByTestId("billing-handoff-overlay"),
       ).not.toBeInTheDocument();
     });
     expect(readPersistedCheckoutIntent()).toBeNull();
@@ -1838,7 +2011,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/billing?plan=team&interval=annual");
 
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "organizations:getMyOrganizations") {
@@ -1855,10 +2028,10 @@ describe("App hosted OAuth callback handling", () => {
     });
 
     expect(
-      screen.queryByTestId("billing-handoff-loading")
+      screen.queryByTestId("billing-handoff-loading"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByTestId("billing-handoff-overlay")
+      screen.queryByTestId("billing-handoff-overlay"),
     ).not.toBeInTheDocument();
     expect(mockOrganizationsTab).not.toHaveBeenCalled();
   });
@@ -1975,7 +2148,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -1989,7 +2162,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      "org-owned"
+      "org-owned",
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2050,7 +2223,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete org with no owner fallback
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2135,7 +2308,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete non-current org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2147,12 +2320,12 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
         "org-deleted",
-        "org-owner"
+        "org-owner",
       );
     });
 
     const postDeleteCalls = setActiveOrganizationId.mock.calls.slice(
-      activeOrgCallsBeforeDelete
+      activeOrgCallsBeforeDelete,
     );
     expect(postDeleteCalls).not.toContainEqual(["org-owner"]);
     expect(clearConvexActiveProjectSelection).not.toHaveBeenCalled();
@@ -2214,7 +2387,7 @@ describe("App hosted OAuth callback handling", () => {
         >
           Delete last org
         </button>
-      )
+      ),
     );
 
     render(<App />);
@@ -2228,7 +2401,7 @@ describe("App hosted OAuth callback handling", () => {
     expect(clearConvexActiveProjectSelection).toHaveBeenCalled();
     expect(clearLocalFallbackProjectSelection).toHaveBeenCalledWith(
       "org-deleted",
-      undefined
+      undefined,
     );
     expect(window.location.pathname).toBe("/servers");
   });
@@ -2286,7 +2459,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2316,7 +2489,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/playground");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled"
+      (flag: string) => flag === "playground-enabled",
     );
 
     render(<App />);
@@ -2365,8 +2538,42 @@ describe("App hosted OAuth callback handling", () => {
         isWorkOsAuthLoading: false,
         isConvexAuthenticated: true,
         hasSeenFirstRunOnboarding: false,
-      })
+      }),
     );
+  });
+
+  it("leaves an IdP-initiated visitor on /login instead of auto-routing to Playground", async () => {
+    // Same first-run-eligible guest as the test above, at the WorkOS Initiate
+    // Login URL. `/login` is not a known tab segment, so the shell resolves it
+    // to the `servers` fallback — a first-run-eligible route — and a hosted
+    // guest session IS Convex-authenticated. Without the guard in
+    // `shouldRouteToFirstRunOnboarding`, the onboarding redirect fires on the
+    // commit that mounts LoginInitiationRoute and navigates the visitor to
+    // Playground mid-sign-in, stranding the enterprise entry point the route
+    // exists to fix.
+    //
+    // Asserts the App-level half only: `render(<App />)` mounts no Router, so
+    // the shell renders its no-router body rather than the route element. That
+    // `signIn()` is what actually runs there is covered by
+    // `components/auth/__tests__/login-initiation-route.test.tsx`.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    mockUnseenOnboardingState();
+    window.history.replaceState({}, "", "/login");
+    mockHandleOAuthCallback.mockReset();
+    mockConvexAuthState.isAuthenticated = true;
+    mockWorkOsAuthState.user = null;
+    mockHostedShellGateState.value = "ready";
+    mockFreshGuestUser();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("mcp-sidebar")).toBeInTheDocument();
+    });
+
+    expect(window.location.pathname).toBe("/login");
+    expect(screen.queryByTestId("playground-tab")).not.toBeInTheDocument();
   });
 
   it("auto-routes a Convex-authenticated hosted guest from the default route into Playground onboarding", async () => {
@@ -2638,7 +2845,7 @@ describe("App hosted OAuth callback handling", () => {
     clearScenarioSession();
     localStorage.setItem(
       "mcp-onboarding-state",
-      JSON.stringify({ status: "seen", shownAt: Date.now() })
+      JSON.stringify({ status: "seen", shownAt: Date.now() }),
     );
     window.history.replaceState({}, "", "/servers");
     mockHandleOAuthCallback.mockReset();
@@ -2679,7 +2886,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
     );
 
     render(<App />);
@@ -2701,7 +2908,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/evals/runs");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui"
+      (flag: string) => flag === "playground-enabled" || flag === "evaluate-ui",
     );
 
     render(<App />);
@@ -2788,21 +2995,22 @@ describe("App hosted OAuth callback handling", () => {
                 updatedAt: 0,
               },
             ]
-          : undefined
+          : undefined,
     );
     localStorage.setItem(
       "mcp-previewed-host-id",
-      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" })
+      JSON.stringify({ project_shared: "kd7n2m5xq9b3tv6yz1r4s0hc" }),
     );
     window.history.replaceState({}, "", "/hosts/m17b6q9xw2tv4kz8p3r5s0dc");
 
     render(<App />);
 
     await waitFor(() => {
-      expect(JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"))
-        .toEqual({
-          project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
-        });
+      expect(
+        JSON.parse(localStorage.getItem("mcp-previewed-host-id") ?? "{}"),
+      ).toEqual({
+        project_shared: "m17b6q9xw2tv4kz8p3r5s0dc",
+      });
     });
     expect(screen.getByTestId("hosts-tab")).toBeInTheDocument();
   });
@@ -2829,7 +3037,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
 
     render(<App />);
@@ -2848,7 +3056,7 @@ describe("App hosted OAuth callback handling", () => {
     window.history.replaceState({}, "", "/xaa-flow");
     mockHandleOAuthCallback.mockReset();
     mockUseFeatureFlagEnabled.mockImplementation((flag: string) =>
-      flag === "xaa" ? true : false
+      flag === "xaa" ? true : false,
     );
     const appStateMock = createAppStateMock();
     const currentProjectServers = {
@@ -2886,7 +3094,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2894,7 +3102,7 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
   });
 
@@ -2940,7 +3148,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: true,
             autoSelectFilteredServer: "when-empty",
           }),
-        })
+        }),
       );
     });
 
@@ -2948,11 +3156,11 @@ describe("App hosted OAuth callback handling", () => {
       activeServerSelectorProps?: { serverConfigs?: unknown };
     };
     expect(latestProps.activeServerSelectorProps?.serverConfigs).toBe(
-      currentProjectServers
+      currentProjectServers,
     );
     expect(
       (mockOAuthFlowTabState.lastProps as { serverConfigs?: unknown })
-        .serverConfigs
+        .serverConfigs,
     ).toBe(currentProjectServers);
   });
 
@@ -2971,7 +3179,7 @@ describe("App hosted OAuth callback handling", () => {
             showOnlyOAuthServers: false,
             autoSelectFilteredServer: true,
           }),
-        })
+        }),
       );
     });
   });
@@ -2999,8 +3207,7 @@ describe("App hosted OAuth callback handling", () => {
       },
     }));
     mockUseFeatureFlagEnabled.mockImplementation(
-      (flag: string) =>
-        flag === "billing-entitlements-ui"
+      (flag: string) => flag === "billing-entitlements-ui",
     );
     mockUseQuery.mockImplementation((name: string) => {
       if (name === "users:getCurrentUser") {
@@ -3048,7 +3255,7 @@ describe("App hosted OAuth callback handling", () => {
     render(<App />);
 
     const wsPremiumnessCall = mockUseQuery.mock.calls.find(
-      ([name]) => name === "billing:getProjectPremiumness"
+      ([name]) => name === "billing:getProjectPremiumness",
     );
 
     expect(wsPremiumnessCall?.[1]).toEqual({

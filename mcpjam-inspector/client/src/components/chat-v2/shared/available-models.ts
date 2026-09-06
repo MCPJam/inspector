@@ -48,7 +48,7 @@ export function applyGuestModelLocks(
 }
 
 export const OUT_OF_CREDITS_MODEL_REASON =
-  "You're out of credits. Top up or use your own key.";
+  "You're out of credits. Upgrade, buy credits, or use your own key.";
 
 /**
  * Once the org/guest is out of MCPJam credits, MCPJam-provided ("free")

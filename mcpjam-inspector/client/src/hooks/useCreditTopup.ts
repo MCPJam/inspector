@@ -211,12 +211,6 @@ export function useCreditTopup() {
     }: StartCheckoutInput): Promise<void> => {
       setIsStartingCheckout(true);
       setError(null);
-      track("credit_topup_checkout_started", {
-        location: "credit_topup",
-        package_id: packageId,
-        price_cents: priceCents,
-        source,
-      });
       stashPendingTopup({ chatSessionId, message: lastUserMessage });
       // Track the most specific failure category we know about. Defaults to
       // `action_threw` (the fallback when the Convex action itself rejects)
@@ -224,11 +218,25 @@ export function useCreditTopup() {
       let errorKind: "missing_url" | "invalid_url" | "action_threw" =
         "action_threw";
       try {
-        const result = (await createCheckoutSession({
+        // Begin the real checkout action first. Product analytics is emitted
+        // without being awaited and cannot block or break the checkout.
+        const checkoutPromise = createCheckoutSession({
           organizationId,
           packageId,
           ...(returnUrl ? { returnUrl } : {}),
-        } as any)) as { checkoutUrl?: string } | null;
+        } as any);
+        track("credit_topup_checkout_started", {
+          location: "credit_topup",
+          organization_id: organizationId,
+          package_id: packageId,
+          price_cents: priceCents,
+          source,
+          has_resume_context: Boolean(chatSessionId && lastUserMessage),
+          has_return_url: Boolean(returnUrl),
+        });
+        const result = (await checkoutPromise) as {
+          checkoutUrl?: string;
+        } | null;
         const checkoutUrl = result?.checkoutUrl;
         if (typeof checkoutUrl !== "string" || checkoutUrl.length === 0) {
           errorKind = "missing_url";
@@ -242,18 +250,20 @@ export function useCreditTopup() {
         }
         window.location.assign(checkoutUrl);
       } catch (err) {
-        track("credit_topup_checkout_failed", {
-          location: "credit_topup",
-          package_id: packageId,
-          price_cents: priceCents,
-          error_kind: errorKind,
-          source,
-        });
         clearPendingTopup();
 
         const message =
           err instanceof Error ? err.message : "Failed to start checkout";
         setError(message);
+        track("credit_topup_checkout_failed", {
+          location: "credit_topup",
+          organization_id: organizationId,
+          package_id: packageId,
+          price_cents: priceCents,
+          error_kind: errorKind,
+          error_name: err instanceof Error ? err.name : "unknown",
+          source,
+        });
         throw err;
       } finally {
         setIsStartingCheckout(false);

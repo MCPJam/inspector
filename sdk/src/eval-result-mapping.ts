@@ -11,6 +11,7 @@ import type {
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
 import type { Predicate } from "./predicates/types.js";
+import type { IterationStatus } from "./contract/chain.js";
 import type { EvaluationConfigSnapshot } from "./contract/types.js";
 import type { PromptResult } from "./PromptResult.js";
 import { finalizePassedForEval } from "./eval-tool-execution.js";
@@ -20,6 +21,13 @@ import {
   type EvalMatchOptions,
 } from "./matchers.js";
 import { buildHostSnapshotMetadata } from "./host-config/internal.js";
+import {
+  deriveStageResults,
+  isPositiveToolCallPredicateKind,
+  isSelectionPredicateKind,
+  stageDerivationToMetadata,
+} from "./contract/stage-derivation.js";
+import { attachStageMeasurements } from "./contract/stage-measurements.js";
 
 /**
  * Per-iteration host-extras lookup:
@@ -366,6 +374,10 @@ export function promptsToEvalResult(
     caseTitle: overrides.caseTitle,
     query: overrides.query ?? first.getPrompt(),
     passed,
+    // A caller-declared status wins; otherwise the same named legacy rule, on
+    // the error this mapper already derived from the prompts.
+    status:
+      overrides.status ?? legacyIterationStatusFromExecutionError(iterationError),
     durationMs: durationSum > 0 ? durationSum : undefined,
     provider: overrides.provider ?? first.getProvider(),
     model: overrides.model ?? first.getModel(),
@@ -380,7 +392,9 @@ export function promptsToEvalResult(
     errorDetails: overrides.errorDetails,
     trace,
     externalIterationId: overrides.externalIterationId,
+    caseId: overrides.caseId,
     externalCaseId: overrides.externalCaseId,
+    intent: overrides.intent,
     metadata: overrides.metadata,
     isNegativeTest: overrides.isNegativeTest,
     advancedConfig: overrides.advancedConfig,
@@ -496,6 +510,21 @@ export interface IterationToEvalResultOptions {
   promptSelector?: "first" | "last";
   /** @see MCPJamReportingConfig.failOnToolError */
   failOnToolError?: boolean;
+  /**
+   * The case's DECLARED identity (`EvalTestConfig.id`), forwarded when given.
+   *
+   * Optional and never defaulted, because this converter cannot know it: it
+   * receives a `casePrefix`, not an `EvalTest`. Passing it is what lets a
+   * reporter built on these helpers join a renamed test to its hosted history.
+   *
+   * Supplying one across a run's iterations declares them ONE case rather than
+   * one case per iteration — a change to how they land hosted, which is why
+   * nothing supplies it on the caller's behalf. See {@link runToEvalResults}
+   * for the `caseTitle` consequence.
+   */
+  caseId?: string;
+  /** Authored analytics grouping label; omission keeps legacy wire behavior. */
+  intent?: string | null;
 }
 
 /**
@@ -554,8 +583,11 @@ export function iterationToEvalResult(
 
   return {
     caseTitle: options.caseTitle,
+    ...(options.caseId !== undefined ? { caseId: options.caseId } : {}),
+    ...(options.intent !== undefined ? { intent: options.intent } : {}),
     query: selectedPrompt?.getPrompt(),
     passed,
+    status: resolveIterationLifecycleStatus(iteration),
     durationMs: durationMs > 0 ? durationMs : undefined,
     provider,
     model,
@@ -586,10 +618,23 @@ export interface RunToEvalResultsOptions {
   expectedToolCalls?: EvalExpectedToolCall[];
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /** @see IterationToEvalResultOptions.caseId */
+  caseId?: string;
+  /** Authored analytics grouping label; omission keeps legacy wire behavior. */
+  intent?: string | null;
 }
 
 /**
  * Convert all iterations from an EvalRunResult to EvalResultInput payloads.
+ *
+ * The per-iteration `-iter-N` title suffix is what makes each iteration land as
+ * its OWN hosted case, so it is dropped when a declared `caseId` is supplied:
+ * that id says these iterations are one case, and the backend then titles that
+ * case from the first result it accepts (`sdkEvals.ts`, the grouped-stats
+ * `title` is set once and never revised) — leaving a case that holds N
+ * iterations named after iteration 1, or after iteration 2 when the first is
+ * skipped. Nothing is lost by dropping it: the iteration number already rides
+ * every result as `metadata.iterationNumber`.
  */
 export function runToEvalResults(
   run: EvalRunResult,
@@ -597,12 +642,17 @@ export function runToEvalResults(
 ): EvalResultInput[] {
   return run.iterationDetails.map((iteration, index) =>
     iterationToEvalResult(iteration, index, {
-      caseTitle: `${options.casePrefix}-iter-${index + 1}`,
+      caseTitle:
+        options.caseId !== undefined
+          ? options.casePrefix
+          : `${options.casePrefix}-iter-${index + 1}`,
       provider: options.provider,
       model: options.model,
       expectedToolCalls: options.expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseId,
+      intent: options.intent,
     })
   );
 }
@@ -617,6 +667,15 @@ export interface SuiteRunToEvalResultsOptions {
   expectedToolCallsByTest?: Record<string, EvalExpectedToolCall[]>;
   promptSelector?: "first" | "last";
   failOnToolError?: boolean;
+  /**
+   * Declared case ids, keyed by test name — the same shape as
+   * `expectedToolCallsByTest`, because one id cannot describe a whole suite.
+   *
+   * @see IterationToEvalResultOptions.caseId
+   */
+  caseIdByTest?: Record<string, string>;
+  /** Authored analytics labels keyed by test name. */
+  intentByTest?: Record<string, string | null>;
 }
 
 /**
@@ -638,6 +697,8 @@ export function suiteRunToEvalResults(
       expectedToolCalls,
       promptSelector: options.promptSelector,
       failOnToolError: options.failOnToolError,
+      caseId: options.caseIdByTest?.[testName],
+      intent: options.intentByTest?.[testName],
     });
     results.push(...testResults);
   }
@@ -742,10 +803,161 @@ function syntheticStepsForCase(
  * backend reads them to join a local run to a hosted case's history.
  */
 export type EvalCaseIdentity = {
+  /** The case's DECLARED identity — `EvalTestConfig.id`. */
+  caseId?: string;
   externalCaseId?: string;
+  /** `null` explicitly records an unlabelled modern SDK case. */
+  intent?: string | null;
   isNegativeTest?: boolean;
   expectedOutput?: string;
 };
+
+/**
+ * Adapt one SDK iteration into the stage analyzer's evidence shape.
+ *
+ * The load-bearing distinction is between the two span-less cases:
+ *
+ *   - `traceAbsent` — `iterationTraceFromPrompts` returned nothing at all, so
+ *     the iteration recorded no messages, no spans and no summaries. A retry
+ *     that died before the executor ever ran looks like this.
+ *   - `traceLacksSpanChannel` — a trace exists (messages survived) but carries
+ *     no `spans` key. That is the caller-supplied `HostExecutor` signature:
+ *     spans are not part of the `HostExecutor` contract, so an executor that
+ *     never populates `PromptResult.spans` produces exactly this. Reading it
+ *     as "nothing happened" is how an iteration whose every tool call failed
+ *     scores a vacuous pass.
+ */
+function buildSdkStageEvidence(
+  iteration: IterationResult,
+  trace: EvalResultInput["trace"]
+) {
+  const spans =
+    trace && typeof trace === "object" && !Array.isArray(trace) && trace.spans
+      ? trace.spans
+      : [];
+  const match = iteration.toolMatch;
+  return {
+    ...(spans.length > 0 ? { spans } : {}),
+    ...(match
+      ? {
+          prompts: [
+            {
+              promptIndex: 0,
+              missing: match.missing,
+              unexpected: match.extra,
+              argumentMismatches: match.argumentMismatches,
+              // The matcher's OWN verdict, under this case's match options.
+              // Without it the analyzer cannot tell a tolerated extra call
+              // (`maxExtraToolCalls: null`, the default) from a failing one,
+              // and would report a passing run as broken at `selection`.
+              passed: match.passed,
+            },
+          ],
+        }
+      : {}),
+    ...(iteration.predicateResults?.length
+      ? { predicateResults: iteration.predicateResults }
+      : {}),
+    traceAbsent: trace === undefined,
+    traceLacksSpanChannel: trace !== undefined && spans.length === 0,
+  };
+}
+
+/**
+ * Derive one SDK iteration's user-value chain.
+ *
+ * Shared by BOTH exported mappers. They build the same per-iteration shape from
+ * the same inputs, and a chain that appeared from one entry point and not the
+ * other would leave a reader unable to tell "no derivation ran" from "the
+ * derivation found nothing" — which is the exact ambiguity the `notMeasured`
+ * state exists to remove.
+ */
+function deriveSdkStageResults(args: {
+  iteration: IterationResult;
+  trace: EvalResultInput["trace"];
+  expectedToolCalls?: EvalExpectedToolCall[];
+  predicates?: Predicate[];
+  caseIdentity?: EvalCaseIdentity;
+}) {
+  const { iteration, trace, expectedToolCalls, predicates } = args;
+  const caseIdentity = args.caseIdentity;
+  return deriveStageResults({
+    authored: {
+      // An SDK case always drives a HostExecutor with prompts, so there is
+      // always a model turn that could select a tool.
+      mode: "model_driven",
+      ...(caseIdentity?.isNegativeTest !== undefined
+        ? { isNegativeTest: caseIdentity.isNegativeTest }
+        : {}),
+      // UVH-IN1's matrix, mirrored: a positive tool-call predicate expects a
+      // call, `toolNeverCalled` does not. This path builds its own authored
+      // case rather than calling `buildStageAuthoredCase` (it has no steps or
+      // turns to read, and its `mode` and `expectsWidgetRender` are fixed by
+      // what the SDK path can observe), so the matrix has to be applied twice
+      // — a pre-existing divergence this PR keeps in step rather than widens.
+      expectsToolCall:
+        (expectedToolCalls?.length ?? 0) > 0 ||
+        caseIdentity?.isNegativeTest === true ||
+        (predicates ?? []).some((p) =>
+          isPositiveToolCallPredicateKind(p?.type)
+        ),
+      // Render observations are not carried on the SDK path, so a case is
+      // never treated as asserting a widget render here — claiming otherwise
+      // would demand evidence this path cannot produce and report every SDK
+      // run's `response` as an evidence gap.
+      //
+      // Tool-call predicates are excluded for the same reason they are on the
+      // server: their results are routed to `selection`, so counting them here
+      // would leave `userValue` applicable with nothing left to grade it.
+      assertionCount:
+        (predicates ?? []).filter((p) => !isSelectionPredicateKind(p?.type))
+          .length + (caseIdentity?.expectedOutput !== undefined ? 1 : 0),
+    },
+    evidence: buildSdkStageEvidence(iteration, trace),
+    iteration: {
+      // The LIFECYCLE status, never the task verdict. Deriving it from `passed`
+      // told the analyzer that every graded failure was an execution failure,
+      // which is the one thing the two-axis contract exists to distinguish.
+      status: resolveIterationLifecycleStatus(iteration),
+      ...(iteration.error ? { error: iteration.error } : {}),
+    },
+  });
+}
+
+/**
+ * The status a FINISHED iteration reports, from the iteration itself.
+ *
+ * `EvalTest` sets `status` on every terminal path, so the v2 path reads it
+ * directly. The fallback is for `IterationResult`s built OUTSIDE this SDK
+ * version — an older recorded run, or a caller assembling the struct by hand —
+ * and it is deliberately the same rule the backend's compatibility adapter
+ * uses: EXECUTION ERROR PRESENT means the execution failed, and nothing else.
+ *
+ * It must never consult `passed`. A graded failure is `completed` + a failed
+ * task verdict; folding the verdict into the lifecycle makes a working harness
+ * indistinguishable from a broken one, inflates every failure rate with harness
+ * noise, and (through the validity checks) can turn a real regression into
+ * `inconclusive`.
+ */
+export function resolveIterationLifecycleStatus(
+  iteration: Pick<IterationResult, "status" | "error">
+): IterationStatus {
+  if (iteration.status !== undefined) return iteration.status;
+  return legacyIterationStatusFromExecutionError(iteration.error);
+}
+
+/**
+ * The named legacy adapter: the ONLY place a status is inferred rather than
+ * reported. Kept separate from {@link resolveIterationLifecycleStatus} so the
+ * inference is greppable and cannot creep onto the v2 path.
+ */
+export function legacyIterationStatusFromExecutionError(
+  error: string | undefined
+): IterationStatus {
+  return error === undefined || error.trim().length === 0
+    ? "completed"
+    : "failed";
+}
 
 export function iterationsToEvalResultInputs(
   testName: string,
@@ -780,19 +992,35 @@ export function iterationsToEvalResultInputs(
       predicateResults: iteration.predicateResults,
     });
 
+    const stageDerivation = deriveSdkStageResults({
+      iteration,
+      trace,
+      expectedToolCalls,
+      predicates,
+      caseIdentity,
+    });
+
     return {
       caseTitle: testName,
       query: prompts[0]?.getPrompt() ?? testName,
       passed,
+      status: resolveIterationLifecycleStatus(iteration),
       durationMs: durationMs > 0 ? durationMs : undefined,
       expectedToolCalls,
       actualToolCalls,
-      // Hosted↔local identity and semantics. These are the SAME wire fields
-      // the backend already hashes into caseKey and renders on the run page,
-      // so a materialized hosted case joins its own history instead of
-      // appearing as a new scenario.
+      // Hosted↔local identity and semantics, on the wire. `caseId` is the
+      // DECLARED identity the backend resolves by first (and adopts onto a
+      // case that resolved by content hash); `externalCaseId` is the older
+      // join key it hashes into caseKey. Either way a materialized hosted case
+      // joins its own history instead of appearing as a new scenario.
+      ...(caseIdentity?.caseId !== undefined
+        ? { caseId: caseIdentity.caseId }
+        : {}),
       ...(caseIdentity?.externalCaseId !== undefined
         ? { externalCaseId: caseIdentity.externalCaseId }
+        : {}),
+      ...(caseIdentity?.intent !== undefined
+        ? { intent: caseIdentity.intent }
         : {}),
       ...(caseIdentity?.isNegativeTest !== undefined
         ? { isNegativeTest: caseIdentity.isNegativeTest }
@@ -818,6 +1046,12 @@ export function iterationsToEvalResultInputs(
             ? { predicates: iteration.predicateResults }
             : {}),
           ...scoreMetadata(iteration, evaluationConfig),
+          ...attachStageMeasurements(
+            stageDerivationToMetadata(stageDerivation),
+            trace && typeof trace === "object" && !Array.isArray(trace)
+              ? trace.spans
+              : undefined
+          ),
         },
         resolveIterationHostExtras(iteration, hostExtras)
       ),
@@ -877,12 +1111,15 @@ export function suiteTestResultsToEvalResultInputs(
         caseTitle: testName,
         query: prompts[0]?.getPrompt() ?? testName,
         passed,
+        status: resolveIterationLifecycleStatus(iteration),
         durationMs: durationMs > 0 ? durationMs : undefined,
         expectedToolCalls,
         actualToolCalls,
+        ...(identity?.caseId !== undefined ? { caseId: identity.caseId } : {}),
         ...(identity?.externalCaseId !== undefined
           ? { externalCaseId: identity.externalCaseId }
           : {}),
+        ...(identity?.intent !== undefined ? { intent: identity.intent } : {}),
         ...(identity?.isNegativeTest !== undefined
           ? { isNegativeTest: identity.isNegativeTest }
           : {}),
@@ -909,6 +1146,20 @@ export function suiteTestResultsToEvalResultInputs(
               ? { predicates: iteration.predicateResults }
               : {}),
             ...scoreMetadata(iteration, testResult.evaluationConfig),
+            ...attachStageMeasurements(
+              stageDerivationToMetadata(
+                deriveSdkStageResults({
+                  iteration,
+                  trace,
+                  expectedToolCalls,
+                  predicates,
+                  caseIdentity: identity,
+                })
+              ),
+              trace && typeof trace === "object" && !Array.isArray(trace)
+                ? trace.spans
+                : undefined
+            ),
           },
           resolveIterationHostExtras(iteration, hostExtras)
         ),

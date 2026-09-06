@@ -8,7 +8,7 @@
  * `subscriptions/listen`, and — like every other extension operation — that
  * listen request MUST carry the per-request eligibility declaration in
  * `params._meta["io.modelcontextprotocol/clientCapabilities"]`. A non-declaring
- * client gets `-32003`.
+ * client gets `-32021`.
  *
  * `Client.listen(filter, options)` has no `_meta` parameter. It builds its own
  * request body (`client dist/index.mjs:3706-3713`):
@@ -86,7 +86,7 @@ export class TasksExtListenMetaSeamError extends Error {
       `Cannot declare io.modelcontextprotocol/tasks on subscriptions/listen: ${reason}. ` +
         `\`Protocol.${ENVELOPE_MEMBER}\` is a private member of @modelcontextprotocol/client ` +
         `(verified against ${VERIFIED_CLIENT_VERSION}); without it the listen request would go ` +
-        `out undeclared and a conforming server would answer -32003. Re-verify ` +
+        `out undeclared and a conforming server would answer -32021. Re-verify ` +
         `sdk/src/mcp-client-manager/tasks-ext-listen-meta.ts against the new client build, or ` +
         `disable task notifications and fall back to polling.`
     );
@@ -175,7 +175,7 @@ export function withTasksExtensionEnvelope<T>(
 
   // The seam check rides ON the pending promise rather than short-circuiting
   // it. Two reasons: a call that also rejected must surface ITS error (the
-  // server's `-32003` is more useful than our diagnosis of it), and abandoning
+  // server's `-32021` is more useful than our diagnosis of it), and abandoning
   // `pending` here would leave an unhandled rejection behind.
   return pending.then(async (value) => {
     if (!observed) {

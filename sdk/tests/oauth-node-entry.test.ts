@@ -38,11 +38,19 @@ describe("@mcpjam/sdk/oauth/node entry", () => {
     );
   });
 
+  it("re-exports the streaming transport from its own module, not a copy", async () => {
+    const streaming = await import("../src/oauth/pinned-stream-fetch.js");
+    expect(oauthNode.createPinnedStreamingFetch).toBe(
+      streaming.createPinnedStreamingFetch
+    );
+  });
+
   it("exposes nothing beyond the documented surface", () => {
     expect(Object.keys(oauthNode).sort()).toEqual([
       "OAuthOutboundUrlBlockedError",
       "OAuthProxyError",
       "assertOutboundOAuthUrlAllowed",
+      "createPinnedStreamingFetch",
       "executeDebugOAuthProxy",
       "executeOAuthProxy",
       "fetchOAuthMetadata",
@@ -83,6 +91,10 @@ describe("@mcpjam/sdk/oauth/node entry", () => {
       "node:http",
       "node:https",
       "node:net",
+      // `node:zlib` is the streaming transport undoing `content-encoding`, so
+      // its byte cap counts DECOMPRESSED bytes and a compressed bomb is
+      // measured at the size it will actually occupy.
+      "node:zlib",
     ]);
   });
 });

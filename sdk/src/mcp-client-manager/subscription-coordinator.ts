@@ -180,7 +180,7 @@ export interface SubscriptionInterestRejection {
     /**
      * A task-filtered listen was wanted but this connection cannot put the
      * extension's per-request eligibility declaration on the listen request,
-     * so sending it would earn `-32003`. Polling continues; the handle is not
+     * so sending it would earn `-32021`. Polling continues; the handle is not
      * lost. See `tasks-ext-listen-meta.ts`.
      */
     | "tasks-declaration-unavailable";
@@ -277,7 +277,7 @@ export interface SubscriptionClientPort {
    * per-request eligibility declaration.
    *
    * Separate from {@link listen} on purpose. A task-filtered listen without
-   * the declaration MUST be answered `-32003` (`tasks.md:797-799`), so a
+   * the declaration MUST be answered `-32021` (`tasks.md:797-799`), so a
    * connection that cannot declare must not send one at all — it drops the
    * `taskIds` selection, records it as `tasks-declaration-unavailable`, and
    * keeps polling. Absent method ⇒ exactly that.
@@ -596,6 +596,22 @@ export function diffAcknowledgement(
  */
 const MAX_RETAINED_STREAMS = 50;
 
+/**
+ * How many rejected notifications a coordinator keeps.
+ *
+ * Unlike the stream history, this one grows on input the PEER controls: a
+ * server that keeps sending notifications for a stream that is no longer
+ * active, or for a subscription id we never issued, adds a record per
+ * notification and nothing ever removed one. The records are small — three to
+ * five scalars each, no `params` — so this was slow rather than dramatic, but
+ * it had no ceiling at all, and the process it grows in is the Electron main
+ * process.
+ *
+ * Higher than {@link MAX_RETAINED_STREAMS} because rejections arrive in bursts
+ * and the debugger wants the burst, not a sample of it.
+ */
+const MAX_RETAINED_REJECTIONS = 200;
+
 let coordinatorSeq = 0;
 
 /**
@@ -628,6 +644,7 @@ export class SubscriptionCoordinator {
   private currentLocalId?: string;
   /** Serializes reconcile/close/reopen so filter churn cannot interleave. */
   private queue: Promise<void> = Promise.resolve();
+  /** Bounded by {@link MAX_RETAINED_REJECTIONS}; oldest evicted on write. */
   private readonly rejections: RejectedSubscriptionNotification[] = [];
   /** Legacy adapter bookkeeping: URIs currently `resources/subscribe`d. */
   private legacySubscribedUris = new Set<string>();
@@ -914,6 +931,15 @@ export class SubscriptionCoordinator {
 
   private recordRejection(event: RejectedSubscriptionNotification): void {
     this.rejections.push(event);
+    // Oldest first, matching the stream history: a long-lived connection being
+    // spammed by its peer should keep the RECENT rejections, which are the ones
+    // describing whatever is wrong now.
+    if (this.rejections.length > MAX_RETAINED_REJECTIONS) {
+      this.rejections.splice(
+        0,
+        this.rejections.length - MAX_RETAINED_REJECTIONS
+      );
+    }
     this.options.onRejectedNotification?.(event);
   }
 
@@ -944,7 +970,7 @@ export class SubscriptionCoordinator {
    *
    * Kept together so every caller — reconcile and re-listen alike — sees the
    * same filter. A re-listen that skipped the gate would resurrect a `taskIds`
-   * selection this connection cannot declare and earn a `-32003` on reconnect.
+   * selection this connection cannot declare and earn a `-32021` on reconnect.
    */
   private resolveFilter(): {
     requested: SubscriptionFilterShape;
@@ -963,7 +989,7 @@ export class SubscriptionCoordinator {
     }
 
     // Drop rather than downgrade: an undeclared task-filtered listen is a
-    // guaranteed -32003, and the polling fallback loses nothing but latency.
+    // guaranteed -32021, and the polling fallback loses nothing but latency.
     //
     // Only ONE reason is reachable here. `resolveRequestedFilter` was given the
     // era, so a legacy connection already had its `taskIds` rejected as

@@ -1,0 +1,96 @@
+{
+  "id": "hosted-0005",
+  "note": "transport-local error \u2014 attributed to setup, never to the server",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "error",
+        "toolName": "list_files",
+        "promptIndex": 0,
+        "mcpErrorCode": -32000
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": false
+      }
+    ],
+    "toolErrors": [
+      {
+        "kind": "tool_error",
+        "toolName": "list_files"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "failed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "failed",
+        "reason": "protocolError",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      },
+      {
+        "stage": "userValue",
+        "state": "notReached",
+        "reason": "earlierStageFailed"
+      }
+    ],
+    "firstFailedStage": "call",
+    "failureCategory": "setup",
+    "stageAnalyzerVersion": 8
+  }
+}

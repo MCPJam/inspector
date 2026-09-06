@@ -6,6 +6,7 @@ import {
 } from "./suite-insights-collapsible";
 import { SuiteMetricStrip } from "./suite-metric-strip";
 import { TestCasesOverview } from "./test-cases-overview";
+import type { CrossHostEnvironment } from "./cross-host/use-cross-host-data";
 import { SuiteResultsSplit } from "./suite-results-split";
 import { buildHostNamesById } from "./helpers";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -65,6 +66,7 @@ export interface SuiteDashboardProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  onRecordTestCase?: () => void;
   /**
    * When set, the results split shows this run's detail in its right pane
    * (the rail highlights the run). Drives the folded-in run-detail view; the
@@ -82,6 +84,12 @@ export interface SuiteDashboardProps {
    * environment-backed run. Falls back to attachment names alone when omitted.
    */
   hostNamesById?: Map<string, string | null>;
+  /**
+   * The suite's project environments, owned by the parent like `hostNamesById`.
+   * Without them the matrix can only place a run by its resolved host, so two
+   * model cells on one client share a column.
+   */
+  environments?: readonly CrossHostEnvironment[];
   /** Forwarded to the per-case credit estimate (quick-run iteration override). */
   quickRunIterationOverride?: number;
 }
@@ -117,10 +125,12 @@ export function SuiteDashboard({
   generateTestCasesDisabledReason,
   isGeneratingTestCases,
   onCreateTestCase,
+  onRecordTestCase,
   selectedRunId,
   runDetailPane,
   onExitRun,
   hostNamesById: hostNamesByIdProp,
+  environments,
   quickRunIterationOverride,
 }: SuiteDashboardProps) {
   const hasRuns = runs.length > 0;
@@ -172,7 +182,9 @@ export function SuiteDashboard({
       generateTestCasesDisabledReason={generateTestCasesDisabledReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
+      onRecordTestCase={onRecordTestCase}
       hostNamesById={hostNamesById}
+      environments={environments}
     />
   );
 
@@ -236,6 +248,7 @@ export function SuiteDashboard({
         runs={runs}
         allIterations={allIterations}
         hostNamesById={hostNamesById}
+        environments={environments}
         allRunsPane={caseLibrary}
         onTestCaseClick={onTestCaseClick}
         onOpenCaseIteration={onOpenCaseIteration}

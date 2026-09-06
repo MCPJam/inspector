@@ -412,6 +412,17 @@ apiKeys.post("/", async (c) =>
             `${message} (API key not created)`,
           );
         }
+        // The key id is already bound to a different org. The backend refuses
+        // to re-point a live key, and it is right to: the request is
+        // well-formed and the caller is permitted, so this is a conflict, not
+        // a validation error or a backend fault.
+        if (bindingError.status === 409) {
+          throw new WebRouteError(
+            409,
+            ErrorCode.CONFLICT,
+            `${message} (API key not created)`,
+          );
+        }
       }
       throw new WebRouteError(
         502,
@@ -514,10 +525,25 @@ apiKeys.delete("/:id", async (c) =>
     // and the WorkOS key is already gone, so a cleanup failure (including a
     // binding that was never written) must not fail the user-facing revoke.
     try {
-      await removeWorkosKeyBinding(id);
+      // Name the actor on the binding delete so the backend's audit row says
+      // who revoked instead of inferring the minter. The check above already
+      // proved this session owns the key, so this is not the authorization —
+      // it is attribution, plus defense in depth on a route the service token
+      // alone can reach. Resolving can fail (a WorkOS user with no MCPJam row
+      // yet); the revoke is already done, so send it unattributed rather than
+      // turning a bookkeeping gap into a failed revoke.
+      const actor = await resolveUserByExternalId(session.userId);
+      await removeWorkosKeyBinding(id, actor?._id);
     } catch (error) {
+      const status =
+        error instanceof WorkosKeyBindingError ? error.status : undefined;
       logger.warn("Failed to remove API key org binding during revoke", {
         workos_key_id: id,
+        // A 403 is the minter-only rule firing, which should be unreachable
+        // behind the ownership check above — worth separating from an
+        // unreachable backend when reading logs.
+        ...(status === 403 ? { reason: "not_key_minter" } : {}),
+        ...(status !== undefined ? { binding_status: status } : {}),
         error: error instanceof Error ? error.message : String(error),
       });
     }

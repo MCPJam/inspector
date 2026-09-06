@@ -9,10 +9,16 @@ const sdkSkillReferenceEntry = path.resolve(
   "../sdk/src/skill-reference.ts",
 );
 const sdkMatchersEntry = path.resolve(rootDir, "../sdk/src/matchers.ts");
+const sdkBrowserEntry = path.resolve(rootDir, "../sdk/src/browser.ts");
 const sdkPredicatesEntry = path.resolve(
   rootDir,
   "../sdk/src/predicates/index.ts",
 );
+// The versioned contract — now the canonical home of the step union that
+// `shared/steps.ts` re-exports. Needs its own alias BEFORE the bare
+// `@mcpjam/sdk` entry below: a string `find` matches by prefix, so without it
+// `@mcpjam/sdk/contract` would rewrite to `<sdk index>.ts/contract`.
+const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
 
 export default defineConfig({
   define: {
@@ -55,7 +61,9 @@ export default defineConfig({
       },
       { find: "@mcpjam/sdk/operations", replacement: sdkOperationsEntry },
       { find: "@mcpjam/sdk/matchers", replacement: sdkMatchersEntry },
+      { find: "@mcpjam/sdk/browser", replacement: sdkBrowserEntry },
       { find: "@mcpjam/sdk/predicates", replacement: sdkPredicatesEntry },
+      { find: "@mcpjam/sdk/contract", replacement: sdkContractEntry },
       { find: "@mcpjam/sdk", replacement: sdkIndexEntry },
       { find: "@/shared", replacement: path.resolve(__dirname, "./") },
     ],

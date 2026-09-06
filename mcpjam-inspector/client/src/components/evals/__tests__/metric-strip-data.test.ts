@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { buildCellMetricStripData } from "../metric-strip-data";
 
 describe("buildCellMetricStripData", () => {
-  it("aggregates headline latency across runs while keeping latest pass rate", () => {
+  it("aggregates headline latency and pass counts across runs", () => {
     const data = buildCellMetricStripData([
       {
         runLabel: "old",
@@ -22,9 +22,9 @@ describe("buildCellMetricStripData", () => {
       },
     ]);
 
-    expect(data?.latest.passRate).toBe(0);
-    expect(data?.latest.passed).toBe(0);
-    expect(data?.latest.total).toBe(1);
+    expect(data?.latest.passRate).toBe(50);
+    expect(data?.latest.passed).toBe(1);
+    expect(data?.latest.total).toBe(2);
     expect(data?.latest.tokens).toBe(2_000);
     expect(data?.latest.toolCalls).toBe(2);
     expect(data?.latest.latencyP50).toBe(9_000);

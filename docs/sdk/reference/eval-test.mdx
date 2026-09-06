@@ -28,11 +28,71 @@ new EvalTest(options: EvalTestConfig)
 
 | Property            | Type                     | Required | Description                                                                    |
 | ------------------- | ------------------------ | -------- | ------------------------------------------------------------------------------ |
-| `name`              | `string`                 | Yes      | Unique identifier for the test                                                 |
+| `id`                | `string`                 | Yes      | The case's identity. **Required from 5.0** — see below.                         |
+| `name`              | `string`                 | Yes      | Human-readable display name for the test                                       |
 | `test`              | `TestFunction`           | Yes      | The test function to run                                                       |
 | `expectedToolCalls` | `EvalExpectedToolCall[]` | No       | Tool calls the iteration must make. **Enforced locally from 3.0** — see below. |
 | `matchOptions`      | `EvalMatchOptions`       | No       | How `expectedToolCalls` is matched (order, arguments, extras)                   |
+| `intent`            | `string`                 | No       | Analytics grouping label for this case. Forwarded with every result but never affects scoring or the verdict. Must be 1–64 characters, already trimmed (no leading or trailing whitespace). |
 | `predicates`        | `Predicate[]`            | No       | Deterministic transcript checks that gate each iteration                        |
+
+<Warning>
+  **New in 5.0: `id` is required.** A case's identity used to be its `name`, so
+  renaming a test forked its history — the run page started a fresh series and
+  the old one was orphaned. `id` separates the two: history joins on `id`, and
+  `name` is free to change.
+
+  Mint one **once** and commit the literal beside the test:
+
+  ```typescript
+  import { mintCaseId } from "@mcpjam/sdk/contract";
+  console.log(mintCaseId()); // c_V1StGXR8Z5jdHi6Bmy — paste this in
+  ```
+
+  Any URL-safe string of 1–128 characters (`A-Z a-z 0-9 _ -`) is accepted, so an
+  id you already have — a hosted case id, a ticket number, a slug you maintain —
+  works as-is; the `c_` prefix is only a grep convenience. Do **not** call
+  `mintCaseId()` inline: an id regenerated on every run is not an identity.
+  Constructing an `EvalTest` without an `id` throws, and the error carries a
+  freshly minted id to paste.
+
+  **Migrating from `externalCaseId`:** If your test already declares
+  `externalCaseId`, reuse that value verbatim as `id` — do not mint a new one.
+  The hosted history for that case is keyed on `externalCaseId`, so setting
+  `id` to the same value keeps the history intact. Setting `id` to a different
+  value is a hard error — at construction from 6.0, and at ingest.
+
+  If your `externalCaseId` is not a valid id (it was never charset-bound, so it
+  may contain spaces, slashes or punctuation), no `id` can agree with it.
+  Rename the external id itself to a conforming value and declare that same
+  value in both fields.
+
+  ```typescript
+  // Before
+  new EvalTest({ externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+
+  // After — reuse the existing externalCaseId as id
+  new EvalTest({ id: "case_123", externalCaseId: "case_123", name: "refunds a duplicate charge", ... })
+  ```
+</Warning>
+
+<Warning>
+  **New in 5.0: step objects reject unknown fields.** `prompt`, `toolCall`,
+  `interact`, and `assert` steps — and their nested sub-objects such as
+  `elementLocator` and widget assertions — are now **closed schemas**. A step
+  carrying a field the contract does not declare fails to parse instead of
+  silently dropping that field.
+
+  Two things are deliberately left open:
+  - `toolCallStep.arguments` — the tool's own argument object, whose keys come
+    from the server's input schema.
+  - A `Predicate` inside an `assert` step — predicates are a separate contract
+    module with their own versioning.
+
+  If you generate steps programmatically (for example, from an LLM or an
+  importer), remove any fields that are not part of the step contract before
+  passing them to the SDK.
+</Warning>
 
 <Warning>
   **Changed in 3.0.** `expectedToolCalls` used to be reporting metadata only:
@@ -63,6 +123,7 @@ Deterministic, state-based checks evaluated against the iteration transcript —
 
 ```typescript
 const test = new EvalTest({
+  id: "c_books_the_venue",
   name: "books the venue",
   expectedToolCalls: [{ toolName: "book_venue" }],
   matchOptions: { toolCallOrder: "strict" },
@@ -96,6 +157,7 @@ Both `HostRunner`, `HostRuntime`, and mock executors implement the `HostExecutor
 
 ```typescript
 const test = new EvalTest({
+  id: "c_addition_accuracy",
   name: "addition-accuracy",
   test: async (agent) => {
     const result = await agent.run("Add 2 and 3");
@@ -510,6 +572,7 @@ async function main() {
   });
 
   const test = new EvalTest({
+    id: "c_addition",
     name: "addition",
     test: async (agent) => {
       const r = await agent.run("Add 2 and 3");

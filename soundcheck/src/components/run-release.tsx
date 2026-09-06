@@ -4,7 +4,7 @@
  * Run Release tile — the single dispatch form for every production deploy
  * Soundcheck can trigger:
  *
- *   - release.yml (scope + promote_production + deploy_backend_prod)
+ *   - release.yml (scope + deploy_webapp + deploy_backend_prod)
  *   - deploy-mcp-prod.yml (deploy_mcp_production)
  *
  * MCP lives here rather than in its own tile because it's another flavor
@@ -55,7 +55,7 @@ export function RunRelease() {
   const router = useRouter();
   const [scope, setScope] = useState<Scope>("full");
   const [deployBackend, setDeployBackend] = useState(false);
-  const [promoteProd, setPromoteProd] = useState(false);
+  const [deployWebapp, setDeployWebapp] = useState(false);
   const [deployMcp, setDeployMcp] = useState(false);
   const [skipVerify, setSkipVerify] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -68,7 +68,7 @@ export function RunRelease() {
   const [isPending, startTransition] = useTransition();
 
   const runsRelease = scope !== "none";
-  const impactsProd = deployBackend || promoteProd || deployMcp;
+  const impactsProd = deployBackend || deployWebapp || deployMcp;
   const hasAnyTarget = runsRelease || deployMcp;
   const effectiveSkipVerify = runsRelease && skipVerify;
 
@@ -78,7 +78,7 @@ export function RunRelease() {
   function changeScope(next: Scope) {
     setScope(next);
     if (next !== "full") setDeployBackend(false);
-    if (next === "packages-only" || next === "none") setPromoteProd(false);
+    if (next === "packages-only" || next === "none") setDeployWebapp(false);
     if (next === "none") setSkipVerify(false);
     setFeedback({ kind: "idle" });
   }
@@ -87,8 +87,8 @@ export function RunRelease() {
     setDeployBackend(v);
     setFeedback({ kind: "idle" });
   }
-  function changePromoteProd(v: boolean) {
-    setPromoteProd(v);
+  function changeDeployWebapp(v: boolean) {
+    setDeployWebapp(v);
     setFeedback({ kind: "idle" });
   }
   function changeDeployMcp(v: boolean) {
@@ -115,7 +115,7 @@ export function RunRelease() {
           body: JSON.stringify({
             scope,
             deploy_backend_prod: deployBackend,
-            promote_production: promoteProd,
+            deploy_webapp: deployWebapp,
             deploy_mcp_production: deployMcp,
             skip_verify: effectiveSkipVerify
           })
@@ -235,10 +235,10 @@ export function RunRelease() {
               description="Dispatch backend production deploy (scope=full only)."
             />
             <FlagRow
-              id="promote-prod"
-              name="promote_production"
-              checked={promoteProd}
-              onChange={changePromoteProd}
+              id="deploy-webapp"
+              name="deploy_webapp"
+              checked={deployWebapp}
+              onChange={changeDeployWebapp}
               disabled={scope === "packages-only" || scope === "none"}
               description="Deploy inspector to Railway prod after publish."
             />
@@ -310,7 +310,7 @@ export function RunRelease() {
         busy={isPending}
         scope={scope}
         deployBackend={deployBackend}
-        promoteProd={promoteProd}
+        deployWebapp={deployWebapp}
         deployMcp={deployMcp}
         skipVerify={effectiveSkipVerify}
       />
@@ -365,7 +365,7 @@ function ConfirmModal({
   busy,
   scope,
   deployBackend,
-  promoteProd,
+  deployWebapp,
   deployMcp,
   skipVerify
 }: {
@@ -375,11 +375,11 @@ function ConfirmModal({
   busy: boolean;
   scope: Scope;
   deployBackend: boolean;
-  promoteProd: boolean;
+  deployWebapp: boolean;
   deployMcp: boolean;
   skipVerify: boolean;
 }) {
-  const impactsProd = deployBackend || promoteProd || deployMcp;
+  const impactsProd = deployBackend || deployWebapp || deployMcp;
   const runsRelease = scope !== "none";
   const dispatchedWorkflows = [
     runsRelease ? "release.yml" : null,
@@ -441,15 +441,15 @@ function ConfirmModal({
           </div>
           <div className="flex gap-3">
             <dt className="w-44 font-mono text-xs text-muted-foreground">
-              promote_production
+              deploy_webapp
             </dt>
             <dd
               className={
                 "font-mono text-xs " +
-                (promoteProd ? "text-warning" : "text-muted-foreground")
+                (deployWebapp ? "text-warning" : "text-muted-foreground")
               }
             >
-              {String(promoteProd)}
+              {String(deployWebapp)}
             </dd>
           </div>
           <div className="flex gap-3">

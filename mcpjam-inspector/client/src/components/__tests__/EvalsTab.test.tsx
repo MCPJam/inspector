@@ -72,7 +72,10 @@ vi.mock("@/hooks/use-eval-tab-context", () => ({
     organizationId: "org-1",
     connectedServerNames: new Set(["server-a", "server-b"]),
     userMap: new Map(),
-    canDeleteSuite: false,
+    canManageEvalArtifacts: false,
+    // Nobody's artifacts are deletable in this fixture: not a manager, and
+    // the suites under test were made by someone else.
+    canDeleteArtifact: () => false,
     canDeleteRuns: false,
     availableModels: [],
   }),

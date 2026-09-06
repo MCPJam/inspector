@@ -44,7 +44,7 @@ vi.mock("../registry.js", () => ({
     displayName: "Claude Code",
     defaultPermissionMode: "allow-all",
     supportsSkills: false,
-    supportsSelectedMcpServers: false,
+    mcpDelivery: "host-executed",
     supportsModel: vi.fn(() => true),
     createHarness: vi.fn(() => ({ harnessId: "claude-code" })),
     parseToolName: vi.fn((toolName: string) => ({ toolName })),
@@ -94,6 +94,9 @@ vi.mock("../harness-session-state.js", async (importOriginal) => {
 });
 
 vi.mock("../harness-model-broker.js", () => ({
+  reserveHarnessBox: vi.fn(async () => ({ ok: true })),
+  renewHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
+  releaseHarnessBoxReservation: vi.fn(async () => ({ ok: true })),
   revokeHarnessModelBroker: vi.fn(async () => {}),
   startHarnessModelBroker: vi.fn(async () => ({
     ok: true,
@@ -118,6 +121,11 @@ vi.mock("../mcp-config.js", async (importOriginal) => {
 import { runHarnessTurn } from "../run-harness-turn";
 import { startHarnessModelBroker } from "../harness-model-broker.js";
 import { revokeHarnessModelBroker } from "../harness-model-broker.js";
+import {
+  reserveHarnessBox,
+  renewHarnessBoxReservation,
+  releaseHarnessBoxReservation,
+} from "../harness-model-broker.js";
 import { resolveHarnessSandbox } from "../resolve-sandbox.js";
 import { createE2BHarnessSandboxProvider } from "../e2b-sandbox-provider.js";
 
@@ -164,8 +172,12 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.mocked(startHarnessModelBroker).mockClear();
+  vi.mocked(revokeHarnessModelBroker).mockClear();
   vi.mocked(resolveHarnessSandbox).mockClear();
   vi.mocked(createE2BHarnessSandboxProvider).mockClear();
+  vi.mocked(reserveHarnessBox).mockClear();
+  vi.mocked(renewHarnessBoxReservation).mockClear();
+  vi.mocked(releaseHarnessBoxReservation).mockClear();
 });
 
 describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
@@ -245,6 +257,113 @@ describe("runHarnessTurn — ephemeral sandbox binding (phase 6)", () => {
 
     expect(startHarnessModelBroker).not.toHaveBeenCalled();
     expect(resolveHarnessSandbox).not.toHaveBeenCalled();
+  });
+});
+
+describe("runHarnessTurn — reserve, then start the baseline-preserving broker lease", () => {
+  it("claims the box and only then asks for a credential", async () => {
+    // Reserve → broker start → in-stream bootstrap. The lease keeps the box's
+    // own egress baseline, so the bootstrap can reach the registry after start.
+    // The claim still comes first so a second turn cannot interleave.
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+
+    const reserveOrder = vi.mocked(reserveHarnessBox).mock
+      .invocationCallOrder[0]!;
+    const providerOrder = vi.mocked(createE2BHarnessSandboxProvider).mock
+      .invocationCallOrder[0]!;
+    const brokerOrder = vi.mocked(startHarnessModelBroker).mock
+      .invocationCallOrder[0]!;
+    expect(reserveOrder).toBeLessThan(providerOrder);
+    expect(providerOrder).toBeLessThan(brokerOrder);
+  });
+
+  it("builds one provider for the turn before broker start", async () => {
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+
+    expect(createE2BHarnessSandboxProvider).toHaveBeenCalledTimes(1);
+  });
+
+  it("shares one runId between the claim and the lease that consumes it", async () => {
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+
+    const reservedRunId = vi.mocked(reserveHarnessBox).mock.calls[0]![0].runId;
+    const leasedRunId = vi.mocked(startHarnessModelBroker).mock.calls[0]![0]
+      .runId;
+    expect(reservedRunId).toBe(leasedRunId);
+    expect(reservedRunId).toBeTruthy();
+  });
+
+  it("hands the box back when broker start fails", async () => {
+    vi.mocked(startHarnessModelBroker).mockResolvedValueOnce({
+      ok: false,
+      status: 502,
+      error: "Failed to provision the harness network.",
+    });
+
+    const result = await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING }) as never,
+      "none"
+    );
+
+    // The run id was recorded before the POST, so teardown still revokes in
+    // case the backend installed before a lost response — and the reservation
+    // is ours to give back so the next turn does not wait out its TTL.
+    expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
+    expect(releaseHarnessBoxReservation).toHaveBeenCalledTimes(1);
+    expect(result.aborted).toBe(false);
+  });
+
+  it("refuses to prepare a box another run is already preparing", async () => {
+    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+      ok: false,
+      status: 409,
+      error: "A harness run is already active on this computer.",
+    });
+    const onEngineError = vi.fn();
+
+    await runHarnessTurn(
+      baseOptions({
+        harnessSandboxBinding: BINDING,
+        onEngineError,
+      }) as never,
+      "none"
+    );
+
+    // The caller is told the box is busy, in the same words a lease conflict
+    // would have produced.
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(onEngineError.mock.calls[0]![0].message).toMatch(
+      /already active on this computer/i
+    );
+    // Refused before ANY work on the box — that is the point of claiming first.
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the backend has no reservation endpoint", async () => {
+    vi.mocked(reserveHarnessBox).mockResolvedValueOnce({
+      ok: false,
+      status: 404,
+      error: "Harness model-broker returned 404",
+    });
+    const onEngineError = vi.fn();
+
+    await runHarnessTurn(
+      baseOptions({ harnessSandboxBinding: BINDING, onEngineError }) as never,
+      "none"
+    );
+
+    expect(onEngineError).toHaveBeenCalledTimes(1);
+    expect(startHarnessModelBroker).not.toHaveBeenCalled();
+    expect(releaseHarnessBoxReservation).not.toHaveBeenCalled();
   });
 });
 

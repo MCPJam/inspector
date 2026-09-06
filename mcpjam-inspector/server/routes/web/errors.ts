@@ -13,6 +13,7 @@ import {
   maybeCaptureOriginError,
   type OriginCaptureBoundary,
 } from "../../utils/error-origin-capture.js";
+import type { RouteFailureHop } from "../../utils/route-error-report.js";
 import { PROTOCOL_VERSION_PIN_SLUG } from "../../../shared/protocol-version-pin.js";
 
 export const ErrorCode = {
@@ -185,10 +186,14 @@ export function webError(
   // `extras` is permissive (rpc-log collectors, etc.). If it carries a
   // `normalized` key, hoist it to the top-level response body — clients
   // pluck the rich block off the JSON envelope without re-classifying.
-  const { normalized, effectiveOrigin, responseHeaders, ...restExtras } =
+  const { normalized, effectiveOrigin, hop, responseHeaders, ...restExtras } =
     (extras ?? {}) as Record<string, unknown> & {
       normalized?: NormalizedError;
       effectiveOrigin?: ErrorOrigin;
+      // Destructured OUT for the same reason as `responseHeaders`: this is
+      // telemetry, not part of the client contract. It rides on
+      // `webErrorMeta` only.
+      hop?: RouteFailureHop;
       // Destructured OUT of the body spread on purpose: everything left in
       // `restExtras` is spread into the JSON, so a header bag left in there
       // would ship as a response FIELD instead of as headers.
@@ -218,6 +223,12 @@ export function webError(
       message,
       ...(reportedOrigin ? { origin: reportedOrigin } : {}),
       ...(normalized ? { slug: normalized.slug } : {}),
+      // Recorded independently of `origin`, never folded into it. A hop says
+      // WHICH BOUNDARY broke; `origin` says WHOSE PROBLEM it is. Collapsing
+      // the two would let a `user_server_hop` declaration quietly lower a
+      // positively-MCPJam verdict, which is the one direction of this change
+      // that must stay impossible.
+      ...(hop ? { hop } : {}),
     });
   }
   return c.json(
@@ -752,10 +763,15 @@ export function parseWithSchema<T>(schema: z.ZodSchema<T>, data: unknown): T {
   const parsed = schema.safeParse(data);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
+    const path = issue?.path?.length ? issue.path.join(".") : "";
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      issue?.message ?? "Request validation failed"
+      issue
+        ? path
+          ? `${path}: ${issue.message}`
+          : issue.message
+        : "Request validation failed"
     );
   }
   return parsed.data;

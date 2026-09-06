@@ -43,10 +43,9 @@ import type { HostAttentionIssue } from "../types";
 import { useJsonDraftBuffer } from "./useJsonDraftBuffer";
 
 /**
- * "auto" is the UI-only sentinel for "no pin stored" — it maps to
- * `mcpProfile.mcpProtocolVersion === undefined`, NOT to a wire literal.
- * Deliberately not labelled with a version number: absence means the SDK
- * picks the version at connect time, so hardcoding a revision into that
+ * "auto" is a stored selection policy, NOT a wire literal. The SDK negotiates
+ * at connect time and never emits the string itself. Deliberately not labelled
+ * with a version number: hardcoding a revision into that
  * label would go stale the moment the SDK's default moves (the sequenced
  * Phase-5 `versionNegotiation: 'auto'` activation) without anything in
  * this file changing.
@@ -114,21 +113,19 @@ const HOST_PROTOCOL_OPTIONS: Array<{
  *
  * The backend refuses to store a STATEFUL pin the client does not also
  * advertise in `initialize.supportedProtocolVersions` — the SDK's
- * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. Presets
+ * `ConflictingProtocolVersionPin` rule in `canonicalizeMcpProfile`. A
+ * stateless pin skips `initialize`, so it is exempt from that rule. Presets
  * carry that list (VS Code ships `["2025-11-25"]`), so offering every version
  * on those clients produced choices that could only fail at Save with an
  * opaque "Server Error". Offer what actually saves instead.
  *
  * The advertised list is the whole answer, INCLUDING for stateless revisions.
- * The backend only validates stateful pins (stateless ones skip the initialize
- * handshake, so `ConflictingProtocolVersionPin` never fires for them), but
- * "the backend would accept it" is not the same as "this client speaks it":
- * offering `2026-07-28` on a client that never advertised it emulates a
+ * Offering `2026-07-28` on a client that never advertised it would emulate a
  * product capability that does not exist. A client supports a revision when it
  * lists that revision — there is no separate stateless-support flag.
  *
  * Exempt from the filter:
- * - `"auto"`, which stores no pin at all and so claims nothing.
+ * - `"auto"`, which is a negotiation policy rather than a concrete pin.
  * - The stored value, so a row already pinned outside its own advertised list
  *   keeps rendering its selection instead of silently reading as "Automatic".
  *   Same don't-strand-the-user rule as the policy controls further down.
@@ -214,7 +211,7 @@ type ProtocolDoc = {
    * persistence; per-server pins live on the server card's Connection
    * overrides section.
    */
-  mcpProtocolVersion?: McpProtocolVersion;
+  mcpProtocolVersion?: HostProtocolDropdownValue;
   /**
    * Whether the simulated client mirrors `x-mcp-header` tool arguments into
    * `Mcp-Param-*` request headers (SEP-2243, 2026-07-28). Absent → `"mirror"`,
@@ -230,10 +227,21 @@ type ProtocolDoc = {
    * back as absence for the same hash reason as the mirroring knob above:
    * a host that never touches the control must keep hashing exactly as it
    * did before the field existed. Map onto `mcpProfile.paginationTraversal`
-   * / `mcpProfile.mrtrSupport`.
+   * / `mcpProfile.mrtrSupport` / `mcpProfile.toolCallCancellation`.
    */
   paginationTraversal?: PaginationTraversalMode;
   mrtrSupport?: MrtrSupport;
+  toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  /**
+   * How the client handles `notifications/tools/list_changed`. `listens` is
+   * whether it opens the server→client channel at all; `refetches` is whether
+   * it acts on the notification once one arrives. Absent means conforming
+   * (both), so only an explicit `false` is ever written.
+   */
+  toolListChanged?: {
+    listens?: boolean;
+    refetches?: boolean;
+  };
   capabilities?: Record<string, unknown>;
   /**
    * Host-level MCP profile extensions (`mcpProfile.extensions`) — freeform
@@ -304,6 +312,14 @@ export function protocolToJson(draft: HostConfigInputV2): ProtocolDoc {
   }
   if (draft.mcpProfile?.mrtrSupport !== undefined) {
     doc.mrtrSupport = draft.mcpProfile.mrtrSupport;
+  }
+  if (draft.mcpProfile?.toolCallCancellation !== undefined) {
+    doc.toolCallCancellation = draft.mcpProfile.toolCallCancellation;
+  }
+
+  const toolListChanged = draft.mcpProfile?.toolListChanged;
+  if (toolListChanged && Object.keys(toolListChanged).length > 0) {
+    doc.toolListChanged = { ...toolListChanged };
   }
 
   if (
@@ -517,14 +533,13 @@ export function applyJsonToDraft(
     if (cleaned.length > 0) supportedProtocolVersions = cleaned;
   }
 
-  // mcpProtocolVersion — membership-gate via `isKnownProtocolVersion`
-  // so typo strings fall back to `undefined` (= "SDK default") rather
-  // than slipping through to the SDK's open-routing predicate. Absent
-  // / wrong type also collapses to undefined for the same canonical-
-  // hash-stability reason documented in the type.
-  let mcpProtocolVersion: McpProtocolVersion | undefined;
+  // `auto` is a stored selection policy; every other accepted value is a
+  // concrete wire revision. Typo strings still collapse to undefined.
+  let mcpProtocolVersion: HostProtocolDropdownValue | undefined;
   const rawProtocolVersion = parsed.mcpProtocolVersion;
-  if (
+  if (rawProtocolVersion === "auto") {
+    mcpProtocolVersion = "auto";
+  } else if (
     typeof rawProtocolVersion === "string" &&
     isKnownProtocolVersion(rawProtocolVersion)
   ) {
@@ -550,6 +565,31 @@ export function applyJsonToDraft(
   const rawMrtr = parsed.mrtrSupport;
   const mrtrSupport: MrtrSupport | undefined =
     rawMrtr === "full" || rawMrtr === "none" ? rawMrtr : undefined;
+  // Same closed-shape collapse as `toolListChanged`: an unknown leaf or a
+  // non-boolean must not reach the canonicalizer, which throws and rejects the
+  // whole save.
+  const rawCancellation = parsed.toolCallCancellation;
+  let toolCallCancellation: HostConfigMcpProfileV1["toolCallCancellation"];
+  if (rawCancellation && typeof rawCancellation === "object") {
+    const parsedCancellation: { legacy?: boolean; modern?: boolean } = {};
+    for (const key of ["legacy", "modern"] as const) {
+      const value = (rawCancellation as Record<string, unknown>)[key];
+      if (typeof value === "boolean") parsedCancellation[key] = value;
+    }
+    if (Object.keys(parsedCancellation).length > 0) {
+      toolCallCancellation = parsedCancellation;
+    }
+  }
+
+  let toolListChangedParsed: HostConfigMcpProfileV1["toolListChanged"];
+  if (isPlainObject(parsed.toolListChanged)) {
+    const incoming = parsed.toolListChanged;
+    const next: NonNullable<typeof toolListChangedParsed> = {};
+    for (const key of ["listens", "refetches"] as const) {
+      if (typeof incoming[key] === "boolean") next[key] = incoming[key];
+    }
+    if (Object.keys(next).length > 0) toolListChangedParsed = next;
+  }
 
   // capabilities — pass through verbatim as Record<string, unknown> only if
   // the user supplied an object. Absence vs `{}` is preserved: missing key
@@ -622,7 +662,13 @@ export function applyJsonToDraft(
       toolParamHeaderMirroring,
       paginationTraversal,
       mrtrSupport,
+      toolCallCancellation,
+      toolListChanged: toolListChangedParsed,
       extensions: profileExtensions,
+      // `apps` is owned by the Apps tab (including the widget tool-result
+      // policy that used to be edited here); this view must pass it through
+      // untouched rather than rebuild it.
+      apps: base.apps,
     };
 
     return isMcpProfileEmpty(next) ? undefined : next;
@@ -658,8 +704,10 @@ export function ProtocolTab({
   // "Automatic" — matching what the connect path does with them anyway.
   const storedProtocolVersion = draft.mcpProfile?.mcpProtocolVersion;
   const selectedDropdownValue: HostProtocolDropdownValue =
-    storedProtocolVersion !== undefined &&
-    isKnownProtocolVersion(storedProtocolVersion)
+    storedProtocolVersion === "auto"
+      ? "auto"
+      : storedProtocolVersion !== undefined &&
+        isKnownProtocolVersion(storedProtocolVersion)
       ? storedProtocolVersion
       : "auto";
 
@@ -667,21 +715,42 @@ export function ProtocolTab({
   // pin the backend would reject. MCPJam deliberately has no capability list;
   // ignore singleton lists persisted by the old canonicalizer so existing
   // rows remain able to switch revisions. See `visibleHostProtocolOptions`.
+  // The `initialize` accept-list only ever carries legacy revisions, so it
+  // cannot be the whole answer: a client that speaks a modern era advertises
+  // it on its catalog row and negotiates it outside the handshake. Offer the
+  // union so a 2026-capable client can actually be pinned to 2026.
+  const catalogProtocolVersions = buildHostCompatProfiles().find(
+    (item) => item.id === draft.hostStyle
+  )?.supportedProtocolVersions;
+  const initializeProtocolVersions =
+    draft.mcpProfile?.initialize?.supportedProtocolVersions;
+  // A row with no accept-list is a legacy one and stays fully editable, so
+  // the catalog only ever widens an existing list — never creates one.
   const advertisedProtocolVersions =
     draft.hostStyle === "mcpjam"
       ? undefined
-      : draft.mcpProfile?.initialize?.supportedProtocolVersions;
+      : initializeProtocolVersions === undefined ||
+        initializeProtocolVersions.length === 0
+      ? initializeProtocolVersions
+      : Array.from(
+          new Set([
+            ...initializeProtocolVersions,
+            ...(catalogProtocolVersions ?? []),
+          ])
+        );
   const protocolOptions = visibleHostProtocolOptions(
     advertisedProtocolVersions,
     selectedDropdownValue
   );
   const protocolOptionsRestricted =
     protocolOptions.length < HOST_PROTOCOL_OPTIONS.length;
-  // A stored stateful pin outside the advertised list — a legacy row, or one
+  // A stored STATEFUL pin outside the advertised list — a legacy row, or one
   // hand-edited in the JSON. Its option is force-kept (see the helper), which
   // can pad the list back to full length, so this must be detected directly
   // rather than inferred from the option count. Saving such a draft throws
-  // `ConflictingProtocolVersionPin`; warn before Save does.
+  // `ConflictingProtocolVersionPin`; warn before Save does. A stateless pin
+  // skips `initialize` entirely, so both canonicalizers accept it outside the
+  // accept-list — warning there would promise a failure that never comes.
   const selectedPinUnadvertised =
     selectedDropdownValue !== "auto" &&
     !isStatelessProtocolVersion(selectedDropdownValue) &&
@@ -689,11 +758,9 @@ export function ProtocolTab({
     advertisedProtocolVersions.length > 0 &&
     !advertisedProtocolVersions.includes(selectedDropdownValue);
 
-  // Dropdown handler. Writes through to `draft.mcpProfile.mcpProtocolVersion`
-  // directly (parallel to the JSON editor's applyJsonToDraft path) so the
-  // JSON view round-trips immediately. Maps the UI-only "default" sentinel
-  // to `undefined` — preserves canonical-hash stability so the SDK can
-  // upgrade its default version without churning every stored host config.
+  // Dropdown handler. `undefined` here means the user selected Automatic;
+  // persist the explicit policy so ChatGPT's default can differ from a legacy
+  // row whose field is genuinely absent.
   const setProtocolVersion = (next: McpProtocolVersion | undefined) => {
     const warning = legacyProtocolSupportWarning(
       draft.hostStyle,
@@ -724,7 +791,7 @@ export function ProtocolTab({
       const updated: HostConfigMcpProfileV1 = {
         ...base,
         initialize,
-        mcpProtocolVersion: next,
+        mcpProtocolVersion: next ?? "auto",
       };
       return {
         ...prev,
@@ -761,11 +828,39 @@ export function ProtocolTab({
     });
   };
 
-  // Client-conformance knobs (siblings of the mirroring control above). Both
+  // Client-conformance knobs (siblings of the mirroring control above). All
   // model how REAL hosts differ, so the default is written back as ABSENCE
   // and only the degraded value is stored.
   const storedPagination = draft.mcpProfile?.paginationTraversal;
   const storedMrtrSupport = draft.mcpProfile?.mrtrSupport;
+  const storedToolCallCancellation = draft.mcpProfile?.toolCallCancellation;
+  // Delete-on-default per leaf, exactly like `toolListChanged`: absent is the
+  // conforming answer (the client cancels), so re-enabling a switch must leave
+  // no trace rather than write `true`.
+  const setToolCallCancellationPart = (
+    key: "legacy" | "modern",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const toolCallCancellation = { ...(base.toolCallCancellation ?? {}) };
+      if (enabled) delete toolCallCancellation[key];
+      else toolCallCancellation[key] = false;
+      const updated: HostConfigMcpProfileV1 = { ...base };
+      if (Object.keys(toolCallCancellation).length > 0) {
+        updated.toolCallCancellation = toolCallCancellation;
+      } else {
+        delete updated.toolCallCancellation;
+      }
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
   const setConformanceKnob = <K extends "paginationTraversal" | "mrtrSupport">(
     key: K,
     next: HostConfigMcpProfileV1[K] | undefined
@@ -775,6 +870,33 @@ export function ProtocolTab({
         profileVersion: 1,
       };
       const updated: HostConfigMcpProfileV1 = { ...base, [key]: next };
+      return {
+        ...prev,
+        mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
+      };
+    });
+  };
+
+  const storedToolListChanged = draft.mcpProfile?.toolListChanged;
+  // Delete-on-default: absence IS the
+  // conforming answer, so a re-enabled switch must leave no trace behind.
+  const setToolListChangedPart = (
+    key: "listens" | "refetches",
+    enabled: boolean
+  ) => {
+    onDraftChange((prev) => {
+      const base: HostConfigMcpProfileV1 = prev.mcpProfile ?? {
+        profileVersion: 1,
+      };
+      const toolListChanged = { ...(base.toolListChanged ?? {}) };
+      if (enabled) delete toolListChanged[key];
+      else toolListChanged[key] = false;
+      const updated: HostConfigMcpProfileV1 = { ...base };
+      if (Object.keys(toolListChanged).length > 0) {
+        updated.toolListChanged = toolListChanged;
+      } else {
+        delete updated.toolListChanged;
+      }
       return {
         ...prev,
         mcpProfile: isMcpProfileEmpty(updated) ? undefined : updated,
@@ -858,7 +980,7 @@ export function ProtocolTab({
         <div className="flex items-center gap-3">
           <span
             className="text-[12px] font-medium"
-            title="Automatic: store no pin — MCPJam picks the wire version at connect time. Any other choice pins that exact revision for every server on this client."
+            title="Automatic: negotiate at connect time. Any other choice pins that exact revision for every server on this client."
           >
             {fProtocolVersion.label}
           </span>
@@ -893,7 +1015,7 @@ export function ProtocolTab({
             materially, so they get their own copy: a stateless pin has no
             legacy fallback, while a stateful pin narrows the initialize
             handshake to that one version. "Automatic" gets no line — the
-            absence of a pin needs no explanation and keeps the panel quiet in
+            selection policy needs no extra explanation and keeps the panel quiet in
             the default state. */}
         {selectedDropdownValue !== "auto" && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
@@ -905,14 +1027,26 @@ export function ProtocolTab({
         {/* Without this line a preset-backed client reads as a broken control:
             the missing revisions look arbitrary, and the list that removed them
             is invisible unless the JSON editor below is open. Name both. The
-            claim is scoped to pre-2026 revisions — stateless versions skip the
-            initialize handshake and stay pinnable regardless of the list. */}
+            list constrains every concrete pin, including 2026.
+
+            A client can advertise a revision MCPJam itself does not speak —
+            Copilot advertises 2024-11-05, which is not in MCP_PROTOCOL_VERSIONS
+            — and that version can never appear in the dropdown however the list
+            is edited. Say so inline rather than leaving the reader to edit the
+            JSON and find nothing changed. */}
         {protocolOptionsRestricted && (
           <p className="mt-1.5 text-[11px] leading-snug text-muted-foreground">
             This client advertises{" "}
-            {(advertisedProtocolVersions ?? []).join(", ")}, so no other version
-            can be pinned. Edit <code>supportedProtocolVersions</code> in the
-            JSON below to offer more.
+            {(advertisedProtocolVersions ?? [])
+              .map((version) =>
+                (MCP_PROTOCOL_VERSIONS as readonly string[]).includes(version)
+                  ? version
+                  : `${version} (which MCPJam doesn't support)`
+              )
+              .join(", ")}
+            , so no other version can be pinned. Edit{" "}
+            <code>supportedProtocolVersions</code> in the JSON below to offer
+            more.
           </p>
         )}
         {/* Fires independently of the option count above: force-keeping the
@@ -1029,11 +1163,99 @@ export function ProtocolTab({
             </SelectContent>
           </Select>
         </div>
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">Tool cancellation</span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether stopping an in-flight tool call reaches the server, or
+              only ends the turn here while the server runs the tool to
+              completion. Measured per era because a client can be right on one
+              and wrong on the other; each connection reads only the era it
+              negotiated.
+            </p>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2025 (notifications/cancelled)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.legacy !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("legacy", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2025)"
+              />
+            </div>
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Cancels on 2026 (closes the response stream)
+              </span>
+              <Switch
+                checked={storedToolCallCancellation?.modern !== false}
+                onCheckedChange={(checked) =>
+                  setToolCallCancellationPart("modern", checked)
+                }
+                disabled={readOnly}
+                aria-label="Tool cancellation (2026)"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="mt-2.5 border-t border-border/50 pt-2.5">
+          <div className="min-w-0">
+            <span className="text-[12px] font-medium">
+              Tool list changed notifications
+            </span>
+            <p className="text-[11px] leading-snug text-muted-foreground">
+              Whether this client opens the server-to-client notification
+              channel, and whether it acts on
+              <code className="mx-1 text-[10px]">
+                notifications/tools/list_changed
+              </code>
+              once one arrives.
+            </p>
+          </div>
+          <div className="mt-2 flex flex-col divide-y divide-border/50 rounded-md border border-border/50">
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">Opens notification channel</span>
+              <Switch
+                checked={storedToolListChanged?.listens !== false}
+                onCheckedChange={(checked) =>
+                  setToolListChangedPart("listens", checked)
+                }
+                disabled={readOnly}
+                aria-label="Opens notification channel"
+              />
+            </div>
+            {/* Disabled when the channel is closed: nothing can arrive, so
+                this answer is unobservable rather than merely unset. */}
+            <div className="flex items-center justify-between gap-3 px-3 py-2">
+              <span className="text-[12px]">
+                Re-fetches tools after the notification
+              </span>
+              <Switch
+                checked={storedToolListChanged?.refetches !== false}
+                onCheckedChange={(checked) =>
+                  setToolListChangedPart("refetches", checked)
+                }
+                // NOT gated on `listens`. The 2026-08-26 Copilot capture
+                // re-fetched without ever opening the channel: the server
+                // published `list_changed` on an open tools/call response
+                // stream, which reaches a client that never opened the
+                // standalone one. off + on is a real combination.
+                disabled={readOnly}
+                aria-label="Re-fetches tools after the notification"
+              />
+            </div>
+          </div>
+        </div>
         {showPolicyToggle && (
           <div className="mt-2.5 flex items-center justify-between gap-3 border-t border-border/50 pt-2.5">
             <div className="min-w-0">
               <span className="text-[12px] font-medium">
-                Enterprise-managed authorization
+                Default all project servers to enterprise managed auth
               </span>
               <p className="text-[11px] leading-snug text-muted-foreground">
                 Route every HTTP server connection through your IdP (XAA) by
@@ -1053,7 +1275,7 @@ export function ProtocolTab({
               checked={policyOn}
               onCheckedChange={setPolicyOn}
               disabled={readOnly}
-              aria-label="Enterprise-managed authorization"
+              aria-label="Default all project servers to enterprise managed auth"
             />
           </div>
         )}

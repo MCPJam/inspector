@@ -1,4 +1,5 @@
 import { API_ENDPOINTS } from "@/components/evals/constants";
+import type { TestStep } from "@/shared/steps";
 import { isHostedMode, runByMode } from "@/lib/apis/mode-client";
 import { getSessionToken } from "@/lib/session-token";
 import { attachToolMetadata } from "@/lib/apis/tool-metadata";
@@ -225,6 +226,12 @@ export type GeneratedEvalTestCase = {
   scenario?: string;
   expectedOutput?: string;
   promptTurns?: PromptTurn[];
+  /**
+   * Authored steps, present when the backend produced the Wave-0 case shape.
+   * They are the case, not a projection of it — persist them verbatim rather
+   * than rebuilding from the legacy fields beside them.
+   */
+  steps?: TestStep[];
 };
 
 export type GenerateEvalTestsResponse = {
@@ -282,8 +289,14 @@ function mergeHostedServerBatch<
  * by the buffered (`postEvalRequest`) and streamed (`streamEvalTestCase`) eval
  * paths so single-case compare runs surface the same billing UX. No-op unless
  * the payload is a billing cap.
+ *
+ * Exported because the replay endpoint is called with a hand-rolled fetch
+ * rather than `postEvalRequest`: without this the raw response body is thrown
+ * whole, and the billing parser reads the outer envelope (`BILLING_LIMIT_
+ * REACHED`) instead of the payload nested under `details` — so a cap there
+ * looked like an ordinary failure.
  */
-function rethrowIfBillingError(errorBody: unknown): void {
+export function rethrowIfBillingError(errorBody: unknown): void {
   const billingPayload = (
     errorBody as { details?: { code?: unknown } } | null | undefined
   )?.details;

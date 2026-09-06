@@ -1,12 +1,7 @@
 import { logger } from "../../utils/logger.js";
 import { createConvexClient } from "./route-helpers.js";
-
-const TERMINAL_RUN_STATUSES = new Set([
-  "completed",
-  "failed",
-  "cancelled",
-  "timed_out",
-]);
+import { TERMINAL_RUN_STATUSES } from "./run-status.js";
+import { shouldSkipExecution } from "../../routes/shared/evals.js";
 
 type DetachableEvalRun = {
   suiteId: string;
@@ -25,6 +20,10 @@ type DetachableEvalRun = {
     }): Promise<void>;
   } | null;
   execute: () => Promise<void>;
+  /** Set when this "start" replayed an existing run — see `shouldSkipExecution`. */
+  deduped?: boolean;
+  /** The run's own status; terminal on a replay of a finished run. */
+  status?: string;
 };
 
 async function isRunAlreadyTerminal(
@@ -56,6 +55,22 @@ export function detachPreparedEvalRun(args: {
   cleanup?: () => Promise<void> | void;
 }) {
   const { prepared, convexAuthToken, logPrefix, logContext, cleanup } = args;
+
+  // A REPLAY of a finished run has nothing to execute. Running it would repeat
+  // every case and bill for it, over results that are already final — the
+  // double-spend an idempotency key is sent to prevent. Guarded here rather
+  // than at each call site so every surface that detaches a run inherits it.
+  if (shouldSkipExecution(prepared)) {
+    logger.info(`${logPrefix} idempotent replay — not re-executing`, {
+      ...logContext,
+      suiteId: prepared.suiteId,
+      runId: prepared.runId,
+      status: prepared.status,
+    });
+    void Promise.resolve(cleanup?.()).catch(() => {});
+    return;
+  }
+
   void Promise.resolve()
     .then(() => prepared.execute())
     .catch(async (error) => {

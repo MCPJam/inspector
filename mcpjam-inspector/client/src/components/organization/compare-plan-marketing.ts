@@ -1,7 +1,9 @@
 /**
- * Marketing compare-plans table: product rows mirror `mcpjam_pricing_page.html`;
- * eval caps and enterprise security features carry the commercial
- * distinctions.
+ * Marketing compare-plans table skeleton. Eval allowance values are replaced
+ * from the backend plan catalog by `buildComparePlanSectionsFromCatalog`, so
+ * this file cannot drift from the limits billing actually enforces.
+ * Included credits remain marketing copy until credits are represented in the
+ * plan catalog.
  */
 
 export type ComparePlanCell =
@@ -56,8 +58,8 @@ export const COMPARE_PLAN_MARKETING_SECTIONS: ComparePlanSection[] = [
     rows: [
       {
         label: "Eval iterations",
-        free: t("75 / day"),
-        team: t("15,000 / mo", true),
+        free: t("—"),
+        team: t("—", true),
         enterprise: t("Custom", true),
       },
       {

@@ -1,817 +1,667 @@
-diff --git a/.changeset/checks-one-vocabulary-and-session-verdicts.md b/.changeset/checks-one-vocabulary-and-session-verdicts.md
+diff --git a/.changeset/bb-133-guest-credit-wall.md b/.changeset/bb-133-guest-credit-wall.md
 deleted file mode 100644
-index e2235ad69..000000000
---- a/.changeset/checks-one-vocabulary-and-session-verdicts.md
-+++ /dev/null
-@@ -1,23 +0,0 @@
-----
--"@mcpjam/inspector": patch
-----
--
--Call every check a check, and show the reason it failed.
--
--The deterministic-checks foundation was already unified in code — one `Predicate` union, one pure fail-closed evaluator in `@mcpjam/sdk`, one race-safe `chatSessionChecks` table. What a user saw was six nouns for that one concept and five formatters for the same predicate, so surfaces that share an implementation read as unrelated features.
--
--**One noun.** "Checks" everywhere, with scope carried by a qualifier rather than a different word: "Default checks" on suite settings, "Whole-run checks" where "Global gates" was, "Step checks" unchanged. "Grading" stays as the umbrella over checks-plus-judge, which is what `journey-list.tsx` and the code name `gradingConfig` already called it. Gone from UI copy: "gates", "criterion/criteria", "Deterministic checks", "Scoring rubric". The swarm cap message stops leaking the storage word ("At most 25 checks — remove one to add another", not "A rubric holds at most 25 criteria"). Convex fields, code identifiers and test ids are untouched — this is copy, not a migration. GitHub Checks, an unrelated homonym, is not involved.
--
--**One label vocabulary.** `formatCriterion` in `shared/predicate-kinds.ts` is now the single formatter: the Insights scorecard (`criterionDisplayName`) and the swarm findings panel (`findingName`) delegate to it instead of reimplementing label-then-kind, joining the run scorecard which already did. Each keeps its own raw-`criterionId` fallback — deliberate, and the reason it cannot move into the shared helper: a finding whose check no longer appears in the run's pinned rubric is a real row with real counts, and `formatCriterion` has no id to name it with. The eval iteration's checks list stops printing the raw discriminator (`widgetRendered`) as its row title and prints the human label, keeping `summarizePredicate` beside it for argument specifics; that row was the last surface speaking the code's vocabulary at the user. `WIDGET_ASSERTION_LABELS` moves to `shared/steps.ts` beside the union it names, so the step-list sub-editor, the Add Step picker and the click-to-assert chooser stop keeping three private copies — which is how the same assertion came to be called both "Input value equals" and "Input equals…". `INLINE_ASSERT_LABELS` stays and is now documented as the turn-scoped VARIANT of `PREDICATE_KIND_LABELS`, not a fork: "no tool errors" and "no tool errors so far" are different claims.
--
--**Per-session check verdicts, with the evaluator's reasons.** A new Checks block on the shared session detail (Swarms sessions and User Testing sessions) renders each check's name, PASS/FAIL, and the evaluator's `reason` string. Those strings have been persisted since the rubric path shipped — `chatSessionChecks.criterionResults[].reason` is the only place they live, deliberately dropped from the compact `chatSessions.criteria` projection that feeds list payloads — and until now nothing rendered them, so a failing check could be counted on a scorecard and never explained. It is fed by `chatSessionChecks:getCheckRunsForSession`, a fully-built authorized query that had zero consumers.
--
--Three properties the block holds to:
--
--- **Run status is never folded into verdicts.** "Grading broke" and "the check failed" stay distinct badges, the same doctrine the run scorecard's four count columns enforce. A dead runner is not a product regression.
--- **A grading failure is never hidden by age.** Re-grades accumulate rows, so the newest run leads and older ones collapse behind "Previous runs (N)" — but a `failed` run is pulled out of that disclosure and rendered unconditionally.
--- **Judge rows are excluded, including the ones with nothing to show.** `chatSessionChecks` holds both graders' rows and `source` does not separate them: `on_demand` is written by both, and `scheduled` by the judge. A judge row that failed or is still running carries no `goalCompletionResult`, so a presence-based rule would render exactly those as empty duplicate "Checks" groups. Classification now reads a `runKind` column the backend stamps, falling back on legacy rows to the producer-minted `checkRunId` shape and only then to snapshot shape — so the panel is correct against a deployment where the backend hasn't been promoted yet.
--
--The block hides itself when a session has no checks rows. Eval sessions are the deliberate case: they persist verdicts on `testIteration.metadata.predicates` and write no `chatSessionChecks` rows at all, and the eval surfaces keep rendering `PredicatesList` against that metadata.
--
--**The widget-assertion seam, made deliberate.** DOM assertions stay a separate vocabulary from transcript predicates, and `shared/steps.ts` now says why rather than leaving it to be re-derived: a `Predicate` is evaluated against a persisted transcript and can be re-graded from stored data months later, a `WidgetAssertion` is evaluated against a live DOM and nothing persisted can reproduce it. That is the whole reason `widgetRendered` is a predicate while `textVisible` is not, and why swarms — no `TestStep[]`, no browser harness — cannot use widget assertions at all. Picker items for them now carry a "Checked in the live view" hint so the distinction is visible where the choice is made, and the comment names the condition that would justify revisiting the split: a persisted-DOM-snapshot capability.
-diff --git a/.changeset/default-nux-claude-gpt-luna.md b/.changeset/default-nux-claude-gpt-luna.md
-deleted file mode 100644
-index 55443f755..000000000
---- a/.changeset/default-nux-claude-gpt-luna.md
+index 9d75eee35..000000000
+--- a/.changeset/bb-133-guest-credit-wall.md
 +++ /dev/null
 @@ -1,5 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Automatically connect Excalidraw after a new Playground finishes setup, with Claude selected by default and ChatGPT using GPT-5.6 Luna.
-diff --git a/.changeset/protocol-version-pin-message.md b/.changeset/protocol-version-pin-message.md
+-Add a benefit-led A/B variant of the guest credit-limit modal (BB-133). Behind the PostHog flag `guest-credit-wall-copy`, the treatment replaces the single "Sign in" wall with a headline, value copy, a hero illustration, and two CTAs — "Create free account" (sign-up) and "See paid plans" (pricing page). The `plan_limit_*` events now carry a `variant` tag so sign-in vs create-account conversion can be compared across control and treatment. Defaults to the existing control modal when the flag is off.
+diff --git a/.changeset/connection-error-toast-copy.md b/.changeset/connection-error-toast-copy.md
 deleted file mode 100644
-index 8caedff8d..000000000
---- a/.changeset/protocol-version-pin-message.md
+index 04df2ffc0..000000000
+--- a/.changeset/connection-error-toast-copy.md
 +++ /dev/null
-@@ -1,18 +0,0 @@
+@@ -1,35 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A failed connection reads as a title and a failure, and copies as both
+-
+-The toast said `Excalidraw (App): Request failed (500)` — the server and the
+-failure spliced into one run-on line by a colon, with sonner's error icon
+-aligned against the middle of it rather than a title. It now uses the two
+-fields sonner renders: the server name as the title, the failure as the muted
+-description below it. The single-line form is kept for the message that already
+-names the server, where a title would print the name twice.
+-
+-One failure also produced two differently-worded toasts. `ServerDetailModal`,
+-`ServerConnectionCard` and `RecommendedServers` each caught the throw and built
+-their own sentence around it ("Failed to connect to X: …") while the connection
+-layer was already reporting the same failure in its own words. All three now
+-raise it through one helper, so the wording matches wherever it comes from. The
+-duplicate report itself is untouched and still open.
+-
+-The error toast's copy button copied only the line it sits on, which after the
+-split is a server name and nothing else. It now takes the description with it.
+-
+-Error-toast action buttons no longer claim a full centered row of their own.
+-The Toaster forced that because a sentence-long CTA squeezed the message beside
+-it, but it also stranded short labels — "Retry", "Reconnect" — under a one-line
+-error at four times their width. The toast content grows instead, so the label
+-decides: a short button rides the title row at the trailing edge, and one that
+-no longer fits wraps to its own line.
+-
+-Two layout fixes come with it. The toast aligns its icon and action to the
+-first line rather than the middle of a paragraph, and a paragraph no longer
+-forces its own row and strands the icon alone above it. And the copy button no
+-longer overflows the message box it sits in: at 20px against a 19.5px line it
+-raised a native scrollbar — arrows and all — over a one-line error.
+diff --git a/.changeset/error-cards-copy-and-select.md b/.changeset/error-cards-copy-and-select.md
+deleted file mode 100644
+index 3a6432ee4..000000000
+--- a/.changeset/error-cards-copy-and-select.md
++++ /dev/null
+@@ -1,20 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Error cards can be copied, and their text selected
+-
+-Highlighting the text on an error card was impossible wherever the card sits in
+-a surface that owns the drag gesture. On the servers grid, dnd-kit spreads its
+-sortable listeners over the whole card, and once the 8px activation distance is
+-crossed the sensor wipes the selection on every `selectionchange` — dragging
+-across the message reordered the card instead of selecting a word of it. In the
+-OAuth flow the card renders inside a ReactFlow node, and `.react-flow__node`
+-sets `user-select: none`, so there was nothing to drag for in the first place.
+-
+-The card now stops the pointerdown from reaching those surfaces and carries
+-`select-text nodrag nopan`. A Copy button beside "Show details" puts the whole
+-failure on the clipboard as plain text — title, one-liner, likely causes, next
+-steps, raw error and cause — including the details while they are still
+-collapsed, since expanding them first to copy them defeats the point. A
+-clipboard that refuses the write says "Copy failed" instead of claiming success.
+diff --git a/.changeset/grader-stage-contract-map.md b/.changeset/grader-stage-contract-map.md
+deleted file mode 100644
+index 2ac4aa73f..000000000
+--- a/.changeset/grader-stage-contract-map.md
++++ /dev/null
+@@ -1,16 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+----
+-
+-The contract now says which stage of the chain each grader measures
+-
+-The six-stage user-value chain has always been able to answer "where did this run stop being good?" for a single trial. What nothing could answer was the same question about a suite's SETTINGS: given this configuration, which stages does it actually measure, and which does it leave unchecked? The routing existed, but it lived inside the stage analyzer, reachable only by running a trial through it.
+-
+-`PREDICATE_STAGE`, `GRADER_STAGE` and `PREDICATE_KINDS` export that routing directly, so a settings surface can group graders by what they measure instead of by how they happen to be implemented.
+-
+-- **The analyzer's own routing is now derived from the map, not restated beside it.** That is the point of the change rather than a tidy-up. Two hand-kept copies of the same fact are one edit away from a suite that renders a grader under "selection" while the analyzer files its failures under "user value" — a disagreement neither copy is wrong enough to fail a test for. A new test asserts the analyzer routes exactly the three predicate kinds it routed before, so the derivation cannot quietly widen or narrow.
+-- **`PREDICATE_KINDS` is derived from the authoring schema.** A hand-written list is a list that misses the next predicate someone adds, and a predicate missing from the map is a grader a settings page cannot place — which renders as a stage that looks unmeasured when it is not. Totality is tested in both directions.
+-- **`toolCalledWith` is mapped to `selection` and is still matcher-graded.** The map records what an author was measuring; the analyzer still routes the kind through `expectedToolCalls`, because re-reading its point-in-time predicate row would let a raw residual contradict the adjudicated verdict. `isSelectionStagePredicateKind` (the map's question) and `isSelectionPredicateKind` (the analyzer's) deliberately disagree on this one kind, and a test pins that.
+-- **`GRADER_PRESENTATION_GROUP` carries no analytical weight.** Token and turn ceilings read better beside each other than beside "did the answer contain the right thing", but they are still filed where the analyzer files them. A test pins that the grouping never redefines a stage.
+-
+-`STAGE_ANALYZER_VERSION` stays at 8. Nothing about where a failure is attributed has changed, so this is a refactor rather than a re-derivation. The docblock names the kinds that are future bump candidates — `noToolErrors` toward `call` or `response`, the three `widget*` kinds toward `response` — so that moving one is a deliberate versioned change rather than a fix someone applies to the table in isolation.
+diff --git a/.changeset/local-harness-pack-signing-key.md b/.changeset/local-harness-pack-signing-key.md
+deleted file mode 100644
+index 22b85c066..000000000
+--- a/.changeset/local-harness-pack-signing-key.md
++++ /dev/null
+@@ -1,8 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Trust the local-harness runtime pack release key. `PACK_SIGNING_KEYS` shipped
+-empty, which refused every network-sourced pack — the correct default before a
+-key existed, and a hard blocker on publishing packs at all. The public half of
+-the Ed25519 release key is now committed; the private half lives only in CI.
+diff --git a/.changeset/local-inspector-reaches-private-networks.md b/.changeset/local-inspector-reaches-private-networks.md
+deleted file mode 100644
+index e67c9434a..000000000
+--- a/.changeset/local-inspector-reaches-private-networks.md
++++ /dev/null
+@@ -1,46 +0,0 @@
+----
+-"@mcpjam/sdk": minor
+-"@mcpjam/cli": minor
+-"@mcpjam/inspector": patch
+----
+-
+-The local inspector reaches OAuth servers on your own network
+-
+-Testing a fully local OAuth setup failed with `OAuth proxy target resolves to
+-a private/reserved IP address (127.0.0.1)` whenever the authorization server
+-had a hostname of its own — `auth.local`, or anything else answering
+-loopback. The address guard could not tell a developer's laptop from our
+-hosted infrastructure, so it applied the policy written for the second to
+-both, and the official MCP Inspector, which has no guard at all, worked where
+-we did not.
+-
+-**What changed.** The guard now distinguishes two questions instead of
+-answering one. "Is this private?" still governs the hosted app, which fetches
+-from our nodes where a private address means our own network. "Is this ever
+-dialable?" governs the local inspector and the CLI, and refuses only what is
+-never a real OAuth endpoint: link-local and every cloud metadata service,
+-including the two that hide inside ranges corporate networks legitimately use
+-(Alibaba's inside CGNAT, AWS's inside the unique-local range), plus the
+-unspecified address, multicast and reserved space.
+-
+-So `npx @mcpjam/inspector` and `mcpjam oauth …` now reach loopback, LAN,
+-CGNAT and unique-local targets, and hostnames that resolve to them, with no
+-flag to set. The hosted app is unchanged. The CLI's three OAuth proxy
+-commands, which hardcoded the hosted policy and could not be talked out of
+-it, gain `--https-only` for reproducing what the hosted app would do.
+-
+-**For SDK consumers.** `allowPrivateNetwork` (and `allowPrivateMetadataFetch`
+-on the state-machine surfaces) is additive and defaults to false, so existing
+-callers keep today's behaviour without changing a line, and `httpsOnly` still
+-overrides it. The one visible difference for an unchanged caller is wording:
+-a link-local or metadata destination now says so, instead of being reported
+-as "private/reserved".
+-
+-**What is still refused locally.** The allowance belongs to the chain, and
+-the chain's character is decided by where its first hop actually landed
+-rather than by how the hostname looked — a name that looks public and answers
+-`127.0.0.1` is the case this exists to serve, so a name-based test would
+-refuse the thing it permits. A public server that answers `302 Location:
+-http://192.168.1.1/…` therefore cannot make your inspector fetch it. DNS is
+-still resolved once and pinned into the socket, so rebinding is closed, and
+-cross-origin redirects still drop credentials.
+diff --git a/.changeset/modern-cancellation-aborts-the-stream.md b/.changeset/modern-cancellation-aborts-the-stream.md
+deleted file mode 100644
+index 6ded1ba2f..000000000
+--- a/.changeset/modern-cancellation-aborts-the-stream.md
++++ /dev/null
+@@ -1,43 +0,0 @@
+----
+-"@mcpjam/sdk": patch
+----
+-
+-Modern-era cancellation aborts the per-request stream instead of POSTing `notifications/cancelled`
+-
+-MCP `2026-07-28` moved cancellation onto the transport for Streamable HTTP:
+-
+-> Closing the SSE response stream is the cancellation signal. The server MUST treat a client disconnect as cancellation of that request. No `notifications/cancelled` message is required or expected.
+-
+-The client package already forks on exactly this. Its protocol layer aborts the
+-per-request stream when the negotiated era is modern **and** the transport
+-reports `hasPerRequestStream === true`, and only falls back to POSTing
+-`notifications/cancelled` — the 2025-era and stdio signal — when it does not.
+-`StreamableHTTPClientTransport` sets the flag; the fork was never reaching it.
+-
+-Every transport we hand to a client is wrapped first, and the wrappers forwarded
+-`sessionId` and `setProtocolVersion` but not `hasPerRequestStream`. The flag read
+-`undefined`, so the fork took the legacy branch on *every* connection. This was
+-not limited to debug configurations: `wrapTransportForTaskResults` is applied
+-unconditionally at every HTTP transport site, so a plain 2026-07-28 connection
+-with no logger and no simulated-client options was already downgraded.
+-
+-Both halves of the resulting behavior were wrong. We sent a `notifications/cancelled`
+-a modern server neither requires nor expects, and — because that notification is
+-its own POST while the cancelled call is a *different* in-flight request — the
+-server holding the tool call never learned anything. It kept running the tool
+-until it finished, on a stateless transport where the abandoned response stream
+-was the only signal that would have reached it.
+-
+-All five wrappers now forward the flag: the four in `transport-utils`
+-(`LoggingTransport`, `DroppedListChangedTransport`, `TaskResultTransport`,
+-`FirstPageOnlyTransport`) and the widget runtime's `LoggingTransport`. It is
+-forwarded, never defaulted — a wrapper around a stdio transport must keep
+-reporting no per-request stream, because there the notification IS the spec
+-signal.
+-
+-The suite already had a test asserting no `notifications/cancelled` on a modern
+-abort, and it passed throughout. The legacy branch POSTs fire-and-forget, so
+-asserting the instant the call rejects reads `exchanges` before the notification
+-lands. The test now waits for that window to settle and additionally asserts the
+-positive half — that the aborted `tools/call` exchange actually terminates, which
+-a client that only rejects locally never does.
+diff --git a/.changeset/pass-criteria-enter-commits-once.md b/.changeset/pass-criteria-enter-commits-once.md
+deleted file mode 100644
+index 3fc882bbd..000000000
+--- a/.changeset/pass-criteria-enter-commits-once.md
++++ /dev/null
+@@ -1,10 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Pressing Enter in the accuracy field reports one edit, not two
+-
+-Enter leaves the field by blurring it, and blurring is what commits — so
+-committing before the blur as well filed the same edit twice. The test that
+-covered Enter only checked the value it reported, which is why the duplicate
+-went unnoticed; it now pins the call count too.
+diff --git a/.changeset/retire-client-verdict-rederivation.md b/.changeset/retire-client-verdict-rederivation.md
+deleted file mode 100644
+index ed37123af..000000000
+--- a/.changeset/retire-client-verdict-rederivation.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Stop re-grading eval iterations in the browser.
+-
+-The run-detail view used to re-run the tool-call matcher over an iteration's
+-`actualToolCalls` and compute its own pass/fail — a second grader, in a second
+-implementation, over evidence the server had already graded. It only deferred
+-to the stored verdict when `resultSource` was exactly `"reported"`; a `derived`
+-row was re-derived client-side every time.
+-
+-A stored terminal `result` is now the only source for a row that has one.
+-
+-This matters more than it used to. Under the versioned score contract at
+-grading mode `enforce`, an iteration's verdict comes from its gating score rows
+-— predicates, gates, tool errors, the whole set — and the browser can see none
+-of that. It sees the tool calls. Re-deriving from them is not a check on the
+-server; it is a different answer to the same question, reached with less
+-information, and the two silently disagreeing is exactly the failure this
+-removes.
+-
+-The matcher itself is untouched and still runs where there is nothing stored to
+-defer to: legacy rows that never persisted a result (falling back to "failed"
+-would silently re-grade years of history), and the live-grading preview, whose
+-synthetic per-turn rows were never persisted at all. What retires is the
+-unverified re-derivation of an iteration that has already been graded — not the
+-matcher, and not the evaluation.
+-
+-This one is not behind a flag. Restoring the old behaviour means reverting this
+-change.
+diff --git a/.changeset/suite-settings-draft-and-commit.md b/.changeset/suite-settings-draft-and-commit.md
+deleted file mode 100644
+index 11699729e..000000000
+--- a/.changeset/suite-settings-draft-and-commit.md
++++ /dev/null
+@@ -1,24 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-Eval suite settings are a draft you save, not a form that saves as you read it
+-
+-Every control in the settings sheet used to write the moment you touched it. A dropdown, a toggle, a text field: each fired its own mutation and its own toast. Three things followed, and all three were reported rather than predicted.
+-
+-- **There was no way to not save.** No Cancel, because there was nothing uncommitted to cancel. Opening the sheet to check a setting meant risking changing it, and the only way to find out whether you had was to close it and look again.
+-- **There was no unit of change.** Adjusting four related settings produced four writes and four toasts, none of which was the change you made. Anyone reading the suite later saw four unrelated events.
+-- **Two people editing one suite silently overwrote each other.** Each write succeeded, last one won, and neither person was told.
+-
+-The sheet now holds a draft. Edits accumulate, a bar appears with a count, and Review and save shows what will change — before and after, per setting — with an optional note that lands on the suite's revision so the next reader gets a reason instead of a diff to interpret. ⌘S opens the review rather than saving, because in a sheet with a review step the honest response to "commit what I did" is to show you what that is.
+-
+-- **One write, carrying only what changed.** A save that resent every field would clobber a colleague's edit to a row you never opened. The clearing semantics each control had are preserved exactly — the backend distinguishes an omitted field from a cleared one, and getting that wrong means a setting you cleared is still there on reload.
+-- **A concurrent save is refused, and your draft survives.** The save carries the revision you loaded. If someone saved first, the sheet keeps your edits, marks the settings you both changed, and asks you to look — rather than discarding your work, which is the outcome the check exists to prevent.
+-- **Renaming moved into the sheet.** It was an inline header edit that committed on blur, so a stray click saved a half-typed name to a suite other people watch.
+-- **Leaving with unsaved changes now asks.** In-app navigation and closing the tab are separately handled, because either alone leaves a whole class of exits silent.
+-
+-The debounced default-checks committer is gone, along with the pass-criteria localStorage mirror. Both were machinery for saving on every keystroke — a debounce that had to serialize its own writes so an out-of-order response could not persist stale text, and a local mirror so a value the server had not accepted yet survived a reload. Neither has anything to do now.
+-
+-Environments, the schedule and client attachments still save immediately and say so in their hint. Each has cross-field validation a batched save would have to re-implement, and re-implementing a validation is how the two copies come to disagree.
+-
+-On a deployment whose backend predates the composite save, the sheet detects the missing function once and falls back to the previous mutation. Everything still batches into one write; only the revision history is absent.
+diff --git a/.changeset/suite-settings-draft-follow-ups.md b/.changeset/suite-settings-draft-follow-ups.md
+deleted file mode 100644
+index 105a294e7..000000000
+--- a/.changeset/suite-settings-draft-follow-ups.md
++++ /dev/null
+@@ -1,47 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A settings draft belongs to one suite, and its concurrency check now runs
+-
+-Five follow-ups from review of the draft-and-commit sheet. The first two are
+-the ones that mattered.
+-
+-**Unsaved edits followed you to another suite.** The draft lived in a
+-component that is not remounted between suites, and the effect that used to
+-reset it per suite went away with the per-control writers. Rebasing keeps
+-every key the person edited — that is the whole point of it — so opening
+-suite A, typing a name, confirming "leave without saving" and clicking suite
+-B left A's name proposed as an unsaved change on B, and saving wrote it
+-there. A draft now carries the suite it belongs to, and a rebase across
+-identities starts a new one instead of reconciling.
+-
+-**Confirming the prompt now actually discards.** The guard only paused the
+-navigation; nothing threw the draft away, so the edits survived, every later
+-navigation re-prompted, and ⌘S opened the review dialog from pages that have
+-no settings sheet.
+-
+-**A conflict marker survived only until the next unrelated change.**
+-Conflicts were recomputed from the new base each time, so a colleague
+-renaming the suite cleared the warning about the threshold you had both
+-changed, and the next save overwrote theirs silently. A conflict is now
+-resolved by the person, by editing the key or discarding.
+-
+-**Renaming had two writers.** The header's inline editor still committed on
+-blur — no review, no note, no precondition — while the sheet drafted the
+-same field. Using it marked the sheet as "changed elsewhere" for the
+-person's own action, and the next save overwrote the rename. The header
+-title is read-only in the sheet; the overview keeps its own editor.
+-
+-**The accuracy input kept showing a discarded number.** It held its own text
+-state and never followed the prop, so Discard reverted the draft while the
+-field still displayed the old value — a settings control saying one thing
+-while a different thing gets saved.
+-
+-Also: pass criteria is omitted rather than sent as `null` (the mutation's
+-validator has no null member, so a clear would have failed the whole batched
+-save), an absent judge config reads as "Not configured" rather than "Off"
+-(absent resolves to an enabled advisory judge), and on a deployment without
+-the composite mutation the fallback drops fields that backend does not
+-declare and names them in the toast, rather than failing every save in the
+-draft.
+diff --git a/.changeset/suite-settings-draft-review-fixes.md b/.changeset/suite-settings-draft-review-fixes.md
+deleted file mode 100644
+index 46a114879..000000000
+--- a/.changeset/suite-settings-draft-review-fixes.md
++++ /dev/null
+@@ -1,31 +0,0 @@
+----
+-"@mcpjam/inspector": patch
+----
+-
+-A save reports what it actually wrote, and typing survives an edit landing elsewhere
+-
+-Three follow-ups from review of the draft-and-commit settings sheet. The
+-first two lose an edit.
+-
+-**A field the save could not carry was marked saved anyway.** On a
+-deployment that predates the composite mutation, the fallback drops settings
+-the older mutation does not declare — a judge rubric today — and its toast
+-says so. But the commit still reported a clean save, so the draft rebased
+-every dirty key, including the one that never travelled. The rubric stopped
+-being an unsaved change and there was nothing left to retry. The commit now
+-names the keys it dropped and the draft keeps them dirty, which is what the
+-toast was already promising.
+-
+-**An in-flight save landed on the suite you switched to.** Rebasing a live
+-suite already ignores a result that belongs to a different suite; the
+-matching commit path did not check, so a mutation started on suite A and
+-resolved after the person opened suite B wrote A's values into B's draft.
+-Both paths now carry the suite the save was started for.
+-
+-**The accuracy field was pulled out from under someone typing.** Following
+-the prop is what stops the input from displaying a number the draft no
+-longer holds, but the guard could not tell a live edit from a settled one,
+-so a colleague's save or a discard elsewhere replaced half-typed text.
+-Typing now wins until it is committed or abandoned — and Escape genuinely
+-abandons it, where before the blur it triggered committed the value it was
+-meant to throw away.
+diff --git a/.changeset/tool-cancellation-host-knob.md b/.changeset/tool-cancellation-host-knob.md
+deleted file mode 100644
+index fbd2ae707..000000000
+--- a/.changeset/tool-cancellation-host-knob.md
++++ /dev/null
+@@ -1,90 +0,0 @@
 ----
 -"@mcpjam/sdk": patch
 -"@mcpjam/inspector": patch
 ----
 -
--Say which protocol version a server refused, and offer the setting that fixes it.
+-Model tool cancellation per era: two Protocol-tab switches and two caniuse rows
 -
--A connection pinned to a modern protocol version needs the server to advertise it via `server/discover`, and in pin mode there is deliberately no fallback — the pin exists to reproduce one specific client's wire behavior. When the server doesn't offer it, the upstream client raises `SdkError(EraNegotiationFailed)` naming the version it wanted. The manager then tried the SSE transport, that failed too (a modern-only server answers `405`), and both failures were folded into one message: "Failed to connect to MCP server … using HTTP transports … SSE error: Non-200 status code (405)." What reached the user described the SECOND attempt's symptom. The version was never mentioned, so a user whose client profile pins the latest revision against a server that hasn't adopted it was told their server was unreachable — with no hint that the cause was a dropdown.
+-A server author has no way to answer the question that decides whether a stopped
+-turn costs them anything: **when the user hits stop, does the host tell me?** If
+-it does not, the tool runs to completion server-side — side effects, tokens and
+-all — while the host has already moved on.
 -
--The manager now recognizes that case and throws `ProtocolVersionPinUnsupported`, carrying `serverId` and `protocolVersion` as fields and naming both in its message. The version is read from the resolved config, never parsed out of the upstream prose: the manager is what chose the pin, and an upstream reword must not be able to empty the field. Pin mode is detected through `resolveVersionNegotiation` — the same helper the negotiation telemetry uses — so an `auto` connection, which probes and falls back on its own, can never produce this error. Both HTTP exits raise it, including the `disableSseFallback` path, which is where modern-only servers are most likely to land.
+-`mcpProfile.toolCallCancellation` now answers it, as
+-`{ legacy?: boolean; modern?: boolean }` — one leaf per era.
 -
--`describeError` resolves it to a new slug, `sdk/protocol_version_pin_unsupported`, whose origin is `user_config`. That matters beyond copy: the previous classification was `transport/fetch_failed` (`ambiguous`), so on hosted chat this failure was attributed to MCPJam and paged the team for a version pin. Its catalog entry says what to do — set the version to Automatic, or pick one the server advertises.
+-**Two leaves, not one boolean.** A host can be right on one era and wrong on the
+-other, and the proof is this package's own history: MCPJam sent
+-`notifications/cancelled` correctly on 2025 while never aborting the stream on
+-2026. Through the 2026 migration that split is common, and collapsing it hides
+-exactly the defect the prober exists to find. `legacy` covers every 2025 revision
+-(they are identical here; `2025-11-25` differs only in routing task-augmented
+-requests through `tasks/cancel`); `modern` covers `2026-07-28`.
 -
--In the inspector, both surfaces that can meet this failure now render **Change protocol version**, opening that client's MCP Protocol tab (`/hosts/:hostId?hostTab=protocol`, via a new exported `buildHostFocusTabPath`). On the chat banner it deliberately replaces the retry rather than joining it: the pin is stored, so resending the identical turn fails identically until someone changes the setting — the opposite of the upstream-error-page case next to it, where resending IS the fix. On a server card it fills `ErrorCard`'s existing `action` slot, which was already documented for exactly this ("one affordance that actually FIXES this error"). Where a surface has no host id (scenario, environment), the link degrades to the clients list rather than building a path the `:hostId` route rejects.
+-The era selects the leaf, not the transport: a 2026 stdio connection reads
+-`modern` even though its mechanism is `notifications/cancelled`. What is modeled
+-is whether the host cancels on that era's connections, not which message carries
+-it. Users never see `legacy`/`modern` — the UI and caniuse say "Tool cancellation
+-(2025)" and "(2026)".
 -
--The two surfaces gate differently, because they hold different evidence. A server card reads `lastNormalizedError.slug`, which is always populated — `CONNECT_FAILURE` either carries the block the backend attached or the reducer derives one with `describeError` — so it matches on the slug. Chat has no normalized block to read at all and matches the message clause instead.
+-Absent per leaf is the conforming answer, so a fully cancelling client writes
+-nothing and keeps its canonical hash; only an explicit `false` is stored. The
+-field is validated by the same `canonicalBooleanCapabilityRecord` its sibling
+-`toolListChanged` already uses, on both sides of the wire.
 -
--The chat surfaces recognize the failure by a clause in the message, because that is all that survives: the AI SDK collapses a failed response into `new Error(await response.text())`, so the class, the `normalized` block and the response headers are gone by the time a banner sees anything. Both sides pin the clause in tests, and the SDK-side test names the inspector files to update if the wording changes.
-diff --git a/.changeset/publish-scenario-create-time-overrides.md b/.changeset/publish-scenario-create-time-overrides.md
+-Both leaves travel to the connection, and the leaf that governs is resolved
+-AFTER the handshake from `getNegotiatedProtocolVersion()` — the same value the
+-UI reports — falling back to the configured pin before the handshake lands.
+-Resolving at config-build time cannot work for an unpinned (`"auto"`) host: the
+-era does not exist yet, so picking one there makes the other era's toggle
+-unreachable.
+-
+-A `false` leaf is enforced by withholding the caller's abort signal from the
+-request and racing the caller against it locally instead. The signal is the only
+-thing that reaches the wire, so withholding it withholds whichever mechanism that
+-era would have used, while the turn still ends promptly for the user. It is
+-deliberately not implemented by hiding the transport's `hasPerRequestStream`:
+-that would make a modern connection fall back to POSTing
+-`notifications/cancelled`, a message no conforming client sends on `2026-07-28`.
+-The simulated host must be silent, not wrong.
+-
+-Two fixes fall out of wiring it up:
+-
+-- `toolCallCancellation` was missing from `CONFORMANCE_PROFILE_KEYS`, so the
+-  public `HostMcp` ⇄ `mcpProfile` round-trip silently dropped it in both
+-  directions.
+-- `isMcpProfileEmpty` did not know the field, so turning an era off on a host
+-  with nothing else configured collapsed the profile and wrote nothing at all.
+-
+-**Public rows appear with their data.** caniuse.dev hides any field no published
+-host has been measured for, rather than showing a column of "Not yet tested" — a
+-question dressed as an answer. The two eras gate independently, so a 2025-only
+-measurement never publishes a 2026 row nobody has probed. No host values ship
+-here, so neither row is visible yet.
+-
+-The saved value has to reach a connection that is already up, and it does so
+-twice over:
+-
+-- **Per turn.** The chat routes (local and hosted) resolve the host config
+-  server-side on every turn and pass its cancellation record to
+-  `getToolsForAiSdk` as a per-turn override that takes precedence over the
+-  connection's connect-time copy. It is authoritative whenever a host config
+-  resolved: a host that cancels normally sends an *empty* record, not nothing,
+-  because `undefined` would fall through to the stale connection copy and a
+-  toggle switched back on would keep suppressing.
+-- **On save.** The host's connected servers are reconnected so the connection's
+-  own copy is refreshed too — the same reason the per-server protocol pin
+-  reconnects after its save. The reconnect is deferred until the app's view of
+-  the host shows the just-saved config: it builds its connection defaults from
+-  the active host's profile, and right after the mutation resolves that
+-  subscription still holds the previous config, so an immediate reconnect
+-  applied the value the user had just replaced — one save behind, every time.
+-  Narrow by construction: only when the setting actually changed, only for
+-  servers already connected, never interactive, and a failed reconnect warns
+-  rather than failing the save.
+-
+-A suppressed call also outlives the default request timeout. The protocol layer
+-runs the same cancellation on a timeout as on an abort — closing the stream on a
+-modern connection — so with the 60s timer left in place a host configured never
+-to cancel still cancelled, a minute later, which read as the knob being flaky
+-rather than off. Suppressed requests now carry a long bounded timeout instead.
+diff --git a/.changeset/tool-list-changed-reaches-hosted-connections.md b/.changeset/tool-list-changed-reaches-hosted-connections.md
 deleted file mode 100644
-index 4bc8da4a9..000000000
---- a/.changeset/publish-scenario-create-time-overrides.md
+index 3d02dd916..000000000
+--- a/.changeset/tool-list-changed-reaches-hosted-connections.md
 +++ /dev/null
-@@ -1,15 +0,0 @@
-----
--"@mcpjam/sdk": minor
--"@mcpjam/cli": minor
--"@mcpjam/inspector": minor
-----
--
--Set a scenario's name, description and access mode in the same call that publishes it.
--
--Publishing an environment used to take whatever defaults the scenario was created with, so "publish this, but only for invited people" was two operations — a publish, then an update — with a window between them where the share link was live in the DEFAULT mode. Anyone holding the URL during that window got in.
--
--`publishScenario` on the SDK's platform client, and the `publish_scenario` operation behind it, now accept optional `name`, `description` and `mode` (`project_members` | `invited_only` | `anyone_with_link`) and forward them to the v1 route, which applies them at create time. The CLI exposes the same three as `--name`, `--description` and `--mode` on `mcpjam scenarios publish`; a misspelled `--mode` is answered locally as a usage error rather than spending a round trip to learn the flag was typed wrong.
--
--The overrides are CREATE-TIME ONLY. Publishing is idempotent, and re-publishing an already-published environment keeps returning the existing scenario — it does not quietly re-apply the overrides, because that would make a routine re-publish able to change who can open a live link. When overrides were sent and discarded for that reason, the result says `overridesIgnored: true`, and the scenario in the response carries the scenario's REAL name and mode: a caller who asked for `invited_only` must never conclude the link is restricted when it is not. Changing an existing scenario stays `mcpjam user-testing update` / `update_user_testing_scenario`.
--
--Callers that pass no overrides are unaffected — the request body stays empty, exactly what already went on the wire.
-diff --git a/.changeset/user-server-unreachable-424.md b/.changeset/user-server-unreachable-424.md
-deleted file mode 100644
-index d5f1c40ae..000000000
---- a/.changeset/user-server-unreachable-424.md
-+++ /dev/null
-@@ -1,21 +0,0 @@
+@@ -1,79 +0,0 @@
 ----
 -"@mcpjam/inspector": patch
 ----
 -
--Stop reporting an unreachable target MCP server as an MCPJam outage on hosted chat.
+-The two "Tool list changed" switches now reach the connection, hosted and local
 -
--A connection-class failure — the ECONN\* errno family, "fetch failed", "socket hang up", a refused or reset connection — leaves `mapRuntimeError` as `502 SERVER_UNREACHABLE`. The code and the message were already right: the message says outright that this is a connection problem with the target server, not an MCPJam outage. The status contradicted both, and on hosted the status is the only part that survives.
+-`mcpProfile.toolListChanged` models a host that never opens the listen channel
+-(`listens: false`) or that ignores `notifications/tools/list_changed` when it
+-arrives (`refetches: false`) — the two ways a real client can leave a server's
+-tool list stale. **Neither switch reached a connection.** Every connection
+-listened and refetched no matter how the host was configured, so the debugger
+-reported conforming behavior the host does not have.
 -
--Hosted traffic runs behind Cloudflare, which replaces an origin 5xx with its own branded error page. That discards the JSON envelope AND the `x-mcpjam-error-origin` header `webError` attaches for exactly this purpose. What reaches the browser is a Cloudflare HTML page with no verdict on it, so the chat client falls back to its documented rule — a 5xx from our own route is ours — and reports a user's own unreachable MCP server as an MCPJam failure. The user is told MCPJam was briefly unreachable when their server was the thing that refused, and the same event pages us.
+-The values were computed correctly and then never handed over — at four
+-separate hand-offs, all of them silent.
 -
--`/api/web/chat-v2` now maps that class through `mapTargetServerError`, which answers `424 Failed Dependency`: the request was well-formed, and something it depends on failed. Any 4xx would have cleared the edge; 424 is the one that describes it honestly. The status is mutated on the already-mapped error rather than rebuilt, so `origin`, `normalized` and the capture-dedupe cause link all survive — `origin` is what the header carries.
+-**Hosted.** `App.tsx` resolved both leaves into `hostedMcpProfilePins` and
+-stopped there, without passing them to `useApiContext`. Even had it passed
+-them, `projectServerSchema` declared neither field, so Zod would have stripped
+-them off the request body; two hops further,
+-`extractMcpInitializeOptions` did not read them and `toHttpConfig` had nowhere
+-to put them. The sibling knobs (`firstPageOnly`, `supportsMrtr`,
+-`toolCallCancellation`) travel every one of those hops; these two never did.
 -
--The downgrade also requires the failure to NAME a server. Declaring the hop at the catch site is not sufficient on its own: a chat turn's outer catch spans more than its MCP work — `/stream/org/resolve` reaches MCPJam's own Convex deployment with a bare `fetch`, and undici raises `TypeError("fetch failed")` for it, which is indistinguishable to the shared mapper from the user's server refusing. Every connect failure `MCPClientManager` raises quotes the server it was reaching (`Failed to connect to MCP server "<id>" …`), and nothing else in a hosted turn produces that phrase, so that is the positive test. It matches MCPJam's own wording rather than a server's, which is what makes a message check safe here. A target-server failure raised somewhere that doesn't name the server keeps 502 and pages us — a false page, which is the correct direction to be wrong in.
+-Hosted **chat** turns were right by accident: a turn with a backing host config
+-re-derives every conformance knob server-side (`applyHostConformanceKnobs`),
+-overwriting whatever the body carried. Every other hosted surface — Tools,
+-Resources, Prompts, tasks, evals, bench, apps, export, MRTR continuation, and
+-ad-hoc chat turns with no host config — builds its connection straight from the
+-request body, and so ran as a fully conforming client.
 -
--Deliberately a separate entry point rather than a change to `mapRuntimeError`. That mapper is a shared envelope with no hop information: the same branch catches a failed fetch to MCPJam's own Convex deployment (`/api/web/server-secrets` reaches nothing else) and the router-wide `web.onError`. Downgrading those would stop paging us during our OWN outage, which is strictly worse than the problem being fixed — so the status now follows the rule the origin already does, and the catch site that knows the hop declares it. A pre-built `WebRouteError` is passed through untouched for the same reason: a deliberate 502 is how a caller says its hop was internal.
+-**Local.** The same pair died one hop earlier and for the same reason. The
+-client put both leaves on `connectionDefaults` and `/api/mcp/connect` received
+-them, but `parseConnectionDefaults` — the shape gate that must name every field
+-it keeps — did not read them, and `toMCPServerConfig` had no field to set. A
+-local connect was as conforming as a hosted one, whatever the host asked for.
 -
--`requestLogContextMiddleware` now treats 424 as a failure alongside the 5xx range. Without that, moving these failures out of 5xx would also move them out of `http.request.failed` and lose the `errorCode`/`origin`/`slug` breakdown — the Axiom slice that makes an unpaged `ambiguous` bucket measurable, and therefore promotable later as a data decision rather than a guess.
+-Both switches now travel the same path their siblings do on both surfaces: only
+-the non-conforming value reaches the wire, the boundary declares it, the
+-extractor or parser reads it, and it lands on the SDK config. An absent field
+-still means the conforming behavior, so a host with no `toolListChanged`
+-opinion sends nothing and behaves exactly as before.
 -
--A target TIMEOUT is downgraded on the same terms. `classifyRuntimeError` tests "timed out" before the connection patterns, so a server that accepts the connection and then goes quiet — an overloaded or half-deployed one — exits as `504 TIMEOUT` and never reaches the 502 branch at all. Cloudflare replaces a 504 exactly as it replaces a 502, so that class kept arriving as an MCPJam outage and kept paging us, one branch over from the fix. Silence is genuinely weaker evidence than a refusal (it can be our own container starving rather than their server being slow), which is what `namesAnMcpServer` is for: a timeout raised while reaching a named MCP server is theirs, and a timeout from our own hops carries no such name, keeps 504, and keeps paging.
+-**The wire declaration is now written once.** Chasing this bug turned up two
+-more instances of it, both the same shape and neither about `toolListChanged`:
+-`projectServerSchema` had never declared `toolCallCancellation`, so that knob
+-was stripped on every hosted surface except chat (which extracts from the
+-pre-parse raw body) since the day it shipped; and `hostedBatchSchema` — the
+-schema every hosted **eval** body is parsed through — declared none of the
+-conformance knobs at all. Three knobs, three schemas, one failure mode: Zod
+-strips what a schema does not name, and the result is not an error but a
+-silently conforming session. The six fields now live in one exported
+-`conformanceKnobWireShape` that both schemas spread, so a new knob reaches
+-every body-built surface by being added in one place.
 -
--Unchanged: upstream auth rejections still answer 401/403, an unclassified throw still answers 500 even when a server is named, and every other route still answers 502 for an unreachable dependency.
+-The hosted local-runtime **stdio** divert was dropping `toolCallCancellation`
+-for the same reason at a different hop: it forwarded the sibling knobs to
+-`resolveLocalStdioServerConfig`, which has always accepted cancellation and
+-writes it onto the child config, but the hand-off never passed it. Cancellation
+-is era-scoped, not transport-scoped, so a stdio connection has to honor it too.
+-
+-`/api/web/evals/stream-test-case` needed one more fix of the same family. It is
+-the only eval route that builds its own manager instead of going through the
+-wrappers that extract the body's `mcpProfile` pins, so it accepted every pin its
+-schema declares — `clientInfo`, `supportedProtocolVersions`, the per-server
+-version map, and now the conformance knobs — and connected as though none had
+-been sent. It extracts them now, from the pre-parse raw body for the same reason
+-`xaaPolicy` there does.
+-
+-One thing this does **not** change: on the body-built surfaces a server-side
+-host config is not re-derived over the request body. Only chat turns do that
+-(`applyHostConformanceKnobs`); everywhere else the body is the source, exactly
+-as it already was for the sibling knobs.
+-
+-One asymmetry is deliberate. `dropToolListChanged` edits an inbound JSON-RPC
+-frame, so it is forwarded on stdio as well as HTTP; `suppressListenChannel`
+-refuses a server→client GET stream that only Streamable HTTP has, so — like
+-`mirrorToolParamHeaders` — it is not written onto a stdio config, where it
+-could never act.
 diff --git a/cli/package.json b/cli/package.json
-index 8e803110f..e8d0f4034 100644
+index d1b3ea28f..f5f08ad10 100644
 --- a/cli/package.json
 +++ b/cli/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/cli",
--  "version": "3.22.0",
-+  "version": "3.23.0",
+-  "version": "5.5.2",
++  "version": "5.6.0",
    "description": "Test, debug, and validate MCP servers — health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI",
    "type": "module",
    "main": "dist/index.js",
-@@ -17,7 +17,7 @@
+@@ -19,7 +19,7 @@
      "prepublishOnly": "npm run build"
    },
    "dependencies": {
--    "@mcpjam/sdk": "^4.2.0",
-+    "@mcpjam/sdk": "^4.3.0",
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
      "@modelcontextprotocol/server": "2.0.0",
-     "commander": "^12.1.0",
+     "commander": "^14.0.3",
      "posthog-node": "^5.24.10",
 diff --git a/mcpjam-inspector/package.json b/mcpjam-inspector/package.json
-index fa0dbeffa..434ff4545 100644
+index bbdd10137..daaaf0c8c 100644
 --- a/mcpjam-inspector/package.json
 +++ b/mcpjam-inspector/package.json
 @@ -1,7 +1,7 @@
  {
    "name": "@mcpjam/inspector",
    "productName": "MCPJam Inspector",
--  "version": "2.38.0",
-+  "version": "2.39.0",
+-  "version": "3.3.5",
++  "version": "3.3.6",
    "type": "module",
    "engines": {
      "node": ">=22.0.0"
-@@ -132,7 +132,7 @@
+@@ -137,7 +137,7 @@
      "@hookform/resolvers": "^3.10.0",
      "@lezer/highlight": "^1.2.3",
      "@mcp-ui/client": "^5.9.0",
--    "@mcpjam/sdk": "^4.2.0",
-+    "@mcpjam/sdk": "^4.3.0",
+-    "@mcpjam/sdk": "^8.5.2",
++    "@mcpjam/sdk": "^8.6.0",
      "@modelcontextprotocol/client": "2.0.0",
      "@modelcontextprotocol/ext-apps": "^1.7.4",
      "@openrouter/ai-sdk-provider": "^2.0.2",
 diff --git a/package-lock.json b/package-lock.json
-index 362dc87b1..8f1f3176c 100644
+index fccd59c0f..f82bfc78d 100644
 --- a/package-lock.json
 +++ b/package-lock.json
-@@ -60,9 +60,9 @@
+@@ -62,9 +62,9 @@
      },
      "cli": {
        "name": "@mcpjam/cli",
--      "version": "3.22.0",
-+      "version": "3.23.0",
+-      "version": "5.5.2",
++      "version": "5.6.0",
        "dependencies": {
--        "@mcpjam/sdk": "^4.2.0",
-+        "@mcpjam/sdk": "^4.3.0",
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
          "@modelcontextprotocol/server": "2.0.0",
-         "commander": "^12.1.0",
+         "commander": "^14.0.3",
          "posthog-node": "^5.24.10",
-@@ -389,7 +389,7 @@
+@@ -400,7 +400,7 @@
      },
      "mcpjam-inspector": {
        "name": "@mcpjam/inspector",
--      "version": "2.38.0",
-+      "version": "2.39.0",
+-      "version": "3.3.5",
++      "version": "3.3.6",
        "license": "Apache-2.0",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^4.0.116",
-@@ -422,7 +422,7 @@
+@@ -435,7 +435,7 @@
          "@hookform/resolvers": "^3.10.0",
          "@lezer/highlight": "^1.2.3",
          "@mcp-ui/client": "^5.9.0",
--        "@mcpjam/sdk": "^4.2.0",
-+        "@mcpjam/sdk": "^4.3.0",
+-        "@mcpjam/sdk": "^8.5.2",
++        "@mcpjam/sdk": "^8.6.0",
          "@modelcontextprotocol/client": "2.0.0",
          "@modelcontextprotocol/ext-apps": "^1.7.4",
          "@openrouter/ai-sdk-provider": "^2.0.2",
-@@ -935,7 +935,7 @@
-       "version": "0.9.31",
-       "resolved": "https://registry.npmjs.org/@acemir/cssom/-/cssom-0.9.31.tgz",
-       "integrity": "sha512-ZnR3GSaH+/vJ0YlHau21FjfLYjMpYVIzTD8M8vIEQvIGxeOXyXdzCI140rrCY862p/C/BbzWsjc1dgnM9mkoTA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@adobe/css-tools": {
-@@ -1737,7 +1737,7 @@
-       "version": "4.1.2",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/css-color/-/css-color-4.1.2.tgz",
-       "integrity": "sha512-NfBUvBaYgKIuq6E/RBLY1m0IohzNHAYyaJGuTK79Z23uNwmz2jl1mPsC5ZxCCxylinKhT1Amn5oNTlx1wN8cQg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@csstools/css-calc": "^3.0.0",
-@@ -1751,7 +1751,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1761,7 +1761,7 @@
-       "version": "6.8.1",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/dom-selector/-/dom-selector-6.8.1.tgz",
-       "integrity": "sha512-MvRz1nCqW0fsy8Qz4dnLIvhOlMzqDVBabZx6lH+YywFDdjXhMY37SmpV1XFX3JzG5GWHn63j6HX6QPr3lZXHvQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/nwsapi": "^2.3.9",
-@@ -1775,7 +1775,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -1785,7 +1785,7 @@
-       "version": "2.3.9",
-       "resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
-       "integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/@aws-crypto/crc32": {
-@@ -3126,7 +3126,7 @@
-       "version": "6.0.2",
-       "resolved": "https://registry.npmjs.org/@csstools/color-helpers/-/color-helpers-6.0.2.tgz",
-       "integrity": "sha512-LMGQLS9EuADloEFkcTBR3BwV/CGHV7zyDxVRtVDTwdI2Ca4it0CCVTT9wCkxSgokjE5Ho41hEPgb8OEUwoXr6Q==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3146,7 +3146,7 @@
-       "version": "3.2.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-calc/-/css-calc-3.2.0.tgz",
-       "integrity": "sha512-bR9e6o2BDB12jzN/gIbjHa5wLJ4UjD1CB9pM7ehlc0ddk6EBz+yYS1EV2MF55/HUxrHcB/hehAyt5vhsA3hx7w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3170,7 +3170,7 @@
-       "version": "4.1.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-color-parser/-/css-color-parser-4.1.0.tgz",
-       "integrity": "sha512-U0KhLYmy2GVj6q4T3WaAe6NPuFYCPQoE3b0dRGxejWDgcPp8TP7S5rVdM5ZrFaqu4N67X8YaPBw14dQSYx3IyQ==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3198,7 +3198,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-parser-algorithms/-/css-parser-algorithms-4.0.0.tgz",
-       "integrity": "sha512-+B87qS7fIG3L5h3qwJ/IFbjoVoOe/bpOdh9hAjXbvx0o8ImEmUsGXN0inFOnk2ChCFgqkkGFQ+TpM5rbhkKe4w==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3221,7 +3221,7 @@
-       "version": "1.1.3",
-       "resolved": "https://registry.npmjs.org/@csstools/css-syntax-patches-for-csstree/-/css-syntax-patches-for-csstree-1.1.3.tgz",
-       "integrity": "sha512-SH60bMfrRCJF3morcdk57WklujF4Jr/EsQUzqkarfHXEFcAR1gg7fS/chAE922Sehgzc1/+Tz5H3Ypa1HiEKrg==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -3246,7 +3246,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/@csstools/css-tokenizer/-/css-tokenizer-4.0.0.tgz",
-       "integrity": "sha512-QxULHAm7cNu72w97JUNCBFODFaXpbDg+dP8b/oWFAZ2MTRppA3U00Y2L1HqaS4J6yBqxwa/Y3nMBaxVKbB/NsA==",
--      "devOptional": true,
-+      "dev": true,
-       "funding": [
-         {
-           "type": "github",
-@@ -5625,7 +5625,7 @@
-       "version": "1.15.0",
-       "resolved": "https://registry.npmjs.org/@exodus/bytes/-/bytes-1.15.0.tgz",
-       "integrity": "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": "^20.19.0 || ^22.12.0 || >=24.0.0"
-@@ -7149,7 +7149,7 @@
-       "version": "0.3.11",
-       "resolved": "https://registry.npmjs.org/@jridgewell/source-map/-/source-map-0.3.11.tgz",
-       "integrity": "sha512-ZMp1V8ZFcPG5dIWnQLr3NSI1MiCU7UETdS/A0G8V/XWHvJv3ZsFqutJn1Y5RPmAPX6F3BiE397OqveU/9NCuIA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@jridgewell/gen-mapping": "^0.3.5",
-@@ -9371,7 +9371,7 @@
-       "version": "1.59.1",
-       "resolved": "https://registry.npmjs.org/@playwright/test/-/test-1.59.1.tgz",
-       "integrity": "sha512-PG6q63nQg5c9rIi4/Z5lR5IVF7yU5MqmKaPOe0HSc0O2cX1fPi96sUQu5j7eo4gKCkB2AnNGoWt7y4/Xx3Kcqg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "playwright": "1.59.1"
-@@ -14876,6 +14876,7 @@
-       "version": "19.2.14",
-       "resolved": "https://registry.npmjs.org/@types/react/-/react-19.2.14.tgz",
-       "integrity": "sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==",
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "csstype": "^3.2.2"
-@@ -14885,7 +14886,7 @@
-       "version": "19.2.3",
-       "resolved": "https://registry.npmjs.org/@types/react-dom/-/react-dom-19.2.3.tgz",
-       "integrity": "sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "peerDependencies": {
-         "@types/react": "^19.2.0"
-@@ -17541,7 +17542,7 @@
-       "version": "1.0.3",
-       "resolved": "https://registry.npmjs.org/bidi-js/-/bidi-js-1.0.3.tgz",
-       "integrity": "sha512-RKshQI1R3YQ+n9YJz2QQ147P66ELpa1FQEg20Dk8oW9t2KgLbpDLLp9aGZ7y8WHSshDknG0bknqGw5/tyCs5tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "require-from-string": "^2.0.2"
-@@ -17769,7 +17770,7 @@
-       "version": "1.1.2",
-       "resolved": "https://registry.npmjs.org/buffer-from/-/buffer-from-1.1.2.tgz",
-       "integrity": "sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/bundle-name": {
-@@ -18861,7 +18862,7 @@
-       "version": "3.2.1",
-       "resolved": "https://registry.npmjs.org/css-tree/-/css-tree-3.2.1.tgz",
-       "integrity": "sha512-X7sjQzceUhu1u7Y/ylrRZFU2FS6LRiFVp6rKLPg23y3x3c3DOKAwuXGDp+PAGjh6CSnCjYeAul8pcT8bAl+lSA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "mdn-data": "2.27.1",
-@@ -18882,7 +18883,7 @@
-       "version": "5.3.7",
-       "resolved": "https://registry.npmjs.org/cssstyle/-/cssstyle-5.3.7.tgz",
-       "integrity": "sha512-7D2EPVltRrsTkhpQmksIu+LxeWAIEk6wRDMJ1qljlv+CKHJM+cJLlfhWIzNA44eAsHXSNe3+vO6DW1yCYx8SuQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@asamuzakjp/css-color": "^4.1.1",
-@@ -18898,7 +18899,7 @@
-       "version": "11.3.5",
-       "resolved": "https://registry.npmjs.org/lru-cache/-/lru-cache-11.3.5.tgz",
-       "integrity": "sha512-NxVFwLAnrd9i7KUBxC4DrUhmgjzOs+1Qm50D3oF1/oL+r1NpZ4gA7xvG0/zJ8evR7zIKn4vLf7qTNduWFtCrRw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BlueOak-1.0.0",
-       "engines": {
-         "node": "20 || >=22"
-@@ -19469,7 +19470,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/data-urls/-/data-urls-6.0.1.tgz",
-       "integrity": "sha512-euIQENZg6x8mj3fO6o9+fOW8MimUI4PpD/fZBhJfeioZVy9TUpM4UY7KjQNVZFlqwJ0UdzRDzkycB997HEq1BQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "whatwg-mimetype": "^5.0.0",
-@@ -19483,7 +19484,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-5.0.0.tgz",
-       "integrity": "sha512-sXcNcHOC51uPGF0P/D4NVtrkjSU2fNsm9iog4ZvZJsL3rjoDAzXZhkm2MWt1y+PUdggKAYVoMAIYcs78wJ51Cw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=20"
-@@ -19580,7 +19581,7 @@
-       "version": "10.6.0",
-       "resolved": "https://registry.npmjs.org/decimal.js/-/decimal.js-10.6.0.tgz",
-       "integrity": "sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/decimal.js-light": {
-@@ -21011,6 +21012,7 @@
-       "version": "0.1.13",
-       "resolved": "https://registry.npmjs.org/encoding/-/encoding-0.1.13.tgz",
-       "integrity": "sha512-ETBauow1T35Y/WZMkio9jiM0Z5xjHHmJ4XmjZOq1l/dXz3lr2sRn87nJy20RupqSh1F2m3HHPSp8ShIPQJrJ3A==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -21021,6 +21023,7 @@
-       "version": "0.6.3",
-       "resolved": "https://registry.npmjs.org/iconv-lite/-/iconv-lite-0.6.3.tgz",
-       "integrity": "sha512-4fCk79wshMdzMp2rH06qWrJE4iolqLhCUH+OiuIgU++RB0+94NlDL81atO7GX55uUKueo0txHNtvEyI6D7WdMw==",
-+      "dev": true,
-       "license": "MIT",
-       "optional": true,
-       "dependencies": {
-@@ -23785,7 +23788,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/html-encoding-sniffer/-/html-encoding-sniffer-6.0.0.tgz",
-       "integrity": "sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@exodus/bytes": "^1.6.0"
-@@ -23852,7 +23855,7 @@
-       "version": "7.0.2",
-       "resolved": "https://registry.npmjs.org/http-proxy-agent/-/http-proxy-agent-7.0.2.tgz",
-       "integrity": "sha512-T1gkAiYYDWYx3V5Bmyu7HcfcvL7mUrTWiM6yOfa3PIphViJ/gFPbvidQ+veqSOHci/PxBcDabeUNCzpOODJZig==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.0",
-@@ -23866,7 +23869,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -24678,7 +24681,7 @@
-       "version": "1.0.1",
-       "resolved": "https://registry.npmjs.org/is-potential-custom-element-name/-/is-potential-custom-element-name-1.0.1.tgz",
-       "integrity": "sha512-bCYeRA2rVibKZd+s2625gGnGF/t7DSqDs4dP7CrLA1m7jKWz6pps0LpYLJN8Q64HtmPKJ1hrN3nzPNKFEKOUiQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/is-promise": {
-@@ -26082,7 +26085,7 @@
-       "version": "27.4.0",
-       "resolved": "https://registry.npmjs.org/jsdom/-/jsdom-27.4.0.tgz",
-       "integrity": "sha512-mjzqwWRD9Y1J1KUi7W97Gja1bwOOM5Ug0EZ6UDK3xS7j7mndrkwozHtSblfomlzyB4NepioNt+B2sOSzczVgtQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "@acemir/cssom": "^0.9.28",
-@@ -26122,7 +26125,7 @@
-       "version": "7.1.4",
-       "resolved": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
-       "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">= 14"
-@@ -26132,7 +26135,7 @@
-       "version": "7.0.6",
-       "resolved": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
-       "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "agent-base": "^7.1.2",
-@@ -26146,7 +26149,7 @@
-       "version": "8.20.0",
-       "resolved": "https://registry.npmjs.org/ws/-/ws-8.20.0.tgz",
-       "integrity": "sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=10.0.0"
-@@ -26540,7 +26543,7 @@
-       "version": "1.32.0",
-       "resolved": "https://registry.npmjs.org/lightningcss/-/lightningcss-1.32.0.tgz",
-       "integrity": "sha512-NXYBzinNrblfraPGyrbPoD19C1h9lfI/1mzgWYvXUTe414Gz/X1FD2XBZSZM7rRTrMA8JL3OtAaGifrIKhQ5yQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MPL-2.0",
-       "dependencies": {
-         "detect-libc": "^2.0.3"
-@@ -26573,6 +26576,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26593,6 +26597,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26613,6 +26618,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26633,6 +26639,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26653,6 +26660,7 @@
-       "cpu": [
-         "arm"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26673,6 +26681,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26693,6 +26702,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26713,6 +26723,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26733,6 +26744,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26753,6 +26765,7 @@
-       "cpu": [
-         "arm64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -26773,6 +26786,7 @@
-       "cpu": [
-         "x64"
-       ],
-+      "dev": true,
-       "license": "MPL-2.0",
-       "optional": true,
-       "os": [
-@@ -27745,7 +27759,7 @@
-       "version": "2.27.1",
-       "resolved": "https://registry.npmjs.org/mdn-data/-/mdn-data-2.27.1.tgz",
-       "integrity": "sha512-9Yubnt3e8A0OKwxYSXyhLymGW4sCufcLG6VdiDdUGVkPhpqLxlvP5vl1983gQjJl3tqbrM731mjaZaP68AgosQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "CC0-1.0"
-     },
-     "node_modules/media-typer": {
-@@ -30555,7 +30569,7 @@
-       "version": "8.0.0",
-       "resolved": "https://registry.npmjs.org/parse5/-/parse5-8.0.0.tgz",
-       "integrity": "sha512-9m4m5GSgXjL4AjumKzq1Fgfp3Z8rsvjRNbnkVwfu2ImRqE5D0LnY2QfDen18FSY9C573YU5XxSapdHZTZ2WolA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "entities": "^6.0.0"
-@@ -31431,7 +31445,7 @@
-       "version": "2.3.1",
-       "resolved": "https://registry.npmjs.org/punycode/-/punycode-2.3.1.tgz",
-       "integrity": "sha512-vYt7UD1U9Wg6138shLtLOvdAu+8DsC/ilFtEVHcH+wydcSpNE20AfSOduf6MkRFahL5FY7X1oU7nKVZFtfq8Fg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=6"
-@@ -32854,7 +32868,7 @@
-       "version": "7.8.2",
-       "resolved": "https://registry.npmjs.org/rxjs/-/rxjs-7.8.2.tgz",
-       "integrity": "sha512-dhKf903U/PQZY6boNNtAGdWbG85WAbjT/1xYoZIC7FAY0yWapOBQVsVrDl58W86//e1VpMNBtRV4MaXfdMySFA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "dependencies": {
-         "tslib": "^2.1.0"
-@@ -32945,7 +32959,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/saxes/-/saxes-6.0.0.tgz",
-       "integrity": "sha512-xAg7SOnEhrm5zI3puOOKyy1OMcMlIJZYNJY7xLBwSze0UjhPLnWfj2GF2EpT0jmzaJKIWKHLsaSSajf35bcYnA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "ISC",
-       "dependencies": {
-         "xmlchars": "^2.2.0"
-@@ -33618,7 +33632,7 @@
-       "version": "0.6.1",
-       "resolved": "https://registry.npmjs.org/source-map/-/source-map-0.6.1.tgz",
-       "integrity": "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "engines": {
-         "node": ">=0.10.0"
-@@ -33637,7 +33651,7 @@
-       "version": "0.5.21",
-       "resolved": "https://registry.npmjs.org/source-map-support/-/source-map-support-0.5.21.tgz",
-       "integrity": "sha512-uBHU3L3czsIyYXKX88fdrGovxdSCoTGDRZ6SYXtSRxLZUzHg5P/66Ht6uoUlHu9EZod+inXhKo3qQgwXUT/y1w==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "buffer-from": "^1.0.0",
-@@ -34334,7 +34348,7 @@
-       "version": "3.2.4",
-       "resolved": "https://registry.npmjs.org/symbol-tree/-/symbol-tree-3.2.4.tgz",
-       "integrity": "sha512-9QNk5KwDF+Bvz+PyObkmSYjI5ksVUYtjW7AU22r2NKcfLJcXp96hkDWU3+XndOsUb+AQ9QhfzfCT2O+CNWT5Tw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/synckit": {
-@@ -34481,7 +34495,7 @@
-       "version": "5.46.1",
-       "resolved": "https://registry.npmjs.org/terser/-/terser-5.46.1.tgz",
-       "integrity": "sha512-vzCjQO/rgUuK9sf8VJZvjqiqiHFaZLnOiimmUuOKODxWL8mm/xua7viT7aqX7dgPY60otQjUotzFMmCB4VdmqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "dependencies": {
-         "@jridgewell/source-map": "^0.3.3",
-@@ -34565,7 +34579,7 @@
-       "version": "2.20.3",
-       "resolved": "https://registry.npmjs.org/commander/-/commander-2.20.3.tgz",
-       "integrity": "sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/test-exclude": {
-@@ -34823,7 +34837,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts/-/tldts-7.0.28.tgz",
-       "integrity": "sha512-+Zg3vWhRUv8B1maGSTFdev9mjoo8Etn2Ayfs4cnjlD3CsGkxXX4QyW3j2WJ0wdjYcYmy7Lx2RDsZMhgCWafKIw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tldts-core": "^7.0.28"
-@@ -34836,7 +34850,7 @@
-       "version": "7.0.28",
-       "resolved": "https://registry.npmjs.org/tldts-core/-/tldts-core-7.0.28.tgz",
-       "integrity": "sha512-7W5Efjhsc3chVdFhqtaU0KtK32J37Zcr9RKtID54nG+tIpcY79CQK/veYPODxtD/LJ4Lue66jvrQzIX2Z2/pUQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/tmp": {
-@@ -34940,7 +34954,7 @@
-       "version": "6.0.1",
-       "resolved": "https://registry.npmjs.org/tough-cookie/-/tough-cookie-6.0.1.tgz",
-       "integrity": "sha512-LktZQb3IeoUWB9lqR5EWTHgW/VTITCXg4D21M+lvybRVdylLrRMnqaIONLVb5mav8vM19m44HIcGq4qASeu2Qw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-3-Clause",
-       "dependencies": {
-         "tldts": "^7.0.5"
-@@ -34953,7 +34967,7 @@
-       "version": "6.0.0",
-       "resolved": "https://registry.npmjs.org/tr46/-/tr46-6.0.0.tgz",
-       "integrity": "sha512-bLVMLPtstlZ4iMQHpFHTR7GAGj2jxi8Dg0s2h2MafAE4uSWF98FC/3MomU51iQAMf8/qDUbKWf5GxuvvVcXEhw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "punycode": "^2.3.1"
-@@ -35316,7 +35330,7 @@
-       "version": "4.21.0",
-       "resolved": "https://registry.npmjs.org/tsx/-/tsx-4.21.0.tgz",
-       "integrity": "sha512-5C1sg4USs1lfG0GFb2RLXsdpXqBSEhAaA/0kPL01wxzpMqLILNxIxIOKiILz+cdg/pLnOUxFYOR5yhHU666wbw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "esbuild": "~0.27.0",
-@@ -35499,7 +35513,7 @@
-       "version": "5.9.3",
-       "resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
-       "integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "bin": {
-         "tsc": "bin/tsc",
-@@ -36510,7 +36524,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/w3c-xmlserializer/-/w3c-xmlserializer-5.0.0.tgz",
-       "integrity": "sha512-o8qghlI8NZHU1lLPrpi2+Uq7abh4GGPpYANlalzWxyWteJOCsr/P+oPBA49TOLu5FTZO4d3F9MnWJfiMo4BkmA==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "xml-name-validator": "^5.0.0"
-@@ -36586,7 +36600,7 @@
-       "version": "8.0.1",
-       "resolved": "https://registry.npmjs.org/webidl-conversions/-/webidl-conversions-8.0.1.tgz",
-       "integrity": "sha512-BMhLD/Sw+GbJC21C/UgyaZX41nPt8bUTg+jWyDeg7e7YN4xOM05YPSIXceACnXVtqyEw/LMClUQMtMZ+PGGpqQ==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "BSD-2-Clause",
-       "engines": {
-         "node": ">=20"
-@@ -36691,7 +36705,7 @@
-       "version": "4.0.0",
-       "resolved": "https://registry.npmjs.org/whatwg-mimetype/-/whatwg-mimetype-4.0.0.tgz",
-       "integrity": "sha512-QaKxh0eNIi2mE9p2vEdzfagOKHCcj1pJ56EEHGQOVxp8r9/iszLUUV7v89x9O1p/T+NlTM5W7jW6+cz4Fq1YVg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "engines": {
-         "node": ">=18"
-@@ -36701,7 +36715,7 @@
-       "version": "15.1.0",
-       "resolved": "https://registry.npmjs.org/whatwg-url/-/whatwg-url-15.1.0.tgz",
-       "integrity": "sha512-2ytDk0kiEj/yu90JOAp44PVPUkO9+jVhyf+SybKlRHSDlvOOZhdPIrr7xTH64l4WixO2cP+wQIcgujkGBPPz6g==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT",
-       "dependencies": {
-         "tr46": "^6.0.0",
-@@ -37572,7 +37586,7 @@
-       "version": "5.0.0",
-       "resolved": "https://registry.npmjs.org/xml-name-validator/-/xml-name-validator-5.0.0.tgz",
-       "integrity": "sha512-EvGK8EJ3DhaHfbRlETOWAS5pO9MZITeauHKJyb8wyajUfQUenkIg2MvLDTZ4T/TgIcm3HU0TFBgWWboAZ30UHg==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "Apache-2.0",
-       "engines": {
-         "node": ">=18"
-@@ -37592,7 +37606,7 @@
-       "version": "2.2.0",
-       "resolved": "https://registry.npmjs.org/xmlchars/-/xmlchars-2.2.0.tgz",
-       "integrity": "sha512-JZnDKK8B0RCDw84FNdDAIpZK+JuJw+s7Lz8nksI7SIuU3UXJJslUthsi+uWBUYOwPFwW7W7PRLRfUKpxjtjFCw==",
--      "devOptional": true,
-+      "dev": true,
-       "license": "MIT"
-     },
-     "node_modules/xpath": {
-@@ -37825,7 +37839,7 @@
+@@ -39236,7 +39236,7 @@
      },
      "sdk": {
        "name": "@mcpjam/sdk",
--      "version": "4.2.0",
-+      "version": "4.3.0",
+-      "version": "8.5.2",
++      "version": "8.6.0",
        "license": "MIT",
        "dependencies": {
          "@ai-sdk/amazon-bedrock": "^3.0.101",
 diff --git a/sdk/package.json b/sdk/package.json
-index d71d0e50b..03d6666aa 100644
+index 57f8709b6..7a84b33bf 100644
 --- a/sdk/package.json
 +++ b/sdk/package.json
 @@ -1,6 +1,6 @@
  {
    "name": "@mcpjam/sdk",
--  "version": "4.2.0",
-+  "version": "4.3.0",
+-  "version": "8.5.2",
++  "version": "8.6.0",
    "description": "MCP server unit testing, end to end (e2e) testing, and server evals",
    "type": "module",
    "main": "dist/index.js",

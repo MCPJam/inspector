@@ -24,6 +24,21 @@ const captureMcpAppWidgetSnapshotsMock = vi.fn();
 const prepareChatV2Mock = vi.fn();
 const convexMutationMock = vi.fn();
 const createBrowserSessionContextMock = vi.fn();
+const listCloudRuntimeSkillsMock = vi.fn();
+
+// The project catalog is the one skills dependency the runner reaches out to
+// itself; everything else about the skill surface is the orchestrator's, and
+// `prepareChatV2` is mocked here.
+vi.mock("../../../utils/computers/cloud-skill-tools.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../utils/computers/cloud-skill-tools.js")
+  >("../../../utils/computers/cloud-skill-tools.js");
+  return {
+    ...actual,
+    listCloudRuntimeSkills: (...args: unknown[]) =>
+      listCloudRuntimeSkillsMock(...args),
+  };
+});
 
 vi.mock("../../../utils/assistant-turn.js", async () => {
   const actual = await vi.importActual<
@@ -228,7 +243,9 @@ beforeEach(() => {
   vi.stubEnv("CONVEX_URL", "https://convex.cloud");
   runAssistantTurnMock.mockReset();
   resolveSyntheticModelSourceMock.mockReset();
-  persistChatSessionToConvexMock.mockReset().mockResolvedValue(undefined);
+  persistChatSessionToConvexMock
+    .mockReset()
+    .mockResolvedValue({ outcome: "saved", version: 1 });
   captureMcpAppWidgetSnapshotsMock.mockReset().mockResolvedValue([]);
   prepareChatV2Mock.mockReset().mockResolvedValue({
     allTools: { search: { description: "noop" } },
@@ -239,6 +256,18 @@ beforeEach(() => {
   });
   convexMutationMock.mockReset().mockResolvedValue(null);
   createBrowserSessionContextMock.mockReset();
+  listCloudRuntimeSkillsMock.mockReset().mockResolvedValue([
+    {
+      skillId: "skill-1",
+      ref: "pdf-tools",
+      name: "pdf-tools",
+      description: "Process PDFs",
+      aggregateHash: "hash-1",
+      channels: [],
+      content: async () => "# pdf-tools",
+      files: [],
+    },
+  ]);
   resolveSyntheticModelSourceMock.mockResolvedValue({ source: "mcpjam" });
   runAssistantTurnMock.mockImplementation(async (opts: any) => {
     callOrder.push("runAssistantTurn");
@@ -372,11 +401,21 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
 
     await runSyntheticHostSession(baseAdapter() as never);
 
-    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.cloudSkills).toEqual({
+    expect(listCloudRuntimeSkillsMock).toHaveBeenCalledWith({
       authHeader: "Bearer token",
       projectId: "proj-1",
     });
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    // The project pool arrives as a live capability set, and the source keeps
+    // `composeLiveServerSkills` so a connected server's SEP-2640 skills compose
+    // ON TOP of it rather than being displaced by it.
+    expect(prepareOpts.skillsSource.kind).toBe("resolved");
+    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
+    expect(
+      prepareOpts.skillsSource.capabilities.standaloneSkills.map(
+        (skill: any) => skill.ref
+      )
+    ).toEqual(["pdf-tools"]);
   });
 
   it("omits Cloud Skills tools on the harness path (delivered natively)", async () => {
@@ -384,14 +423,15 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // claude-code + an MCPJam-provided model ⇒ the turn runs the real harness,
-    // which writes skills into the sandbox itself; the emulated listSkills/
-    // loadSkill tools must NOT also be advertised.
+    // which writes skills into the sandbox itself; the emulated prompt catalog
+    // + loadSkill tools must NOT also be advertised.
     await runSyntheticHostSession(
       baseAdapter({ runtime: { harness: "claude-code" } }) as never
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.cloudSkills).toBeUndefined();
+    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
   });
 
   it("omits Cloud Skills under tool approval (headless can't approve)", async () => {
@@ -399,14 +439,45 @@ describe("runSyntheticHostSession — browser pipeline wiring", () => {
     createBrowserSessionContextMock.mockReturnValue(fake);
 
     // A synthetic visitor can't grant approval; the local-BYOK path fail-closes
-    // on any non-empty tool set, so the always-present listSkills/loadSkill
-    // meta-tools must not be injected when requireToolApproval is on.
+    // on any non-empty tool set, so emulated skill tools must not be injected
+    // when requireToolApproval is on (the skip stays correct even though
+    // empty projects no longer advertise phantom tools).
     await runSyntheticHostSession(
       baseAdapter({ runtime: { requireToolApproval: true } }) as never
     );
 
     const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
-    expect(prepareOpts.cloudSkills).toBeUndefined();
+    expect(prepareOpts.skillsSource).toEqual({ kind: "none" });
+    expect(listCloudRuntimeSkillsMock).not.toHaveBeenCalled();
+  });
+
+  it("reports a catalog fetch failure, and still composes live server skills", async () => {
+    const fake = buildFakeBrowserContext({ computerUse: false });
+    createBrowserSessionContextMock.mockReturnValue(fake);
+    listCloudRuntimeSkillsMock.mockRejectedValue(
+      new Error("CONVEX_URL is not configured")
+    );
+    const emitted: any[] = [];
+
+    await runSyntheticHostSession(
+      baseAdapter({ emit: (payload) => emitted.push(payload) }) as never
+    );
+
+    const notice = emitted.find((p) => p.type === "session_notice");
+    expect(notice).toMatchObject({
+      kind: "tool_suppressed",
+      toolId: "skills",
+      message: "CONVEX_URL is not configured",
+    });
+
+    // The regression this pins: a failed PROJECT catalog must not collapse the
+    // source to `{ kind: "none" }`. That would drop `composeLiveServerSkills`
+    // and take the connected servers' skills down with it — skills that were
+    // never fetched from Convex and never failed.
+    const prepareOpts = prepareChatV2Mock.mock.calls[0]![0] as any;
+    expect(prepareOpts.skillsSource.kind).toBe("resolved");
+    expect(prepareOpts.skillsSource.composeLiveServerSkills).toBe(true);
+    expect(prepareOpts.skillsSource.capabilities.standaloneSkills).toEqual([]);
   });
 
   it("disposes the context when the turn throws, and reports failed", async () => {

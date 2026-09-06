@@ -1,0 +1,49 @@
+name: Claude policy drift
+
+# Claude's connector-directory pages are the source the readiness checks grade
+# against, and they live on claude.com — they can move on a day nobody touched
+# this repository. That makes drift a "the world changed" event rather than a
+# "this pull request broke something" one, which is why this runs on a schedule
+# instead of in the PR build: gating every unrelated PR on an external site
+# being reachable buys nothing and fails work that is fine.
+#
+# A red run here means the pinned corpus no longer matches the live pages.
+# Re-read the pages that moved, adjust any check whose wording they changed,
+# then `npm run claude-policy:sync` to re-pin. Do NOT re-pin first — the point
+# of the manifest is that a grade can name the revision it was made against.
+on:
+  schedule:
+    # Mondays, 13:00 UTC. Weekly is the right cadence for documentation drift:
+    # often enough to catch a change in the week it lands, rare enough that the
+    # failure means something when it appears.
+    - cron: "0 13 * * 1"
+  workflow_dispatch:
+
+# The job reads a checkout and fetches public documentation. It writes nothing
+# back — re-pinning is a deliberate human step — so the token needs no more
+# than `contents: read`, and an unscoped default token on a scheduled workflow
+# is a standing grant nobody is watching.
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: "24.14.0"
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    name: Compare pinned policy revisions against the live pages
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      # The script imports node builtins only, so it needs no install step and
+      # cannot be broken by a dependency resolution unrelated to policy text.
+      - name: Check pinned policy revisions
+        run: npm run claude-policy:check

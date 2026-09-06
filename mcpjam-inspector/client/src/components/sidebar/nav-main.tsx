@@ -2,6 +2,7 @@ import React from "react";
 import {
   SidebarGroup,
   SidebarGroupContent,
+  SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
@@ -34,12 +35,14 @@ interface LearnMoreProps {
 
 interface NavMainProps {
   items: NavMainItem[];
+  /** Section heading ("Explore", "Measure", …). Hidden when collapsed to icons. */
+  label?: string;
   onItemClick?: (url: string) => void;
   /** Learn more hover card integration */
   learnMore?: LearnMoreProps | null;
 }
 
-export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
+export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) {
   const { open: sidebarOpen } = useSidebar();
 
   const handleClick = (url: string) => {
@@ -55,7 +58,28 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
       item.disabled
         ? "cursor-not-allowed text-muted-foreground opacity-50 hover:bg-transparent hover:text-muted-foreground active:bg-transparent active:text-muted-foreground"
         : isItemActive(item)
-        ? "[&[data-active=true]]:bg-accent cursor-pointer"
+        ? // The selected pill is the PANEL fill (--background, #FAF9F5) on the
+          // linen ground, with a 1px --divider stroke — a lit square, not a
+          // tinted one. It cannot be bg-accent: the ground (--sidebar) is the
+          // same value as --accent, so that renders invisible here.
+          //
+          // The bang is load-bearing. `sidebarMenuButtonVariants` already emits
+          // `data-[active=true]:bg-sidebar-accent`, which ties this on
+          // specificity, so without it the winner is whichever utility Tailwind
+          // happens to order last.
+          //
+          // The stroke is an inset shadow rather than a border so the pill keeps
+          // its box: a real border would shift the label 1px against every
+          // unselected sibling.
+          // The label colour is pinned for the same reason the fill is.
+          // `sidebarMenuButtonVariants` sets
+          // `data-[active=true]:text-sidebar-accent-foreground`, which is a
+          // per-preset value: the brutalist light preset makes it white, and
+          // that preset's --background is white too, so the active label
+          // disappeared. --foreground is the pair for --background by
+          // definition, in every preset.
+          "[&[data-active=true]]:bg-background! [&[data-active=true]]:text-foreground! cursor-pointer " +
+            "[&[data-active=true]]:shadow-[inset_0_0_0_1px_var(--divider)]"
         : "cursor-pointer"
     );
 
@@ -120,6 +144,22 @@ export function NavMain({ items, onItemClick, learnMore }: NavMainProps) {
 
   return (
     <SidebarGroup className="py-1">
+      {label ? (
+        // Keep the primitive's `text-sidebar-foreground/70`: the design specs
+        // --secondary-foreground, but that token inverts in dark mode and the
+        // label lands at L 0.31 on an L 0.24 sidebar — invisible.
+        //
+        // `px-0` drops the primitive's own px-2 so the heading sits at the
+        // group's 8px inset while its rows start at 16px. Sharing 16px with the
+        // row icons aligned the two perfectly and left nothing to read the
+        // grouping by; the 8px step is what says these rows belong to it.
+        //
+        // -mt-5 must track h-5: the primitive collapses its own h-8 label with
+        // -mt-8 when the sidebar shrinks to icons.
+        <SidebarGroupLabel className="h-5 px-0 group-data-[collapsible=icon]:-mt-5">
+          {label}
+        </SidebarGroupLabel>
+      ) : null}
       <SidebarGroupContent>
         <SidebarMenu className="gap-0.5">
           {items.map((item) => {

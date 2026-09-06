@@ -22,10 +22,10 @@
  * degraded to a no-op, cases 1 and 2 would both still pass and nothing else in
  * the repo would notice.
  *
- * Wired into root `test:ci:rest` — the script CI actually invokes — and into
- * `test:ordered`. `test:ordered` alone would have been dead weight: no workflow
- * references it, so a gate wired only there runs at authoring time and never
- * again.
+ * Wired into root `test:ci:packaging` — the script the `Packaging` job in
+ * test.yml actually invokes — and into `test:ordered`. `test:ordered` alone
+ * would have been dead weight: no workflow references it, so a gate wired only
+ * there runs at authoring time and never again.
  *
  * `prepack` builds before packing. `npm pack` does NOT run `prepublishOnly`
  * (only `publish` does), so on a clean checkout the tarball would otherwise
@@ -150,6 +150,14 @@ export function suiteOf(EvalSuite, EvalTest, cases) {
   const suite = new EvalSuite({ name: "packaging suite" });
   for (const entry of cases) {
     suite.add(new EvalTest({
+      // \`id\` is the case's declared identity and is required by @mcpjam/sdk.
+      // Passed through from the scenario so the packaged tarball is exercised
+      // against the same shape a consumer writes. Where a scenario also sets
+      // \`externalCaseId\`, the two carry the SAME value: they are two claims
+      // about one case, and @mcpjam/sdk rejects a differing pair. The scenarios
+      // keep the external id because the \`[id]\` title suffix is derived from
+      // it, and the output assertions below match on that suffix.
+      id: entry.id,
       name: entry.name,
       ...(entry.externalCaseId ? { externalCaseId: entry.externalCaseId } : {}),
       test: async (executor) => {
@@ -177,7 +185,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "case_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -196,7 +204,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that fails", externalCaseId: "case_red", passes: false },
+  { id: "case_red", name: "a case that fails", externalCaseId: "case_red", passes: false },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },
@@ -221,7 +229,7 @@ import { describeEvalSuite } from "@mcpjam/vitest";
 import { StubExecutor, suiteOf } from "./support.mjs";
 
 describeEvalSuite("packaged suite", suiteOf(EvalSuite, EvalTest, [
-  { name: "a case that passes", externalCaseId: "case_green", passes: true },
+  { id: "case_green", name: "a case that passes", externalCaseId: "case_green", passes: true },
 ]), {
   executor: new StubExecutor(),
   run: { iterations: 1, mcpjam: { enabled: false } },

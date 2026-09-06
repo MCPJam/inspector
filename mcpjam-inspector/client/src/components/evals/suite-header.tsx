@@ -22,7 +22,6 @@ import {
   RotateCw,
   Settings,
   Sparkles,
-  X,
 } from "lucide-react";
 import {
   Popover,
@@ -36,6 +35,7 @@ import {
   getEffectiveSuiteServers,
   getRunMetricSource,
 } from "./helpers";
+import { SuiteRevisionPill } from "./suite-revision-pill";
 import {
   EvalSuite,
   EvalSuiteRun,
@@ -59,10 +59,9 @@ import { getBillingErrorMessage } from "@/lib/billing-entitlements";
 import { getSuiteReplayEligibility } from "./replay-eligibility";
 import { RunDetailPlaygroundActions } from "./run-detail-playground-actions";
 import { cn } from "@/lib/utils";
-import { SuiteEnvironmentComposerBar } from "./suite-environment-composer-bar";
 import { countSuiteRunPlans } from "./helpers";
 import { SuiteRunCostEstimateHint } from "./run-cost-estimate-hint";
-import type { HostAttachmentDraft } from "./client-attachments-editor";
+import { SuiteRunDisclosureHint } from "./run-disclosure-hint";
 import type { SuiteOverviewView } from "@/lib/eval-route-types";
 
 interface SuiteHeaderProps {
@@ -117,10 +116,6 @@ interface SuiteHeaderProps {
    * Playground: block suite-level Run all while a single case quick-run is in flight.
    */
   runningTestCaseId?: string | null;
-  /** Persists the suite's host attachments (multi-host fan-out target list). */
-  onSuiteHostAttachmentsUpdate?: (
-    attachments: HostAttachmentDraft[]
-  ) => Promise<void>;
   /** Playground run detail: compact KPI strip rendered beside the run title. */
   runDetailKpiStrip?: ReactNode;
   /**
@@ -135,6 +130,15 @@ interface SuiteHeaderProps {
    */
   iterationOverride?: number;
   onIterationOverrideChange?: (value: number | undefined) => void;
+  /**
+   * Open the settings-history slide-over.
+   *
+   * Optional, and the revision pill still RENDERS without it: the number is
+   * the useful half — which version of these settings am I looking at — and
+   * withholding it because the drill-down is unavailable takes the answer away
+   * along with the panel.
+   */
+  onOpenRevisionHistory?: () => void;
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -174,9 +178,9 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     blockTestCaseRuns: _blockTestCaseRuns = false,
     runningTestCaseId = null,
     runsViewMode = "runs",
-    onSuiteHostAttachmentsUpdate,
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
+    onOpenRevisionHistory,
   } = props;
 
   const showTestCaseCtas =
@@ -232,32 +236,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     }
   }, [editedName, suite.name, suite._id, updateSuite]);
 
-  const handleServerAttachmentUpdate = useCallback(
-    async (serverAttachmentId: string) => {
-      // Picker calls this synchronously inside onClick — don't rethrow,
-      // or the unawaited promise becomes an unhandled rejection. The
-      // toast is the user-facing signal; the suite row will reconcile
-      // from the live Convex subscription on retry.
-      try {
-        await updateSuite({
-          suiteId: suite._id,
-          serverAttachmentId,
-        });
-        track("eval_suite_server_changed", {
-          location: "suite_header",
-          suite_id: suite._id,
-          server_attachment_id: serverAttachmentId,
-        });
-        toast.success("Server group updated");
-      } catch (error) {
-        toast.error(
-          getBillingErrorMessage(error, "Failed to update server group")
-        );
-      }
-    },
-    [suite._id, updateSuite]
-  );
-
   const handleNameKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (e.key === "Enter") {
@@ -293,47 +271,35 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     // Settings sheet header — matches the body's max-w-2xl column so the
     // title sits flush over the form. Title is light-weight (semibold,
     // not text-xl bold) so the eyebrow-labelled sections below carry the
-    // visual rhythm; Done is a ghost chip, not a heavy outline button.
+    // visual rhythm.
     return (
       <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
+        {/* READ-ONLY in the settings sheet. Renaming lives in the sheet's own
+            Name row now, and leaving the inline editor here too gave one field
+            two writers: this one commits on blur, immediately, with no review,
+            no note and no revision precondition. Using it while a draft held an
+            unsaved name marked the sheet as "changed elsewhere" for the
+            person's own action, and the next save overwrote the rename with the
+            stale draft. */}
         <div className="min-w-0 flex-1 pr-2">
-          {isEditingName && !readOnlyConfig ? (
-            <input
-              type="text"
-              value={editedName}
-              onChange={(e) => setEditedName(e.target.value)}
-              onBlur={handleNameBlur}
-              onKeyDown={handleNameKeyDown}
-              autoFocus
-              className="w-full min-w-0 max-w-full -ml-2 px-2 py-1 text-lg font-semibold border border-input rounded-md focus:outline-none focus:ring-2 focus:ring-ring bg-background"
-            />
-          ) : readOnlyConfig ? (
-            <h1
-              className="truncate text-lg font-semibold tracking-tight"
-              title={suite.name}
-            >
-              {suite.name}
-            </h1>
-          ) : (
-            <Button
-              variant="ghost"
-              onClick={handleNameClick}
-              className="h-auto max-w-full min-w-0 justify-start -ml-2 rounded-md px-2 py-1 text-left text-lg font-semibold tracking-tight hover:bg-accent/40"
-              title={suite.name}
-            >
-              <span className="min-w-0 truncate text-left">{suite.name}</span>
-            </Button>
-          )}
+          <h1
+            className="truncate text-lg font-semibold tracking-tight"
+            title={suite.name}
+          >
+            {suite.name}
+          </h1>
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => onViewModeChange("overview")}
-        >
-          Done
-          <X className="h-3.5 w-3.5" />
-        </Button>
+        {/* WHAT VERSION AM I LOOKING AT, not "am I finished".
+            The Done button told a reader this sheet was a form to fill in and
+            submit, which it has not been since the draft-and-commit bar
+            shipped: Done only navigated, and the save lives in the bar. The
+            breadcrumb is the way back. What belongs in this corner is the
+            thing a reader of a shared suite actually needs — which revision
+            these settings are, and who moved them last. */}
+        <SuiteRevisionPill
+          revisionNumber={suite.revisionNumber}
+          onOpenHistory={() => onOpenRevisionHistory?.()}
+        />
       </div>
     );
   }
@@ -441,22 +407,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
   if (viewMode === "test-detail" || viewMode === "test-edit") {
     return null;
   }
-
-  // Rendered whenever the suite overview is visible, regardless of whether any
-  // cases exist yet — the empty "pick a client" affordance is the whole point of
-  // surfacing the axis up front. The model-axis bar was removed: a host's
-  // `modelId` is the source of truth for what each run runs against, so a
-  // separate suite-wide model selector is just noise.
-  const suiteOverviewHostBar = (
-    <SuiteEnvironmentComposerBar
-      containerVariant="inline"
-      className="py-1.5 md:py-2"
-      suite={suite}
-      readOnly={readOnlyConfig}
-      onUpdate={onSuiteHostAttachmentsUpdate}
-      onUpdateServerAttachment={handleServerAttachmentUpdate}
-    />
-  );
 
   const overviewRunAllCta =
     hideRunActions && showTestCaseCtas
@@ -661,6 +611,19 @@ export function SuiteHeader(props: SuiteHeaderProps) {
                   ? { iterationOverride }
                   : {})}
               />
+              <SuiteRunDisclosureHint
+                suiteId={suite._id}
+                environmentIds={suite.environmentIds}
+                // The host axis applies only when no environments are
+                // attached (the environment axis always wins when both are —
+                // same rule `computeRunTargets` uses). The hint decides from
+                // the COUNT: exactly one attached host is disclosed for real
+                // since G4c, several is the multi-target refusal.
+                hostIds={(suite.hostAttachments ?? []).map(
+                  (attachment) => attachment.namedHostId
+                )}
+                suppressed={testCaseCount === 0 || runAllNeedsLocalServers}
+              />
             </span>
           );
         })()
@@ -735,7 +698,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
           sideOffset={6}
           className="px-2 py-1 text-[11px]"
         >
-          Suite settings — description, validators, judges
+          Suite settings — where it runs, validators, judges
         </TooltipContent>
       </Tooltip>
     ) : null;
@@ -967,7 +930,6 @@ export function SuiteHeader(props: SuiteHeaderProps) {
             ) : null}
           </div>
         </div>
-        <div className="min-w-0 shrink">{suiteOverviewHostBar}</div>
         {overviewSettingsButton}
         {overviewSuiteNavButtons}
       </div>

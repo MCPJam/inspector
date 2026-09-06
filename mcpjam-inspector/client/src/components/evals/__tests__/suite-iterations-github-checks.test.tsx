@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { withDataRouter } from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
@@ -30,8 +31,6 @@ vi.mock("@workos-inc/authkit-react", () => ({
 }));
 
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  GITHUB_CHECKS_UNAVAILABLE_MESSAGE:
-    "GitHub Checks settings are not currently available.",
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
 }));
@@ -61,10 +60,23 @@ vi.mock("../suite-header", () => ({
   SuiteHeader: () => <div data-testid="suite-header" />,
 }));
 
+vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
+  SuiteEnvironmentComposerBar: () => (
+    <div data-testid="suite-environment-bar">composer</div>
+  ),
+}));
+
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
+}));
+
+// S3 — capabilities `unavailable` is the "behave exactly as before" case, and
+// it is what these tests want: the GitHub row's own gate is the availability
+// read, not the capabilities query.
+vi.mock("@/hooks/use-suite-capabilities", () => ({
+  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
 }));
 
 const noopNav = {
@@ -89,6 +101,7 @@ const baseSuite: EvalSuite = {
 
 function renderSettingsSheet() {
   return render(
+      withDataRouter(
     <SuiteIterationsView
       suite={baseSuite}
       cases={[]}
@@ -113,8 +126,8 @@ function renderSettingsSheet() {
       projectId="project-1"
       route={{ type: "suite-edit", suiteId: "suite-1" }}
       navigation={noopNav}
-    />
-  );
+    />)
+    );
 }
 
 describe("SuiteIterationsView GitHub Checks gate", () => {
@@ -139,13 +152,20 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
       );
     });
 
-    renderSettingsSheet();
+    const { container } = renderSettingsSheet();
 
     // The sheet survived: a sibling section still rendered.
     expect(screen.getByText("Minimum iterations")).toBeTruthy();
-    // ...without the section whose gate refused.
-    expect(screen.queryByText("GitHub Checks")).toBeNull();
+    // The section whose gate refused is now a DISABLED ROW that says so,
+    // rather than nothing at all. A row that vanishes makes a refused gate,
+    // a missing permission and a backend that could not answer look identical
+    // — and none of them is a thing the reader can act on from an empty space.
     expect(screen.queryByTestId("github-checks-section")).toBeNull();
+    const row = container.querySelector('[data-setting-key="githubChecks"]');
+    expect(row).toBeTruthy();
+    expect(row?.getAttribute("data-disabled-reason")).toBe(
+      "GitHub Checks could not be loaded for this organization"
+    );
   });
 
   it("still reports the swallowed error to the error sinks", () => {
@@ -155,7 +175,8 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
 
     renderSettingsSheet();
 
-    // `fallback={null}` is a UI choice, never a telemetry one.
+    // The fallback ROW is a UI choice, never a telemetry one: a boundary that
+    // renders something helpful still has to report what it caught.
     expect(mocks.reportBoundaryError).toHaveBeenCalled();
     expect(mocks.reportBoundaryError.mock.calls[0]?.[2]).toBe(
       "suite_github_checks"
@@ -165,10 +186,15 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
   it("hides the section when the backend answers `disabled`", () => {
     mocks.availability.mockReturnValue({ state: "disabled" });
 
-    renderSettingsSheet();
+    const { container } = renderSettingsSheet();
 
+    // `disabled` is the backend ANSWERING, not failing — the boundary never
+    // trips, so the row stays hidden exactly as before.
     expect(screen.getByText("Minimum iterations")).toBeTruthy();
     expect(screen.queryByTestId("github-checks-section")).toBeNull();
+    expect(
+      container.querySelector('[data-setting-key="githubChecks"]')
+    ).toBeNull();
     expect(mocks.reportBoundaryError).not.toHaveBeenCalled();
   });
 

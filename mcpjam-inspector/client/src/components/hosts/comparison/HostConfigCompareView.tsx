@@ -50,9 +50,15 @@ import { useSearchParams } from "react-router";
 import { useHost, useHostList } from "@/hooks/useClients";
 import { useClaudeCodeHostEnabled } from "@/hooks/useClaudeCodeHostEnabled";
 import { useCodexHostEnabled } from "@/hooks/useCodexHostEnabled";
+import { useCursorHostEnabled } from "@/hooks/useCursorHostEnabled";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
+import {
+  excludedFlagGatedHostIds,
+  FLAG_GATED_HOST_IDS,
+} from "@/lib/host-compat/feature-visibility";
 import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { bundledHostCompatCatalog } from "@mcpjam/sdk/host-compat";
+import { clientDisplayName } from "@/lib/client-display-name";
 import type {
   HostComparisonSubject,
   HostConfigFieldDef,
@@ -66,11 +72,19 @@ import {
   toggleHostCompareSelection,
   writeHostCompareSelection,
 } from "./host-compare-selection";
-import { buildPresetCompareEntries } from "./host-compare-presets";
 import {
-  PUBLIC_CAN_I_USE_FIELDS,
+  buildPresetCompareEntries,
+  demoteMcpjamHosts,
+  dropPresetsShadowedByLiveHosts,
+  isPresetHostId,
+  remapShadowedSelection,
+} from "./host-compare-presets";
+import { resolveClientDisplayNames } from "@/lib/client-display-name";
+import {
+  clientCompareFieldsWithData,
   getCaniuseCapabilityBySlug,
   getCaniuseCapabilityForField,
+  publicCaniuseFieldsWithData,
   sortCaniusePresetHosts,
 } from "./caniuse-capability-catalog";
 import { HostConfigComparisonMatrix } from "./host-config-comparison-matrix";
@@ -79,10 +93,7 @@ import {
   fieldMatchesQuery,
   type SupportFilterMode,
 } from "./support-level";
-import {
-  groupHostConfigFields,
-  HOST_CONFIG_FIELDS,
-} from "@/lib/host-config-field-schema";
+import { groupHostConfigFields } from "@/lib/host-config-field-schema";
 import { SearchInput } from "@/components/ui/search-input";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
 import { buildHostCompareSnapshot } from "@/lib/webmcp/review-surface-snapshots";
@@ -233,16 +244,36 @@ export function HostConfigCompareView({
   const selectionScopeId = presetOnly ? "public" : projectId ?? "";
 
   // Catalog host profiles (Claude, ChatGPT, Cursor, …) offered as opt-in
-  // comparison columns even when the user hasn't created them.
+  // read-only comparison columns even when the user cannot create them.
   const themeMode = usePreferencesStore((s) => s.themeMode);
   const claudeCodeEnabled = useClaudeCodeHostEnabled();
   const codexEnabled = useCodexHostEnabled();
+  const cursorCliEnabled = useCursorHostEnabled();
+  // Claude Code and Codex are always useful as read-only reference data here,
+  // like on caniuse.dev. Their creation flags still gate the New Client picker
+  // and every mutation path. Other gated hosts keep their existing rollout.
   const excludedPresetTemplateIds = useMemo(() => {
-    const excluded = new Set<string>();
-    if (!claudeCodeEnabled) excluded.add("claude-code");
-    if (!codexEnabled) excluded.add("codex");
+    if (presetOnly) return new Set<string>();
+    const excluded = excludedFlagGatedHostIds({
+      claudeCode: claudeCodeEnabled,
+      codex: codexEnabled,
+      cursorCli: cursorCliEnabled,
+    });
+    excluded.delete("claude-code");
+    excluded.delete("codex");
     return excluded;
-  }, [claudeCodeEnabled, codexEnabled]);
+  }, [claudeCodeEnabled, codexEnabled, cursorCliEnabled, presetOnly]);
+  // Public caniuse still displays flag-gated hosts as reference data, but must
+  // not offer their verify links because those links auto-create a host, and
+  // the app refuses to create one until the rollout flag is on. The flags
+  // cannot govern this decision: as the comment above says, they are scoped to
+  // @mcpjam.com users and read as off for every anonymous visitor. So the hide
+  // is unconditional here — drop an id from `FLAG_GATED_HOST_IDS` when it ships
+  // and its verify link comes back with it. Verify links exist only in this
+  // mode (`verifyBaseUrl` is undefined otherwise), so no set is needed there.
+  const disabledVerifyTemplateIds = presetOnly
+    ? FLAG_GATED_HOST_IDS
+    : undefined;
   const presets = useMemo(() => {
     if (!compareCatalog) {
       return { hosts: [], subjects: {} as Record<string, HostComparisonSubject> };
@@ -251,15 +282,59 @@ export function HostConfigCompareView({
         excludedTemplateIds: excludedPresetTemplateIds,
     });
   }, [compareCatalog, excludedPresetTemplateIds]);
-  // Real created hosts first, then presets — what the selector chips iterate.
-  const hosts = useMemo(() => {
-    if (!presetOnly) return [...liveHosts, ...presets.hosts];
-    return sortCaniusePresetHosts(presets.hosts);
-  }, [liveHosts, presetOnly, presets.hosts]);
-
   const [subjectsByHost, setSubjectsByHost] = useState<
     Record<string, HostComparisonSubject>
   >({});
+
+  // Real created hosts first, then presets — what the selector chips iterate.
+  // Presets carry the caniuse order on BOTH surfaces: the ranking is a
+  // deliberate reading order, and having the same clients appear in a
+  // different sequence on Compare than on caniuse.dev made the two pages hard
+  // to read against each other. Live hosts keep their own order, since that
+  // one belongs to the user.
+  // MCPJam goes last on BOTH surfaces: it is the emulator doing the comparing,
+  // so it should not hold one of the leading chip slots. Still present and
+  // still selectable — this demotes rather than filters. On caniuse its preset
+  // already sorted past the inline limit, but relying on where it happens to
+  // land is what let it back in once live hosts joined the list.
+  const hosts = useMemo(() => {
+    const orderedPresets = sortCaniusePresetHosts(presets.hosts);
+    if (presetOnly) return demoteMcpjamHosts(orderedPresets, subjectsByHost);
+
+    // A preset is a read-only stand-in for a client you do NOT have, so drop
+    // the ones the user already owns before combining. Without this a project
+    // with an MCPJam client showed it twice, same name and logo both times.
+    const ordered = demoteMcpjamHosts(
+      [
+        ...liveHosts,
+        ...dropPresetsShadowedByLiveHosts(
+          liveHosts,
+          orderedPresets,
+          subjectsByHost,
+        ),
+      ],
+      subjectsByHost,
+    );
+
+    // Number whatever collisions survive. `useHostList` already does this for
+    // live hosts, but it cannot see presets, so a live host colliding with a
+    // preset by NAME rather than by style used to render as two identical
+    // rows. Presets sort last here so the user's own client keeps the
+    // unsuffixed name and the stand-in takes the "#2".
+    const displayNames = resolveClientDisplayNames(
+      ordered.map((host) => ({
+        hostId: host.hostId,
+        name: host.name,
+        createdAt: isPresetHostId(host.hostId)
+          ? Number.MAX_SAFE_INTEGER
+          : host.createdAt,
+      })),
+    );
+    return ordered.map((host) => ({
+      ...host,
+      displayName: displayNames.get(host.hostId) ?? host.displayName,
+    }));
+  }, [liveHosts, presetOnly, presets.hosts, subjectsByHost]);
   const [searchParams, setSearchParams] = useSearchParams();
   const [selectedHostIds, setSelectedHostIds] = useState<string[]>([]);
   const [divergingOnly, setDivergingOnly] = useState(false);
@@ -298,9 +373,15 @@ export function HostConfigCompareView({
   // Every selectable id (real + preset). URL / stored selections reconcile
   // against this so a chosen preset column survives a reload.
   const knownHostIds = useMemo(() => hosts.map((host) => host.hostId), [hosts]);
+  // A column of "Not yet tested" answers nothing, so both surfaces hide rows
+  // no published host has measured. The signed-in matrix adds only the
+  // temporarily retained protocol-version row.
   const compareFields = useMemo(
-    () => (presetOnly ? PUBLIC_CAN_I_USE_FIELDS : HOST_CONFIG_FIELDS),
-    [presetOnly]
+    () =>
+      presetOnly
+        ? publicCaniuseFieldsWithData(presets.subjects)
+        : clientCompareFieldsWithData(presets.subjects),
+    [presetOnly, presets.subjects]
   );
   // Base for the per-column "Verify against your server" deep-link. In dev the
   // caniuse surface and the hosted app share an origin, so stay on it (localhost)
@@ -329,12 +410,19 @@ export function HostConfigCompareView({
       : parseHostsParam(searchParams.get(HOSTS_QUERY_PARAM));
     urlConsumedRef.current = true;
     setSelectedHostIds((previous) => {
+      // Point any selected preset at the live host that shadowed it BEFORE
+      // reconciling. A dropped preset is no longer selectable, so the default
+      // ChatGPT + Claude pair — or a selection stored before the user created
+      // the client — would otherwise reconcile the column away entirely.
+      // Owning the real client should upgrade that column, not delete it.
       const next = resolveInitialHostCompareSelection({
         projectId: selectionScopeId,
         liveHostIds: defaultHostIds,
         knownHostIds,
         previousSelection: previous,
         urlSelection,
+        remapSelection: (ids) =>
+          remapShadowedSelection(ids, liveHosts, subjectsByHost),
       });
       return sameStringArray(previous, next) ? previous : next;
     });
@@ -342,10 +430,12 @@ export function HostConfigCompareView({
     defaultHostIds,
     knownHostIds,
     listLoading,
+    liveHosts,
     presetOnly,
     projectId,
     searchParams,
     selectionScopeId,
+    subjectsByHost,
   ]);
 
   useEffect(() => {
@@ -522,7 +612,7 @@ export function HostConfigCompareView({
         orderedSubjects.map((s) => [s.hostId, s.hostName] as const),
       );
       const hostNameById = new Map(
-        hosts.map((h) => [h.hostId, h.name] as const),
+        hosts.map((h) => [h.hostId, clientDisplayName(h)] as const),
       );
       return buildHostCompareSnapshot({
         totalSelectableHosts: knownHostIds.length,
@@ -566,7 +656,7 @@ export function HostConfigCompareView({
           <HostConfigFetcher
             key={host.hostId}
             hostId={host.hostId}
-            hostName={host.name}
+            hostName={clientDisplayName(host)}
             hostConfigId={host.hostConfigId}
             isAuthenticated={isAuthenticated}
             onLoaded={reportSubject}
@@ -574,11 +664,15 @@ export function HostConfigCompareView({
         );
       })}
 
+      {/* Flex column: the matrix card below sizes itself with `flex-1` to
+          whatever height is actually left below the search + selector rows,
+          rather than guessing at a fixed viewport fraction. Still scrolls, so
+          a short viewport (or list view) just overflows this div instead. */}
       <div
         className={cn(
           presetOnly
-            ? "min-h-0 min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
-            : "min-h-0 flex-1 overflow-auto p-4 md:p-8"
+            ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-3 pb-3 pt-1 sm:px-4 sm:pb-4 sm:pt-2 md:px-6 md:pb-6 md:pt-2"
+            : "flex min-h-0 flex-1 flex-col overflow-auto p-4 md:p-8"
         )}
       >
         {listLoading ? (
@@ -630,9 +724,6 @@ export function HostConfigCompareView({
               disableListView={showDescriptions}
               divergingOnly={divergingOnly}
               onDivergingOnlyChange={setDivergingOnly}
-              supportFilter={supportFilter}
-              onSupportFilterChange={setSupportFilter}
-              supportFiltersDisabled={!hasFieldSearchQuery}
               showDescriptions={showDescriptions}
               onShowDescriptionsChange={handleShowDescriptionsChange}
               descriptionsDisabled={viewMode === "list"}
@@ -657,20 +748,29 @@ export function HostConfigCompareView({
                   </div>
                 )}
                 {viewMode === "table" ? (
-                  <HostConfigComparisonMatrix
-                    subjects={orderedSubjects}
-                    fields={compareFields}
-                    divergingOnly={divergingOnly}
-                    supportFilter={effectiveSupportFilter}
-                    searchQuery={fieldSearchQuery}
-                    showDescriptions={showDescriptions}
-                    themeMode={themeMode}
-                    mobileOptimized={presetOnly}
-                    onRemoveHost={
-                      selectedHostIdSet.size > 1 ? handleToggleHost : undefined
-                    }
-                    verifyBaseUrl={verifyBaseUrl}
-                  />
+                  // Table only: this div (not the matrix) claims the height
+                  // left below the search/selector rows via flex-1, and the
+                  // matrix caps itself at it with max-h-full instead of
+                  // force-filling it. Wrapping list view too would give the
+                  // grid a definite height it overflows, and the container's
+                  // bottom padding stops clearing the last card.
+                  <div className="min-h-0 flex-1">
+                    <HostConfigComparisonMatrix
+                      subjects={orderedSubjects}
+                      fields={compareFields}
+                      divergingOnly={divergingOnly}
+                      supportFilter={effectiveSupportFilter}
+                      searchQuery={fieldSearchQuery}
+                      showDescriptions={showDescriptions}
+                      themeMode={themeMode}
+                      mobileOptimized={presetOnly}
+                      onRemoveHost={
+                        selectedHostIdSet.size > 1 ? handleToggleHost : undefined
+                      }
+                      verifyBaseUrl={verifyBaseUrl}
+                      disabledVerifyTemplateIds={disabledVerifyTemplateIds}
+                    />
+                  </div>
                 ) : (
                   <HostCapabilityListView
                     subjects={orderedSubjects}
@@ -989,7 +1089,7 @@ function HostConfigFetcher({
     if (!host) return;
     onLoaded(hostId, {
       hostId,
-      hostName: host.name ?? hostName,
+      hostName,
       hostStyle: host.config.hostStyle,
       configHashShort: hostConfigId.slice(-6),
       config: host.config,

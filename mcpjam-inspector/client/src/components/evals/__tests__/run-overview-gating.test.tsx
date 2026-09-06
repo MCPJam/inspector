@@ -83,6 +83,42 @@ describe("RunOverview canDeleteRuns", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("disables batch delete while the selection holds a run it cannot delete", async () => {
+    const user = userEvent.setup();
+    const theirs = { ...baseRun, _id: "run-2", runNumber: 2, createdBy: "u2" };
+
+    renderWithProviders(
+      <RunOverview
+        {...baseProps}
+        runs={[baseRun, theirs]}
+        canDeleteRuns
+        canDeleteRun={(run) => run.createdBy === "u1"}
+      />,
+    );
+
+    const [mine, notMine] = screen.getAllByRole("checkbox", {
+      name: /Select run/i,
+    });
+
+    await user.click(mine);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeEnabled();
+
+    // Adding someone else's run disables the action rather than quietly
+    // deleting the half of the selection it is allowed to.
+    await user.click(notMine);
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+  });
+
+  it("leaves batch delete enabled when no per-run predicate is supplied", () => {
+    // The local/playground case: no membership to rank, so every run goes.
+    renderWithProviders(
+      <RunOverview {...baseProps} runs={[baseRun]} canDeleteRuns />,
+    );
+    expect(
+      screen.getByRole("checkbox", { name: /Select run/i }),
+    ).toBeInTheDocument();
+  });
+
   it("hides the Runs/Cases selector when hideViewModeSelect is set", () => {
     renderWithProviders(<RunOverview {...baseProps} hideViewModeSelect />);
     expect(screen.queryByRole("combobox")).not.toBeInTheDocument();

@@ -23,6 +23,7 @@
     "| where event == 'http.request.completed'",
     "| where toint(statusCode) >= 400 and toint(statusCode) < 500",
     "| where tostring(environment) in ('prod','production')",
+    "| where isnull(credentialPresented) or credentialPresented == true",
     "| summarize Count = count()"
   ],
   "description": [
@@ -30,7 +31,11 @@
     "",
     "WHY THIS EXISTS: the 5xx rate monitor is deliberately 5xx-only, so without this the entire 4xx surface is unwatched. That matters because classifyRuntimeError checks isUnauthorized401 before every other branch, so MCP auth failures carrying a clean 401 land on 'http.request.completed' and never reach 'http.request.failed'. Measured on the incident route: 2,328 401s vs 4,932 500s on /api/web/tools/list.",
     "",
-    "WHY THIS THRESHOLD: measured hourly 4xx over 30d is p50=12, p95=62, p99=89, max=156. 200/hr is ~2.2x p99 and above the observed maximum. Steady auth churn (8,373 401s across 520 orgs in 30d) cannot reach it; a genuine auth or rate-limit storm can.",
+    "WHY NO-CREDENTIAL 4xx ARE EXCLUDED: `bearerAuthMiddleware` sets `credentialPresented` on every route it fronts. False means the caller sent no `Authorization` header at all — the one 4xx class that says nothing about our health, because anything that walks the public API generates it in bulk. On 2026-08-18 a contracted Oneleet sweep (54,105 requests across every mcpjam subdomain, self-identified via `x-oneleet-scan`) put ~600 of these on /api/v1/* and tripped this monitor at 231. Nothing was broken. A 401 from a caller who DID present something is a different animal and still counts.",
+    "",
+    "NULL IS NOT FALSE: routes outside `bearerAuthMiddleware` never set the field, so the filter keeps nulls. Reading a missing field as \"no credential\" would silently drop every 4xx on the unauthenticated routes — the same populated-field trap `orgId` already fell into for the whole public API.",
+    "",
+    "WHY THIS THRESHOLD: measured hourly 4xx over 30d is p50=12, p95=62, p99=89, max=156. 200/hr is ~2.2x p99 and above the observed maximum. Steady auth churn (8,373 401s across 520 orgs in 30d) cannot reach it; a genuine auth or rate-limit storm can. NOTE: those percentiles were measured BEFORE the no-credential exclusion below, on a population that included scan traffic. 200/hr is therefore a more conservative bar now than when it was set; re-measure before lowering it.",
     "",
     "WHY WARN, NOT PAGE: a 4xx is a declared client outcome. Only an abnormal RATE of one is evidence of anything, and the classes worth paging on are already covered by the per-class spike monitor. Revisit this tier only if a real incident is found to have announced itself here first.",
     "",

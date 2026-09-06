@@ -156,15 +156,49 @@ describe("UserTestingOverviewPanel", () => {
   // The empty state carries the only explanation of what a scenario IS, and it
   // read as a parenthetical buried inside a long clause. One dash can be
   // deliberate; two in one sentence means the sentence wanted to be two.
-  it("explains a scenario without a double-dash parenthetical", () => {
+  it("explains a study in the frame's words, without a double-dash parenthetical", () => {
     render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
 
     const empty = screen.getByTestId("user-testing-overview-empty");
     const copy = empty.textContent ?? "";
 
-    expect(copy).toContain("a link you can hand to a real person");
+    expect(copy).toContain("Create your first study");
+    expect(copy).toContain("A study starts with a link you send");
+    expect(copy).toContain("their sessions are recorded here");
     // No table placeholders live in the empty state, so every dash here is prose.
     expect(copy.split("—").length - 1).toBeLessThan(2);
+  });
+
+  it("fills the panel so it can centre in it, like the Swarm empty state", () => {
+    // jsdom has no layout, so the class is the only observable: without a
+    // height of its own the box is content-tall and `justify-center` does
+    // nothing, which left the notice pinned to the top of the panel.
+    render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
+
+    const empty = screen.getByTestId("user-testing-overview-empty");
+    expect(empty.className).toContain("min-h-full");
+    expect(empty.className).toContain("justify-center");
+  });
+
+  it("leads with the study illustration, not a persona avatar", () => {
+    // BB-125's own bitmap, now that the asset exists. A persona avatar reads as
+    // "a user"; this page is about a study.
+    render(<UserTestingOverviewPanel {...defaults} scenarios={[]} />);
+
+    const art = screen.getByTestId("user-testing-empty-illustration");
+    expect(art).toBeVisible();
+    expect(art).toHaveAttribute("src", "/user-testing-empty.png");
+    // h-28 is 112px: twice the height of the Swarm empty state's characters
+    // (PersonaPixelAvatar "lg" = 19 cells x 2.75px + 4 = 56px). That page
+    // runs four of them side by side, so matching its HEIGHT left this one
+    // reading as a quarter of the picture — the two are matched by area.
+    expect(art.className).toContain("h-28");
+    // Decorative: the heading and body below already say what this is, so a
+    // screen reader announcing the art too would only repeat them.
+    expect(art).toHaveAttribute("alt", "");
+    expect(
+      screen.queryByTestId("persona-pixel-avatar")
+    ).not.toBeInTheDocument();
   });
 
   it("shows a skeleton while the list is loading, not an empty state", () => {

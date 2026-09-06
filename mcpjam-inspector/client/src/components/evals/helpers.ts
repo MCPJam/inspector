@@ -12,6 +12,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -340,16 +341,28 @@ export function buildHostNamesById(
   attachments:
     | Array<{ namedHostId: string; hostName: string | null }>
     | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined
+  projectHosts:
+    | Array<{ hostId: string; name: string; displayName?: string }>
+    | undefined
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
+  const projectHostById = new Map(
+    (projectHosts ?? []).map((host) => [host.hostId, host]),
+  );
   for (const host of projectHosts ?? []) {
-    map.set(host.hostId, host.name);
+    map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
+    const projectHost = projectHostById.get(attachment.namedHostId);
+    const attachmentMatchesRawName =
+      projectHost !== undefined &&
+      attachment.hostName?.trim().toLowerCase() ===
+        projectHost.name.trim().toLowerCase();
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
+      projectHost && (attachment.hostName === null || attachmentMatchesRawName)
+        ? clientDisplayName(projectHost)
+        : attachment.hostName ?? map.get(attachment.namedHostId) ?? null
     );
   }
   return map;
@@ -680,10 +693,14 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "border-l-warning/50";
     case RESULT_STATUS.CANCELLED:
       return "border-l-muted";
     case "mixed":
+    // Amber, alongside the other "no verdict" states: an unmeasurable run is
+    // not a failing one.
+    case "inconclusive":
       return "border-l-warning/50";
     default:
       return "border-l-muted-foreground/50";
@@ -702,6 +719,7 @@ export function evalStatusMiniBarClasses(result: string): string {
       return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/50";
@@ -727,6 +745,9 @@ export function evalOverviewEntryLeftBorderClass(
   if (r.result === "failed") {
     return evalStatusLeftBorderClasses(RESULT_STATUS.FAILED);
   }
+  if (r.result === "inconclusive") {
+    return evalStatusLeftBorderClasses("inconclusive");
+  }
   return "border-l-muted-foreground/35";
 }
 
@@ -742,6 +763,7 @@ export function evalOverviewEntryMiniBarClass(
     return "bg-success/50";
   }
   if (r.result === "failed") return "bg-destructive/50";
+  if (r.result === "inconclusive") return "bg-warning/50";
   return "bg-muted-foreground/50";
 }
 
@@ -779,6 +801,8 @@ export function evalOverviewEntryOutcomeTitle(
   }
   if (r.result === "passed") return "Last run passed";
   if (r.result === "failed") return "Last run failed";
+  // Deliberately not "failed": the last run did not measure enough to decide.
+  if (r.result === "inconclusive") return "Last run inconclusive";
   return `Last run: ${r.status}`;
 }
 
@@ -790,6 +814,7 @@ export function evalOverviewEntryLastRunStatusLabel(
   if (!r) return "No runs yet";
   if (r.status === "running" || r.status === "pending") return "Running";
   if (r.result === "passed") return "Passed";
+  if (r.result === "inconclusive") return "Inconclusive";
   if (r.result === "failed" || r.status === "failed") return "Failed";
   if (r.result === "cancelled" || r.status === "cancelled") {
     return "Cancelled";
@@ -808,6 +833,7 @@ export function evalOverviewEntryLastRunStatusClass(
     return "text-warning";
   }
   if (r.result === "passed") return "text-success";
+  if (r.result === "inconclusive") return "text-warning";
   if (r.result === "failed" || r.status === "failed") {
     return "text-destructive";
   }
@@ -924,13 +950,16 @@ export const formatters = {
 
 /**
  * Order runs for commit drilldown: failed first, then running/pending, then
- * passed, then other (same ordering as the former in-panel suite list).
+ * inconclusive, then passed, then other (same ordering as the former in-panel
+ * suite list, with the undecided runs ahead of the green ones because they are
+ * the ones still asking for attention).
  */
 export function orderCommitGroupRunsByOutcome(
   runs: EvalSuiteRun[]
 ): EvalSuiteRun[] {
   const failed: EvalSuiteRun[] = [];
   const running: EvalSuiteRun[] = [];
+  const inconclusive: EvalSuiteRun[] = [];
   const passed: EvalSuiteRun[] = [];
   const notRun: EvalSuiteRun[] = [];
 
@@ -939,13 +968,15 @@ export function orderCommitGroupRunsByOutcome(
       running.push(run);
     } else if (run.result === "failed") {
       failed.push(run);
+    } else if (run.result === "inconclusive") {
+      inconclusive.push(run);
     } else if (run.result === "passed") {
       passed.push(run);
     } else {
       notRun.push(run);
     }
   }
-  return [...failed, ...running, ...passed, ...notRun];
+  return [...failed, ...running, ...inconclusive, ...passed, ...notRun];
 }
 
 /**
@@ -1010,7 +1041,13 @@ export function groupRunsByCommit(
   const groups: CommitGroup[] = [];
   for (const [key, { runs, suiteMap }] of buckets) {
     const isManual = key.startsWith("__manual__");
-    const summary = { total: runs.length, passed: 0, failed: 0, running: 0 };
+    const summary = {
+      total: runs.length,
+      passed: 0,
+      failed: 0,
+      running: 0,
+      inconclusive: 0,
+    };
     let latestTimestamp = 0;
     let branch: string | null = null;
 
@@ -1018,16 +1055,29 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
+      else if (run.result === "inconclusive") summary.inconclusive++;
     }
 
     let status: CommitGroup["status"];
     if (summary.running > 0) status = "running";
     else if (summary.failed > 0 && summary.passed > 0) status = "mixed";
     else if (summary.failed > 0) status = "failed";
+    // Nothing failed AND nothing passed, but something was undecided: the
+    // commit has no verdict. Falling through to `passed` here is how an
+    // unmeasurable commit gets a green rail it never earned.
+    else if (summary.inconclusive > 0 && summary.passed === 0)
+      status = "inconclusive";
     else status = "passed";
 
     // For manual runs, use a unique ID so each gets its own page

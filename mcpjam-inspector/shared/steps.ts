@@ -1,11 +1,25 @@
 /**
  * Unified test-step model — the authored unit of an MCP-app synthetic test.
  *
- * A test case is an ORDERED `TestStep[]` (Datadog-Synthetics-style): you record
- * a scenario by interacting with the live app, and assertions are first-class
- * steps interleaved inline. This REPLACES the old per-turn model
- * (`PromptTurn` with prompt/expectedToolCalls/pinnedToolCall/widgetChecks/checks
- * — which fused actions and assertions onto one object).
+ * ── The union itself now lives in the SDK ────────────────────────────────────
+ *
+ * `TestStep` and everything that defines it (the four step schemas, the
+ * interact actions, the widget assertions, the caps and the narrowing helpers)
+ * were RELOCATED to `@mcpjam/sdk/contract` — `sdk/src/contract/steps.ts` — and
+ * are re-exported below. Every existing importer of `shared/steps` is
+ * unchanged; there is still exactly ONE definition, it just moved repos-of-
+ * record from this app to the published SDK.
+ *
+ * Why it had to move: the step union is part of the evaluation CONTRACT (it is
+ * what a suite file carries and what the hosted API accepts), and the SDK's
+ * suite-file schema reuses it. The SDK cannot import this directory — the
+ * dependency direction is shared → sdk, never the reverse — so the alternative
+ * was a hand-mirrored copy inside the SDK, i.e. a THIRD sibling beside this
+ * file and the Convex validator. A re-export leaves one definition.
+ *
+ * What still lives here: the UI copy (`WIDGET_ASSERTION_LABELS`), the
+ * case-level selectors and derived display projections, and the legacy
+ * `PromptTurn` bridge — none of which are contract, all of which are this app's.
  *
  * The four authored kinds:
  *   - `prompt`   — a user message; the model decides which tools to call.
@@ -22,244 +36,80 @@
  *
  * Mirrored by the Convex validator in mcpjam-backend `convex/lib/steps.ts`
  * (same hand-mirroring arrangement as `scriptedSteps` / `probeConfig` / the
- * predicate validators) — edit both in the same PR.
+ * predicate validators) — edit the SDK module and the mirror in the same PR.
  */
 
-import { z } from "zod";
-import { predicateSchema, type Predicate } from "@mcpjam/sdk/predicates";
+import type { z } from "zod";
+import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
-  elementLocatorSchema,
-  MAX_SCRIPTED_STEP_TEXT_CHARS,
-  MAX_SCRIPTED_WAIT_MS,
-  type ScriptedStep,
-  type StepAssertion,
-  type ScriptedWidgetCheck,
+  isAssertStep,
+  isPromptStep,
+  isToolCallStep,
+  isWidgetAssertion,
+  testStepSchema,
+  type InteractAction,
+  type TestStep,
+  type ToolCallStep,
+  type WidgetAssertion,
+} from "@mcpjam/sdk/contract";
+import type {
+  ScriptedStep,
+  StepAssertion,
+  ScriptedWidgetCheck,
 } from "./scripted-steps";
-import {
-  MAX_PROBE_ARGS_CHARS,
-  MAX_PROBE_RENDER_TIMEOUT_MS,
-  type ProbeConfig,
-} from "./probe-config";
+import type { ProbeConfig } from "./probe-config";
 
-export const TEST_STEP_KINDS = [
-  "prompt",
-  "toolCall",
-  "interact",
-  "assert",
-] as const;
-export type TestStepKind = (typeof TEST_STEP_KINDS)[number];
-
-// ── prompt ──────────────────────────────────────────────────────────────────
-export const promptStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("prompt"),
-  prompt: z.string(),
-});
-export type PromptStep = z.infer<typeof promptStepSchema>;
-
-// ── toolCall (deterministic, = old pinnedToolCall/ProbeConfig) ────────────────
-const toolCallArgumentsSchema = z.record(z.string(), z.unknown()).refine(
-  (v) => {
-    try {
-      return JSON.stringify(v).length <= MAX_PROBE_ARGS_CHARS;
-    } catch {
-      return false;
-    }
-  },
-  {
-    message: `arguments must be ≤ ${MAX_PROBE_ARGS_CHARS} characters when serialized`,
-  }
-);
-
-export const toolCallStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("toolCall"),
-  // `serverId` is the stable project-server reference (resolved against the run
-  // environment's serverBindings at execution time); `serverName` is the display
-  // fallback. Id wins when both are present.
-  serverId: z.string().min(1).optional(),
-  serverName: z.string().min(1),
-  toolName: z.string().min(1),
-  arguments: toolCallArgumentsSchema,
-  /** Per-call render budget override (ms); harness default applies when absent. */
-  renderTimeoutMs: z
-    .number()
-    .int()
-    .positive()
-    .max(MAX_PROBE_RENDER_TIMEOUT_MS)
-    .optional(),
-});
-export type ToolCallStep = z.infer<typeof toolCallStepSchema>;
-
-// ── interact (PURE actions — never an assertion) ──────────────────────────────
-export const interactActionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("click"),
-    target: elementLocatorSchema,
-    clickType: z.enum(["left", "double", "right"]).optional(),
-  }),
-  z.object({
-    kind: z.literal("type"),
-    target: elementLocatorSchema,
-    text: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({ kind: z.literal("key"), key: z.string().min(1) }),
-  z.object({
-    kind: z.literal("scroll"),
-    direction: z.enum(["up", "down"]),
-    amount: z.number().int().positive().optional(),
-  }),
-  z.object({
-    kind: z.literal("wait"),
-    ms: z.number().int().positive().max(MAX_SCRIPTED_WAIT_MS),
-  }),
-]);
-export type InteractAction = z.infer<typeof interactActionSchema>;
-
-export const interactStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("interact"),
-  /** The widget this action targets (the tool that rendered it). */
-  toolName: z.string().min(1),
-  action: interactActionSchema,
-});
-export type InteractStep = z.infer<typeof interactStepSchema>;
-
-// ── assert ────────────────────────────────────────────────────────────────────
-/**
- * DOM/widget-level assertions evaluated against the live widget by the headless
- * harness (NOT the transcript predicate engine). `toolName` is always the WIDGET
- * being asserted against. `widgetToolCalled.calledToolName` is the tool the
- * widget invoked (distinct from the widget's own tool).
- *
- * ── Why this is a SEPARATE union from `Predicate`, and stays one ──────────────
- *
- * The dividing line is what the assertion is evaluated AGAINST, and therefore
- * what can re-run it later:
- *
- *  - A `Predicate` is evaluated against a persisted TRANSCRIPT. Anything
- *    holding one — the eval runner, the swarm checks runner, an on-demand
- *    re-grade months later — can re-derive the same verdict from stored data
- *    by calling the SDK's pure evaluator. That is why swarm rubrics, whole-run
- *    checks and the per-session Checks panel are all predicate-shaped.
- *  - A `WidgetAssertion` is evaluated against a LIVE DOM inside the browser
- *    harness, at the moment the step runs. Nothing is persisted that could
- *    reproduce it: the transcript records that a widget rendered, not what was
- *    on screen inside it. Re-running the assertion means re-running the
- *    session.
- *
- * That is the whole reason `widgetRendered` is a `Predicate` while
- * `textVisible` is not, even though both sound like claims about a view.
- * "Did the host mount this widget?" is answered by a render observation the
- * transcript already carries; "is the word 'Refunded' visible in it?" is
- * answered only by looking at the live document.
- *
- * The consequence is not cosmetic: swarms have no `TestStep[]` and no browser
- * harness, so they cannot author or evaluate widget assertions at all. Merging
- * the two unions would put kinds in the swarm rubric menu that can never
- * produce a verdict there.
- *
- * Re-evaluate this split if a persisted-DOM-snapshot capability lands (a
- * serialized document per render observation, not just a screenshot). At that
- * point widget assertions become transcript-replayable and the argument for
- * two vocabularies goes away.
- */
-export const widgetAssertionSchema = z.discriminatedUnion("kind", [
-  z.object({
-    kind: z.literal("textVisible"),
-    toolName: z.string().min(1),
-    text: z.string().min(1).max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({
-    kind: z.literal("elementVisible"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-  }),
-  z.object({
-    kind: z.literal("elementHidden"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-  }),
-  z.object({
-    kind: z.literal("inputValue"),
-    toolName: z.string().min(1),
-    target: elementLocatorSchema,
-    equals: z.string().max(MAX_SCRIPTED_STEP_TEXT_CHARS),
-  }),
-  z.object({
-    kind: z.literal("widgetToolCalled"),
-    toolName: z.string().min(1),
-    calledToolName: z.string().min(1),
-  }),
-]);
-export type WidgetAssertion = z.infer<typeof widgetAssertionSchema>;
+// ── the canonical step union, re-exported ────────────────────────────────────
+export {
+  MAX_TEST_STEPS,
+  TEST_STEP_KINDS,
+  assertStepSchema,
+  interactActionSchema,
+  interactStepSchema,
+  isAssertStep,
+  isInteractStep,
+  isPromptStep,
+  isToolCallStep,
+  isWidgetAssertion,
+  promptStepSchema,
+  stepAssertionPayloadSchema,
+  stepsSchema,
+  testStepSchema,
+  toolCallStepSchema,
+  widgetAssertionSchema,
+} from "@mcpjam/sdk/contract";
+export type {
+  AssertStep,
+  InteractAction,
+  InteractStep,
+  PromptStep,
+  StepAssertionPayload,
+  TestStep,
+  TestStepKind,
+  ToolCallStep,
+  WidgetAssertion,
+} from "@mcpjam/sdk/contract";
 
 /**
  * The ONE human label per widget-assertion kind — the DOM-level counterpart of
  * `PREDICATE_KIND_LABELS` in `shared/predicate-kinds.ts`.
  *
- * Lives here, beside the union it names, so a new `kind` cannot be added
- * without the exhaustive `Record` forcing a label for it. Every authoring
- * surface (the step-list sub-editor, the Add Step picker catalog, the
+ * Presentation, not contract, which is why it stayed behind when the union
+ * moved to the SDK. It lives beside the re-exported union so a new `kind`
+ * cannot be added without the exhaustive `Record` forcing a label for it. Every
+ * authoring surface (the step-list sub-editor, the Add Step picker catalog, the
  * click-to-assert chooser) imports these rather than keeping private copies —
  * three copies is how "Input value equals" and "Input equals…" ended up on
  * screen for the same assertion.
  */
-export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> = {
-  textVisible: "Text visible",
-  elementVisible: "Element visible",
-  elementHidden: "Element hidden",
-  inputValue: "Input value equals",
-  widgetToolCalled: "View called tool",
-};
-
-/**
- * An assert step's payload is EITHER a model-level `Predicate` (keyed on `type`)
- * OR a DOM-level `WidgetAssertion` (keyed on `kind`). Disjoint discriminator
- * keys, so a plain union resolves unambiguously.
- */
-export const stepAssertionPayloadSchema = z.union([
-  widgetAssertionSchema,
-  predicateSchema,
-]);
-export type StepAssertionPayload = WidgetAssertion | Predicate;
-
-export const assertStepSchema = z.object({
-  id: z.string(),
-  kind: z.literal("assert"),
-  assertion: stepAssertionPayloadSchema,
-});
-export type AssertStep = z.infer<typeof assertStepSchema>;
-
-// ── the union ─────────────────────────────────────────────────────────────────
-export const testStepSchema = z.discriminatedUnion("kind", [
-  promptStepSchema,
-  toolCallStepSchema,
-  interactStepSchema,
-  assertStepSchema,
-]);
-export type TestStep = z.infer<typeof testStepSchema>;
-
-/** Max steps per case — keeps snapshotted rows bounded. */
-export const MAX_TEST_STEPS = 200;
-export const stepsSchema = z.array(testStepSchema).max(MAX_TEST_STEPS);
-
-// ── narrowing helpers ─────────────────────────────────────────────────────────
-export const isPromptStep = (s: TestStep): s is PromptStep =>
-  s.kind === "prompt";
-export const isToolCallStep = (s: TestStep): s is ToolCallStep =>
-  s.kind === "toolCall";
-export const isInteractStep = (s: TestStep): s is InteractStep =>
-  s.kind === "interact";
-export const isAssertStep = (s: TestStep): s is AssertStep =>
-  s.kind === "assert";
-
-/** True when `assertion` is a DOM-level WidgetAssertion (vs a transcript Predicate). */
-export function isWidgetAssertion(
-  a: StepAssertionPayload
-): a is WidgetAssertion {
-  return typeof (a as { kind?: unknown }).kind === "string";
-}
+export const WIDGET_ASSERTION_LABELS: Record<WidgetAssertion["kind"], string> =
+  {
+    textVisible: "Text visible",
+    elementVisible: "Element visible",
+    elementHidden: "Element hidden",
+    inputValue: "Input value equals",
+    widgetToolCalled: "View called tool",
+  };
 
 // ── case-level selectors (replace isPinnedTurn / isPinnedOnly / countModelTurns) ─
 type MaybeStep = { kind?: unknown };
@@ -285,16 +135,117 @@ export function isModelFree(steps: unknown): boolean {
 
 // ── normalization ─────────────────────────────────────────────────────────────
 /**
+ * Collect every `unrecognized_keys` issue in an error tree, including the ones
+ * nested inside union branches.
+ *
+ * Union branches disagree by construction — an `assert` step's payload is
+ * matched against both the (strict) widget-assertion union and the (open)
+ * predicate union — so a key one branch calls unrecognized may be perfectly
+ * declared by another. That is safe here ONLY because the caller re-validates
+ * after stripping and keeps nothing that fails: an over-eager strip produces a
+ * step that no longer parses, which is dropped exactly as it would have been.
+ */
+function unrecognizedKeyIssues(
+  issues: readonly z.core.$ZodIssue[],
+  basePath: PropertyKey[] = []
+): Array<{ path: PropertyKey[]; keys: string[] }> {
+  const found: Array<{ path: PropertyKey[]; keys: string[] }> = [];
+  for (const issue of issues) {
+    // A union branch reports paths RELATIVE to that branch, so the enclosing
+    // `invalid_union`'s own path has to be carried down. Without it every
+    // nested strip lands at the wrong depth and — being re-validated — the
+    // step is silently dropped anyway, which is the bug this whole function
+    // exists to prevent.
+    if (issue.code === "unrecognized_keys") {
+      found.push({ path: [...basePath, ...issue.path], keys: [...issue.keys] });
+    } else if (issue.code === "invalid_union") {
+      for (const branch of issue.errors) {
+        found.push(
+          ...unrecognizedKeyIssues(branch, [...basePath, ...issue.path])
+        );
+      }
+    }
+  }
+  return found;
+}
+
+/**
+ * Delete `keys` from the object at `path`, in a structural clone of `value`.
+ *
+ * Returns `undefined` when the value cannot be cloned. `structuredClone`
+ * throws on a function, a symbol or a class instance it does not know — and
+ * the values under UNRECOGNIZED keys are exactly the ones nothing has
+ * validated, so that is reachable (a client draft holding an event handler,
+ * say). Letting it escape would take down the whole array over one bad step,
+ * which is worse than the drop it replaced.
+ */
+function withoutKeys(
+  value: unknown,
+  removals: Array<{ path: PropertyKey[]; keys: string[] }>
+): unknown {
+  let clone: unknown;
+  try {
+    clone = structuredClone(value);
+  } catch {
+    return undefined;
+  }
+  for (const { path, keys } of removals) {
+    let target: unknown = clone;
+    for (const segment of path) {
+      if (!target || typeof target !== "object") {
+        target = undefined;
+        break;
+      }
+      target = (target as Record<PropertyKey, unknown>)[segment];
+    }
+    if (!target || typeof target !== "object") continue;
+    for (const key of keys) {
+      delete (target as Record<string, unknown>)[key];
+    }
+  }
+  return clone;
+}
+
+/**
  * Structurally normalize a steps array (round-trip shape only; semantic
  * validation is the route Zod boundary + Convex mutation's job). Drops anything
  * that isn't a known step kind.
+ *
+ * ── Why this STRIPS unknown keys rather than dropping the step ───────────────
+ *
+ * The step union is `.strict()`, so a step carrying an undeclared key does not
+ * parse. That strictness is aimed at the CONTRACT boundaries — the route Zod
+ * schemas and the Convex `v.object` validators — where an importer's mis-mapped
+ * field must fail loudly rather than vanish.
+ *
+ * This function is not one of those boundaries. It is the shared normalizer on
+ * the editor load path, the execution paths, and the LLM case-GENERATION path
+ * (`server/routes/v1/evals.ts`), where the input is model output that nobody
+ * validated. Letting strictness reach here would turn "the generator invented a
+ * field" into "the whole step disappeared", and a generated case silently
+ * losing a prompt is a worse outcome than the stray key ever was.
+ *
+ * So: parse; if the only complaint is unrecognized keys, remove exactly those
+ * and re-validate. Re-validating is what makes this safe — nothing is kept
+ * unless it parses cleanly afterwards, so a step that was broken for any other
+ * reason is dropped exactly as before, and the strict boundaries above are
+ * untouched.
  */
 export function normalizeSteps(value: unknown): TestStep[] {
   if (!Array.isArray(value)) return [];
   const out: TestStep[] = [];
   for (let i = 0; i < value.length; i++) {
     const parsed = testStepSchema.safeParse(value[i]);
-    if (parsed.success) out.push(parsed.data);
+    if (parsed.success) {
+      out.push(parsed.data);
+      continue;
+    }
+    const removals = unrecognizedKeyIssues(parsed.error.issues);
+    if (removals.length === 0) continue;
+    const cleaned = withoutKeys(value[i], removals);
+    if (cleaned === undefined) continue;
+    const retry = testStepSchema.safeParse(cleaned);
+    if (retry.success) out.push(retry.data);
   }
   return out;
 }

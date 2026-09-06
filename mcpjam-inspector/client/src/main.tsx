@@ -10,11 +10,14 @@ import { ConvexReactClient } from "convex/react";
 import { ConvexProviderWithAuthKit } from "@convex-dev/workos";
 import { captureSentryException, initSentry } from "./lib/sentry.js";
 import { reportCaught } from "./lib/error-reporting";
+import { handleWorkosRefreshFailure } from "./lib/auth/workos-refresh-failure";
 import { ErrorBoundary } from "./components/ui/error-boundary";
 import { IframeRouterError } from "./components/IframeRouterError.jsx";
 import { initializeSessionToken } from "./lib/session-token.js";
+import { resolveBootstrapErrorScreen } from "./components/SessionBootstrapError";
 import OAuthDesktopReturnNotice from "./components/oauth/OAuthDesktopReturnNotice";
 import { HOSTED_MODE, SANDBOX_ORIGIN } from "./lib/config";
+import { detectSandboxOriginFault } from "./lib/sandbox-origin-fault";
 import {
   buildElectronHostedAuthCallbackUrl,
   resolveWorkosRedirectUri,
@@ -33,11 +36,18 @@ import { TESTER_LINK_RUNTIME_PATH_PATTERN } from "./lib/tester-link-path";
 import OAuthDebugCallback from "./components/oauth/OAuthDebugCallback";
 import { ServerConnectionHandoff } from "./components/server-connections/ServerConnectionHandoff";
 import {
+  PERMALINK_SIGN_IN_STATE_KEY,
+  takePermalinkSignInReturn,
+} from "./lib/permalink-signin-return";
+import {
   callbackMatchesPending,
+  HANDOFF_SIGN_IN_STATE_KEY,
   matchHandoffRoute,
   readCallbackParams,
   readPendingAuthorization,
+  takeHandoffSignInReturn,
 } from "./lib/server-connection-handoff";
+import { PlanLimitDialogPreview } from "./components/billing/PlanLimitDialogPreview";
 import {
   getInitialThemeMode,
   getInitialThemePreset,
@@ -55,55 +65,16 @@ import {
 // Initialize Sentry before React mounts
 initSentry();
 
-/**
- * A hosted deploy with no sandbox origin is a SECURITY REGRESSION, not a
- * config nicety.
- *
- * `VITE_MCPJAM_SANDBOX_ORIGIN` is what puts MCP Apps widgets on an origin that
- * shares no cookies with the host app. Unset, the iframe falls back to
- * same-origin and the isolation the sandbox exists to provide is simply gone.
- *
- * `widget-react` already warns — but it warns from inside a shared package, at
- * RENDER time, on a `console.warn` nobody is watching, and only for a user who
- * happens to open a widget. Reporting it here instead means it is noticed at
- * BOOT, once, by whoever deployed it, through the channel that pages someone.
- *
- * Deliberately non-fatal: refusing to start would take the whole app down over
- * a widget-isolation setting, which is a worse outcome than a loud deploy.
- *
- * SET TO THE APP'S OWN ORIGIN counts as unset. A configured value that equals
- * `window.location.origin` produces exactly the same same-origin iframe as no
- * value at all — the isolation is gone either way — and it is the more likely
- * mistake of the two, because it looks configured.
- *
- * REPORTED ONCE PER TAB. This is a deployment fault, and it is true for every
- * visitor for as long as the deploy lives: capturing on each load turns one
- * static misconfiguration into an exception per page view (and, with replay on,
- * a session recording per visitor), which buries the signal it is meant to
- * raise. `sessionStorage` bounds it to one report per tab without needing
- * anything server-side. The console line stays unconditional — it costs
- * nothing and it is what a developer looking at THIS page load will see.
- */
-const sandboxOriginFault =
-  HOSTED_MODE && (!SANDBOX_ORIGIN || SANDBOX_ORIGIN === window.location.origin);
+// The invariant a browser can actually decide. Its reasoning, and the half
+// that had to move to the server, live in `lib/sandbox-origin-fault.ts`.
+const sandboxOriginFault = detectSandboxOriginFault({
+  hostedMode: HOSTED_MODE,
+  sandboxOrigin: SANDBOX_ORIGIN,
+});
 if (sandboxOriginFault) {
-  const message = SANDBOX_ORIGIN
-    ? `VITE_MCPJAM_SANDBOX_ORIGIN is set to this app's own origin (${SANDBOX_ORIGIN}). MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.`
-    : "VITE_MCPJAM_SANDBOX_ORIGIN is not configured in hosted mode. MCP Apps widgets will render SAME-ORIGIN with the host app, losing the cookie/storage isolation the sandbox provides.";
-  console.error(`[MCPJam] ${message}`);
-
-  const REPORTED_KEY = "mcpjam.sandbox-origin-fault-reported";
-  let alreadyReported = false;
-  try {
-    alreadyReported = window.sessionStorage.getItem(REPORTED_KEY) === "1";
-    window.sessionStorage.setItem(REPORTED_KEY, "1");
-  } catch {
-    // Storage can be unavailable (Safari private mode, a blocked third-party
-    // context). Reporting every load is the safe direction for a security
-    // regression — better noisy than silent.
-  }
-  if (!alreadyReported) {
-    captureSentryException(new Error(message), {
+  console.error(`[MCPJam] ${sandboxOriginFault.message}`);
+  if (sandboxOriginFault.shouldCapture) {
+    captureSentryException(new Error(sandboxOriginFault.message), {
       tags: { area: "sandbox-origin", severity: "config" },
     });
   }
@@ -142,7 +113,7 @@ const isInIframe = (() => {
       // prefix test would let any unrelated future subpath slip past the
       // misrouted-pushState guard. See lib/tester-link-path.ts.
       const isPublicScenarioRuntimePath = TESTER_LINK_RUNTIME_PATH_PATTERN.test(
-        window.location.pathname
+        window.location.pathname,
       );
       if (sameOrigin && isPublicScenarioRuntimePath) {
         return false;
@@ -175,7 +146,7 @@ function isServerConnectionHandoff(): boolean {
   // must not swallow the Inspector's own OAuth callbacks in the same tab.
   return callbackMatchesPending(
     readPendingAuthorization(),
-    readCallbackParams(window.location.search)
+    readCallbackParams(window.location.search),
   );
 }
 
@@ -185,7 +156,7 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <IframeRouterError />
-    </StrictMode>
+    </StrictMode>,
   );
 } else if (isServerConnectionHandoff()) {
   // <AuthKitProvider> BUT NO CONVEX. The page still holds no credential of its
@@ -213,7 +184,7 @@ if (isInIframe) {
   const handoffRuntimeApiHostname = getRuntimeWorkosApiHostname();
   const handoffWorkosOptions = handoffRuntimeApiHostname
     ? { apiHostname: handoffRuntimeApiHostname }
-    : resolveWorkosClientOptions(import.meta.env, window.location);
+    : resolveWorkosClientOptions(import.meta.env, window.location, HOSTED_MODE);
   const root = createRoot(document.getElementById("root")!);
   root.render(
     <StrictMode>
@@ -230,7 +201,25 @@ if (isInIframe) {
       >
         <ServerConnectionHandoff />
       </AuthKitProvider>
-    </StrictMode>
+    </StrictMode>,
+  );
+} else if (
+  import.meta.env.DEV &&
+  window.location.pathname.startsWith("/__preview/plan-limit")
+) {
+  // Dev-only design harness for the free-plan limit wall. Mounted here, ahead
+  // of AuthKit and Convex, because the states worth reviewing (member who
+  // can't upgrade, org already at its Team ceiling) can't be produced on
+  // demand against a real backend. Renders the real component and the real
+  // stylesheet with dummy data. The DEV guard keeps it out of production
+  // bundles entirely.
+  updateThemeMode(getInitialThemeMode());
+  updateThemePreset(getInitialThemePreset());
+  const root = createRoot(document.getElementById("root")!);
+  root.render(
+    <StrictMode>
+      <PlanLimitDialogPreview />
+    </StrictMode>,
   );
 } else if (isDebugOAuthCallbackPath(window.location.pathname)) {
   // Throwaway popup: render without <AuthKitProvider>/Convex so it can't fire a
@@ -242,7 +231,7 @@ if (isInIframe) {
   root.render(
     <StrictMode>
       <OAuthDebugCallback />
-    </StrictMode>
+    </StrictMode>,
   );
 } else {
   const buildConvexUrl = import.meta.env.VITE_CONVEX_URL as string | undefined;
@@ -252,8 +241,7 @@ if (isInIframe) {
   // Convex URL above does: the deployed bundle is shared across environments
   // and only the serving process knows which WorkOS environment it belongs to.
   const buildWorkosClientId = import.meta.env.VITE_WORKOS_CLIENT_ID as
-    | string
-    | undefined;
+    string | undefined;
   // Coerced to "" rather than typed as `string`: the previous `as string` cast
   // claimed a value that may not exist, and AuthKit already fails loudly on a
   // falsy client id. The warning below is the one that should fire first.
@@ -279,7 +267,7 @@ if (isInIframe) {
   // Warn if critical env vars are missing
   if (!convexUrl) {
     console.warn(
-      "[main] VITE_CONVEX_URL is not set; Convex features may not work."
+      "[main] VITE_CONVEX_URL is not set; Convex features may not work.",
     );
   }
   if (import.meta.env.DEV) {
@@ -288,8 +276,8 @@ if (isInIframe) {
       source: runtimeConvexUrl
         ? "runtime"
         : buildConvexUrl
-        ? "build (VITE_CONVEX_URL)"
-        : "none",
+          ? "build (VITE_CONVEX_URL)"
+          : "none",
       HOSTED_MODE,
     });
   }
@@ -311,12 +299,12 @@ if (isInIframe) {
       {
         buildConvexUrl,
         runtimeConvexUrl,
-      }
+      },
     );
   }
   if (!workosClientId) {
     console.warn(
-      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work."
+      "[main] WorkOS client id is not set (runtime config or VITE_WORKOS_CLIENT_ID); authentication will not work.",
     );
   }
 
@@ -328,11 +316,23 @@ if (isInIframe) {
     ? { apiHostname: runtimeWorkosApiHostname }
     : resolveWorkosClientOptions(
         import.meta.env,
-        typeof window === "undefined" ? undefined : window.location
+        typeof window === "undefined" ? undefined : window.location,
+        HOSTED_MODE,
       );
   clearLegacyWorkosRefreshTokenStorage();
 
-  const convex = new ConvexReactClient(convexUrl);
+  // INVARIANT: this MUST stay below the `refreshBufferInterval` passed to
+  // <AuthKitProvider> below. Convex refetches at `exp - leeway`; if that lands
+  // before authkit's own refresh threshold (`exp - refreshBufferInterval`),
+  // authkit hands back the SAME still-valid token, Convex sees an unchanged
+  // token, settles into `notRefetching` — and never schedules another refetch.
+  // The refresh loop then dies silently and the token expires under a live
+  // socket. Raised from the 10s default so the retry ladder in
+  // `useUnifiedConvexAuth` (~5s worst case) still completes while the current
+  // token is valid.
+  const convex = new ConvexReactClient(convexUrl, {
+    authRefreshTokenLeewaySeconds: 60,
+  });
   normalizeInitialLegacyHashBookmark();
 
   const Providers = (
@@ -340,8 +340,58 @@ if (isInIframe) {
       clientId={workosClientId}
       redirectUri={workosRedirectUri}
       devMode={WORKOS_DEV_MODE}
+      // Must stay ABOVE `authRefreshTokenLeewaySeconds` on the Convex client
+      // above — see the invariant documented there.
+      refreshBufferInterval={90}
       onRefresh={() => {
         clearLegacyWorkosRefreshTokenStorage();
+      }}
+      // Redirect a genuinely dead session to sign-in rather than leaving
+      // signed-in chrome over a de-authed connection. See the handler.
+      onRefreshFailure={handleWorkosRefreshFailure}
+      /**
+       * Send a returning sign-in back where it started, when something asked
+       * to come back.
+       *
+       * TWO things do. The handoff page lives on `/connect/server/…`, and an
+       * agent-minted PERMALINK can be any exact resource path plus its
+       * `?project=` scope; both redirect HERE on `/callback`, and without
+       * this the user arrives at the app shell having lost what they opened.
+       *
+       * In both cases the nonce is all that crossed the network — the path
+       * itself was kept in same-origin storage, and each `take…` re-validates
+       * it as same-origin on the way out before anything navigates. AuthKit's
+       * default for this hook is a no-op, so nothing else changes by
+       * supplying it.
+       *
+       * It runs AFTER the session is persisted (authkit-js sets session data,
+       * then calls this), so navigating away here does not race the login.
+       */
+      onRedirectCallback={({ state }) => {
+        const carried = state as Record<string, unknown> | null;
+        const returnTo =
+          takeHandoffSignInReturn(
+            carried?.[HANDOFF_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          ) ??
+          // An agent-minted permalink the visitor opened while signed out.
+          // Without this they authenticate and land on the app shell, having
+          // lost both the resource AND the `?project=` scope — the
+          // wrong-project landing permalinks exist to prevent, reintroduced
+          // at the last step.
+          takePermalinkSignInReturn(
+            carried?.[PERMALINK_SIGN_IN_STATE_KEY],
+            window.location.origin,
+          );
+        // `replace`, not `assign`: `/callback` is not somewhere the back
+        // button should return to.
+        if (returnTo) {
+          // Keep the generic return path through this redirect. `App.tsx`
+          // consumes it on the restored page, where it also arms stale-project
+          // recovery. Clearing it here loses that signal because this replace
+          // navigates away before the callback route's App effect can run.
+          window.location.replace(returnTo);
+        }
       }}
       {...workosClientOptions}
     >
@@ -365,7 +415,7 @@ if (isInIframe) {
           <OAuthDesktopReturnNotice
             returnToElectronUrl={electronHostedAuthCallbackUrl}
           />
-        </StrictMode>
+        </StrictMode>,
       );
       return;
     }
@@ -377,62 +427,22 @@ if (isInIframe) {
         console.log("[Auth] Session token initialized");
       } else {
         console.log(
-          "[Auth] Hosted mode active, skipping session token bootstrap"
+          "[Auth] Hosted mode active, skipping session token bootstrap",
         );
       }
     } catch (error) {
       console.error("[Auth] Failed to initialize session token:", error);
-      // This branch replaces the whole app with a static screen — without a
-      // report the failure is invisible outside the user's own console.
-      reportCaught(error, { source: "session_token_bootstrap" });
-      // Show error UI instead of crashing
-      root.render(
-        <StrictMode>
-          <div
-            style={{
-              padding: "2rem",
-              textAlign: "center",
-              fontFamily: "system-ui",
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              minHeight: "100vh",
-            }}
-          >
-            <img
-              src="/mcp_jam.svg"
-              alt="MCPJam Logo"
-              style={{ width: "120px", height: "auto", marginBottom: "1.5rem" }}
-            />
-            <h1 style={{ color: "#dc2626", marginBottom: "0.5rem" }}>
-              Authentication Error
-            </h1>
-            <p style={{ marginBottom: "0.25rem" }}>
-              Failed to establish secure session.
-            </p>
-            <p style={{ color: "#666", fontSize: "0.875rem" }}>
-              If accessing via network, use localhost instead.
-            </p>
-            <button
-              onClick={() => location.reload()}
-              style={{
-                marginTop: "1.5rem",
-                padding: "0.75rem 1.5rem",
-                cursor: "pointer",
-                backgroundColor: "#18181b",
-                color: "#fff",
-                border: "none",
-                borderRadius: "0.5rem",
-                fontSize: "1rem",
-                fontWeight: 500,
-              }}
-            >
-              Restart App
-            </button>
-          </div>
-        </StrictMode>
-      );
+
+      // The branch decision (which screen; whether to report) lives in
+      // resolveBootstrapErrorScreen so it is unit-testable — main.tsx itself
+      // can't be imported in a test. Expected host-denial 403s render guidance
+      // and are NOT reported (the Sentry noise this feature removed); genuine
+      // failures render the generic screen AND report.
+      const { report, element } = resolveBootstrapErrorScreen(error);
+      if (report) {
+        reportCaught(error, { source: "session_token_bootstrap" });
+      }
+      root.render(<StrictMode>{element}</StrictMode>);
       return;
     }
 
@@ -455,7 +465,7 @@ if (isInIframe) {
             {Providers}
           </PostHogProvider>
         </ErrorBoundary>
-      </StrictMode>
+      </StrictMode>,
     );
   }
 

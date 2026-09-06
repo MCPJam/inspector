@@ -1,0 +1,111 @@
+{
+  "id": "hosted-0011",
+  "note": "negative case: the forbidden call happened",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "isNegativeTest": true,
+    "expectsToolCall": true,
+    "assertionCount": 1
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "delete_file",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [],
+        "missing": [],
+        "unexpected": [
+          {
+            "toolName": "delete_file"
+          }
+        ],
+        "argumentMismatches": [],
+        "passed": false
+      }
+    ],
+    "predicateResults": [
+      {
+        "passed": false,
+        "reason": "forbidden call observed"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "failed",
+        "reason": "unexpectedToolCall",
+        "evidence": {
+          "promptIndexes": [
+            0
+          ]
+        }
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "userValue",
+        "state": "failed",
+        "reason": "predicateFailed",
+        "evidence": {
+          "predicateReasons": [
+            "forbidden call observed"
+          ]
+        }
+      }
+    ],
+    "firstFailedStage": "selection",
+    "failureCategory": "selection",
+    "stageAnalyzerVersion": 8
+  }
+}

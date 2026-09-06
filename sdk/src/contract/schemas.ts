@@ -43,7 +43,11 @@ export const scorerRoleSchema = z.enum(["gating", "advisory"]);
 
 export const scorerErrorPolicySchema = z.enum(["fail", "ignore"]);
 
-export const scorerIdSourceSchema = z.enum(["explicit", "generated"]);
+export const scorerIdSourceSchema = z.enum([
+  "explicit",
+  "generated",
+  "platform",
+]);
 
 /** A score or a threshold: a real number in [0,1]. */
 const unitIntervalSchema = z.number().min(0).max(1);

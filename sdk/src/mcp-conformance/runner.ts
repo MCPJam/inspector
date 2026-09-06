@@ -3,6 +3,11 @@ import {
   decideConformanceOutcome,
   isUnrunCheck,
 } from "../conformance-outcome.js";
+import {
+  buildConformanceProfileStamp,
+  conformanceProfile,
+  partitionByProfile,
+} from "../conformance-profile.js";
 import type { HttpServerConfig } from "../mcp-client-manager/index.js";
 import { isKnownProtocolVersion } from "../mcp-client-manager/mcp-protocol-version.js";
 import {
@@ -17,6 +22,7 @@ import { MODERN_CHECK_METADATA, runModernChecks } from "./checks/modern.js";
 import { runProtocolChecks } from "./checks/protocol.js";
 import { runSecurityChecks } from "./checks/security.js";
 import { runTransportChecks } from "./checks/transport.js";
+import { runWireSchemaCheck, WIRE_SCHEMA_CHECK_ID } from "./checks/wire.js";
 import { TOOL_CHECKS } from "./checks/tools.js";
 import { PROMPT_CHECKS } from "./checks/prompts.js";
 import {
@@ -45,6 +51,8 @@ import {
   collectClientReadiness,
   collectRawReadiness,
 } from "./readiness.js";
+import { WireObservationRecorder } from "./wire-observations.js";
+import { createCapturingFetch } from "./raw-capture.js";
 import {
   eraForProtocolVersion,
   normalizeMCPConformanceConfig,
@@ -70,6 +78,7 @@ const RAW_CHECK_CATEGORY_ENTRIES: ReadonlyArray<
   ["get-stream-or-405", "transport"],
   ["session-id-visible-ascii", "transport"],
   ["post-response-content-type", "transport"],
+  [WIRE_SCHEMA_CHECK_ID, "protocol"],
   ...Object.values(MODERN_CHECK_METADATA).map(
     (check): readonly [MCPCheckId, MCPCheckCategory] => [
       check.id,
@@ -126,7 +135,55 @@ const buildSummary = buildOutcomeSummary;
 
 function createServerConfig(
   config: NormalizedMCPConformanceConfig,
+  recorder: WireObservationRecorder,
 ): HttpServerConfig {
+  // The client's traffic is only visible UNNORMALIZED here: by the time a
+  // result reaches app code the official Client has consumed the wire-only
+  // members (`resultType`, the cache hints, the `_meta` envelope) that the
+  // schema check exists to inspect. Wrapping its base fetch is the one seam
+  // that sees them.
+  //
+  // No double-counting with the raw path: `rawRequest` builds its own
+  // capturing fetch over `config.fetchFn` and records there, while this
+  // wrapper sits on the Client's `baseFetch`. The two stacks never share an
+  // exchange.
+  const recordingFetch: typeof fetch = async (input, init) => {
+    // ONE CAPTURE PER CALL. A single shared instance appends every exchange to
+    // one array, and reading the last element after an `await` is only correct
+    // while nothing else is in flight — which is never true here: the client
+    // phase fans `tools/list`, `prompts/list`, `resources/list` and
+    // `resources/templates/list` out through one `Promise.all`. Whichever
+    // settles second would be recorded twice and the other not at all, and
+    // since `recordExchange` derives the request method from the exchange it
+    // was handed, a `tools/list` response would be graded against
+    // `ListPromptsResult` — a fabricated violation in the one check whose
+    // entire value is correlation.
+    // NEVER BUFFER A STREAM THE SERVER MAY HOLD OPEN. The capturing fetch
+    // reads the response body to completion before returning it — its own
+    // docstring says it is "NOT suitable for wrapping a long-lived stream" —
+    // and the official client opens a standing `GET` with
+    // `accept: text/event-stream` through exactly this seam
+    // (`_startOrAuthSse`). A conforming 2025-era server that holds that stream
+    // open would never let the capture resolve, so the transport would never
+    // receive its response and the run would hang against a server that did
+    // nothing wrong. The same applies to a POST answered over SSE that the
+    // server keeps open (closing it is only a SHOULD).
+    //
+    // `skipStreamBodies` records those head-only — status and headers, no body
+    // — and hands the untouched stream to the transport. Nothing the graded
+    // checks read is lost: every wire member they inspect (`resultType`, the
+    // cache hints, the `_meta` envelope) rides the JSON responses, and the raw
+    // track captures its own SSE frames at a seam that owns the stream's
+    // lifetime.
+    const capture = createCapturingFetch(config.fetchFn, {
+      skipStreamBodies: true,
+    });
+    const response = await capture.fetch(input, init);
+    for (const exchange of capture.exchanges) {
+      recorder.recordExchange(exchange);
+    }
+    return response;
+  };
   return {
     url: config.serverUrl,
     accessToken: config.accessToken,
@@ -139,6 +196,13 @@ function createServerConfig(
     // connect at all. Absent ⇒ `auto` (automatic negotiation is always on), so
     // an unconfigured conformance run detects the era the server negotiates.
     mcpProtocolVersion: config.protocolVersion,
+    // THE SAME GUARD THE RAW PROBES GET. `fetchFn` used to reach only the raw
+    // HTTP/SSE probes, so the one real MCP connection this suite opens dialled
+    // through the global fetch and followed its redirects unchecked — a
+    // hosted-mode SSRF hole this file's own comment used to document. Threading
+    // it in as the transport's base fetch closes it: one guard, one target, no
+    // second resolution.
+    baseFetch: recordingFetch,
   };
 }
 
@@ -219,6 +283,7 @@ async function safeListResources(
 async function runClientChecks(
   config: NormalizedMCPConformanceConfig,
   selectedCheckIds: Set<MCPCheckId>,
+  recorder: WireObservationRecorder,
 ): Promise<{
   checks: MCPCheckResult[];
   config: NormalizedMCPConformanceConfig;
@@ -241,7 +306,7 @@ async function runClientChecks(
 
   try {
     return await withEphemeralClient(
-      createServerConfig(config),
+      createServerConfig(config, recorder),
       async (manager, serverId) => {
         // `getManagedClient()` works for every era — the modern pin and the
         // legacy path both resolve to a `ManagedMcpClient` (the stateless
@@ -458,9 +523,15 @@ export class MCPConformanceTest {
   async run(): Promise<MCPConformanceResult> {
     const startedAt = Date.now();
     const selectedCheckIds = buildCheckSelection(this.config);
+    // ONE record for the whole run, opened before the first byte moves. The
+    // raw families run concurrently and each builds its own requests, so
+    // "everything this run observed" only exists if something collects it —
+    // which is what the wire-schema check reads.
+    const recorder = new WireObservationRecorder();
     const clientRun = await runClientChecks(
       this.config,
       selectedCheckIds,
+      recorder,
     );
 
     const rawContext: RawHttpCheckContext = {
@@ -468,6 +539,7 @@ export class MCPConformanceTest {
       serverUrl: clientRun.config.serverUrl,
       fetchFn: clientRun.config.fetchFn,
       surface: clientRun.surface,
+      recorder,
     };
 
     const [
@@ -484,20 +556,51 @@ export class MCPConformanceTest {
       collectRawReadiness(rawContext),
     ]);
 
+    // LAST, and deliberately not inside the `Promise.all` above: its subject is
+    // everything the other families made the server say, so it has to run after
+    // all of them or it would grade a partial record and call it complete.
+    const wireSchema = await runWireSchemaCheck(
+      rawContext,
+      selectedCheckIds,
+      recorder,
+    );
+
     const checks = [
       ...clientRun.checks,
       ...protocolChecks,
       ...securityChecks,
       ...transportChecks,
       ...modernChecks,
+      ...wireSchema.results,
     ];
+    // The tally reports EVERYTHING that ran, pending checks included: a report
+    // that hid them would misstate what the run did. Only the VERDICT is
+    // narrowed to the scored set, below.
     const categorySummary = summarizeChecks(checks);
+
+    // Which of these checks the active profile scores. A check outside the
+    // frozen manifest still ran and still shows its verdict in `checks`, but it
+    // is excluded from the verdict and from the score: a MUST check added this
+    // week must not retroactively fail a server that was green last week.
+    const profile = conformanceProfile("mcp-protocol");
+    const { scored, pending } = partitionByProfile(checks, profile);
 
     // A check that COULD NOT RUN is neither a violation nor a pass: the
     // obligation went untested, so the run is `incomplete`. Collapsing that
     // into "nothing failed" is what let a run with unexercised checks report
     // success.
-    const verdict = decideConformanceOutcome(checks);
+    // An empty SCORED set is not the same fact as an empty CHECK set.
+    // `decideConformanceOutcome([])` reports "no checks were selected, so this
+    // run establishes nothing" — true for an empty selection, and the exact
+    // opposite of what happened when checks ran and every one of them is
+    // pending (e.g. `checkIds: ["wire-schema-valid"]`).
+    const verdict =
+      scored.length === 0 && pending.length > 0
+        ? {
+            outcome: "incomplete" as const,
+            incompleteReason: `all ${pending.length} selected check(s) ran but are unscored by profile ${profile.id}@${profile.version}, so this run establishes no conformance verdict`,
+          }
+        : decideConformanceOutcome(scored);
 
     return {
       // Readiness is deliberately absent from this expression: the verdict is
@@ -514,10 +617,29 @@ export class MCPConformanceTest {
         ? { protocolVersion: clientRun.config.protocolVersion }
         : {}),
       checks,
-      summary: buildSummary(checks),
+      summary:
+        pending.length > 0
+          ? `${buildSummary(scored)}, ${pending.length} pending (unscored by profile ${profile.id}@${profile.version})`
+          : buildSummary(scored),
       durationMs: Date.now() - startedAt,
       categorySummary,
       readiness: [...clientRun.readiness, ...rawReadiness],
+      profile: buildConformanceProfileStamp({
+        profile,
+        checks,
+        protocolVersion: clientRun.config.protocolVersion,
+        // Only when the schema pass actually ran: a digest on a run that
+        // validated nothing would claim provenance for a measurement that
+        // never happened.
+        ...(wireSchema.report
+          ? {
+              schemaDigest: wireSchema.report.schemaDigest,
+              ...(wireSchema.report.extensionIds.length > 0
+                ? { extensionVersions: wireSchema.report.extensionRevisions }
+                : {}),
+            }
+          : {}),
+      }),
     };
   }
 }

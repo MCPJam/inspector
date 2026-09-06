@@ -10,8 +10,10 @@
  * carries no `namedHostId`) falls through to the caller's neutral
  * `fallbackName`, never to the environment name wearing a host chip.
  */
+import { compactModelLabel } from "@/components/chat-v2/shared/model-helpers";
 import { cn } from "@/lib/utils";
 import { HostChip } from "@/components/hosts/host-chip";
+import { compactModelIdTail } from "@/lib/environment-label";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import {
   runEnvironmentRef,
@@ -19,6 +21,11 @@ import {
   runRevisionLabel,
   type RunContextSource,
 } from "./helpers";
+
+type RunAttributionSource = RunContextSource & {
+  effectiveModelId?: string;
+  modelSource?: "client_default" | "override";
+};
 
 /**
  * The environment chip's presentation, shared by {@link RunContextChip} and the
@@ -65,27 +72,56 @@ export function RunContextChip({
   hostNamesById,
   fallbackName,
   className,
+  modelLabel,
 }: {
-  run: RunContextSource;
+  run: RunAttributionSource;
   /** namedHostId → display name, for legacy host-backed runs. */
   hostNamesById?: Map<string, string | null>;
   /** Shown when the run names neither an environment nor a host. */
   fallbackName?: string | null;
   className?: string;
+  /** Catalog display name for `effectiveModelId`. Falls back to the id tail. */
+  modelLabel?: string | null;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const environmentRef = projectEnvironmentsEnabled
     ? runEnvironmentRef(run)
     : null;
+  const modelId = run.effectiveModelId;
+  const modelSource = run.modelSource;
+  const resolvedModelLabel = modelId
+    ? (modelLabel && compactModelLabel(modelLabel)) ||
+      compactModelIdTail(modelId)
+    : null;
 
   if (environmentRef) {
     return (
-      <EnvironmentChip
-        name={environmentRef.name}
-        environmentId={environmentRef.environmentId}
-        revisionLabel={runRevisionLabel(run)}
-        className={className}
-      />
+      <span className={cn("inline-flex min-w-0 items-center gap-1", className)}>
+        <EnvironmentChip
+          name={environmentRef.name}
+          environmentId={environmentRef.environmentId}
+          revisionLabel={runRevisionLabel(run)}
+        />
+        {resolvedModelLabel ? (
+          <span
+            className={cn(
+              "truncate text-[11px]",
+              modelSource === "override"
+                ? "text-foreground"
+                : "text-muted-foreground"
+            )}
+            title={
+              modelSource === "client_default"
+                ? `Client default · ${resolvedModelLabel}`
+                : modelSource === "override"
+                  ? `Override · ${resolvedModelLabel}`
+                  : resolvedModelLabel
+            }
+          >
+            {resolvedModelLabel}
+          </span>
+        ) : null}
+      </span>
     );
   }
 
@@ -95,7 +131,30 @@ export function RunContextChip({
   // screen (mislabelled as a host) with the flag off.
   const name = runHostLabel(run, hostNamesById) ?? fallbackName;
   if (!name) return null;
+  // Same model attribution as the environment branch: a host chip by itself
+  // only names the client, not which model actually ran.
   return (
-    <HostChip name={name} hostId={run.namedHostId} className={className} />
+    <span className="inline-flex min-w-0 items-center gap-1.5">
+      <HostChip name={name} hostId={run.namedHostId} className={className} />
+      {resolvedModelLabel ? (
+        <span
+          className={cn(
+            "truncate text-[11px]",
+            modelSource === "override"
+              ? "text-foreground"
+              : "text-muted-foreground",
+          )}
+          title={
+            modelSource === "client_default"
+              ? `Client default · ${resolvedModelLabel}`
+              : modelSource === "override"
+                ? `Override · ${resolvedModelLabel}`
+                : resolvedModelLabel
+          }
+        >
+          {resolvedModelLabel}
+        </span>
+      ) : null}
+    </span>
   );
 }

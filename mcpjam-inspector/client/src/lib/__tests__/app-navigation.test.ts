@@ -1,6 +1,9 @@
 import { renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import {
+  buildConformanceRunPath,
+  buildConformanceSharePath,
+  buildEvalSharePath,
   buildOrganizationPath,
   buildSessionsPath,
   buildSwarmPath,
@@ -11,17 +14,38 @@ import {
   isLegacyUserTestingEditTab,
   legacyCiEvalsPathToRunsPath,
   legacyHashBookmarkToPath,
+  navigateApp,
   navigationTargetToPath,
   normalizeInitialLegacyHashBookmark,
   normalizeReturnTargetPath,
   parseSwarmDetailTab,
   parseUserTestingDetailTab,
   pathnameToActiveTab,
-  shouldSnapToServersOnActiveProjectChange,
+  buildProjectSettingsTarget,
+  buildProjectSwitchTarget,
+  scopeNavigationTarget,
   useActiveTab,
   useCurrentOrgRoute,
   useCurrentSearchParam,
 } from "../app-navigation";
+
+describe("conformance run and share paths", () => {
+  it("builds encoded detail and share URLs", () => {
+    // The project is a PATH segment, not `?project=`: a run link has to
+    // reopen the same project on a refresh, and a query the app consumed and
+    // stripped could not do that.
+    expect(buildConformanceRunPath("run/1", "k57aaaaaaaaaaaaaaaaaaaaaaaaa")).toBe(
+      "/p/k57aaaaaaaaaaaaaaaaaaaaaaaaa/conformance/runs/run%2F1"
+    );
+    expect(buildConformanceRunPath("run/1")).toBe(
+      "/conformance/runs/run%2F1"
+    );
+    expect(buildConformanceSharePath("tok/en")).toBe(
+      "/conformance/shared/tok%2Fen"
+    );
+    expect(buildEvalSharePath("tok/en")).toBe("/evals/shared/tok%2Fen");
+  });
+});
 
 describe("isDebugOAuthCallbackPath", () => {
   it("matches the OAuth debugger callback popup route", () => {
@@ -48,9 +72,12 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     expect(buildSwarmPath("a/b")).toBe("/swarms/a%2Fb");
   });
 
-  it("omits insights (default) from the query and includes sessions", () => {
-    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+  it("omits findings (default) from the query and includes other tabs", () => {
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
       "/swarms/wave-1"
+    );
+    expect(buildSwarmPath("wave-1", { tab: "insights" })).toBe(
+      "/swarms/wave-1?tab=insights"
     );
     expect(buildSwarmPath("wave-1", { tab: "sessions" })).toBe(
       "/swarms/wave-1?tab=sessions"
@@ -66,14 +93,21 @@ describe("buildSwarmPath / parseSwarmDetailTab", () => {
     );
   });
 
-  it("parses known tabs, maps legacy aliases to insights, defaults to insights", () => {
+  it("parses known tabs, maps legacy aliases to insights, defaults to findings", () => {
     expect(parseSwarmDetailTab("?tab=insights")).toBe("insights");
     expect(parseSwarmDetailTab("?tab=sessions")).toBe("sessions");
     expect(parseSwarmDetailTab("?tab=personas")).toBe("insights");
-    expect(parseSwarmDetailTab("")).toBe("insights");
+    expect(parseSwarmDetailTab("")).toBe("findings");
     expect(parseSwarmDetailTab("?tab=overview")).toBe("insights");
-    expect(parseSwarmDetailTab("?tab=nope")).toBe("insights");
+    expect(parseSwarmDetailTab("?tab=nope")).toBe("findings");
     expect(parseSwarmDetailTab("?session=thread-1")).toBe("sessions");
+  });
+
+  it("parses the findings tab", () => {
+    expect(parseSwarmDetailTab("?tab=findings")).toBe("findings");
+    expect(buildSwarmPath("wave-1", { tab: "findings" })).toBe(
+      "/swarms/wave-1"
+    );
   });
 });
 
@@ -107,33 +141,43 @@ describe("buildSessionsPath", () => {
   it("encodes the focused session and the project scope", () => {
     // This is the shape the backend mints as the universal permalink
     // fallback, so its exact spelling is a wire contract with `/v1/sessions`.
-    expect(buildSessionsPath({ session: "k57abc", project: "p_1" })).toBe(
-      "/sessions?session=k57abc&project=p_1"
-    );
+    expect(
+      buildSessionsPath({
+        session: "k57abc",
+        project: "k57bbbbbbbbbbbbbbbbbbbbbbbbb",
+      })
+    ).toBe("/p/k57bbbbbbbbbbbbbbbbbbbbbbbbb/sessions?session=k57abc");
     expect(buildSessionsPath({ session: "a/b" })).toBe(
       "/sessions?session=a%2Fb"
     );
   });
 
   it("keeps each param independent", () => {
-    expect(buildSessionsPath({ project: "p_1" })).toBe("/sessions?project=p_1");
+    expect(buildSessionsPath({ project: "k57bbbbbbbbbbbbbbbbbbbbbbbbb" })).toBe(
+      "/p/k57bbbbbbbbbbbbbbbbbbbbbbbbb/sessions"
+    );
     expect(buildSessionsPath({ session: "s_1" })).toBe("/sessions?session=s_1");
+  });
+
+  it("refuses to scope to an unusable project id", () => {
+    // `none` is the local placeholder. A link with it in the canonical
+    // position would look authoritative and resolve to nothing.
+    expect(buildSessionsPath({ session: "s_1", project: "none" })).toBe(
+      "/sessions?session=s_1"
+    );
   });
 
   it("a project switch leaves /sessions, so a stale ?session= cannot render", () => {
     // SessionsPanel keeps its selection in the URL, which in principle could
-    // outlive a project switch. This is why it does not: the switch snaps the
-    // app to /servers, unmounting the panel and replacing the URL. If /sessions
-    // ever joins the exempt tabs, the panel needs its own cleanup.
-    const activeTab = pathnameToActiveTab("/sessions");
-    expect(activeTab).toBe("sessions");
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "p2",
-        activeTab,
-      })
-    ).toBe(true);
+    // outlive a project switch. This is why it does not: the switch IS a
+    // navigation to another project's Servers, which unmounts the panel and
+    // replaces the URL outright.
+    expect(pathnameToActiveTab("/p/k57ccccccccccccccccccccccccc/sessions")).toBe(
+      "sessions"
+    );
+    expect(buildProjectSwitchTarget("k57ddddddddddddddddddddddddd")).toBe(
+      "/p/k57ddddddddddddddddddddddddd/servers"
+    );
   });
 
   it("reads the focused session back off the URL", () => {
@@ -163,6 +207,7 @@ describe("pathnameToActiveTab", () => {
     // from KNOWN_APP_TAB_SEGMENTS resolves to "servers", so the shell's
     // flag-redirect / auto-select / active-server-selector never fire.
     expect(pathnameToActiveTab("/conformance")).toBe("conformance");
+    expect(pathnameToActiveTab("/conformance/runs/abc")).toBe("conformance");
     expect(pathnameToActiveTab("/compatibility")).toBe("compatibility");
   });
 
@@ -202,80 +247,79 @@ describe("pathnameToActiveTab", () => {
   });
 });
 
-describe("shouldSnapToServersOnActiveProjectChange", () => {
-  it("snaps to servers when the active project changes on a project-scoped tab", () => {
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "p2",
-        activeTab: "playground",
-      })
-    ).toBe(true);
+describe("project switch targets", () => {
+  const PROJECT_B = "k57bbbbbbbbbbbbbbbbbbbbbbbbb";
+
+  it("sends the picker to the next project's Servers", () => {
+    // Deterministic on purpose. The picker navigates and the route
+    // coordinator performs the switch; the previous design switched hidden
+    // state and repaired the URL from an effect, which raced a second effect
+    // doing the same thing from the other direction.
+    expect(buildProjectSwitchTarget(PROJECT_B)).toBe(`/p/${PROJECT_B}/servers`);
   });
 
-  it("does NOT snap while on an organizations route", () => {
-    // Regression: opening another org's settings via the switcher gear flips
-    // the active org, which auto-resolves a new active project as a side
-    // effect. Snapping to Servers here bounced the user off the org settings
-    // page they just opened.
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "p2",
-        activeTab: "organizations",
-      })
-    ).toBe(false);
+  it("opens another project's settings without switching first", () => {
+    // The per-row gear used to switch the active project AND navigate. One
+    // URL does both now, so there is no window in which the app is on project
+    // B while the address bar still says A.
+    expect(buildProjectSettingsTarget(PROJECT_B)).toBe(
+      `/p/${PROJECT_B}/project-settings`
+    );
   });
 
-  it("does NOT snap while on project settings", () => {
-    // Regression: the switcher's per-row gear switches project and opens that
-    // project's settings as one gesture. Snapping here flashed the settings
-    // page and bounced the user to Servers. Project settings renders whichever
-    // project is active, so it is still correct after the switch.
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "p2",
-        activeTab: "project-settings",
-      })
-    ).toBe(false);
+  it("does not mint a scoped path for a placeholder project id", () => {
+    expect(buildProjectSwitchTarget("none")).toBe("/servers");
+  });
+});
+
+describe("scopeNavigationTarget", () => {
+  const PROJECT_A = "k57aaaaaaaaaaaaaaaaaaaaaaaaa";
+  const from = `/p/${PROJECT_A}/servers`;
+
+  it("carries the current project into a project-owned target", () => {
+    expect(scopeNavigationTarget("/playground", from)).toBe(
+      `/p/${PROJECT_A}/playground`
+    );
+    expect(scopeNavigationTarget("/evals/suite/s1?view=runs#case", from)).toBe(
+      `/p/${PROJECT_A}/evals/suite/s1?view=runs#case`
+    );
   });
 
-  it("does not snap on initial hydration (no previous project id)", () => {
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: null,
-        nextActiveProjectId: "p1",
-        activeTab: "playground",
-      })
-    ).toBe(false);
+  it("never prefixes a global or public target", () => {
+    // Settings, Organizations and the WorkOS callback are not project-owned.
+    // A project prefix there would be a URL nothing renders.
+    expect(scopeNavigationTarget("/settings", from)).toBe("/settings");
+    expect(scopeNavigationTarget("/organizations/org_1/billing", from)).toBe(
+      "/organizations/org_1/billing"
+    );
+    expect(scopeNavigationTarget("/callback", from)).toBe("/callback");
+    expect(scopeNavigationTarget("/evals/shared/tok", from)).toBe(
+      "/evals/shared/tok"
+    );
   });
 
-  it("does not snap when the project id is unchanged", () => {
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "p1",
-        activeTab: "playground",
-      })
-    ).toBe(false);
+  it("is a no-op from an unscoped location", () => {
+    expect(scopeNavigationTarget("/servers", "/servers")).toBe("/servers");
   });
 
-  it("does not snap across the local-default 'none' placeholder in either direction", () => {
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "none",
-        nextActiveProjectId: "p1",
-        activeTab: "playground",
-      })
-    ).toBe(false);
-    expect(
-      shouldSnapToServersOnActiveProjectChange({
-        previousActiveProjectId: "p1",
-        nextActiveProjectId: "none",
-        activeTab: "playground",
-      })
-    ).toBe(false);
+  it("leaves an already-scoped target alone", () => {
+    const other = "/p/k57bbbbbbbbbbbbbbbbbbbbbbbbb/servers";
+    expect(scopeNavigationTarget(other, from)).toBe(other);
+  });
+
+  it("leaves bare query and hash navigations alone", () => {
+    // `#scenario-slug` is scenario state, not app navigation.
+    expect(scopeNavigationTarget("#scenario-1", from)).toBe("#scenario-1");
+    expect(scopeNavigationTarget("?tab=sessions", from)).toBe("?tab=sessions");
+  });
+
+  it("refuses to scope an off-origin target", () => {
+    expect(scopeNavigationTarget("https://evil.example/servers", from)).toBe(
+      "https://evil.example/servers"
+    );
+    expect(scopeNavigationTarget("//evil.example/servers", from)).toBe(
+      "//evil.example/servers"
+    );
   });
 });
 
@@ -444,5 +488,62 @@ describe("legacy /ci-evals redirects", () => {
     expect(legacyCiEvalsPathToRunsPath("/ci-evals/suite/ci-evals")).toBe(
       "/evals/runs/suite/ci-evals"
     );
+  });
+});
+
+describe("navigateApp scope inheritance", () => {
+  const PROJECT_A = "k57aaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  beforeEach(() => {
+    window.history.replaceState({}, "", `/p/${PROJECT_A}/servers`);
+  });
+
+  it("carries the project through an imperative navigation", () => {
+    navigateApp("/playground");
+    expect(window.location.pathname).toBe(`/p/${PROJECT_A}/playground`);
+  });
+
+  it("honors an explicit unscoped navigation", () => {
+    // The escape hatch from an unavailable project: inheriting it here would
+    // navigate straight back into the state the user is trying to leave.
+    navigateApp("/", { unscoped: true });
+    expect(window.location.pathname).toBe("/");
+  });
+});
+
+describe("scoped paths survive return-target normalization", () => {
+  const PROJECT_A = "k57aaaaaaaaaaaaaaaaaaaaaaaaa";
+
+  it("keeps a canonical path intact instead of reducing it to /servers", () => {
+    // This is what makes a project link survive a sign-in round trip: the
+    // stored path is normalized on the way back out, and normalization used
+    // to know only about logical first segments.
+    expect(
+      normalizeReturnTargetPath(`/p/${PROJECT_A}/evals/suite/s1?view=runs#case`)
+    ).toBe(`/p/${PROJECT_A}/evals/suite/s1?view=runs#case`);
+    expect(navigationTargetToPath(`/p/${PROJECT_A}/servers`)).toBe(
+      `/p/${PROJECT_A}/servers`
+    );
+  });
+
+  it("normalizes the logical half of a scoped path", () => {
+    // `scenarios` is the legacy tab id for User Testing; the canonical path
+    // segment is `user-testing`, and the project comes back afterwards.
+    expect(navigationTargetToPath(`/p/${PROJECT_A}/scenarios`)).toBe(
+      `/p/${PROJECT_A}/user-testing`
+    );
+  });
+
+  it("still refuses an off-origin return target", () => {
+    expect(normalizeReturnTargetPath("https://evil.example/servers")).toBe(
+      "/servers"
+    );
+    expect(normalizeReturnTargetPath("//evil.example/p/x/servers")).toBe(
+      "/servers"
+    );
+  });
+
+  it("keeps a scoped path with an unusable project id out of the canonical position", () => {
+    expect(normalizeReturnTargetPath("/p/none/servers")).toBe("/servers");
   });
 });

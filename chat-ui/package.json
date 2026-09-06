@@ -1,6 +1,6 @@
 {
   "name": "@mcpjam/chat-ui",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Reusable, read-only transcript renderer for AI SDK chat messages (MCPJam).",
   "license": "MIT",
   "type": "module",
@@ -58,7 +58,7 @@
   "devDependencies": {
     "@ai-sdk/react": "^3.0.156",
     "@testing-library/jest-dom": "^6.9.1",
-    "@testing-library/react": "^16.3.1",
+    "@testing-library/react": "^16.3.3",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "ai": "^6.0.154",
@@ -67,6 +67,6 @@
     "react-dom": "19.1.0",
     "tsup": "^8.3.5",
     "typescript": "^5",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.7"
   }
 }

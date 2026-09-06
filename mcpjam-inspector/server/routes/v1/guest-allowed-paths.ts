@@ -27,6 +27,9 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   // project/user data), read by the first-party UI to show a harness host's
   // native tools. Safe for guests (local mode + share-link previews); GET-only.
   { pattern: /^\/harness\/[^/]+\/builtin-tools$/, methods: ["GET"] },
+  // Same shape and same reasoning as the catalog above: static registry
+  // metadata about what a harness can do, with no project scope behind it.
+  { pattern: /^\/harness\/[^/]+\/capabilities$/, methods: ["GET"] },
   // Host-compat catalog: static public host metadata (no project/user data).
   // Mounted before the auth middleware (fully public), so this rule is
   // defense-in-depth for guests if the mount order ever changes; GET-only.
@@ -80,9 +83,58 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     methods: ["GET"],
   },
   { pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/runs$/ },
+  // The pre-run disclosure for a launch plan. A guest can already POST
+  // /eval-suites/:id/runs above, so denying them the read that describes what
+  // that run discloses is the one gap that actually matters — the payload is
+  // org-plan + vendor names + suite-resolved model ids, nothing a guest
+  // cannot already see via GET /eval-suites/:id. GET-only: there is no write
+  // at this path.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+    methods: ["GET"],
+  },
   { pattern: /^\/projects\/[^/]+\/eval-runs$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+$/ },
   { pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/ },
+  // The canonical run verdict Evaluate (New) renders in Run History. A guest
+  // can already GET the run and its iterations — the two reads this route
+  // composes — so denying the summary left the verdict cell as LOAD FAILED
+  // while RATE still rendered from the local Convex rows. GET-only: there is
+  // no write at this path, and a method-less entry would hand a guest any
+  // future mutation for free.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/decision-summary$/,
+    methods: ["GET"],
+  },
+  // Stage measurements for one run, which the Evaluate run page reads for its
+  // stage strip. Same argument as the summary above and a narrower payload: it
+  // is counts over the iterations a guest can already GET, with no prompt,
+  // response or tool argument in it. Denying it rendered the strip as "could
+  // not be read", which reads as a broken backend rather than as a permission
+  // the guest was never granted. GET-only, for the reason stated above.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/stage-analytics$/,
+    methods: ["GET"],
+  },
+  // Route facts for one run, which the Evaluate run page reads for its
+  // per-case routes. Same argument as stage analytics: it is counts over the
+  // iterations a guest can already GET, with no prompt, response or tool
+  // argument in it. GET-only, for the reason stated above.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/route-facts$/,
+    methods: ["GET"],
+  },
+  // One description-experiment document. Same argument as route-facts: the
+  // Evaluate run page reads it, and a guest can already GET the source run.
+  // GET-only — propose and start spend.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-description-experiments\/[^/]+$/,
+    methods: ["GET"],
+  },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },
@@ -99,11 +151,20 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
   },
   { pattern: /^\/projects\/[^/]+\/scenarios$/ },
   { pattern: /^\/projects\/[^/]+\/scenarios\/[^/]+$/ },
+  // Directory reads only. Backing Convex queries are publicQuery and the
+  // Convex `/v1` twins use authedV1ReadOnly (no guest user/org/project
+  // materialization). Registry-server reads, connection reads, and every
+  // install/uninstall stay guest-DENIED (default). Bearer is still required
+  // — these stay OUT of openapi-drift PUBLIC_OPERATIONS; anonymous MCP
+  // callers arrive with minted guest tokens, not with no token.
+  { pattern: /^\/registry\/directory-servers$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-servers\/[^/]+$/, methods: ["GET"] },
+  { pattern: /^\/registry\/directory-sources$/, methods: ["GET"] },
 ];
 
 export function isGuestAllowedV1Request(
   method: string,
-  fullPath: string
+  fullPath: string,
 ): boolean {
   // `c.req.path` is the full request path; strip the mount prefix so the
   // patterns above stay readable and relative.
@@ -112,6 +173,6 @@ export function isGuestAllowedV1Request(
   return GUEST_ALLOWED_V1_RULES.some(
     (rule) =>
       rule.pattern.test(relative) &&
-      (!rule.methods || rule.methods.includes(upper))
+      (!rule.methods || rule.methods.includes(upper)),
   );
 }

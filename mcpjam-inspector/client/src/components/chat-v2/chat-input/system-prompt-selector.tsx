@@ -11,13 +11,20 @@ import { Textarea } from "@mcpjam/design-system/textarea";
 import { Slider } from "@mcpjam/design-system/slider";
 import { AlertTriangle, Settings2 } from "lucide-react";
 import { toast } from "sonner";
-import { Alert, AlertDescription, AlertTitle } from "@mcpjam/design-system/alert";
+import {
+  Alert,
+  AlertDescription,
+  AlertTitle,
+} from "@mcpjam/design-system/alert";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@mcpjam/design-system/tooltip";
-import { ModelDefinition, isGPT5Model } from "@/shared/types";
+import {
+  ModelDefinition,
+  modelDefinitionSupportsTemperature,
+} from "@/shared/types";
 
 interface SystemPromptSelectorProps {
   systemPrompt: string;
@@ -84,11 +91,14 @@ export function SystemPromptSelector({
     multiModelEnabled && selectedModels && selectedModels.length > 0
       ? selectedModels
       : [currentModel];
-  const someSelectedModelsAreGpt5 = effectiveSelectedModels.some((model) =>
-    isGPT5Model(model.id),
+  // Passes the whole row, not just its id, so a hosted model the catalog says
+  // takes no `temperature` greys the slider out here too rather than leaving it
+  // live over a value prepareChatV2 goes on to drop.
+  const someSelectedModelsIgnoreTemperature = effectiveSelectedModels.some(
+    (model) => !modelDefinitionSupportsTemperature(model)
   );
-  const allSelectedModelsAreGpt5 = effectiveSelectedModels.every((model) =>
-    isGPT5Model(model.id),
+  const allSelectedModelsIgnoreTemperature = effectiveSelectedModels.every(
+    (model) => !modelDefinitionSupportsTemperature(model)
   );
 
   const handleOpenChange = (open: boolean) => {
@@ -186,16 +196,16 @@ export function SystemPromptSelector({
               max={2}
               step={0.1}
               className="w-full"
-              disabled={allSelectedModelsAreGpt5}
+              disabled={allSelectedModelsIgnoreTemperature}
             />
-            {allSelectedModelsAreGpt5 ? (
+            {allSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                Temperature is not supported for GPT-5 models
+                Temperature is not supported for the selected models
               </p>
-            ) : someSelectedModelsAreGpt5 ? (
+            ) : someSelectedModelsIgnoreTemperature ? (
               <p className="text-xs text-muted-foreground">
-                GPT-5 models ignore temperature. The setting still applies to
-                the other selected models.
+                Some selected models do not support temperature. The setting
+                still applies to the others.
               </p>
             ) : (
               <p className="text-xs text-muted-foreground">

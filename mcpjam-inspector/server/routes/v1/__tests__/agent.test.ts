@@ -133,6 +133,7 @@ import {
   createEvalSuiteOperation,
   getEvalIterationTraceOperation,
   getEvalRunOperation,
+  installRegistryDirectoryServerOperation,
   listProjectServersOperation,
   runEvalSuiteOperation,
   generateEvalCasesOperation,
@@ -521,6 +522,196 @@ describe("agent tool surface", () => {
     executeSpy.mockRestore();
   });
 
+  it("hands the model permalinks alongside a read's rows", async () => {
+    // The system prompt tells the model to pass back a `permalinks` url
+    // verbatim. This surface returned the raw result, so on the hosted agent
+    // that rule named a field nothing produced and the model was left with
+    // bare ids — which is how it came to invent app URLs in the first place.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "srv_1", name: "Asana", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string; resource: { id: string } }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_1?project=p1"),
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("keeps the permalinks when the payload is truncated for the model", async () => {
+    // The case they matter MOST in. `capForModel` replaces an over-cap value
+    // wholesale with `{truncated, preview}`, so a permalink folded inside the
+    // payload disappeared on exactly the long listings where the link is the
+    // only thing the model can still act on.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          {
+            id: "srv_1",
+            name: "Asana",
+            projectId: "p1",
+            // Comfortably past the 24k model-output cap on its own.
+            notes: "x".repeat(30_000),
+          },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      truncated?: boolean;
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.truncated).toBe(true);
+    expect(result.permalinks?.[0]?.url).toContain("/servers/srv_1?project=p1");
+    executeSpy.mockRestore();
+  });
+
+  it("leaves the result alone when nothing is addressable", async () => {
+    // An empty listing has no resource to open. The envelope must not appear
+    // as an empty array either: `permalinks: []` reads to the model as "this
+    // surface offers links and there are none for you", which is a different
+    // claim from a result that never carried links at all.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as Record<string, unknown>;
+    expect(result).not.toHaveProperty("permalinks");
+    expect(result.items).toEqual([]);
+    executeSpy.mockRestore();
+  });
+
+  it("links the rows it can address and drops the ones it cannot", async () => {
+    // Each ref is built independently. One row missing the id the route needs
+    // must cost that row its link and nothing more — the failure mode worth
+    // guarding is the one where a single bad row silently strips the links off
+    // every row beside it.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1", name: "P1" },
+        items: [
+          { id: "", name: "Unaddressable", projectId: "p1" },
+          { id: "srv_2", name: "Linear", projectId: "p1" },
+        ],
+        otherProjects: [],
+      } as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute({}, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(result.permalinks?.map((permalink) => permalink.url)).toEqual([
+      expect.stringContaining("/servers/srv_2?project=p1"),
+    ]);
+    executeSpy.mockRestore();
+  });
+
+  it("does not report an idempotent re-create as something the turn created", async () => {
+    // `createdResourcesFrom` keys on a NAME PREFIX so the catalog's new
+    // creates are adopted without editing that file. The cost of that rule is
+    // that an idempotent create — one that succeeds by returning the row that
+    // already existed, saying so with `created: false` — would be reported
+    // under a heading that reads "created", which is the same lie the function
+    // already refuses to tell about an edit.
+    //
+    // `publish_scenario` is the operation the flag was written for and it is
+    // excluded from this surface entirely (who may talk to your servers is a
+    // human call), so this drives the guard through a create-prefixed op that
+    // IS on the surface. The model still sees the permalink either way; only
+    // the host's created-resource block is withheld.
+    const executeSpy = vi
+      .spyOn(createEvalSuiteOperation, "execute")
+      .mockResolvedValue({
+        project: { id: "p1" },
+        suite: { id: "ts_1", name: "smoke", created: false },
+        servers: [],
+      } as never);
+    const created: CreatedResource[] = [];
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created,
+    });
+    const tool = tools[createEvalSuiteOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    const result = (await tool.execute(VALID_CREATE_INPUT, {})) as {
+      permalinks?: Array<{ url: string }>;
+    };
+    expect(created).toEqual([]);
+    expect(result.permalinks?.[0]?.url).toContain("/evals/suite/ts_1");
+    executeSpy.mockRestore();
+  });
+
+  it("still returns the read when the permalink policy cannot read it", async () => {
+    // A policy reads a shape (`result.items.map`). A null result throws inside
+    // it. Deriving a link is a convenience on top of the read; it must never
+    // be what turns a successful read into a failed tool call.
+    const executeSpy = vi
+      .spyOn(listProjectServersOperation, "execute")
+      .mockResolvedValue(null as never);
+    const tools = buildAgentApiToolSet({
+      client: {} as PlatformApiClient,
+      projectId: "p1",
+      created: [],
+    });
+    const tool = tools[listProjectServersOperation.name]! as {
+      execute: (input: unknown, ctx: unknown) => Promise<unknown>;
+    };
+
+    await expect(tool.execute({}, {})).resolves.toBeNull();
+    executeSpy.mockRestore();
+  });
+
   it("returns field-addressed validation errors (not a bare 'Invalid input')", async () => {
     const tools = buildAgentApiToolSet({
       client: {} as PlatformApiClient,
@@ -905,6 +1096,59 @@ describe("gated proposal tools", () => {
     // Not "proposed": the model must not tell the user a button exists.
     expect(result.proposed).toBeUndefined();
     expect(result.error).toMatch(/Try again in a moment/);
+  });
+
+  it("REFUSES to mint an install proposal the freeze could not pin", async () => {
+    // The default self-fetch answers `{}`: the mint-time directory lookup
+    // resolves a row with no endpoint and no content hash, so the freeze has
+    // nothing to pin. The tool must refuse rather than persist — an unpinned
+    // install proposal is exactly the TOCTOU hole the pin exists to close: an
+    // approver shown "install cs_1" with no endpoint, and a click that
+    // installs whatever the row resolves to an hour later.
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    const result = await tools[
+      installRegistryDirectoryServerOperation.name
+    ]!.execute({ catalogServerId: "cs_1" }, {});
+    expect(result.proposed).toBeUndefined();
+    expect(result.error).toMatch(/Could not pin/);
+    expect(createProposedActionMock).not.toHaveBeenCalled();
+  });
+
+  it("persists an install proposal WITH its pins when the row resolves", async () => {
+    getSelfFetchMock.mockReturnValue(async (request: Request) => {
+      const { pathname } = new URL(request.url);
+      if (pathname.includes("/registry/directory-servers/")) {
+        return new Response(
+          JSON.stringify({
+            id: "cs_1",
+            source: "claude",
+            serverName: "linear",
+            remoteUrl: "https://mcp.linear.app/mcp",
+            latestContentHash: "hash_now",
+          }),
+          { headers: { "Content-Type": "application/json" } }
+        );
+      }
+      return new Response("{}");
+    });
+    const tools = await toolsForSlackTurn({ slackChannelId: "C1" });
+    const result = await tools[
+      installRegistryDirectoryServerOperation.name
+    ]!.execute({ catalogServerId: "cs_1" }, {});
+    expect(result).toMatchObject({ proposed: true });
+    // The FROZEN description — the endpoint host the approval control shows.
+    expect(result.description).toBe(
+      "Install directory server cs_1 at mcp.linear.app"
+    );
+    expect(createProposedActionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        operation: installRegistryDirectoryServerOperation.name,
+        input: expect.objectContaining({
+          endpointUrl: "https://mcp.linear.app/mcp",
+          expectedContentHash: "hash_now",
+        }),
+      })
+    );
   });
 
   it("does not persist a proposal for an aborted turn", async () => {

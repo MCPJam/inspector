@@ -4,7 +4,7 @@
  * Tests for the OAuth fetch interceptor and persisted discovery state.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 const {
   mockDiscoverAuthorizationServerMetadata,
@@ -669,7 +669,7 @@ describe("mcp-oauth", () => {
       );
     });
 
-    it("rejects a proxied metadata response whose real upstream URL redirected to loopback", async () => {
+    it("rejects a proxied metadata response whose real upstream URL redirected to cloud metadata", async () => {
       const metadataResponse = new Response(
         JSON.stringify({
           authorization_servers: ["https://auth.example.com"],
@@ -678,7 +678,7 @@ describe("mcp-oauth", () => {
           status: 200,
           headers: {
             "X-MCPJam-OAuth-Upstream-URL":
-              "http://127.0.0.1:8787/private-metadata",
+              "http://169.254.169.254/latest/meta-data/",
           },
         }
       );
@@ -711,11 +711,11 @@ describe("mcp-oauth", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+        'Refusing OAuth response from link-local or cloud-metadata host "169.254.169.254"'
       );
     });
 
-    it("rejects a proxied OAuth endpoint response whose real upstream URL redirected to loopback", async () => {
+    it("rejects a proxied OAuth endpoint response whose real upstream URL redirected to cloud metadata", async () => {
       authFetch.mockImplementation(
         async () =>
           new Response(
@@ -724,14 +724,14 @@ describe("mcp-oauth", () => {
               statusText: "OK",
               headers: { "content-type": "application/json" },
               body: { access_token: "should-not-be-consumed" },
-              finalUrl: "http://127.0.0.1:8787/private-token",
+              finalUrl: "http://169.254.169.254/latest/meta-data/",
             }),
             {
               status: 200,
               headers: {
                 "Content-Type": "application/json",
                 "X-MCPJam-OAuth-Upstream-URL":
-                  "http://127.0.0.1:8787/private-token",
+                  "http://169.254.169.254/latest/meta-data/",
               },
             }
           )
@@ -753,7 +753,7 @@ describe("mcp-oauth", () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toContain(
-        'Refusing OAuth response from private/reserved host "127.0.0.1"'
+        'Refusing OAuth response from link-local or cloud-metadata host "169.254.169.254"'
       );
       expect(authFetch).toHaveBeenCalledWith(
         expect.stringMatching(/\/api\/mcp\/oauth\/proxy$/),
@@ -2852,8 +2852,8 @@ describe("mcp-oauth", () => {
         expect.stringMatching(/\.convex\.site\/registry\/oauth\/token$/),
         expect.anything()
       );
-    });
 
+    });
   });
 
   describe("MCPOAuthProvider.saveTokens convex binding", () => {
@@ -3420,5 +3420,78 @@ describe("evaluateCallbackSecurity (2R-iss callback gate)", () => {
         issParameterSupported: undefined,
       })
     ).toEqual({ ok: true });
+  });
+});
+
+describe("formatOAuthCallbackError", () => {
+  const invalidGrantMessage =
+    "OAuth token exchange failed (invalid_grant): the authorization server rejected the authorization code. Check whether the code expired or was reused, and whether the redirect URI, client ID, and PKCE verifier match.";
+  const unknownCallbackMessage = "Unknown callback error";
+
+  let formatOAuthCallbackError: typeof import("../mcp-oauth").formatOAuthCallbackError;
+
+  beforeAll(async () => {
+    ({ formatOAuthCallbackError } = await import("../mcp-oauth"));
+  });
+
+  it.each<[unknown, string]>([
+    ["invalid_grant", invalidGrantMessage],
+    ["invalid-grant", invalidGrantMessage],
+    ["invalid grant", invalidGrantMessage],
+    ["Uncaught InvalidGrantError", invalidGrantMessage],
+    [
+      "Uncaught InvalidGrantError\n    at async exchangeGenericAuthorizationCode",
+      invalidGrantMessage,
+    ],
+    [new Error("invalid_grant"), invalidGrantMessage],
+    ["Provider temporarily unavailable", "Provider temporarily unavailable"],
+    [null, unknownCallbackMessage],
+    [undefined, unknownCallbackMessage],
+    ["", unknownCallbackMessage],
+    [new Error(""), unknownCallbackMessage],
+    [{ message: "" }, unknownCallbackMessage],
+    [{ message: null }, unknownCallbackMessage],
+    [{ message: undefined }, unknownCallbackMessage],
+  ])("formats callback error context for %s", (error, expected) => {
+    expect(formatOAuthCallbackError(error)).toBe(expected);
+  });
+
+  // The server's own words survive the canned copy. `describeTokenRequestFailure`
+  // appends `error_description` to the flow error precisely so the cause is
+  // readable, and it is the only part that names what actually went wrong.
+  it.each<[string, string]>([
+    ["invalid_grant: client_id mismatch", "client_id mismatch"],
+    [
+      "Token request failed: 400: invalid_grant: code was issued to another client_id",
+      "code was issued to another client_id",
+    ],
+    ["Uncaught InvalidGrantError: Token is not active", "Token is not active"],
+  ])("keeps the authorization server's reason for %s", (error, reason) => {
+    expect(formatOAuthCallbackError(error)).toBe(
+      `${invalidGrantMessage} Server response: ${reason}`
+    );
+  });
+
+  // A `client_id` mention inside an invalid_grant description must not
+  // reclassify the failure as a registration problem.
+  it("prefers invalid_grant over the client_id substring check", () => {
+    expect(
+      formatOAuthCallbackError("invalid_grant: client_id mismatch")
+    ).toContain("invalid_grant");
+  });
+
+  it("still reports genuine client errors", () => {
+    expect(formatOAuthCallbackError("invalid_client")).toBe(
+      "Invalid client ID during token exchange. Please verify the client ID is correctly registered."
+    );
+    expect(formatOAuthCallbackError("unauthorized_client")).toBe(
+      "Client not authorized for token exchange. The client ID may not match the one used for authorization."
+    );
+  });
+
+  it("reads a message off a plain error-shaped object", () => {
+    expect(formatOAuthCallbackError({ message: "invalid_grant" })).toBe(
+      invalidGrantMessage
+    );
   });
 });

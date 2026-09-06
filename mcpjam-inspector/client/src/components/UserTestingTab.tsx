@@ -1,12 +1,10 @@
 import { useEffect, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useSearchParams } from "react-router";
 import { AlertTriangle, Boxes, Inbox, Loader2, Plus } from "lucide-react";
 import { useConvexAuth } from "convex/react";
-import { toast } from "@/lib/toast";
 import { Button } from "@mcpjam/design-system/button";
 import { UserTestingOverviewPanel } from "@/components/scenarios/UserTestingOverviewPanel";
 import { UserTestingScenarioDetail } from "@/components/scenarios/UserTestingScenarioDetail";
-import { UserTestingCreateFlow } from "@/components/scenarios/UserTestingCreateFlow";
 import { UserTestingScenarioCreateFlow } from "@/components/scenarios/UserTestingScenarioCreateFlow";
 import {
   useScenario,
@@ -23,7 +21,7 @@ import {
   describeScenarioDeletion,
   type ScenarioBackingRetirement,
 } from "@/lib/scenario-backing";
-import { useHostList, useHostMutations } from "@/hooks/useClients";
+import { useHostList } from "@/hooks/useClients";
 import { shouldQueryProjectId } from "@/hooks/useProjects";
 import { useUsageInsights } from "@/hooks/useUsageInsights";
 import { EMPTY_USAGE_FILTER } from "@/hooks/scenario-usage-filters";
@@ -31,6 +29,7 @@ import {
   buildUserTestingScenarioPath,
   parseUserTestingDetailTab,
   routePaths,
+  useAppNavigate,
   userTestingCreatePath,
 } from "@/lib/app-navigation";
 import { useSurfaceAgentBridge } from "@/lib/webmcp/use-surface-agent-bridge";
@@ -41,9 +40,9 @@ import type {
 } from "@/shared/inspector-command.js";
 
 /**
- * `/user-testing` — the User Testing surface. A scenario is one client bound to
- * one server, published behind a share link; the product question it answers is
- * "what happened when real people used this?".
+ * `/user-testing` — the User Testing surface. A scenario is one environment —
+ * a client and the servers it can reach — published behind a share link; the
+ * product question it answers is "what happened when real people used this?".
  *
  *   - `/user-testing`                    — the project's scenarios
  *   - `/user-testing/:scenarioId`        — Insights | Sessions (+ share band)
@@ -89,7 +88,7 @@ export function UserTestingTab({
   createOpen = false,
   editOpen = false,
 }: UserTestingTabProps) {
-  const navigate = useNavigate();
+  const navigate = useAppNavigate();
   const [searchParams] = useSearchParams();
   const convexAuth = useConvexAuth();
   const effectiveAuth = isAuthenticated && convexAuth.isAuthenticated;
@@ -221,9 +220,8 @@ export function UserTestingTab({
   // hydration) would advertise the tools before any query can run, so the
   // agent would get an empty snapshot and failing commands.
   const agentOperable = effectiveAuth && shouldQueryProjectId(projectId);
-  const { deleteScenario } = useScenarioMutations();
+  const { deleteScenario, updateScenario } = useScenarioMutations();
   const { publishEnvironmentScenario } = useEnvironmentScenarioMutations();
-  const { createHost } = useHostMutations();
   // Session rows for the snapshot only — the same list query the Sessions view
   // reads, unfiltered, redacted at read time.
   const { threads: agentSessionThreads } = useUsageInsights({
@@ -493,66 +491,42 @@ export function UserTestingTab({
         />
       );
     }
-    if (environmentsEnabled) {
-      return (
-        <UserTestingScenarioCreateFlow
-          projectId={projectId}
-          onCancel={goOverview}
-          onCreateEnvironment={() => navigate(routePaths.environments)}
-          onCreateScenario={async ({ environmentId, name, mode }) => {
-            // The one write. Publishing applies the name and the access mode
-            // in the same mutation, so the scenario is never briefly live in a
-            // mode nobody asked for. Idempotent: re-publishing an environment
-            // returns its existing scenario UNCHANGED rather than re-moding it.
-            const result = await publishEnvironmentScenario({
-              environmentId,
-              name,
-              mode,
-            });
-            navigate(buildUserTestingScenarioPath(result.scenarioId), {
-              replace: true,
-            });
-            return { scenarioId: result.scenarioId, created: result.created };
-          }}
-        />
-      );
-    }
+    // ONE create flow, both flag states. The composer's client and server-group
+    // pills render without `project-environments-enabled` — only its saved-
+    // environment picker is gated — so a flag-off project composes an ad-hoc
+    // environment out of them instead of getting the single-server form this
+    // replaces. That form could attach exactly one server and produced a
+    // scenario nobody could edit afterwards, because its backing client is
+    // hidden from every client surface.
     return (
-      <UserTestingCreateFlow
+      <UserTestingScenarioCreateFlow
         projectId={projectId}
-        isAuthenticated={effectiveAuth}
         onCancel={goOverview}
-        onCreateScenario={async ({ name, input, scenarioMode }) => {
-          // The one write. `owner: 'user_testing'` makes `hosts.createHost`
-          // mint the client, an ad-hoc environment over it, and an
-          // ENVIRONMENT-backed scenario in a single mutation, so a
-          // half-created scenario isn't reachable.
-          //
-          // Why the owner tag matters here and not just as a label: the
-          // env-backed scenario resolves its servers LIVE from the client's
-          // config on every read. The old host-backed mint copied them at
-          // create time — except it copied nothing, so every scenario made
-          // this way served testers zero MCP servers.
-          const { scenarioId } = await createHost({
-            projectId,
+        onCreateEnvironment={() => navigate(routePaths.environments)}
+        onCreateScenario={async ({ environmentId, name, mode }) => {
+          // The one write. Publishing applies the name and the access mode
+          // in the same mutation, so the scenario is never briefly live in a
+          // mode nobody asked for. Idempotent: re-publishing an environment
+          // returns its existing scenario UNCHANGED rather than re-moding it.
+          const result = await publishEnvironmentScenario({
+            environmentId,
             name,
-            input,
-            scenarioMode,
-            owner: "user_testing",
+            mode,
           });
-          // `scenarioId` is typed nullable because `owner: 'journeys'` mints no
-          // scenario. This branch always does — but asserting that would turn a
-          // backend that disagreed into a navigation to `/user-testing/null`
-          // and a success toast for a scenario nobody can open.
-          if (!scenarioId) {
-            throw new Error("Scenario creation did not return a scenario.");
-          }
-          toast.success("Scenario created");
-          // Navigate by SCENARIO id, like the environment flow above. The
-          // host-keyed ladder deliberately filters env-backed rows out, so a
-          // host id would resolve to nothing here.
-          navigate(buildUserTestingScenarioPath(scenarioId), { replace: true });
-          return { scenarioId };
+          navigate(buildUserTestingScenarioPath(result.scenarioId), {
+            replace: true,
+          });
+          return { scenarioId: result.scenarioId, created: result.created };
+        }}
+        onSetPerTurnFeedback={async (scenarioId, settings) => {
+          // A second write, because `publishEnvironmentScenario` takes no
+          // `chatUi`. Both fields go together: this is the study's first and
+          // only statement about its rating widget, so there is no stored
+          // value for a partial patch to preserve.
+          await updateScenario({
+            scenarioId,
+            chatUi: { surfaces: { perTurnFeedback: settings } },
+          } as any);
         }}
       />
     );
@@ -652,12 +626,12 @@ export function UserTestingTab({
           </h1>
           <Button size="sm" onClick={goCreate}>
             <Plus className="mr-1.5 size-4" />
-            New scenario
+            Create new study
           </Button>
         </div>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-          Share a scenario with real people, then read what happened in their
-          sessions.
+          Create a study with real users or internal testers, then read what
+          happened in their sessions.
         </p>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto px-6 py-5 sm:px-8">
@@ -668,7 +642,7 @@ export function UserTestingTab({
           isLoading={listLoading}
           onOpenScenario={(id) => navigate(buildUserTestingScenarioPath(id))}
           onCreateScenario={goCreate}
-          createLabel="New scenario"
+          createLabel="Create new study"
         />
       </div>
     </div>

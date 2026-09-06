@@ -973,6 +973,30 @@ describe("HostRunner", () => {
       expect(callArgs.onStepFinish).toBeInstanceOf(Function);
     });
 
+    it("omits temperature entirely for a model that rejects the field", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        // A Bedrock inference profile for an affected family — the shape the
+        // original report came in under.
+        model: "bedrock/us.anthropic.claude-opus-4-7-20260205-v1:0",
+        apiKey: "test-key",
+        temperature: 0.3,
+      });
+
+      await agent.run("What is 2+2?");
+
+      // Not a falsy check: `temperature: undefined` still serializes the key,
+      // and the key being present at all is what Anthropic 400s on.
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs).not.toHaveProperty("temperature");
+    });
+
     it("should handle empty usage data", async () => {
       mockGenerateText.mockResolvedValueOnce({
         text: "Response",
@@ -1857,6 +1881,94 @@ describe("HostRunner", () => {
           { type: "media", data: "aGVsbG8=", mediaType: "image/png" },
         ],
       });
+    });
+  });
+
+  describe("tool description overrides", () => {
+    const createMockTool = (
+      name: string,
+      visibility?: Array<"model" | "app">
+    ): Tool => ({
+      name,
+      description: `Mock ${name} tool`,
+      inputSchema: { type: "object", properties: {} },
+      execute: async () => ({ content: [{ type: "text", text: "ok" }] }),
+      _meta: visibility
+        ? { _serverId: "test", ui: { visibility } }
+        : { _serverId: "test" },
+    });
+
+    it("rewrites description on the Tool[] branch after visibility drop", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [
+        createMockTool("search", ["model"]),
+        createMockTool("appOnlyTool", ["app"]),
+      ];
+      const agent = new HostRunner({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: { search: "Look up a user by email" },
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.tools.search.description).toBe("Look up a user by email");
+      expect(Object.keys(callArgs.tools)).not.toContain("appOnlyTool");
+    });
+
+    it("re-applies overrides through withOptions", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const tools: Tool[] = [createMockTool("search", ["model"])];
+      const agent = new HostRunner({
+        tools,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: { search: "Look up a user by email" },
+      });
+      const clone = agent.withOptions({});
+
+      await clone.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(callArgs.tools.search.description).toBe("Look up a user by email");
+    });
+
+    it("rewrites own tools only on the record form, never Object.prototype members", async () => {
+      mockGenerateText.mockResolvedValueOnce({
+        text: "OK",
+        steps: [],
+        usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+      } as any);
+
+      const agent = new HostRunner({
+        tools: mockToolSet,
+        model: "openai/gpt-4o",
+        apiKey: "test-key",
+        toolDescriptionOverrides: {
+          add: "Sum two numbers",
+          toString: "not a tool",
+          constructor: "not a tool",
+        },
+      });
+
+      await agent.run("Test");
+
+      const callArgs = mockGenerateText.mock.calls[0][0] as any;
+      expect(Object.keys(callArgs.tools).sort()).toEqual(["add", "subtract"]);
+      expect(callArgs.tools.add.description).toBe("Sum two numbers");
+      expect(callArgs.tools.subtract.description).toBe("Subtract two numbers");
     });
   });
 });

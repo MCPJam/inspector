@@ -39,6 +39,103 @@ describe("PlatformApiClient", () => {
     expect(DEFAULT_PLATFORM_API_BASE_URL).toBe("https://app.mcpjam.com/api/v1");
   });
 
+  it("resolves a relative baseUrl against the current origin (browser/worker)", async () => {
+    // The directory-readiness client passes baseUrl "/api/v1" so the request
+    // rides the current origin's session. `new URL("/api/v1/...")` throws
+    // "Invalid URL" on its own, so the origin must be supplied as the base.
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      await client.listReadinessRuns({
+        projectId: "p1",
+        readinessKind: "claude",
+        serverId: "s1",
+        limit: 1,
+      });
+
+      const { url } = requestOf(fetchMock);
+      expect(url.origin).toBe("https://staging.mcpjam.com");
+      expect(url.pathname).toBe("/api/v1/projects/p1/readiness-runs");
+      expect(url.searchParams.get("readinessKind")).toBe("claude");
+      expect(url.searchParams.get("serverId")).toBe("s1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("starts a Claude readiness run through a relative baseUrl", async () => {
+    // Regression: the /conformance page's "Directory Readiness" run threw
+    // "Failed to construct 'URL': Invalid URL" because the relative baseUrl
+    // reached `new URL` with no base.
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({ runId: "run-1", status: "running" }, { status: 202 })
+      );
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      const receipt = await client.startClaudeReadinessRun({
+        projectId: "p1",
+        serverId: "s1",
+      });
+
+      const { url, init } = requestOf(fetchMock);
+      expect(url.href).toBe(
+        "https://staging.mcpjam.com/api/v1/projects/p1/servers/s1/readiness-runs/claude"
+      );
+      expect(init.method).toBe("POST");
+      expect(receipt.runId).toBe("run-1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("starts a conformance run through a relative baseUrl", async () => {
+    vi.stubGlobal("location", { origin: "https://staging.mcpjam.com" });
+    try {
+      const fetchMock = vi.fn(async () =>
+        jsonResponse({ runId: "run-1", status: "queued" }, { status: 202 })
+      );
+      const client = makeClient(fetchMock, { baseUrl: "/api/v1" });
+
+      const receipt = await client.startConformanceRun({
+        projectId: "p1",
+        serverId: "s1",
+        suites: ["protocol"],
+      });
+
+      const { url, init } = requestOf(fetchMock);
+      expect(url.href).toBe(
+        "https://staging.mcpjam.com/api/v1/projects/p1/servers/s1/conformance-runs"
+      );
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(String(init.body))).toEqual({ suites: ["protocol"] });
+      expect(receipt.runId).toBe("run-1");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("lists conformance runs with optional server and cursor", async () => {
+    const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
+    const client = makeClient(fetchMock);
+
+    await client.listConformanceRuns({
+      projectId: "p1",
+      serverId: "s1",
+      limit: 10,
+      cursor: "c1",
+    });
+
+    const { url } = requestOf(fetchMock);
+    expect(url.pathname).toBe("/api/v1/projects/p1/conformance-runs");
+    expect(url.searchParams.get("serverId")).toBe("s1");
+    expect(url.searchParams.get("limit")).toBe("10");
+    expect(url.searchParams.get("cursor")).toBe("c1");
+  });
+
   it("sends GET requests with bearer auth and skips undefined query params", async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ items: [] }));
     const client = makeClient(fetchMock);

@@ -1,4 +1,5 @@
 import claudeLogo from "/claude_logo.png";
+import claudeDesktopLogo from "/claude-desktop-logo.png";
 import claudeCodeLogo from "/claude_code_logo.png";
 import openaiLogo from "/openai_logo.png";
 import mistralLogo from "/mistral_logo.png";
@@ -91,7 +92,10 @@ import type {
 // local — the SDK catalog doesn't carry them.
 import {
   MCP_APPS_FULL,
+  MCP_APPS_CLAUDE,
+  MCP_APPS_CHATGPT,
   MCP_APPS_COPILOT,
+  MCP_APPS_CURSOR,
   MCP_APPS_GOOSE,
   MCP_APPS_NO_CLAIMS,
   MCP_APPS_VSCODE,
@@ -165,6 +169,15 @@ export const OPENAI_APPS_COPILOT_SURFACE: ResolvedOpenAiAppsCapabilities = {
  */
 export const MCP_APPS_FULL_SURFACE: ResolvedMcpAppsCapabilities =
   MCP_APPS_FULL as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CLAUDE_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CLAUDE as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CHATGPT_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CHATGPT as ResolvedMcpAppsCapabilities;
+
+export const MCP_APPS_CURSOR_SURFACE: ResolvedMcpAppsCapabilities =
+  MCP_APPS_CURSOR as ResolvedMcpAppsCapabilities;
 
 /**
  * Spec-default "no claims" surface — every advertise key off, no
@@ -245,6 +258,9 @@ export const MCP_APPS_SLACK_SURFACE: ResolvedMcpAppsCapabilities = {
   resourcePrefersBorder: false,
   downloadFile: false,
   requestTeardown: false,
+  // Slackbot omits `hostContext.safeAreaInsets` entirely — the
+  // 2026-09-03 captures carry no such key in either theme.
+  safeAreaInsets: false,
   widgetDisplayModeRequests: "accept",
 };
 
@@ -265,7 +281,7 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
     // controlled and all on. listChanged sub-fields stay omitted because
     // the renderer doesn't forward those notifications yet — apps that
     // gate on `listChanged: true` would otherwise hit dead paths.
-    mcpAppsCapabilities: MCP_APPS_FULL_SURFACE,
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
     resolveStyleVariables: getClaudeDesktopStyleVariables,
   },
   chatUi: {
@@ -288,6 +304,35 @@ export const CLAUDE_HOST_STYLE: HostStyleDefinition = {
 // Capabilities reuse Claude's preset here, but the catalog host definition
 // overrides host app capabilities since the CLI renders no MCP Apps — the style
 // preset is just the fallback if a host ever clears that override.
+// Claude Desktop is the Electron app; CLAUDE_HOST_STYLE above is claude.ai in
+// a browser. They render the same surface — the style variables in
+// claude-desktop-client-context.ts were captured from Desktop in the first
+// place — so this borrows all of it and differs only in identity. The
+// behavioural differences (no fullscreen, no toolInfo) live in the catalog
+// row, not here.
+export const CLAUDE_DESKTOP_HOST_STYLE: HostStyleDefinition = {
+  id: "claude-desktop",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CLAUDE_DESKTOP_PLATFORM,
+    fontCss: CLAUDE_DESKTOP_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_CLAUDE_SURFACE,
+    resolveStyleVariables: getClaudeDesktopStyleVariables,
+  },
+  chatUi: {
+    // Must match the catalog label byte-for-byte: `?template=claude-desktop`
+    // opens an existing host by `name === template.label`, and any drift mints
+    // a duplicate on every visit.
+    label: "Claude Desktop",
+    shortLabel: "Claude Desktop-style host",
+    pickerDescription: "Claude desktop app chrome",
+    logoSrc: claudeDesktopLogo,
+    family: "claude",
+    resolveChatBackground: (theme) => CLAUDE_DESKTOP_CHAT_BACKGROUND[theme],
+    loadingIndicator: ClaudeMarkIndicator,
+  },
+};
+
 export const CLAUDE_CODE_HOST_STYLE: HostStyleDefinition = {
   id: "claude-code",
   mcp: {
@@ -314,16 +359,7 @@ export const CHATGPT_HOST_STYLE: HostStyleDefinition = {
     protocolOverride: UIType.OPENAI_SDK,
     platform: CHATGPT_PLATFORM,
     fontCss: CHATGPT_FONT_CSS,
-    // ChatGPT differs from Claude on the SDK surface: ChatGPT's Apps SDK
-    // historically focuses on tool calls rather than proxying server
-    // resources/logging, so those rows are off here. `updateModelContext`
-    // and `message` stay on. Adjust once verified against the current
-    // OpenAI Apps SDK documentation.
-    mcpAppsCapabilities: {
-      ...MCP_APPS_FULL_SURFACE,
-      serverResources: false,
-      logging: false,
-    },
+    mcpAppsCapabilities: MCP_APPS_CHATGPT_SURFACE,
     resolveStyleVariables: getChatGPTStyleVariables,
     // Real ChatGPT exposes the OpenAI Apps SDK `window.openai` surface
     // to widget HTML; emulating it here keeps existing Apps SDK widgets
@@ -466,11 +502,7 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     // they're carried as a preset-only `hostCapabilitiesAugment` below.
     // Don't widen without evidence — apps that gate on `listChanged: true`
     // need to know real Cursor doesn't send them.
-    mcpAppsCapabilities: {
-      ...MCP_APPS_FULL_SURFACE,
-      updateModelContext: false,
-      message: false,
-    },
+    mcpAppsCapabilities: MCP_APPS_CURSOR_SURFACE,
     hostCapabilitiesAugment: {
       serverTools: { listChanged: false },
       serverResources: { listChanged: false },
@@ -486,6 +518,44 @@ export const CURSOR_HOST_STYLE: HostStyleDefinition = {
     // — closer to ChatGPT than to Claude's warm bubbles. Routes
     // family-keyed branches (bubble shape, send hint, etc.) to the
     // chatgpt visual until Cursor earns its own family.
+    family: "chatgpt",
+    resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
+    loadingIndicator: CursorShineIndicator,
+  },
+};
+
+/**
+ * Cursor CLI host style.
+ *
+ * `cursor-agent` is a terminal agent with no chat chrome of its own, so it
+ * borrows Cursor's surface wholesale (platform, fonts, style variables,
+ * background) and differs only in identity: its own label and picker copy.
+ * Exactly the recipe CLAUDE_CODE_HOST_STYLE uses over Claude's, and
+ * CODEX_HOST_STYLE over ChatGPT's.
+ *
+ * What it does NOT borrow is the app-capability claim. `mcpAppsCapabilities`
+ * drops to the no-claims preset: the Cursor row above was captured from the IDE
+ * chat panel, which renders MCP Apps in a webview, and a CLI cannot. Reusing
+ * that matrix would advertise a widget surface that does not exist. (The
+ * template also sets `hostCapabilitiesOverride: {}`, so this preset is only the
+ * fallback if a host ever clears that override — which is exactly when getting
+ * it right matters.)
+ */
+export const CURSOR_CLI_HOST_STYLE: HostStyleDefinition = {
+  id: "cursor-cli",
+  mcp: {
+    protocolOverride: UIType.MCP_APPS,
+    platform: CURSOR_PLATFORM,
+    fontCss: CURSOR_FONT_CSS,
+    mcpAppsCapabilities: MCP_APPS_NO_CLAIMS_SURFACE,
+    resolveStyleVariables: getCursorStyleVariables,
+  },
+  chatUi: {
+    label: "Cursor CLI",
+    shortLabel: "Cursor CLI-style host",
+    pickerDescription: "Cursor coding CLI chrome",
+    logoSrc: cursorLogo,
+    // Same flat, dark, IDE-adjacent visual bucket as the Cursor panel.
     family: "chatgpt",
     resolveChatBackground: (theme) => CURSOR_CHAT_BACKGROUND[theme],
     loadingIndicator: CursorShineIndicator,
@@ -567,6 +637,13 @@ export const CODEX_HOST_STYLE: HostStyleDefinition = {
       ...MCP_APPS_FULL_SURFACE,
       serverResources: false,
       logging: false,
+      // Same CSP answers as ChatGPT (2026-08-19 probe), same app runtime.
+      // `connect-src` is one directive, so the three subtypes cannot diverge:
+      // the declared wss endpoint connected while an undeclared one took a
+      // real violation, so the declared list IS honored. Resource subtypes
+      // stay unknown — the probe's declared origin sits in ChatGPT's own
+      // baseline allowlist, so it proves nothing either way.
+      cspConnectDomains: { fetch: true, xhr: true, websocket: true },
     },
     resolveStyleVariables: getChatGPTStyleVariables,
     // Codex is a CLI (no widget rendering surface), so the `window.openai`
@@ -836,9 +913,11 @@ export const BUILT_IN_HOST_STYLES: readonly HostStyleDefinition[] = [
   GOOSE_HOST_STYLE,
   SLACK_HOST_STYLE,
   CURSOR_HOST_STYLE,
+  CURSOR_CLI_HOST_STYLE,
   COPILOT_HOST_STYLE,
   CODEX_HOST_STYLE,
   CLAUDE_CODE_HOST_STYLE,
+  CLAUDE_DESKTOP_HOST_STYLE,
   VSCODE_HOST_STYLE,
   AGENTCORE_HOST_STYLE,
   N8N_HOST_STYLE,

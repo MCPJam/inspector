@@ -46,6 +46,43 @@ export const ANALYTICS_EVENTS = {
   // --- Public API agent surface (server-authoritative; no client twin) ---
   api_agent_turn_completed: { source: "server" },
   /**
+   * One agent Playground turn finished (`POST /v1/chat-sessions/messages`).
+   * Outcome/count/duration only — the messages and tool payloads on that
+   * route are customer conversation content and never ride an event.
+   */
+  api_chat_session_turn_completed: { source: "server" },
+
+  // --- Directory readiness (server-authoritative; no client twin) ---
+  /**
+   * A hosted readiness run was accepted. Fired from the v1 start route, which
+   * is the only way a hosted run is created, so it covers every surface that
+   * ever starts one (REST, MCP worker, agent approval, chat, CLI) without
+   * instrumenting each.
+   *
+   * `deduped` is why this fires on a replay too: a retried start that returned
+   * an existing run is a real request the caller made, and counting only fresh
+   * runs would understate demand while hiding a client that retries badly.
+   *
+   * The SERVER URL IS NEVER SENT — it names somebody's private endpoint, and
+   * no launch question needs it.
+   */
+  directory_readiness_run_started_server: { source: "server" },
+  /**
+   * A hosted readiness run reached a terminal state. Fired from the detached
+   * worker, so it is attributed through `captureServerEventForActor` to the
+   * identity resolved back when the request still existed.
+   *
+   * Carries the THREE AXES separately, because collapsing them is the exact
+   * misreading the product exists to prevent: `status` is whether the run
+   * completed, `overall_status` is the grade, and `llm_observation_status` /
+   * `llm_observation_reason` are whether the optional paid pass ran. A run can
+   * be `completed` + `not-ready` + `billing-blocked` and all three matter.
+   *
+   * NO REPORT CONTENTS. Findings carry the raw observation behind a verdict;
+   * an analytics pipeline is the last place that belongs.
+   */
+  directory_readiness_run_finished_server: { source: "server" },
+  /**
    * One `GET /projects/{p}/sessions` search, emitted from the proxy route —
    * the chokepoint every surface (in-app chat, MCP worker, REST, CLI) funnels
    * through, so one event covers all four instead of four instrumentations
@@ -118,6 +155,7 @@ export const ANALYTICS_EVENTS = {
   scenario_bootstrap_started: { source: "client" },
   client_builder_viewed: { source: "client" },
   client_config_saved: { source: "client" },
+  client_setting_saved: { source: "client" },
   client_created: { source: "client" },
   client_deleted: { source: "client" },
   client_selected: { source: "client" },
@@ -146,6 +184,32 @@ export const ANALYTICS_EVENTS = {
   local_computer_consent_granted: { source: "client" },
   local_computer_consent_reauthorized: { source: "client" },
   local_terminal_unavailable: { source: "client" },
+  // --- Local harness target ("Native on this machine") ---
+  // The Claude Code agent running as a supervised process on the user's own
+  // machine rather than in a cloud computer. Content-free by the same rule as
+  // the local computer above, and then some: NEVER a workspace path (not even
+  // tilde-shortened), a machine id, a runtime digest, a lease, or a key.
+  // Enums, booleans and counts only.
+  // local_harness_target_selected: the user moved the Hosted⇄Native selector
+  //   {target}.
+  // local_harness_consent_gate_shown: the consent sheet rendered.
+  // local_harness_consent_granted / _denied: Allow / "Run hosted instead" —
+  //   the two affordances on the sheet.
+  // local_harness_consent_reauthorized: "Forget & re-authorize".
+  // local_harness_runtime_install_started / _completed / _failed: the explicit
+  //   runtime-pack install step {outcome} — an enum, never an installer
+  //   message, which can carry a path.
+  // local_harness_unavailable: the native target could not be offered
+  //   {reason} — the availability gate's own status enum.
+  local_harness_target_selected: { source: "client" },
+  local_harness_consent_denied: { source: "client" },
+  local_harness_consent_gate_shown: { source: "client" },
+  local_harness_consent_granted: { source: "client" },
+  local_harness_consent_reauthorized: { source: "client" },
+  local_harness_runtime_install_started: { source: "client" },
+  local_harness_runtime_install_completed: { source: "client" },
+  local_harness_runtime_install_failed: { source: "client" },
+  local_harness_unavailable: { source: "client" },
   connect_host_overlay_add_clicked: { source: "client" },
   connect_host_overlay_opened: { source: "client" },
   connect_host_overlay_quick_added: { source: "client" },
@@ -231,6 +295,13 @@ export const ANALYTICS_EVENTS = {
   mcpjam_agent_tour_launched: { source: "client" },
   move_server_to_project_clicked: { source: "client" },
   /**
+   * A connected server was offered to the organization's registry from the
+   * server card's menu. Fires on the CLICK, before the eligibility refusal —
+   * how often people reach for it and are told a header-authed server cannot
+   * be shared is the thing worth knowing.
+   */
+  share_server_to_org_registry_clicked: { source: "client" },
+  /**
    * A callback arrived with a pending server name but no stored flow session,
    * so it could not be completed and the user was asked to reauthorize.
    *
@@ -256,6 +327,32 @@ export const ANALYTICS_EVENTS = {
   playground_tool_run_clicked: { source: "client" },
   playground_tools_pane_tab_changed: { source: "client" },
   playground_tools_refresh_clicked: { source: "client" },
+  // --- Free-plan limit walls (PlanLimitDialog) ---
+  // One impression per opening, then explicit user actions and checkout
+  // outcomes. `limit_kind` distinguishes which cap was hit so we can compare
+  // which wall converts. Person data comes from the global identified profile,
+  // not duplicated PII in these events.
+  plan_limit_dialog_shown: { source: "client" },
+  plan_limit_sign_in_clicked: { source: "client" },
+  plan_limit_buy_credits_clicked: { source: "client" },
+  plan_limit_byok_clicked: { source: "client" },
+  plan_limit_interval_selected: { source: "client" },
+  plan_limit_upgrade_clicked: { source: "client" },
+  plan_limit_upgrade_failed: { source: "client" },
+  plan_limit_upgrade_resolved: { source: "client" },
+  plan_limit_upgrade_returned: { source: "client" },
+  plan_limit_dialog_dismissed: { source: "client" },
+  plan_limit_enterprise_cta_clicked: { source: "client" },
+  plan_limit_upgrade_requested: { source: "client" },
+  // Guest credit-wall A/B (BB-133): the treatment modal replaces the single
+  // "Sign in" CTA with a benefit-led create-account primary and a see-plans
+  // secondary. `variant` on the impression/click events lets PostHog compare
+  // sign-in vs create-account conversion across control and treatment.
+  plan_limit_create_account_clicked: { source: "client" },
+  plan_limit_see_plans_clicked: { source: "client" },
+  credit_topup_dialog_shown: { source: "client" },
+  credit_topup_package_selected: { source: "client" },
+  credit_topup_dialog_dismissed: { source: "client" },
   // --- OpenAI plugin import (Connect "Add plugin", INS-2) ---
   // Props are built by `client/src/lib/plugins/plugin-analytics.ts`, which
   // exists to keep bundle paths, server URLs, env/header names, and plugin
@@ -338,6 +435,45 @@ export const ANALYTICS_EVENTS = {
   ui_navigation_rejected: { source: "client" },
   ui_tool_call_completed: { source: "client" },
   ui_tool_call_started: { source: "client" },
+
+  // --- Home: shared Slack Connect channel card ---
+  // Flag-dark (`shared-slack-channel-enabled`). Props: location ("home"),
+  // state (none | provisioning | invite_sent | pending_admin_approval |
+  // active | invite_declined | invite_expired | error).
+  home_shared_slack_card_viewed: { source: "client" },
+  home_shared_slack_provision_clicked: { source: "client" },
+  home_shared_slack_invite_opened: { source: "client" },
+  home_shared_slack_retry_clicked: { source: "client" },
+  home_shared_slack_channel_opened: { source: "client" },
+
+  // --- Canonical project-scoped URLs (`/p/<projectId>/...`) ---
+  // Every prop here is LOW CARDINALITY on purpose: a project id would make
+  // these unusable as aggregates and would put customer identifiers on a
+  // navigation event. Ids never ride these — only what happened.
+  //
+  // `project_route_legacy_normalized`  props: source (unscoped | query),
+  //   resolved (true | false). One old link rewritten onto its canonical path.
+  //   Its volume is what says whether legacy compatibility can be retired.
+  // `project_route_resolved`           props: outcome (ready), duration_bucket
+  //   (instant | fast | slow) — how long a scoped URL took to become the
+  //   active project.
+  // `project_route_inaccessible`       props: reason (malformed | not-a-member
+  //   | timed-out). Never says whether the project exists.
+  // `project_route_recovered`          props: cause (late-ready). A route that
+  //   had already looked inaccessible later resolved without navigation.
+  // `project_route_stale_return_recovered` props: outcome (switched |
+  //   no-fallback). A post-sign-in scoped path named a lost membership.
+  // `project_route_scope_mismatch`     props: guard (redirect-loop |
+  //   repeated-switch). Redirect-loop protection tripped.
+  // `app_signin_return_restored`       props: outcome (restored | absent |
+  //   superseded).
+  project_route_legacy_normalized: { source: "client" },
+  project_route_resolved: { source: "client" },
+  project_route_inaccessible: { source: "client" },
+  project_route_recovered: { source: "client" },
+  project_route_stale_return_recovered: { source: "client" },
+  project_route_scope_mismatch: { source: "client" },
+  app_signin_return_restored: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

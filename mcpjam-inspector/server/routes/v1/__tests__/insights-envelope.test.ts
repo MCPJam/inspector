@@ -300,6 +300,343 @@ describe("journey-run detail — envelope failure degrades", () => {
   });
 });
 
+describe("eval-run detail — judges envelope", () => {
+  const GRADED_RUN = {
+    ...RUN_ROW,
+    goalCompletionStatus: "completed",
+    goalCompletion: {
+      summary: "Two of three answers hit the goal.",
+      generatedAt: 9,
+      modelUsed: "openai/gpt-5.4-mini",
+      threshold: 0.7,
+      cases: [
+        {
+          caseKey: "ui_abc",
+          iterationId: "it_1",
+          score: 0.9,
+          passed: true,
+          reason: "named the right tool",
+          rubricHits: ["cites the id"],
+        },
+      ],
+    },
+  };
+
+  it("projects the persisted goal-completion result", async () => {
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: GRADED_RUN,
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion).toEqual({
+      status: "completed",
+      errorCode: null,
+      summary: "Two of three answers hit the goal.",
+      generatedAt: 9,
+      modelUsed: "openai/gpt-5.4-mini",
+      threshold: 0.7,
+      cases: [
+        {
+          // The persisted AUTHORED-case identity, kept under its own name so
+          // nobody joins it against a case row id.
+          caseKey: "ui_abc",
+          // The join key. Without it a caller can only pair a judge case with
+          // its iteration by array POSITION.
+          iterationId: "it_1",
+          score: 0.9,
+          passed: true,
+          reason: "named the right tool",
+          rubricHits: ["cites the id"],
+        },
+      ],
+    });
+  });
+
+  it("omits iterationId on a judge result persisted without one", async () => {
+    // Rows written before the join key was projected must not grow a key
+    // whose value would be a guess.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_legacy",
+              score: 0.4,
+              passed: false,
+              reason: "missed the goal",
+              rubricHits: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.goalCompletion.cases[0].caseKey).toBe("ui_legacy");
+  });
+
+  it("reports a never-requested judge as status null, not as an absent field", async () => {
+    // A caller must be able to read `judges.goalCompletion.status` without
+    // first proving the field exists, and `null` has to be distinguishable
+    // from "ran and graded nothing".
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: RUN_ROW,
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.status).toBeNull();
+    expect(body.judges.goalCompletion.cases).toEqual([]);
+    expect(body.judges.groundedness.status).toBeNull();
+  });
+
+  it("carries no cases for a pending or failed judge, and names the error code", async () => {
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...GRADED_RUN,
+        goalCompletionStatus: "failed",
+        goalCompletionErrorCode: "spend_cap_exceeded",
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.status).toBe("failed");
+    expect(body.judges.goalCompletion.errorCode).toBe("spend_cap_exceeded");
+    expect(body.judges.goalCompletion.cases).toEqual([]);
+  });
+
+  it("projects groundedness with its own per-case evidence field", async () => {
+    // Same envelope, NOT the same case shape: groundedness grades support from
+    // the trajectory, so it reports unsupportedClaims where goal completion
+    // reports rubricHits.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        groundednessStatus: "completed",
+        groundedness: {
+          summary: "One answer overreached.",
+          generatedAt: 11,
+          modelUsed: "openai/gpt-5.4-mini",
+          threshold: 0.6,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: "it_9",
+              score: 0.2,
+              passed: false,
+              reason: "invented a total",
+              unsupportedClaims: ["the 42 figure"],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    const body = (await res.json()) as any;
+    expect(body.judges.groundedness.cases).toEqual([
+      {
+        caseKey: "ui_abc",
+        // Groundedness projects through its OWN callback, so the join key
+        // needs its own assertion — a regression in one mapper must not pass
+        // because the other is covered.
+        iterationId: "it_9",
+        score: 0.2,
+        passed: false,
+        reason: "invented a total",
+        unsupportedClaims: ["the 42 figure"],
+      },
+    ]);
+  });
+
+  it.each([
+    ["null", null],
+    ["an empty string", ""],
+    ["a non-string", 42],
+  ])("omits a %s iterationId on both judges", async (_label, persisted) => {
+    // The DTO promises a join key a caller can use. `""` is a string but joins
+    // to nothing, and a non-string is not a key at all — all three have to be
+    // ABSENT rather than echoed, so "no join key on this row" stays one state.
+    vi.clearAllMocks();
+    answerQueries({
+      getTestSuiteRun: {
+        ...RUN_ROW,
+        goalCompletionStatus: "completed",
+        goalCompletion: {
+          ...GRADED_RUN.goalCompletion,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.9,
+              passed: true,
+              reason: "named the right tool",
+              rubricHits: [],
+            },
+          ],
+        },
+        groundednessStatus: "completed",
+        groundedness: {
+          summary: "One answer overreached.",
+          generatedAt: 11,
+          modelUsed: "openai/gpt-5.4-mini",
+          threshold: 0.6,
+          cases: [
+            {
+              caseKey: "ui_abc",
+              iterationId: persisted,
+              score: 0.2,
+              passed: false,
+              reason: "invented a total",
+              unsupportedClaims: [],
+            },
+          ],
+        },
+      },
+      getEvalRunInsightsEnvelope: ENVELOPE,
+    });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}`,
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.judges.goalCompletion.cases[0]).not.toHaveProperty(
+      "iterationId",
+    );
+    expect(body.judges.groundedness.cases[0]).not.toHaveProperty("iterationId");
+  });
+});
+
+describe("eval-run judge request", () => {
+  it("202s with a pending receipt and forwards the per-run override", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: JSON.stringify({
+          force: true,
+          enable: true,
+          model: "openai/gpt-5",
+          threshold: 0.8,
+        }),
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(202);
+    expect(await res.json()).toMatchObject({
+      runId: RUN,
+      projectId: PROJECT,
+      status: "pending",
+    });
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      {
+        suiteRunId: RUN,
+        force: true,
+        runOverride: {
+          enabled: true,
+          judgeModel: "openai/gpt-5",
+          threshold: 0.8,
+        },
+      },
+    );
+  });
+
+  it("sends NO override when the caller stated none", async () => {
+    // The mutation clears a previously persisted override when the arg is
+    // absent, so re-grading without restating one returns to suite-config
+    // grading. Sending an empty object would defeat that.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockResolvedValue(null);
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      { method: "POST" },
+    );
+    expect(res.status).toBe(202);
+    expect(mutationMock).toHaveBeenCalledWith(
+      "goalCompletion:requestGoalCompletion",
+      { suiteRunId: RUN },
+    );
+  });
+
+  it("404s across projects before requesting anything", async () => {
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: { ...RUN_ROW, projectId: "proj_b" } });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      { method: "POST" },
+    );
+    expect(res.status).toBe(404);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a refused request instead of a false pending receipt", async () => {
+    // `202 pending` is a PROMISE that grading was scheduled. Reporting it for
+    // a mutation that never landed sends the caller to poll a judge that will
+    // never move off `null`.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    mutationMock.mockRejectedValue(new Error("Suite not found or unauthorized"));
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      { method: "POST" },
+    );
+    expect(res.status).toBeGreaterThanOrEqual(400);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.status).not.toBe("pending");
+    expect(body.code).toBeTruthy();
+  });
+
+  it.each([
+    ["malformed JSON", "{not json"],
+    ["a truthy non-boolean force", JSON.stringify({ force: "false" })],
+    ["an out-of-range threshold", JSON.stringify({ threshold: 80 })],
+    ["an unknown key", JSON.stringify({ autoRun: true })],
+  ])("400s on %s rather than billing for it", async (_label, payload) => {
+    // This endpoint SPENDS, so the body is validated, not coerced.
+    vi.clearAllMocks();
+    answerQueries({ getTestSuiteRun: RUN_ROW });
+    const res = await makeApp(evals).request(
+      `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
+      {
+        method: "POST",
+        body: payload,
+        headers: { "content-type": "application/json" },
+      },
+    );
+    expect(res.status).toBe(400);
+    expect(mutationMock).not.toHaveBeenCalled();
+  });
+});
+
 describe("guest boundary (default-deny allowlist)", () => {
   it("keeps every insights surface guest-closed", () => {
     // Method-specific: the guest-readable eval-run DETAIL path stays open
@@ -309,6 +646,15 @@ describe("guest boundary (default-deny allowlist)", () => {
       isGuestAllowedV1Request(
         "POST",
         `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/insights`,
+      ),
+    ).toBe(false);
+    // Grading spends the ORG's budget; a share-link guest must not be able to
+    // start it. Closed by default-deny, asserted so an allowlist edit has to
+    // break this test to reach it.
+    expect(
+      isGuestAllowedV1Request(
+        "POST",
+        `/api/v1/projects/${PROJECT}/eval-runs/${RUN}/judge`,
       ),
     ).toBe(false);
     expect(

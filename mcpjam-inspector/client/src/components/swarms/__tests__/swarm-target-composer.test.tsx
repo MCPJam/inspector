@@ -5,6 +5,9 @@ import {
   emptyComposerState,
   type EnvironmentComposerState,
 } from "@/components/environment-composer/environment-stack";
+import type { CloudServerBlockCopy } from "@/lib/cloud-server-readiness";
+
+const { navigateAppMock } = vi.hoisted(() => ({ navigateAppMock: vi.fn() }));
 
 const flagState = vi.hoisted(() => ({
   skills: false,
@@ -50,6 +53,9 @@ vi.mock("@/hooks/useClients", () => ({
 }));
 vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true }),
+  useConvex: () => ({
+    query: vi.fn(async () => ({ modelMatrix: false })),
+  }),
 }));
 vi.mock("@/components/hosts/ServerGroupPicker", () => ({
   ServerGroupPicker: () => <div data-testid="server-group-picker" />,
@@ -87,15 +93,19 @@ vi.mock(
   () => ({
     ProjectEnvironmentSkillsPicker: () => (
       <p className="italic">
-        No shared skills in this project yet. Share a skill with the project to
+        No skills in the project library yet. Add a skill to the library to
         pin it here.
       </p>
     ),
   })
 );
 vi.mock("@/lib/app-navigation", () => ({
-  navigateApp: vi.fn(),
-  routePaths: { hosts: "/hosts", environments: "/environments" },
+  navigateApp: navigateAppMock,
+  routePaths: {
+    hosts: "/hosts",
+    environments: "/environments",
+    servers: "/servers",
+  },
 }));
 vi.mock("@/lib/toast", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
@@ -117,6 +127,7 @@ function Harness({
     },
   ],
   onChange,
+  serverBlock,
 }: {
   environments?: Array<{
     environmentId: string;
@@ -129,6 +140,7 @@ function Harness({
     pluginVersionIds?: string[];
   }>;
   onChange?: (next: EnvironmentComposerState) => void;
+  serverBlock?: CloudServerBlockCopy | null;
 }) {
   const [value, setValue] = useState<EnvironmentComposerState>(
     emptyComposerState
@@ -143,6 +155,7 @@ function Harness({
         onChange?.(next);
       }}
       draftNameHint="Billing"
+      serverBlock={serverBlock}
     />
   );
 }
@@ -211,6 +224,12 @@ describe("SwarmTargetComposer", () => {
     });
   });
 
+  it("hides the models pill so New Swarm does not change product", () => {
+    render(<Harness />);
+    expect(screen.queryByTestId("new-swarm-models-picker")).toBeNull();
+    expect(screen.getByTestId("new-swarm-clients-picker")).toBeVisible();
+  });
+
   it("hides the environments picker when project-environments-enabled is off", () => {
     flagState.environments = false;
     render(<Harness />);
@@ -227,7 +246,7 @@ describe("SwarmTargetComposer", () => {
       screen.queryByTestId("new-swarm-skills-picker")
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
   });
 
@@ -238,12 +257,12 @@ describe("SwarmTargetComposer", () => {
     expect(trigger).toBeVisible();
     expect(trigger).toHaveTextContent(/No skills · pick some/i);
     expect(
-      screen.queryByText(/No shared skills in this project yet/i)
+      screen.queryByText(/No skills in the project library yet/i)
     ).not.toBeInTheDocument();
 
     fireEvent.click(trigger);
     expect(
-      screen.getByText(/No shared skills in this project yet/i)
+      screen.getByText(/No skills in the project library yet/i)
     ).toBeVisible();
   });
 
@@ -408,5 +427,28 @@ describe("SwarmTargetComposer — multi-environment seeding", () => {
     expect(
       screen.getByTestId("new-swarm-environments-picker"),
     ).not.toBeDisabled();
+  });
+});
+
+/**
+ * The copy module names a route key; this layer turns it into a destination.
+ * Asserting the button exists would not catch an index that resolves to
+ * undefined, which is the only way this mapping can be wrong.
+ */
+describe("SwarmTargetComposer — the block's way out", () => {
+  it("sends the empty-project action to Servers", () => {
+    navigateAppMock.mockClear();
+    render(
+      <Harness
+        serverBlock={{
+          message: "Claude has no servers to run against.",
+          detail: "These sessions run against an MCP server.",
+          tone: "guidance",
+          action: { label: "Connect a server", route: "servers" },
+        }}
+      />
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Connect a server" }));
+    expect(navigateAppMock).toHaveBeenCalledWith("/servers");
   });
 });

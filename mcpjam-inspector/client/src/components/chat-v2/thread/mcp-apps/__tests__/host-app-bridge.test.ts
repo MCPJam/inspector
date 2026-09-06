@@ -211,6 +211,36 @@ describe("registerHostBridgeHandlers — sendToolCancelled matrix gating", () =>
     ).rejects.toThrow();
     expect(bridge.sendToolCancelled).not.toHaveBeenCalled();
   });
+
+  // Nobody awaits the side-channel notification, and the app-tool call that
+  // failed is often what tore the widget down in the first place — so the
+  // bridge can already be disconnected by the time we send it. An unguarded
+  // send then rejects with "Not connected" and surfaces as an unhandled
+  // rejection, which the hosted app reports as a client crash.
+  it("swallows a send failure when the bridge is already disconnected", async () => {
+    const bridge = makeStubBridge();
+    const toolError = new Error("boom");
+    // Assert on the very promise the handler receives ("this rejection was
+    // handled") rather than on the runtime staying quiet: an unhandled
+    // rejection is reported by the browser, not by vitest's jsdom worker.
+    const sendResult = Promise.reject(new Error("Not connected"));
+    const handled = vi.spyOn(sendResult, "catch");
+    bridge.sendToolCancelled.mockReturnValue(sendResult);
+    register(bridge, {
+      callbacks: { onCallTool: vi.fn().mockRejectedValue(toolError) },
+    });
+
+    // The tool error still reaches the app through the response path.
+    await expect(
+      (bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>)(
+        { name: "go", arguments: {} },
+        {},
+      ),
+    ).rejects.toBe(toolError);
+
+    expect(bridge.sendToolCancelled).toHaveBeenCalledWith({ reason: "boom" });
+    expect(handled).toHaveBeenCalled();
+  });
 });
 
 describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
@@ -232,6 +262,59 @@ describe("registerHostBridgeHandlers — app-tool invocation lifecycle", () => {
     );
     expect(updates.map((u) => u.status)).toEqual(["running", "success"]);
     expect((updates[0] as { id: string }).id).toBe("parent-1:app-tool:7");
+  });
+
+  it("shapes the returned result by the host's toolResult policy", async () => {
+    const bridge = makeStubBridge();
+    const updates: Array<{ status: string; output?: unknown }> = [];
+    const raw = {
+      content: [
+        { type: "text", text: "keep" },
+        { type: "image", data: "aGk=", mimeType: "image/png" },
+      ],
+      structuredContent: { dropped: true },
+    };
+    register(bridge, {
+      getMatrix: () => ({
+        toolResult: {
+          structuredContent: false,
+          content: { image: false },
+        },
+      }),
+      callbacks: {
+        onCallTool: vi.fn().mockResolvedValue(raw),
+        onAppToolInvocation: (u) => updates.push(u),
+      },
+    });
+
+    const returned = await (
+      bridge.oncalltool as (p: unknown, e: unknown) => Promise<{
+        content: Array<{ type: string }>;
+        structuredContent?: unknown;
+      }>
+    )({ name: "go", arguments: {} }, {});
+
+    // What the widget receives.
+    expect("structuredContent" in returned).toBe(false);
+    expect(returned.content.map((b) => b.type)).toEqual(["text"]);
+    // ...and what the inspector's panel records is the SAME shaped value, so
+    // a widget author debugging a Cursor-style host sees what the widget saw.
+    expect(updates[1].output).toEqual(returned);
+    // The upstream result object is never mutated.
+    expect(raw.structuredContent).toEqual({ dropped: true });
+  });
+
+  it("passes the result through untouched when no policy is configured", async () => {
+    const bridge = makeStubBridge();
+    const raw = { content: [{ type: "text", text: "x" }], structuredContent: {} };
+    register(bridge, {
+      callbacks: { onCallTool: vi.fn().mockResolvedValue(raw) },
+    });
+
+    const returned = await (
+      bridge.oncalltool as (p: unknown, e: unknown) => Promise<unknown>
+    )({ name: "go", arguments: {} }, {});
+    expect(returned).toBe(raw);
   });
 
   it("emits running → error and cancels when the dispatch throws", async () => {

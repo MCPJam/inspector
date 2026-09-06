@@ -7,6 +7,7 @@ import type { ListToolsResultWithMetadata } from "@/lib/apis/mcp-tools-api";
 const mockCapture = vi.fn();
 const mockUseFeatureFlagEnabled = vi.hoisted(() => vi.fn(() => false));
 const mockUseQuery = vi.hoisted(() => vi.fn(() => undefined));
+const mockDbUserReady = vi.hoisted(() => ({ value: true }));
 const mockSetProjectServerConfig = vi.hoisted(() => vi.fn());
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -28,6 +29,10 @@ vi.mock("posthog-js/react", () => ({
 
 vi.mock("@/lib/analytics", () => ({
   track: (...args: unknown[]) => mockCapture(...args),
+}));
+
+vi.mock("@/contexts/db-user-ready-context", () => ({
+  useDbUserReady: () => mockDbUserReady.value,
 }));
 
 // ServerDetailModal reads + writes the project-server config via Convex
@@ -153,6 +158,7 @@ describe("ServerDetailModal", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDbUserReady.value = true;
     mockUseFeatureFlagEnabled.mockReturnValue(false);
     mockUseQuery.mockReturnValue(undefined);
     mockSetProjectServerConfig.mockResolvedValue({
@@ -166,6 +172,13 @@ describe("ServerDetailModal", () => {
       tools: [],
       toolsMetadata: {},
     });
+  });
+
+  it("prevents browser translation from rewriting the portaled dialog", () => {
+    render(<ServerDetailModal {...defaultProps} />);
+
+    expect(screen.getByRole("dialog")).toHaveAttribute("translate", "no");
+    expect(screen.getByRole("dialog")).toHaveClass("notranslate");
   });
 
   // Regression: local mode used to hand this modal the LOCAL project id (a
@@ -205,6 +218,25 @@ describe("ServerDetailModal", () => {
     expect(configCalls.at(-1)?.[1]).toEqual({
       projectId: "jh7abc123def456ghi789jk",
     });
+  });
+
+  it("skips hosted config and history while the database user is not ready", () => {
+    mockDbUserReady.value = false;
+
+    render(
+      <ServerDetailModal
+        {...defaultProps}
+        projectId="jh7abc123def456ghi789jk"
+        hostedServerId="server_123"
+      />
+    );
+
+    const configCalls = mockUseQuery.mock.calls.filter(
+      ([name]) => name === "projectServerConfig:getConfig"
+    );
+    expect(configCalls.length).toBeGreaterThan(0);
+    expect(configCalls.at(-1)?.[1]).toBe("skip");
+    expect(screen.queryByRole("tab", { name: "History" })).toBeNull();
   });
 
   it("keeps the footer in the DOM but visually hidden when not on configuration tab", () => {

@@ -1,3 +1,4 @@
+import { Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ViewModeSelector } from "@/components/shared/view-mode-selector";
 
@@ -7,6 +8,9 @@ export type SwarmViewOption = {
   value: SwarmViewMode;
   label: string;
 };
+
+const TAB_CLASSNAME =
+  "mt-0 w-auto min-w-0 shrink justify-start overflow-x-auto [&_button]:min-h-8 [&_button]:px-2.5 [&_button]:py-1 [&_button]:text-sm sm:[&_button]:min-h-8 sm:[&_button]:px-3 sm:[&_button]:text-sm md:[&_button]:min-h-8 lg:[&_button]:px-3.5";
 
 interface SwarmsTabHeaderProps {
   projectId: string | null;
@@ -27,10 +31,10 @@ export function SwarmsTabHeader({
 }: SwarmsTabHeaderProps) {
   return (
     <div
-      className="relative shrink-0 border-b border-border/40 px-8 py-2.5"
+      className="relative shrink-0 border-b border-border/40 px-8 py-3"
       data-testid="swarms-tab-header-chrome"
     >
-      <div className="flex items-center justify-between gap-4">
+      <div className="flex flex-wrap items-center justify-between gap-4">
         <div className="flex min-w-0 items-center gap-3">
           <h1 className="shrink-0 text-xl font-bold tracking-tight text-foreground">
             Swarm
@@ -45,7 +49,7 @@ export function SwarmsTabHeader({
             indicatorId="swarms-tab"
             onChange={onViewModeChange}
             options={viewOptions}
-            className="min-w-0 justify-start md:w-auto [&_button]:min-h-9 [&_button]:px-3 [&_button]:py-1.5 [&_button]:text-sm sm:[&_button]:min-h-9 sm:[&_button]:px-3.5 sm:[&_button]:text-sm md:[&_button]:min-h-9 lg:[&_button]:px-4"
+            className={TAB_CLASSNAME}
           />
         </div>
         <Button
@@ -55,7 +59,8 @@ export function SwarmsTabHeader({
           disabled={creatingSwarm || !projectId}
           onClick={onNewSwarm}
         >
-          New swarm
+          <Plus className="mr-1.5 size-4" />
+          Create new swarm
         </Button>
       </div>
     </div>

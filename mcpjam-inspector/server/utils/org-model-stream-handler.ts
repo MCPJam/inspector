@@ -41,7 +41,11 @@ import {
   isClientFulfilledToolName,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
-import type { PersistedTurnTrace } from "./chat-ingestion";
+import {
+  writePersistReceipt,
+  type PersistChatOutcome,
+  type PersistedTurnTrace,
+} from "./chat-ingestion";
 import { handleMCPJamFreeChatModel } from "./mcpjam-stream-handler.js";
 import { logger } from "./logger.js";
 import {
@@ -102,10 +106,14 @@ export interface OrgModelHandlerOptions {
    * in a synthetic run). Direct chatters omit or pass `"prompt"`.
    */
   approvalMode?: "prompt" | "auto-deny";
+  /**
+   * Persist tap. May return the ingest's outcome so the rail can stream a
+   * `data-persist-receipt` before closing. See `PersistChatOutcome`.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
-  ) => Promise<void> | void;
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -279,10 +287,14 @@ export interface OrgLocalModelHandlerOptions {
   authHeader?: string;
   scenarioId?: string;
   accessVersion?: number;
+  /**
+   * Persist tap. May return the ingest's outcome so the rail can stream a
+   * `data-persist-receipt` before closing. See `PersistChatOutcome`.
+   */
   onConversationComplete?: (
     fullHistory: ModelMessage[],
     turnTrace: PersistedTurnTrace
-  ) => Promise<void> | void;
+  ) => Promise<void | PersistChatOutcome> | void | PersistChatOutcome;
   onStreamComplete?: () => Promise<void> | void;
   onStreamWriterReady?: (writer: {
     write: (chunk: UIMessageChunk) => void;
@@ -348,8 +360,9 @@ function hasUnsupportedLocalApprovalGate(
     // dispatches on registry membership rather than the `ui_` prefix: the
     // property that matters is "the browser fulfills this", and only the
     // missing `execute` actually proves it.
-    return typeof (tool as { execute?: unknown } | undefined)?.execute ===
-      "function";
+    return (
+      typeof (tool as { execute?: unknown } | undefined)?.execute === "function"
+    );
   });
 }
 
@@ -374,7 +387,7 @@ export function handleLocalOrgChatModel(
   // sites; system fallback keeps the invariant if a future caller forgets it.
   const failureReporter = oncePerTurn(
     options.failureReporter ??
-      createSystemStreamFailureReporter("org-local-stream"),
+      createSystemStreamFailureReporter("org-local-stream")
   );
 
   // Deliberately NOT reported as an operation failure: this is a declared
@@ -492,6 +505,9 @@ export function handleLocalOrgChatModel(
       // callback fires from its `streamText` `onError` branch — and
       // gate `onConversationComplete` below.
       let streamErrored = false;
+      let persistReceipt:
+        | { outcome: PersistChatOutcome; turnId: string }
+        | undefined;
 
       handle = runDirectChatTurn({
         // The org-resolved model is typed as the AI SDK `LanguageModel`
@@ -536,6 +552,9 @@ export function handleLocalOrgChatModel(
           options,
           isStreamErrored: () => streamErrored,
           onConversationComplete,
+          onOutcome: (outcome, turnId) => {
+            persistReceipt = { outcome, turnId };
+          },
         }),
         onPersistError: (err) => {
           logger.warn("[org/local] onFinish ingestion error", {
@@ -574,7 +593,7 @@ export function handleLocalOrgChatModel(
           if (
             isSuspendedScopeStepUpOutputChunk(
               chunk,
-              options.suspendedToolCallId?.(),
+              options.suspendedToolCallId?.()
             )
           ) {
             continue;
@@ -588,6 +607,17 @@ export function handleLocalOrgChatModel(
         throw error;
       } finally {
         handle.cleanup();
+      }
+
+      // Safe to read here: `streamText`'s own `onFinish` — which is what
+      // `onPersist` runs inside — resolves before the UI-message stream this
+      // loop drains can end, so the persist has settled by the time we exit it.
+      // The stream itself is still open until `execute` returns.
+      if (persistReceipt && options.chatSessionId) {
+        writePersistReceipt(writer, persistReceipt.outcome, {
+          chatSessionId: options.chatSessionId,
+          turnId: persistReceipt.turnId,
+        });
       }
     },
   });
@@ -625,8 +655,17 @@ function buildLocalOrgOnPersist(params: {
   options: OrgLocalModelHandlerOptions;
   isStreamErrored: () => boolean;
   onConversationComplete: OrgLocalModelHandlerOptions["onConversationComplete"];
+  /**
+   * Hands the persist result back to the caller's scope. `runDirectChatTurn`
+   * awaits `onPersist` but discards whatever it returns, so an outer closure is
+   * the only way for the streaming rail to learn the outcome and emit its
+   * receipt. Widening the engine's own signature would touch every headless
+   * caller for no benefit.
+   */
+  onOutcome?: (outcome: PersistChatOutcome, turnId: string) => void;
 }): (event: DirectChatTurnPersistEvent) => Promise<void> {
-  const { options, isStreamErrored, onConversationComplete } = params;
+  const { options, isStreamErrored, onConversationComplete, onOutcome } =
+    params;
   return async (event) => {
     // Post usage to Convex (best-effort, non-blocking on failure).
     // Preserves the legacy fire-and-forget behavior so an ingestion
@@ -673,7 +712,10 @@ function buildLocalOrgOnPersist(params: {
     // the legacy defensive-dedup semantics.
     const fullHistory: ModelMessage[] = [...options.messages];
     appendDedupedModelMessages(fullHistory, event.responseMessages);
-    await onConversationComplete(fullHistory, event.turnTrace);
+    const outcome = await onConversationComplete(fullHistory, event.turnTrace);
+    if (outcome) {
+      onOutcome?.(outcome, event.turnTrace.turnId);
+    }
   };
 }
 
@@ -740,9 +782,7 @@ export async function postLocalUsage(params: {
         ...((params.serverIds ?? params.selectedServers)?.length
           ? { serverIds: params.serverIds ?? params.selectedServers }
           : {}),
-        ...(params.journeyRunId
-          ? { journeyRunId: params.journeyRunId }
-          : {}),
+        ...(params.journeyRunId ? { journeyRunId: params.journeyRunId } : {}),
       }),
       signal: controller.signal,
     });

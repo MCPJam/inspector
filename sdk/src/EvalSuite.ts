@@ -67,6 +67,7 @@ export interface EvalSuiteResult {
  * ```ts
  * const suite = new EvalSuite({ name: "Math" });
  * suite.add(new EvalTest({
+ *   id: "c_addition",
  *   name: "addition",
  *   test: async (executor) => {
  *     const r = await executor.run("Add 2+3");
@@ -74,6 +75,7 @@ export interface EvalSuiteResult {
  *   },
  * }));
  * suite.add(new EvalTest({
+ *   id: "c_multiply",
  *   name: "multiply",
  *   test: async (executor) => {
  *     const r = await executor.run("Multiply 4*5");
@@ -101,12 +103,28 @@ export class EvalSuite {
   }
 
   /**
-   * Add a test to the suite
+   * Add a test to the suite.
+   *
+   * Duplicate IDS are rejected for the same reason duplicate names always were,
+   * only more so: the suite keys results by name, but everything that outlives
+   * the run — hosted history, a lock file, a report row — joins on the declared
+   * id. Two cases sharing one id do not collide visibly; they silently merge
+   * into one case's history.
    */
   add(test: EvalTest): void {
     const name = test.getName();
     if (this.tests.has(name)) {
       throw new Error(`Test with name "${name}" already exists in suite`);
+    }
+    const id = test.getId();
+    for (const existing of this.tests.values()) {
+      if (existing.getId() === id) {
+        throw new Error(
+          `Test with id "${id}" already exists in suite (as ` +
+            `"${existing.getName()}"). A case id is its identity — give this ` +
+            `one its own.`
+        );
+      }
     }
     test.setDefaultMatchOptions(this.matchOptions);
     this.tests.set(name, test);
@@ -265,6 +283,15 @@ export class EvalSuite {
       matchOptionsByTest[name] = test.getConfig().matchOptions;
       const config = test.getConfig();
       const identity = {
+        // Unconditional, unlike its three siblings: `id` is required, so
+        // there is no absent case to spread around. `identity` is therefore
+        // always non-empty and `caseIdentityByTest` goes from sparse to dense
+        // — safe because every reader looks the record up by test NAME and
+        // none of them branches on how many entries it holds.
+        caseId: config.id,
+        // Preserve the unlabelled slice on every modern SDK result. An
+        // omitted field means an older producer did not speak to intent.
+        intent: config.intent ?? null,
         ...(config.externalCaseId !== undefined
           ? { externalCaseId: config.externalCaseId }
           : {}),

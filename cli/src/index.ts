@@ -3,33 +3,24 @@ import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import { registerAppsCommands } from "./commands/apps.js";
-import { registerAuthCommands } from "./commands/auth.js";
+import { registerCloudCommands } from "./commands/cloud.js";
 import { registerCompatCommands } from "./commands/compat.js";
-import { registerImagesCommands } from "./commands/images.js";
-import { registerChatCommands } from "./commands/chat.js";
-import { registerEnvironmentsCommands } from "./commands/environments.js";
-import { registerJourneysCommands } from "./commands/journeys.js";
-import { registerScenariosCommands } from "./commands/scenarios.js";
-import { registerSwarmAuthoringCommands } from "./commands/swarms.js";
-import { registerUserTestingCommands } from "./commands/user-testing.js";
-import { registerEvalCommands } from "./commands/eval.js";
-import { registerHostsCommands } from "./commands/hosts.js";
 import { registerMcpCommands } from "./commands/mcp.js";
-import { registerOrganizationsCommands } from "./commands/organizations.js";
-import { registerSessionsCommands } from "./commands/sessions.js";
-import { registerProjectsCommands } from "./commands/projects.js";
 import { registerProtocolCommands } from "./commands/conformance.js";
+import { registerConformanceRunCommand } from "./commands/conformance-run.js";
+import { registerReadinessCommands } from "./commands/readiness.js";
 import { registerOAuthCommands } from "./commands/oauth.js";
 import { registerXaaCommands } from "./commands/xaa.js";
 import { registerPromptCommands } from "./commands/prompts.js";
 import { registerResourcesCommands } from "./commands/resources.js";
+import { registerServerSkillsCommands } from "./commands/server-skills.js";
 import { registerServerCommands } from "./commands/server.js";
 import { registerSubscriptionsCommands } from "./commands/subscriptions.js";
 import { registerTelemetryCommands } from "./commands/telemetry.js";
 import { registerTasksCommands } from "./commands/tasks.js";
 import { registerToolsCommands } from "./commands/tools.js";
-import { registerTunnelCommands } from "./commands/tunnel.js";
 import { registerInspectorCommands } from "./commands/inspector.js";
+import { registerRegistryCommands } from "./commands/registry.js";
 import {
   detectOutputFormatFromArgv,
   normalizeCliError,
@@ -77,7 +68,7 @@ export async function main(
       .name("mcpjam")
       .version(pkgVersion, "-v, --version", "output the CLI version")
       .description(
-        "Test, debug, and validate MCP servers. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.",
+        "Test, debug, and validate MCP servers locally, or manage MCPJam Cloud via `mcpjam cloud`. Health checks, OAuth conformance, tool-surface diffing, and structured triage from the terminal or CI.",
       )
       .allowExcessArguments(false)
       .exitOverride()
@@ -90,9 +81,11 @@ export async function main(
   );
   const telemetry = initTelemetry(program, pkgVersion, dependencies.telemetry);
 
+  program.commandsGroup("Local MCP testing:");
   registerServerCommands(program);
   registerToolsCommands(program);
   registerResourcesCommands(program);
+  registerServerSkillsCommands(program);
   registerSubscriptionsCommands(program);
   registerCompatCommands(program);
   registerPromptCommands(program);
@@ -101,22 +94,14 @@ export async function main(
   registerOAuthCommands(program);
   registerXaaCommands(program);
   registerProtocolCommands(program);
-  registerAuthCommands(program);
-  registerOrganizationsCommands(program);
-  registerProjectsCommands(program);
-  registerEvalCommands(program);
-  registerChatCommands(program);
-  registerSessionsCommands(program);
-  registerHostsCommands(program);
-  registerEnvironmentsCommands(program);
-  const journeys = registerJourneysCommands(program);
-  registerScenariosCommands(program);
-  // Authoring + insights hang off the same `journeys` group the run loop
-  // registered, plus their own `personas` / `swarms` / `capabilities` groups.
-  registerSwarmAuthoringCommands(program, journeys);
-  registerUserTestingCommands(program);
-  registerImagesCommands(program);
-  registerTunnelCommands(program);
+  registerConformanceRunCommand(program);
+  registerReadinessCommands(program);
+
+  program.commandsGroup("MCPJam Cloud:");
+  registerCloudCommands(program);
+  registerRegistryCommands(program);
+
+  program.commandsGroup("CLI:");
   registerInspectorCommands(program);
   registerMcpCommands(program);
   registerTelemetryCommands(program, dependencies.telemetry);

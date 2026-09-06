@@ -3,7 +3,7 @@ name: Bug report
 about: Bug reports help make MCPJam better
 title: "[BUG]"
 labels: bug
-assignees: matteo8p
+assignees: chelojimenez
 ---
 
 # Issue

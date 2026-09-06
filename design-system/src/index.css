@@ -19,6 +19,15 @@
   border-width: 1px;
 }
 
+/* Sonner colours the description from its own theme rather than from the vars
+   we hand it, so it is the one part of a toast that can end up light-on-light.
+   Pinning it to our token keeps it readable even if the two themes drift. */
+[data-sonner-toaster][data-sonner-theme]
+  [data-sonner-toast][data-styled="true"]
+  [data-description] {
+  color: var(--foreground);
+}
+
 [data-sonner-toaster][data-sonner-theme]
   [data-sonner-toast][data-styled="true"]
   [data-close-button] {
@@ -260,11 +269,19 @@
   --chart-3: oklch(0.8816 0.0276 93.128);
   --chart-4: oklch(0.8822 0.0403 298.1792);
   --chart-5: oklch(0.5608 0.1348 42.0584);
-  --sidebar: oklch(0.9663 0.008 98.8792);
+  /* Production Redesign chrome (BB-127). The sidebar + top bar are the outer
+     "linen" frame and the middle panel is the off-white working surface, so
+     the two sidebar fills swap roles relative to the old flat nav:
+       --sidebar        linen ground   #E9E6DC (= --accent / --secondary)
+       --sidebar-accent hover/active   #F5F4EE (the old --sidebar)
+     The panel fill stays --background (#FAF9F5), which is the design's
+     #FAF9F6 within rounding. Dark mode already reads this way (chrome darker
+     than the panel) and is left alone. */
+  --sidebar: oklch(0.9245 0.0138 92.9892);
   --sidebar-foreground: oklch(0.359 0.0051 106.6524);
   --sidebar-primary: oklch(0.6171 0.1375 39.0427);
   --sidebar-primary-foreground: oklch(0.9881 0 0);
-  --sidebar-accent: oklch(0.9245 0.0138 92.9892);
+  --sidebar-accent: oklch(0.9663 0.008 98.8792);
   --sidebar-accent-foreground: oklch(0.325 0 0);
   --sidebar-border: oklch(0.9401 0 0);
   --sidebar-ring: oklch(0.7731 0 0);
@@ -410,6 +427,11 @@
   --color-destructive: var(--destructive);
   --color-destructive-foreground: var(--destructive-foreground);
   --color-border: var(--border);
+  --color-chrome-control: var(--chrome-control);
+  --color-chrome-control-border: var(--chrome-control-border);
+  --color-chrome-hover: var(--chrome-hover);
+  --color-chrome-control-hover: var(--chrome-control-hover);
+  --color-divider: var(--divider);
   --color-input: var(--input);
   --color-ring: var(--ring);
   --color-success: var(--success);
@@ -458,4 +480,5 @@
   --shadow-lg: var(--shadow-lg);
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
+  --shadow-chrome-panel: var(--shadow-chrome-panel);
 }

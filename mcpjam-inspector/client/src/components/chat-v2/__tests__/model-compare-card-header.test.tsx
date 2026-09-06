@@ -183,7 +183,7 @@ describe("ModelCompareCardHeader", () => {
     );
   });
 
-  it("uses the sidebar-selected styling for full-width trace tabs", () => {
+  it("uses segment styling for full-width trace tabs", () => {
     render(
       <ModelCompareCardHeader
         model={model}
@@ -196,9 +196,11 @@ describe("ModelCompareCardHeader", () => {
       />,
     );
 
+    // The full-width header bar now renders the same segment chrome as the
+    // inline preview tabs above, so both surfaces read as one control.
     expect(screen.getByRole("button", { name: "Chat" })).toHaveClass(
-      "bg-sidebar-accent",
-      "text-sidebar-accent-foreground",
+      "bg-background",
+      "ring-inset",
     );
   });
 

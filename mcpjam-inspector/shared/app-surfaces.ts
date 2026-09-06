@@ -28,8 +28,23 @@
 /** Stable surface id. Also the atlas key and the snapshot-provider key. */
 export type AppSurfaceId = (typeof APP_SURFACES)[number]["id"];
 
+/**
+ * Who owns a surface — the same dimension the route table declares
+ * (`client/src/lib/app-routes.ts`), kept here so the two can be asserted
+ * equal rather than assumed equal.
+ *
+ * A `"project"` surface renders below `/p/:projectId`. Its `canonicalPath`
+ * and `routePatterns` stay LOGICAL (project-relative): agent navigation and
+ * the atlas would be unusable if every target carried a literal `:projectId`,
+ * and the concrete path is built from the viewer's resolved project at
+ * navigation time.
+ */
+export type AppSurfaceScope = "project" | "global" | "public";
+
 export interface AppSurfaceManifest {
   id: string;
+  /** Project-owned, global app chrome, or public. See {@link AppSurfaceScope}. */
+  scope: AppSurfaceScope;
   /**
    * The path `ui_navigate` sends the user to. Must be one of this surface's
    * own `routePatterns`.
@@ -56,7 +71,12 @@ export interface AppSurfaceManifest {
   /** What users actually do here. Model-facing; keep to real actions. */
   userActivities: readonly string[];
   /**
-   * Not reachable in hosted deployments (see `HOSTED_HASH_BLOCKED_TABS`).
+   * Not reachable in hosted deployments — this field is the SOURCE OF TRUTH
+   * for that, and `hosted-tab-policy.ts` derives its block list from it. Set
+   * it only when the screen genuinely cannot work hosted (Tracing streams
+   * from the local Inspector's RPC bus, which hosted does not run); a screen
+   * that merely isn't ready yet belongs
+   * behind a feature flag instead.
    * Kept out of the atlas when the atlas is built for a hosted surface, so
    * the model isn't handed a map to a door that is locked.
    */
@@ -94,6 +114,7 @@ export interface AppSurfaceManifest {
 export const APP_SURFACES = [
   {
     id: "home",
+    scope: "project",
     canonicalPath: "/home",
     routePatterns: ["/", "home"],
     navSegments: ["home"],
@@ -115,8 +136,13 @@ export const APP_SURFACES = [
   },
   {
     id: "servers",
+    scope: "project",
     canonicalPath: "/servers",
-    routePatterns: ["servers"],
+    routePatterns: [
+      "servers",
+      "servers/plugins/:pluginId",
+      "servers/:serverId",
+    ],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -136,6 +162,7 @@ export const APP_SURFACES = [
   },
   {
     id: "hosts",
+    scope: "project",
     canonicalPath: "/hosts",
     routePatterns: ["hosts", "hosts/:hostId"],
     navSegments: ["clients"],
@@ -155,6 +182,7 @@ export const APP_SURFACES = [
   },
   {
     id: "host-compare",
+    scope: "global",
     canonicalPath: "/host-compare",
     routePatterns: ["host-compare", "capabilities/:capabilitySlug"],
     navSegments: ["host-compare"],
@@ -175,6 +203,7 @@ export const APP_SURFACES = [
   },
   {
     id: "computer",
+    scope: "project",
     canonicalPath: "/computer",
     routePatterns: ["computer"],
     navSegments: ["computer"],
@@ -192,16 +221,19 @@ export const APP_SURFACES = [
   },
   {
     id: "registry",
+    scope: "project",
     canonicalPath: "/registry",
     routePatterns: ["registry"],
     navSegments: ["registry"],
     title: "Registry",
     purpose:
-      "Browse the public MCP server registry and install servers into the current project.",
+      "Browse organization-shared MCP servers and mirrors of the Claude and ChatGPT connector directories, and install them into the current project.",
     userActivities: [
-      "Search the registry for a server",
-      "Install a registry server into the project",
-      "Star or unstar a registry server",
+      "Share a server with the organization",
+      "Search a mirrored connector directory (Claude or ChatGPT) by name, description, tool or skill name",
+      "Switch between the Claude and ChatGPT directories",
+      "Install a directory or organization server into the project",
+      "Choose which endpoint a multi-region connector uses, or enter their own instance URL",
     ],
     hasSnapshotProvider: true,
     agentTools: { kind: "group" },
@@ -209,6 +241,7 @@ export const APP_SURFACES = [
   },
   {
     id: "playground",
+    scope: "project",
     canonicalPath: "/playground",
     routePatterns: ["playground"],
     // `chat` renders nothing of its own (it redirects here), but it IS still
@@ -233,6 +266,7 @@ export const APP_SURFACES = [
     // agent tool group, and the Convex tables. Only the product name and the
     // URL changed.
     id: "scenarios",
+    scope: "project",
     canonicalPath: "/user-testing",
     routePatterns: [
       "user-testing",
@@ -258,6 +292,7 @@ export const APP_SURFACES = [
   },
   {
     id: "swarms",
+    scope: "project",
     canonicalPath: "/swarms",
     routePatterns: ["swarms", "swarms/new", "swarms/:swarmId"],
     navSegments: ["swarms"],
@@ -278,8 +313,9 @@ export const APP_SURFACES = [
   },
   {
     id: "project-environments",
+    scope: "project",
     canonicalPath: "/environments",
-    routePatterns: ["environments"],
+    routePatterns: ["environments", "environments/:environmentId"],
     navSegments: ["environments"],
     title: "Environments",
     purpose:
@@ -302,6 +338,7 @@ export const APP_SURFACES = [
   },
   {
     id: "sessions",
+    scope: "project",
     canonicalPath: "/sessions",
     routePatterns: ["sessions"],
     navSegments: ["sessions"],
@@ -328,6 +365,7 @@ export const APP_SURFACES = [
   },
   {
     id: "evals",
+    scope: "project",
     canonicalPath: "/evals",
     routePatterns: [
       "evals",
@@ -367,7 +405,54 @@ export const APP_SURFACES = [
     showInAtlas: true,
   },
   {
+    // Evaluate (New): the redesigned Evaluate tab, behind
+    // `evaluate-enabled`. A SEPARATE surface rather than a variant of
+    // `evals` so the shipped tab keeps its routes, its agent tools, and its
+    // behaviour untouched while this one is dogfooded. It is deleted (and its
+    // routes folded into `evals`) once the redesign replaces the original.
+    id: "evaluate",
+    // Same suites and same project-owned data as Evaluate — the redesign
+    // changes the screens, not who owns them.
+    scope: "project",
+    canonicalPath: "/evaluate",
+    routePatterns: [
+      "evaluate",
+      "evaluate/create",
+      "evaluate/suite/:suiteId",
+      "evaluate/suite/:suiteId/edit",
+      "evaluate/suite/:suiteId/runs/:runId",
+      "evaluate/suite/:suiteId/test/:testId",
+      "evaluate/suite/:suiteId/test/:testId/edit",
+    ],
+    navSegments: ["evaluate"],
+    title: "Evaluate (New)",
+    purpose:
+      "Preview of the redesigned Evaluate tab: a suites landing with a Runs view, a full-page create-suite flow, and a suite overview built around run history. Same suites and same data as Evaluate — only the screens differ.",
+    userActivities: [
+      "Browse eval suites from the landing table",
+      "Create a suite on the full-page create flow",
+      "Open a suite's overview to see its run history and cases",
+      "Open a run to inspect each step, tool call, and score",
+    ],
+    // No snapshot provider and no tool group of its own: the component
+    // bridges as `surfaceId: "evals"`, reusing that surface's group and
+    // snapshot. The two tabs are never mounted at once, and duplicating the
+    // agent contract for a preview shell would give the model two names for
+    // one set of suites.
+    hasSnapshotProvider: false,
+    agentTools: {
+      kind: "none",
+      reason:
+        'Flag-gated preview of the Evaluate tab. It bridges as surfaceId "evals" and reuses that surface\'s tool group, so declaring a second group would advertise duplicate tools for the same suites.',
+    },
+    // Flag-gated: the atlas is static and cannot read `evaluate-enabled`,
+    // so advertising this path would send the agent to a screen that is
+    // unreachable for almost every project. Same rationale as `sessions`.
+    showInAtlas: false,
+  },
+  {
     id: "tools",
+    scope: "project",
     canonicalPath: "/tools",
     routePatterns: ["tools"],
     navSegments: ["tools"],
@@ -385,6 +470,7 @@ export const APP_SURFACES = [
   },
   {
     id: "resources",
+    scope: "project",
     canonicalPath: "/resources",
     routePatterns: ["resources"],
     navSegments: ["resources"],
@@ -400,6 +486,7 @@ export const APP_SURFACES = [
   },
   {
     id: "prompts",
+    scope: "project",
     canonicalPath: "/prompts",
     routePatterns: ["prompts"],
     navSegments: ["prompts"],
@@ -415,6 +502,7 @@ export const APP_SURFACES = [
   },
   {
     id: "tasks",
+    scope: "project",
     canonicalPath: "/tasks",
     routePatterns: ["tasks"],
     navSegments: ["tasks"],
@@ -432,6 +520,7 @@ export const APP_SURFACES = [
   },
   {
     id: "skills",
+    scope: "project",
     canonicalPath: "/skills",
     routePatterns: ["skills"],
     navSegments: ["skills"],
@@ -447,6 +536,10 @@ export const APP_SURFACES = [
   },
   {
     id: "learning",
+    // Project-scoped: a lesson launches an agent session into the active
+    // project, so the project belongs in the URL like any other screen whose
+    // work lands in one.
+    scope: "project",
     canonicalPath: "/learning",
     routePatterns: ["learning"],
     navSegments: ["learning"],
@@ -462,8 +555,9 @@ export const APP_SURFACES = [
   },
   {
     id: "conformance",
+    scope: "project",
     canonicalPath: "/conformance",
-    routePatterns: ["conformance"],
+    routePatterns: ["conformance", "conformance/runs/:runId"],
     navSegments: ["conformance"],
     title: "Conformance",
     purpose:
@@ -481,6 +575,7 @@ export const APP_SURFACES = [
   },
   {
     id: "compatibility",
+    scope: "project",
     canonicalPath: "/compatibility",
     routePatterns: ["compatibility"],
     navSegments: ["compatibility"],
@@ -498,6 +593,7 @@ export const APP_SURFACES = [
   },
   {
     id: "oauth-flow",
+    scope: "project",
     canonicalPath: "/oauth-flow",
     routePatterns: ["oauth-flow"],
     navSegments: ["oauth-flow"],
@@ -518,6 +614,7 @@ export const APP_SURFACES = [
   },
   {
     id: "xaa-flow",
+    scope: "project",
     canonicalPath: "/xaa-flow",
     routePatterns: ["xaa-flow"],
     navSegments: ["xaa-flow"],
@@ -537,6 +634,7 @@ export const APP_SURFACES = [
   },
   {
     id: "tracing",
+    scope: "project",
     canonicalPath: "/tracing",
     routePatterns: ["tracing"],
     navSegments: ["tracing"],
@@ -554,6 +652,7 @@ export const APP_SURFACES = [
   },
   {
     id: "settings",
+    scope: "global",
     canonicalPath: "/settings",
     // `settings/github-checks` is deliberately absent: the page moved under
     // Integrations and that path is now a loader redirect, not a screen. The
@@ -563,6 +662,7 @@ export const APP_SURFACES = [
       "settings/api-keys",
       "settings/integrations",
       "settings/integrations/github",
+      "settings/integrations/github/callback",
     ],
     navSegments: ["settings"],
     title: "Settings",
@@ -582,6 +682,7 @@ export const APP_SURFACES = [
   },
   {
     id: "project-settings",
+    scope: "project",
     canonicalPath: "/project-settings",
     routePatterns: ["project-settings"],
     navSegments: ["project-settings"],
@@ -598,6 +699,7 @@ export const APP_SURFACES = [
   },
   {
     id: "organizations",
+    scope: "global",
     canonicalPath: "/organizations",
     routePatterns: [
       "organizations",
@@ -613,6 +715,10 @@ export const APP_SURFACES = [
       // Discord agent settings — same reasoning as Slack directly above,
       // including staying out of `userActivities` while `discord-agent` is off.
       "organizations/:orgId/discord",
+      // Trace destinations — where this org's traces are streamed. Same
+      // reasoning again: listed for route coverage, kept out of
+      // `userActivities` while `trace-destinations` is off.
+      "organizations/:orgId/observability",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -632,6 +738,7 @@ export const APP_SURFACES = [
   },
   {
     id: "profile",
+    scope: "global",
     canonicalPath: "/profile",
     routePatterns: ["profile"],
     navSegments: ["profile"],
@@ -647,6 +754,7 @@ export const APP_SURFACES = [
   },
   {
     id: "support",
+    scope: "global",
     canonicalPath: "/support",
     routePatterns: ["support"],
     navSegments: ["support"],
@@ -659,6 +767,35 @@ export const APP_SURFACES = [
         "Contact-support screen; a human conversation, nothing for an agent to automate.",
     },
     showInAtlas: true,
+  },
+  {
+    id: "webmcp",
+    scope: "project",
+    canonicalPath: "/webmcp",
+    routePatterns: ["webmcp"],
+    navSegments: ["webmcp"],
+    title: "WebMCP",
+    purpose:
+      "Inspect a live web page's WebMCP tools: what it registers, what they accept, and what they return when invoked.",
+    userActivities: [
+      "Open a page in a managed browser and watch the tools it registers",
+      "Invoke a page tool with structured input and read its result",
+      "Review the activity timeline across navigations, with screenshots",
+    ],
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
+    agentTools: {
+      kind: "none",
+      reason:
+        "Drives a live third-party web page; the in-app agent must not operate someone's site, and page output is untrusted.",
+    },
+    // Off until rollout: the atlas is static, so `true` would advertise a
+    // flag-hidden surface to the agent before anyone can reach it.
+    showInAtlas: false,
   },
 ] as const satisfies readonly AppSurfaceManifest[];
 
@@ -674,7 +811,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s])
+  listAppSurfaces().map((s) => [s.id, s]),
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -686,7 +823,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
 );
 
 /**
@@ -695,7 +832,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string
+  segment: string,
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -713,6 +850,23 @@ export function listAppSurfaceNavSegments(): string[] {
 }
 
 /**
+ * Nav segments a hosted deployment cannot serve — the manifests are the
+ * source of truth, and `hosted-tab-policy.ts` is the only caller.
+ *
+ * Reads through `listAppSurfaces()` rather than `APP_SURFACES` directly:
+ * the const assertion narrows each entry to its own literal type, so an
+ * optional field is absent from the ones that never set it.
+ */
+export function listHostedBlockedNavSegments(): string[] {
+  const out = new Set<string>();
+  for (const surface of listAppSurfaces()) {
+    if (!surface.hostedBlocked) continue;
+    for (const segment of surface.navSegments) out.add(segment);
+  }
+  return [...out];
+}
+
+/**
  * The app atlas: a compact map of the app for the agent's system prompt.
  *
  * Static per build ON PURPOSE — it goes in the cacheable prefix, so nothing
@@ -721,7 +875,7 @@ export function listAppSurfaceNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -737,7 +891,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n")
+      ].join("\n"),
     ),
   ].join("\n");
 }

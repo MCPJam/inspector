@@ -1,0 +1,113 @@
+{
+  "id": "hosted-0002",
+  "note": "predicate failed \u2014 the judge can never reach this row",
+  "origin": "synthetic",
+  "authored": {
+    "mode": "model_driven",
+    "expectsToolCall": true,
+    "assertionCount": 2
+  },
+  "evidence": {
+    "setupSignals": {
+      "connection": {
+        "outcome": "ok"
+      },
+      "discovery": {
+        "outcome": "ok"
+      }
+    },
+    "toolSignals": {
+      "toolsTotalBefore": 12,
+      "toolsExposed": 12
+    },
+    "spans": [
+      {
+        "id": "span-1",
+        "category": "tool",
+        "status": "ok",
+        "toolName": "list_files",
+        "promptIndex": 0
+      }
+    ],
+    "prompts": [
+      {
+        "promptIndex": 0,
+        "expectedToolCalls": [
+          {
+            "toolName": "list_files"
+          }
+        ],
+        "missing": [],
+        "unexpected": [],
+        "argumentMismatches": [],
+        "passed": true
+      }
+    ],
+    "predicateResults": [
+      {
+        "passed": true,
+        "reason": "contains expected token"
+      },
+      {
+        "passed": false,
+        "reason": "expected 2 rows, saw 0"
+      }
+    ]
+  },
+  "iteration": {
+    "status": "completed"
+  },
+  "recorded": {
+    "legacyPassed": false,
+    "stageResults": [
+      {
+        "stage": "connection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "discovery",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "selection",
+        "state": "passed",
+        "reason": "observed"
+      },
+      {
+        "stage": "call",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "response",
+        "state": "passed",
+        "reason": "observed",
+        "evidence": {
+          "spanIds": [
+            "span-1"
+          ]
+        }
+      },
+      {
+        "stage": "userValue",
+        "state": "failed",
+        "reason": "predicateFailed",
+        "evidence": {
+          "predicateReasons": [
+            "expected 2 rows, saw 0"
+          ]
+        }
+      }
+    ],
+    "firstFailedStage": "userValue",
+    "failureCategory": "userValue",
+    "stageAnalyzerVersion": 8
+  }
+}

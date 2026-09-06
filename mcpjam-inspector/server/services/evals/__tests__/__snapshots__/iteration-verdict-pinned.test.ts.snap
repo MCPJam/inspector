@@ -1,0 +1,5 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`buildEvalIterationVerdict output is unchanged > a missing expected tool still fails, byte for byte 1`] = `"{"evaluation":{"expectedToolCalls":["list_files"],"toolsCalled":[],"missing":["list_files"],"unexpected":[],"argumentMismatches":[],"passed":false,"promptSummaries":[{"promptIndex":0,"prompt":"hi","expectedToolCalls":["list_files"],"actualToolCalls":[],"missing":["list_files"],"unexpected":[],"argumentMismatches":[],"passed":false}],"turnCount":1,"failedTurnCount":1,"firstFailedTurnIndex":0},"passed":false,"predicateResults":[]}"`;
+
+exports[`buildEvalIterationVerdict output is unchanged > a passing tool-match iteration still passes, byte for byte 1`] = `"{"evaluation":{"expectedToolCalls":["list_files"],"toolsCalled":["list_files"],"missing":[],"unexpected":[],"argumentMismatches":[],"passed":true,"promptSummaries":[{"promptIndex":0,"prompt":"hi","expectedToolCalls":["list_files"],"actualToolCalls":["list_files"],"missing":[],"unexpected":[],"argumentMismatches":[],"passed":true}],"turnCount":1,"failedTurnCount":0},"passed":true,"predicateResults":[]}"`;

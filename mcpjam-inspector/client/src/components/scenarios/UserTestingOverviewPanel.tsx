@@ -1,5 +1,5 @@
 import { formatDistanceToNow } from "date-fns";
-import { AlertTriangle, Inbox, Plus } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import type { ScenarioListItem } from "@/hooks/useScenarios";
@@ -193,7 +193,7 @@ function LoadFailureState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-error"
     >
       <AlertTriangle className="size-8 text-amber-500" />
@@ -212,6 +212,32 @@ function LoadFailureState({
   );
 }
 
+/**
+ * The redesigned User Testing empty state (BB-125).
+ *
+ * The graphic is the frame's own bitmap, served from `public/`. It replaces a
+ * scaled-up `PersonaPixelAvatar`, which stood in while the asset did not exist
+ * yet: a persona avatar says "a user", but this page is about a study — the
+ * desk, the brief and the observed subject are the thing being described.
+ *
+ * Sized against the Swarm empty state, but by MASS rather than by height.
+ * That page puts four `PersonaPixelAvatar size="lg"` characters in a row —
+ * 56px tall but roughly 180px wide — so a single 44x56 bitmap matched the
+ * height and still read as a quarter of the picture. At 2x that height
+ * (112px, `h-28`) the two illustrations occupy about the same area.
+ *
+ * 112px is also well down from the native 250px, which towered over the
+ * heading beneath it.
+ *
+ * `w-auto` rather than a matching width: 196×250 has no clean integer
+ * downscale (their GCD is 2), so pinning both dimensions would round the
+ * ratio. The intrinsic size stays on the attributes to reserve the box
+ * before the file loads.
+ *
+ * No `image-rendering: pixelated` either. That keeps edges hard when pixel
+ * art is scaled UP; scaling 4.5× DOWN it would drop rows unevenly and
+ * alias. The browser's own filtering is the better of the two here.
+ */
 function EmptyState({
   onCreateScenario,
   createLabel,
@@ -221,16 +247,25 @@ function EmptyState({
 }) {
   return (
     <div
-      className="flex flex-col items-center justify-center px-6 py-16 text-center"
+      className="flex min-h-full flex-col items-center justify-center px-6 py-16 text-center"
       data-testid="user-testing-overview-empty"
     >
-      <Inbox className="size-8 text-muted-foreground/70" />
-      <h2 className="mt-4 text-base font-semibold">No scenarios yet</h2>
-      <p className="mt-1 max-w-sm text-sm text-muted-foreground">
-        A scenario puts one of your environments behind a link you can hand to a
-        real person, so you can read what happened in their sessions.
+      <img
+        src="/user-testing-empty.png"
+        alt=""
+        width={196}
+        height={250}
+        aria-hidden
+        data-testid="user-testing-empty-illustration"
+        className="h-28 w-auto max-w-full object-contain"
+      />
+      <h2 className="mt-4 text-lg font-semibold">Create your first study</h2>
+      <p className="mt-2 max-w-md text-sm leading-relaxed text-foreground">
+        A study starts with a link you send. Users open it, use your server
+        inside the client they&rsquo;re used to seeing, and their sessions are
+        recorded here.
       </p>
-      <Button className="mt-5" onClick={onCreateScenario}>
+      <Button size="sm" className="mt-4" onClick={onCreateScenario}>
         <Plus className="mr-1.5 size-4" />
         {createLabel}
       </Button>

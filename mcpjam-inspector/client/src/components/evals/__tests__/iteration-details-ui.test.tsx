@@ -27,6 +27,9 @@ const actualToolCalls = [
 vi.mock("convex/react", () => ({
   useAction: () => mockGetBlob,
   useQuery: () => undefined,
+  // No Convex identity: nothing to wait on, so `useActorCanQuery` lets the
+  // suite-config read through exactly as it did before it was gated.
+  useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
 }));
 
 vi.mock("@/components/ui/json-editor", () => ({
@@ -35,6 +38,15 @@ vi.mock("@/components/ui/json-editor", () => ({
 
 vi.mock("@/lib/apis/mcp-tools-api", () => ({
   listTools: vi.fn(),
+}));
+
+vi.mock("../trial-judge-review", () => ({
+  TrialJudgeReviewPanel: (props: { iterationId: string }) => (
+    <div
+      data-testid="mock-trial-judge-review"
+      data-iteration={props.iterationId}
+    />
+  ),
 }));
 
 vi.mock("../trace-viewer", () => ({
@@ -274,6 +286,57 @@ describe("IterationDetails trace blob load error", () => {
       screen.getByText(
         /Something went wrong while loading the recorded trace/i,
       ),
+    ).toBeInTheDocument();
+  });
+});
+
+describe("IterationDetails judge review gate", () => {
+  const judgeCase = {
+    caseKey: "case-1",
+    gradingKey: "case-1#1",
+    iterationId: "iter-1",
+    score: 0.42,
+    passed: false,
+    reason: "The answer never named the file.",
+    rubricHits: [],
+  };
+
+  beforeEach(() => {
+    mockGetBlob.mockReset();
+    mockJsonEditor.mockClear();
+  });
+
+  it("offers the calibration label for a trial from a suite run", () => {
+    render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={{ ...iteration, suiteRunId: "run-1" }}
+        testCase={testCase}
+        judgeCase={judgeCase}
+        enableJudgeReview
+      />,
+    );
+    expect(screen.getByTestId("mock-trial-judge-review")).toHaveAttribute(
+      "data-iteration",
+      "iter-1",
+    );
+  });
+
+  it("shows only the read-only verdict for a quick-run trial", () => {
+    // No `suiteRunId`: the backend refuses every label for this trial
+    // (`JUDGE_REVIEW_NO_RUN`), so the control is not offered at all.
+    render(
+      <IterationDetails
+        layoutMode="full"
+        iteration={iteration}
+        testCase={testCase}
+        judgeCase={judgeCase}
+        enableJudgeReview
+      />,
+    );
+    expect(screen.queryByTestId("mock-trial-judge-review")).toBeNull();
+    expect(
+      screen.getByText(/The answer never named the file/),
     ).toBeInTheDocument();
   });
 });

@@ -102,9 +102,11 @@ When you connect to such a server, the app shows a warning toast. You can contin
 
 Tunneling exposes a local MCP server over HTTPS for remote access. Since the hosted app connects to already-remote servers, tunneling is not applicable.
 
-### No tasks
+### No Tracing tab
 
-Tasks are not yet available in the hosted app.
+The **Tracing** tab is not available in the hosted app. It is a live log of the JSON-RPC traffic between the Inspector and a server you are connected to, and it streams from the local Inspector process's RPC bus — which a hosted deployment does not run. Use the [local inspector](/installation) for the full log. In the hosted app, the JSON-RPC frames for a chat turn are captured and shown with that turn in the Playground instead.
+
+Getting eval traces OUT of the hosted app is a different thing, and it does work: open a completed run and use **Export traces** for an OTLP JSON file (see [Evals](/inspector/evals#exporting-traces)), or fetch the same projection from `GET /api/v1/trace-exports/otlp` in the [public API](/reference/public-api). Both use OpenInference semantic conventions and land in Arize Phoenix, Datadog, or any other OTLP-compatible backend.
 
 ## Billing
 
@@ -122,3 +124,12 @@ The **Payment history** card on the org billing page lists your recent credit to
 If a receipt isn't available yet the cell shows **Processing** (for pending charges) or **Not available** (for succeeded charges without a receipt link).
 
 To add credits, click **Top up** — either from the empty state when you have no history, or from the credit balance card above.
+
+### Seat payment failures
+
+When someone you invited to a paid-seat organization signs up and the automatic seat charge fails or is cancelled, the org billing page shows a **Seat payment didn't go through** notice. As the org owner you can:
+
+- Click **Retry payment** to reopen the charge and complete payment (including any 3DS challenge).
+- Click **Remove invite** to remove the invite entirely if you no longer want to add that person.
+
+The invited member's organization appears greyed out in their sidebar until the seat is paid.
