@@ -19,8 +19,6 @@ import {
   type Predicate,
 } from "@/shared/eval-matching";
 
-export const SIMPLE_CASE_EDITOR_FLAG = "eval-simple-case-editor";
-
 export type MoreCheckGroupId = "response" | "selection" | "appView";
 
 /**

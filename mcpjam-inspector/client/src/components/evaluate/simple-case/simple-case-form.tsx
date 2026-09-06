@@ -22,7 +22,10 @@ import {
 } from "@/shared/eval-matching";
 import type { Predicate } from "@/shared/eval-matching";
 import type { TestStep } from "@/shared/steps";
-import { ChecksSection, ToolCalledWithFields } from "../checks-section";
+import {
+  ChecksSection,
+  ToolCalledWithFields,
+} from "../../evals/checks-section";
 import {
   displayCaseKind,
   initialToolsChoice,
