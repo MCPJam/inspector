@@ -340,10 +340,10 @@ function ViolationPolicyComparison({
   );
   const label =
     comparison.status === "matching"
-      ? "Matches Applied"
+      ? "originalPolicy matches Applied"
       : comparison.status === "different"
-      ? "Differs from Applied"
-      : "Comparison unavailable";
+      ? "originalPolicy differs from Applied"
+      : "originalPolicy comparison unavailable";
   const tone =
     comparison.status === "matching"
       ? "text-emerald-600 dark:text-emerald-400"

@@ -54,9 +54,11 @@ describe("PolicyDiffTab violation evidence", () => {
     render(<PolicyDiffTab input={input} diagnoses={[]} />);
 
     expect(screen.getAllByText("Applied").length).toBeGreaterThan(0);
-    expect(screen.getByText("Matches Applied")).toBeTruthy();
-    expect(screen.getByText("Differs from Applied")).toBeTruthy();
-    expect(screen.getByText("Comparison unavailable")).toBeTruthy();
+    expect(screen.getByText("originalPolicy matches Applied")).toBeTruthy();
+    expect(screen.getByText("originalPolicy differs from Applied")).toBeTruthy();
+    expect(
+      screen.getByText("originalPolicy comparison unavailable"),
+    ).toBeTruthy();
     expect(screen.getByText(/mount unknown/)).toBeTruthy();
   });
 });
