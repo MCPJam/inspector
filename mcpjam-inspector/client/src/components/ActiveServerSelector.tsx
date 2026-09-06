@@ -4,6 +4,11 @@ import { cn } from "@/lib/utils";
 import { AddServerModal } from "./connection/AddServerModal";
 import { ServerFormData } from "@/shared/types.js";
 import { Check, ChevronLeft, ChevronRight, RefreshCw, X } from "lucide-react";
+import {
+  UNKNOWN_CONNECTION_STATUS,
+  getConnectionStatusMeta,
+  isConnectionStatus,
+} from "@/components/connection/server-card-utils";
 import { track } from "@/lib/analytics";
 import { HOSTED_MODE } from "@/lib/config";
 import {
@@ -84,36 +89,6 @@ export type PlaygroundServerSelectorProps = Omit<
   "hasMessages" | "className"
 >;
 
-function getStatusColor(status: string): string {
-  switch (status) {
-    case "connected":
-      return "bg-green-500 dark:bg-green-400";
-    case "connecting":
-      return "bg-yellow-500 dark:bg-yellow-400 animate-pulse";
-    case "failed":
-      return "bg-red-500 dark:bg-red-400";
-    case "disconnected":
-      return "bg-muted-foreground";
-    default:
-      return "bg-muted-foreground";
-  }
-}
-
-function getStatusText(status: string): string {
-  switch (status) {
-    case "connected":
-      return "Connected";
-    case "connecting":
-      return "Connecting...";
-    case "failed":
-      return "Failed";
-    case "disconnected":
-      return "Disconnected";
-    default:
-      return "Unknown";
-  }
-}
-
 export function ActiveServerSelector({
   serverConfigs,
   selectedServer,
@@ -153,6 +128,18 @@ export function ActiveServerSelector({
     return true;
   });
 
+  /**
+   * WHICH servers are listed, not how many.
+   *
+   * The effect below reads `servers` but used to depend on `servers.length`,
+   * so any change that preserved the count — a rename, or one server leaving
+   * as another arrives — never re-ran it, and `selectedServer` went on
+   * pointing at a name the list no longer holds. That is precisely the state
+   * the effect exists to repair. JSON, not a joined string, so a name
+   * containing the separator cannot forge a key.
+   */
+  const listedServersKey = JSON.stringify(servers.map(([name]) => name));
+
   // Auto-select first available server if current selection is not in the list
   useEffect(() => {
     if (
@@ -189,7 +176,7 @@ export function ActiveServerSelector({
       onServerChange("none");
     }
   }, [
-    servers.length,
+    listedServersKey,
     selectedServer,
     isMultiSelectEnabled,
     onServerChange,
@@ -264,6 +251,30 @@ export function ActiveServerSelector({
               : selectedServer === name;
             const isHostedHttpReconnectBlocked =
               isHostedInsecureHttpServer(serverConfig);
+            /**
+             * The same helper the server cards and the picker read. The local
+             * copies this replaces had no `oauth-flow` case at all, so a
+             * server waiting on consent showed a grey dot titled "Unknown"
+             * here while the card beside it said "Authorizing in browser...".
+             *
+             * A status OUTSIDE the union keeps its own answer rather than
+             * taking the helper's `disconnected` fallback: "we cannot read
+             * this" and "this is not connected" are different claims, and only
+             * the first one is true here.
+             */
+            const statusMeta = isConnectionStatus(
+              serverConfig.connectionStatus,
+            )
+              ? getConnectionStatusMeta(serverConfig.connectionStatus)
+              : UNKNOWN_CONNECTION_STATUS;
+            // The pulse stays local to the strip. The shared helper carries the
+            // colour and the word, not the motion: these tabs are dense and
+            // always on screen, so a handshake in flight is worth animating
+            // here in a way the picker's one-off popover row is not.
+            const isHandshaking =
+              serverConfig.connectionStatus === "connecting" ||
+              serverConfig.connectionStatus === "oauth-flow";
+
 
             return (
               <button
@@ -316,9 +327,10 @@ export function ActiveServerSelector({
                 <div
                   className={cn(
                     "w-2 h-2 rounded-full",
-                    getStatusColor(serverConfig.connectionStatus),
+                    statusMeta.indicatorClassName,
+                    isHandshaking && "animate-pulse",
                   )}
-                  title={getStatusText(serverConfig.connectionStatus)}
+                  title={statusMeta.label}
                 />
                 <span className="text-sm font-medium truncate max-w-36">
                   {name}

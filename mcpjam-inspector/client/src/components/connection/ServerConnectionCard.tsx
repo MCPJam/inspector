@@ -208,7 +208,7 @@ export function ServerConnectionCard({
 
   const {
     label: connectionStatusLabel,
-    indicatorColor,
+    indicatorClassName,
     Icon: ConnectionStatusIcon,
     iconClassName,
   } = getConnectionStatusMeta(server.connectionStatus);
@@ -637,8 +637,7 @@ export function ServerConnectionCard({
                     <ConnectionStatusIcon className={iconClassName} />
                   ) : (
                     <span
-                      className="h-1.5 w-1.5 rounded-full"
-                      style={{ backgroundColor: indicatorColor }}
+                      className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                     />
                   )}
                   <span>

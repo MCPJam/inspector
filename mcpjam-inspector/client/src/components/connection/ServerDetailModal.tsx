@@ -341,7 +341,7 @@ export function ServerDetailModal({
     existingServerNames.includes(trimmedName);
 
   const isConnected = server.connectionStatus === "connected";
-  const { label: connectionStatusLabel, indicatorColor } =
+  const { label: connectionStatusLabel, indicatorClassName } =
     getConnectionStatusMeta(server.connectionStatus);
 
   useEffect(() => {
@@ -608,8 +608,7 @@ export function ServerDetailModal({
                   <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 ) : (
                   <span
-                    className="h-1.5 w-1.5 rounded-full"
-                    style={{ backgroundColor: indicatorColor }}
+                    className={`h-1.5 w-1.5 rounded-full ${indicatorClassName}`}
                   />
                 )}
                 <span>

@@ -486,10 +486,12 @@ describe("ActiveServerSelector", () => {
       );
 
       const indicator = screen.getByTitle("Connected").closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-green");
+      expect(indicator?.className).toContain("bg-success");
+      // Settled, so it holds still.
+      expect(indicator?.className).not.toContain("animate-pulse");
     });
 
-    it("shows yellow indicator for connecting servers", () => {
+    it("shows the info indicator for connecting servers", () => {
       const serverConfigs = {
         "server-1": createServer({
           name: "server-1",
@@ -505,13 +507,17 @@ describe("ActiveServerSelector", () => {
         />,
       );
 
+      // "Finishing setup...", not "Connecting...": the wording is the shared
+      // helper's now, so the strip and the server card say the same thing.
       const indicator = screen
-        .getByTitle("Connecting...")
+        .getByTitle("Finishing setup...")
         .closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-yellow");
+      expect(indicator?.className).toContain("bg-info");
+      // The pulse the strip had before the shared helper landed.
+      expect(indicator?.className).toContain("animate-pulse");
     });
 
-    it("shows red indicator for failed servers", () => {
+    it("shows the destructive indicator for failed servers", () => {
       const serverConfigs = {
         "server-1": createServer({
           name: "server-1",
@@ -528,7 +534,61 @@ describe("ActiveServerSelector", () => {
       );
 
       const indicator = screen.getByTitle("Failed").closest(".rounded-full");
-      expect(indicator?.className).toContain("bg-red");
+      expect(indicator?.className).toContain("bg-destructive");
+    });
+
+    it("makes no claim about a status it cannot read", () => {
+      // Runtime values arrive as plain strings widened with `as
+      // ConnectionStatus`, so a value outside the union does reach here.
+      // `getConnectionStatusMeta` falls back to `disconnected`, which SAYS the
+      // server is not connected — a claim we have no basis for. Transparent
+      // holds the row's alignment and says nothing, matching the picker.
+      const serverConfigs = {
+        "server-1": createServer({
+          name: "server-1",
+          connectionStatus: "reticulating" as never,
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const indicator = screen
+        .getByTitle("Connection state unavailable")
+        .closest(".rounded-full");
+      expect(indicator?.className).toContain("bg-transparent");
+      expect(screen.queryByTitle("Disconnected")).toBeNull();
+    });
+
+    it("names a server that is mid-authorization instead of calling it unknown", () => {
+      // The strip's own status vocabulary had NO `oauth-flow` branch, so this
+      // server fell through to the grey dot titled "Unknown" while the card
+      // beside it read "Authorizing in browser...". One helper, one answer.
+      const serverConfigs = {
+        "server-1": createServer({
+          name: "server-1",
+          connectionStatus: "oauth-flow",
+        }),
+      };
+
+      render(
+        <ActiveServerSelector
+          {...defaultProps}
+          serverConfigs={serverConfigs}
+          selectedServer="server-1"
+        />,
+      );
+
+      const indicator = screen
+        .getByTitle("Authorizing in browser...")
+        .closest(".rounded-full");
+      expect(indicator?.className).toContain("bg-pending");
+      expect(indicator?.className).toContain("animate-pulse");
     });
   });
 

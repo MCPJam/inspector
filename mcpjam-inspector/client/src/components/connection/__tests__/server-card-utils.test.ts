@@ -12,36 +12,66 @@ describe("getConnectionStatusMeta", () => {
   it("returns connected status meta", () => {
     const meta = getConnectionStatusMeta("connected");
     expect(meta.label).toBe("Connected");
-    expect(meta.indicatorColor).toBe("#10b981");
-    expect(meta.iconClassName).toContain("text-green-500");
+    expect(meta.indicatorClassName).toBe("bg-success");
+    expect(meta.iconClassName).toContain("text-success");
   });
 
   it("returns connecting status meta with spinner", () => {
     const meta = getConnectionStatusMeta("connecting");
     expect(meta.label).toBe("Finishing setup...");
-    expect(meta.indicatorColor).toBe("#3b82f6");
+    expect(meta.indicatorClassName).toBe("bg-info");
     expect(meta.iconClassName).toContain("animate-spin");
   });
 
   it("returns oauth-flow status meta", () => {
     const meta = getConnectionStatusMeta("oauth-flow");
     expect(meta.label).toBe("Authorizing in browser...");
-    expect(meta.indicatorColor).toBe("#a855f7");
-    expect(meta.iconClassName).toContain("text-purple-500");
+    expect(meta.indicatorClassName).toBe("bg-pending");
+    expect(meta.iconClassName).toContain("text-pending");
   });
 
   it("returns failed status meta", () => {
     const meta = getConnectionStatusMeta("failed");
     expect(meta.label).toBe("Failed");
-    expect(meta.indicatorColor).toBe("#ef4444");
-    expect(meta.iconClassName).toContain("text-red-500");
+    expect(meta.indicatorClassName).toBe("bg-destructive");
+    expect(meta.iconClassName).toContain("text-destructive");
   });
 
   it("returns disconnected status meta", () => {
     const meta = getConnectionStatusMeta("disconnected");
     expect(meta.label).toBe("Disconnected");
-    expect(meta.indicatorColor).toBe("#9ca3af");
-    expect(meta.iconClassName).toContain("text-gray-500");
+    expect(meta.indicatorClassName).toBe("bg-muted-foreground");
+    expect(meta.iconClassName).toContain("text-muted-foreground");
+  });
+
+  /**
+   * The dot is painted in both themes, so its colour has to come from a role
+   * token. This is the guard on that: a literal shade (`bg-green-500`) or a
+   * hex passed through `style` reads the same in dark mode as in light, which
+   * is the bug three separate copies of this vocabulary used to carry.
+   */
+  it("paints every status from a role token, never a fixed colour", () => {
+    const statuses: ConnectionStatus[] = [
+      "connected",
+      "connecting",
+      "oauth-flow",
+      "failed",
+      "disconnected",
+    ];
+    for (const status of statuses) {
+      const { indicatorClassName, iconClassName } =
+        getConnectionStatusMeta(status);
+      expect(indicatorClassName).toMatch(/^bg-[a-z-]+$/);
+      expect(indicatorClassName).not.toMatch(/#|\d/);
+      // The ICON too. It kept `text-green-500` and friends after the dot beside
+      // it moved to a token, so one status was painted from the theme and from
+      // a fixed shade at once. Any `text-<name>-<number>` fails here.
+      const colour = iconClassName
+        .split(" ")
+        .find((cls) => cls.startsWith("text-"));
+      expect(colour, `${status} icon colour`).toBeDefined();
+      expect(colour).toMatch(/^text-[a-z-]+$/);
+    }
   });
 
   it("falls back to disconnected for unknown status", () => {
