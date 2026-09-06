@@ -316,6 +316,19 @@ describe("SessionFlowSankey", () => {
     expect(onRebuild).toHaveBeenCalledTimes(1);
   });
 
+  it("starts the analysis with no arguments", async () => {
+    // BB-107: passing the handler straight to onClick handed React's synthetic
+    // event to the rebuild call, which spreads its argument into the Convex
+    // mutation — serializing the event's DOM node threw a circular structure.
+    const user = userEvent.setup();
+    const { onRebuild } = renderSankey({
+      breakdown: breakdown({ latestRun: null }),
+    });
+
+    await user.click(screen.getByRole("button", { name: /Analyze sessions/ }));
+    expect(onRebuild).toHaveBeenCalledWith();
+  });
+
   it("reports an analysis in flight instead of offering to start one", () => {
     renderSankey({
       breakdown: breakdown({ latestRun: run({ status: "queued" }) }),
