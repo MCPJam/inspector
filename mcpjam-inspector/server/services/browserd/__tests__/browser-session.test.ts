@@ -154,6 +154,8 @@ function makeFakes(over?: {
         kill: async () => {},
         wait: async () => {},
       }),
+      // The display probe `bootBrowserd` runs first; 0 means "already up".
+      run: async () => ({ exitCode: 0 }),
       getHost: () => "new.example",
     },
     killBrowserd: vi.fn(async () => {}),
