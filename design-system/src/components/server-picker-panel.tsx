@@ -233,7 +233,10 @@ export function ServerPickerPanel({
                 onClick={() => onSelectServer(server.id)}
                 disabled={busy}
                 aria-current={selected ? "true" : undefined}
-                className={cn(ROW, "min-w-0 flex-1 text-sm")}
+                className={cn(
+                  ROW,
+                  "min-w-0 flex-1 text-sm disabled:opacity-50",
+                )}
               >
                 <span
                   role="img"
@@ -392,7 +395,10 @@ export function ServerPickerPanel({
                 onClick={() => onSelectGroup(group.id)}
                 disabled={busy}
                 aria-current={selected ? "true" : undefined}
-                className={cn(ROW, "min-w-0 flex-1 flex-col !items-start gap-1")}
+                className={cn(
+                  ROW,
+                  "min-w-0 flex-1 flex-col !items-start gap-1 disabled:opacity-50",
+                )}
               >
                 <span className="truncate text-sm">{group.name}</span>
                 <span className="flex flex-wrap items-center gap-1">
@@ -430,7 +436,9 @@ export function ServerPickerPanel({
             onClick={() => setShowForm(true)}
             // Also while the catalog is unknown: the form would open with no
             // servers to tick and a name derived from nothing.
-            disabled={busy || !catalogKnown}
+            // …and with an answered but EMPTY catalog: the form would open
+            // with nothing to tick and no submission possible.
+            disabled={busy || !catalogKnown || servers.length === 0}
             className={cn(ROW, "text-sm hover:bg-accent disabled:opacity-50")}
           >
             <Plus className="size-3.5 shrink-0 text-muted-foreground" />

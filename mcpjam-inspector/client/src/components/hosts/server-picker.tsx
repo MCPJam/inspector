@@ -151,6 +151,16 @@ export function ServerPicker({
    * "just deleted" meant two release effects, two ideas of when a write has
    * landed, and a third one waiting to be written for the next write kind.
    */
+  /**
+   * Servers whose handshake this picker started and has not seen settle.
+   *
+   * `canConnect` reads the RUNTIME status, which does not flip to `connecting`
+   * until the provider says so — and until then every click starts another
+   * `ensureServersReady` for the same server. A set, not one name: connecting
+   * two different servers at once is a thing a user may reasonably do.
+   */
+  const [connecting, setConnecting] = useState<readonly string[]>([]);
+
   const [storedPending, setPending] = useState<PendingWrites>(NO_PENDING);
 
   /** The overlay, but only when it belongs to the project being rendered. */
@@ -252,6 +262,9 @@ export function ServerPicker({
   const handleConnect = useCallback(
     async (serverName: string) => {
       if (!actions) return;
+      setConnecting((names) =>
+        names.includes(serverName) ? names : [...names, serverName],
+      );
       const goToServers = {
         action: {
           label: "Open servers",
@@ -272,6 +285,8 @@ export function ServerPicker({
           raw ? `${serverName} didn't connect: ${raw}` : `${serverName} didn't connect.`,
           goToServers,
         );
+      } finally {
+        setConnecting((names) => names.filter((name) => name !== serverName));
       }
     },
     [actions],
@@ -409,12 +424,15 @@ export function ServerPicker({
               }
             : UNKNOWN_CONNECTION_STATUS,
           onConnect:
-            canConnect && connectionStatus !== null && actions
+            canConnect &&
+            connectionStatus !== null &&
+            actions &&
+            !connecting.includes(server.name)
               ? () => void handleConnect(server.name)
               : undefined,
         };
       }),
-    [catalog, runtime, actions, handleConnect],
+    [catalog, runtime, actions, handleConnect, connecting],
   );
 
   const groupRows = useMemo(

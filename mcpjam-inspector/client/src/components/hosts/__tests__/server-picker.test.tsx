@@ -407,6 +407,31 @@ describe("ServerPicker — creating a multi-server group", () => {
   });
 });
 
+describe("ServerPicker — Connect while a handshake is in flight", () => {
+  it("does not start a second one for the same server", async () => {
+    // `canConnect` reads the RUNTIME status, which does not flip to
+    // `connecting` until the provider says so — until then every click
+    // started another `ensureServersReady`.
+    mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
+    mockState.ensureReady = vi.fn(() => new Promise(() => {}));
+    open();
+
+    const connect = (await screen.findAllByRole("button", {
+      name: /^Connect /,
+    }))[0];
+    fireEvent.click(connect);
+    await waitFor(() => expect(mockState.ensureReady).toHaveBeenCalledTimes(1));
+
+    // The row withdraws the action rather than answering a second click.
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Connect alpha" }),
+      ).toBeNull(),
+    );
+    expect(mockState.ensureReady).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("ServerPicker — Connect reports what to fix", () => {
   const disconnected = () => {
     mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
