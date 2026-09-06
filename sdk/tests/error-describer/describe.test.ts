@@ -205,6 +205,45 @@ const CASES: Case[] = [
     build: () => new Error("Missing or invalid bearer token"),
     expectSlug: "auth/missing_bearer",
   },
+  // Provider quota / rate limit. A 429 reaches us in three shapes: the AI-SDK
+  // `APICallError` carries `statusCode`, some transports set a numeric `code`,
+  // and the local-BYOK swarm path loses both and leaves only the message.
+  {
+    name: "HTTP 429 statusCode",
+    build: () => makeError("Too Many Requests", { statusCode: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "HTTP 429 status",
+    build: () => makeError("Rate limited", { status: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "429 numeric code",
+    build: () => makeError("Rate limited", { code: 429 }),
+    expectSlug: "provider/quota",
+    expectRawCode: 429,
+  },
+  {
+    name: "bare 429 in message",
+    build: () => new Error("429 Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    name: "'too many requests' wording without a status",
+    build: () => new Error("Anthropic returned Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
+  {
+    // What a real throttle looks like: the AI SDK retries three times, then
+    // wraps the last provider error in a `RetryError` that keeps no status.
+    name: "AI SDK RetryError wording",
+    build: () =>
+      new Error("Failed after 3 attempts. Last error: Too Many Requests"),
+    expectSlug: "provider/quota",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",

@@ -415,12 +415,17 @@ function classifyMcpError(error: unknown): string | undefined {
 function classifyHttpStatus(status: number): string | undefined {
   if (status === 401) return "auth/http_401";
   if (status === 403) return "auth/http_403";
+  if (status === 429) return "provider/quota";
   return undefined;
 }
 
 function classifyByMessageHttp(message: string): string | undefined {
   if (/\b(?:http|status)[:\s-]*401\b/i.test(message)) return "auth/http_401";
   if (/\b(?:http|status)[:\s-]*403\b/i.test(message)) return "auth/http_403";
+  // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
+  // the status field and leaves only this wording. Narrower than "rate limit"
+  // on purpose: that also matches MCPJam's own account limit, a different slug.
+  if (/\b429\b|too many requests/i.test(message)) return "provider/quota";
   return undefined;
 }
 
