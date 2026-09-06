@@ -1,0 +1,53 @@
+---
+title: "Integrations"
+description: "Connect MCPJam to GitHub and Slack from Settings → Integrations."
+icon: "plug"
+---
+
+**Settings → Integrations** (`/settings/integrations`) lists the external services you can connect to MCPJam. Each service has a card showing its current status and a link to its configuration.
+
+## GitHub Checks
+
+<Note>
+  GitHub Checks is a beta feature. The card appears only when your organization has access.
+</Note>
+
+The GitHub Checks card shows how many repositories are currently connected across your organization. Click the card to open the GitHub Checks management page (`/settings/integrations/github`).
+
+### GitHub Checks management page
+
+The management page lets you connect repositories to eval suites so the suite runs as a GitHub check on every pull request.
+
+**To connect a repository:**
+
+1. Pick a repository from the **Repository** dropdown.
+2. Pick the eval suite to run on that repository.
+3. Click **Connect**.
+
+Each repository runs exactly one suite. The dropdown only shows repositories where the MCPJam GitHub App is installed.
+
+**To manage an existing connection:**
+
+Each connected repository row shows the suite it runs and whether checks are currently enabled. From the row you can:
+
+- **Pause / resume** — stop or restart checks without disconnecting.
+- **Change suite** — retarget the repository to a different suite.
+- **Disconnect** — remove the connection entirely.
+
+<Tip>
+  To connect a repository to a specific suite without leaving the suite page, use the **GitHub Checks** section in the suite's **Settings** tab. That section lists only repositories running the current suite and lets you add a free one. Full management (pause, disconnect, retarget) stays on this page.
+</Tip>
+
+### Status card values
+
+| Status | Meaning |
+|--------|---------|
+| *N* repositories connected | That many repositories are running a suite as a GitHub check. |
+| Not connected | No repositories are connected yet. |
+| *(blank while loading)* | The list is still being fetched; "Not connected" is not shown until the answer arrives. |
+
+## Slack
+
+The Slack card is always visible. Slack notifications are configured **per project**, not per organization, so the card links to **Project Settings** where the Slack integration section lives.
+
+Click the card to go to Project Settings.
