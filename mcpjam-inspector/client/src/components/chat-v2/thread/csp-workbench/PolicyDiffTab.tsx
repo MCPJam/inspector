@@ -364,10 +364,10 @@ function ViolationPolicyComparison({
   );
   const label =
     comparison.status === "matching"
-      ? "originalPolicy matches Applied"
+      ? "Browser-reported policy matches Applied"
       : comparison.status === "different"
-      ? "originalPolicy differs from Applied"
-      : "originalPolicy comparison unavailable";
+      ? "Browser-reported policy differs from Applied"
+      : "Browser-reported policy comparison unavailable";
   const tone =
     comparison.status === "matching"
       ? "text-emerald-600 dark:text-emerald-400"
@@ -388,7 +388,7 @@ function ViolationPolicyComparison({
         </span>
       </summary>
       <dl className="mt-2 grid grid-cols-[150px_1fr] gap-x-3 gap-y-2 text-[11px]">
-        <dt className="text-muted-foreground">directive</dt>
+        <dt className="text-muted-foreground">Directive</dt>
         <dd className="font-mono">
           {violation.effectiveDirective || violation.directive}
         </dd>
@@ -400,15 +400,13 @@ function ViolationPolicyComparison({
             </dd>
           </>
         )}
-        <dt className="text-muted-foreground">Applied policy for this mount</dt>
+        <dt className="text-muted-foreground">Client-applied policy</dt>
         <dd>
           <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">
             {applied?.headerString ?? "Not captured"}
           </pre>
         </dd>
-        <dt className="text-muted-foreground">
-          policy that caused this violation
-        </dt>
+        <dt className="text-muted-foreground">Browser-reported policy</dt>
         <dd>
           <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">
             {violation.originalPolicy ?? "Not captured"}

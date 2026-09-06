@@ -67,11 +67,17 @@ describe("PolicyDiffTab violation evidence", () => {
       ).length,
     ).toBeGreaterThan(0);
     expect(screen.queryByText(/Applied is parsed from/)).toBeNull();
-    expect(screen.getByText("originalPolicy matches Applied")).toBeTruthy();
-    expect(screen.getByText("originalPolicy differs from Applied")).toBeTruthy();
     expect(
-      screen.getByText("originalPolicy comparison unavailable"),
+      screen.getByText("Browser-reported policy matches Applied"),
     ).toBeTruthy();
+    expect(
+      screen.getByText("Browser-reported policy differs from Applied"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText("Browser-reported policy comparison unavailable"),
+    ).toBeTruthy();
+    expect(screen.getAllByText("Client-applied policy")).toHaveLength(3);
+    expect(screen.getAllByText("Browser-reported policy")).toHaveLength(3);
     expect(screen.getByText(/mount unknown/)).toBeTruthy();
   });
 });
