@@ -2,7 +2,10 @@ import { useState, useCallback, useEffect, useRef, useMemo } from "react";
 import { useMutation } from "convex/react";
 import { track } from "@/lib/analytics";
 import { toast } from "@/lib/toast";
-import type { OnboardingPhase } from "@/lib/onboarding-state";
+import type {
+  OnboardingPersistedState,
+  OnboardingPhase,
+} from "@/lib/onboarding-state";
 import {
   markOnboardingShown,
   markOnboardingStarted,
@@ -41,6 +44,13 @@ interface UseOnboardingReturn {
   retryConnect: () => void;
 }
 
+/** A run that painted or started but never completed still owns this device. */
+function hasUnfinishedLocalFirstRun(
+  persisted: OnboardingPersistedState | null,
+): boolean {
+  return persisted?.status === "started" || persisted?.status === "seen";
+}
+
 function getInitialLocalPhase(
   servers: Record<string, ServerWithName>,
   {
@@ -58,13 +68,17 @@ function getInitialLocalPhase(
 ): OnboardingPhase {
   if (isWorkOsAuthLoading) return "dismissed";
   if (isSignedInWithWorkOs) return "completed";
-  if (hasRemoteOnboardingState && hasSeenOnboarding) return "dismissed";
 
-  const persisted = hasRemoteOnboardingState ? null : readOnboardingState();
-  if (!hasRemoteOnboardingState) {
-    if (persisted?.status === "completed") return "completed";
-    if (persisted?.status === "dismissed") return "dismissed";
-    if (persisted?.status === "seen" && persisted.shownAt) return "dismissed";
+  const persisted = readOnboardingState();
+  if (persisted?.status === "completed") return "completed";
+  if (persisted?.status === "dismissed") return "dismissed";
+
+  // "seen" only records that the NUX painted, which is what stops App from
+  // redirecting. Retiring the guided copy needs a finished run (BB-112).
+  const isUnfinishedHere = hasUnfinishedLocalFirstRun(persisted);
+
+  if (hasRemoteOnboardingState && hasSeenOnboarding && !isUnfinishedHere) {
+    return "dismissed";
   }
 
   const serverEntries = Object.entries(servers);
@@ -73,9 +87,7 @@ function getInitialLocalPhase(
     serverEntries.length === 1 &&
     serverEntries[0]?.[0] === EXCALIDRAW_SERVER_NAME;
   const shouldContinueFirstRun =
-    (hasRemoteOnboardingState && !hasSeenOnboarding) ||
-    persisted?.status === "started" ||
-    (persisted?.status === "seen" && !persisted.shownAt);
+    isUnfinishedHere || (hasRemoteOnboardingState && !hasSeenOnboarding);
 
   if (!hasAnyServers) {
     return "connecting_excalidraw";
@@ -203,17 +215,18 @@ export function useOnboarding({
     // exists, so wait here instead of spending the one auto-connect attempt.
     if (!isProjectProvisioned) return;
 
-    if (hasRemoteOnboardingState) {
-      if (hasSeenOnboarding) return;
-    } else {
-      const persisted = readOnboardingState();
-      if (
-        persisted?.status === "completed" ||
-        persisted?.status === "dismissed" ||
-        (persisted?.status === "seen" && persisted.shownAt)
-      ) {
-        return;
-      }
+    const persisted = readOnboardingState();
+    if (persisted?.status === "completed" || persisted?.status === "dismissed") {
+      return;
+    }
+    // A resumed run still needs its server, so "seen" must not stop the
+    // reconnect the way a finished run does.
+    if (
+      hasRemoteOnboardingState &&
+      hasSeenOnboarding &&
+      !hasUnfinishedLocalFirstRun(persisted)
+    ) {
+      return;
     }
     const hasBlockingServer = Object.keys(servers).some(
       (serverName) => serverName !== EXCALIDRAW_SERVER_NAME,

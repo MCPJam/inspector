@@ -274,7 +274,7 @@ describe("useOnboarding", () => {
     expect(resumed.result.current.isGuidedPostConnect).toBe(true);
   });
 
-  it("does not resume guided mode after the NUX was shown", () => {
+  it("resumes guided mode after the NUX was shown but no message was sent", () => {
     localStorage.setItem(
       "mcp-onboarding-state",
       JSON.stringify({ status: "seen", shownAt: Date.now() })
@@ -292,6 +292,102 @@ describe("useOnboarding", () => {
         onConnect: vi.fn(),
         isSignedInWithWorkOs: false,
         isWorkOsAuthLoading: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("connected_guided");
+    expect(result.current.isGuidedPostConnect).toBe(true);
+  });
+
+  it("reconnects the guided server on a reload that resumed an unfinished run", async () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const onConnect = vi.fn();
+
+    renderHook(() =>
+      useOnboarding({
+        servers: {},
+        onConnect,
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    await waitFor(() => {
+      expect(onConnect).toHaveBeenCalledWith(EXCALIDRAW_SERVER_CONFIG);
+    });
+  });
+
+  it("retires guided mode once the first message completed onboarding", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "completed", completedAt: Date.now() })
+    );
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    expect(result.current.phase).toBe("completed");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+  });
+
+  it("resumes guided mode when the remote row is seen but this device never finished", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasSeenOnboarding: true,
+      })
+    );
+
+    expect(result.current.phase).toBe("connected_guided");
+    expect(result.current.isGuidedPostConnect).toBe(true);
+  });
+
+  it("keeps guided mode retired for a returning identity with no local first run", () => {
+    const connectedServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connected"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+        hasRemoteOnboardingState: true,
+        hasSeenOnboarding: true,
       })
     );
 

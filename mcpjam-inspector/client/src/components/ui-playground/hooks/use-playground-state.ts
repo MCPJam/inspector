@@ -219,6 +219,10 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     onboarding.phase === "connecting_excalidraw" ||
     onboarding.phase === "connected_guided";
 
+  // The gate holds the first message until the guided server is up. Past that
+  // it would strand anyone whose selected server is a different, offline one.
+  const firstRunSubmitBlocked = onboarding.phase === "connecting_excalidraw";
+
   const {
     selectedTool,
     tools,
@@ -998,11 +1002,21 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
     return () => clearTimeout(id);
   }, [wantsFirstRunSkeleton]);
 
-  // The NUX is marked as seen once the user sends their first message (see
-  // PlaygroundCenter's `onFirstMessageSent`), not when it paints. Marking on
-  // paint wrote `status: "seen"` immediately, and `getInitialLocalPhase` reads
-  // that back as "dismissed" — so a reload before the first message retired the
-  // guided run for good (BB-112).
+  const shouldMarkFirstRunNuxShown =
+    firstRunComposerSeed &&
+    onboarding.isGuidedPostConnect &&
+    !isResolvingRemoteCompletion &&
+    !isBootstrappingFirstRunConnection &&
+    !isWaitingForServerSync &&
+    !!serverConfig;
+
+  // Kept in an effect rather than the send handler so the remote half retries
+  // when Convex auth settles — `markOnboardingShown`'s identity changes then.
+  useEffect(() => {
+    if (shouldMarkFirstRunNuxShown) {
+      onboarding.markOnboardingShown();
+    }
+  }, [onboarding.markOnboardingShown, shouldMarkFirstRunNuxShown]);
 
   const loadingState: PlaygroundLoadingState =
     wantsFirstRunSkeleton && !firstRunSkeletonTimedOut
@@ -1048,6 +1062,7 @@ export function usePlaygroundState(options: UsePlaygroundStateOptions) {
 
     // onboarding
     firstRunComposerSeed,
+    firstRunSubmitBlocked,
     onboarding,
 
     // multi-server

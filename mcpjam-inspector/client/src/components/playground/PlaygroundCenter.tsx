@@ -96,7 +96,7 @@ export function PlaygroundCenter({
           state.firstRunComposerSeed ? PLAYGROUND_FIRST_RUN_PROMPT : undefined
         }
         initialInputTypewriter={state.firstRunComposerSeed}
-        blockSubmitUntilServerConnected={state.firstRunComposerSeed}
+        blockSubmitUntilServerConnected={state.firstRunSubmitBlocked}
         ensureServersReady={ensureServersReady}
         pulseSubmit={state.firstRunComposerSeed}
         showPostConnectGuide={false}
@@ -104,9 +104,6 @@ export function PlaygroundCenter({
         onFirstMessageSent={
           isGuidedPostConnect
             ? () => {
-                // Marking the NUX as seen here rather than on first paint is
-                // what keeps it visible across a reload (BB-112).
-                state.onboarding.markOnboardingShown();
                 state.onboarding.completeOnboarding();
               }
             : undefined
