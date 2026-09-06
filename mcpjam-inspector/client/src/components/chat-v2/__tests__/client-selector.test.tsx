@@ -230,6 +230,36 @@ describe("ClientSelector", () => {
     // a compare column instead of leaving compare.
     expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-1"]);
     expect(onMultiHostEnabledChange).toHaveBeenCalledWith(false);
+    // Switching is a terminal gesture — the list goes away with the choice.
+    expect(screen.queryByTestId("client-row-host-1")).not.toBeInTheDocument();
+  });
+
+  // cmdk's root keydown claims Enter for the highlighted row, so without the
+  // checkbox stopping it, Enter on a focused checkbox switched clients.
+  it("toggles compare when Enter lands on a focused checkbox", async () => {
+    const user = userEvent.setup();
+    const onHostChange = vi.fn();
+    const onSelectedHostIdsChange = vi.fn();
+    render(
+      <ClientSelector
+        hosts={hosts}
+        projectId="project-1"
+        currentHostId="host-0"
+        selectedHostIds={["host-0"]}
+        onHostChange={onHostChange}
+        onSelectedHostIdsChange={onSelectedHostIdsChange}
+        onMultiHostEnabledChange={vi.fn()}
+        onPromoteLead={vi.fn()}
+        enableMultiHost
+      />
+    );
+
+    await user.click(screen.getByTestId("client-selector-trigger"));
+    screen.getByTestId("client-row-compare-host-1").focus();
+    await user.keyboard("{Enter}");
+
+    expect(onSelectedHostIdsChange).toHaveBeenCalledWith(["host-0", "host-1"]);
+    expect(onHostChange).not.toHaveBeenCalled();
   });
 
   it("adds a compare column from the checkbox without switching the lead", async () => {

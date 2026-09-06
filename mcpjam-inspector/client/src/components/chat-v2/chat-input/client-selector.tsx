@@ -474,6 +474,13 @@ export function ClientSelector({
                       event.stopPropagation();
                       handleMultiSelect(host.hostId);
                     }}
+                    // cmdk's root keydown claims Enter for the highlighted row
+                    // and preventDefaults it, so Enter on a focused checkbox
+                    // would switch clients instead of toggling compare. Stop it
+                    // reaching the root and the button's own activation stands.
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.stopPropagation();
+                    }}
                     className={cn(
                       "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:cursor-not-allowed disabled:opacity-50",
                       isSelected
@@ -490,7 +497,7 @@ export function ClientSelector({
                   </button>
                 );
 
-                const row = (
+                return (
                   <CommandItem
                     key={host.hostId}
                     value={`${clientDisplayName(host)} ${host.name} ${
@@ -534,8 +541,6 @@ export function ClientSelector({
                     ) : null}
                   </CommandItem>
                 );
-
-                return row;
               })}
             </CommandList>
 
