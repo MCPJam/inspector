@@ -1198,6 +1198,7 @@ function EvaluateTabContent({
           hideRunActions
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
+          evaluateCaseEditor
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {
