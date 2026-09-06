@@ -37,6 +37,9 @@ import {
   generateEvalCasesOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getScenarioOperation,
@@ -46,6 +49,7 @@ import {
   getEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -267,6 +271,7 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   // stopped; these say how much of the run was measured at all — and until
   // now nothing outside the web app could ask.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunRouteFactsOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   // The waiver READ, beside the run read it explains. `get_eval_run` already
@@ -279,6 +284,14 @@ export const PLATFORM_CATALOG_OPERATIONS: ReadonlyArray<
   getEvalRunStepsOperation,
   cancelEvalRunOperation,
   requestEvalRunJudgeOperation,
+  // The description-rewrite experiment, beside the judge request it most
+  // resembles: propose and start are spends with a stated cap, so they carry
+  // the same risk metadata the judge request does, and the read closes the
+  // loop an agent opened. Both routes are wired now (PR-E3), so the earlier
+  // catalog exclusion no longer applies.
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   listEnvironmentsOperation,
