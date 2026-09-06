@@ -202,10 +202,13 @@ export function ServerPickerPanel({
       className="gap-1"
     >
       <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0">
-        <TabsTrigger value="servers" className={TAB}>
+        <TabsTrigger value="servers" className={TAB} disabled={submitting}>
           Servers
         </TabsTrigger>
-        <TabsTrigger value="groups" className={TAB}>
+        {/* Frozen while a create is in flight: leaving the tab mid-submit let
+            a selection or a Connect start beside the write everything else is
+            frozen for. */}
+        <TabsTrigger value="groups" className={TAB} disabled={submitting}>
           Server Groups
         </TabsTrigger>
       </TabsList>
@@ -248,6 +251,9 @@ export function ServerPickerPanel({
               {server.onConnect ? (
                 <button
                   type="button"
+                  // Named for the row: several rows can offer Connect, and a
+                  // screen reader otherwise reads a list of identical buttons.
+                  aria-label={`Connect ${server.name}`}
                   onClick={server.onConnect}
                   // `busy` freezes every other control in the panel, and this
                   // was the one that stayed live: a handshake could be started

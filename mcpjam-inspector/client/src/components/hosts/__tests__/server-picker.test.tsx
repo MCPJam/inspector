@@ -238,7 +238,7 @@ describe("ServerPicker — connection state", () => {
     mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
     open();
 
-    const connects = await screen.findAllByRole("button", { name: /^Connect$/ });
+    const connects = await screen.findAllByRole("button", { name: /^Connect / });
     fireEvent.click(connects[0]);
     expect(mockState.ensureReady).toHaveBeenCalledWith(["alpha"]);
   });
@@ -279,7 +279,7 @@ describe("ServerPicker — connection state", () => {
     const dot = await screen.findByTestId("server-status-dot-srv_1");
     expect(dot).toHaveAccessibleName("Connection state unavailable");
     expect(dot).toHaveClass("bg-transparent");
-    expect(screen.queryByRole("button", { name: /^Connect$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
   });
 
   it("holds the row's alignment without a colour when the state is unknown", async () => {
@@ -300,7 +300,7 @@ describe("ServerPicker — connection state", () => {
     open();
 
     expect(await screen.findByText("alpha")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Connect$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
   });
 
   it("offers no Connect at all when there is no runtime to ask", async () => {
@@ -310,7 +310,7 @@ describe("ServerPicker — connection state", () => {
     open();
 
     expect(await screen.findByText("alpha")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^Connect$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
   });
 });
 
@@ -425,7 +425,7 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ readyServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect$/ }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
     await waitFor(() => expect(mockState.ensureReady).toHaveBeenCalled());
     expect(toast.error).not.toHaveBeenCalled();
   });
@@ -434,7 +434,7 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ failedServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect$/ }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     const [message, options] = (toast.error as any).mock.calls[0];
@@ -450,7 +450,7 @@ describe("ServerPicker — Connect reports what to fix", () => {
     disconnected();
     outcome({ reauthServerNames: ["alpha"] });
     open();
-    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect$/ }))[0]);
+    fireEvent.click((await screen.findAllByRole("button", { name: /^Connect / }))[0]);
 
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
     expect((toast.error as any).mock.calls[0][0]).toMatch(/authoriz/i);
@@ -825,9 +825,10 @@ describe("ServerPicker — a write already in flight", () => {
     await userEvent.click(await screen.findByRole("checkbox", { name: "beta" }));
     fireEvent.click(await screen.findByRole("button", { name: /^Create$/ }));
 
-    await userEvent.click(await screen.findByRole("tab", { name: "Servers" }));
-    fireEvent.click(await serverRow("srv_1"));
-
+    // The tab itself is frozen now, so the race cannot even be reached: the
+    // user cannot leave the form while its write is in flight. The latch below
+    // is still the backstop, but this is the guarantee that shows on screen.
+    expect(screen.getByRole("tab", { name: "Servers" })).toBeDisabled();
     expect(onChange).not.toHaveBeenCalled();
   });
 

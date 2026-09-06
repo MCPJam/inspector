@@ -98,9 +98,9 @@ describe("ServerPickerPanel — Servers tab", () => {
         })}
       />,
     );
-    expect(screen.getAllByRole("button", { name: /^Connect$/ })).toHaveLength(1);
+    expect(screen.getAllByRole("button", { name: /^Connect / })).toHaveLength(1);
 
-    fireEvent.click(screen.getByRole("button", { name: /^Connect$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Connect / }));
     expect(onConnect).toHaveBeenCalledTimes(1);
   });
 
@@ -119,7 +119,7 @@ describe("ServerPickerPanel — Servers tab", () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole("button", { name: /^Connect$/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^Connect / }));
     expect(onConnect).toHaveBeenCalledTimes(1);
     expect(onSelectServer).not.toHaveBeenCalled();
   });

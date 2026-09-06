@@ -9,7 +9,14 @@
  * Storage has no column for a bare server, so picking one resolves to the row
  * holding exactly it — reused when it exists, minted otherwise.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ChevronDown, Server, X } from "lucide-react";
 import { useConvexAuth, useMutation } from "convex/react";
 import {
@@ -163,7 +170,10 @@ export function ServerPicker({
   // an interrupted render, and a bump from one would strand a write started
   // by the tree that actually committed. Each handler reads the counter when
   // it begins and compares after every await.
-  useEffect(() => {
+  // LAYOUT effect: a passive one runs after paint, and a mutation resolving in
+  // that gap would still read the old generation as current — accepting a
+  // completion for the project the user just left.
+  useLayoutEffect(() => {
     generation.current += 1;
   }, [project]);
   const sinceNow = () => {
@@ -297,7 +307,7 @@ export function ServerPicker({
    * as a broken control, which is what three separate silent early-returns
    * used to produce.
    */
-  const busy = creating || disabled || !attachmentsKnown;
+  const busy = creating || disabled || !attachmentsKnown || !catalogKnown;
 
   /**
    * The one release rule: an entry goes when the query stops disagreeing with
@@ -468,7 +478,11 @@ export function ServerPicker({
         // pass an async commit — the suite bar passes an awaited `updateSuite`
         // — and an un-awaited rejection escapes this catch entirely.
         await onChange(result._id, created);
-        if (isCurrent()) setOpen(false);
+        // Re-checked AFTER the commit too: skipping the close but resolving
+        // still tells the panel this succeeded, and it clears a draft that now
+        // belongs to the next project.
+        if (!isCurrent()) throw { stale: true, wrote } as MintFailure;
+        setOpen(false);
       } catch (err) {
         if ((err as MintFailure)?.stale) throw err;
         const raw = err instanceof Error ? err.message : "";
@@ -753,7 +767,9 @@ export function ServerPicker({
       <PopoverTrigger asChild>
         <button
           type="button"
-          disabled={disabled}
+          // `creating` too: clicking the trigger mid-write closed the popover
+          // out from under the very write `busy` freezes everything else for.
+          disabled={disabled || creating}
           data-testid={triggerTestId ?? "server-picker-trigger"}
           className={cn(
             "flex h-8 max-w-[260px] shrink-0 items-center gap-1.5 rounded-full border px-2.5 text-foreground",
