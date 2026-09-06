@@ -57,11 +57,10 @@ export type TurnTraceSpanSource = {
  * visible as empty space, rather than being packed away.
  *
  * The base is the earliest FINITE `startedAt` of the turns passed in, so offset
- * 0 is the session start. `ShareUsageThreadDetail` — the one caller that
- * computes a wall-clock anchor — filters the same way, so span positions and
- * axis labels share an origin even when a row carries a garbage `startedAt`.
- * Blobs that fail to load contribute nothing and never shift the turns that did
- * load.
+ * 0 is the session start. {@link turnTraceWallClockRange} — which every caller
+ * uses for its axis anchor — filters the same way, so span positions and axis
+ * labels share an origin even when a row carries a garbage `startedAt`. Blobs
+ * that fail to load contribute nothing and never shift the turns that did load.
  *
  * Turn-relative is an assumption, not a guarantee, which is why
  * `sessionAnchored` exists. It holds for every chat producer, but NOT for the
@@ -115,4 +114,79 @@ export async function hydrateTurnTraceSpans(
   );
 
   return perTurn.flat();
+}
+
+/**
+ * What both persisted-trace readers say when the recorded spans are gone.
+ *
+ * One string on purpose: the swarm pane and the User Testing / Sessions detail
+ * are two views of the same session, and a viewer who sees this in one place
+ * and different wording in the other has to work out whether it is the same
+ * problem.
+ */
+export const SPAN_LOAD_FAILURE =
+  "Could not load the recorded trace for this session";
+
+/**
+ * The timing fields a wall-clock anchor needs.
+ *
+ * Separate from {@link TurnTraceSpanSource} on purpose: `hydrateTurnTraceSpans`
+ * never reads `endedAt`, and widening its input type would suggest otherwise.
+ */
+export type TurnTraceWallClockSource = {
+  startedAt: number;
+  endedAt: number;
+};
+
+/**
+ * The session's absolute wall-clock bounds, for the timeline's hover tooltip.
+ *
+ * Filtered to FINITE values, and anchored on the same `Math.min` of `startedAt`
+ * that {@link hydrateTurnTraceSpans} rebases from — so offset 0 on the axis and
+ * the clock time printed beside it are the same instant by construction. One
+ * garbage row used to hand the axis a NaN anchor while the spans kept a finite
+ * base, which measured labels and positions from two different origins.
+ *
+ * `null` when nothing usable is left, which `getTraceStartAnchorMs` reads as
+ * "no absolute clock" rather than an anchor at the epoch.
+ */
+export function turnTraceWallClockRange(
+  traces: readonly TurnTraceWallClockSource[],
+): { startedAtMs: number | null; endedAtMs: number | null } {
+  const starts = traces
+    .map((trace) => trace.startedAt)
+    .filter((value) => Number.isFinite(value));
+  const ends = traces
+    .map((trace) => trace.endedAt)
+    .filter((value) => Number.isFinite(value));
+  return {
+    startedAtMs: starts.length > 0 ? Math.min(...starts) : null,
+    endedAtMs: ends.length > 0 ? Math.max(...ends) : null,
+  };
+}
+
+/**
+ * How many spans the turn ROWS claim their blobs hold.
+ *
+ * {@link hydrateTurnTraceSpans} swallows every per-blob failure and returns
+ * `[]`, so a total load failure is indistinguishable from a session that never
+ * recorded spans — and that is not a blank timeline: `getRecordedSpans` reads
+ * `[]` as `undefined`, so the viewer silently falls back to a timeline
+ * SYNTHESIZED from `estimatedDurationMs`. A confident, entirely estimated
+ * timeline is the BB-153 failure mode wearing a different face, so "expected
+ * some, got none" has to be sayable.
+ *
+ * Shared so both readers draw that line in the same place. `Number.isFinite`
+ * rather than `?? 0`: a NaN `spanCount` on one row would otherwise poison the
+ * total and make every session look like it recorded nothing.
+ */
+export function expectedTurnTraceSpanCount(
+  traces: readonly { spanCount?: number | null }[],
+): number {
+  return traces.reduce(
+    (total, trace) =>
+      total +
+      (Number.isFinite(trace.spanCount) ? (trace.spanCount as number) : 0),
+    0,
+  );
 }

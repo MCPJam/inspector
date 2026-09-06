@@ -27,17 +27,26 @@ vi.mock("@/components/swarms/use-journey-run-stream", () => ({
     `${targetKey}:${sessionIndex}`,
 }));
 
+/** Mutable so one test can hand the pane a persisted, clock-anchored trace. */
+const persistedState = {
+  trace: null as Record<string, unknown> | null,
+  loading: false,
+  error: null as string | null,
+  spanError: null as string | null,
+  pluginVersions: [] as unknown[],
+};
+
 vi.mock("@/components/swarms/use-persisted-session-trace", () => ({
-  usePersistedSessionTrace: () => ({
-    trace: null,
-    loading: false,
-    error: null,
-    pluginVersions: [],
-  }),
+  usePersistedSessionTrace: () => persistedState,
 }));
 
+const traceViewerProps = vi.fn();
+
 vi.mock("@/components/evals/trace-viewer", () => ({
-  TraceViewer: () => <div data-testid="trace-viewer-stub" />,
+  TraceViewer: (props: Record<string, unknown>) => {
+    traceViewerProps(props);
+    return <div data-testid="trace-viewer-stub" />;
+  },
 }));
 
 vi.mock("@/components/evals/trace-view-mode-tabs", () => ({
@@ -139,6 +148,11 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     sessionsFixture = [];
     runFixture.status = "running";
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
+    persistedState.trace = null;
+    persistedState.loading = false;
+    persistedState.error = null;
+    persistedState.spanError = null;
+    traceViewerProps.mockClear();
   });
 
   it("shows an empty stream pane until a session is clicked", async () => {
@@ -157,9 +171,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               goalLabel: "Refund a charge",
             },
           ]}
-          fallbackColumns={[
-            { key: "environment:env-1", label: "Prod-like" },
-          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
           environments={[
             {
               environmentId: "env-1",
@@ -182,8 +194,12 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(
       screen.getByTestId("new-swarm-running-open-findings")
     ).toHaveTextContent("Open findings");
-    expect(screen.queryByTestId("new-swarm-running-done")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /^stop$/i })).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-done"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /^stop$/i }),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("new-swarm-running-progress")).toHaveAttribute(
       "aria-valuenow",
       "0"
@@ -219,9 +235,7 @@ describe("NewSwarmRunningStep — session stream pane", () => {
               goalLabel: "Refund a charge",
             },
           ]}
-          fallbackColumns={[
-            { key: "environment:env-1", label: "Prod-like" },
-          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
           environments={[
             {
               environmentId: "env-1",
@@ -243,12 +257,75 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     await waitFor(() => {
       expect(screen.getByTestId("swarm-live-pane")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("swarm-live-pane-empty")).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("swarm-live-pane-empty"),
+    ).not.toBeInTheDocument();
     const pane = screen.getByTestId("swarm-live-pane");
     expect(pane).toHaveTextContent(/Session #1/i);
     expect(pane).not.toHaveTextContent(/synth_/);
     expect(pane).not.toHaveTextContent(/Readiness:/i);
     expect(chips[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * BB-153's other half: re-anchored offsets tell you a prompt landed 8s in,
+   * and only the wall-clock anchor tells you WHEN. `ShareUsageThreadDetail`
+   * always passed one; this pane passed nothing, so the swarm view of a
+   * session could say strictly less than the User Testing view of it.
+   *
+   * Read off the DISPLAYED trace, not off `persisted`, so a live stream's own
+   * contiguously packed spans are never labelled with the persisted session's
+   * clock.
+   */
+  it("hands the trace viewer the session's wall-clock anchor", async () => {
+    persistedState.trace = {
+      traceVersion: 1,
+      messages: [],
+      traceStartedAtMs: 1_000_000,
+      traceEndedAtMs: 1_012_000,
+    };
+
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    fireEvent.click(chips[0]!);
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(traceViewerProps).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: 1_000_000,
+        traceEndedAtMs: 1_012_000,
+      }),
+    );
   });
 
   /**
@@ -296,9 +373,9 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(finding.textContent).toMatch(/never called the refund tool/);
     // Ping sits with the title, not under the matrix.
     expect(
-      screen.getByTestId("new-swarm-running-title").compareDocumentPosition(
-        finding
-      ) & Node.DOCUMENT_POSITION_FOLLOWING
+      screen
+        .getByTestId("new-swarm-running-title")
+        .compareDocumentPosition(finding) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(
       finding.compareDocumentPosition(
@@ -357,7 +434,9 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     );
 
     await screen.findByTestId("new-swarm-running-done");
-    expect(screen.getByTestId("new-swarm-running-open-findings")).toBeInTheDocument();
+    expect(
+      screen.getByTestId("new-swarm-running-open-findings"),
+    ).toBeInTheDocument();
     fireEvent.click(screen.getByTestId("new-swarm-running-done"));
     expect(onLeave).toHaveBeenCalledTimes(1);
   });

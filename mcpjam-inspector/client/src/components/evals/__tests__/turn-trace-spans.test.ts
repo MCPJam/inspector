@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
-import { hydrateTurnTraceSpans } from "../turn-trace-spans";
+import {
+  expectedTurnTraceSpanCount,
+  hydrateTurnTraceSpans,
+  turnTraceWallClockRange,
+} from "../turn-trace-spans";
 
 /** A turn-relative span blob, exactly as a producer writes it: offsets from 0. */
 function turnBlob(durationMs: number): EvalTraceSpan[] {
@@ -249,5 +253,95 @@ describe("hydrateTurnTraceSpans", () => {
     // The NaN row must not poison the base for the valid turn.
     expect(spans.every((span) => Number.isFinite(span.startMs))).toBe(true);
     expect(Math.min(...spans.map((span) => span.startMs))).toBe(0);
+  });
+});
+
+/**
+ * The axis anchor, extracted so both readers share it.
+ *
+ * It has to filter exactly the way `hydrateTurnTraceSpans` filters, or the
+ * clock time printed on the tooltip is measured from a different instant than
+ * offset 0 — which is a subtler version of the bug BB-153 was about.
+ */
+describe("turnTraceWallClockRange", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("spans the earliest start to the latest end", () => {
+    expect(
+      turnTraceWallClockRange([
+        { startedAt: 1_008_000, endedAt: 1_012_000 },
+        { startedAt: 1_000_000, endedAt: 1_005_000 },
+      ]),
+    ).toEqual({ startedAtMs: 1_000_000, endedAtMs: 1_012_000 });
+  });
+
+  it("agrees with the rebase base on which turn is the session start", async () => {
+    // The one invariant worth pinning: the turn the range calls the start is
+    // the same turn `hydrateTurnTraceSpans` puts at offset 0.
+    mockBlobs({ "blob://t1": turnBlob(5_000), "blob://t2": turnBlob(4_000) });
+    const traces = [
+      { startedAt: 1_008_000, endedAt: 1_012_000, spansBlobUrl: "blob://t2" },
+      { startedAt: 1_000_000, endedAt: 1_005_000, spansBlobUrl: "blob://t1" },
+    ];
+
+    const spans = await hydrateTurnTraceSpans(traces);
+    const { startedAtMs } = turnTraceWallClockRange(traces);
+
+    expect(Math.min(...spans.map((span) => span.startMs))).toBe(0);
+    expect(startedAtMs).toBe(1_000_000);
+  });
+
+  it("ignores non-finite timestamps rather than anchoring on NaN", () => {
+    expect(
+      turnTraceWallClockRange([
+        { startedAt: Number.NaN, endedAt: Number.NaN },
+        { startedAt: 1_000_000, endedAt: 1_005_000 },
+      ]),
+    ).toEqual({ startedAtMs: 1_000_000, endedAtMs: 1_005_000 });
+  });
+
+  it("reports null — not 0 — when nothing usable is left", () => {
+    // 0 would be an anchor at the Unix epoch, and the timeline would print it.
+    expect(
+      turnTraceWallClockRange([
+        { startedAt: Number.POSITIVE_INFINITY, endedAt: Number.NaN },
+      ]),
+    ).toEqual({ startedAtMs: null, endedAtMs: null });
+    expect(turnTraceWallClockRange([])).toEqual({
+      startedAtMs: null,
+      endedAtMs: null,
+    });
+  });
+});
+
+/**
+ * "Expected some, got none" is the only way to tell a total span-load failure
+ * apart from a session that never recorded spans — and the two must not look
+ * the same, because one of them means the timeline on screen is invented.
+ */
+describe("expectedTurnTraceSpanCount", () => {
+  it("totals what the rows claim", () => {
+    expect(
+      expectedTurnTraceSpanCount([{ spanCount: 3 }, { spanCount: 4 }]),
+    ).toBe(7);
+  });
+
+  it("reads a session that recorded nothing as zero", () => {
+    expect(expectedTurnTraceSpanCount([])).toBe(0);
+    expect(
+      expectedTurnTraceSpanCount([{ spanCount: 0 }, { spanCount: null }, {}]),
+    ).toBe(0);
+  });
+
+  it("does not let one garbage count erase the others", () => {
+    // `?? 0` let a NaN through, and NaN > 0 is false — so a single bad row
+    // made a whole failed load read as "this session never had spans", which
+    // is the one thing this count exists to distinguish.
+    expect(
+      expectedTurnTraceSpanCount([{ spanCount: Number.NaN }, { spanCount: 2 }]),
+    ).toBe(2);
   });
 });

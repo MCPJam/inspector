@@ -33,7 +33,13 @@ vi.mock("@/components/evals/trace-viewer-adapter", () => ({
   snapshotsToTraceWidgetSnapshots: (s: unknown[]) => s,
 }));
 
-vi.mock("@/components/evals/turn-trace-spans", () => ({
+// Only the fetching helper is stubbed. `expectedTurnTraceSpanCount`,
+// `turnTraceWallClockRange` and `SPAN_LOAD_FAILURE` are pure and stay real, so
+// these assertions exercise the hook's wiring rather than a stub of it.
+vi.mock("@/components/evals/turn-trace-spans", async (importOriginal) => ({
+  ...(await importOriginal<
+    typeof import("@/components/evals/turn-trace-spans")
+  >()),
   hydrateTurnTraceSpans: (...args: unknown[]) => mockHydrate(...args),
 }));
 
@@ -108,5 +114,43 @@ describe("usePersistedSessionTrace — span load failures", () => {
     await waitFor(() =>
       expect(last?.spanError).toMatch(/could not load the recorded trace/i)
     );
+  });
+});
+
+/**
+ * The absolute clock the timeline prints beside its offsets.
+ *
+ * Re-anchored offsets say a prompt happened 40s in; only this says *when*.
+ * `ShareUsageThreadDetail` has always had it and this pane never did, so the
+ * two views of one session could say different amounts about the same spans.
+ * It rides the ENVELOPE rather than a separate return field, so the
+ * live-vs-persisted choice `journey-run-results` already makes carries it too.
+ */
+describe("usePersistedSessionTrace — wall-clock anchor", () => {
+  it("anchors on the earliest start and the latest end, whatever the row order", async () => {
+    mockTraces.traces = [
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+    ];
+    mockHydrate.mockResolvedValue([]);
+    render(<Probe threadId="t1" />);
+
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.trace?.traceStartedAtMs).toBe(1_000_000);
+    expect(last?.trace?.traceEndedAtMs).toBe(1_012_000);
+  });
+
+  it("omits the anchor rather than claiming the Unix epoch", async () => {
+    // A row with no usable timestamps must leave the fields ABSENT: `0` would
+    // be printed as a real date in 1970.
+    mockTraces.traces = [
+      { turnIndex: 0, startedAt: Number.NaN, endedAt: Number.NaN },
+    ];
+    mockHydrate.mockResolvedValue([]);
+    render(<Probe threadId="t1" />);
+
+    await waitFor(() => expect(last?.trace).not.toBeNull());
+    expect(last?.trace).not.toHaveProperty("traceStartedAtMs");
+    expect(last?.trace).not.toHaveProperty("traceEndedAtMs");
   });
 });

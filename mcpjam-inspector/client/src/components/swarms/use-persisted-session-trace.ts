@@ -9,7 +9,12 @@ import {
   snapshotsToTraceWidgetSnapshots,
   type TraceEnvelope,
 } from "@/components/evals/trace-viewer-adapter";
-import { hydrateTurnTraceSpans } from "@/components/evals/turn-trace-spans";
+import {
+  expectedTurnTraceSpanCount,
+  hydrateTurnTraceSpans,
+  SPAN_LOAD_FAILURE,
+  turnTraceWallClockRange,
+} from "@/components/evals/turn-trace-spans";
 import type { EvalTraceSpan } from "@/shared/eval-trace";
 
 /** One pinned plugin version recorded on a synthetic session's resume config. */
@@ -37,9 +42,6 @@ function extractMessages(data: unknown): unknown[] | null {
  * TraceEnvelope so Trace / Chat / Raw work after SSE has ended.
  * Mirrors blob + turn-trace hydration in {@link ShareUsageThreadDetail}.
  */
-/** Shared by the "expected some, got none" and the thrown-hydration paths. */
-const SPAN_LOAD_FAILURE = "Could not load the recorded trace for this session";
-
 export function usePersistedSessionTrace(threadId: string | null): {
   trace: TraceEnvelope | null;
   loading: boolean;
@@ -184,10 +186,7 @@ export function usePersistedSessionTrace(threadId: string | null): {
     //
     // `spanCount` is the row's own record of what should be there, so
     // "expected some, got none" is precisely a total load failure.
-    const expectedSpans = turnTraces.reduce(
-      (total, trace) => total + (trace.spanCount ?? 0),
-      0,
-    );
+    const expectedSpans = expectedTurnTraceSpanCount(turnTraces);
     void hydrateTurnTraceSpans(turnTraces)
       .then((hydrated) => {
         if (!active) return;
@@ -218,6 +217,18 @@ export function usePersistedSessionTrace(threadId: string | null): {
   const interactionSteps = browserArtifacts?.browserInteractionSteps ?? [];
   const videoUrl = browserArtifacts?.videoUrl ?? null;
 
+  // Re-anchored offsets are only half of "when did this happen": without an
+  // absolute base the timeline's hover tooltip has no clock time to print, so
+  // a prompt 40s into the session reads as "+40.0s" and nothing more.
+  // `ShareUsageThreadDetail` has always passed one; this pane never did, which
+  // left the two views of the same session disagreeing about how much they
+  // could say. Rides the envelope rather than a separate return field so the
+  // live/persisted choice `displayTrace` already makes carries it too.
+  const wallClock = useMemo(
+    () => turnTraceWallClockRange(turnTraces ?? []),
+    [turnTraces],
+  );
+
   const loading = loadingMessages || loadingSpans;
   const trace: TraceEnvelope | null =
     messages == null
@@ -226,6 +237,12 @@ export function usePersistedSessionTrace(threadId: string | null): {
           traceVersion: 1,
           messages: messages as TraceEnvelope["messages"],
           ...(spans.length > 0 ? { spans } : {}),
+          ...(wallClock.startedAtMs !== null
+            ? { traceStartedAtMs: wallClock.startedAtMs }
+            : {}),
+          ...(wallClock.endedAtMs !== null
+            ? { traceEndedAtMs: wallClock.endedAtMs }
+            : {}),
           ...(widgetSnapshots.length > 0 ? { widgetSnapshots } : {}),
           ...(renderObservations.length > 0
             ? { widgetRenderObservations: renderObservations }

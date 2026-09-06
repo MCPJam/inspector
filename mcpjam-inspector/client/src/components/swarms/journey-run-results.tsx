@@ -598,6 +598,14 @@ export function SwarmLiveStreamPane({
             forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
+            // Read off the trace being DISPLAYED, not off `persisted`: while a
+            // live SSE trace is winning, the spans on screen are its own
+            // (contiguously packed, no anchor), and stamping the persisted
+            // session's clock onto them would label estimated positions with
+            // real times. `null` keeps today's behaviour — relative offsets
+            // only — for a stream that carries no anchor.
+            traceStartedAtMs={displayTrace.traceStartedAtMs ?? null}
+            traceEndedAtMs={displayTrace.traceEndedAtMs ?? null}
           />
         ) : (
           <div className="flex h-full min-h-[14rem] items-center justify-center px-4 text-center text-[12px] text-muted-foreground">
