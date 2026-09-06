@@ -643,7 +643,7 @@ describe("TestCasesOverview", () => {
     expect(onTestCaseClick).not.toHaveBeenCalled();
   });
 
-  it("keeps Generate and New case when the simple editor flag is off", () => {
+  it("keeps Generate and New case off the Evaluate surface, even with a Record handler", () => {
     useConvexMock.mockReturnValue({ query: vi.fn() });
     useQueryMock.mockReturnValue(undefined);
     renderWithProviders(
@@ -671,8 +671,7 @@ describe("TestCasesOverview", () => {
     expect(screen.queryByText(/mcpjam cloud eval/)).not.toBeInTheDocument();
   });
 
-  it("shows Generate, Record, and Write plus a CLI import pointer when the flag is on", () => {
-    flagMock.mockReturnValue(true);
+  it("shows Generate, Record, and Write plus a CLI import pointer on the Evaluate surface", () => {
     useConvexMock.mockReturnValue({ query: vi.fn() });
     useQueryMock.mockReturnValue(undefined);
     renderWithProviders(
@@ -688,6 +687,7 @@ describe("TestCasesOverview", () => {
         canGenerateTestCases
         onCreateTestCase={vi.fn()}
         onRecordTestCase={vi.fn()}
+        simpleCaseEditor
         runTrendData={[]}
         modelStats={[]}
         runsLoading={false}
