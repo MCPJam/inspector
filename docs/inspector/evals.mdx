@@ -224,9 +224,11 @@ Changes to the suite execution config apply to future runs only. Existing run sn
 </Note>
 
 <Note>
-  **A host that grants `bash` requires a pinned computer environment.** If the suite's host config includes `bash` (or another computer-backed built-in) but no computer environment is pinned, the run is refused at pre-flight rather than executing with the tool silently absent. Pin a computer environment in suite settings, or remove the computer-backed built-in from the host config.
+  **An emulated host that grants `bash` requires a pinned computer environment.** If the suite's host config is emulated (no harness) and includes `bash` (or another computer-backed built-in) but no computer environment is pinned, the run is refused at pre-flight rather than executing with the tool silently absent. Pin a computer environment in suite settings, or remove the computer-backed built-in from the host config.
 
-  This applies to every eval run — harness and emulated alike. A single-case run (the **Run** button on an individual case outside a suite) is always refused for computer-backed built-ins because that surface never provisions a computer; run the case as part of a suite with a pinned environment instead.
+  **Harness runs are exempt:** a harness host (such as Claude Code or Codex) always provisions a fresh disposable box per iteration — using the pinned environment's image when one is set, or the deployment-default image when none is. Because the box is always booted, no pin is required.
+
+  A single-case run (the **Run** button on an individual case outside a suite) is always refused for harness hosts because that surface never provisions a computer; run the case as part of a suite instead.
 </Note>
 
 ### How suite defaults apply to test cases
