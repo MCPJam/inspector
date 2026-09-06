@@ -56,6 +56,7 @@ export type {
   WidgetLifecycleEvent,
   WidgetMount,
   CspViolation,
+  CspApplicationIntent,
   UiLogEvent,
   // chrome injection
   WidgetModalProps,

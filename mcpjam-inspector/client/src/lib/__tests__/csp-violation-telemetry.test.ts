@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { captureSentryMessage } from "../sentry";
 import {
   CspViolationTelemetryLimiter,
+  failedToApplyCsp,
   reportCspViolationToSentry,
   sanitizeCspPolicy,
 } from "../csp-violation-telemetry";
@@ -82,5 +83,57 @@ describe("CSP violation telemetry", () => {
     expect(
       JSON.stringify(vi.mocked(captureSentryMessage).mock.calls),
     ).not.toContain("email");
+  });
+
+  it("identifies only a source MCPJam intended to allow but failed to inject", () => {
+    const intent = {
+      csp: { frameDomains: ["https://js.stripe.com"] },
+      permissive: false,
+    };
+    expect(
+      failedToApplyCsp({
+        violation,
+        appliedPolicy: "default-src 'none'; frame-src 'none'",
+        intent,
+      }),
+    ).toBe(true);
+    expect(
+      failedToApplyCsp({
+        violation,
+        appliedPolicy: "frame-src https://js.stripe.com",
+        intent,
+      }),
+    ).toBe(false);
+    expect(
+      failedToApplyCsp({
+        violation,
+        appliedPolicy: "frame-src 'none'",
+        intent: { csp: { frameDomains: [] }, permissive: false },
+      }),
+    ).toBe(false);
+  });
+
+  it("emits an error named Failed to apply CSP only for an MCPJam failure", () => {
+    reportCspViolationToSentry({
+      toolCallId: "tool-1",
+      serverId: "server-1",
+      violation,
+      appliedPolicy: "default-src 'none'; frame-src 'none'",
+      appliedMode: "widget-declared",
+      intent: {
+        csp: { frameDomains: ["https://js.stripe.com"] },
+        permissive: false,
+      },
+      comparison: { status: "matching", differingDirectives: [] },
+    });
+
+    expect(captureSentryMessage).toHaveBeenCalledWith(
+      "Failed to apply CSP",
+      expect.objectContaining({
+        level: "error",
+        fingerprint: ["failed-to-apply-csp", "frame-src"],
+        tags: expect.objectContaining({ mcpjam_csp_apply_failed: "true" }),
+      }),
+    );
   });
 });

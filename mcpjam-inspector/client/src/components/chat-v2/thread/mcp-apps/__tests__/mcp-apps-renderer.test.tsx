@@ -2631,6 +2631,43 @@ describe("MCPAppsRenderer tool input streaming", () => {
     });
   });
 
+  it("records CSP intent from the proxy with its applied mount", async () => {
+    render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
+
+    await vi.waitFor(() => {
+      expect(sandboxedIframePropsRef.current?.onMessage).toBeTypeOf("function");
+    });
+
+    act(() => {
+      sandboxedIframePropsRef.current.onMessage({
+        data: {
+          type: "mcpjam:csp-applied",
+          mountId: "proxy-a:1",
+          csp: "frame-src https://js.stripe.com",
+          mode: "widget-declared",
+          intent: {
+            csp: { frameDomains: ["https://js.stripe.com"] },
+            permissive: false,
+          },
+        },
+      } as MessageEvent);
+    });
+
+    expect(stableStoreFns.setWidgetAppliedCsp).toHaveBeenCalledWith(
+      expect.any(String),
+      {
+        mountId: "proxy-a:1",
+        headerString: "frame-src https://js.stripe.com",
+        mode: "widget-declared",
+        intent: {
+          csp: { frameDomains: ["https://js.stripe.com"] },
+          cspDirectives: undefined,
+          permissive: false,
+        },
+      },
+    );
+  });
+
   it("marks a srcdoc mount as a degraded view (no origin to allowlist)", async () => {
     render(<HostedRenderer {...baseProps} cachedWidgetHtmlUrl="blob:cached" />);
 

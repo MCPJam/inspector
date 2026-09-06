@@ -358,6 +358,7 @@ export function useWidgetHost(): WidgetHostImpl {
         violation,
         appliedPolicy: applied?.headerString,
         appliedMode: applied?.mode,
+        intent: applied?.intent,
         comparison: compareCspPolicies(
           applied?.headerString,
           violation.originalPolicy,

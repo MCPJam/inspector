@@ -246,6 +246,13 @@ export interface WidgetMount {
 /** New mounts use an opaque string; numbers remain valid for saved data. */
 export type CspMountId = string | number;
 
+/** What MCPJam meant to install before the sandbox proxy serialized it. */
+export interface CspApplicationIntent {
+  csp?: McpUiResourceCsp;
+  cspDirectives?: Record<string, string[]>;
+  permissive: boolean;
+}
+
 export interface CspViolation {
   directive: string;
   effectiveDirective?: string;
@@ -336,7 +343,11 @@ export interface WidgetSandboxInfo {
   /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
   appliedPoliciesByMount?: Record<
     string,
-    { headerString: string; mode: "permissive" | "widget-declared" }
+    {
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
+    }
   >;
   violations: CspViolation[];
   widgetDeclared?: {
@@ -437,6 +448,7 @@ export interface WidgetDebugSink {
       mountId: CspMountId;
       headerString: string;
       mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
     }
   ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;

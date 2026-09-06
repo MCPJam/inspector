@@ -133,6 +133,10 @@ describe("widget-debug-store — applied CSP", () => {
       mountId: "proxy-b:1",
       headerString: "frame-src https://two.example",
       mode: "widget-declared",
+      intent: {
+        csp: { frameDomains: ["https://two.example"] },
+        permissive: false,
+      },
     });
 
     const csp = useWidgetDebugStore.getState().widgets.get("t6")!.csp!;
@@ -141,5 +145,9 @@ describe("widget-debug-store — applied CSP", () => {
       "proxy-a:1",
       "proxy-b:1",
     ]);
+    expect(csp.appliedPoliciesByMount?.["proxy-b:1"].intent).toEqual({
+      csp: { frameDomains: ["https://two.example"] },
+      permissive: false,
+    });
   });
 });

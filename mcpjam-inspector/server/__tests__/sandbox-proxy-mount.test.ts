@@ -68,6 +68,7 @@ interface MountHarness {
     mountMode?: "write" | "srcdoc",
     appliedCsp?: string,
     appliedCspMode?: "permissive" | "widget-declared",
+    cspIntent?: Record<string, unknown>,
   ) => "url" | "srcdoc" | "srcdoc-fallback";
   createInnerFrame: (
     sandboxValue: string,
@@ -117,8 +118,8 @@ function harness(proxyInstanceId = "proxy-a"): { dom: JSDOM; h: MountHarness } {
     ${mountInnerSrc}
     ${remountLastSrc}
     return {
-      mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared") =>
-        mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode),
+      mountInner: (html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp = "default-src 'none'", appliedCspMode = "widget-declared", cspIntent) =>
+        mountInner(html, sandboxValue, allowValue, colorScheme, mountMode, appliedCsp, appliedCspMode, cspIntent),
       createInnerFrame,
       getInner: () => inner,
       getLastMount: () => lastMount,
@@ -262,6 +263,32 @@ describe("sandbox-proxy mountInner", () => {
         "*",
       ],
     ]);
+  });
+
+  it("reports the pre-injection CSP intent with the same mount id", () => {
+    const { h } = harness();
+    const intent = {
+      csp: { frameDomains: ["https://js.stripe.com"] },
+      permissive: false,
+    };
+    h.mountInner(
+      WIDGET,
+      "allow-same-origin allow-scripts",
+      "",
+      "light",
+      undefined,
+      "frame-src https://js.stripe.com",
+      "widget-declared",
+      intent,
+    );
+
+    expect(h.posted[0][0]).toEqual({
+      type: "mcpjam:csp-applied",
+      mountId: "proxy-a:1",
+      csp: "frame-src https://js.stripe.com",
+      mode: "widget-declared",
+      intent,
+    });
   });
 
   it("removes the previous frame and repoints `inner` on every mount", () => {

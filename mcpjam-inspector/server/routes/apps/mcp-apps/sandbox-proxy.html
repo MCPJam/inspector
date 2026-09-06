@@ -939,6 +939,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
        * @param {"write" | "srcdoc" | undefined} mountMode - Mount strategy
        * @param {string} appliedCsp - CSP injected into this mount
        * @param {"permissive" | "widget-declared"} appliedCspMode - CSP branch
+       * @param {object | undefined} cspIntent - pre-injection policy input
        * @returns {"url" | "srcdoc" | "srcdoc-fallback"} How the view was mounted
        */
       function mountInner(
@@ -949,6 +950,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
         mountMode,
         appliedCsp,
         appliedCspMode,
+        cspIntent,
       ) {
         // Scoped to this proxy instance and incremented for every fresh inner
         // frame, including automatic reload remounts. The host uses this id to
@@ -961,6 +963,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
             mountId,
             csp: appliedCsp,
             mode: appliedCspMode,
+            ...(cspIntent ? { intent: cspIntent } : {}),
           },
           hostOrigin || "*",
         );
@@ -1015,6 +1018,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           mountMode,
           appliedCsp,
           appliedCspMode,
+          ...(cspIntent ? { cspIntent } : {}),
         };
         // Tell the host where the view actually landed. `document.URL` is this
         // proxy's URL, which the written document adopts (see above), so this
@@ -1049,6 +1053,7 @@ document.addEventListener('securitypolicyviolation', function(e) {
           lastMount.mountMode,
           lastMount.appliedCsp,
           lastMount.appliedCspMode,
+          lastMount.cspIntent,
         );
       }
 
@@ -1256,6 +1261,11 @@ document.addEventListener('securitypolicyviolation', function(e) {
                 mountMode,
                 appliedCsp,
                 permissive ? "permissive" : "widget-declared",
+                {
+                  csp,
+                  cspDirectives,
+                  permissive: Boolean(permissive),
+                },
               );
               recorderDebug("view mounted", { mode });
             }

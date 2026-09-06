@@ -16,6 +16,17 @@ import type {
 /** New mounts use an opaque string; numbers remain valid for saved data. */
 export type CspMountId = string | number;
 
+export interface CspApplicationIntent {
+  csp?: {
+    connectDomains?: string[];
+    resourceDomains?: string[];
+    frameDomains?: string[];
+    baseUriDomains?: string[];
+  };
+  cspDirectives?: Record<string, string[]>;
+  permissive: boolean;
+}
+
 export interface CspViolation {
   /** The CSP directive that was violated (e.g., "script-src") */
   directive: string;
@@ -205,7 +216,11 @@ export interface WidgetSandboxInfo {
   /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
   appliedPoliciesByMount?: Record<
     string,
-    { headerString: string; mode: "permissive" | "widget-declared" }
+    {
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
+    }
   >;
   /** List of CSP violations for this widget */
   violations: CspViolation[];
@@ -367,7 +382,12 @@ interface WidgetDebugStore {
    */
   setWidgetAppliedCsp: (
     toolCallId: string,
-    applied: { mountId: CspMountId; headerString: string; mode: CspMode },
+    applied: {
+      mountId: CspMountId;
+      headerString: string;
+      mode: CspMode;
+      intent?: CspApplicationIntent;
+    },
   ) => void;
 
   // Add a CSP violation for a widget
@@ -575,6 +595,7 @@ export const useWidgetDebugStore = create<WidgetDebugStore>((set, get) => ({
           [String(applied.mountId)]: {
             headerString: applied.headerString,
             mode: applied.mode,
+            ...(applied.intent ? { intent: applied.intent } : {}),
           },
         },
         // The proxy is authoritative about which branch it took: in permissive

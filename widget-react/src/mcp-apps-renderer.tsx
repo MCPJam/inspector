@@ -70,6 +70,7 @@ import {
   type WidgetHostResolvers,
   type WidgetDebugSink,
   type CspMountId,
+  type CspApplicationIntent,
 } from "./widget-host";
 
 // The debug sink is OPTIONAL on the contract — a non-inspector host can omit it
@@ -117,6 +118,25 @@ function normalizeCspMountId(value: unknown): CspMountId | undefined {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 && trimmed.length <= 128 ? trimmed : undefined;
+}
+
+function normalizeCspApplicationIntent(
+  value: unknown
+): CspApplicationIntent | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Partial<CspApplicationIntent>;
+  if (typeof candidate.permissive !== "boolean") return undefined;
+  return {
+    csp:
+      candidate.csp && typeof candidate.csp === "object"
+        ? candidate.csp
+        : undefined,
+    cspDirectives:
+      candidate.cspDirectives && typeof candidate.cspDirectives === "object"
+        ? candidate.cspDirectives
+        : undefined,
+    permissive: candidate.permissive,
+  };
 }
 
 function toSafeOpenInAppUrl(value: string): string | null {
@@ -3924,6 +3944,7 @@ export function MCPAppsRendererSurface({
           mountId,
           headerString: data.csp,
           mode: data.mode === "permissive" ? "permissive" : "widget-declared",
+          intent: normalizeCspApplicationIntent(data.intent),
         });
         logWidgetDebug("ui-to-host", "debug/csp-applied", {
           mountId,
