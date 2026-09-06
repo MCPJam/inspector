@@ -455,11 +455,17 @@ function mapLogToLifecycle(
     "debug/bridge-connect-error": "bridge-connect-error",
     "debug/bridge-connect-skipped": "bridge-connect-skipped",
     "debug/app-initialized": "app-initialized",
+    "debug/view-mounted": "view-mounted",
   };
   const kind = kindByMethod[method];
   if (!kind) return null;
   let status: WidgetLifecycleEvent["status"];
-  if (
+  if (method === "debug/view-mounted") {
+    // No -ready/-error suffix to read: the mount mode IS the status. A srcdoc
+    // mount means the view has no real URL, which is the degraded outcome
+    // this event exists to make visible.
+    status = details.mode === "url" ? "ok" : "error";
+  } else if (
     method.endsWith("-error") ||
     method === "debug/widget-content-invalid-mimetype"
   ) {
@@ -478,6 +484,8 @@ function mapLogToLifecycle(
       ? details.error
       : typeof details.reason === "string"
       ? details.reason
+      : method === "debug/view-mounted" && typeof details.url === "string"
+      ? details.url
       : undefined;
   return { kind, status, message, timestamp: Date.now() };
 }
@@ -1220,6 +1228,12 @@ export function MCPAppsRendererSurface({
     string | null
   >(null);
   const [sandboxProxyReady, setSandboxProxyReady] = useState(false);
+  // Where the proxy mounted the view, reported once per mount. Surfaced as the
+  // Sandbox Stack "View origin" chip.
+  const [viewMount, setViewMount] = useState<{
+    mode: "url" | "srcdoc" | "srcdoc-fallback";
+    url: string;
+  } | null>(null);
   const [bridgeTransportReady, setBridgeTransportReady] = useState(false);
   const explicitOpenInAppBaseUrl = useMemo(
     () => resolveExplicitBaseUrl(widgetHtml, resourceUri),
@@ -1307,6 +1321,12 @@ export function MCPAppsRendererSurface({
   >(isCachedReplay ? undefined : initialWidgetPermissions ?? undefined);
   const [widgetPermissive, setWidgetPermissive] = useState<boolean>(
     isCachedReplay ? true : initialWidgetPermissive ?? false
+  );
+  // Per-server label for a dedicated view origin, from the widget-content
+  // response. Changing it re-navigates the sandbox iframe, so it is state
+  // rather than a ref.
+  const [viewOriginLabel, setViewOriginLabel] = useState<string | undefined>(
+    undefined
   );
   const [prefersBorder, setPrefersBorder] = useState<boolean>(
     initialPrefersBorder ?? true
@@ -1755,6 +1775,8 @@ export function MCPAppsRendererSurface({
         mimeTypeWarning: warning,
         mimeTypeValid: valid,
         prefersBorder,
+        declaredDomain: serverDeclaredDomain,
+        viewOriginLabel: serverViewOriginLabel,
         injectedOpenAiCompat: serverInjectedOpenAiCompat,
         injectedOpenAiCompatCapabilities:
           serverInjectedOpenAiCompatCapabilities,
@@ -1863,9 +1885,16 @@ export function MCPAppsRendererSurface({
         resolvedInjectedOpenAiCompatCapabilities
       );
 
-      // Update the widget debug store with CSP and permissions info
-      if (csp || permissions || !permissive) {
+      setViewOriginLabel(serverViewOriginLabel);
+
+      // Update the widget debug store with CSP and permissions info. A
+      // declared domain alone is enough to open the Workbench: the origin
+      // card is the only place a developer learns their declaration does not
+      // match what MCPJam serves, and a permissive widget would otherwise
+      // never render the panel at all.
+      if (csp || permissions || !permissive || serverDeclaredDomain) {
         setWidgetCspStore(toolCallIdRef.current, {
+          declaredDomain: serverDeclaredDomain ?? null,
           mode: permissive ? "permissive" : "widget-declared",
           connectDomains: csp?.connectDomains || [],
           resourceDomains: csp?.resourceDomains || [],
@@ -2070,7 +2099,13 @@ export function MCPAppsRendererSurface({
           appToolsListRefreshPendingBridgeIdsRef.current.delete(bridgeId);
           const tools: AppToolDescriptor[] = [];
           let cursor: string | undefined;
-          for (let page = 0; page < 8; page += 1) {
+          const APP_TOOLS_PAGE_CAP = 8;
+          // The page values cross the iframe boundary, so they are
+          // untrusted: a non-string `nextCursor` is not a cursor. A REPEATED
+          // one is still a cursor though — the value is opaque, and an app may
+          // legally reissue one constant token (`""` included) for every
+          // page — so the page cap is the only bound.
+          for (let page = 0; page < APP_TOOLS_PAGE_CAP; page += 1) {
             const result = await bridge.listTools(
               cursor === undefined ? {} : { cursor }
             );
@@ -2079,8 +2114,23 @@ export function MCPAppsRendererSurface({
                 Boolean(t && typeof t.name === "string" && t.name.length > 0)
               )
             );
-            cursor = result.nextCursor;
-            if (!cursor) break;
+            cursor =
+              typeof result.nextCursor === "string"
+                ? result.nextCursor
+                : undefined;
+            // Presence, not truthiness: MCP 2026-07-28
+            // `server/utilities/pagination` makes `""` a valid cursor that MUST
+            // NOT be read as the end of results.
+            if (cursor === undefined) break;
+            // Stopping at the cap is not the same as reaching the end, and the
+            // registered set is about to be treated as this app's whole tool
+            // surface. Say so rather than letting a truncated read pass as
+            // complete.
+            if (page === APP_TOOLS_PAGE_CAP - 1) {
+              console.warn(
+                `[MCP Apps] tools/list still had more pages after ${APP_TOOLS_PAGE_CAP}; registering a partial tool set for bridge ${bridgeId}.`
+              );
+            }
           }
 
           appToolsListedBridgeIdsRef.current.add(bridgeId);
@@ -3033,6 +3083,17 @@ export function MCPAppsRendererSurface({
     [resolvedBridgeHostInfo]
   );
 
+  // Origin of the view's document URL — what a developer allowlists with a
+  // third party that keys on the page URL. The srcdoc paths have none.
+  const viewAssignedOrigin = useMemo(() => {
+    if (!viewMount || viewMount.mode !== "url") return undefined;
+    try {
+      return new URL(viewMount.url).origin;
+    } catch {
+      return undefined;
+    }
+  }, [viewMount]);
+
   useEffect(() => {
     if (!toolCallId) return;
     setSandboxAppliedStore(
@@ -3047,6 +3108,9 @@ export function MCPAppsRendererSurface({
         restrictTo: sandboxCspPolicy?.restrictTo,
         cspMode: sandboxCspPolicy?.mode,
         permissions: effectiveSandbox.permissions,
+        viewMode: viewMount?.mode,
+        viewUrl: viewMount?.url,
+        assignedOrigin: viewAssignedOrigin,
       },
       undefined,
       sandboxHostInfo
@@ -3057,6 +3121,8 @@ export function MCPAppsRendererSurface({
     sandboxCspPolicy,
     sandboxHostInfo,
     setSandboxAppliedStore,
+    viewMount,
+    viewAssignedOrigin,
   ]);
 
   // Keep bridge callbacks in sync before ResizeObserver/rAF-driven widget
@@ -3808,6 +3874,19 @@ export function MCPAppsRendererSurface({
       return;
     }
 
+    // Where the proxy mounted the view. `url` is the view's real document URL
+    // when it was written into a blank frame; "about:srcdoc" on the srcdoc
+    // paths, which have no origin to allowlist.
+    if (data.type === "mcpjam:view-mode") {
+      const mode = data.mode;
+      if (mode === "url" || mode === "srcdoc" || mode === "srcdoc-fallback") {
+        const url = typeof data.url === "string" ? data.url : "";
+        setViewMount({ mode, url });
+        logWidgetDebug("ui-to-host", "debug/view-mounted", { mode, url });
+      }
+      return;
+    }
+
     // Tier 2 recorder: forward captured steps + readiness to the host.
     if (data.type === "recorder:step") {
       recorderDebug("step from sandbox", {
@@ -4193,6 +4272,9 @@ export function MCPAppsRendererSurface({
       title={`MCP App: ${toolName}`}
       hostedMode={host.surface.hostedMode}
       sandboxOrigin={host.surface.sandboxOrigin}
+      mountMode={host.surface.viewMountMode}
+      viewOriginLabel={viewOriginLabel}
+      viewSubdomainsEnabled={host.surface.viewSubdomainsEnabled}
       className={`bg-transparent overflow-hidden ${
         isFullscreen
           ? "flex-1 border-0 rounded-none"

@@ -91,6 +91,6 @@
     ],
     "firstFailedStage": "response",
     "failureCategory": "serverData",
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 8
   }
 }

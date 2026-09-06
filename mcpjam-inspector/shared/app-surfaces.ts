@@ -73,8 +73,9 @@ export interface AppSurfaceManifest {
   /**
    * Not reachable in hosted deployments — this field is the SOURCE OF TRUTH
    * for that, and `hosted-tab-policy.ts` derives its block list from it. Set
-   * it only when the screen genuinely cannot work hosted (Tracing needs the
-   * local OTLP collector); a screen that merely isn't ready yet belongs
+   * it only when the screen genuinely cannot work hosted (Tracing streams
+   * from the local Inspector's RPC bus, which hosted does not run); a screen
+   * that merely isn't ready yet belongs
    * behind a feature flag instead.
    * Kept out of the atlas when the atlas is built for a hosted surface, so
    * the model isn't handed a map to a door that is locked.
@@ -137,7 +138,11 @@ export const APP_SURFACES = [
     id: "servers",
     scope: "project",
     canonicalPath: "/servers",
-    routePatterns: ["servers", "servers/plugins/:pluginId", "servers/:serverId"],
+    routePatterns: [
+      "servers",
+      "servers/plugins/:pluginId",
+      "servers/:serverId",
+    ],
     // `client-config` renders nothing of its own (it redirects here), but it
     // IS still a tab segment that resolves to this surface, so it stays a
     // valid `ui_navigate` target and a valid `pathnameToActiveTab` result.
@@ -710,6 +715,10 @@ export const APP_SURFACES = [
       // Discord agent settings — same reasoning as Slack directly above,
       // including staying out of `userActivities` while `discord-agent` is off.
       "organizations/:orgId/discord",
+      // Trace destinations — where this org's traces are streamed. Same
+      // reasoning again: listed for route coverage, kept out of
+      // `userActivities` while `trace-destinations` is off.
+      "organizations/:orgId/observability",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -759,6 +768,35 @@ export const APP_SURFACES = [
     },
     showInAtlas: true,
   },
+  {
+    id: "webmcp",
+    scope: "project",
+    canonicalPath: "/webmcp",
+    routePatterns: ["webmcp"],
+    navSegments: ["webmcp"],
+    title: "WebMCP",
+    purpose:
+      "Inspect a live web page's WebMCP tools: what it registers, what they accept, and what they return when invoked.",
+    userActivities: [
+      "Open a page in a managed browser and watch the tools it registers",
+      "Invoke a page tool with structured input and read its result",
+      "Review the activity timeline across navigations, with screenshots",
+    ],
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
+    agentTools: {
+      kind: "none",
+      reason:
+        "Drives a live third-party web page; the in-app agent must not operate someone's site, and page output is untrusted.",
+    },
+    // Off until rollout: the atlas is static, so `true` would advertise a
+    // flag-hidden surface to the agent before anyone can reach it.
+    showInAtlas: false,
+  },
 ] as const satisfies readonly AppSurfaceManifest[];
 
 /**
@@ -773,7 +811,7 @@ export function listAppSurfaces(): readonly AppSurfaceManifest[] {
 }
 
 const surfacesById = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().map((s) => [s.id, s])
+  listAppSurfaces().map((s) => [s.id, s]),
 );
 
 export function getAppSurface(id: string): AppSurfaceManifest | undefined {
@@ -785,7 +823,7 @@ export function isAppSurfaceId(value: unknown): value is AppSurfaceId {
 }
 
 const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
-  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s]))
+  listAppSurfaces().flatMap((s) => s.navSegments.map((seg) => [seg, s])),
 );
 
 /**
@@ -794,7 +832,7 @@ const surfacesByNavSegment = new Map<string, AppSurfaceManifest>(
  * the coverage test asserts no segment is claimed by two surfaces.
  */
 export function getAppSurfaceByNavSegment(
-  segment: string
+  segment: string,
 ): AppSurfaceManifest | undefined {
   return surfacesByNavSegment.get(segment);
 }
@@ -837,7 +875,7 @@ export function listHostedBlockedNavSegments(): string[] {
  */
 export function buildAppAtlas(opts?: { hosted?: boolean }): string {
   const surfaces = listAppSurfaces().filter(
-    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked)
+    (s) => s.showInAtlas && !(opts?.hosted && s.hostedBlocked),
   );
   return [
     "## The MCPJam inspector, screen by screen",
@@ -853,7 +891,7 @@ export function buildAppAtlas(opts?: { hosted?: boolean }): string {
         `### ${s.title} (${s.navSegments[0]})`,
         s.purpose,
         ...s.userActivities.map((a) => `- ${a}`),
-      ].join("\n")
+      ].join("\n"),
     ),
   ].join("\n");
 }

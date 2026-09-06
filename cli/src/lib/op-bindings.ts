@@ -44,6 +44,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_project_server_connection_status: {
     command: "cloud projects servers connect-status",
   },
+  cancel_project_server_connection: {
+    command: "cloud projects servers connect-cancel",
+  },
   get_project_server: { command: "cloud projects servers get" },
   update_project_server: { command: "cloud projects servers update" },
   delete_project_server: { command: "cloud projects servers remove" },
@@ -84,6 +87,36 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   update_persona: { command: "cloud personas update" },
   delete_persona: { command: "cloud personas delete" },
   generate_personas: { command: "cloud personas generate" },
+
+  // ── Project secrets ─────────────────────────────────────────────────────
+  // `set`/`update` take the value from --value-file, --value-env, or stdin.
+  // A positional value would be written to shell history and visible in `ps`
+  // for the life of the command, which is why the CLI does not offer one.
+  list_secrets: { command: "cloud secrets list" },
+  get_secret: { command: "cloud secrets show" },
+  create_secret: { command: "cloud secrets set" },
+  update_secret: { command: "cloud secrets update" },
+  delete_secret: { command: "cloud secrets rm" },
+
+  // ── Trace destinations ──────────────────────────────────────────────────
+  // The full surface, bound rather than excluded. Availability is decided per
+  // organization and the server answers a de-flagged org with a clean refusal,
+  // which is a better answer than a command that does not exist — the same
+  // reasoning `journeys` states above. A CLI binding is what makes this
+  // scriptable from CI, which is where an observability integration is
+  // configured in the first place.
+  list_trace_destinations: { command: "cloud trace-destinations list" },
+  get_trace_destination: { command: "cloud trace-destinations show" },
+  create_trace_destination: { command: "cloud trace-destinations create" },
+  update_trace_destination: { command: "cloud trace-destinations update" },
+  delete_trace_destination: { command: "cloud trace-destinations rm" },
+  test_trace_destination: { command: "cloud trace-destinations test" },
+  pause_trace_destination: { command: "cloud trace-destinations pause" },
+  resume_trace_destination: { command: "cloud trace-destinations resume" },
+  backfill_trace_destination: { command: "cloud trace-destinations backfill" },
+  list_trace_destination_backfills: {
+    command: "cloud trace-destinations backfills",
+  },
   list_swarms: { command: "cloud swarms list" },
   get_swarm: { command: "cloud swarms get" },
   create_swarm: { command: "cloud swarms create" },
@@ -159,12 +192,38 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_eval_suite_schedule: { command: "cloud eval schedule" },
   set_eval_suite_environments: { command: "cloud eval environments set" },
   list_eval_suite_runs: { command: "cloud eval runs" },
+  list_eval_suite_revisions: { command: "cloud eval revisions" },
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },
   list_eval_check_repos: { command: "cloud eval checks list" },
   connect_eval_check_repo: { command: "cloud eval checks connect" },
   get_eval_run: { command: "cloud eval status" },
+  // BOTH bound to one command, addressed by `--run` XOR `--suite`. They are
+  // the same document read two ways — one run, or a suite's runs as a trend
+  // series — and two commands would leave a reader guessing which one
+  // answers "has this stage got worse".
+  //
+  // FLAG-QUALIFIED, following the `registry install --card` precedent above:
+  // the binding test resolves the flag against the real Commander tree, so
+  // these entries prove each shelf exists. Unqualified, both would resolve to
+  // the bare command and the test would still pass with `--run` deleted.
+  get_eval_run_stage_analytics: {
+    command: "cloud eval stage-analytics --run",
+  },
+  get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
+  propose_eval_description_rewrite: {
+    command: "cloud eval description-experiment propose --run --tool",
+  },
+  start_eval_description_experiment: {
+    command: "cloud eval description-experiment start --experiment",
+  },
+  get_eval_description_experiment: {
+    command: "cloud eval description-experiment get --experiment",
+  },
+  list_eval_suite_stage_analytics: {
+    command: "cloud eval stage-analytics --suite",
+  },
   compare_eval_run: { command: "cloud eval compare" },
   waive_eval_gate: { command: "cloud eval gate waive" },
   revoke_eval_gate_waiver: { command: "cloud eval gate unwaive" },
@@ -217,6 +276,8 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
     excluded:
       "No `plugins` command group yet — the read surface shipped for the MCP catalog and API first. Bind both plugin reads together when the CLI grows one.",
   },
+  list_project_skills: { command: "cloud skills list" },
+  get_project_skill: { command: "cloud skills get" },
   list_sandbox_images: { command: "cloud images list" },
   get_sandbox_image: { command: "cloud images get" },
   create_sandbox_image: { command: "cloud images create" },
@@ -279,6 +340,18 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   read_server_resource: {
     excluded:
       "`resources read` connects to the server directly, so it works without a project or an API key.",
+  },
+  list_server_skills: {
+    excluded:
+      "`skills list` connects to the server directly, so it works without a project or an API key.",
+  },
+  get_server_skill: {
+    excluded:
+      "`skills get` connects to the server directly, so it works without a project or an API key.",
+  },
+  read_server_skill_file: {
+    excluded:
+      "`skills read` connects to the server directly, so it works without a project or an API key.",
   },
   diagnose_server: {
     excluded:

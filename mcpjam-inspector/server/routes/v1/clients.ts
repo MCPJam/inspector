@@ -50,6 +50,11 @@ import {
   getCatalogTemplate,
   type HostCompatCatalog,
 } from "@mcpjam/sdk/host-compat";
+// DERIVED, not re-listed: the wire enum is the SDK's own harness list, so a
+// harness added to HARNESS_IDS is accepted here without a second hand-edit
+// nobody would think to make (this route accepts no unknown-harness value, so
+// a stale copy is a silent "that host cannot be created through the API").
+import { HARNESS_IDS } from "@mcpjam/sdk/host-config/internal";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { logger } from "../../utils/logger.js";
@@ -183,7 +188,7 @@ function markDeprecated(c: Context): void {
   c.header("Deprecation", "true");
   c.header(
     "Link",
-    '</api/v1/projects/{projectId}/clients>; rel="successor-version"'
+    '</api/v1/projects/{projectId}/clients>; rel="successor-version"',
   );
 }
 
@@ -227,7 +232,7 @@ async function fetchBackendHostCatalog(): Promise<HostCompatCatalog | null> {
 
 async function resolveHostTemplateInput(
   templateId: string,
-  theme: "light" | "dark" | undefined
+  theme: "light" | "dark" | undefined,
 ): Promise<Record<string, unknown>> {
   const liveCatalog = await fetchBackendHostCatalog();
   const template =
@@ -237,7 +242,7 @@ async function resolveHostTemplateInput(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Unknown client template: ${templateId}`
+      `Unknown client template: ${templateId}`,
     );
   }
 
@@ -251,7 +256,7 @@ async function resolveHostTemplateInput(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Client template "${templateId}" does not pin a model; pass an explicit \`config\` instead.`
+      `Client template "${templateId}" does not pin a model; pass an explicit \`config\` instead.`,
     );
   }
   if (theme !== undefined) {
@@ -272,7 +277,7 @@ function createConvexClient(convexAuthToken: string): ConvexHttpClient {
     throw new WebRouteError(
       500,
       ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration"
+      "Server missing CONVEX_URL configuration",
     );
   }
   const client = new ConvexHttpClient(convexUrl);
@@ -297,13 +302,13 @@ function translateConvexWriteError(error: unknown): WebRouteError {
 
 async function listHostRows(
   convexAuthToken: string,
-  projectId: string
+  projectId: string,
 ): Promise<HostListRow[]> {
   const readClient = createConvexClient(convexAuthToken);
   try {
     return ((await readClient.query(
       "hosts:listHosts" as any,
-      { projectId } as any
+      { projectId } as any,
     )) ?? []) as HostListRow[];
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -313,7 +318,7 @@ async function listHostRows(
 async function readHostDetail(
   convexAuthToken: string,
   projectId: string,
-  hostId: string
+  hostId: string,
 ): Promise<HostDetailRow> {
   const readClient = createConvexClient(convexAuthToken);
   let detail: HostDetailRow | null;
@@ -326,7 +331,7 @@ async function readHostDetail(
       {
         hostId,
         projectId,
-      } as any
+      } as any,
     )) as HostDetailRow | null;
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -367,13 +372,13 @@ async function resolveClientId(
   convexAuthToken: string,
   projectId: string,
   selector: string,
-  includePrivateBacking: boolean
+  includePrivateBacking: boolean,
 ): Promise<string> {
   const readClient = createConvexClient(convexAuthToken);
   try {
     const resolved = (await readClient.query(
       "hosts:resolveHostByNameOrId" as any,
-      { projectId, selector, includePrivateBacking } as any
+      { projectId, selector, includePrivateBacking } as any,
     )) as { hostId: string } | null;
     if (resolved?.hostId) return resolved.hostId;
     throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
@@ -383,13 +388,13 @@ async function resolveClientId(
   }
 
   const rows = (await listHostRows(convexAuthToken, projectId)).filter(
-    (row) => includePrivateBacking || !isPrivateBacking(row)
+    (row) => includePrivateBacking || !isPrivateBacking(row),
   );
   const byId = rows.find((row) => row.hostId === selector);
   if (byId) return byId.hostId;
   const needle = selector.trim().toLocaleLowerCase();
   const matches = rows.filter(
-    (row) => row.name.trim().toLocaleLowerCase() === needle
+    (row) => row.name.trim().toLocaleLowerCase() === needle,
   );
   if (matches.length === 1) return matches[0]!.hostId;
   if (matches.length > 1) {
@@ -401,7 +406,7 @@ async function resolveClientId(
       } clients in this project. Use an ID instead: ${matches
         .map((row) => row.hostId)
         .join(", ")}`,
-      { candidateIds: matches.map((row) => row.hostId) }
+      { candidateIds: matches.map((row) => row.hostId) },
     );
   }
   throw new WebRouteError(404, ErrorCode.NOT_FOUND, "Client not found");
@@ -441,7 +446,26 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
 }
 
 /**
- * Return `config` with `modelId` TRIMMED.
+ * The keys a config READ adds that a config WRITE cannot accept.
+ *
+ * `GET /clients/:id` projects the stored row, which carries the config's own
+ * row id and its schema version. Neither is in `hostConfigInputV2Validator`,
+ * and that validator is a strict `v.object`, so handing a freshly-read config
+ * straight back — the obvious `get`, edit one field, `update` loop, and what
+ * every CLI/agent caller actually does — was rejected. Convex's
+ * argument-validation error is deliberately not forwarded (it echoes the
+ * arguments), so the caller got only "Client write rejected by the platform"
+ * with no field named: a 500 for a body the API had just emitted.
+ *
+ * Stripped rather than named in a 400, because these are OUR derived fields,
+ * not the caller's mistake. A genuinely unknown key still fails closed and
+ * still logs, which is the behaviour the write translator documents.
+ */
+const READ_ONLY_CONFIG_KEYS = ["id", "schemaVersion"] as const;
+
+/**
+ * Return `config` ready for the Convex write: `modelId` TRIMMED, and the
+ * read-only projection keys dropped so `get` output round-trips into `update`.
  *
  * The rest of the config is passed through opaquely, but the model cannot be:
  * it is stored verbatim and compared verbatim downstream, so a padded
@@ -450,12 +474,15 @@ function hostConfigPinsAModel(config: Record<string, unknown>): boolean {
  * `normalizeModelId`, which is the other write boundary this value reaches.
  * Only ever a trim; the id itself is never rewritten.
  */
-function withTrimmedModelId(
-  config: Record<string, unknown>
+function normalizeConfigForWrite(
+  config: Record<string, unknown>,
 ): Record<string, unknown> {
-  return typeof config.modelId === "string"
-    ? { ...config, modelId: config.modelId.trim() }
-    : config;
+  const normalized: Record<string, unknown> = { ...config };
+  for (const key of READ_ONLY_CONFIG_KEYS) delete normalized[key];
+  if (typeof normalized.modelId === "string") {
+    normalized.modelId = normalized.modelId.trim();
+  }
+  return normalized;
 }
 
 const createClientSchema = z
@@ -524,7 +551,7 @@ const clientSetSchema = z
       .optional(),
     respectToolVisibility: z.boolean().nullable().optional(),
     progressiveToolDiscovery: z.boolean().nullable().optional(),
-    harness: z.enum(["claude-code", "codex"]).nullable().optional(),
+    harness: z.enum(HARNESS_IDS).nullable().optional(),
     computer: z
       .strictObject({
         kind: z.literal("personal"),
@@ -674,7 +701,7 @@ async function listHandler(c: Context, { legacy }: Surface) {
   const projectId = pathParam(c, "projectId");
   const rows = await listHostRows(
     await getConvexBearerForRequest(c),
-    projectId
+    projectId,
   );
   if (legacy) {
     markDeprecated(c);
@@ -699,7 +726,7 @@ async function listHandler(c: Context, { legacy }: Surface) {
 async function resolveSelector(
   c: Context,
   token: string,
-  { legacy }: Surface
+  { legacy }: Surface,
 ): Promise<string> {
   const projectId = pathParam(c, "projectId");
   if (legacy) return pathParam(c, "hostId");
@@ -707,7 +734,7 @@ async function resolveSelector(
     token,
     projectId,
     pathParam(c, "client"),
-    includePrivateBackingParam(c)
+    includePrivateBackingParam(c),
   );
 }
 
@@ -747,10 +774,10 @@ async function createHandler(c: Context, surface: Surface) {
   // to one of the two ways of reaching it. A template is authored data too, and
   // one carrying a padded `modelId` would otherwise persist an id that no
   // downstream verbatim comparison recognizes.
-  const input = withTrimmedModelId(
+  const input = normalizeConfigForWrite(
     body.template
       ? await resolveHostTemplateInput(body.template, body.theme)
-      : body.config!
+      : body.config!,
   );
 
   let created: { hostId: string };
@@ -761,7 +788,7 @@ async function createHandler(c: Context, surface: Surface) {
         projectId,
         name: body.name,
         input,
-      } as any
+      } as any,
     )) as { hostId: string };
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -785,7 +812,7 @@ async function createHandler(c: Context, surface: Surface) {
  */
 function assertConfigKeepsPinnedModel(
   current: HostDetailRow,
-  nextConfig: Record<string, unknown>
+  nextConfig: Record<string, unknown>,
 ): void {
   if (
     hostConfigPinsAModel(current.config) &&
@@ -795,7 +822,7 @@ function assertConfigKeepsPinnedModel(
       400,
       ErrorCode.VALIDATION_ERROR,
       "`config.modelId` is required and must be a non-empty model id: this client pins a model, and clearing it would leave it unable to back a headless environment.",
-      { modelId: current.config.modelId }
+      { modelId: current.config.modelId },
     );
   }
 }
@@ -808,7 +835,7 @@ async function updateClientHandler(c: Context) {
     token,
     projectId,
     pathParam(c, "client"),
-    includePrivateBackingParam(c)
+    includePrivateBackingParam(c),
   );
   const convexClient = createConvexClient(token);
 
@@ -830,7 +857,7 @@ async function updateClientHandler(c: Context) {
       // preflight read is only for the specific model-clearing 400.
       assertConfigKeepsPinnedModel(
         await readHostDetail(token, projectId, clientId),
-        body.config
+        body.config,
       );
       await convexClient.mutation(
         "hosts:updateHost" as any,
@@ -838,9 +865,9 @@ async function updateClientHandler(c: Context) {
           hostId: clientId,
           projectId,
           ...(body.name === undefined ? {} : { name: body.name }),
-          input: withTrimmedModelId(body.config),
+          input: normalizeConfigForWrite(body.config),
           ...tokens,
-        } as any
+        } as any,
       );
     } else {
       // Rename-only and partial edits both go through the partial mutation: it
@@ -854,7 +881,7 @@ async function updateClientHandler(c: Context) {
           ...(body.name === undefined ? {} : { name: body.name }),
           ...(body.set === undefined ? {} : { set: body.set }),
           ...tokens,
-        } as any
+        } as any,
       );
     }
   } catch (error) {
@@ -862,7 +889,7 @@ async function updateClientHandler(c: Context) {
   }
   return v1Resource(
     c,
-    toClientDetailDto(await readHostDetail(token, projectId, clientId))
+    toClientDetailDto(await readHostDetail(token, projectId, clientId)),
   );
 }
 
@@ -878,9 +905,9 @@ async function updateHostAliasHandler(c: Context) {
   if (body.config !== undefined) {
     assertConfigKeepsPinnedModel(
       await readHostDetail(token, projectId, hostId),
-      body.config
+      body.config,
     );
-    updateArgs.input = withTrimmedModelId(body.config);
+    updateArgs.input = normalizeConfigForWrite(body.config);
   }
   const convexClient = createConvexClient(token);
   try {
@@ -891,7 +918,7 @@ async function updateHostAliasHandler(c: Context) {
   markDeprecated(c);
   return v1Resource(
     c,
-    toLegacyHostDetailDto(await readHostDetail(token, projectId, hostId))
+    toLegacyHostDetailDto(await readHostDetail(token, projectId, hostId)),
   );
 }
 
@@ -922,7 +949,7 @@ async function setServersHandler(c: Context, surface: Surface) {
   return detailResponse(
     c,
     await readHostDetail(token, projectId, clientId),
-    surface.legacy
+    surface.legacy,
   );
 }
 
@@ -932,7 +959,7 @@ async function duplicateHandler(c: Context, surface: Surface) {
   const clientId = await resolveSelector(c, token, surface);
   const body = parseWithSchema(
     duplicateClientSchema,
-    await readJsonObjectBody(c)
+    await readJsonObjectBody(c),
   );
   const convexClient = createConvexClient(token);
 
@@ -946,7 +973,7 @@ async function duplicateHandler(c: Context, surface: Surface) {
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Client "${source.name}" does not pin a model, so duplicating it would create another client that cannot back a headless environment. Pin a model on it first.`
+      `Client "${source.name}" does not pin a model, so duplicating it would create another client that cannot back a headless environment. Pin a model on it first.`,
     );
   }
 
@@ -999,20 +1026,20 @@ const LEGACY: Surface = { legacy: true };
 clients.get("/projects/:projectId/clients", (c) => listHandler(c, CANONICAL));
 // Canonical detail routes take a client NAME or ID.
 clients.get("/projects/:projectId/clients/:client", (c) =>
-  getHandler(c, CANONICAL)
+  getHandler(c, CANONICAL),
 );
 clients.post("/projects/:projectId/clients", (c) =>
-  createHandler(c, CANONICAL)
+  createHandler(c, CANONICAL),
 );
 clients.patch("/projects/:projectId/clients/:client", updateClientHandler);
 clients.post("/projects/:projectId/clients/:client/servers", (c) =>
-  setServersHandler(c, CANONICAL)
+  setServersHandler(c, CANONICAL),
 );
 clients.post("/projects/:projectId/clients/:client/duplicate", (c) =>
-  duplicateHandler(c, CANONICAL)
+  duplicateHandler(c, CANONICAL),
 );
 clients.delete("/projects/:projectId/clients/:client", (c) =>
-  deleteHandler(c, CANONICAL)
+  deleteHandler(c, CANONICAL),
 );
 
 // Deprecated aliases: the original `/hosts` paths, ID-only, old DTOs, old
@@ -1023,13 +1050,13 @@ clients.get("/projects/:projectId/hosts/:hostId", (c) => getHandler(c, LEGACY));
 clients.post("/projects/:projectId/hosts", (c) => createHandler(c, LEGACY));
 clients.patch("/projects/:projectId/hosts/:hostId", updateHostAliasHandler);
 clients.post("/projects/:projectId/hosts/:hostId/servers", (c) =>
-  setServersHandler(c, LEGACY)
+  setServersHandler(c, LEGACY),
 );
 clients.post("/projects/:projectId/hosts/:hostId/duplicate", (c) =>
-  duplicateHandler(c, LEGACY)
+  duplicateHandler(c, LEGACY),
 );
 clients.delete("/projects/:projectId/hosts/:hostId", (c) =>
-  deleteHandler(c, LEGACY)
+  deleteHandler(c, LEGACY),
 );
 
 export default clients;

@@ -186,6 +186,7 @@ import {
   type XMcpHeaderDeclaration,
 } from "./mcp-header-mirror.js";
 import type { ModelVisibleMcpToolResults } from "../host-config/types.js";
+import { cancellationLeafForVersion } from "../host-config/types.js";
 import {
   applyRuntimeClientCapabilities,
   getDefaultClientCapabilities,
@@ -304,6 +305,15 @@ function attachStreamableCause<E extends Error>(
 type UpstreamToolDefinition = NonNullable<
   NonNullable<Parameters<ManagedMcpClient["callTool"]>[1]>["toolDefinition"]
 >;
+
+/**
+ * How long a request whose cancellation is suppressed may run.
+ *
+ * Far beyond any real tool call, because the simulated host never cancels and
+ * the only honest stopping point is the server's own response — but bounded,
+ * so a server that never replies cannot leak the entry forever.
+ */
+const SUPPRESSED_CANCELLATION_TIMEOUT_MS = 86_400_000;
 
 export class MCPClientManager {
   // State management
@@ -975,6 +985,15 @@ export class MCPClientManager {
       /** Host policy for model visibility of MCP tool-result content/resources. */
       modelVisibleMcpToolResults?: ModelVisibleMcpToolResults;
       /**
+       * Per-turn override of the host's tool-cancellation setting.
+       *
+       * The connection's own copy is read at CONNECT time, so a host config
+       * saved mid-session does not reach it until something reconnects. This
+       * carries the freshly-resolved value with the turn instead, which is the
+       * only source guaranteed to match what the user just saved.
+       */
+      toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+      /**
        * Task policy for the tool calls this set produces. Omit (the default)
        * and every call takes the pre-existing path, byte-for-byte: no `_meta`,
        * no declaration, no extra request field. See `tool-task-seam.ts`.
@@ -984,6 +1003,12 @@ export class MCPClientManager {
        * what `toolTaskSeamOptionsFor` returns for it.
        */
       tasks?: ToolTaskSeamOptions;
+      /**
+       * Rewrite `description` on named tools. Description ONLY — name,
+       * input schema, and `_meta` stay byte-identical. Applied in the
+       * converter after visibility filtering.
+       */
+      toolDescriptionOverrides?: Readonly<Record<string, string>>;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -1002,59 +1027,69 @@ export class MCPClientManager {
             needsApproval: options.needsApproval,
             includeAppOnly: options.includeAppOnly,
             modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+            toolDescriptionOverrides: options.toolDescriptionOverrides,
             readResource: async ({ uri, options: readOptions }) => {
-              const requestOptions = readOptions?.abortSignal
-                ? { signal: readOptions.abortSignal }
-                : undefined;
-              return this.readResource(id, { uri }, requestOptions);
+              const { requestOptions, settle } = this.applyCancellationPolicy(
+                id,
+                readOptions?.abortSignal,
+                options.toolCallCancellation
+              );
+              return settle(this.readResource(id, { uri }, requestOptions));
             },
             callTool: async ({ name, args, options: callOptions }) => {
-              const requestOptions = callOptions?.abortSignal
-                ? { signal: callOptions.abortSignal }
-                : undefined;
+              const { requestOptions, readRequestOptions, settle } =
+                this.applyCancellationPolicy(
+                  id,
+                  callOptions?.abortSignal,
+                  options.toolCallCancellation
+                );
               const toolArgs = (args ?? {}) as ExecuteToolArguments;
               if (!options.tasks) {
-                const result = await this.executeTool(
-                  id,
-                  name,
-                  toolArgs,
-                  requestOptions
+                const result = await settle(
+                  this.executeTool(id, name, toolArgs, requestOptions)
                 );
                 return assertCallToolResult(result, `Tool "${name}" result`);
               }
               // `id` is captured per server, so the wire is resolved per call:
               // a mixed tool set does the right thing for each server without
               // any caller knowing mixed sets exist.
-              return runToolTaskSeam(
-                {
-                  serverId: id,
-                  toolName: name,
-                  wire: this.getTasksSupport(id).wire,
-                  callPlain: () =>
-                    this.executeTool(id, name, toolArgs, requestOptions),
-                  callEligible: () =>
-                    this.executeTool(id, name, toolArgs, {
-                      ...(requestOptions ? { request: requestOptions } : {}),
-                      allowTaskResult: true,
-                    }),
-                  getTask: async (taskId) =>
-                    extensionTaskToObservation(
-                      await this.getTaskExt(id, taskId, requestOptions)
-                    ),
-                  updateTask: async (taskId, inputResponses) => {
-                    // The await driver is wire-neutral and types responses as
-                    // plain JSON; on this branch the wire is known to be the
-                    // extension, whose `InputResponses` is the narrower shape
-                    // `collectTaskInputResponses` already validated against.
-                    await this.updateTask(
-                      id,
-                      taskId,
-                      inputResponses as TaskExtInputResponses,
-                      requestOptions
-                    );
+              //
+              // The whole seam is settled, not just its first leg: a task-wire
+              // call polls across several requests, and a host that cancels
+              // nothing must abandon the polling loop locally rather than
+              // cancel any one leg on the wire.
+              return settle(
+                runToolTaskSeam(
+                  {
+                    serverId: id,
+                    toolName: name,
+                    wire: this.getTasksSupport(id).wire,
+                    callPlain: () =>
+                      this.executeTool(id, name, toolArgs, requestOptions),
+                    callEligible: () =>
+                      this.executeTool(id, name, toolArgs, {
+                        ...(requestOptions ? { request: requestOptions } : {}),
+                        allowTaskResult: true,
+                      }),
+                    getTask: async (taskId) =>
+                      extensionTaskToObservation(
+                        await this.getTaskExt(id, taskId, readRequestOptions)
+                      ),
+                    updateTask: async (taskId, inputResponses) => {
+                      // The await driver is wire-neutral and types responses as
+                      // plain JSON; on this branch the wire is known to be the
+                      // extension, whose `InputResponses` is the narrower shape
+                      // `collectTaskInputResponses` already validated against.
+                      await this.updateTask(
+                        id,
+                        taskId,
+                        inputResponses as TaskExtInputResponses,
+                        readRequestOptions
+                      );
+                    },
                   },
-                },
-                options.tasks
+                  options.tasks
+                )
               );
             },
           });
@@ -2062,6 +2097,31 @@ export class MCPClientManager {
       this.declaredCapabilitiesFor(serverId),
       this.getServerCapabilities(serverId)
     );
+  }
+
+  /**
+   * {@link getSkillsSupport}, after ensuring the connection exists.
+   *
+   * `getSkillsSupport` reads what a LIVE connection negotiated, synchronously.
+   * On a manager whose connection has not been established yet it therefore
+   * answers `active: false` for every server — not because the extension is
+   * absent, but because there is nothing to read. That is the right answer to
+   * the question it was asked and the wrong answer to the question a caller
+   * usually means.
+   *
+   * It matters on EPHEMERAL managers, which is every hosted request: a route
+   * that reads support as its first act reads it before anything has
+   * connected, concludes the extension is inactive, and returns an empty
+   * listing — then tears the manager down, aborting the negotiation that was
+   * still in flight. The symptom is a 200 with no skills and an `AbortError`
+   * in the connection telemetry, on a server that is perfectly reachable.
+   *
+   * Every other capability question reaches the wire through a method that
+   * awaits `ensureConnected` first. This is that method for skills.
+   */
+  async ensureSkillsSupport(serverId: string): Promise<SkillsSupport> {
+    await this.ensureConnected(serverId);
+    return this.getSkillsSupport(serverId);
   }
 
   /**
@@ -4106,6 +4166,108 @@ export class MCPClientManager {
       return undefined;
     }
     return this.mrtrInputCollectors.get(serverId);
+  }
+
+  /**
+   * Applies `suppressRequestCancellation` to one caller-supplied abort signal.
+   *
+   * The signal is the ONLY thing that reaches the wire: the protocol layer
+   * hangs both cancellation mechanisms off it — aborting the per-request
+   * response stream on `2026-07-28` Streamable HTTP, POSTing
+   * `notifications/cancelled` on every other era and on stdio. So a host that
+   * cancels nothing is modeled by withholding the signal from the request and
+   * racing the caller against it locally instead.
+   *
+   * That split is the whole point. Dropping the signal outright would leave a
+   * cancelled turn hanging until the tool finished; passing it through would
+   * cancel on the wire. `awaitWithAbort` gives the caller its prompt rejection
+   * while the server hears nothing — which is exactly what these hosts do.
+   *
+   * Deliberately NOT implemented by hiding the transport's
+   * `hasPerRequestStream`: that would make a modern connection fall back to
+   * POSTing `notifications/cancelled`, a message no conforming client sends on
+   * `2026-07-28`. The simulated host must be silent, not wrong.
+   */
+  private applyCancellationPolicy(
+    serverId: string,
+    abortSignal: AbortSignal | undefined,
+    /**
+     * Freshly-resolved value for this turn. Takes precedence over the
+     * connection's connect-time copy, which goes stale the moment the host
+     * config is saved without a reconnect.
+     */
+    override?: { legacy?: boolean; modern?: boolean }
+  ): {
+    /** For the leg that carries the TOOL CALL itself. */
+    requestOptions: { signal?: AbortSignal; timeout?: number } | undefined;
+    /**
+     * For the seam's read legs (`tasks/get` polls, `tasks/update`).
+     *
+     * Separate from `requestOptions` because the suppression is about the tool
+     * call, not about every request made while awaiting it. Cancelling a
+     * `tasks/get` does not cancel the task, so a poll can keep the connection's
+     * ordinary timeout — and must, or a hung poll would sit on the suppressed
+     * call's day-long timer with nothing to end it: the await driver's own
+     * deadline abandons the in-flight promise rather than aborting its request.
+     */
+    readRequestOptions:
+      | { signal?: AbortSignal; timeout?: number }
+      | undefined;
+    settle: <T>(promise: Promise<T>) => Promise<T>;
+  } {
+    // Resolve the era from what the connection actually negotiated — the same
+    // value the UI reports — falling back to the configured pin before the
+    // handshake has landed. Config-time resolution cannot work for an
+    // unpinned (`"auto"`) host: the era does not exist yet, and guessing one
+    // makes the other era's toggle unreachable.
+    const config = this.registeredServers.get(serverId)?.config;
+    const configPin =
+      config && "mcpProtocolVersion" in config
+        ? config.mcpProtocolVersion
+        : undefined;
+    const negotiated: string | undefined =
+      this.getNegotiatedProtocolVersion(serverId) ??
+      (typeof configPin === "string" ? configPin : undefined);
+    const leaves = override ?? config?.toolCallCancellation;
+    const suppressed =
+      leaves?.[cancellationLeafForVersion(negotiated)] === false;
+
+
+    if (abortSignal === undefined) {
+      return {
+        requestOptions: undefined,
+        readRequestOptions: undefined,
+        settle: (promise) => promise,
+      };
+    }
+    if (!suppressed) {
+      const passThrough = { signal: abortSignal };
+      return {
+        requestOptions: passThrough,
+        readRequestOptions: passThrough,
+        settle: (promise) => promise,
+      };
+    }
+    return {
+      // The request must also outlive its own timeout. The protocol layer runs
+      // the SAME cancellation on a timeout as on an abort — closing the
+      // response stream on a modern connection — so leaving the default 60s
+      // timer in place means a host configured never to cancel still cancels,
+      // just a minute later. That is indistinguishable from the knob not
+      // working, and it is why this read as flaky rather than off.
+      //
+      // A host that never tells the server also never times out and tells it.
+      // The call runs to completion instead, which is the behavior being
+      // simulated: the server keeps working on a tool nobody awaits any more.
+      // Bounded rather than infinite so a server that never replies cannot
+      // leak the entry forever.
+      requestOptions: { timeout: SUPPRESSED_CANCELLATION_TIMEOUT_MS },
+      // Reads keep the connection's own timeout (`withTimeout` fills it in for
+      // an absent one) and, like the call, are given no signal — the silence
+      // being simulated is silence about the tool call, and the poll is not it.
+      readRequestOptions: undefined,
+      settle: (promise) => this.awaitWithAbort(promise, abortSignal),
+    };
   }
 
   /**

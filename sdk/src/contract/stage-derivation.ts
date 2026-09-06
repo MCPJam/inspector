@@ -55,6 +55,7 @@ import {
   type StageState,
   type UserValueStage,
 } from "./chain.js";
+import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
 
 /**
  * Bump when the derivation SEMANTICS change — not when a type moves.
@@ -64,8 +65,37 @@ import {
  * is not persisted cannot be recomputed selectively, which is the entire
  * reason `sessionReadiness` stamps `READINESS_ANALYZER_VERSION` on every
  * record it writes.
+ *
+ * 6 (UVH-IN1): tool-call predicate results are routed to `selection` instead
+ * of falling to `userValue` as `predicateFailed`. `STAGE_REASONS` does not
+ * move — the routing re-uses `missingToolCall` and `unexpectedToolCall` — so
+ * the backend mirror needs no re-pin for this bump. Rows derived under 5 are
+ * identifiable as stale and can be recomputed selectively.
+ *
+ * 7 (UVH-IN7): an OBSERVED errored tool call makes `response` measurable even
+ * on a case that authored nothing about tools. Before this, such a run had
+ * every applicable stage green while its legacy verdict failed on exactly
+ * that tool error — a disagreement the chain had no row to express. Re-uses
+ * `toolError`, so again no mirror re-pin.
+ *
+ * 8 (UVH-IN2): a model-call-layer failure is attributed to `providerError`
+ * instead of leaving the trial uncategorised. This one DOES move
+ * `STAGE_REASONS`; the backend mirror already carries the member (UVH-BE1
+ * shipped it deliberately ahead of this bump), so nothing quarantines.
  */
-export const STAGE_ANALYZER_VERSION = 4;
+export const STAGE_ANALYZER_VERSION = 8;
+
+/**
+ * The 7 above, named — the first analyzer that can report an errored tool call
+ * on a case which authored no tool expectation.
+ *
+ * A reader comparing a stored row against this can tell a chain that found
+ * nothing wrong from one that had no row in which to say so, which is the
+ * difference between an open question and a known, closable one. It lives
+ * beside the history rather than beside the copy that reads it so that a
+ * future bump is edited where the bump is already being written down.
+ */
+export const STAGE_ANALYZER_VERSION_EVIDENCE_TRIGGERED_RESPONSE = 7;
 
 /**
  * Why a stage landed where it did.
@@ -96,6 +126,16 @@ export const STAGE_REASONS = [
   "blockedByPolicy",
   /** The grader itself failed, so the run says nothing about the server. */
   "evaluatorError",
+  /**
+   * The MODEL-CALL layer failed: a provider outage, an exhausted credit
+   * balance, a rate limit, or one of our own spend guardrails.
+   *
+   * Broader than the name suggests, and deliberately so — what every case has
+   * in common is that OUR side of the call broke, so the run says nothing
+   * about the MCP server under test. Never `failed`: blaming the server for
+   * our provider's bad day is the mis-attribution this reason exists to stop.
+   */
+  "providerError",
   /** The harness never got to the test (setup abort). */
   "setupAborted",
   /**
@@ -228,11 +268,107 @@ export type StagePromptSummaryLike = {
 export type StagePredicateResultLike = {
   passed?: boolean;
   reason?: string;
+  /**
+   * The predicate that produced this row, when the producer kept it.
+   *
+   * Optional because it is genuinely absent on older rows and on producers
+   * that never carried it. A row without it is graded exactly as before —
+   * user-value evidence — so widening this type changes nothing on its own.
+   */
+  predicate?: { type?: string; toolName?: string };
 };
+
+/**
+ * Predicate kinds that are evidence about TOOL SELECTION, not user value.
+ *
+ * `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
+ * where the selection matcher grades it. The three kinds below fall through to
+ * per-turn checks and arrive here as predicate results, so before UVH-IN1 a
+ * case asserting "tool X was never called" filed its failure at `userValue`
+ * with `predicateFailed` — the chain reporting that the user did not get what
+ * they wanted, when what actually happened is that the model picked the wrong
+ * tool. In one prod audit that alone accounted for the gap between 2 selection
+ * failures and 12 user-value ones.
+ *
+ * `toolCalledWith` is deliberately absent: it is already matcher-graded, and
+ * re-reading its point-in-time predicate row here would let a raw residual
+ * contradict the adjudicated verdict the matcher path produces.
+ */
+const SELECTION_PREDICATE_REASON_BY_KIND: Partial<
+  Record<PredicateKind, StageReason>
+> = {
+  /** A required call never happened — the same fact `missing` reports. */
+  toolCalledAtLeastOnce: "missingToolCall",
+  /** Something else went first: a call we did not expect, in that position. */
+  firstToolWas: "unexpectedToolCall",
+  /** A forbidden tool was called. */
+  toolNeverCalled: "unexpectedToolCall",
+};
+
+/**
+ * DERIVED from `PREDICATE_STAGE`, not restated beside it.
+ *
+ * Before B7 this table and the settings-page routing were two hand-kept lists
+ * of the same fact, which is one edit away from a suite that renders a grader
+ * under `selection` while the analyzer files its failures at `userValue` —
+ * a disagreement no test would catch because neither list is wrong on its own.
+ * Now the stage comes from the map and only the REASON lives here.
+ *
+ * `toolCalledWith` is filtered out on purpose even though the map routes it to
+ * `selection`: it is matcher-graded, and re-reading its point-in-time
+ * predicate row here would let a raw residual contradict the adjudicated
+ * verdict the matcher path produces.
+ */
+const SELECTION_PREDICATE_REASONS: Record<string, StageReason> =
+  Object.fromEntries(
+    Object.entries(SELECTION_PREDICATE_REASON_BY_KIND).filter(
+      ([kind, reason]) =>
+        reason !== undefined &&
+        PREDICATE_STAGE[kind as PredicateKind] === "selection"
+    )
+  ) as Record<string, StageReason>;
+
+/**
+ * Kinds that assert a call WILL happen, so they make `call` applicable.
+ *
+ * `toolNeverCalled` is deliberately excluded: a case whose only tool assertion
+ * is "never call X" expects no call at all, and turning `call` on for it would
+ * demand evidence of something the case exists to forbid.
+ */
+const POSITIVE_TOOL_CALL_PREDICATE_KINDS = new Set([
+  "toolCalledAtLeastOnce",
+  "firstToolWas",
+]);
+
+/** True when this predicate row is selection evidence rather than user value. */
+export function isSelectionPredicateKind(kind: string | undefined): boolean {
+  return kind !== undefined && kind in SELECTION_PREDICATE_REASONS;
+}
+
+/** True when this predicate kind asserts that a tool call will occur. */
+export function isPositiveToolCallPredicateKind(
+  kind: string | undefined
+): boolean {
+  return kind !== undefined && POSITIVE_TOOL_CALL_PREDICATE_KINDS.has(kind);
+}
 
 export type StageToolErrorLike = {
   kind?: string;
   toolName?: string;
+};
+
+/**
+ * The layer a fatal step error came from, reported by the catch site.
+ *
+ * `deriveStageResults` reads only `source`; `code` and `httpStatus` ride along
+ * as diagnostics for a reader, and are deliberately NOT part of the
+ * classification — a rule keyed on a provider's status codes would be one
+ * provider away from mis-attributing a whole class of run.
+ */
+export type StageStepErrorLike = {
+  source?: "model" | "setup";
+  code?: string;
+  httpStatus?: number;
 };
 
 export type StageRenderObservationLike = {
@@ -261,6 +397,38 @@ export type StageAuthoredCase = {
   expectsWidgetRender?: boolean;
   /** Count of authored user-value assertions (predicates, expectedOutput). */
   assertionCount?: number;
+  /**
+   * A real user ask exists in this session/case — someone wanted something.
+   *
+   * D8. Eval cases derive `userValue` applicability from `assertionCount`
+   * alone, which is right for an authored case: the assertions ARE the ask.
+   * A chat session has an ask with no assertions attached to it, and the two
+   * possible answers are not the same claim:
+   *
+   *   - ask present, no user-value grader ⇒ `userValue: notMeasured`. Someone
+   *     wanted something and nothing here can say whether they got it.
+   *   - no ask at all ⇒ `userValue: notApplicable`. There is nothing to
+   *     satisfy, so there is no gap to close.
+   *
+   * Absent (the eval default) leaves the pre-D8 behaviour byte-identical.
+   */
+  hasUserAsk?: boolean;
+  /**
+   * What the ask says about whether a tool SHOULD have been called.
+   *
+   *   - `required`     — a call is part of the assertion (equivalent to
+   *                      `expectsToolCall: true`, and it composes with it).
+   *   - `not_required` — nothing here expects a call; `call` applicability
+   *                      falls back to the authored signals alone.
+   *   - `open`         — a real chat ask, where whether a tool was needed is
+   *                      genuinely unknown. `call`/`response` become
+   *                      applicable so observed spans can decide them, and
+   *                      `selection` can NEVER be `passed` off a bare call:
+   *                      that a tool ran is not evidence the RIGHT tool ran.
+   *
+   * Absent (the eval default) leaves the pre-D8 behaviour byte-identical.
+   */
+  toolExpectation?: "required" | "not_required" | "open";
 };
 
 /**
@@ -276,6 +444,21 @@ export type StageSetupPhaseSignal = {
   egressVerified?: boolean;
   /** Culprit synthetic-span ids (`run-connect-<id>` / `run-toolslist-<id>`). */
   spanIds?: string[];
+  /**
+   * How long this setup PHASE took, in milliseconds — its wall-clock envelope.
+   *
+   * A RUN-LEVEL fact that happens to be copied onto every iteration so the
+   * derivation above can read it per-iteration. Analytics must count it ONCE
+   * per run+phase: a run with 200 trials copies one 3-second connect onto all
+   * 200 of them, and a consumer that treats each copy as a sample reports a
+   * 3-second connection latency measured 200 times.
+   *
+   * Deliberately NOT a source of per-trial `connection` / `discovery` latency —
+   * see `STAGE_LATENCY_ELIGIBLE_STAGES` in `./stage-measurements.ts`. This
+   * field is inert to `deriveStageResults`, which never reads it: timing must
+   * not move a stage's state.
+   */
+  durationMs?: number;
 };
 
 export type StageSetupSignals = {
@@ -298,6 +481,14 @@ export type StageEvidence = {
   prompts?: readonly StagePromptSummaryLike[];
   predicateResults?: readonly StagePredicateResultLike[];
   toolErrors?: readonly StageToolErrorLike[];
+  /**
+   * The fatal step error's LAYER, when one was raised and the runner knew it.
+   *
+   * Distinct from `toolErrors`, which are the server's answers. This is our
+   * own side breaking, and it is the difference between "the server gave us
+   * bad data" and "we never got to ask".
+   */
+  stepError?: StageStepErrorLike;
   renderObservations?: readonly StageRenderObservationLike[];
   /** `tools_total_before` / `tools_exposed` — the one direct discovery signal. */
   toolSignals?: { toolsTotalBefore?: number; toolsExposed?: number };
@@ -422,16 +613,51 @@ const LIFECYCLE_STOPPED: ReadonlySet<IterationStatus> =
 /**
  * Which stages this case can say anything about at all.
  *
- * Computed BEFORE any evidence is read, so an inapplicable stage can never be
- * reported as an evidence gap.
+ * Computed before any evidence is INTERPRETED, so an inapplicable stage can
+ * never be reported as an evidence gap. One entry (`response`) additionally
+ * reads a single positive observation — see `hasObservedToolFailure`.
  */
+/**
+ * Did a tool call come back an ERROR the server is answerable for?
+ *
+ * Deliberately the exact condition `deriveResponse` decides `toolError` on —
+ * a content error, or an errored span carrying no MCP error code (a domain
+ * error reported the protocol-correct way). Written as one predicate used by
+ * both so applicability and the deriver cannot drift into a state where a
+ * stage is switched on by one rule and then found empty by the other.
+ *
+ * Transport-local failures are excluded by that same shared condition: a span
+ * with an `mcpErrorCode` never reached the server's handler, so it is a setup
+ * fact, not the server's answer.
+ */
+function hasObservedToolFailure(e: StageEvidence): boolean {
+  const contentErrors = (e.toolErrors ?? []).some(
+    (t) => t.kind === "content-error"
+  );
+  const domainFailed = (e.spans ?? []).some(
+    (s) => isToolSpan(s) && spanFailed(s) && typeof s.mcpErrorCode !== "number"
+  );
+  return contentErrors || domainFailed;
+}
+
 function applicability(
-  authored: StageAuthoredCase
+  authored: StageAuthoredCase,
+  evidence: StageEvidence
 ): Record<UserValueStage, boolean> {
   // A case that expects no tool call but IS a negative case still exercises
   // `call`: proving no call happened is the assertion.
+  //
+  // D8: an `open` tool expectation ALSO turns `call` on. A real chat ask has
+  // no authored expectation to read, but the spans it produced can still say
+  // whether a call was made and whether it worked — and a stage whose evidence
+  // we are about to inspect must not be pre-declared inapplicable. `open` with
+  // no call observed stays `notMeasured` (deriveCall's floor), which is the
+  // honest answer: we do not know whether one was needed.
   const callApplies =
-    authored.expectsToolCall === true || authored.isNegativeTest === true;
+    authored.expectsToolCall === true ||
+    authored.isNegativeTest === true ||
+    authored.toolExpectation === "required" ||
+    authored.toolExpectation === "open";
   return {
     // Every run must reach a server and read its tools, whatever it asserts.
     connection: true,
@@ -442,10 +668,32 @@ function applicability(
     // even when it authors no expected tool call — `deriveResponse` reads the
     // render observations directly. Gating this on `callApplies` alone would
     // make `renderFailed` unreachable for a pure render probe.
-    response: callApplies || authored.expectsWidgetRender === true,
+    //
+    // UVH-IN7: an OBSERVED errored tool call does the same. A case can author
+    // nothing about tools — only predicates over the transcript — and still
+    // have a tool fail on the server during the run. `notApplicable` there
+    // says "this case has nothing for `response` to decide", which is false
+    // the moment a call came back an error, and it is how the chain ended up
+    // unable to represent a class of run whose legacy verdict failed on
+    // exactly that tool error: every applicable stage green, the verdict red,
+    // and no stage able to say why.
+    //
+    // This is the ONE evidence-driven entry in this table, and it is a
+    // POSITIVE observation rather than a gap — which is what keeps the rule
+    // above intact. A stage turned on by observed evidence cannot then be
+    // reported as an evidence gap: `deriveResponse` has the very span that
+    // turned it on.
+    response:
+      callApplies ||
+      authored.expectsWidgetRender === true ||
+      hasObservedToolFailure(evidence),
+    // D8: a real ask makes `userValue` applicable even with nothing authored
+    // to grade it. `notApplicable` would say "there was nothing to satisfy",
+    // which is false the moment someone asked for something.
     userValue:
       (authored.assertionCount ?? 0) > 0 ||
-      authored.expectsWidgetRender === true,
+      authored.expectsWidgetRender === true ||
+      authored.hasUserAsk === true,
   };
 }
 
@@ -555,8 +803,82 @@ const promptIndexes = (prompts: readonly StagePromptSummaryLike[]): number[] =>
     .map((p) => p.promptIndex)
     .filter((i): i is number => typeof i === "number");
 
-function deriveSelection(e: StageEvidence): StageResultRow {
+/**
+ * D8 guard: a bare tool call is not evidence the RIGHT tool was chosen.
+ *
+ * `deriveSelection`'s pre-D8 floor for a turn summary with no `missing` and no
+ * `unexpected` is `passed/observed` — correct for an AUTHORED case, where the
+ * summary is the verdict of a comparison against declared expectations. A chat
+ * session declares none: its turn summaries (if a caller ever supplies any)
+ * compare against nothing, so "no missing calls" is vacuous rather than a pass.
+ *
+ * Under `toolExpectation: "open"` a `passed` selection therefore requires at
+ * least one turn that actually declared expected calls. Everything else
+ * degrades to `notMeasured` — never to `failed`, which would invent a defect
+ * out of the same silence.
+ */
+function selectionNeedsExplicitEvidence(
+  authored: StageAuthoredCase,
+  prompts: readonly StagePromptSummaryLike[]
+): boolean {
+  if (authored.toolExpectation !== "open") return false;
+  return !prompts.some((p) => nonEmpty(p.expectedToolCalls));
+}
+
+/** Tool-selection predicate rows, in author order. */
+function selectionPredicates(e: StageEvidence): StagePredicateResultLike[] {
+  return (e.predicateResults ?? []).filter((r) =>
+    isSelectionPredicateKind(r.predicate?.type)
+  );
+}
+
+/**
+ * The reason a set of failed selection predicates is filed under.
+ *
+ * A missing REQUIRED call outranks an unexpected one: "the tool you needed was
+ * never called" is the more specific and more actionable of the two, and a case
+ * can fail both at once (a required call absent while a forbidden one fired).
+ */
+function selectionPredicateReason(
+  failed: readonly StagePredicateResultLike[]
+): StageReason {
+  return failed.some(
+    (r) =>
+      SELECTION_PREDICATE_REASONS[r.predicate?.type ?? ""] === "missingToolCall"
+  )
+    ? "missingToolCall"
+    : "unexpectedToolCall";
+}
+
+function deriveSelection(
+  e: StageEvidence,
+  authored: StageAuthoredCase
+): StageResultRow {
   const prompts = e.prompts ?? [];
+  const predicates = selectionPredicates(e);
+  // Authored tool-call predicates ARE explicit evidence about selection, so a
+  // case carrying them is never sent down the "nothing adjudicates this" path
+  // below even when it authored no `expectedToolCalls`.
+  if (
+    predicates.length === 0 &&
+    selectionNeedsExplicitEvidence(authored, prompts)
+  ) {
+    // No trace at all outranks both branches below, the same way it does in
+    // `deriveCall` and `deriveResponse`. "The run recorded no trace" and "a
+    // sink existed and captured nothing" are different facts, and reporting
+    // the second for the first tells an operator to go looking at an empty
+    // channel that was never written.
+    if (e.traceAbsent) return row("selection", "notMeasured", "traceAbsent");
+    // Calls happened but nothing adjudicates them ⇒ the verdict is
+    // unavailable. Nothing happened at all ⇒ nothing was captured. Two
+    // different sentences for an operator, so they keep two reason codes.
+    const tools = (e.spans ?? []).filter(isToolSpan);
+    return tools.length > 0
+      ? row("selection", "notMeasured", "matchVerdictUnavailable", {
+          spanIds: spanIds(tools).slice(0, 5),
+        })
+      : row("selection", "notMeasured", "noEvidenceCaptured");
+  }
   if (prompts.length > 0) {
     // A missing expected call is fatal in EVERY match mode, so it needs no
     // adjudication: `evaluateToolCalls` cannot return `passed` with a
@@ -567,6 +889,23 @@ function deriveSelection(e: StageEvidence): StageResultRow {
         promptIndexes: promptIndexes(missing),
       });
     }
+  }
+
+  // Authored tool-call predicates, after the matcher's most specific verdict
+  // and before its tolerated-extras logic. A failed predicate is a definite,
+  // author-stated fact about which tool the model picked; the `unexpected`
+  // branch below is the one that has to decide whether extras were tolerated.
+  const failedPredicates = predicates.filter((r) => r.passed === false);
+  if (failedPredicates.length > 0) {
+    return row(
+      "selection",
+      "failed",
+      selectionPredicateReason(failedPredicates),
+      boundedPredicateReasons(failedPredicates)
+    );
+  }
+
+  if (prompts.length > 0) {
     const unexpected = prompts.filter((p) => nonEmpty(p.unexpected));
     if (unexpected.length > 0) {
       // Extras are a failure ONLY when the turn's own verdict says so.
@@ -599,6 +938,13 @@ function deriveSelection(e: StageEvidence): StageResultRow {
         promptIndexes: promptIndexes(prompts),
       });
     }
+    return row("selection", "passed", "observed");
+  }
+  // Predicates that all PASSED are evidence too, not just blame: a case whose
+  // only selection assertion is "never call the admin tool" and which did not
+  // call it has measured selection and found it sound. Reporting that as
+  // `notMeasured` would understate what the run actually established.
+  if (predicates.length > 0) {
     return row("selection", "passed", "observed");
   }
   if (e.traceAbsent) return row("selection", "notMeasured", "traceAbsent");
@@ -662,15 +1008,15 @@ function deriveResponse(
   e: StageEvidence,
   authored: StageAuthoredCase
 ): StageResultRow {
-  const contentErrors = (e.toolErrors ?? []).filter(
-    (t) => t.kind === "content-error"
-  );
   // An errored tool span with NO code is a domain error reported the
   // protocol-correct way: the server answered, with unusable data.
   const domainFailed = (e.spans ?? []).filter(
     (s) => isToolSpan(s) && spanFailed(s) && typeof s.mcpErrorCode !== "number"
   );
-  if (contentErrors.length > 0 || domainFailed.length > 0) {
+  // `hasObservedToolFailure` is the same condition, and it is what makes this
+  // stage applicable on a case that authored nothing about tools — the two
+  // must stay one rule, or a stage could be switched on and then found empty.
+  if (hasObservedToolFailure(e)) {
     return row("response", "failed", "toolError", {
       spanIds: spanIds(domainFailed).slice(0, 5),
     });
@@ -709,21 +1055,22 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
   if (e.evaluatorErrored) {
     return row("userValue", "notMeasured", "evaluatorError");
   }
-  const results = e.predicateResults ?? [];
+  // Tool-call predicates are ROUTED to `selection`, not copied into it: a
+  // failure filed in both places would double-count one defect and, worse,
+  // make `firstFailedStage` depend on which stage the reader looked at first.
+  // What is left here is what actually speaks to the user's ask.
+  const results = (e.predicateResults ?? []).filter(
+    (r) => !isSelectionPredicateKind(r.predicate?.type)
+  );
   if (results.length > 0) {
     const failed = results.filter((r) => r.passed === false);
     if (failed.length > 0) {
-      return row("userValue", "failed", "predicateFailed", {
-        predicateReasons: failed
-          .map((r) => r.reason)
-          .filter((r): r is string => typeof r === "string")
-          .slice(0, MAX_EVIDENCE_REASONS)
-          .map((r) =>
-            r.length > MAX_EVIDENCE_REASON_CHARS
-              ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}\u2026`
-              : r
-          ),
-      });
+      return row(
+        "userValue",
+        "failed",
+        "predicateFailed",
+        boundedPredicateReasons(failed)
+      );
     }
     return row("userValue", "passed", "observed");
   }
@@ -763,6 +1110,28 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
     // `skipped` / `not_applicable` fall through to the floor.
   }
   return row("userValue", "notMeasured", "noEvidenceCaptured");
+}
+
+/**
+ * Predicate reasons under the row's evidence caps.
+ *
+ * Extracted so `selection` and `userValue` bound their reasons identically —
+ * two copies of the same slice-and-ellipsis would be free to drift, and the
+ * cap is what keeps a row from carrying an unbounded model-authored string.
+ */
+function boundedPredicateReasons(
+  rows: readonly StagePredicateResultLike[]
+): StageEvidenceRefs | undefined {
+  const bounded = rows
+    .map((r) => r.reason)
+    .filter((r): r is string => typeof r === "string" && r.trim().length > 0)
+    .slice(0, MAX_EVIDENCE_REASONS)
+    .map((r) =>
+      r.length > MAX_EVIDENCE_REASON_CHARS
+        ? `${r.slice(0, MAX_EVIDENCE_REASON_CHARS - 1)}…`
+        : r
+    );
+  return bounded.length > 0 ? { predicateReasons: bounded } : undefined;
 }
 
 /**
@@ -806,7 +1175,14 @@ function categoryFor(
   evidence: StageEvidence
 ): FailureCategory | undefined {
   if (!firstFailed) {
-    return evidence.evaluatorErrored ? "evaluator" : undefined;
+    if (evidence.evaluatorErrored) return "evaluator";
+    // A model-call failure leaves nothing failed — there was nothing to fail
+    // against. Before UVH-IN2 that produced a run with no category at all,
+    // which reads as "we cannot say what went wrong" when in fact we can say
+    // precisely: our provider did. `setup` is the existing bucket for our own
+    // side breaking, which is why this needs no new category.
+    if (evidence.stepError?.source === "model") return "setup";
+    return undefined;
   }
   const failedRow = rows.find((r) => r.stage === firstFailed);
   switch (firstFailed) {
@@ -854,7 +1230,7 @@ export function deriveStageResults(
   input: StageDerivationInput
 ): StageDerivation {
   const { authored, evidence, iteration, policy } = input;
-  const applies = applicability(authored);
+  const applies = applicability(authored, evidence);
 
   const inapplicable = (stage: UserValueStage) =>
     row(stage, "notApplicable", "notAuthored");
@@ -947,7 +1323,7 @@ export function deriveStageResults(
         case "discovery":
           return deriveDiscovery(evidence);
         case "selection":
-          return deriveSelection(evidence);
+          return deriveSelection(evidence, authored);
         case "call":
           return deriveCall(evidence, authored);
         default:
@@ -984,11 +1360,27 @@ export function deriveStageResults(
   // those measured rows with "never ran" destroys the evidence an operator
   // needs and states something the run disproves. `firstFailedStage` already
   // carries "where the chain broke" — the rows do not have to lie to say it.
-  const firstFailedIndex = derived.findIndex((r) => r.state === "failed");
+  // WITHDRAWN FIRST, then cascaded — the order matters and getting it wrong
+  // produces a chain that argues with itself.
+  //
+  // The cascade reads `failed` rows to decide which later stages "never ran".
+  // Withdrawing a provider-blocked failure AFTER it has run leaves the
+  // downstream rows still saying `earlierStageFailed` while no stage failed
+  // and no `firstFailedStage` exists — three rows citing a failure the chain
+  // no longer records. Running the withdrawal first means the cascade sees the
+  // rows as they will actually be reported, so a provider outage marks the
+  // later stages `providerError` (which is why they were not measured) rather
+  // than blaming a stage that is no longer failed.
+  //
+  // A failure the provider did NOT explain still cascades exactly as before:
+  // `unexpectedToolCall` at `selection` survives the withdrawal, stays the
+  // first failed row, and the stages after it still read `notReached`.
+  const withdrawn = applyProviderError(derived, evidence);
+  const firstFailedIndex = withdrawn.findIndex((r) => r.state === "failed");
   const rows =
     firstFailedIndex < 0
-      ? derived
-      : derived.map((r, i) =>
+      ? withdrawn
+      : withdrawn.map((r, i) =>
           i > firstFailedIndex && r.state === "notMeasured"
             ? row(r.stage, "notReached", "earlierStageFailed")
             : r
@@ -1029,11 +1421,114 @@ function mergeMetadataAttributionEvidence(
   );
 }
 
+/**
+ * Reasons a stage reported NOTHING, which a model-call failure explains.
+ *
+ * Each reads as "we looked and the server told us nothing" — an accusation,
+ * when the truth is that our own provider never let us ask.
+ */
+const PROVIDER_BLANKED_REASONS: ReadonlyArray<StageReason | undefined> = [
+  "noEvidenceCaptured",
+  "traceAbsent",
+  "executorEmitsNoSpans",
+];
+
+/**
+ * Failure reasons that conclude from something NOT HAPPENING.
+ *
+ * This is the distinction that decides whether a `failed` row survives a
+ * provider outage, and it is the whole of the second half of this function.
+ *
+ * An ABSENCE verdict — no tool call arrived, an assertion over the output did
+ * not hold, the judge scored a transcript low — is only sound if the run was
+ * allowed to finish. When our own model call died first, "it did not happen"
+ * has a second explanation that outranks the accusation, and we cannot tell
+ * which is true. The honest answer is that we did not measure it.
+ *
+ * PRESENCE verdicts are deliberately absent from this list and keep their
+ * rows: an unexpected call was really made, arguments really mismatched, a
+ * tool really errored, a render really failed. Those observations stand
+ * whatever killed the turn afterwards. `connectFailed` and `toolsListFailed`
+ * matter most here — they happen BEFORE any model call, so a server that would
+ * not connect must never be excused by a provider error that came later.
+ */
+const PROVIDER_UNKNOWABLE_FAILURES: ReadonlyArray<StageReason | undefined> = [
+  "missingToolCall",
+  "predicateFailed",
+  "judgePartial",
+  "judgeFailed",
+];
+
+/**
+ * Re-label what a MODEL-CALL failure made unknowable.
+ *
+ * Applied BEFORE the positional cascade, and again in `finalize` for the
+ * early-return paths that never reach it — idempotent, so the second pass over
+ * already-converted rows finds nothing to do. An earlier revision of this
+ * docblock said "applied last"; that was true until the withdrawal had to move
+ * ahead of the cascade, which reads `failed` rows to decide which later stages
+ * never ran. Withdrawing after it ran left three rows citing a failure the
+ * chain no longer recorded. See the comment at the call site.
+ *
+ * Two parts.
+ *
+ * BLANK ROWS. A stage that measured nothing is re-labelled, while a stage with
+ * its own evidence keeps its own row: the provider dying at turn 4 does not
+ * un-observe what turns 1-3 established.
+ *
+ * FAILED ROWS THAT REST ON AN ABSENCE. The first version of this stopped at
+ * blank rows, and that left the fix inert on the shape it matters most for. A
+ * case expecting a tool call whose provider died first still had
+ * `selection: failed / missingToolCall` written by the matcher before this
+ * ever ran — so `firstFailedStage` stayed `selection`, `categoryFor` returned
+ * `selection`, and the outage was filed as a model-selection defect. The one
+ * thing this reason exists to prevent, on the most common case in the corpus.
+ *
+ * `notMeasured` throughout, never `failed`. A run that could not be attempted
+ * has measured nothing about the server, and inflating a server failure rate
+ * with our own outage is exactly what this reason exists to prevent.
+ */
+function applyProviderError(
+  rows: StageResultRow[],
+  evidence: StageEvidence
+): StageResultRow[] {
+  if (evidence.stepError?.source !== "model") return rows;
+  return rows.map((r) => {
+    if (
+      r.state === "notMeasured" &&
+      PROVIDER_BLANKED_REASONS.includes(r.reason)
+    ) {
+      return { ...r, reason: "providerError" as const };
+    }
+    if (
+      r.state === "failed" &&
+      PROVIDER_UNKNOWABLE_FAILURES.includes(r.reason)
+    ) {
+      // The EVIDENCE goes with the verdict it supported. Those lines say why
+      // the absence was judged a failure, and that judgement is exactly what
+      // is being withdrawn — keeping them would leave a `notMeasured` row
+      // arguing for a failure it no longer claims.
+      const { evidence: _dropped, ...rest } = r;
+      return {
+        ...rest,
+        state: "notMeasured" as const,
+        reason: "providerError" as const,
+      };
+    }
+    return r;
+  });
+}
+
 function finalize(
   rows: StageResultRow[],
   evidence: StageEvidence,
   forcedCategory?: FailureCategory
 ): StageDerivation {
+  // IDEMPOTENT, and applied here as well as before the positional cascade: the
+  // early-return paths above never reach that cascade, so this is the only
+  // place they get it. A second pass over rows the first already converted
+  // finds nothing left to change — `providerError` is in neither list.
+  rows = applyProviderError(rows, evidence);
   const firstFailedStage = rows.find((r) => r.state === "failed")?.stage;
   const failureCategory =
     forcedCategory ?? categoryFor(firstFailedStage, rows, evidence);
@@ -1146,5 +1641,52 @@ export function stageDerivationToMetadata(
       ? { failureCategory: derivation.failureCategory }
       : {}),
     stageAnalyzerVersion: derivation.stageAnalyzerVersion,
+  };
+}
+
+/**
+ * Public projection of an iteration's stage evidence.
+ *
+ * `metadata` is an open record; only this whitelist may cross into a
+ * decision-chain assembly. Validated derivations pass through; invalid
+ * rows become `stageResultsUnverified`. Pre-D1 metadata (no
+ * `stageResults`) is omitted so those iterations stay byte-identical.
+ */
+export function projectStageDerivation(
+  metadata: unknown
+): Record<string, unknown> {
+  if (!metadata || typeof metadata !== "object") return {};
+  const record = metadata as Record<string, unknown>;
+  if (!("stageResults" in record)) return {};
+
+  const derivation = stageDerivationSchema.safeParse({
+    stageResults: record.stageResults,
+    ...(record.firstFailedStage !== undefined
+      ? { firstFailedStage: record.firstFailedStage }
+      : {}),
+    ...(record.failureCategory !== undefined
+      ? { failureCategory: record.failureCategory }
+      : {}),
+    stageAnalyzerVersion: record.stageAnalyzerVersion,
+  });
+  if (derivation.success) {
+    return {
+      stageResults: derivation.data.stageResults,
+      ...(derivation.data.firstFailedStage
+        ? { firstFailedStage: derivation.data.firstFailedStage }
+        : {}),
+      ...(derivation.data.failureCategory
+        ? { failureCategory: derivation.data.failureCategory }
+        : {}),
+      stageAnalyzerVersion: derivation.data.stageAnalyzerVersion,
+    };
+  }
+
+  const version = record.stageAnalyzerVersion;
+  return {
+    stageResultsUnverified: true,
+    ...(typeof version === "number" && Number.isInteger(version) && version >= 0
+      ? { stageAnalyzerVersion: version }
+      : {}),
   };
 }

@@ -54,7 +54,7 @@ const MINIMAL = payload(findFixture(data.accept, "minimal")) as EvalSuiteFile;
 
 describe("the parity corpus, through the loader", () => {
   it("accepts every accept row", () => {
-    expect(data.accept).toHaveLength(4);
+    expect(data.accept).toHaveLength(6);
     for (const row of data.accept) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, `${row.__label}: ${JSON.stringify(result)}`).toBe(true);
@@ -62,7 +62,7 @@ describe("the parity corpus, through the loader", () => {
   });
 
   it("rejects every reject row as a CONTRACT failure, not a parse failure", () => {
-    expect(data.reject).toHaveLength(29);
+    expect(data.reject).toHaveLength(35);
     for (const row of data.reject) {
       const result = loadEvalSuiteFile(asText(payload(row)));
       expect(result.ok, row.__label).toBe(false);
@@ -336,6 +336,64 @@ describe("identity survives a rename", () => {
     expect(after.authored.cases[0]?.title).not.toBe(
       before.authored.cases[0]?.title
     );
+  });
+});
+
+describe("case intent", () => {
+  it("preserves a label in the authored file and resolved runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: "refund" } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.intent).toBe("refund");
+    expect(loaded.resolved.cases[0]?.intent).toBe("refund");
+  });
+
+  it("treats an explicit null update as unlabelled in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, intent: null } : entry
+      ),
+    };
+
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.intent).toBeNull();
+    expect(loaded.resolved.cases[0]?.intent).toBeUndefined();
+  });
+});
+
+describe("case kind", () => {
+  it("accepts capability and regression and omits when absent", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: "regression" } : entry
+      ),
+    };
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.kind).toBe("regression");
+    expect(loaded.resolved.cases[0]?.kind).toBe("regression");
+
+    const omitted = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
+    expect(omitted.authored.cases[0]?.kind).toBeUndefined();
+    expect(omitted.resolved.cases[0]?.kind).toBeUndefined();
+  });
+
+  it("treats an explicit null kind as absent in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: null } : entry
+      ),
+    };
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.kind).toBeNull();
+    expect(loaded.resolved.cases[0]?.kind).toBeUndefined();
   });
 });
 

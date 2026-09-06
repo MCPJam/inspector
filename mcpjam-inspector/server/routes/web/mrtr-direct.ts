@@ -35,7 +35,7 @@ import {
   createManualHostedConnection,
   ErrorCode,
   WebRouteError,
-  webError,
+  webErrorFromRoute,
   mapRuntimeError,
   readJsonBody,
 } from "./auth.js";
@@ -289,12 +289,16 @@ export async function runHostedDirectMrtrOperation<S extends z.ZodTypeAny, R>(
     return c.json(attachHostedRpcLogs(outcome, rpcCollector), 200);
   } catch (error) {
     const routeError = mapRuntimeError(error);
-    return webError(
+    // `webErrorFromRoute`, not a hand-rolled `webError`: the by-hand call
+    // dropped `routeError.normalized` and `routeError.origin`, so every
+    // failure on the three routes that come through here — `tools/execute`,
+    // `resources/read`, `prompts/get` — reached `http.request.failed` with no
+    // `origin` and no `slug` at all. Measured 2026-08-22 to 08-25: 22 of 22
+    // rows on `resources/read` and 10 of 10 on `tools/execute` carried
+    // neither, which reads to any origin-keyed monitor as nothing.
+    return webErrorFromRoute(
       c,
-      routeError.status,
-      routeError.code,
-      routeError.message,
-      routeError.details,
+      routeError,
       rpcCollector?.buildEnvelope() as Record<string, unknown> | undefined,
     );
   }

@@ -140,7 +140,7 @@ export const OPENAI_BRAND_COLOR_CONTRAST = {
 export const OPENAI_MCP_SKILL_LIMITS = {
   /** One skill's `SKILL.md` body. */
   maxSkillMarkdownBytes: 256 * 1024,
-  /** One supporting page fetched via `skills/get`. */
+  /** One supporting resource fetched via `resources/read`. */
   maxPageBytes: 1024 * 1024,
   /** One skill's total footprint, its pages included. */
   maxSkillTotalBytes: 5 * 1024 * 1024,

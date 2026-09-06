@@ -31,7 +31,6 @@ import {
 import { getEffectiveSuiteServers } from "../evals/helpers";
 import {
   SUITE_RUN_HISTORY_PAGE_SIZE,
-  buildSuiteRunHistoryAggregates,
   buildSuiteRunHistoryRows,
   buildSuiteTestCaseRows,
   filterSuiteRunHistoryRows,
@@ -40,8 +39,16 @@ import {
   suiteRunBlockedReason,
   type RunHistoryVerdict,
   type SuiteRunHistoryFilters,
+  type SuiteRunHistoryRow,
 } from "./suite-detail-model";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../evals/types";
+import {
+  RunDecisionVerdictBadge,
+  RunDecisionVerdictUnavailable,
+} from "../evals/run-decision-summary-card";
+import { useEvalRunDecisionBadge, useHasBeenVisible } from "@/hooks/use-eval-run-decision-summary";
+import { isTerminalEvalRunStatus } from "@/lib/evals/eval-decision-summary-store";
+import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
@@ -105,6 +112,8 @@ export function SuiteDetailOverview({
   runningTestCaseId = null,
   evalRunsDisabledReason = null,
   readOnlyConfig = false,
+  projectId = null,
+  decisionSummaryEnabled = false,
 }: {
   suite: EvalSuite;
   cases: EvalCase[];
@@ -127,6 +136,13 @@ export function SuiteDetailOverview({
   runningTestCaseId?: string | null;
   evalRunsDisabledReason?: string | null;
   readOnlyConfig?: boolean;
+  /** Threaded from `EvaluateTab`; never resolved in the browser. */
+  projectId?: string | null;
+  /**
+   * Read D9's canonical verdict for terminal rows. OFF by default: with it
+   * false this table issues no decision-summary requests at all.
+   */
+  decisionSummaryEnabled?: boolean;
 }) {
   const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
   const [filters, setFilters] = useState<SuiteRunHistoryFilters>({
@@ -184,10 +200,6 @@ export function SuiteDetailOverview({
     : filteredRows.slice(0, SUITE_RUN_HISTORY_PAGE_SIZE);
   const hiddenRunCount = filteredRows.length - visibleRows.length;
 
-  const aggregates = useMemo(
-    () => buildSuiteRunHistoryAggregates(runs, allIterations),
-    [runs, allIterations],
-  );
   const testCaseRows = useMemo(() => buildSuiteTestCaseRows(cases), [cases]);
 
   const isEnvironmentSuite = (suite.environmentIds?.length ?? 0) > 0;
@@ -204,10 +216,27 @@ export function SuiteDetailOverview({
   });
   const runDisabled = Boolean(runBlockedReason);
   const hasCases = cases.length > 0;
-  // Runs load after the detail spinner has already cleared (`isSuiteRunsLoading`
-  // is its own query), so keying purely on `runs.length` hides the whole section
-  // from a suite that HAS runs and then pops it in. Hold the frame instead.
-  const showRunHistory = runs.length > 0 || runsLoading;
+  /**
+   * The card is the suite's run surface, so it is present whenever the suite
+   * COULD have runs — not only when it happens to have some.
+   *
+   * Keying purely on `runs.length` made "this suite has never run" and "this
+   * suite's runs did not load" the same picture: no card, no heading, nothing
+   * to distinguish an empty history from a broken one. A reader looking at a
+   * suite they had just run over the API had no way to tell which they were
+   * seeing. The empty history says so in words instead.
+   *
+   * `runsLoading` still counts on its own: runs resolve AFTER the detail
+   * spinner clears (`isSuiteRunsLoading` is its own query), and the frame has
+   * to be held for a suite that has runs rather than popped in under the
+   * reader.
+   *
+   * The one case that stays hidden is a suite with NO CASES: it cannot have
+   * run, the empty-cases hero owns that page, and an empty history card above
+   * it would be scaffolding around a suite that has nothing yet.
+   */
+  const showRunHistory = hasCases || runs.length > 0 || runsLoading;
+  const hasRuns = runs.length > 0;
   const showEmptyCasesHero = !hasCases;
 
   const runButton = (
@@ -351,38 +380,23 @@ export function SuiteDetailOverview({
           ) : null}
         </div>
 
-        {runs.length > 0 ? (
-          <div
-            className="grid grid-cols-2 gap-x-6 gap-y-4 border-b border-border/30 px-5 py-4 sm:grid-cols-3 lg:grid-cols-6"
-            data-testid="suite-detail-run-aggregates"
-          >
-            <AggregateStat label="runs" value={String(aggregates.runCount)} />
-            <AggregateStat
-              label="tokens"
-              value={formatRunHistoryMetric(aggregates.totalTokens, "number")}
-            />
-            <AggregateStat
-              label="P50 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP50, "duration")}
-            />
-            <AggregateStat
-              label="P95 latency"
-              value={formatRunHistoryMetric(aggregates.latencyP95, "duration")}
-            />
-            <AggregateStat
-              label="tokens per run"
-              value={formatRunHistoryMetric(aggregates.tokensPerRun, "number")}
-            />
-            <AggregateStat
-              label="tool calls per run"
-              value={formatRunHistoryMetric(aggregates.toolCallsPerRun, "number")}
-            />
-          </div>
-        ) : null}
+        <SuiteRunHistorySnapshot runs={runs} allIterations={allIterations} />
 
         {filteredRows.length === 0 ? (
-          <div className="bg-card px-5 py-10 text-center text-sm text-muted-foreground">
-            {runsLoading ? "Loading runs…" : "No runs match these filters."}
+          <div
+            className="bg-card px-5 py-10 text-center text-sm text-muted-foreground"
+            data-testid="suite-run-history-empty"
+          >
+            {/*
+              Three different states, and they must not read alike: still
+              loading, never run, and filtered down to nothing. The middle one
+              is the reason this card renders at all now.
+            */}
+            {runsLoading
+              ? "Loading runs…"
+              : hasRuns
+                ? "No runs match these filters."
+                : "No runs yet. Run this suite — verdict, pass rate, latency and cost land here."}
           </div>
         ) : (
           <div className="overflow-x-auto bg-card">
@@ -393,9 +407,6 @@ export function SuiteDetailOverview({
                   <TableHead className={runHistoryHeadClass}>Verdict</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
                     Rate
-                  </TableHead>
-                  <TableHead className={runHistoryHeadClass}>
-                    Top failure signature
                   </TableHead>
                   <TableHead className={runHistoryHeadClass}>Platform</TableHead>
                   <TableHead className={cn(runHistoryHeadClass, "text-right")}>
@@ -410,7 +421,7 @@ export function SuiteDetailOverview({
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {visibleRows.map((row) => (
+                {visibleRows.map((row, index) => (
                   <TableRow
                     key={row.runId}
                     data-testid={`suite-run-row-${row.runId}`}
@@ -424,20 +435,37 @@ export function SuiteDetailOverview({
                       {row.dateLabel}
                     </TableCell>
                     <TableCell>
-                      <span
-                        className={cn(
-                          "text-xs font-medium uppercase tracking-wide",
-                          VERDICT_TEXT_TONE[row.verdict],
-                        )}
-                      >
-                        {row.verdictLabel}
-                      </span>
+                      <SuiteRunVerdictCell
+                        row={row}
+                        projectId={projectId}
+                        enabled={decisionSummaryEnabled}
+                        // The first page is on screen the moment the table
+                        // paints, so it reads eagerly. Everything "Show all"
+                        // reveals waits to be scrolled to — otherwise one
+                        // click would ask for the entire history at once.
+                        lazy={index >= SUITE_RUN_HISTORY_PAGE_SIZE}
+                      />
                     </TableCell>
+                    {/*
+                      DELIBERATELY still the locally derived rate, and the one
+                      place this surface diverges from the project Runs table.
+
+                      There, the Metric column is the run's own counts, so a
+                      canonical summary replaces the stored aggregate outright.
+                      Here the column is per-TRIAL accuracy shown beside
+                      latency, tokens and tool calls — a row of local operating
+                      metrics, not a restatement of the verdict. Swapping in
+                      case-variant counts would put a different population in
+                      the middle of that row.
+
+                      What it must never do is contradict the verdict, and it
+                      cannot: the verdict cell reads the canonical summary and
+                      this cell has no say in it. Lane D10a keeps this local
+                      context; retiring it is a later change with its own
+                      column design.
+                    */}
                     <TableCell className="text-right text-xs tabular-nums text-foreground">
                       {row.passRate != null ? `${row.passRate}%` : "—"}
-                    </TableCell>
-                    <TableCell className="max-w-[16rem] truncate text-xs text-muted-foreground">
-                      {row.topFailureSignature ?? "—"}
                     </TableCell>
                     <TableCell
                       className={cn(
@@ -465,26 +493,20 @@ export function SuiteDetailOverview({
           </div>
         )}
 
-        <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
-          {hiddenRunCount > 0 ? (
-            <>
-              <button
-                type="button"
-                className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
-                onClick={() => setShowAllRuns(true)}
-              >
-                view all {filteredRows.length.toLocaleString()} runs →
-              </button>
-              <span aria-hidden> · </span>
-            </>
-          ) : null}
-          <span>
-            quick runs appear tagged &apos;quick · nx&apos;, grayed, excluded
-            from stability
-          </span>
-        </div>
+        {hiddenRunCount > 0 ? (
+          <div className="border-t border-border/30 bg-card px-5 py-2.5 text-xs text-muted-foreground">
+            <button
+              type="button"
+              className="text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+              onClick={() => setShowAllRuns(true)}
+            >
+              view all {filteredRows.length.toLocaleString()} runs →
+            </button>
+          </div>
+        ) : null}
       </section>
       ) : null}
+
 
       {showEmptyCasesHero ? (
         <SuiteEmptyCasesHero
@@ -742,6 +764,64 @@ function SuiteEmptyCasesHero({
   );
 }
 
+/**
+ * The verdict for one run-history row.
+ *
+ * CANONICAL WINS. `row.verdict` is derived in the browser from iteration rows
+ * — a second reading of a run that already decided for itself — and the moment
+ * a validated summary is in hand it replaces that derivation outright,
+ * `inconclusive` and "no verdict" included. The local label survives only as
+ * the pre-canonical placeholder, and on a non-terminal row (which has no
+ * decision to read) as the lifecycle it always was.
+ */
+function SuiteRunVerdictCell({
+  row,
+  projectId,
+  enabled,
+  lazy,
+}: {
+  row: SuiteRunHistoryRow;
+  projectId: string | null;
+  enabled: boolean;
+  lazy: boolean;
+}) {
+  const [visibilityRef, hasBeenVisible, onScreen] =
+    useHasBeenVisible<HTMLSpanElement>();
+  const terminal = isTerminalEvalRunStatus(row.status);
+  const { status, summary, error } = useEvalRunDecisionBadge({
+    projectId,
+    runId: row.runId,
+    enabled: enabled && terminal && (!lazy || hasBeenVisible),
+    // Eagerly-read first-page rows are on screen by definition; lazy ones
+    // revalidate only while they actually are. See the runs table for why.
+    revalidate: !lazy || onScreen,
+    revision: row.revision,
+  });
+
+  return (
+    <span ref={lazy ? visibilityRef : undefined}>
+      {summary ? (
+        <RunDecisionVerdictBadge summary={summary} />
+      ) : status === "error" ? (
+        // The read SETTLED and there is no verdict to show. `Ship`/`Hold` is
+        // this table's own pass-rate derivation, and leaving it up here — with
+        // nothing saying the run's own answer could not be read — is exactly
+        // the silent disagreement this surface exists to remove.
+        <RunDecisionVerdictUnavailable error={error} />
+      ) : (
+        <span
+          className={cn(
+            "text-xs font-medium uppercase tracking-wide",
+            VERDICT_TEXT_TONE[row.verdict],
+          )}
+        >
+          {row.verdictLabel}
+        </span>
+      )}
+    </span>
+  );
+}
+
 function verdictLabel(verdict: RunHistoryVerdict): string {
   switch (verdict) {
     case "ship":
@@ -802,15 +882,3 @@ function FilterSelect({
   );
 }
 
-function AggregateStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0">
-      <div className="text-[17px] font-semibold leading-none tracking-tight tabular-nums text-foreground">
-        {value}
-      </div>
-      <div className="mt-1.5 text-[11px] leading-none text-muted-foreground">
-        {label}
-      </div>
-    </div>
-  );
-}

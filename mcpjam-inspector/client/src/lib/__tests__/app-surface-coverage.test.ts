@@ -166,6 +166,11 @@ describe("hosted tab policy stays consistent with the manifests", () => {
   it("blocks hosted surfaces sparingly", () => {
     // A growing block list means screens are being written that hosted
     // cannot serve — worth noticing deliberately rather than by drift.
+    //
+    // `webmcp` came OFF this list: it used to drive a browser on the machine
+    // running the inspector, which a hosted replica cannot do, but a hosted
+    // session drives one on the member's own computer instead. Its visibility
+    // is a feature flag now, not a deployment fact.
     expect(HOSTED_HASH_BLOCKED_TABS).toEqual(["tracing"]);
   });
 });
@@ -192,7 +197,9 @@ describe("buildAppAtlas", () => {
   });
 
   it("is stable across calls (it lives in the cacheable prefix)", () => {
-    expect(buildAppAtlas({ hosted: true })).toBe(buildAppAtlas({ hosted: true }));
+    expect(buildAppAtlas({ hosted: true })).toBe(
+      buildAppAtlas({ hosted: true }),
+    );
   });
 
   it("stays a reasonable size for a system prompt", () => {

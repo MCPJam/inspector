@@ -42,6 +42,7 @@ import { CliError, usageError, writeResult } from "./output.js";
 export type PlatformOptions = {
   apiKey?: string;
   apiUrl?: string;
+  apiHeader?: string[];
 };
 
 export type CloudClientContext = {
@@ -133,6 +134,10 @@ export function addPlatformOptions(command: Command): Command {
     .option(
       "--api-url <url>",
       "MCPJam API base URL (defaults to https://app.mcpjam.com/api/v1)"
+    )
+    .option(
+      "--api-header <header...>",
+      'Extra request header for a deployment behind an edge authenticator, as "Name: value" (repeatable; also MCPJAM_API_HEADERS, newline-separated)'
     );
 }
 
@@ -185,7 +190,10 @@ export async function runPlatformOperation<TOutput>(
   const timeoutHandle = setTimeout(() => {
     controller.abort(
       new PlatformApiError(
-        `Request timed out after ${timeoutMs}ms`,
+        `Request timed out after ${timeoutMs}ms. Raise it with --timeout <ms>. ` +
+          "The server may still be working: a command that spends credits keeps " +
+          "running after the client gives up, so retry with the SAME " +
+          "--idempotency-key to replay that turn rather than start another.",
         "TIMEOUT",
         {
           status: 0,
@@ -304,6 +312,18 @@ export type BindOperationExtras<TOutput> = {
    * `writeResult`, so JSON output stays machine-shaped.
    */
   formatHuman?: (result: TOutput) => string;
+  /**
+   * The `--timeout` default for THIS command, when the caller passed none.
+   *
+   * The 30s program default is sized for an MCP probe. A command that BLOCKS
+   * on a model turn — `sessions send` — routinely runs longer than that, and
+   * the client giving up does NOT stop the turn: it keeps running, keeps
+   * spending, and the caller sees only a timeout. Raising the default per
+   * command keeps the probe commands snappy without making the blocking ones
+   * lie about what happened. `eval run` needs none of this: it returns once
+   * the run has STARTED, and the run is then polled.
+   */
+  defaultTimeoutMs?: number;
 };
 
 /**
@@ -355,7 +375,7 @@ export function bindOperation<
     const invoked = invocation[invocation.length - 1] as Command;
     const options = invocation[invocation.length - 2] as TOptions;
     const positionals = invocation.slice(0, -2) as (string | undefined)[];
-    const globalOptions = getGlobalOptions(invoked);
+    const globalOptions = getGlobalOptions(invoked, bindExtras.defaultTimeoutMs);
     const merged = platformOptionsOf<TOptions & { project?: string }>(invoked);
     const underCloud = hasCloudAncestor(invoked);
     // Gating ambient resolution on the parent being named `cloud` alone

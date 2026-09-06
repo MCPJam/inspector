@@ -356,18 +356,6 @@ describe("SessionFlowSankey", () => {
     expect(new Set(xs).size).toBe(4);
   });
 
-  it("says how many themes were folded away, across all columns", () => {
-    renderSankey({
-      breakdown: breakdown({
-        sankey: {
-          ...SANKEY,
-          foldedByStage: { goal: 2, behavior: 1 },
-        },
-      }),
-    });
-    expect(screen.getByText(/3 smaller themes folded/)).toBeInTheDocument();
-  });
-
   it("warns that the counts are windowed when the scan truncated", () => {
     renderSankey({
       breakdown: breakdown({

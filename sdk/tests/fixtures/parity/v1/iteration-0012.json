@@ -80,6 +80,6 @@
         "reason": "observed"
       }
     ],
-    "stageAnalyzerVersion": 4
+    "stageAnalyzerVersion": 8
   }
 }

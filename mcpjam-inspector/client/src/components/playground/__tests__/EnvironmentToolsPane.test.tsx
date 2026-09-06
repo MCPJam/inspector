@@ -75,7 +75,7 @@ describe("EnvironmentToolsPane", () => {
     expect(screen.queryByText("Run")).not.toBeInTheDocument();
     expect(screen.queryByText("Connect")).not.toBeInTheDocument();
     expect(
-      screen.getByText(/connect automatically on every message/i)
+      screen.getByText(/connect automatically on every message/i),
     ).toBeInTheDocument();
   });
 
@@ -106,7 +106,7 @@ describe("EnvironmentToolsPane", () => {
 
     expect(screen.getByText("list_issues")).toBeInTheDocument();
     expect(
-      screen.getByTestId("environment-tools-error-ps_2")
+      screen.getByTestId("environment-tools-error-ps_2"),
     ).toHaveTextContent("asana: couldn't list tools");
   });
 
@@ -114,7 +114,7 @@ describe("EnvironmentToolsPane", () => {
     setTools({ servers: null, isLoading: true });
     render(<EnvironmentToolsPane projectId="p_1" environmentId="env_1" />);
     expect(
-      screen.getByText("Listing the environment's tools…")
+      screen.getByText("Listing the environment's tools…"),
     ).toBeInTheDocument();
   });
 
@@ -122,17 +122,17 @@ describe("EnvironmentToolsPane", () => {
     setTools({ error: "This environment couldn't be resolved." });
     render(<EnvironmentToolsPane projectId="p_1" environmentId="env_1" />);
     expect(
-      screen.getByText("This environment couldn't be resolved.")
+      screen.getByText("This environment couldn't be resolved."),
     ).toBeInTheDocument();
   });
 
   it("distinguishes zero tools from all-servers-failed", () => {
     setTools({ servers: [{ ...SERVERS[0], tools: [] }] });
     const { unmount } = render(
-      <EnvironmentToolsPane projectId="p_1" environmentId="env_1" />
+      <EnvironmentToolsPane projectId="p_1" environmentId="env_1" />,
     );
     expect(
-      screen.getByText("This environment's servers expose no tools.")
+      screen.getByText("This environment's servers expose no tools."),
     ).toBeInTheDocument();
     unmount();
 

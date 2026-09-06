@@ -2,6 +2,8 @@ import { createBrowserRouter, RouterProvider, redirect } from "react-router";
 import { RouteErrorScreen } from "./components/RouteErrorScreen";
 import App, {
   ApiKeysSettingsRoute,
+  BenchResultsRoute,
+  BenchRunnerRoute,
   GithubChecksSettingsRoute,
   GithubInstallCallbackSettingsRoute,
   IntegrationsSettingsRoute,
@@ -41,6 +43,7 @@ import App, {
   TasksRoute,
   ToolsRoute,
   TracingRoute,
+  WebmcpInspectorRoute,
   XAAFlowRoute,
 } from "./App";
 import { LoginInitiationRoute } from "./components/auth/login-initiation-route";
@@ -145,9 +148,18 @@ const ROUTE_ELEMENTS: Record<
   // get one 0-100 number on a private shareable link. Chrome-less like the
   // caniuse surface above, and reachable by guests with no sign-in.
   "embed/score": { element: <ScoreRunnerRoute /> },
+  // The benchmark flow on the same chrome-less surface: classify, price,
+  // consent, run on our infrastructure, read the scorecard. Same element for
+  // both paths — the run id is a route param, and it is what makes refresh
+  // and resume free, so re-mounting a different component for the deep link
+  // would throw away the one piece of state worth keeping.
+  "embed/bench": { element: <BenchRunnerRoute /> },
+  "embed/bench/:runId": { element: <BenchRunnerRoute /> },
   // A stored run, addressable only by its secret token. Deliberately
   // readable with no session at all — the link IS the credential.
   "results/:runToken": { element: <ScoreResultsRoute /> },
+  // The benchmark's own result link, on the same terms.
+  "bench/results/:secret": { element: <BenchResultsRoute /> },
   "capabilities/:capabilitySlug": { element: <CaniuseCapabilityRoute /> },
   computer: { element: <ComputerRoute /> },
   hosts: { element: <HostsRoute /> },
@@ -166,6 +178,7 @@ const ROUTE_ELEMENTS: Record<
   "oauth-flow": { element: <OAuthFlowRoute /> },
   "xaa-flow": { element: <XAAFlowRoute /> },
   tracing: { element: <TracingRoute /> },
+  webmcp: { element: <WebmcpInspectorRoute /> },
   chat: { element: <ChatAliasRoute /> },
   // Catch sub-paths like `/chat/thread-1` so old bookmarks land on
   // Playground instead of the router's `*` catch-all (now an explicit
@@ -237,6 +250,7 @@ const ROUTE_ELEMENTS: Record<
   "organizations/:orgId/models": { element: <OrganizationsRoute /> },
   "organizations/:orgId/slack": { element: <OrganizationsRoute /> },
   "organizations/:orgId/discord": { element: <OrganizationsRoute /> },
+  "organizations/:orgId/observability": { element: <OrganizationsRoute /> },
   "evals/shared/:token": { element: <EvalRunSharedRoute /> },
   evals: { element: <EvalsRoute /> },
   "evals/create": { element: <EvalsRoute /> },
@@ -322,7 +336,7 @@ const ROUTE_ELEMENTS: Record<
  * what the router matched, and it keeps the wrapper callable without a Request.
  */
 function withProjectScopedLoader(
-  loader: (args: any) => unknown
+  loader: (args: any) => unknown,
 ): (args: any) => unknown {
   return async (args: any) => {
     const projectId = String(args.params?.projectId ?? "");
@@ -346,7 +360,7 @@ function withProjectScopedLoader(
  */
 function routeChildFor(
   route: AppRouteEntry,
-  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown }
+  rendered: { element?: React.ReactElement; loader?: (args: any) => unknown },
 ) {
   const isIndex = route.path === "/";
   return {
@@ -370,7 +384,7 @@ function buildRouteChildren() {
   for (const path of Object.keys(ROUTE_ELEMENTS)) {
     if (!tablePaths.has(path)) {
       throw new Error(
-        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`
+        `[router] element registered for "${path}", which is not in APP_ROUTES — it would never be mounted`,
       );
     }
   }
@@ -381,7 +395,7 @@ function buildRouteChildren() {
       // A route table entry with nothing to render is a first-party bug —
       // the coverage test catches it, but fail loudly if one slips through.
       throw new Error(
-        `[router] no element registered for route "${route.path}"`
+        `[router] no element registered for route "${route.path}"`,
       );
     }
     return rendered;
@@ -406,9 +420,9 @@ function buildRouteChildren() {
           redirect(
             buildProjectPath(
               String(params.projectId),
-              PROJECT_HOME_RELATIVE_PATH
-            )
-          )
+              PROJECT_HOME_RELATIVE_PATH,
+            ),
+          ),
         ),
       };
     }
@@ -442,7 +456,7 @@ function buildRouteChildren() {
   });
 
   const unscopedChildren = APP_ROUTES.filter(
-    (route) => route.scope !== "project"
+    (route) => route.scope !== "project",
   ).map((route) => routeChildFor(route, elementFor(route)));
 
   return [
@@ -484,9 +498,8 @@ export function createAppRouter(): AppRouter {
           {
             path: "__e2e/oauth-debugger",
             lazy: async () => {
-              const { OAuthDebuggerE2EHarness } = await import(
-                "./components/e2e/OAuthDebuggerE2EHarness"
-              );
+              const { OAuthDebuggerE2EHarness } =
+                await import("./components/e2e/OAuthDebuggerE2EHarness");
               return { Component: OAuthDebuggerE2EHarness };
             },
           },

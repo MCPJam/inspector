@@ -38,6 +38,10 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: () => false,
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
   detectPlatform: () => "web",
@@ -53,6 +57,7 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 describe("getStepsBlockReason", () => {
@@ -331,6 +336,72 @@ describe("TestTemplateEditor prompt validation UI", () => {
       }
       return undefined;
     });
+  });
+
+  it("shows the converter's mapping note READ-ONLY, in claim wording", async () => {
+    const claim = {
+      status: "exact" as const,
+      sourceCaseKey: "upstream/refunds/duplicate-charge",
+      note: "1:1 with the upstream single-turn assertion form.",
+    };
+    useQueryMock.mockImplementation((name: string) => {
+      if (name === "testSuites:listTestCases") {
+        return [{ ...caseDoc, import: claim }];
+      }
+      if (name === "testSuites:getTestSuite") {
+        return { _id: "suite-1", environment: { servers: ["srv"] } };
+      }
+      return undefined;
+    });
+
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          { provider: "openai", model: "gpt-4", label: "GPT-4" } as any,
+        ]}
+        suiteIterations={[]}
+      />,
+    );
+
+    const details = await screen.findByTestId("import-claim-details");
+    expect(details).toHaveTextContent("claimed exact");
+    expect(details).toHaveTextContent(
+      "1:1 with the upstream single-turn assertion form.",
+    );
+    expect(details).toHaveTextContent("upstream/refunds/duplicate-charge");
+    // Never "verified" or "accepted": the converter claimed this, MCPJam did
+    // not check it.
+    expect(details).toHaveTextContent(/has not verified/i);
+    // READ-ONLY. Making the note editable here would let somebody rewrite the
+    // justification for a claim without changing the claim, which is the one
+    // edit that makes the record actively misleading.
+    expect(details.querySelector("input")).toBeNull();
+    expect(details.querySelector("textarea")).toBeNull();
+  });
+
+  it("shows nothing for a natively authored case", async () => {
+    renderWithProviders(
+      <TestTemplateEditor
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          { provider: "openai", model: "gpt-4", label: "GPT-4" } as any,
+        ]}
+        suiteIterations={[baseIteration]}
+      />,
+    );
+    await waitFor(() => {
+      expect(
+        screen.getByPlaceholderText("Enter the user prompt…"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("import-claim-details")).toBeNull();
   });
 
   it("marks empty user prompt and disables Run", async () => {

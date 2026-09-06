@@ -195,7 +195,10 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     delete process.env.CONVEX_HTTP_URL;
   });
 
-  async function runQuickTestCase(compareRunId?: string) {
+  async function runQuickTestCase(
+    compareRunId?: string,
+    intent?: string,
+  ) {
     // Use a BYOK-only model id so the runner takes the local generateText
     // path (which the test mocks). gpt-5-mini has a hosted "openai/gpt-5-mini"
     // counterpart and would otherwise route through the backend.
@@ -211,6 +214,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
             model: "gpt-4-turbo",
             provider: "openai",
             expectedToolCalls: [],
+            ...(intent !== undefined ? { intent } : {}),
             promptTurns: [
               { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
             ],
@@ -741,6 +745,17 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     expect(callsByRef["testSuites:lockEvalSession"]).toBe(1);
   });
 
+  it("freezes the authored intent in a quick-run iteration snapshot", async () => {
+    await runQuickTestCase(undefined, "Task search");
+
+    const createCall = convexClient.mutation.mock.calls.find(
+      (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+    );
+    expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+      intent: "Task search",
+    });
+  });
+
   it("derives lockReason from iteration STATUS, not verdict: failed-verdict + clean cycle → eval_completed", async () => {
     // Regression test for the transcript-lifecycle vs verdict split.
     // The lock-reason describes whether the eval CYCLE ran to completion
@@ -917,6 +932,113 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
     const updatePayload = await runQuickTestCase();
 
     expect(updatePayload.metadata).not.toHaveProperty("compareRunId");
+  });
+
+  describe("description-experiment rewrite stamp", () => {
+    const rewriteMarker = {
+      experimentId: "exp_1",
+      toolName: "search",
+      description: "Find documents by query.",
+      proposalHash: "hash_1",
+    };
+
+    async function runWithOverride(args: {
+      preparedDescription?: string;
+      suiteHostConfig?: Record<string, unknown>;
+      omitOverride?: boolean;
+      /** The prepared catalog does not offer the tool at all. */
+      absentTool?: boolean;
+    }) {
+      preparedToolsOverride.current = args.absentTool
+        ? { other_tool: { description: "unrelated" } }
+        : {
+            search: {
+              description: args.preparedDescription ?? rewriteMarker.description,
+            },
+          };
+      await runEvalSuiteWithAiSdk({
+        ...buildQuickRunConfig(),
+        ...(args.omitOverride
+          ? {}
+          : { toolDescriptionOverride: rewriteMarker }),
+        ...(args.suiteHostConfig
+          ? { suiteHostConfig: args.suiteHostConfig }
+          : {}),
+      } as any);
+      const updateCall = convexClient.action.mock.calls.find(
+        (call) => call[0] === "testSuites:updateTestIteration"
+      );
+      return updateCall?.[1] as {
+        metadata?: Record<string, unknown>;
+      };
+    }
+
+    it("stamps applied true when the prepared tool description matches", async () => {
+      const orchestration = await import("../../../utils/chat-v2-orchestration");
+      const payload = await runWithOverride({});
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: true,
+      });
+      expect(vi.mocked(orchestration.prepareChatV2)).toHaveBeenCalledWith(
+        expect.objectContaining({
+          toolDescriptionOverrides: { search: rewriteMarker.description },
+        })
+      );
+    });
+
+    it("stamps applied false when the prepared tool description does not match", async () => {
+      const payload = await runWithOverride({
+        preparedDescription: "the original catalog copy",
+      });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+    });
+
+    it("stamps applied false when the prepared catalog lacks the tool", async () => {
+      // The case a customer actually hits: the rewrite arm replays against
+      // servers that no longer offer the tool, so nothing was rewritten.
+      const payload = await runWithOverride({ absentTool: true });
+      expect(payload.metadata?.descriptionExperiment).toEqual({
+        experimentId: "exp_1",
+        arm: "rewrite",
+        toolName: "search",
+        proposalHash: "hash_1",
+        applied: false,
+      });
+      expect(payload.metadata).not.toHaveProperty(
+        "tools_description_overridden"
+      );
+    });
+
+    it("does not stamp descriptionExperiment on the original arm", async () => {
+      const payload = await runWithOverride({ omitOverride: true });
+      expect(payload.metadata).not.toHaveProperty("descriptionExperiment");
+    });
+
+    it("refuses a harness host with DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED", async () => {
+      preparedToolsOverride.current = {
+        search: { description: rewriteMarker.description },
+      };
+      await expect(
+        runEvalSuiteWithAiSdk({
+          ...buildQuickRunConfig(),
+          toolDescriptionOverride: rewriteMarker,
+          suiteHostConfig: { harness: "claude-code" },
+        } as any)
+      ).rejects.toMatchObject({
+        status: 400,
+        details: { reason: "DESCRIPTION_OVERRIDE_ENGINE_UNSUPPORTED" },
+      });
+    });
   });
 
   it("does not throw from non-streaming onStepFinish and records tokens once", async () => {
@@ -2077,6 +2199,7 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
           model: "claude-haiku-4.5",
           provider: "anthropic",
           expectedToolCalls: [],
+          intent: "Stream task",
           promptTurns: [
             { id: "turn-1", prompt: "Hello", expectedToolCalls: [] },
           ],
@@ -2116,6 +2239,13 @@ describe("runEvalSuiteWithAiSdk compare session metadata", () => {
       const payload = updateCall![1] as Record<string, unknown>;
       expect(payload.status).toBe("setup_failed");
       expect(payload.result).toBe("failed");
+
+      const createCall = convexClient.mutation.mock.calls.find(
+        (call) => call[0] === "testSuites:recordIterationStartWithoutRun"
+      );
+      expect(createCall?.[1]?.testCaseSnapshot).toMatchObject({
+        intent: "Stream task",
+      });
 
       // The runner must NOT have hit the backend — failure happens before
       // the per-step fetch loop.

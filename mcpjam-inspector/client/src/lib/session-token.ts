@@ -32,6 +32,35 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
+/**
+ * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
+ * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
+ * genuine failure.
+ *
+ * A 403 here is not a bug: the server withholds the token from any host that
+ * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
+ * A self-hosted user reaching the inspector over the network hits exactly this,
+ * and it has a self-service fix (allowlist their host) — so it gets a tailored
+ * screen and is NOT reported to Sentry, unlike a real 5xx/transport failure.
+ */
+export class SessionTokenError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Failed to get session token: ${status}`);
+    this.name = "SessionTokenError";
+    this.status = status;
+  }
+}
+
+/**
+ * Whether `error` is the expected "host not allowed" session-token denial (403).
+ * These are self-inflicted-by-config, not defects: the caller renders guidance
+ * instead of a generic error and skips error reporting.
+ */
+export function isSessionTokenHostDenied(error: unknown): boolean {
+  return error instanceof SessionTokenError && error.status === 403;
+}
+
 type AuthFetchSurface = "scenario";
 
 const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
@@ -39,14 +68,14 @@ const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
 };
 
 function resolveAuthFetchSurface(
-  input: RequestInfo | URL
+  input: RequestInfo | URL,
 ): AuthFetchSurface | null {
   const rawUrl =
     input instanceof URL
       ? input.toString()
       : typeof Request !== "undefined" && input instanceof Request
-      ? input.url
-      : String(input);
+        ? input.url
+        : String(input);
   const baseOrigin =
     typeof window !== "undefined" ? window.location.origin : "http://localhost";
 
@@ -98,14 +127,14 @@ function hasAuthorizationHeader(headers?: HeadersInit): boolean {
   }
 
   return Object.keys(headers).some(
-    (key) => key.toLowerCase() === "authorization"
+    (key) => key.toLowerCase() === "authorization",
   );
 }
 
 function buildAuthFetchInit(
   input: RequestInfo | URL,
   init: RequestInit | undefined,
-  hostedAuthorizationHeader: string | null
+  hostedAuthorizationHeader: string | null,
 ): RequestInit {
   const sessionHeaders = shouldAttachSessionHeaders(input)
     ? getAuthHeaders()
@@ -148,7 +177,7 @@ export async function initializeSessionToken(): Promise<string> {
     initPromise = fetch("/api/session-token")
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Failed to get session token: ${response.status}`);
+          throw new SessionTokenError(response.status);
         }
         const data = await response.json();
         cachedToken = data.token;
@@ -255,17 +284,40 @@ function resolveRequestUrl(input: RequestInfo | URL): URL | null {
     return input instanceof URL
       ? input
       : typeof Request !== "undefined" && input instanceof Request
-      ? new URL(input.url, baseOrigin)
-      : new URL(String(input), baseOrigin);
+        ? new URL(input.url, baseOrigin)
+        : new URL(String(input), baseOrigin);
   } catch {
     return null;
   }
 }
 
-// The session token is a single-process secret for the local CLI/Inspector
-// build; only attach it to loopback `/api/*` calls. Non-hosted Inspector is
-// not supported behind a public origin — relaxing this would expose the token
-// to any reachable client.
+/**
+ * May this URL carry the local session token?
+ *
+ * The token is a single-process secret for the local CLI/Inspector build, and
+ * this gate exists so `authFetch` never ships it to a FOREIGN origin (the
+ * Convex `*.convex.site` HTTP actions, an absolute URL a caller pasted, a
+ * redirect target). It is an exfiltration guard, not a localhost-only rule:
+ * the server that issued the token is the only party that should ever see it,
+ * and that server is reachable at exactly two places from this page's point of
+ * view — a loopback address, or the origin the page itself was served from.
+ *
+ * Same-origin matters for the self-hosted-over-the-network case
+ * (`MCPJAM_ALLOWED_HOSTS`, BB-118): the server issues the token to an
+ * allowlisted LAN host, and the page at `http://192.168.1.50:6274` must be
+ * able to send it back to `http://192.168.1.50:6274/api/*`. Matching the FULL
+ * origin (scheme + host + port), never just the hostname, keeps a different
+ * service on the same box (`:9999`) from receiving it. Which hosts may hold
+ * the token at all is the server's decision (`mayServeSessionToken`) — a page
+ * on an origin the server refused never has a token to attach.
+ */
+function isSessionTokenOrigin(parsed: URL): boolean {
+  if (isLoopbackHostname(parsed.hostname)) return true;
+  return (
+    typeof window !== "undefined" && parsed.origin === window.location.origin
+  );
+}
+
 function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
   if (HOSTED_MODE) {
     return false;
@@ -273,9 +325,7 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 
   const parsed = resolveRequestUrl(input);
   if (parsed) {
-    return (
-      isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/")
-    );
+    return isSessionTokenOrigin(parsed) && parsed.pathname.startsWith("/api/");
   }
   return typeof input === "string" && input.startsWith("/api/");
 }
@@ -305,6 +355,11 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // The org-settings Capabilities page reading the agent's op registry, so its
   // toggles cannot drift from the tools the server actually offers.
   "/api/v1/agent-ops",
+  // Local-harness control routes. These are `requireVerifiedAuth()`-gated and
+  // one of them (consent grant) forwards the bearer to Convex to register this
+  // installation's instance key — so without this entry a signed-in user gets a
+  // 401 on every one of them, which is the exact bug PR #4515 shipped once.
+  "/api/mcp/local-harness",
   // Local resolver path that calls Convex /web/authorize-batch-local.
   "/api/mcp/connect",
   "/api/mcp/servers/reconnect",
@@ -333,6 +388,12 @@ const HOSTED_AUTH_PATH_PREFIXES = [
   // via authFetch (not a manual header) keeps the on-401 session-token refresh
   // so a dev-server restart doesn't strand consent at 401 until a page reload.
   "/api/mcp/computers/local-consent",
+  // The local-terminal nonce mint mounts the same bearerAuthMiddleware +
+  // `requireVerifiedAuth` stack as the consent routes, so it needs the user's
+  // bearer for the same reason — without it the mint 401s on the missing
+  // bearer before the consent check ever runs, and the terminal can never
+  // open on a WorkOS-signed-in inspector.
+  "/api/mcp/computers/local-terminal-token",
   // Convex HTTP actions called via absolute URL (OAuth completion, etc.).
   "/web/oauth/",
   // Registry catalog/star routes are Convex HTTP actions called via absolute
@@ -393,6 +454,34 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // module header on why a pattern, not a prefix, is what keeps the grant as
   // narrow as the id segments in the middle.
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/run-disclosure$/,
+  // The Evaluate (New) chain reads: D9's decision summary and D5c's stage
+  // analytics, suite-paged and run-scoped. Same anchored bearer-scope grant as
+  // the disclosure above, and needed for the same reason — both go out through
+  // `authFetch`, so without an entry here they ship no `Authorization` at all
+  // and the route answers "Bearer token required". That 401 surfaces as
+  // `requestFailed`/service copy ("could not be loaded"), which reads as a
+  // backend outage rather than a missing header, so the panels look broken
+  // while the API is fine.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics|route-facts)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
+  // Description-experiment reads and the two writes the Evaluate card
+  // issues through authFetch (propose + start). Anchored the same way as
+  // route-facts: id segments in the middle, no blanket /eval- prefix.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-description-experiments\/[^/]+(\/start)?$/,
+  // One page of a run's iterations, each carrying its own stage rows — the
+  // only read that covers a PASSING trial's chain, which D9's diagnostics
+  // exclude by contract.
+  //
+  // Anchored at `iterations` on purpose: the trace and the per-iteration
+  // resource beneath it are a transcript and a row, read elsewhere with their
+  // own auth, and a pattern that swallowed them would be the blanket prefix
+  // this list exists to avoid. The eval-chain test pins all three.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations$/,
+  // What changed since the previous run. Same grant, same reason as the reads
+  // above, and anchored the same way: `compare` is one segment and nothing
+  // hangs beneath it.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/compare$/,
 ];
 
 function pathMatchesHostedPrefix(pathname: string): boolean {
@@ -445,6 +534,16 @@ export function addTokenToUrl(url: string): string {
   try {
     // Parse URL (uses origin as base for relative URLs)
     const parsed = new URL(url, window.location.origin);
+
+    // Same exfiltration guard as `authFetch`: the token only ever travels back
+    // to the server that issued it (same origin or loopback). A foreign
+    // absolute URL is returned untouched rather than carrying the secret in a
+    // query string to another host.
+    if (!isSessionTokenOrigin(parsed)) {
+      console.warn("[Auth] Refusing to attach session token to foreign origin");
+      return url;
+    }
+
     parsed.searchParams.set("_token", token);
 
     // Check if this is a same-origin URL
@@ -452,11 +551,13 @@ export function addTokenToUrl(url: string): string {
       // Same-origin: return relative path (pathname + search)
       return parsed.pathname + parsed.search;
     } else {
-      // Cross-origin: preserve the full absolute URL
+      // Absolute loopback URL: preserve the full absolute URL
       return parsed.href;
     }
   } catch {
-    // Fallback for unusual URL formats
+    // Fallback for unusual URL formats. `new URL` only throws for values that
+    // cannot be absolute (it accepts anything absolute and resolves anything
+    // relative), so what lands here is a same-origin relative path.
     const separator = url.includes("?") ? "&" : "?";
     return `${url}${separator}_token=${encodeURIComponent(token)}`;
   }
@@ -464,8 +565,8 @@ export function addTokenToUrl(url: string): string {
 
 /**
  * Authenticated fetch wrapper.
- * Adds local session auth only for loopback `/api/*` requests and hosted auth
- * where applicable.
+ * Adds local session auth only for same-origin or loopback `/api/*` requests
+ * (see `isSessionTokenOrigin`) and hosted auth where applicable.
  * Use this instead of native fetch for API calls.
  *
  * @param input - URL or Request object
@@ -474,7 +575,7 @@ export function addTokenToUrl(url: string): string {
  */
 export async function authFetch(
   input: RequestInfo | URL,
-  init?: RequestInit
+  init?: RequestInit,
 ): Promise<Response> {
   const surface = resolveAuthFetchSurface(input);
   const callerProvidedAuthorization = hasAuthorizationHeader(init?.headers);
@@ -556,7 +657,7 @@ export async function authFetch(
   const retryInit = buildAuthFetchInit(
     input,
     init,
-    `Bearer ${refreshedGuestToken}`
+    `Bearer ${refreshedGuestToken}`,
   );
   return fetch(input, retryInit);
 }

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useConvex, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
-import { Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
+import { Circle, Loader2, Play, Plus, Puzzle, Sparkles, Trash2 } from "lucide-react";
+import { useFeatureFlagEnabled } from "posthog-js/react";
+import { SIMPLE_CASE_EDITOR_FLAG } from "./simple-case/simple-case-model";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { Checkbox } from "@mcpjam/design-system/checkbox";
@@ -26,6 +28,7 @@ import {
   EVAL_FAILED_BADGE_CLASS,
   EVAL_LOW_PASS_RATE_TEXT_CLASS,
 } from "./constants";
+import { ImportClaimBadge } from "./import-claim-badge";
 import { ITERATION_RESULT_BADGE_BASE } from "./iteration-result-presentation";
 import { computeIterationResult } from "./pass-criteria";
 import { formatRelativeTime, getEffectiveSuiteServers } from "./helpers";
@@ -139,6 +142,8 @@ interface TestCasesOverviewProps {
   generateTestCasesDisabledReason?: string;
   isGeneratingTestCases?: boolean;
   onCreateTestCase?: () => void;
+  /** Run-once-then-adopt draft. Flag-gated; omitted keeps the two-button empty state. */
+  onRecordTestCase?: () => void;
   /**
    * `namedHostId` → display name for hosts with no suite attachment — the
    * resolved host of an environment-backed run, or a detached one. Owned by
@@ -184,10 +189,13 @@ export function TestCasesOverview({
   generateTestCasesDisabledReason,
   isGeneratingTestCases = false,
   onCreateTestCase,
+  onRecordTestCase,
   hostNamesById,
   environments,
   quickRunIterationOverride,
 }: TestCasesOverviewProps) {
+  const simpleCaseEditorEnabled =
+    useFeatureFlagEnabled(SIMPLE_CASE_EDITOR_FLAG) === true;
   const convex = useConvex();
   // A one-host matrix is pointless, so the cross-host view is only offered when
   // the suite has >=2 host attachments. Same source useCrossHostData reads.
@@ -647,64 +655,89 @@ export function TestCasesOverview({
                 ) : hideViewModeSelect ? (
                   <div className="flex min-h-[200px] flex-col items-center justify-center gap-4 px-4 py-12">
                     {onGenerateTestCases || onCreateTestCase ? (
-                      <div className="flex items-center gap-2">
-                        {onGenerateTestCases ? (
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="inline-flex">
-                                <Button
-                                  type="button"
-                                  variant="default"
-                                  className="h-11 gap-2 px-6 text-sm"
-                                  onClick={onGenerateTestCases}
-                                  disabled={
-                                    !canGenerateTestCases ||
-                                    isGeneratingTestCases
-                                  }
-                                  aria-busy={isGeneratingTestCases}
-                                >
-                                  {isGeneratingTestCases ? (
-                                    <Loader2
-                                      className="h-4 w-4 shrink-0 animate-spin"
-                                      aria-hidden
-                                    />
-                                  ) : (
-                                    <Sparkles
-                                      className="h-4 w-4 shrink-0"
-                                      aria-hidden
-                                    />
-                                  )}
-                                  Generate
-                                </Button>
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent
-                              variant="muted"
-                              side="bottom"
-                              sideOffset={6}
+                      <div className="flex flex-col items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          {onGenerateTestCases ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="inline-flex">
+                                  <Button
+                                    type="button"
+                                    variant="default"
+                                    className="h-11 gap-2 px-6 text-sm"
+                                    onClick={onGenerateTestCases}
+                                    disabled={
+                                      !canGenerateTestCases ||
+                                      isGeneratingTestCases
+                                    }
+                                    aria-busy={isGeneratingTestCases}
+                                  >
+                                    {isGeneratingTestCases ? (
+                                      <Loader2
+                                        className="h-4 w-4 shrink-0 animate-spin"
+                                        aria-hidden
+                                      />
+                                    ) : (
+                                      <Sparkles
+                                        className="h-4 w-4 shrink-0"
+                                        aria-hidden
+                                      />
+                                    )}
+                                    Generate
+                                  </Button>
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent
+                                variant="muted"
+                                side="bottom"
+                                sideOffset={6}
+                              >
+                                {isGeneratingTestCases
+                                  ? "Generating test cases…"
+                                  : !canGenerateTestCases
+                                    ? generateTestCasesDisabledReason ??
+                                      "Configure suite servers before generating cases."
+                                    : "Generate suggested cases from your server's tools."}
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : null}
+                          {simpleCaseEditorEnabled && onRecordTestCase ? (
+                            <Button
+                              type="button"
+                              variant="outline"
+                              className="h-11 gap-2 px-6 text-sm"
+                              onClick={onRecordTestCase}
                             >
-                              {isGeneratingTestCases
-                                ? "Generating test cases…"
-                                : !canGenerateTestCases
-                                ? generateTestCasesDisabledReason ??
-                                  "Configure suite servers before generating cases."
-                                : "Generate suggested cases from your server's tools."}
-                            </TooltipContent>
-                          </Tooltip>
-                        ) : null}
-                        {onCreateTestCase ? (
-                          <Button
-                            type="button"
-                            variant="default"
-                            className="h-11 gap-2 px-6 text-sm"
-                            onClick={onCreateTestCase}
-                          >
-                            <Plus
-                              className="h-4 w-4 shrink-0"
-                              aria-hidden
-                            />
-                            New case
-                          </Button>
+                              <Circle
+                                className="h-4 w-4 shrink-0"
+                                aria-hidden
+                              />
+                              Record
+                            </Button>
+                          ) : null}
+                          {onCreateTestCase ? (
+                            <Button
+                              type="button"
+                              variant={
+                                simpleCaseEditorEnabled ? "outline" : "default"
+                              }
+                              className="h-11 gap-2 px-6 text-sm"
+                              onClick={onCreateTestCase}
+                            >
+                              <Plus
+                                className="h-4 w-4 shrink-0"
+                                aria-hidden
+                              />
+                              {simpleCaseEditorEnabled ? "Write" : "New case"}
+                            </Button>
+                          ) : null}
+                        </div>
+                        {simpleCaseEditorEnabled ? (
+                          <p className="text-[11px] text-muted-foreground">
+                            Or import a suite file with{" "}
+                            <code className="font-mono">mcpjam cloud eval</code>
+                            .
+                          </p>
                         ) : null}
                       </div>
                     ) : null}
@@ -896,6 +929,7 @@ export function TestCasesOverview({
                             CI
                           </span>
                         ) : null}
+                        <ImportClaimBadge claim={testCase.import} />
                       </span>
                       {showClientRail ? null : lastPart}
                     </>
