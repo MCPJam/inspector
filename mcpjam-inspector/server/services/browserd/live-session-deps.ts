@@ -109,6 +109,21 @@ export function adaptSandbox(sandbox: ConnectedSandboxLike): BrowserdSandbox {
       });
       return { kill: () => handle.kill(), wait: () => handle.wait() };
     },
+    async run(command, options) {
+      try {
+        const result = await sandbox.commands.run(command, {
+          envs: options?.envs,
+          timeoutMs: 30_000,
+        });
+        return { exitCode: Number(result?.exitCode ?? 0) };
+      } catch (error) {
+        // The E2B SDK rejects on a non-zero exit. The caller asked for the
+        // exit CODE — a failing probe is an answer, not an error — so recover
+        // it when the SDK carried one, and read anything else as a failure.
+        const code = (error as { exitCode?: unknown })?.exitCode;
+        return { exitCode: typeof code === "number" ? code : 1 };
+      }
+    },
     getHost: (port) => sandbox.getHost(port),
   };
 }
