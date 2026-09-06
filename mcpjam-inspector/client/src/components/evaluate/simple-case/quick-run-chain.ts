@@ -3,7 +3,7 @@ import {
   projectStageDerivation,
   type EvalRunDecisionChain,
 } from "@mcpjam/sdk/contract";
-import type { EvalIteration } from "../types";
+import type { EvalIteration } from "../../evals/types";
 
 /**
  * Assemble a decision chain from a quick-run iteration the client already
