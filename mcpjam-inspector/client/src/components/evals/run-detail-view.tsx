@@ -1101,6 +1101,12 @@ export function RunDetailView({
           selectedRunDetails.configSnapshot?.environmentPluginVersions
         }
         skillsExcluded={selectedRunDetails.configSnapshot?.skillsExcluded}
+        {...(selectedRunDetails.configSnapshot?.toolDescriptionOverride
+          ? {
+              toolDescriptionOverride:
+                selectedRunDetails.configSnapshot.toolDescriptionOverride,
+            }
+          : {})}
       />
 
       {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (
