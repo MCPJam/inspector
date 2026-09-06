@@ -169,11 +169,7 @@ function endOfExpression(source: string, start: number): number {
       j += 2;
       continue;
     }
-    // `://` is a URL, not a comment. JSX children are raw source, so
-    // `<span>http://host</span>` was blanked to the end of its line, and
-    // anything after it on that line — a `<button onClick>`, or the `)` that
-    // closes the callback — went with it. See the JSX-TEXT note above.
-    if (two === "//" && source[i - 1] !== ":") {
+    if (two === "//") {
       const nl = source.indexOf("\n", j);
       j = nl === -1 ? source.length : nl;
       continue;
@@ -239,7 +235,11 @@ export function maskNonCode(source: string): string {
   while (i < source.length) {
     const two = source.slice(i, i + 2);
 
-    if (two === "//") {
+    // `://` is a URL, not a comment. JSX children are raw source, so
+    // `<span>http://host</span>` was blanked to the end of its line, and
+    // anything after it on that line — a `<button onClick>`, or the `)` that
+    // closes the callback — went with it. See the JSX-TEXT note above.
+    if (two === "//" && source[i - 1] !== ":") {
       const nl = source.indexOf("\n", i);
       const stop = nl === -1 ? source.length : nl;
       blank(i, stop);

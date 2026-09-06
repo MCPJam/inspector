@@ -1132,7 +1132,15 @@ describe("ServerPicker — the consequences of a delete", () => {
     // Without `onClearSelection` the parent keeps the id it stored, so this
     // delete is refused — and a control offered only to be denied is a dead
     // control. It used to render, and answer a click with a toast.
-    mockState.attachments = [PAIR2];
+    mockState.attachments = [
+      PAIR2,
+      {
+        _id: "att_o",
+        name: "other pair",
+        serverIds: ["srv_1", "srv_2"],
+        resolvedServerNames: ["alpha", "beta"],
+      },
+    ];
     render(
       <ServerPicker projectId="p_1" value="att_p" onChange={vi.fn()} />,
     );
@@ -1140,11 +1148,13 @@ describe("ServerPicker — the consequences of a delete", () => {
     await userEvent.click(
       await screen.findByRole("tab", { name: "Server Groups" }),
     );
-    // The row is there — the trigger names it too, hence `getAllByText` —
-    // and only its delete control is withheld.
-    await waitFor(() =>
-      expect(screen.getAllByText("prod pair").length).toBeGreaterThan(0),
-    );
+    // Waited on something that exists ONLY inside the row. "prod pair" is no
+    // good: the trigger renders it from the first paint, so the wait was
+    // already satisfied and the assertion below would have passed against a
+    // tab that never rendered at all.
+    expect(
+      await screen.findByRole("button", { name: "Delete other pair" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Delete prod pair" })).toBeNull();
     expect(mockState.deleteSpy).not.toHaveBeenCalled();
   });

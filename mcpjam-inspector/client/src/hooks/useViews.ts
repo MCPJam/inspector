@@ -191,6 +191,19 @@ export function useProjectServers({
   ) as RemoteServer[] | undefined;
 
   const isLoading = enableQuery && servers === undefined;
+  /**
+   * A skipped query reports `isLoading: false` with an empty list, which reads
+   * as "answered, and empty". While the DB user is not ready that is wrong —
+   * the query has not run — so the two are told apart here, by the hook that
+   * owns the skip, rather than by every caller re-deriving it.
+   *
+   * Computed from the SAME inputs as `enableQuery`, because it has to be true
+   * on the very first render. `isEnsuringUser` is not: it starts `false` and is
+   * raised inside an effect, so the renders before that effect runs would
+   * still claim the empty list was an answer.
+   */
+  const isBootstrapping =
+    isAuthenticated && !isUserReady && shouldQueryProjectId(projectId);
 
   // Create a map for quick lookup by name
   const serversByName = useMemo(() => {
@@ -217,6 +230,7 @@ export function useProjectServers({
     serversByName,
     serversById,
     isLoading,
+    isBootstrapping,
   };
 }
 
@@ -245,8 +259,15 @@ export function useProjectServerAttachments({
   }> | undefined;
 
   const isLoading = enableQuery && serverAttachments === undefined;
+  /** See `useProjectServers`: a skipped query is not an answer. */
+  const isBootstrapping =
+    isAuthenticated && !isUserReady && shouldQueryProjectId(projectId);
 
-  return { serverAttachments: serverAttachments ?? [], isLoading };
+  return {
+    serverAttachments: serverAttachments ?? [],
+    isLoading,
+    isBootstrapping,
+  };
 }
 
 // Server mutation for creating servers

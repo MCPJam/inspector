@@ -62,6 +62,31 @@ function endOfOpeningTag(source: string, start: number): number {
       i += 1;
       continue;
     }
+    // A template literal is a quoted region too, and its `${…}` holds braces
+    // that are not this element's. Without it, `title={`{`}` desynced the
+    // depth and the element was truncated or skipped — either a correct call
+    // site failing CI, or a missing `inModal` going unseen.
+    if (c === "`") {
+      i += 1;
+      let expr = 0;
+      while (i < source.length) {
+        const t = source[i];
+        if (t === "\\") {
+          i += 2;
+          continue;
+        }
+        if (expr === 0 && t === "`") break;
+        if (t === "$" && source[i + 1] === "{") {
+          expr += 1;
+          i += 2;
+          continue;
+        }
+        if (expr > 0 && t === "}") expr -= 1;
+        i += 1;
+      }
+      i += 1;
+      continue;
+    }
     if (c === "{") {
       depth += 1;
       i += 1;
@@ -122,6 +147,17 @@ describe("reading a <ServerPicker> element out of source", () => {
     const [element] = serverPickerElements(src);
     expect(element).toBeDefined();
     expect(disablesPortal(element)).toBe(true);
+  });
+
+  it("is not desynced by braces inside a quoted prop value", () => {
+    // A string was already handled; a TEMPLATE was not, and its `${…}` braces
+    // were counted as the element's own.
+    for (const prop of ['title={"{"}', "title={`{`}", "title={`${'}'}`}"]) {
+      const src = `<ServerPicker ${prop} inModal />`;
+      const [element] = serverPickerElements(src);
+      expect(element, prop).toContain("inModal");
+      expect(disablesPortal(element), prop).toBe(true);
+    }
   });
 
   it("yields nothing for an element that never closes", () => {

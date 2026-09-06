@@ -22,7 +22,6 @@ import { cn } from "@/lib/utils";
 import { toast } from "@/lib/toast";
 import { navigateApp, routePaths } from "@/lib/app-navigation";
 import { useProjectServerAttachments, useProjectServers } from "@/hooks/useViews";
-import { useDbUserBootstrapStatus } from "@/contexts/db-user-ready-context";
 import { useOptionalSharedAppState } from "@/state/app-state-context";
 import { useServerActionsOptional } from "@/state/server-actions-context";
 import {
@@ -54,11 +53,18 @@ import {
  * entry can go.
  */
 type PendingWrites = {
+  /**
+   * The project these writes were made against. Carried WITH them so a render
+   * for another project discards the overlay by DERIVATION — an effect clears
+   * it one render too late, and that render is the one offering the old
+   * project's rows.
+   */
+  projectId: string;
   added: EvalServerAttachment[];
   removed: string[];
 };
 
-const NO_PENDING: PendingWrites = { added: [], removed: [] };
+const NO_PENDING: PendingWrites = { projectId: "", added: [], removed: [] };
 
 export type ServerPickerProps = {
   projectId: string;
@@ -97,11 +103,16 @@ export function ServerPicker({
   triggerTestId,
 }: ServerPickerProps) {
   const { isAuthenticated } = useConvexAuth();
-  const { serverAttachments, isLoading: attachmentsLoading } =
-    useProjectServerAttachments({ isAuthenticated, projectId });
-  const { servers: catalogRows, isLoading: catalogLoading } = useProjectServers(
-    { isAuthenticated, projectId },
-  );
+  const {
+    serverAttachments,
+    isLoading: attachmentsLoading,
+    isBootstrapping: attachmentsBootstrapping,
+  } = useProjectServerAttachments({ isAuthenticated, projectId });
+  const {
+    servers: catalogRows,
+    isLoading: catalogLoading,
+    isBootstrapping: catalogBootstrapping,
+  } = useProjectServers({ isAuthenticated, projectId });
   const appState = useOptionalSharedAppState();
   const actions = useServerActionsOptional();
   const createServerAttachment = useMutation(
@@ -123,17 +134,22 @@ export function ServerPicker({
    * "just deleted" meant two release effects, two ideas of when a write has
    * landed, and a third one waiting to be written for the next write kind.
    */
-  const [pending, setPending] = useState<PendingWrites>(NO_PENDING);
+  const [storedPending, setPending] = useState<PendingWrites>(NO_PENDING);
+
+  /** The overlay, but only when it belongs to the project being rendered. */
+  const pending =
+    storedPending.projectId === projectId ? storedPending : NO_PENDING;
 
   /**
-   * Pending writes belong to the project they were written in. A surface that
-   * swaps `projectId` without remounting would otherwise carry them across:
-   * the old project's minted rows would show on the new project's tabs, and
-   * one could be selected under a project that does not hold it.
+   * The project a completing write must still be looking at.
+   *
+   * `projectId` inside a handler is the value captured when the click
+   * happened; this is the value NOW. A write that lands after the user has
+   * switched projects belongs to a screen they have left, so it must not
+   * report a selection or reopen anything here.
    */
-  useEffect(() => {
-    setPending(NO_PENDING);
-  }, [projectId]);
+  const currentProject = useRef(projectId);
+  currentProject.current = projectId;
 
   /**
    * A SAME-TICK backstop for `busy`, and deliberately nothing more.
@@ -230,14 +246,13 @@ export function ServerPicker({
    * marked a live selection dangling and told the user the project has no
    * servers. That is the BB-182 defect one layer up.
    *
-   * `isEnsuringUser`, not `!isUserReady`: the context defaults to
-   * `{ isEnsuringUser: false, isUserReady: false }`, so a picker mounted
-   * outside the provider would otherwise claim to be loading for ever — the
-   * exact failure the skipped-query note above guards against.
+   * Answered by the hooks that own the skip, not re-derived here: the picker
+   * has no business knowing WHY a query did not run, and reaching for the
+   * bootstrap context directly made this component break every test that
+   * mocks that module without the new export.
    */
-  const { isEnsuringUser } = useDbUserBootstrapStatus();
-  const catalogKnown = !isEnsuringUser && !catalogLoading;
-  const attachmentsKnown = !isEnsuringUser && !attachmentsLoading;
+  const catalogKnown = !catalogBootstrapping && !catalogLoading;
+  const attachmentsKnown = !attachmentsBootstrapping && !attachmentsLoading;
 
   /**
    * One flag, and the only guard the write paths have. It disables every
@@ -267,12 +282,13 @@ export function ServerPicker({
       // Same identity when nothing changed, so React bails out of the render
       // rather than looping on `serverAttachments`, which is a fresh array
       // every time until the query settles.
+      if (prev.projectId !== projectId) return prev;
       return added.length === prev.added.length &&
         removed.length === prev.removed.length
         ? prev
-        : { added, removed };
+        : { ...prev, added, removed };
     });
-  }, [serverAttachments, attachmentsKnown, pending]);
+  }, [serverAttachments, attachmentsKnown, pending, projectId]);
 
   /**
    * The one deadline, and only for a written row the query never lists.
@@ -427,7 +443,13 @@ export function ServerPicker({
             serverIds: [serverId],
             resolvedServerNames: [server.name],
           };
-          setPending((prev) => ({ ...prev, added: [...prev.added, created] }));
+          if (currentProject.current !== projectId) return;
+          setPending((prev) => ({
+            projectId,
+            removed: prev.projectId === projectId ? prev.removed : [],
+            added:
+              prev.projectId === projectId ? [...prev.added, created] : [created],
+          }));
           // Awaited for the same reason as the group path.
           await onChange(result._id, created);
           setOpen(false);
@@ -504,7 +526,13 @@ export function ServerPicker({
           // gap shifts every later name onto the wrong id.
           resolvedServerNames: serverIds.map((id) => byId.get(id) ?? ""),
         };
-        setPending((prev) => ({ ...prev, added: [...prev.added, created] }));
+        if (currentProject.current !== projectId) return;
+        setPending((prev) => ({
+          projectId,
+          removed: prev.projectId === projectId ? prev.removed : [],
+          added:
+            prev.projectId === projectId ? [...prev.added, created] : [created],
+        }));
         // Awaited: `onChange` is typed `=> void`, but bivariance lets a caller
         // pass an async commit — the suite bar passes an awaited `updateSuite`
         // — and an un-awaited rejection escapes this catch entirely.
@@ -581,12 +609,20 @@ export function ServerPicker({
         // deleted in one sitting was never in the query to begin with) and
         // record it in `removed` (a row the query still returns would
         // otherwise sit on the tab, and stay clickable, until the refetch).
-        setPending((prev) => ({
-          added: prev.added.filter((row) => row._id !== groupId),
-          removed: prev.removed.includes(groupId)
-            ? prev.removed
-            : [...prev.removed, groupId],
-        }));
+        if (currentProject.current !== projectId) return;
+        setPending((prev) => {
+          const mine = prev.projectId === projectId;
+          const removed = mine ? prev.removed : [];
+          return {
+            projectId,
+            added: mine
+              ? prev.added.filter((row) => row._id !== groupId)
+              : [],
+            removed: removed.includes(groupId)
+              ? removed
+              : [...removed, groupId],
+          };
+        });
         if (value === groupId) onClearSelection?.();
       } catch (err) {
         const raw = err instanceof Error ? err.message : "";
@@ -596,7 +632,7 @@ export function ServerPicker({
         writing.current = false;
       }
     },
-    [creating, deleteServerAttachment, onClearSelection, value],
+    [creating, deleteServerAttachment, onClearSelection, projectId, value],
   );
 
   /**
