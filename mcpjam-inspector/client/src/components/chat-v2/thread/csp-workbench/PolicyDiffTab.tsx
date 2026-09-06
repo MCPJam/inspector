@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Info } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import type { ClassifierInput, Diagnosis } from "./types";
 import { compareCspPolicies } from "./csp-header";
 import { extractOrigin, originAllowedByAny } from "./match-source";
@@ -223,11 +228,19 @@ function PolicyColumn({
             <span className="inline-flex items-center gap-1 text-[12px] font-medium">
               {title}
               {info && (
-                <Info
-                  aria-label={info}
-                  title={info}
-                  className="size-3 text-muted-foreground"
-                />
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span
+                      aria-label={info}
+                      className="inline-flex cursor-help"
+                    >
+                      <Info className="size-3 text-muted-foreground" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent variant="muted" sideOffset={4}>
+                    {info}
+                  </TooltipContent>
+                </Tooltip>
               )}
             </span>
             <span

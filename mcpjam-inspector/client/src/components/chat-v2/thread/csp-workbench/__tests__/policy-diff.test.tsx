@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import { PolicyDiffTab } from "../PolicyDiffTab";
 import type { ClassifierInput } from "../types";
 
 describe("PolicyDiffTab violation evidence", () => {
-  it("shows matching, different, and unavailable policy comparisons", () => {
+  it("shows matching, different, and unavailable policy comparisons", async () => {
     const input: ClassifierInput = {
       effective: {
         connectDomains: [],
@@ -54,9 +55,16 @@ describe("PolicyDiffTab violation evidence", () => {
     render(<PolicyDiffTab input={input} diagnoses={[]} />);
 
     expect(screen.getAllByText("Applied").length).toBeGreaterThan(0);
-    expect(
+    await userEvent.hover(
       screen.getByLabelText("The CSP MCPJam enforced for this widget."),
-    ).toBeTruthy();
+    );
+    expect(
+      (
+        await screen.findAllByText(
+          "The CSP MCPJam enforced for this widget.",
+        )
+      ).length,
+    ).toBeGreaterThan(0);
     expect(screen.queryByText(/Applied is parsed from/)).toBeNull();
     expect(screen.getByText("originalPolicy matches Applied")).toBeTruthy();
     expect(screen.getByText("originalPolicy differs from Applied")).toBeTruthy();
