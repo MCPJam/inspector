@@ -997,6 +997,79 @@ export type HostConfigInputV2 = {
   >;
 };
 
+/**
+ * Every top-level key a host-config WRITE accepts. Portable
+ * **persistence-contract source of truth**, like `HARNESS_IDS`: the backend's
+ * hand-mirrored `hostConfigInputV2Validator` is a strict `v.object` over
+ * exactly these fields, and the inspector's v1 client routes check a
+ * caller-supplied config against this list before the write leaves Node.
+ *
+ * That pre-check is why the list is exported at all. Convex rejects an unknown
+ * field at the CALL boundary, before the handler runs, and production Convex
+ * redacts the resulting `ArgumentValidationError` to a bare "Server Error" — so
+ * without a check on this side the caller is told only that the write failed,
+ * never which field failed it.
+ */
+export const HOST_CONFIG_INPUT_V2_WIRE_KEYS = [
+  "builtInToolIds",
+  "chatUiOverride",
+  "clientCapabilities",
+  "computer",
+  "connectionDefaults",
+  "harness",
+  "hostCapabilitiesOverride",
+  "hostContext",
+  "hostStyle",
+  "mcpProfile",
+  "mcpToolResultImageRendering",
+  "modelId",
+  "modelVisibleMcpToolResults",
+  "optionalServerIds",
+  "progressiveToolDiscovery",
+  "requireToolApproval",
+  "respectToolVisibility",
+  "serverConnectionOverrides",
+  "serverIds",
+  "skillSelection",
+  "systemPrompt",
+  "temperature",
+] as const;
+
+type HostConfigInputV2WireKey = (typeof HOST_CONFIG_INPUT_V2_WIRE_KEYS)[number];
+
+/**
+ * Fields this type declares that no write accepts yet. `oauthProfile` is
+ * canonicalized but has no backend validator or column, so a config carrying it
+ * fails closed. Naming it keeps the guard below honest rather than letting the
+ * gap read as an oversight; closing it means moving the key into the wire list.
+ */
+type HostConfigKeyNotOnTheWire = "oauthProfile";
+
+// Every way the three lists can disagree, each a real bug:
+//   1. a field on the type that is neither on the wire nor a declared gap — the
+//      write boundary would reject it on a VALID config;
+//   2. a wire key that is not on the type — nothing validates it;
+//   3. a declared gap whose field no longer exists — stale bookkeeping;
+//   4. a declared gap that IS on the wire — the gap closed and the note lies.
+// (3) and (4) are why the gap is not just a comment: closing `oauthProfile`
+// means moving one key between two lists, and a half-done move must not compile.
+type HostConfigWireKeyDrift =
+  | Exclude<
+      keyof HostConfigInputV2,
+      HostConfigInputV2WireKey | HostConfigKeyNotOnTheWire
+    >
+  | Exclude<HostConfigInputV2WireKey, keyof HostConfigInputV2>
+  | Exclude<HostConfigKeyNotOnTheWire, keyof HostConfigInputV2>
+  | Extract<HostConfigKeyNotOnTheWire, HostConfigInputV2WireKey>;
+
+const _wireKeysMatchTheType: [HostConfigWireKeyDrift] extends [never]
+  ? true
+  : [
+      "HOST_CONFIG_INPUT_V2_WIRE_KEYS is out of sync with HostConfigInputV2",
+      HostConfigWireKeyDrift,
+    ] = true;
+void _wireKeysMatchTheType;
+
 export type CanonicalHostConfigV2 = {
   schemaVersion: typeof HOST_CONFIG_SCHEMA_VERSION_V2;
   hostStyle: HostConfigStyle;
