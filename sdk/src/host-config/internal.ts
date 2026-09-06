@@ -75,6 +75,7 @@ export { isAppOnlyTool } from "./app-only-tool.js";
 export {
   filterAppOnlyTools,
   applyVisibilityPolicyAndCountSignals,
+  applyToolDescriptionOverrides,
 } from "./tool-visibility.js";
 export type { ToolMetadataSource } from "./tool-visibility.js";
 export {
