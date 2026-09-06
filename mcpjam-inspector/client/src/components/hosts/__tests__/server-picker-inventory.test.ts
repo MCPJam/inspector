@@ -1,9 +1,10 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative, sep } from "node:path";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 
 /**
- * One picker, guarded by a grep.
+ * One picker, guarded by the compiler.
  *
  * BB-142 did not start as a design problem. It started with three components
  * that all let a user choose a server — `ServerGroupPicker`, an alias of it
@@ -20,32 +21,27 @@ import { describe, expect, it } from "vitest";
  * stops matching fails too, so the list cannot quietly accumulate entries for
  * surfaces that already migrated.
  *
- * SCOPE, stated rather than implied — a ratchet that overstates itself is
- * worse than none:
+ * Read through `typescript`, already a dependency here, rather than by
+ * scanning text. The hand-written version balanced parentheses over raw
+ * source, and every construct that can hold one lied to it: a `)` in a
+ * comment or a string ended the callback early, a nested template literal
+ * ended it at the wrong backtick and blanked the rest of the file, a `//` in
+ * JSX text ate the row below it, and regex literals were documented as
+ * unfixable. Each of those was a silent MISS — a picker the lock reported as
+ * clean. The parser has no such cases.
+ *
+ * SCOPE, stated rather than implied:
  *
  * - It sees `client/src/**` only. The design system's own panel lives in
  *   another package and is not scanned.
- * - It matches on SHAPE: a `.map(` whose receiver mentions "server" and whose
- *   body contains a click or checkbox affordance. A list built some other way
- *   — a `for` loop, a child component handed pre-rendered rows — passes
- *   unexamined.
+ * - It matches on SHAPE: a `.map(` whose receiver mentions "server", holding
+ *   a click or checkbox affordance. A list built some other way — a `for`
+ *   loop, a child component handed pre-rendered rows — passes unexamined.
  * - It cannot tell a picker from a list that merely happens to be clickable.
- *   That judgement is why each entry below carries a reason instead of just a
- *   path.
- *
- * What it does catch is the shape that actually went wrong three times: a
- * server list and its rows written inline in one file.
+ *   That judgement is why each entry below carries a reason, not just a path.
  */
 const CLIENT_SRC = join(__dirname, "..", "..", "..");
 
-/**
- * The files allowed to render a clickable server list, and why each one is
- * not something `ServerPicker` should have replaced.
- *
- * Adding a path here is a claim that this surface is NOT choosing a server
- * group for a project. Write the reason; a bare path tells the next reader
- * nothing about whether the exception still holds.
- */
 const ALLOWED: Record<string, string> = {
   "components/hosts/server-selection-list.tsx":
     "The shared multi-select leaf (checkbox rows, no data, no popover) that " +
@@ -87,412 +83,59 @@ const ALLOWED: Record<string, string> = {
 };
 
 /**
- * Blank out everything that is not code, keeping every offset and every
- * newline, so what follows can count brackets without a comment or a string
- * lying to it.
- *
- * This exists because the paren scan below was silently defeatable. A callback
- * written `(server) => { … }` sits at depth 1 for its whole body, so ONE
- * unbalanced `)` in a comment — `// paso 1)`, or a `:)` — closed the call
- * early, and a `<button onClick>` below it was never seen. The inventory lock
- * then reported the file as clean. For a guard whose only job is to catch the
- * next picker, under-detection is the one failure that matters.
- *
- * A template literal is blanked WHOLE, `${…}` expressions included: whatever
- * is in there is code, so its brackets already balance, and blanking them
- * changes no count.
- *
- * JSX TEXT, partly. A `//` in JSX children is not a comment, and telling the
- * two apart needs to know whether the scan sits inside JSX children — a
- * parser-level fact. The common carrier is a URL, so `://` is excused, and
- * the rest is a known blind spot: a bare `//` in JSX text still blanks the
- * rest of its line. That costs a detection only when the row's own `onClick`
- * sits after it on that same line.
- *
- * NOT handled: regex literals. In a `.tsx` file `/` is overwhelmingly a JSX
- * closing tag — `</span>`, `/>` — and no character-level heuristic separates
- * those from a regex start. Guessing wrong blanks real code and hides a real
- * picker, which is the failure this function was written to remove. A regex
- * carrying an unbalanced `\)` inside a server row's `.map(` is the narrower
- * risk, and it is left standing knowingly.
- */
-/** Index just past the quoted string opening at `start`, newline-bounded. */
-function endOfQuoted(source: string, start: number): number {
-  const quote = source[start];
-  let j = start + 1;
-  // A newline ends it: an unterminated quote is a typo, and running to the end
-  // of the file on one would blank the rest of the component.
-  while (j < source.length && source[j] !== quote && source[j] !== "\n") {
-    j += source[j] === "\\" ? 2 : 1;
-  }
-  return Math.min(j + 1, source.length);
-}
-
-/**
- * Index just past the template literal opening at `start`, or -1 if it never
- * closes.
- *
- * `${…}` holds CODE, which can hold its own strings and its own templates, and
- * the brace that ends the expression is the one this has to find. Counting
- * bare `}` instead meant `` `${`a}b`}` `` ended the scan at the inner
- * backtick; everything after it was then read as one unterminated template and
- * blanked to the end of the file, taking any picker below it with it.
- */
-function endOfTemplate(source: string, start: number): number {
-  let j = start + 1;
-  while (j < source.length) {
-    const c = source[j];
-    if (c === "\\") {
-      j += 2;
-      continue;
-    }
-    if (c === "`") return j + 1;
-    if (c === "$" && source[j + 1] === "{") {
-      const after = endOfExpression(source, j + 2);
-      if (after === -1) return -1;
-      j = after;
-      continue;
-    }
-    j += 1;
-  }
-  return -1;
-}
-
-/** Index just past the `}` closing a `${` whose body starts at `start`. */
-function endOfExpression(source: string, start: number): number {
-  let j = start;
-  let depth = 1;
-  while (j < source.length) {
-    const c = source[j];
-    const two = source.slice(j, j + 2);
-    if (c === "\\") {
-      j += 2;
-      continue;
-    }
-    if (two === "//") {
-      const nl = source.indexOf("\n", j);
-      j = nl === -1 ? source.length : nl;
-      continue;
-    }
-    if (two === "/*") {
-      const close = source.indexOf("*/", j + 2);
-      j = close === -1 ? source.length : close + 2;
-      continue;
-    }
-    if (c === '"' || c === "'") {
-      j = endOfQuoted(source, j);
-      continue;
-    }
-    if (c === "`") {
-      const after = endOfTemplate(source, j);
-      if (after === -1) return -1;
-      j = after;
-      continue;
-    }
-    if (c === "{") depth += 1;
-    else if (c === "}") {
-      depth -= 1;
-      if (depth === 0) return j + 1;
-    }
-    j += 1;
-  }
-  return -1;
-}
-
-/**
- * Blank out everything that is not code, keeping every offset and every
- * newline, so what follows can count brackets without a comment or a string
- * lying to it.
- *
- * This exists because the paren scan below was silently defeatable. A callback
- * written `(server) => { … }` sits at depth 1 for its whole body, so ONE
- * unbalanced `)` in a comment — `// paso 1)`, or a `:)` — closed the call
- * early, and a `<button onClick>` below it was never seen. The inventory lock
- * then reported the file as clean. For a guard whose only job is to catch the
- * next picker, under-detection is the one failure that matters.
- *
- * WHEN IN DOUBT, LEAVE IT AS CODE. A construct that never closes is not
- * blanked at all, because the two ways to be wrong are not equal: over-detect
- * and somebody adds an allowlist entry with a reason, under-detect and a
- * picker ships unnoticed. That is the whole point of the guard.
- *
- * NOT handled: regex literals. In a `.tsx` file `/` is overwhelmingly a JSX
- * closing tag — `</span>`, `/>` — and no character-level heuristic separates
- * those from a regex start. Guessing wrong blanks real code and hides a real
- * picker, which is the failure this function was written to remove. A regex
- * carrying an unbalanced `\)` inside a server row's `.map(` is the narrower
- * risk, and it is left standing knowingly.
- */
-export function maskNonCode(source: string): string {
-  const out = source.split("");
-  const blank = (from: number, to: number) => {
-    for (let k = from; k < to && k < out.length; k += 1) {
-      if (out[k] !== "\n") out[k] = " ";
-    }
-  };
-
-  let i = 0;
-  while (i < source.length) {
-    const two = source.slice(i, i + 2);
-
-    // `://` is a URL, not a comment. JSX children are raw source, so
-    // `<span>http://host</span>` was blanked to the end of its line, and
-    // anything after it on that line — a `<button onClick>`, or the `)` that
-    // closes the callback — went with it. See the JSX-TEXT note above.
-    if (two === "//" && source[i - 1] !== ":") {
-      const nl = source.indexOf("\n", i);
-      const stop = nl === -1 ? source.length : nl;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-
-    if (two === "/*") {
-      const close = source.indexOf("*/", i + 2);
-      const stop = close === -1 ? source.length : close + 2;
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-
-    const c = source[i];
-    if (c === '"' || c === "'") {
-      const stop = endOfQuoted(source, i);
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-
-    if (c === "`") {
-      const stop = endOfTemplate(source, i);
-      if (stop === -1) {
-        // Unresolvable. Leave it alone rather than blanking the rest.
-        i += 1;
-        continue;
-      }
-      blank(i, stop);
-      i = stop;
-      continue;
-    }
-
-    i += 1;
-  }
-
-  return out.join("");
-}
-
-/**
- * The text of the `(...)` that begins at `openIndex`, or "" when it never
- * closes. Used to read a `.map(` callback whole rather than guessing at how
- * many lines of it to look at — a row's `onClick` is routinely 30 lines below
- * the `.map(` that opens it.
- *
- * Expects text that has been through `maskNonCode`.
- */
-export function balancedCall(source: string, openIndex: number): string {
-  let depth = 0;
-  for (let i = openIndex; i < source.length; i += 1) {
-    const char = source[i];
-    if (char === "(") depth += 1;
-    else if (char === ")") {
-      depth -= 1;
-      if (depth === 0) return source.slice(openIndex, i + 1);
-    }
-  }
-  return "";
-}
-
-/**
  * Does this file map a server-ish collection into something clickable?
  *
- * The receiver is read from the 60 characters BEFORE `.map(`, which is where
- * the collection is named (`servers.map`, `visibleServers.map`,
- * `pendingOAuthServers.map`). Sixty rather than the whole line because these
- * are routinely wrapped by the formatter.
+ * Walked as a tree: the `.map(` call node has an exact extent, so there is
+ * nothing to balance and nothing for a comment or a string to lie about.
+ * Commented-out code is not in the tree at all, which is the right answer.
  */
-export function rendersClickableServerList(rawSource: string): boolean {
-  // Everything below reads the MASKED text: a `.map(` quoted in a comment is
-  // not a list, and a `<button` in commented-out code is not a picker.
-  const source = maskNonCode(rawSource);
-  const pattern = /\.map\s*\(/g;
-  for (
-    let match = pattern.exec(source);
-    match;
-    match = pattern.exec(source)
-  ) {
-    const receiver = source.slice(Math.max(0, match.index - 60), match.index);
-    if (!receiver.toLowerCase().includes("server")) continue;
-    const body = balancedCall(source, match.index + match[0].length - 1);
-    if (!body) continue;
-    if (
-      body.includes("onClick") ||
-      body.includes("<button") ||
-      body.includes("<Checkbox")
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function collectTsx(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) {
-      // Tests render these lists on purpose; the rule is about the app.
-      if (entry !== "node_modules" && entry !== "__tests__") {
-        collectTsx(full, out);
+export function rendersClickableServerList(source: string): boolean {
+  const tree = ts.createSourceFile(
+    "f.tsx",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let found = false;
+  const visit = (node: ts.Node, inServerMap: boolean) => {
+    const mapping =
+      inServerMap ||
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "map" &&
+        node.expression.expression.getText().toLowerCase().includes("server"));
+    if (mapping) {
+      if (ts.isJsxAttribute(node) && node.name.getText() === "onClick") {
+        found = true;
       }
-      continue;
+      if (
+        (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) &&
+        ["button", "Checkbox"].includes(node.tagName.getText())
+      ) {
+        found = true;
+      }
     }
-    if (entry.endsWith(".tsx")) out.push(full);
-  }
-  return out;
+    ts.forEachChild(node, (child) => visit(child, mapping));
+  };
+  visit(tree, false);
+  return found;
 }
 
-/** Posix-separated, so the allowlist reads the same on every platform. */
-function repoPath(full: string): string {
-  return relative(CLIENT_SRC, full).split(sep).join("/");
+/** Every app `.tsx` under `client/src`, posix-relative so ALLOWED reads the same everywhere. */
+function appTsxFiles(): string[] {
+  return readdirSync(CLIENT_SRC, { recursive: true })
+    .map(String)
+    .filter((f) => f.endsWith(".tsx") && !f.includes("__tests__"))
+    .map((f) => f.split("\\").join("/"));
 }
-
-/**
- * The scanner itself. A ratchet nobody has tested is a ratchet nobody can
- * trust — and this one WAS defeatable: every case below with a stray `)`
- * returned false before `maskNonCode` existed.
- */
-describe("the scanner behind the inventory lock", () => {
-  const ROW = `<button onClick={() => pick(server.id)}>{server.name}</button>`;
-  const block = (middle: string) =>
-    `{servers.map((server) => {\n${middle}\n  return ${ROW};\n})}`;
-
-  it("sees a plain clickable server row", () => {
-    expect(rendersClickableServerList(block("  const n = server.name;"))).toBe(
-      true,
-    );
-  });
-
-  /**
-   * The shape that defeated it. A block-body callback sits at paren depth 1
-   * for its whole body, so a single unmatched `)` closed the call before the
-   * row was reached.
-   */
-  it("is not fooled by an unmatched ) in a line comment", () => {
-    expect(rendersClickableServerList(block("  // paso 1) elegir"))).toBe(true);
-    expect(rendersClickableServerList(block("  // fácil :)"))).toBe(true);
-  });
-
-  it("is not fooled by an unmatched ) in a block comment", () => {
-    expect(rendersClickableServerList(block("  /* ojo :) */"))).toBe(true);
-  });
-
-  it("is not fooled by an unmatched ) inside a string", () => {
-    expect(
-      rendersClickableServerList(block('  const hint = "elegí uno :)";')),
-    ).toBe(true);
-    expect(
-      rendersClickableServerList(block("  const hint = 'elegí uno :)';")),
-    ).toBe(true);
-  });
-
-  it("is not fooled by an unmatched ) inside a template literal", () => {
-    expect(
-      rendersClickableServerList(block("  const hint = `${server.name} :)`;")),
-    ).toBe(true);
-  });
-
-  /**
-   * `${…}` holds code, and code holds its own strings, templates, objects and
-   * comments. Counting bare `}` ended the scan at a nested backtick, and the
-   * rest of the file was then read as one unterminated template and blanked —
-   * so a picker BELOW the template vanished from the inventory.
-   */
-  it("finds the end of a template whose expression nests", () => {
-    for (const expr of [
-      "`${`a}b`}`", // a `}` that is literal text in a nested template
-      '`${ "}" }`', // …and in a string
-      "`${ f({ a: 1 }) }`", // …and a real object literal
-      "`${`x${`y}z`}`}`", // two levels deep
-      "`${ /* } */ server.name }`", // …and a comment
-    ]) {
-      expect(
-        rendersClickableServerList(block(`  const k = ${expr};`)),
-        expr,
-      ).toBe(true);
-    }
-  });
-
-  it("blanks a nested template WHOLE, and stops at its real end", () => {
-    // Asserted on the mask itself, not through a detection that the
-    // never-closes guard would rescue anyway. Counting bare `}` ended the
-    // template at the inner backtick and left `}` and a stray backtick behind
-    // as code, so this is what tells the two implementations apart.
-    const prefix = "const k = ";
-    const template = "`${`a}b`}`";
-    const src = `${prefix}${template};\nconst LATER = 1;\n`;
-    const masked = maskNonCode(src);
-
-    expect(masked.slice(prefix.length, prefix.length + template.length)).toBe(
-      " ".repeat(template.length),
-    );
-    expect(masked).toContain(prefix);
-    expect(masked).toContain("const LATER = 1;");
-  });
-
-  it("leaves a construct that never closes alone rather than blanking on", () => {
-    // The two ways to be wrong are not equal. Over-detect and someone adds an
-    // allowlist entry; under-detect and a picker ships unseen. So an
-    // unterminated template masks nothing instead of swallowing the file.
-    const src = "const bad = `abre y no cierra\nconst LATER = 1;\n";
-    expect(maskNonCode(src)).toContain("const LATER = 1;");
-  });
-
-  it("does not read a URL in JSX text as a comment", () => {
-    // JSX children are raw source. Blanking from `//` to end of line took the
-    // row's own `onClick` — and the `)` closing the callback — with it.
-    expect(
-      rendersClickableServerList(
-        "{servers.map((server) => (\n  <span>http://{server.host}</span>\n  " +
-          ROW +
-          "\n))}",
-      ),
-    ).toBe(true);
-    expect(
-      rendersClickableServerList(
-        "{servers.map((server) => (<a href={`https://${server.host}`}>x</a>" +
-          ROW +
-          "))}",
-      ),
-    ).toBe(true);
-  });
-
-  it("does not count a picker that only exists in a comment", () => {
-    // The other direction: masking must not turn commented-out code into a
-    // finding, or the allowlist fills up with files that render nothing.
-    const commentedOut = `// {servers.map((server) => (\n//   ${ROW}\n// ))}`;
-    expect(rendersClickableServerList(commentedOut)).toBe(false);
-  });
-
-  it("keeps offsets and lines intact when masking", () => {
-    // Same length and same newlines, so anything reported against the masked
-    // text still points at the right place in the real file.
-    const src = 'const a = "x :)"; // y )\nconst b = 1;';
-    const masked = maskNonCode(src);
-    expect(masked).toHaveLength(src.length);
-    expect(masked.split("\n")).toHaveLength(src.split("\n").length);
-    expect(masked).not.toContain(")");
-    expect(masked).toContain("const a =");
-    expect(masked).toContain("const b = 1;");
-  });
-});
 
 describe("one server picker", () => {
-  // Walked ONCE. The sanity check below used to walk the tree a second time
-  // just to count it, which is both a wasted recursive pass and two walks that
-  // could in principle disagree about what they saw.
-  const allTsx = collectTsx(CLIENT_SRC);
+  const allTsx = appTsxFiles();
   const found = allTsx
-    .filter((full) => rendersClickableServerList(readFileSync(full, "utf8")))
-    .map(repoPath)
+    .filter((f) =>
+      rendersClickableServerList(readFileSync(join(CLIENT_SRC, f), "utf8")),
+    )
     .sort();
 
   it("has no clickable server list outside the declared set", () => {
@@ -530,7 +173,7 @@ describe("one server picker", () => {
 
   it("is looking at a real tree, and finding the surfaces we know exist", () => {
     // Without this the two assertions above both pass on an empty scan — a
-    // broken path or an over-tight regex would read as a clean repo.
+    // broken path would read as a clean repo.
     expect(allTsx.length).toBeGreaterThan(100);
     expect(found).toContain("components/ActiveServerSelector.tsx");
   });

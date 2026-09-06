@@ -3,6 +3,22 @@ import { useQuery, useMutation } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { shouldQueryProjectId, type RemoteServer } from "./useProjects";
 
+/**
+ * The query has not run YET — as opposed to having run and found nothing.
+ *
+ * A skipped query reports `isLoading: false` with an empty list, which reads
+ * as "answered, and empty". Computed from the same inputs as `enableQuery` so
+ * it is true on the very first render: `isEnsuringUser` is not, since it
+ * starts `false` and is raised inside an effect.
+ */
+function queryWillRunLater(
+  isAuthenticated: boolean,
+  isUserReady: boolean,
+  projectId: string | null,
+): boolean {
+  return isAuthenticated && !isUserReady && shouldQueryProjectId(projectId);
+}
+
 // Type definitions matching backend
 export type ViewProtocol = "mcp-apps" | "openai-apps";
 
@@ -191,19 +207,9 @@ export function useProjectServers({
   ) as RemoteServer[] | undefined;
 
   const isLoading = enableQuery && servers === undefined;
-  /**
-   * A skipped query reports `isLoading: false` with an empty list, which reads
-   * as "answered, and empty". While the DB user is not ready that is wrong —
-   * the query has not run — so the two are told apart here, by the hook that
-   * owns the skip, rather than by every caller re-deriving it.
-   *
-   * Computed from the SAME inputs as `enableQuery`, because it has to be true
-   * on the very first render. `isEnsuringUser` is not: it starts `false` and is
-   * raised inside an effect, so the renders before that effect runs would
-   * still claim the empty list was an answer.
-   */
+  /** Told apart by the hook that owns the skip, not by every caller. */
   const isBootstrapping =
-    isAuthenticated && !isUserReady && shouldQueryProjectId(projectId);
+    queryWillRunLater(isAuthenticated, isUserReady, projectId);
 
   // Create a map for quick lookup by name
   const serversByName = useMemo(() => {
@@ -261,7 +267,7 @@ export function useProjectServerAttachments({
   const isLoading = enableQuery && serverAttachments === undefined;
   /** See `useProjectServers`: a skipped query is not an answer. */
   const isBootstrapping =
-    isAuthenticated && !isUserReady && shouldQueryProjectId(projectId);
+    queryWillRunLater(isAuthenticated, isUserReady, projectId);
 
   return {
     serverAttachments: serverAttachments ?? [],
