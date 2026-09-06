@@ -49,13 +49,15 @@ const QUICK_ADD_VISIBLE = 6;
 /**
  * Data needed to drive the chat-input client (host) chip. Mirrors the model
  * selector's prop shape so the two chips behave the same way, minus a
- * "Multiple hosts" toggle (PUR-11): checking a second row in the list stacks
- * a compare lineup immediately, no switch to find and flip first. Host
- * compare and model compare stay mutually exclusive — that's enforced by the
- * parent's `onMultiHostEnabledChange` / `onMultiModelEnabledChange`, not
- * here; this component still calls `onMultiHostEnabledChange` (kept in sync
- * with the selection count) so the parent's mutual-exclusion logic keeps
- * working unchanged.
+ * "Multiple hosts" toggle (PUR-11): ticking a row's checkbox stacks a compare
+ * lineup immediately, no switch to find and flip first. The row BODY is a
+ * separate gesture (BB-135) that switches the active client and collapses any
+ * lineup, so switching costs one click instead of "tick the new one, untick
+ * the old one". Host compare and model compare stay mutually exclusive —
+ * that's enforced by the parent's `onMultiHostEnabledChange` /
+ * `onMultiModelEnabledChange`, not here; this component still calls
+ * `onMultiHostEnabledChange` (kept in sync with the selection count) so the
+ * parent's mutual-exclusion logic keeps working unchanged.
  */
 export interface ClientSelectorData {
   hosts: HostListItem[];
@@ -228,7 +230,14 @@ export function ClientSelector({
     : compactHostLabel(leadHostName);
   const clientListMaxHeight = isComparing ? 160 : 220;
 
-  const handleSingleSelect = (hostId: string) => {
+  const handleSelectLead = (hostId: string) => {
+    // Collapsing the lineup is required, not cosmetic. `usePersistedHost`
+    // preserves the column COUNT when only the lead changes, so changing the
+    // lead alone would swap a compare column rather than leave comparison.
+    if (effectiveSelectedHostIds.length > 1) {
+      onSelectedHostIdsChange([hostId]);
+      onMultiHostEnabledChange(false);
+    }
     if (hostId !== leadHostId) onHostChange(hostId);
     setIsOpen(false);
   };
@@ -447,19 +456,55 @@ export function ClientSelector({
                   modalThemeMode
                 );
 
-                const row = (
+                // A real button, not the row's own click target: the row body
+                // switches clients, the checkbox builds the comparison. Same
+                // stopPropagation pattern the chip strip's remove control uses.
+                const compareToggle = (
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={
+                      isSelected
+                        ? `Remove ${host.name} from comparison`
+                        : `Compare with ${host.name}`
+                    }
+                    disabled={isLimitedOut}
+                    data-testid={`client-row-compare-${host.hostId}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      handleMultiSelect(host.hostId);
+                    }}
+                    // cmdk's root keydown claims Enter for the highlighted row
+                    // and preventDefaults it, so Enter on a focused checkbox
+                    // would switch clients instead of toggling compare. Stop it
+                    // reaching the root and the button's own activation stands.
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") event.stopPropagation();
+                    }}
+                    className={cn(
+                      "flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)] disabled:cursor-not-allowed disabled:opacity-50",
+                      isSelected
+                        ? "border-primary bg-primary shadow-sm"
+                        : "border-border/60 bg-transparent hover:border-border"
+                    )}
+                  >
+                    {isSelected ? (
+                      <Check
+                        strokeWidth={3}
+                        className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
+                      />
+                    ) : null}
+                  </button>
+                );
+
+                return (
                   <CommandItem
                     key={host.hostId}
                     value={`${clientDisplayName(host)} ${host.name} ${
                       host.hostId
                     }`}
-                    onSelect={() =>
-                      checklistMode
-                        ? handleMultiSelect(host.hostId)
-                        : handleSingleSelect(host.hostId)
-                    }
-                    disabled={isLimitedOut}
-                    className="cursor-pointer rounded-sm px-2 py-1 data-[disabled=true]:cursor-not-allowed"
+                    onSelect={() => handleSelectLead(host.hostId)}
+                    className="cursor-pointer rounded-sm px-2 py-1"
                     data-testid={`client-row-${host.hostId}`}
                   >
                     <HostChipLogo
@@ -476,41 +521,25 @@ export function ClientSelector({
                       </span>
                     ) : null}
                     {checklistMode ? (
-                      <div
-                        className={cn(
-                          "ml-auto flex size-4 shrink-0 items-center justify-center rounded-[5px] border transition-[background-color,border-color,box-shadow] duration-200 ease-[cubic-bezier(0.33,1,0.68,1)]",
-                          isSelected
-                            ? "border-primary bg-primary shadow-sm"
-                            : "border-border/60 bg-transparent hover:border-border"
+                      <div className="ml-auto flex shrink-0 items-center">
+                        {isLimitedOut ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="flex">{compareToggle}</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right">
+                              You can compare up to {maxSelectedHosts} clients
+                              at once
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : (
+                          compareToggle
                         )}
-                        aria-hidden
-                      >
-                        {isSelected ? (
-                          <Check
-                            strokeWidth={3}
-                            className="size-2.5 animate-in zoom-in-95 fade-in duration-200 fill-none text-primary-foreground"
-                          />
-                        ) : null}
                       </div>
                     ) : host.hostId === leadHostId ? (
                       <div className="ml-auto size-1.5 shrink-0 rounded-full bg-primary" />
                     ) : null}
                   </CommandItem>
-                );
-
-                return isLimitedOut ? (
-                  <Tooltip key={host.hostId}>
-                    <TooltipTrigger asChild>
-                      <div className="rounded-sm transition-colors hover:bg-accent/60">
-                        {row}
-                      </div>
-                    </TooltipTrigger>
-                    <TooltipContent side="right">
-                      You can compare up to {maxSelectedHosts} clients at once
-                    </TooltipContent>
-                  </Tooltip>
-                ) : (
-                  row
                 );
               })}
             </CommandList>
