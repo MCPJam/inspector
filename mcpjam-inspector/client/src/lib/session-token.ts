@@ -32,6 +32,35 @@ declare global {
 let cachedToken: string | null = null;
 let initPromise: Promise<string> | null = null;
 
+/**
+ * Error thrown when `/api/session-token` responds non-OK, carrying the HTTP
+ * status so the bootstrap can tell the EXPECTED host-denial (403) apart from a
+ * genuine failure.
+ *
+ * A 403 here is not a bug: the server withholds the token from any host that
+ * isn't localhost or in `MCPJAM_ALLOWED_HOSTS` (see server/utils/localhost-check.ts).
+ * A self-hosted user reaching the inspector over the network hits exactly this,
+ * and it has a self-service fix (allowlist their host) — so it gets a tailored
+ * screen and is NOT reported to Sentry, unlike a real 5xx/transport failure.
+ */
+export class SessionTokenError extends Error {
+  readonly status: number;
+  constructor(status: number) {
+    super(`Failed to get session token: ${status}`);
+    this.name = "SessionTokenError";
+    this.status = status;
+  }
+}
+
+/**
+ * Whether `error` is the expected "host not allowed" session-token denial (403).
+ * These are self-inflicted-by-config, not defects: the caller renders guidance
+ * instead of a generic error and skips error reporting.
+ */
+export function isSessionTokenHostDenied(error: unknown): boolean {
+  return error instanceof SessionTokenError && error.status === 403;
+}
+
 type AuthFetchSurface = "scenario";
 
 const AUTH_FETCH_SURFACE_BY_PATH: Record<string, AuthFetchSurface> = {
@@ -148,7 +177,7 @@ export async function initializeSessionToken(): Promise<string> {
     initPromise = fetch("/api/session-token")
       .then(async (response) => {
         if (!response.ok) {
-          throw new Error(`Failed to get session token: ${response.status}`);
+          throw new SessionTokenError(response.status);
         }
         const data = await response.json();
         cachedToken = data.token;
@@ -262,10 +291,33 @@ function resolveRequestUrl(input: RequestInfo | URL): URL | null {
   }
 }
 
-// The session token is a single-process secret for the local CLI/Inspector
-// build; only attach it to loopback `/api/*` calls. Non-hosted Inspector is
-// not supported behind a public origin — relaxing this would expose the token
-// to any reachable client.
+/**
+ * May this URL carry the local session token?
+ *
+ * The token is a single-process secret for the local CLI/Inspector build, and
+ * this gate exists so `authFetch` never ships it to a FOREIGN origin (the
+ * Convex `*.convex.site` HTTP actions, an absolute URL a caller pasted, a
+ * redirect target). It is an exfiltration guard, not a localhost-only rule:
+ * the server that issued the token is the only party that should ever see it,
+ * and that server is reachable at exactly two places from this page's point of
+ * view — a loopback address, or the origin the page itself was served from.
+ *
+ * Same-origin matters for the self-hosted-over-the-network case
+ * (`MCPJAM_ALLOWED_HOSTS`, BB-118): the server issues the token to an
+ * allowlisted LAN host, and the page at `http://192.168.1.50:6274` must be
+ * able to send it back to `http://192.168.1.50:6274/api/*`. Matching the FULL
+ * origin (scheme + host + port), never just the hostname, keeps a different
+ * service on the same box (`:9999`) from receiving it. Which hosts may hold
+ * the token at all is the server's decision (`mayServeSessionToken`) — a page
+ * on an origin the server refused never has a token to attach.
+ */
+function isSessionTokenOrigin(parsed: URL): boolean {
+  if (isLoopbackHostname(parsed.hostname)) return true;
+  return (
+    typeof window !== "undefined" && parsed.origin === window.location.origin
+  );
+}
+
 function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
   if (HOSTED_MODE) {
     return false;
@@ -273,9 +325,7 @@ function shouldAttachSessionHeaders(input: RequestInfo | URL): boolean {
 
   const parsed = resolveRequestUrl(input);
   if (parsed) {
-    return (
-      isLoopbackHostname(parsed.hostname) && parsed.pathname.startsWith("/api/")
-    );
+    return isSessionTokenOrigin(parsed) && parsed.pathname.startsWith("/api/");
   }
   return typeof input === "string" && input.startsWith("/api/");
 }
@@ -412,8 +462,13 @@ const HOSTED_AUTH_PATH_PATTERNS = [
   // `requestFailed`/service copy ("could not be loaded"), which reads as a
   // backend outage rather than a missing header, so the panels look broken
   // while the API is fine.
-  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics)$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/(decision-summary|stage-analytics|route-facts)$/,
   /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+\/stage-analytics$/,
+  // Description-experiment reads and the two writes the Evaluate card
+  // issues through authFetch (propose + start). Anchored the same way as
+  // route-facts: id segments in the middle, no blanket /eval- prefix.
+  /^\/api\/v1\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+  /^\/api\/v1\/projects\/[^/]+\/eval-description-experiments\/[^/]+(\/start)?$/,
   // One page of a run's iterations, each carrying its own stage rows — the
   // only read that covers a PASSING trial's chain, which D9's diagnostics
   // exclude by contract.
@@ -479,6 +534,16 @@ export function addTokenToUrl(url: string): string {
   try {
     // Parse URL (uses origin as base for relative URLs)
     const parsed = new URL(url, window.location.origin);
+
+    // Same exfiltration guard as `authFetch`: the token only ever travels back
+    // to the server that issued it (same origin or loopback). A foreign
+    // absolute URL is returned untouched rather than carrying the secret in a
+    // query string to another host.
+    if (!isSessionTokenOrigin(parsed)) {
+      console.warn("[Auth] Refusing to attach session token to foreign origin");
+      return url;
+    }
+
     parsed.searchParams.set("_token", token);
 
     // Check if this is a same-origin URL
@@ -486,11 +551,13 @@ export function addTokenToUrl(url: string): string {
       // Same-origin: return relative path (pathname + search)
       return parsed.pathname + parsed.search;
     } else {
-      // Cross-origin: preserve the full absolute URL
+      // Absolute loopback URL: preserve the full absolute URL
       return parsed.href;
     }
   } catch {
-    // Fallback for unusual URL formats
+    // Fallback for unusual URL formats. `new URL` only throws for values that
+    // cannot be absolute (it accepts anything absolute and resolves anything
+    // relative), so what lands here is a same-origin relative path.
     const separator = url.includes("?") ? "&" : "?";
     return `${url}${separator}_token=${encodeURIComponent(token)}`;
   }
@@ -498,8 +565,8 @@ export function addTokenToUrl(url: string): string {
 
 /**
  * Authenticated fetch wrapper.
- * Adds local session auth only for loopback `/api/*` requests and hosted auth
- * where applicable.
+ * Adds local session auth only for same-origin or loopback `/api/*` requests
+ * (see `isSessionTokenOrigin`) and hosted auth where applicable.
  * Use this instead of native fetch for API calls.
  *
  * @param input - URL or Request object
