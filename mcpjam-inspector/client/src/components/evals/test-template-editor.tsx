@@ -214,21 +214,19 @@ import {
 import { resolveHostLogoByName } from "@/lib/host-logo";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 import { HostChipLogo } from "@/components/hosts/host-chip";
-import { useFeatureFlagEnabled } from "posthog-js/react";
-import { SimpleCaseForm } from "./simple-case/simple-case-form";
-import { CaseSuiteChips } from "./simple-case/case-suite-chips";
+import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
+import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
-  SIMPLE_CASE_EDITOR_FLAG,
   deriveCaseKind,
   isSimpleCaseShape,
-} from "./simple-case/simple-case-model";
-import { chainForQuickRunIteration } from "./simple-case/quick-run-chain";
-import { RouteRollupCard } from "./simple-case/route-rollup-card";
+} from "../evaluate/simple-case/simple-case-model";
+import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
+import { RouteRollupCard } from "../evaluate/simple-case/route-rollup-card";
 import {
   adoptRouteFromIteration,
   expectedPathKeyFromSteps,
   summarizeRoutes,
-} from "./simple-case/route-rollup";
+} from "../evaluate/simple-case/route-rollup";
 
 interface TestTemplate {
   title: string;
@@ -258,6 +256,18 @@ interface TestTemplateEditorProps {
    * Off by default, and off issues no request.
    */
   trialChainEnabled?: boolean;
+  /**
+   * Evaluate (New) only: author a single-turn case as the three-question
+   * simple form (`components/evaluate/simple-case/`) instead of the flat step
+   * list, and offer the per-trial chain and route rollup on quick runs.
+   *
+   * OFF by default, and the default is what keeps `/evals` byte-identical.
+   * This editor is shared — the shipped Evals tab, the Evaluate tab, CI Runs
+   * and the desktop surfaces all mount it — so the SURFACE decides, exactly
+   * as `suiteDetailOverview` and `evaluateDecisionSummary` do. Only
+   * `EvaluateTab` passes it, via `SuiteIterationsView`.
+   */
+  simpleCaseEditor?: boolean;
   availableModels: ModelDefinition[];
   /**
    * Iterations for the entire suite, already subscribed by the parent via
@@ -874,6 +884,7 @@ export function TestTemplateEditor({
   openCompareFromRoute = false,
   openCompareIterationId = null,
   trialChainEnabled = false,
+  simpleCaseEditor = false,
   isDirectGuest = false,
   ensureServersReady,
   projectServers,
@@ -883,8 +894,7 @@ export function TestTemplateEditor({
   // Resolves the WorkOS token for signed-in users and the guest bearer for
   // guests (project-owning guests included). See use-convex-access-token.
   const getAccessToken = useConvexAccessToken();
-  const simpleCaseEditorEnabled =
-    useFeatureFlagEnabled(SIMPLE_CASE_EDITOR_FLAG) === true;
+  const simpleCaseEditorEnabled = simpleCaseEditor;
   const [deepEditor, setDeepEditor] = useState(false);
   const [toolsChoiceBlockReason, setToolsChoiceBlockReason] = useState<
     string | null

@@ -63,7 +63,6 @@ const routeFacts = vi.hoisted(() => ({
   },
 }));
 const flagEnabled = vi.hoisted(() => ({ current: false }));
-const routeFactsFlag = vi.hoisted(() => ({ current: false }));
 const descriptionExperimentFlag = vi.hoisted(() => ({ current: false }));
 const failureGroupsFlag = vi.hoisted(() => ({ current: false }));
 // `null` keeps the advisory section unmounted; an empty result mounts it
@@ -107,13 +106,11 @@ vi.mock("../use-eval-run-compare", () => ({
 
 vi.mock("posthog-js/react", () => ({
   useFeatureFlagEnabled: (flag: string) =>
-    flag === "evaluate-route-facts-enabled"
-      ? routeFactsFlag.current
-      : flag === "description-experiments-enabled"
-        ? descriptionExperimentFlag.current
-        : flag === "evaluate-failure-groups-enabled"
-          ? failureGroupsFlag.current
-          : flagEnabled.current,
+    flag === "description-experiments-enabled"
+      ? descriptionExperimentFlag.current
+      : flag === "evaluate-failure-groups-enabled"
+        ? failureGroupsFlag.current
+        : flagEnabled.current,
 }));
 vi.mock("@/hooks/use-suite-failure-groups", () => ({
   useSuiteFailureGroups: (args: { enabled?: boolean; suiteId?: string }) => {
@@ -259,7 +256,6 @@ afterEach(() => {
     error: null,
   };
   flagEnabled.current = false;
-  routeFactsFlag.current = false;
   descriptionExperimentFlag.current = false;
   failureGroupsFlag.current = false;
   serverQuality.current = { result: null };
@@ -662,7 +658,9 @@ describe("EvaluateRunContent", () => {
     ).toHaveLength(1);
   });
 
-  it("asks the route-facts hook with enabled: false when the flag is off", () => {
+  it("asks the route-facts hook for every run, with no flag of its own", () => {
+    // Route facts have no gate beyond `evaluate-enabled`, which already gates
+    // this whole page: they read what the page loaded and spend nothing.
     detailState.current = {
       ...detailState.current,
       status: "ready",
@@ -676,25 +674,12 @@ describe("EvaluateRunContent", () => {
         projectId: "proj_1",
         runId: "run_1",
         runStatus: "completed",
-        enabled: false,
+        enabled: true,
       });
     }
   });
 
-  it("does not compute or render route facts when the flag is off", () => {
-    detailState.current = {
-      ...detailState.current,
-      status: "ready",
-      summary: summary(),
-      diagnostics: [DIAGNOSTIC],
-    };
-    renderContent();
-    expect(screen.queryByTestId("route-facts-section")).toBeNull();
-    expect(screen.queryByTestId("route-line-case_1")).toBeNull();
-  });
-
-  it("renders route facts on the default-open failing row when the flag is on", () => {
-    routeFactsFlag.current = true;
+  it("renders route facts on the default-open failing row", () => {
     detailState.current = {
       ...detailState.current,
       status: "ready",
@@ -808,7 +793,6 @@ describe("EvaluateRunContent", () => {
   }
 
   it("prefers the persisted route-facts document when the hook is ready", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "ready",
       document: persistedRouteFactsDoc(),
@@ -832,7 +816,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("falls back to local route facts when the persisted document is absent", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "absent",
       document: null,
@@ -856,7 +839,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("shows no route facts, local or otherwise, while the persisted read is loading", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "loading",
       document: null,
@@ -880,7 +862,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("says the document did not match the contract instead of substituting local numbers", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "error",
       document: null,
@@ -905,7 +886,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("falls back to local route facts when the deployment does not serve the route", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "error",
       document: null,
@@ -930,7 +910,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("renders the page when the local producer's document is one the contract rejects", () => {
-    routeFactsFlag.current = true;
     routeFacts.current = {
       status: "absent",
       document: null,
@@ -955,7 +934,6 @@ describe("EvaluateRunContent", () => {
   });
 
   it("renders one route-facts section per execution variant on a two-model row", () => {
-    routeFactsFlag.current = true;
     detailState.current = {
       ...detailState.current,
       status: "ready",
