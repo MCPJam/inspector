@@ -261,6 +261,11 @@ describe('announcementFor', () => {
       'U1',
     );
     assert.match(text, /<https:\/\/app\/x\|follow it here>/);
+    // URL also wins for generate, schedule, and external when the server returns one.
+    for (const kind of ['generate', 'schedule', 'external']) {
+      const t = announcementFor({ operation: 'x', kind, resource: { url: 'https://app/r' } }, 'U1');
+      assert.match(t, /<https:\/\/app\/r\|follow it here>/, `URL should win for kind=${kind}`);
+    }
   });
 
   it('falls back to operation names for a server that predates `kind`', () => {
