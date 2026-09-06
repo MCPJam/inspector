@@ -123,9 +123,20 @@ export async function hydrateTurnTraceSpans(
  * are two views of the same session, and a viewer who sees this in one place
  * and different wording in the other has to work out whether it is the same
  * problem.
+ *
+ * It has to name the CONSEQUENCE, because the timeline underneath contradicts
+ * it otherwise. Neither reader passes `estimatedDurationMs`, so the viewer
+ * cannot fall back to an estimated timeline — `mode` lands on `"none"` and it
+ * prints "No timing data recorded", i.e. a statement about the session. This
+ * banner's whole job is to correct that: the timing WAS recorded, and the load
+ * is what failed.
  */
 export const SPAN_LOAD_FAILURE =
   "Could not load the recorded trace for this session";
+
+/** Follows {@link SPAN_LOAD_FAILURE} next to the timeline it qualifies. */
+export const SPAN_LOAD_FAILURE_CONSEQUENCE =
+  "the timeline below is empty for that reason, not because none was recorded";
 
 /**
  * The timing fields a wall-clock anchor needs.
@@ -169,16 +180,19 @@ export function turnTraceWallClockRange(
  * How many spans the turn ROWS claim their blobs hold.
  *
  * {@link hydrateTurnTraceSpans} swallows every per-blob failure and returns
- * `[]`, so a total load failure is indistinguishable from a session that never
- * recorded spans — and that is not a blank timeline: `getRecordedSpans` reads
- * `[]` as `undefined`, so the viewer silently falls back to a timeline
- * SYNTHESIZED from `estimatedDurationMs`. A confident, entirely estimated
- * timeline is the BB-153 failure mode wearing a different face, so "expected
- * some, got none" has to be sayable.
+ * `[]`, and `getRecordedSpans` reads `[]` as `undefined`, so the timeline drops
+ * to its `mode: "none"` branch and says "No timing data recorded" — which is a
+ * claim about the SESSION, not about the fetch. A session whose spans were
+ * recorded and could not be loaded is told it never had any. That is the
+ * BB-153 failure mode wearing a different face, so "the rows expected spans and
+ * none arrived" has to be sayable.
  *
- * Shared so both readers draw that line in the same place. `Number.isFinite`
- * rather than `?? 0`: a NaN `spanCount` on one row would otherwise poison the
- * total and make every session look like it recorded nothing.
+ * Shared so both readers draw that line in the same place. The guard is
+ * `isSafeInteger && >= 0` rather than `?? 0`: this is a persisted count the
+ * client does not validate, and a NaN would poison the total through the `+`
+ * while a negative row could cancel a positive one out (`-1` and `1` sum to
+ * `0`) — either way the total reads as "recorded nothing" and the warning it
+ * gates goes silent, which is the single case it exists for.
  */
 export function expectedTurnTraceSpanCount(
   traces: readonly { spanCount?: number | null }[],
@@ -186,7 +200,9 @@ export function expectedTurnTraceSpanCount(
   return traces.reduce(
     (total, trace) =>
       total +
-      (Number.isFinite(trace.spanCount) ? (trace.spanCount as number) : 0),
+      (Number.isSafeInteger(trace.spanCount) && (trace.spanCount as number) > 0
+        ? (trace.spanCount as number)
+        : 0),
     0,
   );
 }

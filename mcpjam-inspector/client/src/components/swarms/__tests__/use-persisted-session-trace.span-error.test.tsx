@@ -107,6 +107,18 @@ describe("usePersistedSessionTrace — span load failures", () => {
     await waitFor(() => expect(last?.spanError).toBeNull());
   });
 
+  it("clears a standing failure when the selection is cleared", async () => {
+    // A stale warning outliving the session it described would sit over the
+    // next thing the pane shows — or over the empty pane (coderabbit).
+    mockHydrate.mockResolvedValue([]);
+    const { rerender } = render(<Probe threadId="t1" />);
+    await waitFor(() => expect(last?.spanError).not.toBeNull());
+
+    rerender(<Probe threadId={null} />);
+    await waitFor(() => expect(last?.spanError).toBeNull());
+    expect(last?.trace).toBeNull();
+  });
+
   it("surfaces a thrown hydration, not just an empty result", async () => {
     mockHydrate.mockRejectedValue(new Error("network down"));
     render(<Probe threadId="t1" />);

@@ -50,9 +50,9 @@ export function usePersistedSessionTrace(threadId: string | null): {
    * The recorded spans could not be loaded, though the transcript may have
    * been. SEPARATE from `error` because it does not stop the transcript from
    * rendering — and a caller that only shows `error` in its no-trace branch
-   * would swallow it in exactly the case it exists for: the viewer falls back
-   * to a SYNTHESIZED `estimatedDurationMs` timeline, which is the BB-153
-   * failure mode wearing a confident face.
+   * would swallow it in exactly the case it exists for: with no spans the
+   * timeline states "No timing data recorded", a claim about the SESSION that
+   * is false here. That is the BB-153 failure mode wearing a confident face.
    */
   spanError: string | null;
   /**
@@ -179,10 +179,10 @@ export function usePersistedSessionTrace(threadId: string | null): {
     setSpanError(null);
     // `hydrateTurnTraceSpans` swallows every per-blob failure and returns [],
     // so a total load failure was indistinguishable from a session that never
-    // recorded spans — and that is not a blank timeline: `getRecordedSpans`
-    // reads [] as `undefined`, so the viewer silently falls back to the
-    // SYNTHESIZED `estimatedDurationMs` trace. A confident, entirely estimated
-    // timeline is the BB-153 failure mode over again.
+    // recorded spans — and the timeline then asserts the wrong one of the two:
+    // `getRecordedSpans` reads [] as `undefined`, `mode` lands on "none", and
+    // it prints "No timing data recorded". Stating that about a session whose
+    // timing WAS recorded is the BB-153 failure mode over again.
     //
     // `spanCount` is the row's own record of what should be there, so
     // "expected some, got none" is precisely a total load failure.

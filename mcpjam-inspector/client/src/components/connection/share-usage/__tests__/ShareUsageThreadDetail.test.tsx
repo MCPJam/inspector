@@ -606,7 +606,10 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     await openTrace();
 
     const warning = await screen.findByTestId("share-usage-span-error");
-    expect(warning).toHaveTextContent("durations below are estimated");
+    // The wording has to correct the timeline, not agree with it: with no
+    // spans and no `estimatedDurationMs` the viewer prints "No timing data
+    // recorded", which is a claim about the session (cubic).
+    expect(warning).toHaveTextContent("not because none was recorded");
     // The transcript is unaffected — that is why this cannot share `error`,
     // whose branch replaces the whole viewer.
     expect(screen.getByTestId("trace-viewer")).toBeInTheDocument();
@@ -643,6 +646,28 @@ describe("ShareUsageThreadDetail — span load failure", () => {
     expect(
       screen.queryByTestId("share-usage-span-error"),
     ).not.toBeInTheDocument();
+  });
+
+  it("gives an eval session no absolute anchor rather than a wrong one", async () => {
+    // Eval spans are anchored at the RUN start (that is why they are not
+    // rebased), while these rows carry each turn's PERSIST time — the earliest
+    // of which lands after turn 1 finished. Handing that to the timeline would
+    // label span offset 0 with a clock time minutes off (coderabbit).
+    mockThreadState.sourceType = "eval";
+    mockTurnTracesState.traces = [
+      { turnIndex: 0, startedAt: 1_000_000, endedAt: 1_005_000, spanCount: 0 },
+      { turnIndex: 1, startedAt: 1_008_000, endedAt: 1_012_000, spanCount: 0 },
+    ];
+    render(<ShareUsageThreadDetail threadId="thread-1" />);
+    await openTrace();
+
+    await waitFor(() => expect(mockTraceViewer).toHaveBeenCalled());
+    expect(mockTraceViewer).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        traceStartedAtMs: null,
+        traceEndedAtMs: null,
+      }),
+    );
   });
 
   it("anchors the timeline on the earliest turn start", async () => {

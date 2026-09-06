@@ -224,8 +224,20 @@ describe("hydrateTurnTraceSpans", () => {
       "blob-a": [
         { id: "ok", name: "ok", category: "step", startMs: 0, endMs: 100 },
         { id: "nan", name: "nan", category: "step", startMs: 0, endMs: NaN },
-        { id: "inf", name: "inf", category: "step", startMs: 0, endMs: Infinity },
-        { id: "bad-shape", name: "bad", category: "not-a-category", startMs: 0, endMs: 5 },
+        {
+          id: "inf",
+          name: "inf",
+          category: "step",
+          startMs: 0,
+          endMs: Infinity,
+        },
+        {
+          id: "bad-shape",
+          name: "bad",
+          category: "not-a-category",
+          startMs: 0,
+          endMs: 5,
+        },
         { id: "missing" },
         null,
       ],
@@ -334,6 +346,23 @@ describe("expectedTurnTraceSpanCount", () => {
     expect(
       expectedTurnTraceSpanCount([{ spanCount: 0 }, { spanCount: null }, {}]),
     ).toBe(0);
+  });
+
+  it("ignores a negative count instead of letting it cancel a real one", () => {
+    // `spanCount` is a persisted integer the client does not validate, and the
+    // old `?? 0` summed it raw: `-1` and `1` totalled `0`, so a session that
+    // recorded spans and failed to load them reported "recorded nothing" and
+    // the warning gated on this count went silent (coderabbit).
+    expect(
+      expectedTurnTraceSpanCount([{ spanCount: -1 }, { spanCount: 1 }]),
+    ).toBe(1);
+    expect(expectedTurnTraceSpanCount([{ spanCount: -5 }])).toBe(0);
+  });
+
+  it("ignores a non-integer count", () => {
+    expect(
+      expectedTurnTraceSpanCount([{ spanCount: 1.5 }, { spanCount: 2 }]),
+    ).toBe(2);
   });
 
   it("does not let one garbage count erase the others", () => {

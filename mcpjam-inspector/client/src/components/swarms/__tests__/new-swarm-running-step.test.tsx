@@ -20,9 +20,17 @@ const streamState = {
   error: null as string | null,
 };
 
+/**
+ * The live SSE envelope, when one exists. Hard-wired to `null` before, which
+ * left the `displayTrace` merge branch unreachable — the very branch where a
+ * completed session still held in the stream buffer decides whether it shows
+ * the persisted spans or nothing at all.
+ */
+const liveTraceState = { trace: null as Record<string, unknown> | null };
+
 vi.mock("@/components/swarms/use-journey-run-stream", () => ({
   useJourneyRunStream: () => streamState,
-  liveSessionTrace: () => null,
+  liveSessionTrace: () => liveTraceState.trace,
   swarmCellKey: (targetKey: string, sessionIndex: number) =>
     `${targetKey}:${sessionIndex}`,
 }));
@@ -150,12 +158,50 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     runFixture.summary = { total: 2, succeeded: 0, failed: 0, rateLimited: 0 };
     runFixture.hostSummaries![0].targetId = "environment:env-1";
     runFixture.snapshot!.hosts[0].targetId = "environment:env-1";
+    liveTraceState.trace = null;
     persistedState.trace = null;
     persistedState.loading = false;
     persistedState.error = null;
     persistedState.spanError = null;
     traceViewerProps.mockClear();
   });
+
+  /** Render the wizard and open the pane on the first session chip. */
+  const renderPaneAndSelectSession = async () => {
+    render(
+      <div className="h-[40rem]">
+        <NewSwarmRunningStep
+          projectId="proj-1"
+          runs={[
+            {
+              runId: "run-1",
+              journeyId: "j-1",
+              personaId: "p-1",
+              personaName: "Async Documentation Writer",
+              personaRole: "Writer",
+              label: "Async Documentation Writer · Refund a charge",
+              goalLabel: "Refund a charge",
+            },
+          ]}
+          fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
+          environments={[
+            {
+              environmentId: "env-1",
+              projectId: "proj-1",
+              name: "Prod-like",
+              hostId: "host-1",
+              revision: 1,
+            },
+          ]}
+          onLeave={vi.fn()}
+          onOpenSession={vi.fn()}
+        />
+      </div>,
+    );
+    const chips = await screen.findAllByTestId("new-swarm-running-session");
+    fireEvent.click(chips[0]!);
+    return chips;
+  };
 
   it("shows an empty stream pane until a session is clicked", async () => {
     runFixture.hostSummaries![0].targetId = "opaque-target";
@@ -287,6 +333,71 @@ describe("NewSwarmRunningStep — session stream pane", () => {
     expect(pane).not.toHaveTextContent(/synth_/);
     expect(pane).not.toHaveTextContent(/Readiness:/i);
     expect(chips[0]).toHaveAttribute("aria-pressed", "true");
+  });
+
+  /**
+   * The window cubic found: a session whose run just ended is still in the SSE
+   * buffer, so `fallbackTrace` wins the merge — and the swarm stream emits no
+   * `trace_snapshot`, so it carries NO spans. The merge only overlaid browser
+   * artifacts, so the Trace tab was empty and the BB-153 re-anchoring never
+   * reached this pane until the buffer was gone.
+   */
+  it("overlays the persisted spans and clock onto a live trace that has none", async () => {
+    liveTraceState.trace = { traceVersion: 1, messages: [] };
+    persistedState.trace = {
+      traceVersion: 1,
+      messages: [],
+      spans: [
+        { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+      ],
+      traceStartedAtMs: 1_000_000,
+      traceEndedAtMs: 1_012_000,
+    };
+
+    await renderPaneAndSelectSession();
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    const props = traceViewerProps.mock.calls.at(-1)![0] as {
+      trace: { spans?: unknown[] };
+      traceStartedAtMs: number | null;
+    };
+    expect(props.trace.spans).toHaveLength(1);
+    expect(props.traceStartedAtMs).toBe(1_000_000);
+  });
+
+  /**
+   * The banner must describe what is ON SCREEN, not what one fetch did. Gating
+   * it on `spanError` alone let it contradict a timeline drawing real spans
+   * (cubic).
+   */
+  it("stays quiet when the displayed trace has spans despite a span-load failure", async () => {
+    liveTraceState.trace = {
+      traceVersion: 1,
+      messages: [],
+      spans: [
+        { id: "s1", name: "step", category: "step", startMs: 0, endMs: 10 },
+      ],
+    };
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    persistedState.spanError = "Could not load the recorded trace";
+
+    await renderPaneAndSelectSession();
+
+    await waitFor(() => expect(traceViewerProps).toHaveBeenCalled());
+    expect(
+      screen.queryByTestId("swarm-live-pane-span-error"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("warns when the displayed trace has no spans and the load failed", async () => {
+    persistedState.trace = { traceVersion: 1, messages: [] };
+    persistedState.spanError = "Could not load the recorded trace";
+
+    await renderPaneAndSelectSession();
+
+    expect(
+      await screen.findByTestId("swarm-live-pane-span-error"),
+    ).toHaveTextContent("not because none was recorded");
   });
 
   /**

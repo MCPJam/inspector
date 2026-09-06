@@ -15,6 +15,7 @@ import {
 } from "@/components/evals/trace-view-mode-tabs";
 import type { TraceEnvelope } from "@/components/evals/trace-viewer-adapter";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
+import { SPAN_LOAD_FAILURE_CONSEQUENCE } from "@/components/evals/turn-trace-spans";
 import {
   swarmCellKey,
   type JourneyRunStreamState,
@@ -419,6 +420,25 @@ export function SwarmLiveStreamPane({
         ? { browserInteractionSteps: finalized.browserInteractionSteps }
         : {}),
       ...(finalized.videoUrl ? { videoUrl: finalized.videoUrl } : {}),
+      // Spans and their clock, on the same terms as the artifacts above: the
+      // live swarm stream emits no `trace_snapshot`, so `fallbackTrace` never
+      // carries spans and the Trace tab stayed EMPTY for any session still held
+      // in the stream buffer — the BB-153 re-anchoring simply never reached
+      // this pane in that window. Overlaid, not merged, and only when the
+      // persisted side actually has them, so a live turn that hasn't persisted
+      // yet keeps whatever the stream is showing rather than flickering to
+      // nothing (cubic).
+      ...(finalized.spans?.length
+        ? {
+            spans: finalized.spans,
+            ...(typeof finalized.traceStartedAtMs === "number"
+              ? { traceStartedAtMs: finalized.traceStartedAtMs }
+              : {}),
+            ...(typeof finalized.traceEndedAtMs === "number"
+              ? { traceEndedAtMs: finalized.traceEndedAtMs }
+              : {}),
+          }
+        : {}),
     };
   }, [fallbackTrace, persisted.trace]);
 
@@ -564,18 +584,25 @@ export function SwarmLiveStreamPane({
         />
       </div>
 
-      {/* A timeline the viewer SYNTHESIZED from `estimatedDurationMs`, shown
-          without a word, is BB-153 over again — so say so next to it. The
-          no-trace branch below cannot carry this: the transcript loading fine
-          while its span blobs fail is exactly the case, and it renders the
-          viewer. */}
-      {displayTrace && persisted.spanError ? (
+      {/* The timeline says "No timing data recorded" whenever it has no spans,
+          which is a claim about the SESSION — and it is false when the spans
+          were recorded and the fetch is what failed. Saying nothing next to it
+          is BB-153 over again. The no-trace branch below cannot carry this:
+          the transcript loading fine while its span blobs fail is exactly the
+          case, and it renders the viewer.
+
+          Gated on the DISPLAYED trace having no spans, not merely on the span
+          fetch having failed (cubic). `persisted.spanError` describes the
+          persisted read alone; if what the viewer ends up showing has real
+          spans from anywhere, this warning would be contradicting the timeline
+          it sits above. */}
+      {displayTrace && persisted.spanError && !displayTrace.spans?.length ? (
         <div
-          className="flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400"
+          className="flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning-foreground"
           data-testid="swarm-live-pane-span-error"
         >
           <AlertTriangle className="size-3 shrink-0" aria-hidden />
-          {persisted.spanError} — durations below are estimated.
+          {persisted.spanError} — {SPAN_LOAD_FAILURE_CONSEQUENCE}.
         </div>
       ) : null}
 
@@ -598,12 +625,12 @@ export function SwarmLiveStreamPane({
             forcedViewMode={showReplay ? "browser" : viewMode}
             isLoading={isStreaming && !fallbackTrace}
             fillContent
-            // Read off the trace being DISPLAYED, not off `persisted`: while a
-            // live SSE trace is winning, the spans on screen are its own
-            // (contiguously packed, no anchor), and stamping the persisted
-            // session's clock onto them would label estimated positions with
-            // real times. `null` keeps today's behaviour — relative offsets
-            // only — for a stream that carries no anchor.
+            // Read off the trace being DISPLAYED, not off `persisted`, so the
+            // clock always describes the spans actually on screen. The merge
+            // above carries the persisted anchor in with the persisted spans,
+            // as one unit — which is the only way the two can't disagree. A
+            // stream showing its own spans (none today) would get `null` and
+            // relative offsets, not the persisted session's clock.
             traceStartedAtMs={displayTrace.traceStartedAtMs ?? null}
             traceEndedAtMs={displayTrace.traceEndedAtMs ?? null}
           />
