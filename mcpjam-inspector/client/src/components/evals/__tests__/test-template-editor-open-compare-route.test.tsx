@@ -5,7 +5,6 @@ import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
-import { SIMPLE_CASE_EDITOR_FLAG } from "../simple-case/simple-case-model";
 import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 
 function renderWithProviders(
@@ -841,10 +840,10 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 
-  it("renders the simple form for a single-turn case when the flag is on", async () => {
-    flagMock.mockReturnValue(true);
+  it("renders the simple form for a single-turn case on the Evaluate surface", async () => {
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -864,13 +863,11 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
-    expect(flagMock).toHaveBeenCalledWith(SIMPLE_CASE_EDITOR_FLAG);
     expect(screen.getByText("What does the user ask?")).toBeInTheDocument();
     expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
   });
 
-  it("falls back to the flat step-list editor for a multi-turn case even with the flag on", async () => {
-    flagMock.mockReturnValue(true);
+  it("falls back to the flat step-list editor for a multi-turn case on the Evaluate surface", async () => {
     activeCaseDoc = {
       ...caseDoc,
       steps: [
@@ -880,6 +877,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -905,7 +903,6 @@ describe("TestTemplateEditor run view from route", () => {
 
   it("saves a no-tool simple case as a negative test", async () => {
     const user = userEvent.setup();
-    flagMock.mockReturnValue(true);
     activeCaseDoc = {
       ...caseDoc,
       isNegativeTest: false,
@@ -924,6 +921,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -958,7 +956,6 @@ describe("TestTemplateEditor run view from route", () => {
   });
 
   it("blocks Run while the simple-form tools choice is unset", async () => {
-    flagMock.mockReturnValue(true);
     activeCaseDoc = {
       ...caseDoc,
       isNegativeTest: false,
@@ -969,6 +966,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -994,9 +992,9 @@ describe("TestTemplateEditor run view from route", () => {
 
   it("mounts the step list from the simple form Steps link", async () => {
     const user = userEvent.setup();
-    flagMock.mockReturnValue(true);
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[baseIteration]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1023,7 +1021,6 @@ describe("TestTemplateEditor run view from route", () => {
   });
 
   it("shows the quick-run chain in the latest-traced pane", async () => {
-    flagMock.mockReturnValue(true);
     const quickRun: EvalIteration = {
       ...baseIteration,
       _id: "quick-1",
@@ -1045,6 +1042,7 @@ describe("TestTemplateEditor run view from route", () => {
     };
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[quickRun]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1069,7 +1067,6 @@ describe("TestTemplateEditor run view from route", () => {
 
   it("shows the quick-run chain in RunColumn after a just-finished run", async () => {
     const user = userEvent.setup();
-    flagMock.mockReturnValue(true);
     streamEvalTestCaseMock.mockImplementation(
       async (
         _request: unknown,
@@ -1114,6 +1111,7 @@ describe("TestTemplateEditor run view from route", () => {
     );
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={[]}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
@@ -1142,7 +1140,6 @@ describe("TestTemplateEditor run view from route", () => {
   });
 
   it("shows the observational route rollup for a multi-trial quick run", async () => {
-    flagMock.mockReturnValue(true);
     const metadata = { compareRunId: "cmp_rollup" };
     const trials: EvalIteration[] = [
       {
@@ -1182,6 +1179,7 @@ describe("TestTemplateEditor run view from route", () => {
     activeCaseDoc = { ...caseDoc, lastMessageRun: "t3" };
     renderWithProviders(
       <TestTemplateEditor
+        simpleCaseEditor
         suiteIterations={trials}
         suiteId="suite-1"
         selectedTestCaseId="case-1"
