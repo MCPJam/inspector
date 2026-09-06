@@ -457,6 +457,79 @@ describe("TopicMapPanel", () => {
     }
   });
 
+  // The cooperative-wheel listener lives on the graph wrapper, which only
+  // mounts once a snapshot exists. Data almost always arrives after the first
+  // render, so an effect that read the wrapper once (before the loading branch
+  // resolved) would leave a bare wheel to d3-zoom and re-trap the page scroll.
+  describe("cooperative wheel zoom", () => {
+    const panelProps = {
+      scenarioId: "scenario-1",
+      filter: EMPTY_FILTER,
+      onToggleChip: vi.fn(),
+      onClearChip: vi.fn(),
+      onRebuild: vi.fn(),
+      cooperativeWheelZoom: true,
+    };
+
+    /** Dispatch a wheel on the canvas and report whether it reached it. */
+    function wheelReachesCanvas(init: WheelEventInit = {}) {
+      const canvas = screen.getByTestId("force-graph");
+      let reached = false;
+      const onWheel = () => {
+        reached = true;
+      };
+      canvas.addEventListener("wheel", onWheel);
+      try {
+        canvas.dispatchEvent(
+          new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init })
+        );
+      } finally {
+        canvas.removeEventListener("wheel", onWheel);
+      }
+      return reached;
+    }
+
+    function renderThenLoad(props = panelProps) {
+      mockUseScenarioTopicMap.mockReturnValue({
+        ...createDefaultScenarioTopicMapHookValue(),
+        snapshot: null,
+        isLoading: true,
+      });
+      const view = render(<TopicMapPanel {...props} />);
+      expect(screen.queryByTestId("force-graph")).toBeNull();
+
+      mockUseScenarioTopicMap.mockReturnValue(
+        createDefaultScenarioTopicMapHookValue()
+      );
+      view.rerender(<TopicMapPanel {...props} />);
+      return view;
+    }
+
+    it("blocks a bare wheel once the graph mounts after loading", () => {
+      renderThenLoad();
+      expect(wheelReachesCanvas()).toBe(false);
+    });
+
+    it("lets a Ctrl/Cmd wheel (and trackpad pinch) through to zoom", () => {
+      renderThenLoad();
+      expect(wheelReachesCanvas({ ctrlKey: true })).toBe(true);
+      expect(wheelReachesCanvas({ metaKey: true })).toBe(true);
+    });
+
+    it("removes the listener when the pane stops owning a scrolling page", () => {
+      const view = renderThenLoad();
+      view.rerender(
+        <TopicMapPanel {...panelProps} cooperativeWheelZoom={false} />
+      );
+      expect(wheelReachesCanvas()).toBe(true);
+    });
+
+    it("leaves the wheel alone in the default (viewport-locked) layout", () => {
+      renderThenLoad({ ...panelProps, cooperativeWheelZoom: false });
+      expect(wheelReachesCanvas()).toBe(true);
+    });
+  });
+
   it("renders cluster list with summaries in the sidebar", () => {
     render(
       <TopicMapPanel
