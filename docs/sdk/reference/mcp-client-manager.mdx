@@ -400,6 +400,10 @@ console.log(result); // 8
 - Error if arguments are invalid
 - Error if tool execution fails
 
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `executeTool` automatically drives the multi-round-trip loop if the server returns an `input_required` result. The collector is invoked once per round; the operation retries until a complete result is returned or the round cap (default 10) is exceeded.
+</Note>
+
 ---
 
 ### listResources()
@@ -471,6 +475,10 @@ const content = await manager.readResource("myServer", {
 });
 console.log(content);
 ```
+
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `readResource` automatically drives the multi-round-trip loop if the server returns an `input_required` result.
+</Note>
 
 ---
 
@@ -545,6 +553,10 @@ const prompt = await manager.getPrompt("myServer", {
 console.log(prompt.messages);
 ```
 
+<Note>
+When an MRTR input collector is registered for the server via `setMrtrInputCollector`, `getPrompt` automatically drives the multi-round-trip loop if the server returns an `input_required` result.
+</Note>
+
 ---
 
 ### getTools()
@@ -603,6 +615,86 @@ console.log(result.getText());
 <Note>
 `getTools()` returns all tools including app-only ones. Tools with `_meta.ui.visibility = ["app"]` are filtered out by `getToolsForAiSdk()` per SEP-1865 before being passed to the model. These tools remain callable by apps via the MCP bridge.
 </Note>
+
+---
+
+### setMrtrInputCollector()
+
+Registers an input collector for the MCP 2026-07-28 multi-round-trip (`input_required`) flow on a server. Once registered, `executeTool`, `readResource`, and `getPrompt` automatically drive the MRTR loop: when a server returns an `input_required` result carrying embedded elicitation requests, the collector is called to gather responses, and the original operation is retried with those responses until a complete result is returned.
+
+Register the collector **before** calling `connectToServer` so the `elicitation` capability is advertised to the server on connect.
+
+```typescript
+setMrtrInputCollector(serverId: string, collect: MrtrInputCollector): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID to register the collector for. |
+| `collect` | `MrtrInputCollector` | Async function that receives the current operation state and embedded input requests, and returns responses keyed by the server's request keys. Must reject (never return a synthetic decline) when the provided `signal` is aborted. |
+
+#### MrtrInputCollector signature
+
+```typescript
+type MrtrInputCollector = (request: {
+  state: MrtrOperationState;
+  inputRequests: InputRequests;
+  signal?: AbortSignal;
+}) => Promise<InputResponses>;
+```
+
+#### Example
+
+```typescript
+import { MCPClientManager, type MrtrInputCollector } from "@mcpjam/sdk";
+
+const manager = new MCPClientManager();
+
+const collector: MrtrInputCollector = async ({ inputRequests, signal }) => {
+  const responses: Record<string, unknown> = {};
+  for (const [key, req] of Object.entries(inputRequests)) {
+    // Collect user input for each embedded elicitation request.
+    // Reject on abort — never return a synthetic decline.
+    responses[key] = { action: "accept", content: { answer: await promptUser(req, signal) } };
+  }
+  return responses;
+};
+
+// Register before connecting so `elicitation` is advertised on connect.
+manager.setMrtrInputCollector("myServer", collector);
+await manager.connectToServer("myServer", { url: "https://mcp.example.com/mcp", mcpProtocolVersion: "2026-07-28" });
+
+// executeTool now drives the MRTR loop automatically when the server returns input_required.
+const result = await manager.executeTool("myServer", "confirm", { topic: "deployment" });
+```
+
+<Note>
+The collector is also called for `readResource` and `getPrompt` when those operations return `input_required`. Registering a collector advertises the `elicitation` capability to the server; `roots` and `sampling` are never advertised.
+</Note>
+
+---
+
+### clearMrtrInputCollector()
+
+Removes a server's MRTR input collector. After clearing, `executeTool`, `readResource`, and `getPrompt` revert to their pre-MRTR behavior for that server.
+
+```typescript
+clearMrtrInputCollector(serverId: string): void
+```
+
+#### Parameters
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `serverId` | `string` | The server ID whose collector should be removed. |
+
+#### Example
+
+```typescript
+manager.clearMrtrInputCollector("myServer");
+```
 
 ---
 
