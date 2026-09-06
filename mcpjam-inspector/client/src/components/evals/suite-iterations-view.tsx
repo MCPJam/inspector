@@ -378,6 +378,7 @@ export function SuiteIterationsView({
   omitSuiteHeader = false,
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
+  evaluateCaseEditor = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -468,6 +469,17 @@ export function SuiteIterationsView({
    * exactly zero decision-summary requests. Only `EvaluateTab` passes it.
    */
   evaluateDecisionSummary?: boolean;
+  /**
+   * Evaluate (New) only: author cases with the simple case editor
+   * (`components/evaluate/simple-case/`) — the three-question form, the
+   * per-trial chain and route rollup on quick runs, and the
+   * Generate / Record / Write empty state.
+   *
+   * OFF by default, which is what keeps `/evals` byte-identical: with this
+   * false the case editor renders the flat step list exactly as it does
+   * today. Only `EvaluateTab` passes it.
+   */
+  evaluateCaseEditor?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -1262,6 +1274,7 @@ export function SuiteIterationsView({
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       onRecordTestCase={onRecordTestCase}
+      simpleCaseEditor={evaluateCaseEditor}
       hostNamesById={hostNamesById}
       environments={projectEnvironments}
       {...extra}
@@ -1453,6 +1466,7 @@ export function SuiteIterationsView({
                   trialChainEnabled={Boolean(
                     evaluateDecisionSummary && projectId,
                   )}
+                  simpleCaseEditor={evaluateCaseEditor}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
                   projectServers={projectServers}
@@ -1804,6 +1818,7 @@ export function SuiteIterationsView({
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       onRecordTestCase={onRecordTestCase}
+                      simpleCaseEditor={evaluateCaseEditor}
                       hostNamesById={hostNamesById}
                       environments={projectEnvironments}
                     />
