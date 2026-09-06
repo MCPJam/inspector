@@ -47,6 +47,7 @@ describe("PolicyDiffTab violation evidence", () => {
           directive: "frame-src",
           blockedUri: "https://js.stripe.com/c",
           originalPolicy: "frame-src 'none'",
+          disposition: "report",
           timestamp: 3,
         },
       ],
@@ -85,6 +86,7 @@ describe("PolicyDiffTab violation evidence", () => {
       "href",
       "https://developer.mozilla.org/en-US/docs/Web/API/SecurityPolicyViolationEvent/originalPolicy",
     );
-    expect(screen.getByText(/mount unknown/)).toBeTruthy();
+    expect(screen.queryByText(/mount|instance|enforce/)).toBeNull();
+    expect(screen.getByText(/report only/)).toBeTruthy();
   });
 });
