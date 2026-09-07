@@ -22,7 +22,12 @@ function fakeGateway(order: string[], id = "gw"): LocalModelGateway {
     close: async () => {
       order.push(`${id}:close`);
     },
-    stats: () => ({ requests: 0, rejected: 0, forwarded: 0, upstreamErrors: 0 }),
+    stats: () => ({
+      requests: 0,
+      rejected: 0,
+      forwarded: 0,
+      upstreamErrors: 0,
+    }),
   };
 }
 
@@ -198,6 +203,74 @@ describe("ending one session", () => {
     expect(releaseRuntime).not.toHaveBeenCalled();
   });
 
+  it("keeps a session that would not stop listed, so it can be stopped again", async () => {
+    // The record is deleted up front so two concurrent callers cannot both run
+    // the teardown — but deleting it for good on a FAILED stop threw away the
+    // only handle this process had on a tree that is still running, and with
+    // it the reservation that tree still holds. `stop-all` reads this map, so
+    // the retry went out with the record and nothing short of quitting the
+    // Inspector could free the runtime directory again.
+    let escaped = 2;
+    const stop = vi.fn(async () =>
+      escaped > 0 ? { stopped: false, escaped } : { stopped: true },
+    );
+    const releaseRuntime = vi.fn(async () => undefined);
+    registerLocalHarnessSession(record({ stop, releaseRuntime }));
+
+    const first = await endLocalHarnessSession("s1");
+    expect(first.stopped).toBe(false);
+    expect(releaseRuntime).not.toHaveBeenCalled();
+    // Still listed — for the stop-all button and for the telemetry count,
+    // which would otherwise report a running session as gone.
+    expect(getLocalHarnessSession("s1")).toBeDefined();
+    expect(listLocalHarnessSessions()).toHaveLength(1);
+
+    // Pressed again, and this time the tree goes down: the retry the retained
+    // record made possible is what finally hands the reservation back.
+    escaped = 0;
+    const second = await endLocalHarnessSession("s1");
+    expect(second.stopped).toBe(true);
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(releaseRuntime).toHaveBeenCalledTimes(1);
+    expect(getLocalHarnessSession("s1")).toBeUndefined();
+  });
+
+  it("does not put a stale record back over a newer one for the same id", async () => {
+    // A session id reused by a later turn must win: the retry path exists to
+    // keep an escaped tree reachable, not to resurrect a record the caller has
+    // already replaced.
+    let resolveStop: (v: {
+      stopped: boolean;
+      escaped?: number;
+    }) => void = () => {};
+    const hangingStop = new Promise<{ stopped: boolean; escaped?: number }>(
+      (resolve) => {
+        resolveStop = resolve;
+      },
+    );
+    const stopCalled = vi.fn();
+    registerLocalHarnessSession(
+      record({
+        stop: () => {
+          stopCalled();
+          return hangingStop;
+        },
+        releaseRuntime: async () => undefined,
+      }),
+    );
+    const ending = endLocalHarnessSession("s1");
+    // Wait until the teardown is actually parked on the stop, so the record is
+    // already deleted and the re-register below is the only thing in the map.
+    await vi.waitFor(() => expect(stopCalled).toHaveBeenCalled());
+    // A new turn claims the id while the old stop is still hanging.
+    registerLocalHarnessSession(record({ runtimeId: "rt_2" }));
+    resolveStop({ stopped: false, escaped: 1 });
+    await ending;
+
+    expect(getLocalHarnessSession("s1")?.runtimeId).toBe("rt_2");
+    expect(listLocalHarnessSessions()).toHaveLength(1);
+  });
+
   it("still ends the session when the reservation will not release", async () => {
     const stop = vi.fn(async () => ({ stopped: true }));
     registerLocalHarnessSession(
@@ -240,8 +313,7 @@ describe("the stop-all brake", () => {
     registerLocalHarnessSession(
       record({
         sessionId: "slow",
-        stop: () =>
-          new Promise<{ stopped: boolean }>((r) => (released = r)),
+        stop: () => new Promise<{ stopped: boolean }>((r) => (released = r)),
       }),
     );
     registerLocalHarnessSession(record({ sessionId: "quick" }));

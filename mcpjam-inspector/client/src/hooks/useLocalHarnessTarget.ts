@@ -607,6 +607,12 @@ export function useLocalHarnessController(
     if (!offerable || !inScope || !projectId) return;
     if (storedTarget !== null) return;
     if (availability === null || availability.hostedAvailable !== false) return;
+    // Re-read at WRITE time, not just at render time. `storedTarget` is this
+    // render's snapshot, and an effect runs after the commit: another window
+    // recording an explicit choice in that gap would be overwritten by a
+    // default derived before it existed — the one thing this effect is not
+    // allowed to do, since the whole point is that an explicit choice wins.
+    if (loadStoredHarnessTarget(projectId) !== null) return;
     saveHarnessTarget(projectId, "local-native");
   }, [offerable, inScope, projectId, storedTarget, availability]);
 
@@ -891,7 +897,15 @@ export function useLocalHarnessController(
         still !== null &&
         still.attemptId === approval.attemptId &&
         still.projectId === projectId &&
-        (userKey === undefined || still.userKey === userKey);
+        // An identity that is not KNOWN cannot be the identity that approved.
+        // `undefined` is the caller's member query in flight, and treating it
+        // as "no objection" persisted a grant without ever proving the member
+        // who clicked is still the member signed in. Every other reader here
+        // already refuses on it — `phase` answers `loading`, and
+        // `resolveSendTarget` answers null — so this was the one place that
+        // spent it.
+        userKey !== undefined &&
+        still.userKey === userKey;
       if (!contextHolds) {
         void revokeLocalHarnessGrantId(result.consent.grantId);
         return {

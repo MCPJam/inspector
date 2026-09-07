@@ -114,8 +114,7 @@ describe("workspace grants", () => {
     for (const share of [
       "\\\\server\\share",
       "\\\\server\\share\\",
-      "//server/share",
-      "//server/share/",
+      "\\\\server\\share/",
       "\\\\server",
     ]) {
       expect(isFilesystemRoot(share)).toBe(true);
@@ -127,10 +126,30 @@ describe("workspace grants", () => {
       "C:\\code\\project",
       "/home/user/code",
       "\\\\server\\share\\project",
-      "//server/share/project",
     ]) {
       expect(isFilesystemRoot(notRoot)).toBe(false);
     }
+  });
+
+  it("does not read a doubled leading slash as a share root", () => {
+    // POSIX lets an implementation keep exactly two leading slashes, and
+    // `//server/share` is only a share on Windows — where the canonical form
+    // this predicate is handed always uses backslashes, because that is what
+    // `realpath` and `path.resolve` answer there. Matching `//` as well meant
+    // an ordinary POSIX directory was refused as a whole network share, so
+    // `//tmp/project` could not be a workspace at all.
+    for (const posix of [
+      "//tmp/project",
+      "//home/user",
+      "//tmp/project/",
+      "//server/share/project",
+    ]) {
+      expect(isFilesystemRoot(posix)).toBe(false);
+    }
+    // The two-slash forms that ARE roots stay roots, by the rule above them:
+    // one slash is the POSIX root, and everything under `//` is an ordinary
+    // path with a doubled separator.
+    expect(isFilesystemRoot("/")).toBe(true);
   });
 
   it("refuses a file, a missing path, the home directory, and the root", async () => {

@@ -396,10 +396,17 @@ export function isFilesystemRoot(canonicalPath: string): boolean {
     // A UNC share root: `\\server\share` and its trailing-separator form, and
     // a bare `\\server`. Scoping a session to a whole network share is the
     // same mistake as scoping it to a whole volume, and the earlier rule
-    // covered only the volume — a test even asserted `//server/share` was an
-    // ordinary directory, which encoded the wrong belief rather than a gap.
-    // Anything BELOW the share (`\\server\share\project`) stays acceptable.
-    /^[\\/]{2}[^\\/]+([\\/][^\\/]+)?[\\/]?$/.test(canonicalPath)
+    // covered only the volume. Anything BELOW the share
+    // (`\\server\share\project`) stays acceptable.
+    //
+    // Matched on the BACKSLASH form only. Accepting `//` here as well read a
+    // POSIX path with a doubled leading slash — `//tmp/project`, which POSIX
+    // expressly permits an implementation to keep — as a share root, and
+    // refused an ordinary directory. Windows has no such ambiguity to trade
+    // against: `realpath` and `path.resolve` both answer `\\server\share`
+    // there, so the canonical path this predicate is given is always the
+    // backslash form.
+    /^\\{2}[^\\/]+([\\/][^\\/]+)?[\\/]?$/.test(canonicalPath)
   );
 }
 

@@ -102,14 +102,34 @@ vi.mock("../availability.js", () => ({
 vi.mock("../grants.js", () => ({
   localHarnessStateRoot: () => stateRoot,
 }));
+// The supervisor, only so a test can make `stopSession` report an ESCAPED
+// tree. The default is the answer the real one gives for a session that never
+// spawned anything, so every other test in this file behaves as before.
+const supervisorFixture = vi.hoisted(() => ({
+  stopOutcome: { stopped: true } as { stopped: boolean; escaped?: number },
+  stopCalls: 0,
+}));
+vi.mock("../supervisor.js", () => ({
+  LocalHarnessSupervisor: class {
+    ownsPid() {
+      return false;
+    }
+    async stopSession() {
+      supervisorFixture.stopCalls += 1;
+      return supervisorFixture.stopOutcome;
+    }
+  },
+}));
 
 const { prepareLocalHarnessTurn } = await import("../local-turn.js");
 // Real, not mocked: whether a reservation is still held is the subject here.
 const { runtimeUseState } = await import("../runtime-lifecycle.js");
 const { localPackTarget } = await import("../targets.js");
-const { getLocalHarnessSession, listLocalHarnessSessions } = await import(
-  "../session-registry.js"
-);
+const {
+  endLocalHarnessSession,
+  getLocalHarnessSession,
+  listLocalHarnessSessions,
+} = await import("../session-registry.js");
 
 function turnArgs() {
   return {
@@ -141,6 +161,8 @@ beforeEach(async () => {
   stateRoot = tempDir;
   installRoot = join(tempDir, "runtime");
   identityFixture.keyId = "key_1";
+  supervisorFixture.stopOutcome = { stopped: true };
+  supervisorFixture.stopCalls = 0;
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
@@ -229,6 +251,53 @@ describe("a local setup that succeeds", () => {
     expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
     expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
   });
+
+  it("keeps a session whose tree escaped, so stop-all can try again", async () => {
+    // The turn's teardown declines to release the reservation when the stop
+    // cannot prove the tree is down — but it used to drop the registry record
+    // FIRST, unconditionally. That left an escaped tree holding the version
+    // directory with nothing in this process able to stop it or hand it back:
+    // `stop-all` reads this map, so the retry went out with the record and
+    // reinstall and repair stayed blocked until the Inspector quit.
+    supervisorFixture.stopOutcome = { stopped: false, escaped: 2 };
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    await result.prepared.teardown();
+    expect(supervisorFixture.stopCalls).toBe(1);
+    // Still listed, and still holding its claim on the runtime directory.
+    expect(getLocalHarnessSession("s_local_1")).toBeDefined();
+    await expect(
+      runtimeUseState({
+        key: {
+          runtimeRoot: installRoot,
+          harnessId: "claude-code",
+          target: localPackTarget()!,
+          packVersion: "test-pack-1",
+          treeDigest: `sha256:${"a".repeat(64)}`,
+        },
+        runtimeRoot: "/nonexistent/runtime-root",
+      }),
+    ).resolves.toMatchObject({ busy: true });
+
+    // And the retained record is what lets a later stop finish the job.
+    supervisorFixture.stopOutcome = { stopped: true };
+    await endLocalHarnessSession("s_local_1");
+    expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
+    await expect(
+      runtimeUseState({
+        key: {
+          runtimeRoot: installRoot,
+          harnessId: "claude-code",
+          target: localPackTarget()!,
+          packVersion: "test-pack-1",
+          treeDigest: `sha256:${"a".repeat(64)}`,
+        },
+        runtimeRoot: "/nonexistent/runtime-root",
+      }),
+    ).resolves.toMatchObject({ busy: false });
+  });
 });
 
 describe("a refused turn does not keep the runtime reserved", () => {
@@ -277,7 +346,9 @@ describe("a runtime this Inspector cannot reserve", () => {
 
     const result = await prepareLocalHarnessTurn(turnArgs());
     expect(result).toMatchObject({ ok: false, status: "runtime-unavailable" });
-    expect((result as { message: string }).message).toMatch(/could not reserve/);
+    expect((result as { message: string }).message).toMatch(
+      /could not reserve/,
+    );
     // And nothing was started that would then need tearing down.
     expect(startLoopbackModelBroker).not.toHaveBeenCalled();
   });

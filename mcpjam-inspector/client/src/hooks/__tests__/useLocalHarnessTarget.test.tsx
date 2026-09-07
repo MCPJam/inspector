@@ -1,4 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
+import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -118,7 +119,9 @@ function storedConsent(overrides: Record<string, unknown> = {}) {
   };
 }
 
-function render(args: Partial<Parameters<typeof useLocalHarnessController>[0]> = {}) {
+function render(
+  args: Partial<Parameters<typeof useLocalHarnessController>[0]> = {},
+) {
   return renderHook((props: Record<string, unknown> = {}) =>
     useLocalHarnessController({
       projectId: PROJECT,
@@ -160,7 +163,10 @@ afterEach(() => {
 
 describe("what the user asked for is preserved", () => {
   it("keeps an explicit local request through a consent change", async () => {
-    localStorage.setItem(`mcp-local-harness-target-v1:${PROJECT}`, "local-native");
+    localStorage.setItem(
+      `mcp-local-harness-target-v1:${PROJECT}`,
+      "local-native",
+    );
     const { result } = render();
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.requestedTarget).toBe("local-native");
@@ -206,6 +212,53 @@ describe("what the user asked for is preserved", () => {
     // And a network failure is not "unavailable" — it says nothing about this
     // machine, so the honest phase is that we still do not know.
     expect(result.current.phase).toBe("loading");
+  });
+
+  it("does not overwrite a choice that lands before the effect writes", async () => {
+    // The derived default is RECORDED, not just returned, so every reader
+    // agrees on one stored fact. Recording it in an effect means the write
+    // happens after the commit, while its `storedTarget !== null` guard was
+    // read during it — and another Inspector window recording an explicit
+    // choice in that gap would be silently overwritten by a default derived
+    // before that choice existed. An explicit choice has to win.
+    const key = `mcp-local-harness-target-v1:${PROJECT}`;
+    let resolveAvailability: (value: unknown) => void = () => {};
+    fetchAvailabilityMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveAvailability = resolve;
+        }),
+    );
+
+    // The other window's write, placed in the LAYOUT phase of the commit that
+    // first carries `hostedAvailable: false`. React runs every layout effect
+    // before any passive effect, and the default is recorded in a passive one
+    // — so this lands after the render that read `storedTarget` as null and
+    // before the write that guard was protecting. The gap, made deterministic
+    // rather than raced for.
+    let armed = false;
+    const { result } = renderHook(() => {
+      const controller = useLocalHarnessController({
+        projectId: PROJECT,
+        userKey: "member",
+        inScope: true,
+        scopeKey: "host-1:claude-code",
+      } as never);
+      React.useLayoutEffect(() => {
+        if (!armed) return;
+        armed = false;
+        localStorage.setItem(key, "hosted");
+      });
+      return controller;
+    });
+
+    armed = true;
+    await act(async () => {
+      resolveAvailability({ ok: true, availability: AVAILABILITY });
+    });
+    await waitFor(() => expect(result.current.loading).toBe(false));
+
+    expect(localStorage.getItem(key)).toBe("hosted");
   });
 
   it("does not default to local when a cloud target also exists", async () => {
@@ -314,10 +367,39 @@ describe("the target survives a browser that will not store it", () => {
     resetSessionHarnessTargetsForTests();
   });
 
-  it("prefers what localStorage holds once it works again", () => {
+  it("stops speaking for a key once localStorage accepts it again", () => {
+    // Named for a recovery, so it has to actually record a refusal first: the
+    // body used to be a plain save/load against WORKING storage, which proved
+    // nothing about the fallback it claimed to be about.
+    //
+    // And the check that matters here is durability, not just what the reader
+    // answers: a fallback left holding the key would keep the choice alive for
+    // this session and lose it on reload, so the recovered write has to land in
+    // `localStorage` itself.
     resetSessionHarnessTargetsForTests();
+    const key = `mcp-local-harness-target-v1:${PROJECT}`;
+    localStorage.removeItem(key);
+
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+    saveHarnessTarget(PROJECT, "local-native");
+    setItem.mockRestore();
+    // Refused, so nothing durable — the fallback is the only thing answering.
+    expect(localStorage.getItem(key)).toBeNull();
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
+
+    // Storage works again. The next write is durable AND the fallback gives up
+    // the key, rather than shadowing storage for the rest of the session.
     saveHarnessTarget(PROJECT, "hosted");
+    expect(localStorage.getItem(key)).toBe("hosted");
     expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+    // Proven by removing the durable value: with the fallback cleared there is
+    // nothing left to answer with.
+    localStorage.removeItem(key);
+    expect(loadStoredHarnessTarget(PROJECT)).toBeNull();
     resetSessionHarnessTargetsForTests();
   });
 });
@@ -754,7 +836,10 @@ describe("authorizing", () => {
       await result.current.authorize();
     });
     expect(mintConsentMock).toHaveBeenCalledWith(
-      expect.objectContaining({ expect: EXPECTATIONS, workspaceGrantId: "ws_1" }),
+      expect.objectContaining({
+        expect: EXPECTATIONS,
+        workspaceGrantId: "ws_1",
+      }),
     );
     expect(
       localStorage.getItem(localHarnessConsentStorageKey(PROJECT)),
@@ -792,7 +877,9 @@ describe("authorizing", () => {
       await pending;
     });
     expect((outcome as { ok: boolean }).ok).toBe(false);
-    expect(localStorage.getItem(localHarnessConsentStorageKey(PROJECT))).toBeNull();
+    expect(
+      localStorage.getItem(localHarnessConsentStorageKey(PROJECT)),
+    ).toBeNull();
     expect(revokeGrantIdMock).toHaveBeenCalledWith("grant_1");
   });
 
@@ -828,6 +915,35 @@ describe("authorizing", () => {
     expect(revokeGrantIdMock).toHaveBeenCalledWith("grant_late");
   });
 
+  it("will not persist a grant while the approving member is unknown", async () => {
+    // `undefined` is the caller's member query in flight, not a member. The
+    // re-check before persisting exists to prove the human who clicked is
+    // still the human who would run, and reading "not answered yet" as "no
+    // objection" spent the grant on no evidence at all. Everything else here
+    // already refuses on it — `phase` answers `loading`, `resolveSendTarget`
+    // answers null — so this was the one place that did not.
+    mintConsentMock.mockResolvedValue({ ok: true, consent: storedConsent() });
+    const rendered = render({ userKey: undefined });
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+    });
+    act(() => {
+      rendered.result.current.captureApproval({
+        expectations: EXPECTATIONS,
+        scopeKey: "host-1:claude-code",
+      });
+    });
+    const outcome = await act(async () => rendered.result.current.authorize());
+
+    expect(outcome).toMatchObject({ ok: false, kind: "conflict" });
+    expect(
+      localStorage.getItem(localHarnessConsentStorageKey(PROJECT)),
+    ).toBeNull();
+    // And the capability that was minted is given back rather than left live.
+    expect(revokeGrantIdMock).toHaveBeenCalledWith("grant_1");
+  });
+
   it("passes a 409 through so the dialog can re-ask with fresh terms", async () => {
     mintConsentMock.mockResolvedValue({
       ok: false,
@@ -845,7 +961,9 @@ describe("authorizing", () => {
       kind: "conflict",
       reason: "consent-context-changed",
     });
-    expect(localStorage.getItem(localHarnessConsentStorageKey(PROJECT))).toBeNull();
+    expect(
+      localStorage.getItem(localHarnessConsentStorageKey(PROJECT)),
+    ).toBeNull();
   });
 });
 
@@ -911,7 +1029,9 @@ describe("the send snapshot", () => {
     localStorage.setItem(
       localHarnessConsentStorageKey(PROJECT),
       JSON.stringify(
-        storedConsent({ expiresAt: new Date(Date.now() - 1_000).toISOString() }),
+        storedConsent({
+          expiresAt: new Date(Date.now() - 1_000).toISOString(),
+        }),
       ),
     );
     const { result } = render();
@@ -946,7 +1066,9 @@ describe("expiry", () => {
     localStorage.setItem(
       localHarnessConsentStorageKey(PROJECT),
       JSON.stringify(
-        storedConsent({ expiresAt: new Date(Date.now() + 5_000).toISOString() }),
+        storedConsent({
+          expiresAt: new Date(Date.now() + 5_000).toISOString(),
+        }),
       ),
     );
     fetchAvailabilityMock.mockResolvedValue({

@@ -442,11 +442,6 @@ async function prepareWithReservedRuntime(outer: {
         started.revoke();
         await started.close();
       } finally {
-        // Dropped from the registry here, not only on the stop-all path: a turn
-        // that ends normally leaves a record behind otherwise, and the map is
-        // what `stop-all` and the telemetry count read. Every completed local
-        // turn would add one more dead session to both.
-        forgetLocalHarnessSession(args.sessionId);
         await revokeLease(broker.runId, args.bearer);
         // Stop the supervised tree, THEN give up the reservation. This is the
         // teardown a normal turn takes — `run-harness-turn.ts` calls it when
@@ -461,10 +456,25 @@ async function prepareWithReservedRuntime(outer: {
         // handed the directory back while escaped children were still
         // executing from it — `activateVerifiedPack` would then be free to
         // replace it. A tree that cannot be proven down keeps its claim; the
-        // reservation outliving a leak is the safe direction, and the janitor
-        // reclaims it once the owner is provably gone.
+        // reservation outliving a leak is the safe direction.
         const stop = await supervisor.stopSession(args.sessionId);
-        if (stop.stopped) await outer.releaseRuntimeUse();
+        // Dropped from the registry only in here, and only on a proven stop.
+        //
+        // Dropping it FIRST — which is what this did — was right for the normal
+        // case and wrong for the one the check above exists for: it deleted the
+        // record, then declined to release, leaving an escaped tree holding the
+        // reservation with nothing left in this process that could stop it or
+        // hand it back. `stop-all` reads this map, so the retry path went out
+        // with the record. Keeping it registered is also the honest count: that
+        // session really is still running.
+        //
+        // On the normal path this still drops the record, which is the reason
+        // it is here at all — a completed turn that left one behind would add a
+        // dead session to `stop-all` and to the telemetry count every time.
+        if (stop.stopped) {
+          forgetLocalHarnessSession(args.sessionId);
+          await outer.releaseRuntimeUse();
+        }
       }
     });
 

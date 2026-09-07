@@ -143,6 +143,16 @@ export async function endLocalHarnessSession(
     } catch (error) {
       errors.push(`runtime release: ${messageOf(error)}`);
     }
+  } else {
+    // Put it back. The record is deleted up front so two concurrent callers
+    // cannot both run this teardown, but deleting it PERMANENTLY on a failed
+    // stop threw away the only handle this process had on a tree that is still
+    // running — and with it the reservation that tree still holds, which is
+    // what blocks the next reinstall or repair. A session that would not stop
+    // stays listed, so `stop-all` can be pressed again and so the count tells
+    // the truth. Re-registering cannot resurrect a session the caller already
+    // replaced: a newer record for the same id wins.
+    if (!sessions.has(sessionId)) sessions.set(sessionId, record);
   }
   if (errors.length > 0) {
     logger.warn("[local-harness] session teardown had failures", {

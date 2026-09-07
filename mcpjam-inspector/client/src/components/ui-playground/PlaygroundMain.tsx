@@ -3657,13 +3657,24 @@ export function PlaygroundMain({
       return;
     }
     autoRanRef.current = true;
-    handleSendFollowUp(autoRunInput as string);
-    // The prompt was just auto-sent, so clear it out of the composer. The
-    // composer is otherwise seeded with the same `initialInput` (so it mirrors
-    // the eval editor's left-pane prompt); leaving the sent text behind would
-    // both look stale and invite an accidental duplicate send. The mirror only
-    // re-seeds when `initialInput` itself changes, so this clear sticks.
+    // The prompt is auto-sent, so clear it out of the composer. The composer is
+    // otherwise seeded with the same `initialInput` (so it mirrors the eval
+    // editor's left-pane prompt); leaving the sent text behind would both look
+    // stale and invite an accidental duplicate send. The mirror only re-seeds
+    // when `initialInput` itself changes, so this clear sticks.
+    //
+    // Written BEFORE the call, which is only a matter of reading order — the
+    // call suspends on its first `await`, so this line always ran first anyway.
+    // Stating it plainly because `handleSendFollowUp` can now DEFER instead of
+    // sending (the local-execution gate opens a dialog) and puts the prompt back
+    // when it does, which lands after this clear and outlives it. That is the
+    // intended end state, not a leak past the clear: nothing was sent, so there
+    // is no stale text and no duplicate to invite — and the notice under the
+    // composer says "press Send to continue", which needs the prompt to still
+    // be there. `autoRanRef` is already set, so the only send that can follow
+    // is the user's own.
     composer.setInput("");
+    handleSendFollowUp(autoRunInput as string);
   }, [
     autoRunInput,
     composer,
