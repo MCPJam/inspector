@@ -97,31 +97,44 @@ const sessionTargets = new Map<string, HarnessExecutionTarget>();
 export function loadStoredHarnessTarget(
   projectId: string,
 ): HarnessExecutionTarget | null {
+  const key = storageKey(projectId);
+  // The unstored choice FIRST, and it is not shadowing a good stored value:
+  // `sessionTargets` only ever holds a key whose write localStorage refused.
+  // Reading storage first meant a value it accepted EARLIER — say `hosted`,
+  // from before the quota filled — outranked the `local-native` the user has
+  // just chosen and storage has just rejected, so the new choice was dropped
+  // and the old one kept answering.
+  const unstored = sessionTargets.get(key);
+  if (unstored !== undefined) return unstored;
   try {
-    const raw = localStorage.getItem(storageKey(projectId));
+    const raw = localStorage.getItem(key);
     if (raw === "hosted" || raw === "local-native") return raw;
   } catch {
-    // Fall through to the in-memory copy: a read that throws is a browser that
-    // will not answer, not a user who chose nothing.
+    // A read that throws is a browser that will not answer, not a user who
+    // chose nothing.
   }
-  return sessionTargets.get(storageKey(projectId)) ?? null;
+  return null;
 }
 
 export function saveHarnessTarget(
   projectId: string,
   target: HarnessExecutionTarget,
 ): void {
-  // Recorded in memory FIRST, so a storage failure cannot lose it, and the
-  // notify happens either way — it used to be unreachable on exactly the path
-  // that needed it most.
-  sessionTargets.set(storageKey(projectId), target);
+  const key = storageKey(projectId);
   try {
-    localStorage.setItem(storageKey(projectId), target);
+    localStorage.setItem(key, target);
+    // Durably stored, so the fallback must stop speaking for this key —
+    // including a failure recorded earlier in this session. Leaving it would
+    // shadow both this write and anything another tab stores later.
+    sessionTargets.delete(key);
   } catch {
-    // Kept for this session only. Nothing here can survive a reload when the
-    // browser refuses to store anything, and pretending otherwise would be a
-    // worse answer than a target the user re-confirms.
+    // Kept for this session only. Nothing here survives a reload when the
+    // browser refuses to store anything, and a target the user re-confirms is
+    // a better answer than one that is quietly wrong.
+    sessionTargets.set(key, target);
   }
+  // Either way: the notify used to sit inside the `try`, after the call that
+  // threw, so the one path that needed subscribers to re-read never told them.
   window.dispatchEvent(new CustomEvent(TARGET_EVENT));
 }
 

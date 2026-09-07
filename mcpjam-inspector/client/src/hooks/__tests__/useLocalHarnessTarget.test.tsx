@@ -252,6 +252,34 @@ describe("the target survives a browser that will not store it", () => {
     }
   });
 
+  it("prefers a refused choice over the stale one storage still holds", () => {
+    // The narrow case the first fix missed: storage worked once, so it holds a
+    // real value, and then started refusing. Reading storage first meant the
+    // OLD accepted value outranked the new refused one, and the user's change
+    // was dropped while the previous target kept answering.
+    resetSessionHarnessTargetsForTests();
+    saveHarnessTarget(PROJECT, "hosted");
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+    try {
+      saveHarnessTarget(PROJECT, "local-native");
+      expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
+    } finally {
+      setItem.mockRestore();
+    }
+
+    // And once storage accepts again, it is authoritative once more — the
+    // fallback must not keep speaking for a key it no longer owns.
+    saveHarnessTarget(PROJECT, "hosted");
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+    resetSessionHarnessTargetsForTests();
+  });
+
   it("prefers what localStorage holds once it works again", () => {
     resetSessionHarnessTargetsForTests();
     saveHarnessTarget(PROJECT, "hosted");
