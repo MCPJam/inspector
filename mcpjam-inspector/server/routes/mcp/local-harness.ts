@@ -62,6 +62,10 @@ import {
   LOCAL_HARNESS_POLICY_VERSION,
   type LocalPermissionProfile,
 } from "../../utils/harness/local/targets.js";
+import {
+  contextCredentialClass,
+  resolveLocalHarnessActor,
+} from "../../utils/harness/local/acting-user.js";
 import { registerLocalInstance } from "../../utils/harness/harness-model-broker.js";
 import { stopAllLocalHarnessSessions } from "../../utils/harness/local/session-registry.js";
 
@@ -84,21 +88,23 @@ localHarness.use("/*", async (c, next) => {
 });
 
 /**
- * The signed-in user, from whichever identity the bearer middleware resolved.
+ * The signed-in user consent binds to.
  *
- * `requireVerifiedAuth` has already rejected an unverified bearer, so reaching
- * here means one of these is set; which one depends on how the request
- * authenticated, and consent does not care as long as it is a stable id.
+ * Deliberately NOT "whichever context field the middleware happened to set".
+ * `acting-user.ts` names the one accepted credential class and the canonical
+ * id, and `/api/mcp/chat-v2` asks the same module when it verifies a turn
+ * against the binding this mints — so the two can no longer derive different
+ * ids for the same request, and no class can mint a grant that no turn could
+ * ever spend.
  */
-function resolveConsentUserId(c: {
+function resolveConsentActor(c: {
   get: (key: string) => unknown;
   req: { header: (name: string) => string | undefined };
-}): string | null {
-  for (const key of ["mcpjamUserId", "workosUserId", "userId"]) {
-    const value = c.get(key);
-    if (typeof value === "string" && value.length > 0) return value;
-  }
-  return null;
+}) {
+  return resolveLocalHarnessActor({
+    authorizationHeader: c.req.header("authorization"),
+    contextCredential: contextCredentialClass(c),
+  });
 }
 
 /**
@@ -311,13 +317,16 @@ localHarness.post("/consent/grant", async (c) => {
       400,
     );
   }
-  // The signed-in identity, as `bearerAuthMiddleware` resolved it. Never taken
-  // from the request body: consent binds to a user, and a user the caller names
-  // is a user the caller chose.
-  const userId = resolveConsentUserId(c);
-  if (userId === null) {
-    return c.json({ error: "A signed-in member is required" }, 403);
+  // The signed-in identity, verified here rather than taken from the request
+  // body: consent binds to a user, and a user the caller names is a user the
+  // caller chose. The refusal carries the credential's own status so a
+  // deployment with no AuthKit reads as the operator problem it is (503)
+  // rather than as a sign-in the user can retry.
+  const actor = await resolveConsentActor(c);
+  if (!actor.ok) {
+    return c.json({ error: actor.message, reason: actor.reason }, actor.status);
   }
+  const userId = actor.actor.userId;
 
   const workspace = await resolveWorkspaceGrant(workspaceGrantId);
   if (!workspace.ok) {
