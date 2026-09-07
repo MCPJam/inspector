@@ -11,6 +11,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AddressInfo } from "node:net";
 import type { Server } from "node:http";
 import { connect } from "node:net";
+import { EventEmitter } from "node:events";
+import { createVideoEncoder } from "../video-encoder";
 import { buildBrowserdStack, type BrowserdStack } from "../server";
 import type { BrowserDriver } from "../browser-driver";
 import type { BrowserCommandResult } from "../../protocol";
@@ -52,6 +54,7 @@ function fakeViewport() {
     },
     subscriberCount: () => listeners.size,
     dispatchInput: async () => {},
+    boost: () => {},
     counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
     noteTransportDrop: () => {
       counters.dropped.pacer += 1;
@@ -99,8 +102,8 @@ function stubDriver(
  * these bodies do not end on their own, so awaiting the end would hang instead
  * of failing.
  */
-function openCursor(res: Response) {
-  const decoder = createFrameStreamDecoder();
+function openCursor(res: Response, options: { video?: boolean } = {}) {
+  const decoder = createFrameStreamDecoder(options);
   const reader = res.body!.getReader();
   const ready: FrameStreamRecord[] = [];
 
@@ -771,5 +774,189 @@ describe("GET /v1/frames — the daemon's own accounting", () => {
     expect(beats[0]?.encoderIdle).toBeUndefined();
     expect(beats[1]?.encoderIdle).toBe(true);
     await cursor.cancel();
+  });
+});
+
+
+/**
+ * V-5. `?codec=h264` is a different stream on the same route: its pixels come
+ * from the display encoder, its version is negotiated so a reader that never
+ * asked can never be handed one, and its lease gate is per subscriber even
+ * though the encoder is shared.
+ */
+describe("GET /v1/frames?codec=h264", () => {
+  let stack: BrowserdStack;
+  let server: Server;
+  let base: string;
+  let lease: HandoffLease;
+  let ffmpeg: ReturnType<typeof fakeEncoderProcess>;
+
+  /** A stand-in for ffmpeg, so no box needs one. */
+  function fakeEncoderProcess() {
+    const stdout = new EventEmitter();
+    const events = new EventEmitter();
+    let killed = false;
+    return {
+      stdout,
+      events,
+      killed: () => killed,
+      spawnProcess: (() => ({
+        stdout: { on: (e: string, fn: never) => stdout.on(e, fn) },
+        stderr: { on: () => {} },
+        on: (e: string, fn: never) => events.on(e, fn),
+        kill: () => {
+          killed = true;
+          return true;
+        },
+      })) as never,
+    };
+  }
+
+  function annexB(...nalTypes: number[]): Uint8Array {
+    const bytes: number[] = [0, 0, 0, 1, 9, 0x10];
+    for (const type of nalTypes) bytes.push(0, 0, 1, type, 0xab, 0xcd);
+    return new Uint8Array(bytes);
+  }
+
+  async function listen(over: { video?: boolean } = {}) {
+    lease = new HandoffLease();
+    ffmpeg = fakeEncoderProcess();
+    stack = buildBrowserdStack(stubDriver(fakeViewport().viewport), {
+      token: TOKEN,
+      lease,
+      frames: { heartbeatMs: 30 },
+      ...(over.video === false
+        ? {}
+        : {
+            video: createVideoEncoder({
+              display: ":0",
+              width: 1024,
+              height: 768,
+              spawnProcess: ffmpeg.spawnProcess,
+            }),
+            displaySize: { width: 1024, height: 768 },
+          }),
+    });
+    server = stack.server;
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  }
+
+  afterEach(async () => {
+    stack.closeStreams();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+
+  const openVideo = (query = "") =>
+    fetch(`${base}/v1/frames?codec=h264${query}`, {
+      headers: { authorization: `Bearer ${TOKEN}` },
+    });
+
+  it("carries access units the daemon's own decoder can read", async () => {
+    await listen();
+    const res = await openVideo();
+    // The reader has to be told it asked for video: an unknown kind is fatal
+    // by design, which is exactly what protects a reader that did not ask.
+    const cursor = openCursor(res, { video: true });
+    expect(await cursor.next()).toEqual({ kind: FRAME_STREAM_KIND.heartbeat });
+
+    ffmpeg.stdout.emit(
+      "data",
+      Buffer.from(
+        new Uint8Array([...annexB(7, 8, 5), ...annexB(1), ...annexB(1)]),
+      ),
+    );
+    const key = await cursor.next();
+    expect(key).toMatchObject({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+    });
+    const delta = await cursor.next();
+    expect(delta.kind).toBe(FRAME_STREAM_KIND.video_delta);
+    await cursor.cancel();
+  });
+
+  it("is refused by a reader that never asked for video", async () => {
+    // The whole reason the video records declare their own version: an old
+    // reader and a new daemon must never meet on a wire either can misread.
+    await listen();
+    const res = await openVideo();
+    const cursor = openCursor(res);
+    expect(await cursor.next()).toEqual({ kind: FRAME_STREAM_KIND.heartbeat });
+    ffmpeg.stdout.emit(
+      "data",
+      Buffer.from(new Uint8Array([...annexB(7, 8, 5), ...annexB(1)])),
+    );
+    await expect(cursor.next()).rejects.toThrow(/unsupported version/);
+    await cursor.cancel();
+  });
+
+  it("answers video_unavailable on a box with no encoder", async () => {
+    // No ffmpeg on the image, or the operator turned it off. The watcher falls
+    // back to JPEG rather than seeing an error.
+    await listen({ video: false });
+    const cursor = openCursor(await openVideo(), { video: true });
+    expect(await cursor.next()).toEqual({ kind: FRAME_STREAM_KIND.heartbeat });
+    expect(await cursor.next()).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "video_unavailable",
+    });
+  });
+
+  it("ends ONE subscriber's stream when the lease moves, and keeps encoding", async () => {
+    // One encoder, a gate per subscriber: an end reason is about who may look,
+    // not about who is encoding.
+    await listen();
+    const watcher = openCursor(await openVideo(), { video: true });
+    const holder = openCursor(await openVideo("&holder=alice"), {
+      video: true,
+    });
+    await watcher.next();
+    await holder.next();
+
+    lease.acquire("alice");
+    // The watcher is evicted on the next heartbeat.
+    let record = await watcher.next();
+    while (record.kind !== FRAME_STREAM_KIND.end) record = await watcher.next();
+    expect(record.reason).toBe("lease_held");
+
+    // The holder's own stream keeps going, and the encoder was never stopped.
+    ffmpeg.stdout.emit(
+      "data",
+      Buffer.from(new Uint8Array([...annexB(7, 8, 5), ...annexB(1)])),
+    );
+    let next = await holder.next();
+    while (next.kind === FRAME_STREAM_KIND.heartbeat) next = await holder.next();
+    expect(next.kind).toBe(FRAME_STREAM_KIND.video_key);
+    expect(ffmpeg.killed()).toBe(false);
+    await holder.cancel();
+  });
+
+  it("says whether the encoder is idle, so silence is not read as loss", async () => {
+    await listen();
+    const cursor = openCursor(await openVideo(), { video: true });
+    await cursor.next();
+    let beats = 0;
+    let sawIdle = false;
+    while (beats < 3) {
+      const record = await cursor.next();
+      if (record.kind !== FRAME_STREAM_KIND.heartbeat) continue;
+      beats += 1;
+      if (record.stats?.encoderIdle === true) sawIdle = true;
+    }
+    expect(sawIdle).toBe(true);
+    await cursor.cancel();
+  });
+
+  it("ends the stream when the encoder dies mid-watch", async () => {
+    await listen();
+    const cursor = openCursor(await openVideo(), { video: true });
+    await cursor.next();
+    ffmpeg.events.emit("exit", 1);
+    let record = await cursor.next();
+    while (record.kind !== FRAME_STREAM_KIND.end) record = await cursor.next();
+    expect(record.reason).toBe("video_unavailable");
   });
 });

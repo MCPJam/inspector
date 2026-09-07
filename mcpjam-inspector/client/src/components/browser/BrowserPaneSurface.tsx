@@ -84,6 +84,21 @@ export interface BrowserPaneSurfaceProps {
   active?: boolean;
   /** Which engine drew this, for the stats overlay and the session summary. */
   engine?: string;
+  /**
+   * Engine-specific controls for the bar — the hosted pane's tab strip.
+   *
+   * The pane draws one because kiosk mode takes Chromium's away, and kiosk is
+   * what makes the video encoder's premise ("the display IS the page") true.
+   */
+  controls?: ReactNode;
+  /**
+   * A transient note about something that happened TO the picture.
+   *
+   * Kept apart from `error`, which describes the pane's own state: "the agent
+   * switched tabs" is not a fault, and showing it in the destructive colour
+   * would read as one.
+   */
+  notice?: string | null;
 }
 
 /** The DOM's button numbering, in the daemon's names. */
@@ -104,6 +119,8 @@ export function BrowserPaneSurface({
   error,
   active = true,
   engine = "unknown",
+  controls,
+  notice,
 }: BrowserPaneSurfaceProps) {
   /**
    * Is the overlay up?
@@ -363,6 +380,7 @@ export function BrowserPaneSurface({
         control={control}
         onTakeControl={onTakeControl}
         onHandBack={onHandBack}
+        {...(controls ? { extra: controls } : {})}
         statsOpen={statsOpen}
         onToggleStats={(next) => {
           // The menu is the flag: turning the overlay on from here is what a
@@ -435,6 +453,14 @@ export function BrowserPaneSurface({
         }}
       >
         {statsOpen ? <StatsOverlay engine={engine} /> : null}
+        {notice ? (
+          <div
+            data-testid="pane-notice"
+            className="pointer-events-none absolute inset-x-0 top-2 z-10 mx-auto w-fit rounded-md bg-foreground/85 px-2 py-1 text-[11px] text-background"
+          >
+            {notice}
+          </div>
+        ) : null}
         {paneBody()}
       </div>
       {error ? (

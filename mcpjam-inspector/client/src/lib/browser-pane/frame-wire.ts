@@ -20,6 +20,19 @@ import {
   type FrameStreamRecord,
 } from "@/shared/browserd-frame-stream";
 
+/** One H.264 access unit, as the pane's decoder wants it. */
+export interface WireVideoUnit {
+  /** Contains an IDR: a decoder can start here. */
+  key: boolean;
+  au: Uint8Array;
+  deviceWidth: number;
+  deviceHeight: number;
+  scale: number;
+  relayTs: number;
+  seq: number;
+  bytes: number;
+}
+
 export type { FrameStreamRecord };
 
 /**
@@ -53,6 +66,15 @@ export interface DecodedFrame {
  */
 export function createFrameWireReader(handlers: {
   onFrame(frame: DecodedFrame): void;
+  /**
+   * An H.264 access unit, undecoded.
+   *
+   * Handed over rather than decoded here because a `VideoDecoder` is a
+   * long-lived object with its own configuration and error budget — see
+   * `video-decoder.ts`. Absent means the caller did not ask for video, and the
+   * decoder below is built to refuse a record it never negotiated.
+   */
+  onVideo?(unit: WireVideoUnit): void;
   /** Proof of life, with the daemon's counters when it sent them. */
   onHeartbeat?(stats: Record<string, unknown> | undefined): void;
   /** The stream said why it stopped. */
@@ -63,12 +85,23 @@ export function createFrameWireReader(handlers: {
    * try to carry on.
    */
   onFatal?(error: string): void;
-}): {
+}, options: {
+  /**
+   * Accept the video records too.
+   *
+   * Off by default, matching the daemon's own decoder: a reader that never
+   * asked for video refuses one at the version check rather than guessing at a
+   * kind it does not know.
+   */
+  video?: boolean;
+} = {}): {
   push(chunk: ArrayBuffer | Uint8Array): void;
   /** Stop decoding and release the pending bitmap, if any. */
   close(): void;
 } {
-  const decoder = createFrameStreamDecoder();
+  const decoder = createFrameStreamDecoder(
+    options.video ? { video: true } : {},
+  );
   let closed = false;
 
   return {
@@ -93,6 +126,24 @@ export function createFrameWireReader(handlers: {
           handlers.onEnd?.(record.reason);
           continue;
         }
+        if (
+          record.kind === FRAME_STREAM_KIND.video_key ||
+          record.kind === FRAME_STREAM_KIND.video_delta
+        ) {
+          handlers.onVideo?.({
+            key: record.kind === FRAME_STREAM_KIND.video_key,
+            au: record.au,
+            deviceWidth: record.deviceWidth,
+            deviceHeight: record.deviceHeight,
+            scale: record.scale,
+            relayTs: record.ts,
+            seq: record.seq,
+            bytes: record.au.byteLength + FRAME_STREAM_HEADER_BYTES,
+          });
+          continue;
+        }
+        if (record.kind !== FRAME_STREAM_KIND.frame) continue;
+        const jpeg = record.jpeg;
         const startedAt = performance.now();
         // OFF THE MAIN THREAD, which is the whole point of the byte wire:
         // `createImageBitmap` decodes in the browser's own image pipeline,
@@ -102,7 +153,7 @@ export function createFrameWireReader(handlers: {
         // goes on appending to; a `Blob` over a live view can decode whatever
         // arrived next instead.
         void createImageBitmap(
-          new Blob([record.jpeg.slice().buffer as ArrayBuffer], {
+          new Blob([jpeg.slice().buffer as ArrayBuffer], {
             type: "image/jpeg",
           }),
         )
@@ -121,7 +172,7 @@ export function createFrameWireReader(handlers: {
               relayTs: record.ts,
               seq: record.seq,
               decodeMs: performance.now() - startedAt,
-              bytes: record.jpeg.byteLength + FRAME_STREAM_HEADER_BYTES,
+              bytes: jpeg.byteLength + FRAME_STREAM_HEADER_BYTES,
             });
           })
           .catch(() => {

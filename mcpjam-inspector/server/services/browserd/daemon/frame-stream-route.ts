@@ -35,6 +35,8 @@ import {
 } from "../frame-stream";
 import { createFramePacer } from "../../webmcp-inspector/frame-pacer";
 import type { BrowserdRequestHandler, DaemonRequest } from "./request-handler";
+import type { VideoEncoder } from "./video-encoder";
+import { BROWSERD_OBSERVATION_VIEWPORT } from "../protocol";
 
 /** How often to prove liveness, re-check the lease, and re-check the tab. */
 const HEARTBEAT_MS = 10_000;
@@ -72,6 +74,16 @@ interface Timers {
 
 export interface FrameStreamOptions {
   /**
+   * The display encoder, when this box has one.
+   *
+   * Absent means `?codec=h264` answers `video_unavailable` — which is a
+   * SUPPORTED state, not a failure: the watcher falls back to the JPEG
+   * screencast, exactly as a client without `VideoDecoder` does.
+   */
+  video?: VideoEncoder;
+  /** The captured display's size, for the video records' geometry. */
+  displaySize?: { width: number; height: number };
+  /**
    * How often to prove liveness and re-ask the two questions a one-way stream
    * cannot answer by itself. Injectable because the behaviour it drives — a
    * lease taken over a STATIC page, a tab that went away — is otherwise only
@@ -84,7 +96,10 @@ export interface FrameStreamOptions {
 }
 
 export function createFrameStreamHost(
-  handler: Pick<BrowserdRequestHandler, "authorize" | "subscribeFrames">,
+  handler: Pick<
+    BrowserdRequestHandler,
+    "authorize" | "subscribeFrames" | "watchLease" | "tabsSnapshot"
+  >,
   options: FrameStreamOptions = {},
 ): FrameStreamHost {
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
@@ -136,6 +151,17 @@ export function createFrameStreamHost(
       return true;
     }
 
+    // VIDEO IS THE ACTIVE TAB, so `tabId` is ignored for it. The encoder grabs
+    // the X display, which has no concept of a tab — per-tab watching stays
+    // JPEG, and the pane draws its own tab strip because kiosk hides
+    // Chromium's.
+    if (query?.get("codec") === "h264") {
+      void startVideoSubscription({ res, holder }).catch(() => {
+        writeEndAndClose(res, "video_unavailable");
+      });
+      return true;
+    }
+
     // The SAME hazard as the heartbeat's, one await earlier: `subscribeFrames`
     // resolves a viewport, and resolving one opens a tab and attaches a CDP
     // session — either of which throws on a closing context or a crashed
@@ -147,6 +173,171 @@ export function createFrameStreamHost(
       writeEndAndClose(res, "tab_gone");
     });
     return true;
+  }
+
+  /**
+   * The video path.
+   *
+   * Structurally the JPEG one with two swaps: the pixels come from the shared
+   * display encoder instead of this subscriber's own viewport, and the lease
+   * question is asked through `watchLease` rather than by subscribing to a tab
+   * — subscribing would start a screencast and a JPEG encoder nobody reads,
+   * purely to borrow the check.
+   *
+   * One encoder, a gate PER subscriber. A person taking the browser ends every
+   * other watcher's stream with its own `lease_held` while the encoder keeps
+   * running for the holder's own pane: an end reason is about who may look, not
+   * about who is encoding.
+   */
+  async function startVideoSubscription(args: {
+    res: ServerResponse;
+    holder: string | undefined;
+  }): Promise<void> {
+    const { res, holder } = args;
+    const encoder = options.video;
+    if (!encoder) {
+      // No encoder on this box: no ffmpeg on the image, or the operator turned
+      // it off. The watcher falls back to JPEG.
+      writeEndAndClose(res, "video_unavailable");
+      return;
+    }
+
+    let ended = false;
+    let stallTimer: unknown;
+    let beatTimer: unknown;
+    let unsubscribe: (() => void) | undefined;
+    let release: (() => void) | undefined;
+    let seq = 0;
+    const size = options.displaySize ?? {
+      width: BROWSERD_OBSERVATION_VIEWPORT.width,
+      height: BROWSERD_OBSERVATION_VIEWPORT.height,
+    };
+    // Capture pixels per CSS pixel, so a click maps through exactly as it does
+    // for a JPEG. The pane never has to know which codec drew the picture.
+    const scale = size.width / BROWSERD_OBSERVATION_VIEWPORT.width;
+
+    const entry = { end: (reason: FrameStreamEndReason) => end(reason) };
+    const end = (reason: FrameStreamEndReason): void => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+      try {
+        res.write(
+          encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }),
+        );
+        res.end();
+      } catch {
+        // Already gone.
+      }
+    };
+
+    const pacer = createFramePacer({
+      send: (data, cb) => {
+        stallTimer = timers.setTimer(() => {
+          if (ended) return;
+          ended = true;
+          timers.clearTimer(beatTimer);
+          unsubscribe?.();
+          release?.();
+          open.delete(entry);
+          pacer.close();
+          res.destroy();
+        }, stallMs);
+        res.write(data, (error) => {
+          timers.clearTimer(stallTimer);
+          cb(error ?? undefined);
+        });
+      },
+    });
+
+    open.add(entry);
+    res.on("close", () => {
+      if (ended) return;
+      ended = true;
+      timers.clearTimer(stallTimer);
+      timers.clearTimer(beatTimer);
+      unsubscribe?.();
+      release?.();
+      open.delete(entry);
+      pacer.close();
+    });
+
+    const gate = handler.watchLease({
+      ...(holder ? { holder } : {}),
+      onRevoked: (reason) =>
+        end(reason === "lease_parked" ? "lease_parked" : "lease_held"),
+    });
+    if (!gate.ok) {
+      end(gate.error === "lease_parked" ? "lease_parked" : "lease_held");
+      return;
+    }
+    if (ended) {
+      gate.release();
+      return;
+    }
+    release = gate.release;
+
+    unsubscribe = encoder.subscribe((unit) => {
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: unit.key
+            ? FRAME_STREAM_KIND.video_key
+            : FRAME_STREAM_KIND.video_delta,
+          deviceWidth: size.width,
+          deviceHeight: size.height,
+          scale,
+          ts: Date.now(),
+          seq: (seq += 1),
+          au: unit.bytes,
+        }),
+      );
+    });
+
+    // Checked AFTER subscribing: a spawn that fails does so synchronously
+    // inside `subscribe`, and asking first would race the answer.
+    const failure = encoder.failure();
+    if (failure) {
+      end("video_unavailable");
+      return;
+    }
+
+    const beat = (): void => {
+      if (ended) return;
+      const tabs = handler.tabsSnapshot?.();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: {
+            subscribers: encoder.subscriberCount(),
+            // What a person is actually looking at. The video stream grabs the
+            // X display, so a model `activate_tab` changes the picture out from
+            // under them — and kiosk hides Chromium's own tab strip, so nothing
+            // else here would say so.
+            ...(tabs ? { tabs } : {}),
+            // `mpdecimate` means an idle page produces NO frames at all, so
+            // silence here is a quiet page rather than a stall. Saying which
+            // is what stops an adaptive client stepping the quality down on a
+            // page that is simply not moving.
+            encoderIdle: encoder.takeIdle(),
+          },
+        }),
+      );
+      gate.revalidate();
+      if (ended) return;
+      // An encoder that died mid-stream is a stream that will never paint
+      // again. Said in-band, so the watcher falls back rather than waiting.
+      if (encoder.failure()) {
+        end("video_unavailable");
+        return;
+      }
+      beatTimer = timers.setTimer(beat, heartbeatMs);
+    };
+    beatTimer = timers.setTimer(beat, heartbeatMs);
   }
 
   /**
@@ -386,7 +577,8 @@ export function createFrameStreamHost(
           stats: (() => {
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
-            return stats;
+            const tabs = handler.tabsSnapshot?.();
+            return tabs ? { ...stats, tabs } : stats;
           })(),
         }),
       );

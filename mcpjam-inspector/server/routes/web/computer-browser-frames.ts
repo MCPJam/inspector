@@ -48,7 +48,10 @@ import {
   touchBrowserSession,
   type BrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
-import { BrowserdClient } from "../../services/browserd/browserd-client.js";
+import {
+  BrowserdClient,
+  type BrowserdStatus,
+} from "../../services/browserd/browserd-client.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import { browserdBundleHash } from "../../services/browserd/live-session-deps.js";
 import {
@@ -97,11 +100,14 @@ export interface BrowserFramesDeps {
   touchActivity?: typeof touchComputerActivity;
   bundleHash?: () => string;
   configured?: () => boolean;
+  /** Ask the daemon what it can do, so the relay never requests more. */
+  daemonStatus?: (session: BrowserSessionRecord) => Promise<BrowserdStatus>;
   /** Open the daemon's frame stream. Injected so tests need no sandbox. */
   openUpstream?: (args: {
     session: BrowserSessionRecord;
     holder: string;
     tabId?: string;
+    codec?: "jpeg" | "h264";
     signal: AbortSignal;
     /**
      * One frame, as the DAEMON produced it — raw JPEG bytes, not base64.
@@ -113,6 +119,16 @@ export interface BrowserFramesDeps {
      */
     onFrame: (frame: {
       jpeg: Uint8Array;
+      deviceWidth: number;
+      deviceHeight: number;
+      scale: number;
+      ts: number;
+      seq: number;
+    }) => void;
+    /** One H.264 access unit, on a `codec: "h264"` stream. */
+    onVideo?: (record: {
+      key: boolean;
+      au: Uint8Array;
       deviceWidth: number;
       deviceHeight: number;
       scale: number;
@@ -190,6 +206,21 @@ export function createComputerBrowserFramesWsHandler(
       }).streamFrames({
         holder: args.holder,
         ...(args.tabId ? { tabId: args.tabId } : {}),
+        ...(args.codec ? { codec: args.codec } : {}),
+        ...(args.onVideo
+          ? {
+              onVideo: (record) =>
+                args.onVideo?.({
+                  key: record.kind === FRAME_STREAM_KIND.video_key,
+                  au: record.au,
+                  deviceWidth: record.deviceWidth,
+                  deviceHeight: record.deviceHeight,
+                  scale: record.scale,
+                  ts: record.ts,
+                  seq: record.seq,
+                }),
+            }
+          : {}),
         signal: args.signal,
         // Straight through: the relay owns the wire decision, not this seam.
         onFrame: (frame) => args.onFrame(frame),
@@ -198,6 +229,13 @@ export function createComputerBrowserFramesWsHandler(
           : {}),
         onEnd: args.onEnd,
       }));
+  const daemonStatus =
+    deps.daemonStatus ??
+    ((session: BrowserSessionRecord) =>
+      new BrowserdClient({
+        baseUrl: session.publicOrigin,
+        bearer: session.browserdToken,
+      }).status());
   const sendInput =
     deps.sendInput ??
     (async (args) =>
@@ -224,6 +262,16 @@ export function createComputerBrowserFramesWsHandler(
      * this safe while an old bundle is still cached in somebody's tab.
      */
     const binaryWire = c.req.query("wire") === "binary";
+    /**
+     * Did this pane ask for video, and can it take it?
+     *
+     * Two gates, both necessary. The pane only asks when its browser has a
+     * `VideoDecoder`; the DAEMON only gets asked when it advertised `"h264"`,
+     * because one too old to encode would answer an error stream and a reader
+     * cannot tell that apart from a dead browser. Video also implies the binary
+     * wire — an access unit in a JSON envelope would be base64 again.
+     */
+    const wantsVideo = binaryWire && c.req.query("codec") === "h264";
 
     // Resolved BEFORE the upgrade wherever possible, but reported as a close
     // code: once an upgrade has been requested there is no HTTP status left to
@@ -231,6 +279,8 @@ export function createComputerBrowserFramesWsHandler(
     let refusal: { code: number; reason: string } | null = null;
     let session: BrowserSessionRecord | null = null;
     let viewerId = "";
+    /** Did the DAEMON say it can encode? Resolved before the socket opens. */
+    let videoAgreed = false;
     const openedAt = killGeneration;
 
     if (shuttingDown) {
@@ -264,6 +314,14 @@ export function createComputerBrowserFramesWsHandler(
           session = lookup.session;
           if (!session) {
             refusal = { code: CLOSE_NOT_FOUND, reason: "no_browser_session" };
+          } else if (wantsVideo) {
+            // ANNOUNCED, never assumed. A daemon too old to encode would answer
+            // an error stream, and a reader cannot tell that apart from a dead
+            // browser — so the relay asks first and simply serves JPEG when the
+            // answer is no.
+            const status = await daemonStatus(session).catch(() => null);
+            videoAgreed =
+              status?.kind === "ok" && (status.features ?? []).includes("h264");
           }
         }
       }
@@ -388,7 +446,12 @@ export function createComputerBrowserFramesWsHandler(
             JSON.stringify({
               type: "hello",
               features: ["input"],
-              codecs: ["jpeg"],
+              // What this stream will actually carry. `"h264"` appears only
+              // when the pane asked AND the daemon said it could — a pane that
+              // asked and does not see it keeps its JPEG path, which is the
+              // same fallback a browser with no `VideoDecoder` takes.
+              codecs: videoAgreed ? ["jpeg", "h264"] : ["jpeg"],
+              codec: videoAgreed ? "h264" : "jpeg",
               // Echoed rather than assumed: the pane asked in its query, and
               // this is the server agreeing. A pane that asked and did not hear
               // back keeps its JSON parser armed.
@@ -450,6 +513,33 @@ export function createComputerBrowserFramesWsHandler(
           // NEVER from the client: see the module docstring.
           holder: viewerId,
           ...(tabId ? { tabId } : {}),
+          ...(videoAgreed ? { codec: "h264" as const } : {}),
+          ...(videoAgreed
+            ? {
+                onVideo: (record) => {
+                  if (closed) {
+                    stats?.countDrop();
+                    return;
+                  }
+                  // The daemon's record, forwarded — the timestamp rewritten to
+                  // THIS hop's clock, exactly as a JPEG frame is.
+                  const bytes = new Uint8Array(
+                    encodeFrameStreamRecord({
+                      kind: record.key
+                        ? FRAME_STREAM_KIND.video_key
+                        : FRAME_STREAM_KIND.video_delta,
+                      deviceWidth: record.deviceWidth,
+                      deviceHeight: record.deviceHeight,
+                      scale: record.scale,
+                      ts: Date.now(),
+                      seq: record.seq,
+                      au: record.au,
+                    }),
+                  );
+                  stats?.offer(bytes.byteLength, () => ws.send(bytes));
+                },
+              }
+            : {}),
           signal: abort.signal,
           onFrame: (frame) => {
             if (closed) {

@@ -72,6 +72,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
   /** Held open so a test can drive "a second batch while the first is out". */
   let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
+  let daemonFeatures: readonly string[] = [];
   const touchActivity = vi.fn(async () => {});
 
   // Captures the handlers the route hands back, so a test can drive the socket
@@ -110,6 +111,11 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
       upstreamCalls.push(args);
       return { ok: true };
     }) as Upstream,
+    daemonStatus: (async () => ({
+      kind: "ok" as const,
+      bootId: SESSION.bootId,
+      features: daemonFeatures,
+    })) as BrowserFramesDeps["daemonStatus"],
     sendInput: (async (args: {
       holder: string;
       tabId?: string;
@@ -158,6 +164,10 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     touchActivity,
     setInputOutcome(next: typeof inputOutcome) {
       inputOutcome = next;
+    },
+    /** What the daemon says it can do. Empty unless a test grants it. */
+    setDaemonFeatures(next: readonly string[]) {
+      daemonFeatures = next;
     },
     holdInput() {
       releaseInput = () => {};
@@ -244,7 +254,7 @@ describe("browser frames socket — carrying frames", () => {
     });
     // `sent[0]` is the `hello`; the frame is the next thing out.
     const message = ws.sent
-      .map((raw) => JSON.parse(raw))
+      .map((raw) => JSON.parse(String(raw)))
       .find((entry) => entry.type === "frame");
     expect(message).toMatchObject({
       type: "frame",
@@ -272,7 +282,7 @@ describe("browser frames socket — carrying frames", () => {
       { data: JSON.stringify({ type: "ping", t: 4242 }) },
       ws,
     );
-    expect(ws.sent.map((raw) => JSON.parse(raw))).toContainEqual({
+    expect(ws.sent.map((raw) => JSON.parse(String(raw)))).toContainEqual({
       type: "pong",
       t: 4242,
     });
@@ -291,10 +301,12 @@ describe("browser frames socket — carrying frames", () => {
         ts: 5,
         seq: 3,
       });
-      expect(ws.sent.some((raw) => raw.includes('"stats"'))).toBe(false);
+      expect(ws.sent.some((raw) => String(raw).includes('"stats"'))).toBe(
+        false,
+      );
       vi.advanceTimersByTime(1_000);
       const stats = ws.sent
-        .map((raw) => JSON.parse(raw))
+        .map((raw) => JSON.parse(String(raw)))
         .find((message) => message.type === "stats");
       expect(stats).toMatchObject({ framesIn: 1, framesOut: 1, dropped: 0 });
     } finally {
@@ -489,10 +501,11 @@ describe("browser frames socket — input on the socket", () => {
   it("advertises what it can do before the pane has to guess", async () => {
     const f = build();
     const { ws } = await f.connect();
-    expect(JSON.parse(ws.sent[0])).toEqual({
+    expect(JSON.parse(String(ws.sent[0]))).toEqual({
       type: "hello",
       features: ["input"],
       codecs: ["jpeg"],
+      codec: "jpeg",
       // A pane that asked for nothing gets the envelope it has always got.
       wire: "json",
     });
@@ -516,11 +529,11 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(
-      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
     ).toEqual({ type: "input_ack", seq: 1, dispatched: 1 });
   });
 
@@ -538,11 +551,11 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(
-      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
     ).toEqual({
       type: "input_ack",
       seq: 9,
@@ -563,7 +576,7 @@ describe("browser frames socket — input on the socket", () => {
       events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
     });
     expect(
-      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
     ).toEqual({
       type: "input_ack",
       seq: 3,
@@ -613,7 +626,7 @@ describe("browser frames socket — input on the socket", () => {
     // Both queued messages get their own ack.
     await vi.waitFor(() => {
       const acks = ws.sent
-        .map((raw) => JSON.parse(raw))
+        .map((raw) => JSON.parse(String(raw)))
         .filter((m) => m.type === "input_ack");
       expect(acks.map((a) => a.seq)).toEqual([1, 2, 3]);
     });
@@ -652,7 +665,7 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(f.touchSession).not.toHaveBeenCalledWith(
@@ -704,7 +717,7 @@ describe("browser frames socket — the binary wire", () => {
   it("answers the wire the pane asked for", async () => {
     const f = build();
     const { ws } = await f.connect("tok", "wire=binary");
-    expect(JSON.parse(ws.sent[0])).toMatchObject({ wire: "binary" });
+    expect(JSON.parse(String(ws.sent[0]))).toMatchObject({ wire: "binary" });
   });
 
   it("forwards the daemon's record, rewriting only the timestamp", async () => {
@@ -771,5 +784,88 @@ describe("browser frames socket — the binary wire", () => {
         .filter((entry) => typeof entry === "string")
         .map((raw) => JSON.parse(String(raw))),
     ).toContainEqual({ type: "pong", t: 9 });
+  });
+});
+
+
+/**
+ * V-5. Video is NEGOTIATED twice over: the pane asks only when its browser has
+ * a `VideoDecoder`, and the relay asks the daemon only when it advertised the
+ * capability. Either "no" leaves the stream on JPEG, which is the same
+ * fallback everything else in this wave takes.
+ */
+describe("browser frames socket — negotiating h264", () => {
+  it("agrees only when the daemon says it can encode", async () => {
+    const f = build();
+    f.setDaemonFeatures(["h264"]);
+    const { ws } = await f.connect("tok", "wire=binary&codec=h264");
+    expect(JSON.parse(String(ws.sent[0]))).toMatchObject({
+      codec: "h264",
+      codecs: ["jpeg", "h264"],
+    });
+    expect(f.upstreamCalls[0]?.codec).toBe("h264");
+  });
+
+  it("stays on JPEG against a daemon that never advertised it", async () => {
+    // A daemon too old to encode would answer an error stream, and a reader
+    // cannot tell that apart from a dead browser.
+    const f = build();
+    const { ws } = await f.connect("tok", "wire=binary&codec=h264");
+    expect(JSON.parse(String(ws.sent[0]))).toMatchObject({
+      codec: "jpeg",
+      codecs: ["jpeg"],
+    });
+    expect(f.upstreamCalls[0]?.codec).toBeUndefined();
+  });
+
+  it("never asks for video on the JSON wire", async () => {
+    // An access unit in a JSON envelope would be base64 again, which is the
+    // cost the binary wire exists to remove.
+    const f = build();
+    f.setDaemonFeatures(["h264"]);
+    const { ws } = await f.connect("tok", "codec=h264");
+    expect(JSON.parse(String(ws.sent[0]))).toMatchObject({ codec: "jpeg" });
+  });
+
+  it("forwards an access unit as a video record", async () => {
+    const f = build();
+    f.setDaemonFeatures(["h264"]);
+    const { ws } = await f.connect("tok", "wire=binary&codec=h264");
+    const before = Date.now();
+    f.upstreamCalls[0].onVideo?.({
+      key: true,
+      au: new Uint8Array([0, 0, 0, 1, 9, 0x10, 0, 0, 1, 5, 0xaa]),
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 5,
+      seq: 2,
+    });
+    const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
+      | Uint8Array
+      | undefined;
+    expect(binary).toBeDefined();
+    const decoded = createFrameStreamDecoder({ video: true }).push(binary!);
+    expect(decoded.ok && decoded.records[0]).toMatchObject({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1024,
+      seq: 2,
+    });
+    // Stamped by THIS hop, like every other frame.
+    expect(
+      (decoded.ok ? (decoded.records[0] as { ts: number }).ts : 0),
+    ).toBeGreaterThanOrEqual(before);
+  });
+
+  it("keeps the JPEG path for a per-tab watch", async () => {
+    // The encoder grabs the X display, which has no concept of a tab — so
+    // watching ONE tab is JPEG whatever the browser can decode. The relay
+    // still asks for video (the pane did), and the daemon ignores `tabId` on
+    // that stream; a pane that wants a specific tab asks for `codec=jpeg`.
+    const f = build();
+    f.setDaemonFeatures(["h264"]);
+    await f.connect("tok", "wire=binary&tabId=tab-2");
+    expect(f.upstreamCalls[0]?.tabId).toBe("tab-2");
+    expect(f.upstreamCalls[0]?.codec).toBeUndefined();
   });
 });

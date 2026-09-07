@@ -6,6 +6,7 @@ import {
   BrowserPaneSurface,
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
+import { PaneTabStrip } from "@/components/browser/PaneControlBar";
 import {
   createInputForwarder,
   type BrowserInputEvent,
@@ -13,6 +14,10 @@ import {
 } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
 import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
+import {
+  createPaneVideoDecoder,
+  videoDecodeSupported,
+} from "@/lib/browser-pane/video-decoder";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
@@ -133,6 +138,28 @@ export function HostedBrowserBody({
   const socketInputRef = useRef(false);
   /** The seq on screen when a gesture goes, for the input→paint sample. */
   const frameSeqRef = useRef(0);
+  /**
+   * Has video already failed for this session?
+   *
+   * A REF, and it survives reconnects on purpose: a decoder that gave up did so
+   * because this browser cannot decode this stream, and asking again on the
+   * next socket would produce the same three errors and the same fallback, a
+   * few seconds later each time.
+   */
+  const videoRefusedRef = useRef(false);
+  /**
+   * Which tab the box is showing.
+   *
+   * The video stream grabs the X display, so a model `activate_tab` changes the
+   * picture out from under a watching person — and kiosk hides Chromium's own
+   * tab strip, so nothing in the picture says so.
+   */
+  const [tabs, setTabs] = useState<{
+    active?: string;
+    list?: Array<{ id: string; url: string }>;
+  } | null>(null);
+  const activeTabRef = useRef<string | undefined>(undefined);
+  const [tabNotice, setTabNotice] = useState<string | null>(null);
 
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -311,6 +338,26 @@ export function HostedBrowserBody({
     let wire: ReturnType<typeof createFrameWireReader> | null = null;
     /** The last bitmap this socket produced, so teardown can release it. */
     let lastBitmap: ImageBitmap | undefined;
+    /** Built on the first access unit; null on a stream that stays JPEG. */
+    let video: ReturnType<typeof createPaneVideoDecoder> | null = null;
+    /**
+     * Record what the box says is on screen, and say so when it moves.
+     *
+     * Only when it MOVES, and only after a first reading: naming the tab a
+     * person just opened the pane on would be a notification about nothing.
+     */
+    const noteTabs = (next?: {
+      active?: string;
+      list?: Array<{ id: string; url: string }>;
+    }) => {
+      if (closed || !next) return;
+      setTabs(next);
+      const previous = activeTabRef.current;
+      activeTabRef.current = next.active;
+      if (!previous || !next.active || previous === next.active) return;
+      const url = next.list?.find((tab) => tab.id === next.active)?.url;
+      setTabNotice(`The agent switched to ${url || next.active}`);
+    };
     let ping: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -325,11 +372,81 @@ export function HostedBrowserBody({
       }
       if (closed) return;
 
-      // The daemon's own bytes. A relay too old to negotiate this ignores the
-      // parameter and keeps sending JSON, which the handler below still reads.
-      const opened = openHostedBrowserFrameStream({ token, wire: "binary" });
+      // The daemon's own bytes, and video when this browser can decode it. A
+      // relay too old to negotiate either ignores the parameters and keeps
+      // sending JSON, which the handler below still reads.
+      const wantsVideo = videoDecodeSupported() && !videoRefusedRef.current;
+      const opened = openHostedBrowserFrameStream({
+        token,
+        wire: "binary",
+        ...(wantsVideo ? { codec: "h264" as const } : {}),
+      });
       stream = opened;
+      /**
+       * The video decoder, built on the FIRST access unit rather than up front.
+       *
+       * A relay that agreed to `h264` still sends JPEG until the encoder has
+       * something to say, and a decoder constructed for a stream that turns
+       * out to be JPEG is a `VideoDecoder` held open for nothing.
+       */
+      const paintVideo = (unit: {
+        key: boolean;
+        au: Uint8Array;
+        deviceWidth: number;
+        deviceHeight: number;
+        scale: number;
+        relayTs: number;
+        seq: number;
+        bytes: number;
+      }) => {
+        if (closed) return;
+        paneFrameStats.noteTransport("h264");
+        paneFrameStats.noteFrameArrived({ bytes: unit.bytes });
+        if (!video) {
+          video = createPaneVideoDecoder({
+            onFrame: (decoded) => {
+              if (closed) return;
+              frameSeqRef.current = unit.seq;
+              // A `VideoFrame` is closed by the decoder wrapper the moment
+              // this returns, so the pane converts it to a bitmap it owns —
+              // the same shape every other wire produces, which is what keeps
+              // the surface free of codec knowledge.
+              void createImageBitmap(decoded)
+                .then((bitmap) => {
+                  if (closed) {
+                    bitmap.close();
+                    return;
+                  }
+                  lastBitmap = bitmap;
+                  setFrame({
+                    bitmap,
+                    deviceWidth: unit.deviceWidth,
+                    deviceHeight: unit.deviceHeight,
+                    scale: unit.scale,
+                    ts: unit.relayTs,
+                    relayTs: unit.relayTs,
+                    seq: unit.seq,
+                  });
+                })
+                .catch(() => {
+                  // One picture. The next one replaces it.
+                });
+            },
+            onGiveUp: () => {
+              // Video is not going to work for this session. Reconnecting
+              // without asking for it puts the pane back on JPEG, which is the
+              // same fallback a browser with no `VideoDecoder` takes.
+              video = null;
+              videoRefusedRef.current = true;
+              opened.close();
+            },
+          });
+        }
+        video.push({ key: unit.key, au: unit.au, seq: unit.seq });
+      };
+
       wire = createFrameWireReader({
+        onVideo: paintVideo,
         onFrame: (decoded) => {
           if (closed) return;
           paneFrameStats.noteTransport("jpeg-binary");
@@ -358,13 +475,16 @@ export function HostedBrowserBody({
           // cadences. Writing the whole object from either would blank the
           // other's numbers between ticks.
           if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+          noteTabs(
+            (daemon as { tabs?: { active?: string } } | undefined)?.tabs,
+          );
         },
         onFatal: () => {
           // A reader that has lost its place in a byte stream can never find
           // it again, so the connection goes rather than the record.
           opened.close();
         },
-      });
+      }, { video: wantsVideo });
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
       // Until this socket's own `hello` says otherwise. A reconnect must not
@@ -534,6 +654,7 @@ export function HostedBrowserBody({
     return () => {
       closed = true;
       wire?.close();
+      video?.close();
       // The pane releases each bitmap as the next one replaces it; the LAST
       // one has no successor, and this is the thing that knows the stream is
       // over.
@@ -620,6 +741,14 @@ export function HostedBrowserBody({
   // forwarder per HOLD, not per session: whatever it has queued belonged to
   // the hold that queued it, so a hand-back or an expiry must retire it rather
   // than let its tail arrive under whoever holds the browser next.
+  // The tab toast is transient: it says something HAPPENED, and a message that
+  // stayed would keep describing a switch that is minutes old.
+  useEffect(() => {
+    if (!tabNotice) return;
+    const timer = setTimeout(() => setTabNotice(null), 4_000);
+    return () => clearTimeout(timer);
+  }, [tabNotice]);
+
   // One analytics event per pane, on the way out — see `session-summary`.
   useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
 
@@ -720,6 +849,8 @@ export function HostedBrowserBody({
       onInput={send}
       placeholder={placeholder}
       error={notice ?? error}
+      notice={tabNotice}
+      controls={<PaneTabStrip tabs={tabs} />}
       active={active}
       engine="hosted"
     />

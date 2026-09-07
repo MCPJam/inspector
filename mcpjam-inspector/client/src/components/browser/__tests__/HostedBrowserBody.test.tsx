@@ -694,3 +694,69 @@ describe("the hosted pane — the binary wire", () => {
     expect(api.streamArgs.at(-1)).toMatchObject({ wire: "binary" });
   });
 });
+
+
+/**
+ * V-5. The video stream grabs the X display, so a model `activate_tab` changes
+ * the picture out from under a watching person — and kiosk mode, which is what
+ * makes "the display IS the page" true for the encoder, takes Chromium's own
+ * tab strip away. These pin the two things that put it back.
+ */
+describe("the hosted pane — which tab is on screen", () => {
+  /** Push a heartbeat carrying the daemon's tab snapshot. */
+  function beat(tabs: {
+    active?: string;
+    list?: Array<{ id: string; url: string }>;
+  }) {
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: { tabs },
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+  }
+
+  it("draws the strip Chromium's kiosk mode removed", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    beat({
+      active: "b",
+      list: [
+        { id: "a", url: "https://example.com/one" },
+        { id: "b", url: "https://other.test/two" },
+      ],
+    });
+    const strip = await screen.findByTestId("pane-tab-strip");
+    // The HOST, not the path: a strip is a few characters wide, and a path
+    // carries reset tokens and account ids that have no business on screen.
+    expect(strip.textContent).toContain("example.com");
+    expect(strip.textContent).toContain("other.test");
+    expect(strip.textContent).not.toContain("/two");
+  });
+
+  it("stays out of the way when there is only one tab", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    beat({ active: "a", list: [{ id: "a", url: "https://example.com/" }] });
+    expect(screen.queryByTestId("pane-tab-strip")).toBeNull();
+  });
+
+  it("says so when the agent switches the tab under a watcher", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    const tabs = [
+      { id: "a", url: "https://example.com/" },
+      { id: "b", url: "https://other.test/" },
+    ];
+    // The first reading is not a switch: naming the tab somebody just opened
+    // the pane on would be a notification about nothing.
+    beat({ active: "a", list: tabs });
+    expect(screen.queryByTestId("pane-notice")).toBeNull();
+    beat({ active: "b", list: tabs });
+    expect((await screen.findByTestId("pane-notice")).textContent).toContain(
+      "https://other.test/",
+    );
+  });
+});

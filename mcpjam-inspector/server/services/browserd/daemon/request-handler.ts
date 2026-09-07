@@ -48,6 +48,16 @@ import {
  */
 const MAX_INPUT_EVENTS = 64;
 
+/**
+ * The frame interval a person's input buys, and for how long.
+ *
+ * 33ms is 30fps — the ceiling the transports can actually carry — and 1.5s is
+ * long enough to cover the echo of a gesture and the settle after it without
+ * keeping a page at full rate because somebody clicked once.
+ */
+const INPUT_BOOST_INTERVAL_MS = 33;
+const INPUT_BOOST_WINDOW_MS = 1_500;
+
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
   method: string;
@@ -89,7 +99,7 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health" | "viewport">;
+  driver: Pick<BrowserDriver, "health" | "viewport" | "tabsSnapshot">;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -127,7 +137,10 @@ export interface BrowserdHandlerDeps {
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<BrowserDriver, "health" | "viewport">;
+  private readonly driver: Pick<
+    BrowserDriver,
+    "health" | "viewport" | "tabsSnapshot"
+  >;
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
@@ -165,6 +178,18 @@ export class BrowserdRequestHandler {
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
+  }
+
+  /**
+   * What is open and which tab is on screen, for a stream's heartbeat.
+   *
+   * `undefined` from a driver that has no concept of tabs, which the pane
+   * reads as "this engine cannot tell you" rather than as "no tabs".
+   */
+  tabsSnapshot():
+    | { active?: string; list?: Array<{ id: string; url: string }> }
+    | undefined {
+    return this.driver.tabsSnapshot?.();
   }
 
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
@@ -544,6 +569,44 @@ export class BrowserdRequestHandler {
   }
 
   /**
+   * The lease gate, without subscribing to a tab's frames.
+   *
+   * The VIDEO stream needs exactly this and nothing else: its pixels come from
+   * the X display rather than from a tab's screencast, so `subscribeFrames`
+   * would start a `Page.startScreencast` and a JPEG encoder that nobody reads —
+   * on a box the agent is also using — purely to borrow the lease check.
+   *
+   * PER SUBSCRIBER, deliberately. One encoder serves every watcher, but who may
+   * SEE it is asked of each of them separately: a person taking the browser
+   * ends the other watchers' streams with their own `lease_held` while the
+   * encoder keeps running for the holder's own pane. End reasons are about who
+   * may look, not about who is encoding.
+   */
+  watchLease(args: {
+    holder?: string;
+    onRevoked?: (reason: LeaseRefusal) => void;
+  }):
+    | { ok: true; revalidate: () => void; release: () => void }
+    | { ok: false; error: LeaseRefusal } {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    let live = true;
+    return {
+      ok: true,
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (!lost) return;
+        live = false;
+        args.onRevoked?.(lost);
+      },
+      release: () => {
+        live = false;
+      },
+    };
+  }
+
+  /**
    * Forward a person's input.
    *
    * Requires the lease, and requires it to be THEIRS — this is the one path
@@ -576,6 +639,9 @@ export class BrowserdRequestHandler {
       () => stillTheirs() === undefined,
       args.holder,
     );
+    // AFTER the dispatch, so the boost covers the repaint it caused rather
+    // than the frame before it.
+    viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
     return { ok: true };
   }
 

@@ -53,8 +53,25 @@
  * is an explained close; a body that ends without one is a drop.
  */
 
-/** Bumped only for an incompatible layout change; readers refuse anything else. */
+/**
+ * The default stream version, and the only one an unnegotiated reader accepts.
+ *
+ * Bumped only for an incompatible layout change. v2 (below) is not a bump of
+ * this: it is requested per stream with `?codec=h264`, so a reader that did not
+ * ask can never be handed one — which is what keeps "unknown kind is fatal"
+ * safe as the wave adds kinds.
+ */
 export const FRAME_STREAM_VERSION = 1;
+
+/**
+ * The video stream's version.
+ *
+ * Its own number rather than a bump of the default, because the two carry
+ * different KINDS and a v1 reader is deliberately fatal on a kind it does not
+ * know. Negotiating per stream means an old reader and a new daemon never meet
+ * on a wire either of them can misread.
+ */
+export const FRAME_STREAM_VERSION_VIDEO = 2;
 
 /** Fixed header on every record. */
 export const FRAME_STREAM_HEADER_BYTES = 24;
@@ -72,6 +89,17 @@ export const FRAME_STREAM_KIND = {
   heartbeat: 2,
   /** The last record. Payload is a UTF-8 reason. */
   end: 3,
+  /**
+   * An H.264 access unit that can be decoded on its own — it carries an IDR,
+   * and the parameter sets in front of it.
+   *
+   * Told apart from a delta because a decoder joining mid-stream has to start
+   * at one, and because the daemon replays the last one to a late subscriber
+   * rather than making them wait out a GOP.
+   */
+  video_key: 4,
+  /** An H.264 access unit that depends on the ones before it. */
+  video_delta: 5,
 } as const;
 
 export type FrameStreamKind =
@@ -87,6 +115,27 @@ export type FrameStreamKind =
  */
 export const FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
 
+/**
+ * Per-KIND payload bounds.
+ *
+ * One number could not serve both: a JPEG above 256 KiB is a frame worth
+ * dropping, while an H.264 keyframe of a dense page legitimately exceeds it —
+ * the parameter sets and a full intra-coded picture are simply bigger than an
+ * inter-coded one. Capping video at the JPEG bound would drop exactly the
+ * frames a decoder cannot start without.
+ *
+ * Still a READER'S bound, for the same reason as before: a corrupt length field
+ * is otherwise indistinguishable from a record that has not finished arriving,
+ * and the reader would wait forever for bytes nobody is going to send.
+ */
+export const FRAME_STREAM_MAX_PAYLOAD_BY_KIND: Record<number, number> = {
+  [1]: FRAME_STREAM_MAX_PAYLOAD_BYTES, // frame (jpeg)
+  [2]: 8 * 1024, // heartbeat (its stats JSON)
+  [3]: 1024, // end (a reason)
+  [4]: 2 * 1024 * 1024, // video_key
+  [5]: 512 * 1024, // video_delta
+};
+
 /** Why a stream ended, when it managed to say so. */
 export type FrameStreamEndReason =
   /** A person holds the browser; their frames are not this watcher's to see. */
@@ -98,7 +147,13 @@ export type FrameStreamEndReason =
   /** It existed and then went away: closed, crashed, or navigated off. */
   | "tab_gone"
   /** The daemon is going down. */
-  | "shutting_down";
+  | "shutting_down"
+  /**
+   * This box cannot encode video: no ffmpeg on the image, the encoder died at
+   * spawn, or the kill switch is on. A watcher falls back to JPEG rather than
+   * showing an error — the picture is the point, not the codec.
+   */
+  | "video_unavailable";
 
 export interface FrameStreamFrame {
   kind: typeof FRAME_STREAM_KIND.frame;
@@ -153,6 +208,19 @@ export interface FrameStreamStats {
    * that is simply not moving.
    */
   encoderIdle?: boolean;
+  /**
+   * What is open, and which one is on screen.
+   *
+   * Rides the heartbeat rather than a record kind of its own: it is only
+   * interesting to somebody already reading this stream, it changes rarely, and
+   * a new kind would be a protocol bump for a field that is pure information.
+   *
+   * Load-bearing for the VIDEO stream specifically. That stream grabs the X
+   * display, so a model `activate_tab` changes what a watching person is
+   * looking at — and kiosk hides Chromium's own tab strip, so nothing else in
+   * the picture would say so.
+   */
+  tabs?: { active?: string; list?: Array<{ id: string; url: string }> };
 }
 
 export interface FrameStreamEnd {
@@ -160,8 +228,34 @@ export interface FrameStreamEnd {
   reason: string;
 }
 
+/**
+ * One H.264 access unit.
+ *
+ * ANNEX-B on the wire, as ffmpeg writes it: start codes, with the parameter
+ * sets in front of every key unit (`repeat-headers=1`). The CLIENT converts to
+ * AVCC before handing it to `VideoDecoder`, because Safari's support for the
+ * `annexb` description format is unverified while AVCC works everywhere — so
+ * one conversion in one place beats a per-browser branch.
+ *
+ * The header's geometry is the CAPTURE's, and `scale` is capture ÷ the CSS
+ * viewport, so a click maps through exactly as it does for a JPEG.
+ */
+export interface FrameStreamVideo {
+  kind: typeof FRAME_STREAM_KIND.video_key | typeof FRAME_STREAM_KIND.video_delta;
+  deviceWidth: number;
+  deviceHeight: number;
+  scale: number;
+  ts: number;
+  seq: number;
+  /** Raw Annex-B bytes. */
+  au: Uint8Array;
+}
+
 export type FrameStreamRecord =
-  FrameStreamFrame | FrameStreamHeartbeat | FrameStreamEnd;
+  | FrameStreamFrame
+  | FrameStreamHeartbeat
+  | FrameStreamEnd
+  | FrameStreamVideo;
 
 /**
  * Pack one record.
@@ -172,20 +266,27 @@ export type FrameStreamRecord =
  * identical even though this writer always sets it.
  */
 export function encodeFrameStreamRecord(record: FrameStreamRecord): Uint8Array {
+  const video = isVideoRecord(record);
   const payload =
     record.kind === FRAME_STREAM_KIND.frame
       ? record.jpeg
-      : record.kind === FRAME_STREAM_KIND.end
-        ? new TextEncoder().encode(record.reason)
-        : record.stats
-          ? new TextEncoder().encode(JSON.stringify(record.stats))
-          : new Uint8Array(0);
+      : video
+        ? record.au
+        : record.kind === FRAME_STREAM_KIND.end
+          ? new TextEncoder().encode(record.reason)
+          : record.stats
+            ? new TextEncoder().encode(JSON.stringify(record.stats))
+            : new Uint8Array(0);
 
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
-  view.setUint8(0, FRAME_STREAM_VERSION);
+  // A video record declares the VIDEO version, so a reader that never asked
+  // for one refuses it at the version check rather than at the kind check —
+  // the same refusal, one field earlier, and with a message that names the
+  // thing that actually happened.
+  view.setUint8(0, video ? FRAME_STREAM_VERSION_VIDEO : FRAME_STREAM_VERSION);
   view.setUint8(1, record.kind);
-  if (record.kind === FRAME_STREAM_KIND.frame) {
+  if (record.kind === FRAME_STREAM_KIND.frame || video) {
     view.setUint16(2, clampU16(record.deviceWidth), true);
     view.setUint16(4, clampU16(record.deviceHeight), true);
     view.setUint16(6, clampU16(Math.round(record.scale * 1000)), true);
@@ -195,6 +296,13 @@ export function encodeFrameStreamRecord(record: FrameStreamRecord): Uint8Array {
   view.setUint32(20, payload.byteLength, true);
   bytes.set(payload, FRAME_STREAM_HEADER_BYTES);
   return bytes;
+}
+
+function isVideoRecord(record: FrameStreamRecord): record is FrameStreamVideo {
+  return (
+    record.kind === FRAME_STREAM_KIND.video_key ||
+    record.kind === FRAME_STREAM_KIND.video_delta
+  );
 }
 
 function clampU16(value: number): number {
@@ -218,9 +326,23 @@ export type FrameStreamDecodeResult =
  * it can never find it again — so detection is the whole of the response, and
  * the caller must drop the connection.
  */
-export function createFrameStreamDecoder(): {
+export function createFrameStreamDecoder(
+  options: {
+    /**
+     * Also accept the VIDEO version and its kinds.
+     *
+     * Off by default, and that default is what makes "an unknown kind is
+     * fatal" safe: a reader that never asked for video can never be handed a
+     * record it would have to guess about. The caller turns it on only when it
+     * requested `codec=h264`, which is the same negotiation the daemon gates
+     * the stream behind.
+     */
+    video?: boolean;
+  } = {},
+): {
   push(chunk: Uint8Array): FrameStreamDecodeResult;
 } {
+  const acceptVideo = options.video === true;
   let buffered = new Uint8Array(0);
 
   return {
@@ -241,14 +363,21 @@ export function createFrameStreamDecoder(): {
           buffered.byteLength,
         );
         const version = view.getUint8(0);
-        if (version !== FRAME_STREAM_VERSION) {
+        if (
+          version !== FRAME_STREAM_VERSION &&
+          !(acceptVideo && version === FRAME_STREAM_VERSION_VIDEO)
+        ) {
           return { ok: false, error: `unsupported version ${version}` };
         }
         const kind = view.getUint8(1);
+        const isVideoKind =
+          kind === FRAME_STREAM_KIND.video_key ||
+          kind === FRAME_STREAM_KIND.video_delta;
         if (
           kind !== FRAME_STREAM_KIND.frame &&
           kind !== FRAME_STREAM_KIND.heartbeat &&
-          kind !== FRAME_STREAM_KIND.end
+          kind !== FRAME_STREAM_KIND.end &&
+          !(acceptVideo && isVideoKind)
         ) {
           // Deliberately fatal rather than skipped. A kind this reader does not
           // know is a writer it does not understand, and guessing which of its
@@ -257,7 +386,10 @@ export function createFrameStreamDecoder(): {
           return { ok: false, error: `unknown record kind ${kind}` };
         }
         const payloadLength = view.getUint32(20, true);
-        if (payloadLength > FRAME_STREAM_MAX_PAYLOAD_BYTES) {
+        const maxPayload =
+          FRAME_STREAM_MAX_PAYLOAD_BY_KIND[kind] ??
+          FRAME_STREAM_MAX_PAYLOAD_BYTES;
+        if (payloadLength > maxPayload) {
           return { ok: false, error: `record too large (${payloadLength})` };
         }
         // A frame with no JPEG in it is corruption, not a frame. The encoder
@@ -268,6 +400,12 @@ export function createFrameStreamDecoder(): {
         // guessing.
         if (kind === FRAME_STREAM_KIND.frame && payloadLength === 0) {
           return { ok: false, error: "frame record carries no image" };
+        }
+        // Same rule for video: an access unit with no bytes is not a picture,
+        // and handing an empty chunk to a decoder desynchronises it just as
+        // surely as losing our place in the stream would.
+        if (isVideoKind && payloadLength === 0) {
+          return { ok: false, error: "video record carries no access unit" };
         }
         const total = FRAME_STREAM_HEADER_BYTES + payloadLength;
         if (buffered.byteLength < total) break; // not all here yet
@@ -283,6 +421,17 @@ export function createFrameStreamDecoder(): {
             ts: view.getFloat64(8, true),
             seq: view.getUint32(16, true),
             jpeg: payload,
+          });
+        } else if (isVideoKind) {
+          const rawScale = view.getUint16(6, true);
+          records.push({
+            kind: kind as FrameStreamVideo["kind"],
+            deviceWidth: view.getUint16(2, true),
+            deviceHeight: view.getUint16(4, true),
+            scale: rawScale === 0 ? 1 : rawScale / 1000,
+            ts: view.getFloat64(8, true),
+            seq: view.getUint32(16, true),
+            au: payload,
           });
         } else if (kind === FRAME_STREAM_KIND.heartbeat) {
           // A payload that will not parse is DROPPED, not fatal. Unlike an

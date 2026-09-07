@@ -193,6 +193,9 @@ export function buildBrowserdStack(
     lease?: HandoffLease;
     /** Announced on `/v1/status`; never assumed by a caller. */
     features?: readonly string[];
+    /** The display encoder, when this box has one. See the frame-stream host. */
+    video?: import("./video-encoder").VideoEncoder;
+    displaySize?: { width: number; height: number };
     /** Observability and the lazy-upgrade decision, never admission. */
     bundleHash?: string;
     contextMode?: "persistent" | "ephemeral";
@@ -227,7 +230,11 @@ export function buildBrowserdStack(
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
-    ...(config.frames ? { frames: config.frames } : {}),
+    frames: {
+      ...(config.frames ?? {}),
+      ...(config.video ? { video: config.video } : {}),
+      ...(config.displaySize ? { displaySize: config.displaySize } : {}),
+    },
   });
   // AFTER, because the stream host is built FROM the handler. Until this runs
   // `/v1/status` omits `watchers` entirely, which reads as "unknown" rather

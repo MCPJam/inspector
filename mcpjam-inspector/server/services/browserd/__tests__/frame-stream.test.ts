@@ -13,6 +13,7 @@ import {
   FRAME_STREAM_HEADER_BYTES,
   FRAME_STREAM_KIND,
   FRAME_STREAM_MAX_PAYLOAD_BYTES,
+  FRAME_STREAM_MAX_PAYLOAD_BY_KIND,
   FRAME_STREAM_VERSION,
   type FrameStreamFrame,
 } from "../frame-stream";
@@ -339,5 +340,146 @@ describe("heartbeat stats", () => {
       kind: FRAME_STREAM_KIND.end,
       reason: "shutting_down",
     });
+  });
+});
+
+
+/**
+ * V-5's video records.
+ *
+ * The version is negotiated PER STREAM rather than bumped globally, and these
+ * pin what that buys: a reader that never asked for video refuses one at the
+ * version check, which is the same refusal an unknown kind would give but one
+ * field earlier and with a message that names what happened.
+ */
+describe("video records", () => {
+  const AU = new Uint8Array([0, 0, 0, 1, 9, 0x10, 0, 0, 1, 5, 0xab]);
+
+  it("round-trips through a reader that asked for video", () => {
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1536,
+      deviceHeight: 1152,
+      scale: 1.5,
+      ts: 42,
+      seq: 9,
+      au: AU,
+    });
+    const decoded = createFrameStreamDecoder({ video: true }).push(bytes);
+    expect(decoded).toEqual({
+      ok: true,
+      records: [
+        {
+          kind: FRAME_STREAM_KIND.video_key,
+          deviceWidth: 1536,
+          deviceHeight: 1152,
+          scale: 1.5,
+          ts: 42,
+          seq: 9,
+          au: AU,
+        },
+      ],
+    });
+  });
+
+  it("is refused by a reader that did not", () => {
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_delta,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: AU,
+    });
+    const decoded = createFrameStreamDecoder().push(bytes);
+    expect(decoded.ok).toBe(false);
+    expect(decoded.ok === false && decoded.error).toContain(
+      "unsupported version",
+    );
+  });
+
+  it("still carries JPEG and heartbeats on a video-capable reader", () => {
+    // The same stream mixes them: pixels are video, liveness is a heartbeat,
+    // and the reason it stopped is an end record.
+    const decoder = createFrameStreamDecoder({ video: true });
+    const decoded = decoder.push(
+      new Uint8Array([
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          stats: { encoderIdle: true },
+        }),
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.video_key,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: 1,
+          seq: 1,
+          au: AU,
+        }),
+        ...encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.end,
+          reason: "video_unavailable",
+        }),
+      ]),
+    );
+    expect(decoded.ok && decoded.records.map((r) => r.kind)).toEqual([
+      FRAME_STREAM_KIND.heartbeat,
+      FRAME_STREAM_KIND.video_key,
+      FRAME_STREAM_KIND.end,
+    ]);
+  });
+
+  it("bounds each kind by what that kind can legitimately be", () => {
+    // One number could not serve both: a JPEG above 256 KiB is a frame worth
+    // dropping, while a keyframe of a dense page is legitimately bigger — and
+    // capping video at the JPEG bound would drop exactly the records a decoder
+    // cannot start without.
+    expect(FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.video_key]).toBe(
+      2 * 1024 * 1024,
+    );
+    expect(
+      FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.frame],
+    ).toBeLessThan(
+      FRAME_STREAM_MAX_PAYLOAD_BY_KIND[FRAME_STREAM_KIND.video_key]!,
+    );
+  });
+
+  it("refuses a video record with no access unit in it", () => {
+    // An empty chunk desynchronises a decoder just as surely as losing our
+    // place in the stream would.
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_delta,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: new Uint8Array(0),
+    });
+    const decoded = createFrameStreamDecoder({ video: true }).push(bytes);
+    expect(decoded.ok).toBe(false);
+  });
+
+  it("reassembles a keyframe that crosses chunk boundaries", () => {
+    const big = new Uint8Array(300 * 1024);
+    big.set([0, 0, 0, 1, 9, 0x10, 0, 0, 1, 5]);
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.video_key,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 1,
+      au: big,
+    });
+    const decoder = createFrameStreamDecoder({ video: true });
+    expect(decoder.push(bytes.slice(0, 100_000))).toEqual({
+      ok: true,
+      records: [],
+    });
+    const rest = decoder.push(bytes.slice(100_000));
+    expect(rest.ok && rest.records).toHaveLength(1);
   });
 });

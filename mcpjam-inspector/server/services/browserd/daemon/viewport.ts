@@ -151,6 +151,16 @@ export interface TabViewport {
     stillPermitted?: () => boolean,
     holder?: string,
   ): Promise<void>;
+  /**
+   * Raise the frame rate for a moment.
+   *
+   * The throttle floor stops a busy page flooding the transport, but the frame
+   * that ECHOES a person's gesture is the one they are waiting for — holding it
+   * for the rest of a 100ms window is the most noticeable lag in the pane. The
+   * boost expires on its own, so a page left animating drops straight back to
+   * the floor.
+   */
+  boost(intervalMs: number, windowMs: number): void;
   /** A snapshot of the counters. Cheap; safe to call on every heartbeat. */
   counters(): ViewportCounters;
   /** A transport dropped a frame this viewport had already published. */
@@ -314,6 +324,7 @@ export function createTabViewport(
       };
     },
     subscriberCount: () => listeners.size,
+    boost: (intervalMs, windowMs) => throttle.boost(intervalMs, windowMs),
     counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
     noteTransportDrop() {
       counters.dropped.pacer += 1;

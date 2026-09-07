@@ -21,6 +21,8 @@
  */
 export {
   FRAME_STREAM_VERSION,
+  FRAME_STREAM_VERSION_VIDEO,
+  FRAME_STREAM_MAX_PAYLOAD_BY_KIND,
   FRAME_STREAM_HEADER_BYTES,
   FRAME_STREAM_KIND,
   FRAME_STREAM_MAX_PAYLOAD_BYTES,
@@ -32,6 +34,7 @@ export {
   type FrameStreamHeartbeat,
   type FrameStreamStats,
   type FrameStreamEnd,
+  type FrameStreamVideo,
   type FrameStreamRecord,
   type FrameStreamDecodeResult,
 } from "../../../shared/browserd-frame-stream";

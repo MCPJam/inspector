@@ -168,6 +168,15 @@ export class ChromiumDriver implements BrowserDriver {
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
   /**
+   * Which tab is on screen.
+   *
+   * Load-bearing only for the HUMAN pane's video, which grabs the X display and
+   * therefore always shows whatever tab Chromium is displaying. A model
+   * `activate_tab` changes what a watching person sees, and without this the
+   * pane could not say so — the picture would simply become a different page.
+   */
+  private activeTabId: string | undefined;
+  /**
    * One viewport per tab, created on first watch.
    *
    * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
@@ -327,6 +336,7 @@ export class ChromiumDriver implements BrowserDriver {
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
+      this.activeTabId = tabId;
       const frame = await this.snapshot(page);
       return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
@@ -865,6 +875,29 @@ export class ChromiumDriver implements BrowserDriver {
    * is the right one: it is the person's own hands, and the lease is what says
    * the hands are theirs.
    */
+  /**
+   * What is open, and which one is on screen.
+   *
+   * For the human pane, not for the model: the video stream grabs the X
+   * display, so a model `activate_tab` silently changes what a watching person
+   * is looking at. The pane draws its own tab strip from this (kiosk hides
+   * Chromium's) and says so when the active one moves.
+   *
+   * Deliberately cheap and synchronous — it reads the driver's own map rather
+   * than asking Chromium — because it runs on every heartbeat of every open
+   * stream.
+   */
+  tabsSnapshot(): { active?: string; list: Array<{ id: string; url: string }> } {
+    const list = [...this.tabs.entries()].map(([id, entry]) => ({
+      id,
+      url: safeUrl(entry.page),
+    }));
+    return {
+      ...(this.activeTabId ? { active: this.activeTabId } : {}),
+      list,
+    };
+  }
+
   async viewport(tabId?: string): Promise<TabViewport | null> {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
@@ -1093,6 +1126,9 @@ export class ChromiumDriver implements BrowserDriver {
       }
       const entry: TabEntry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
+      // A new tab is the one Chromium shows, which is what the human pane's
+      // video will be grabbing a moment later.
+      this.activeTabId = tabId;
       return entry;
     })();
     this.pendingTabs.set(tabId, creating);
@@ -1238,6 +1274,14 @@ export class ChromiumDriver implements BrowserDriver {
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
     this.tabs.delete(tabId);
+    if (this.activeTabId === tabId) {
+      // Chromium shows SOMETHING after a close, and the most recently
+      // registered remaining tab is the best answer available without asking
+      // the browser — which would be a round trip on a path that runs whenever
+      // a tab goes away.
+      const remaining = [...this.tabs.keys()];
+      this.activeTabId = remaining[remaining.length - 1];
+    }
     // Refs name nodes in a page that is going away. Left behind, they would be
     // handed to a recreated tab of the same name and resolve — by role and
     // name — against a document that never issued them.
@@ -1258,5 +1302,20 @@ export class ChromiumDriver implements BrowserDriver {
     if (!viewport) return;
     this.viewports.delete(tabId);
     await viewport.then((v) => v?.dispose()).catch(() => {});
+  }
+}
+
+/**
+ * A page's URL, or an empty string.
+ *
+ * `page.url()` throws on a closed page, and this runs on a heartbeat that must
+ * never take a stream down — a tab that is closing is exactly the case where a
+ * snapshot is most likely to be read.
+ */
+function safeUrl(page: { url(): string }): string {
+  try {
+    return page.url();
+  } catch {
+    return "";
   }
 }
