@@ -456,6 +456,45 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
   });
 
+  it("threads the target's declared browser policy to the tool resolver", async () => {
+    // A swarm session never pauses to ask, so approval — the gate every
+    // interactive surface uses — does not exist here, and this DECLARED policy
+    // is the only thing that can authorize a browser tool. Before it was
+    // threaded, `browser` on a journey target was unreachable no matter what
+    // the host config said: the resolver saw no delivery and advertised
+    // nothing, silently.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["bash", "browser"],
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: ["example.com"],
+        },
+      })
+    );
+
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toEqual({
+      kind: "unattended",
+      policy: { mode: "allowlist", originAllowlist: ["example.com"] },
+    });
+  });
+
+  it("passes NO delivery when the target declares no policy (fail-closed)", async () => {
+    await startJourneyRun(baseOpts({ builtInToolIds: ["bash", "browser"] }));
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
+  });
+
+  it("passes NO delivery for a malformed policy — never a permissive default", async () => {
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        // `allowlist` naming nothing would mean "everything".
+        browserToolPolicy: { mode: "allowlist" },
+      })
+    );
+    expect(resolverContexts()[0]!.browserApprovalDelivery).toBeUndefined();
+  });
+
   it("gives two sessions of ONE target two DISTINCT boxes", async () => {
     await startJourneyRun(baseOpts({}, 2));
 
