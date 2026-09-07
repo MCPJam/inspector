@@ -155,10 +155,25 @@ export function localExecutionReleasedForThisMachine(args: {
   harnessId: SupportedLocalHarnessId;
   platform?: NodeJS.Platform;
   arch?: string;
+  /** Injectable, like `advertisedLocalPlatforms` — the tables are the fixture. */
+  manifests?: Readonly<Partial<Record<string, LocalHarnessCompatibility>>>;
+  records?: typeof PACK_RECORDS;
+  expectedVersion?: string;
 }): boolean {
   const target = localPackTarget(args.platform, args.arch);
   if (target === null) return false;
-  return packTargetsWithDigests(args.harnessId).includes(target);
+  // Derived from `advertisedLocalPlatforms`, not from the digest table alone.
+  // A digest record is one of three facts a release needs; on its own it said
+  // "released" for a platform the manifest still refuses, or for a build with
+  // no conformance evidence at all — which `resolveLocalCompatibility` then
+  // refuses at runtime. Asking the same function the offer is derived from is
+  // what keeps this answer and that one from disagreeing.
+  return advertisedLocalPlatforms(
+    args.harnessId,
+    args.manifests,
+    args.records,
+    args.expectedVersion,
+  ).some((platform) => TARGETS_BY_PLATFORM[platform].includes(target));
 }
 
 /**

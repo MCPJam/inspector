@@ -124,6 +124,57 @@ describe("the derived offer", () => {
     ).toBe(false);
   });
 
+  // A digest record is ONE of the three facts a release needs. On its own it
+  // used to answer "released" for a build with no conformance evidence — which
+  // `resolveLocalCompatibility` then refuses at runtime, so the release check
+  // and the runtime gate disagreed about the same machine.
+  it("refuses a digest-backed target when conformance evidence is missing", () => {
+    const withDigest = records({
+      "darwin-arm64": {
+        packVersion: "3.4.0",
+        treeDigest: DIGEST,
+      } as PackDigestRecord,
+    });
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "claude-code",
+        platform: "darwin",
+        arch: "arm64",
+        manifests: manifestWith({ conformance: "cc-2026-09-01" }),
+        records: withDigest,
+        expectedVersion: "3.4.0",
+      }),
+    ).toBe(true);
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "claude-code",
+        platform: "darwin",
+        arch: "arm64",
+        manifests: manifestWith({ conformance: "" }),
+        records: withDigest,
+        expectedVersion: "3.4.0",
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses a digest-backed target the manifest does not call native", () => {
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "claude-code",
+        platform: "darwin",
+        arch: "arm64",
+        manifests: manifestWith({ platforms: ["linux"] }),
+        records: records({
+          "darwin-arm64": {
+            packVersion: "3.4.0",
+            treeDigest: DIGEST,
+          } as PackDigestRecord,
+        }),
+        expectedVersion: "3.4.0",
+      }),
+    ).toBe(false);
+  });
+
   it("refuses an architecture nobody builds for", () => {
     expect(
       localExecutionReleasedForThisMachine({
