@@ -226,29 +226,72 @@ async function renderWithHarness(
   return rendered;
 }
 
+const TURN_MESSAGES = [
+  { id: "m1", role: "user", parts: [{ type: "text", text: "draw a dog" }] },
+];
+
+type TransportUnderTest = {
+  api?: string;
+  body?: () => Record<string, unknown>;
+  headers?: Record<string, string>;
+  prepareSendMessagesRequest?: (args: {
+    api: string;
+    id: string;
+    messages: typeof TURN_MESSAGES;
+    body: Record<string, unknown>;
+    headers: HeadersInit | undefined;
+    credentials: undefined;
+    requestMetadata: undefined;
+    trigger: "submit-message";
+    messageId: string;
+  }) => { body: Record<string, unknown>; headers?: HeadersInit };
+};
+
+function latestTransport(): TransportUnderTest {
+  return mockState.transportOptions.at(-1) as unknown as TransportUnderTest;
+}
+
 /**
- * Drive the transport the way the SDK does: resolve `body` and `headers`, then
- * hand both to `prepareSendMessagesRequest` and take what it returns.
+ * Drive the transport the way `HttpChatTransport.sendMessages` does: resolve
+ * `body` and `headers`, hand the hook the SDK's full argument set, and take
+ * what it returns — or, with no hook installed, compose the SDK's own default
+ * (custom fields + `id`/`messages`/`trigger`/`messageId`). The hook's returned
+ * body REPLACES that default, which is why every path asserts `messages`
+ * below: `lib/__tests__/chat-send-request.test.ts` proves the same against the
+ * real transport.
  *
  * Exercised through that seam rather than by reading the two separately,
  * because the property under test is that they come from one snapshot.
  */
 function sendRequest() {
-  const t = mockState.transportOptions.at(-1) as unknown as {
-    body?: () => Record<string, unknown>;
-    headers?: Record<string, string>;
-    prepareSendMessagesRequest?: (args: {
-      body: Record<string, unknown>;
-      headers: HeadersInit | undefined;
-    }) => { body: Record<string, unknown>; headers?: HeadersInit };
-  };
-  const body = t?.body?.() ?? {};
+  const t = latestTransport();
+  const custom = t?.body?.() ?? {};
   const headers = (t?.headers ?? {}) as Record<string, string>;
-  const prepared = t?.prepareSendMessagesRequest?.({ body, headers });
+  const prepared = t?.prepareSendMessagesRequest?.({
+    api: t.api ?? "",
+    id: "chat_1",
+    messages: TURN_MESSAGES,
+    body: custom,
+    headers,
+    credentials: undefined,
+    requestMetadata: undefined,
+    trigger: "submit-message",
+    messageId: "m1",
+  });
+  const body =
+    prepared?.body ??
+    ({
+      ...custom,
+      id: "chat_1",
+      messages: TURN_MESSAGES,
+      trigger: "submit-message",
+      messageId: "m1",
+    } as Record<string, unknown>);
+  expect(body.messages).toEqual(TURN_MESSAGES);
   return {
-    body: (prepared?.body ?? body) as Record<string, unknown>,
+    body,
     headers: (prepared?.headers ?? headers) as Record<string, string>,
-    api: (t as { api?: string })?.api,
+    api: t?.api,
   };
 }
 
@@ -308,6 +351,25 @@ describe("useChatSession — local Claude Code transmission", () => {
     expect(() => sendRequest()).toThrow(
       "Local execution is not authorized for this turn",
     );
+  });
+
+  it("leaves the SDK's own body composition alone unless local was requested", async () => {
+    // The hook exists to rewrite the body on a local turn. Installed on every
+    // turn it once replaced the SDK's default body — `messages` included —
+    // with the custom fields alone, and every chat turn 400'd.
+    await renderWithHarness(undefined, { projectId: "proj-1" });
+    expect(latestTransport().prepareSendMessagesRequest).toBeUndefined();
+    await renderWithHarness(grantedController(), { projectId: "proj-1" });
+    expect(latestTransport().prepareSendMessagesRequest).toBeDefined();
+  });
+
+  it("still sends the turn's messages on a local turn", async () => {
+    await renderWithHarness(grantedController(), { projectId: "proj-1" });
+    const { body } = sendRequest();
+    expect(body.messages).toEqual(TURN_MESSAGES);
+    expect(body.id).toBe("chat_1");
+    expect(body.trigger).toBe("submit-message");
+    expect(body.harnessTarget).toEqual(LOCAL_TARGET);
   });
 
   it("sends nothing when the caller did not request local", async () => {

@@ -96,7 +96,10 @@ import {
 import { getGuestBearerToken } from "@/lib/guest-session";
 import { HOSTED_MODE } from "@/lib/config";
 import { LOCAL_CONSENT_HEADER } from "@/lib/local-computer-consent";
-import { LOCAL_HARNESS_GRANT_HEADER } from "@/lib/local-harness-consent";
+import {
+  prepareLocalHarnessSendRequest,
+  type ChatSendRequestOptions,
+} from "@/lib/chat-send-request";
 import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import {
   preserveHydratedMessageIds,
@@ -1641,22 +1644,6 @@ function isAuthDeniedError(error: unknown): boolean {
   return /\b(401|403)\b|unauthorized|forbidden/i.test(withStatus.message);
 }
 
-/**
- * `HeadersInit` as a plain record.
- *
- * The SDK hands `prepareSendMessagesRequest` whatever the transport resolved,
- * which is a `Headers`, an entry array, or a record depending on where it came
- * from. Spreading one of the first two into an object literal silently
- * produces `{}` — and the consent capability would be the header that went
- * missing.
- */
-function normalizeSendHeaders(headers: HeadersInit | undefined): Record<string, string> {
-  if (headers === undefined) return {};
-  if (headers instanceof Headers) return Object.fromEntries(headers.entries());
-  if (Array.isArray(headers)) return Object.fromEntries(headers);
-  return { ...headers };
-}
-
 export function useChatSession(
   options: UseChatSessionOptions,
 ): UseChatSessionReturn {
@@ -3160,27 +3147,28 @@ export function useChatSession(
        * hosted. A user who deliberately scoped work to their machine got a
        * cloud sandbox and no indication of it. Failing loudly is the point.
        */
-      prepareSendMessagesRequest: ({ body, headers }) => {
-        if (!localHarnessRequested) return { body: body ?? {}, headers };
-        const snapshot = localHarnessExecution?.resolveSendTarget() ?? null;
-        if (snapshot === null) {
-          throw new Error("Local execution is not authorized for this turn");
-        }
-        return {
-          body: {
-            ...(body ?? {}),
-            // Opaque ids only. Every one of them is re-derived server-side
-            // before anything spawns.
-            harnessTarget: snapshot.target,
-          },
-          headers: {
-            ...normalizeSendHeaders(headers),
-            // The capability, in a HEADER. Never in the body, which is
-            // persisted into a transcript.
-            [LOCAL_HARNESS_GRANT_HEADER]: snapshot.token,
-          },
-        };
-      },
+      //
+      // Installed ONLY on a local-harness turn. The SDK adds `messages` (and
+      // `id`/`trigger`/`messageId`) to the request itself, but only when no
+      // `prepareSendMessagesRequest` returns a body — any returned body replaces
+      // the SDK's wholesale. A hook that ran on every turn and handed back the
+      // custom fields it was given sent every chat turn out with no `messages`
+      // (400 "messages are required", both routes). Not installing it on the
+      // ordinary path leaves the SDK's own composition in charge there, and
+      // `prepareLocalHarnessSendRequest` re-adds the SDK fields on the path
+      // that does rewrite the body — `lib/chat-send-request.ts` owns that
+      // contract and pins it against the real transport.
+      ...(localHarnessRequested
+        ? {
+            prepareSendMessagesRequest: (
+              options: ChatSendRequestOptions<UIMessage>,
+            ) =>
+              prepareLocalHarnessSendRequest(
+                options,
+                localHarnessExecution?.resolveSendTarget() ?? null,
+              ),
+          }
+        : {}),
     });
   }, [
     selectedModel,
