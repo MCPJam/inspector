@@ -1375,6 +1375,82 @@ describe("TestTemplateEditor run view from route", () => {
     });
   });
 
+  it("opens a just-finished quick run on its Scorecard, with the chain above it", async () => {
+    // The run stays in RunColumn after it finishes (`showRunInPreview`), so
+    // without a scorecard here the most common trial on the page would be the
+    // one that has none.
+    const user = userEvent.setup();
+    streamEvalTestCaseMock.mockImplementation(
+      async (
+        _request: unknown,
+        onEvent: (event: {
+          type: "complete";
+          iterationId: string;
+          iteration: EvalIteration;
+        }) => void,
+      ) => {
+        onEvent({
+          type: "complete",
+          iterationId: "quick-run-2",
+          iteration: {
+            ...baseIteration,
+            _id: "quick-run-2",
+            suiteRunId: undefined,
+            blob: "trace",
+            metadata: {
+              predicates: [
+                {
+                  predicate: { type: "noToolErrors" },
+                  passed: true,
+                  reason: "no tool reported an error",
+                },
+              ],
+              stageResults: [
+                { stage: "connection", state: "passed" },
+                { stage: "discovery", state: "passed" },
+                { stage: "selection", state: "passed" },
+                { stage: "call", state: "passed" },
+                { stage: "response", state: "passed" },
+                { stage: "userValue", state: "passed" },
+              ],
+              stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+            },
+          },
+        });
+      },
+    );
+    activeCaseDoc = goldenCaseDoc;
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        trialChainEnabled
+        availableModels={[
+          { provider: "openai", model: "gpt-4", label: "GPT-4" } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /run$/i })[0],
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+
+    const card = await screen.findByTestId("trial-scorecard");
+    expect(card).toBeInTheDocument();
+    // The chain describes the trial, so it sits above the tabs, not inside one.
+    const chain = screen.getByTestId("trial-chain-panel");
+    expect(
+      chain.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows the observational route rollup for a multi-trial quick run", async () => {
     const metadata = { compareRunId: "cmp_rollup" };
     const trials: EvalIteration[] = [

@@ -626,7 +626,13 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
+  | "scorecard"
+  | "timeline"
+  | "chat"
+  | "raw"
+  | "tools"
+  | "browser"
+  | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;

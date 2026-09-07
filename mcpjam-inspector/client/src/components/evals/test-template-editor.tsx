@@ -2752,15 +2752,18 @@ export function TestTemplateEditor({
     // the Steps replay — the 1:1 mirror of the authored steps. Pure prompt+grade
     // cases keep Chat: a transcript predicate like `toolCalledWith` (derived
     // from expectedToolCalls) is a grade, NOT a recorded widget step.
-    const defaultRunColumnTab: RunColumnTab = normalizeSteps(
-      savePayload.steps,
-    ).some(
-      (s) =>
-        s.kind === "interact" ||
-        (s.kind === "assert" && isWidgetAssertion(s.assertion)),
-    )
-      ? "steps"
-      : "chat";
+    // On the workspace the run opens on its Scorecard — the question a person
+    // pressed Run to answer. The interact/assert heuristic below stays for
+    // /evals, which has no scorecard to open on.
+    const defaultRunColumnTab: RunColumnTab = useWorkspace
+      ? "scorecard"
+      : normalizeSteps(savePayload.steps).some(
+          (s) =>
+            s.kind === "interact" ||
+            (s.kind === "assert" && isWidgetAssertion(s.assertion)),
+        )
+        ? "steps"
+        : "chat";
     setRunColumnTabByModel((previous) => ({
       ...previous,
       ...Object.fromEntries(
@@ -4177,7 +4180,7 @@ export function TestTemplateEditor({
                         }
                         activeTab={
                           runColumnTabByModel[workspaceLiveRecord.modelValue] ??
-                          "chat"
+                          "scorecard"
                         }
                         onTabChange={(tab) =>
                           handleRunColumnTabChange(
@@ -4194,6 +4197,33 @@ export function TestTemplateEditor({
                         baselineHostStyle={hostConfigBaseline?.hostStyle}
                         syncedStepId={syncedStepId}
                         onSyncStep={setSyncedStepId}
+                        scorecardSlot={
+                          <TrialScorecard
+                            authored={
+                              authoredForTrial({
+                                trial: workspaceSelectedTrial,
+                                draft: workspaceDraftScorecardInput,
+                                run: null,
+                              }).authored
+                            }
+                            iteration={workspaceLiveRecord.iteration ?? null}
+                            steps={
+                              workspaceLiveRecord.launchSnapshot?.steps ??
+                              editForm?.steps ??
+                              []
+                            }
+                            chain={
+                              workspaceLiveRecord.iteration
+                                ? chainForQuickRunIteration(
+                                    workspaceLiveRecord.iteration,
+                                  )
+                                : null
+                            }
+                            liveStepStatusById={liveStepStatusById}
+                            syncedStepId={syncedStepId}
+                            onSyncStep={setSyncedStepId}
+                          />
+                        }
                       />
                     ) : workspacePersistedIteration ? (
                       <IterationDetails
@@ -4785,6 +4815,7 @@ function RunColumn({
   authoredSteps,
   onRenderedWidgetTargets,
   trialChainSlot,
+  scorecardSlot,
 }: {
   record: CompareRunRecord;
   testCase: any;
@@ -4820,6 +4851,13 @@ function RunColumn({
    */
   baselineHostStyle: string | undefined;
   trialChainSlot?: ReactNode;
+  /**
+   * The scorers for the attempt in flight, keyed to the snapshot it was
+   * LAUNCHED with. A quick run stays in this column after it finishes
+   * (`showRunInPreview`), so without this the most common trial on the page
+   * would be the one with no scorecard.
+   */
+  scorecardSlot?: ReactNode;
 }) {
   const themeMode = usePreferencesStore((state) => state.themeMode);
   const globalPreferenceHostStyle = usePreferencesStore(
@@ -4959,6 +4997,8 @@ function RunColumn({
       ? "timeline"
       : activeTab === "steps" && !showStepsTab
       ? "chat"
+      : activeTab === "scorecard" && !scorecardSlot
+      ? "chat"
       : activeTab;
   const traceMode =
     effectiveActiveTab === "chat"
@@ -4972,6 +5012,7 @@ function RunColumn({
       : effectiveActiveTab === "steps"
       ? "steps"
       : "tools";
+  const showScorecard = effectiveActiveTab === "scorecard" && scorecardSlot;
   const continueInChatPayload = useMemo(() => {
     if (!onContinueInChat) {
       return null;
@@ -5279,7 +5320,8 @@ function RunColumn({
           allSummaries={[runColumnSummary]}
           mode={
             effectiveActiveTab === "browser" ||
-            effectiveActiveTab === "steps"
+            effectiveActiveTab === "steps" ||
+            effectiveActiveTab === "scorecard"
               ? "timeline"
               : effectiveActiveTab
           }
@@ -5289,6 +5331,9 @@ function RunColumn({
           compactCompareHeader={false}
           result={runColumnResult}
           showToolsTab={showToolsTab}
+          showScorecardTab={Boolean(scorecardSlot)}
+          scorecardActive={effectiveActiveTab === "scorecard"}
+          onSelectScorecard={() => onTabChange("scorecard")}
           showStepsTab={showStepsTab}
           stepsActive={effectiveActiveTab === "steps"}
           onSelectSteps={() => onTabChange("steps")}
@@ -5329,7 +5374,9 @@ function RunColumn({
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden px-3 pb-3 pt-1.5">
         {trialChainSlot}
-        {shouldRenderChatShell ? (
+        {showScorecard ? (
+          <div className="min-h-0 flex-1 overflow-y-auto">{scorecardSlot}</div>
+        ) : shouldRenderChatShell ? (
           <ScenarioHostStyleProvider value={hostStyle}>
             <ScenarioHostThemeProvider value={themeMode}>
               <div
