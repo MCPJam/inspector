@@ -127,10 +127,10 @@ export interface SessionStore {
   // this module never has to narrow a union to say "yes, the box I asked
   // about is the box I got".
   lookup(
-    args: { computerId: string } & StoreLookupOptions,
+    args: { computerId: string; sandboxRowId?: undefined } & StoreLookupOptions,
   ): Promise<ComputerBrowserSessionLookup>;
   lookup(
-    args: { sandboxRowId: string } & StoreLookupOptions,
+    args: { sandboxRowId: string; computerId?: undefined } & StoreLookupOptions,
   ): Promise<SandboxBrowserSessionLookup>;
   // The stream rides the TARGET, not the options: it is REQUIRED on a computer
   // (the password exists nowhere else durable, so this row is the only way
@@ -138,15 +138,22 @@ export interface SessionStore {
   // stream, nothing minted a password). Optional on both would let either
   // mistake compile and be caught only by the backend — after a daemon had
   // been booted on a paid box.
+  //
+  // Each overload also EXCLUDES the other target key (`?: undefined`), the
+  // same discriminants `BrowserSessionTargetArgs` carries. Without them a
+  // value holding both ids satisfies the first overload, and "exactly one
+  // target" would be enforced only on the wire.
   record(
     args: {
       computerId: string;
+      sandboxRowId?: undefined;
       stream: { url: string; password: string };
     } & StoreRecordOptions,
   ): Promise<BrowserSessionRecordResult>;
   record(
     args: {
       sandboxRowId: string;
+      computerId?: undefined;
       stream?: undefined;
     } & StoreRecordOptions,
   ): Promise<BrowserSessionRecordResult>;

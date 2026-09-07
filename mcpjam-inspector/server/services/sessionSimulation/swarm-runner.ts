@@ -816,16 +816,20 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
+        // Resolved ONCE and shared with `sandboxIntentFor` below: the two
+        // must agree about whether a browser is in play, or the notice
+        // describes a consumer the intent never provisioned for.
+        const hostedBrowserAvailable = hostedBrowserAdvertisable();
         const sandboxConsumer = describeSandboxConsumer(
           target,
-          hostedBrowserAdvertisable(),
+          hostedBrowserAvailable,
         );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target, hostedBrowserAdvertisable());
+          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
