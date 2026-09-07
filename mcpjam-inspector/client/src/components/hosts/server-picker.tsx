@@ -185,6 +185,11 @@ export function ServerPicker({
   // completion for the project the user just left.
   useLayoutEffect(() => {
     generation.current += 1;
+    // Handshakes belong to the project they were started in. Keyed by NAME,
+    // so carrying them across would withhold Connect from a same-named server
+    // in the next project. The in-flight one still settles; its `finally`
+    // filters a list that no longer holds it, which is a no-op.
+    setConnecting([]);
   }, [project]);
   const sinceNow = () => {
     const started = generation.current;

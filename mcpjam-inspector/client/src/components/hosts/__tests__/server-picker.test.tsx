@@ -432,6 +432,34 @@ describe("ServerPicker — Connect while a handshake is in flight", () => {
   });
 });
 
+describe("ServerPicker — a handshake left behind by a project switch", () => {
+  it("does not withhold Connect from a same-named server in the next project", async () => {
+    mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
+    mockState.ensureReady = vi.fn(() => new Promise(() => {}));
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
+    );
+    fireEvent.click(screen.getByTestId("server-picker-trigger"));
+    fireEvent.click(
+      (await screen.findAllByRole("button", { name: /^Connect / }))[0],
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("button", { name: "Connect alpha" }),
+      ).toBeNull(),
+    );
+
+    // Same server name, different project: the handshake was the old one's.
+    // The popover stays open across the rerender — clicking the trigger again
+    // would just close it.
+    rerender(<ServerPicker projectId="p_2" value={null} onChange={onChange} />);
+    expect(
+      await screen.findByRole("button", { name: "Connect alpha" }),
+    ).toBeInTheDocument();
+  });
+});
+
 describe("ServerPicker — Connect reports what to fix", () => {
   const disconnected = () => {
     mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
