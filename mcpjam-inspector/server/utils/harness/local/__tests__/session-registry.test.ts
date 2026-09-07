@@ -442,6 +442,47 @@ describe("the stop-all brake", () => {
     });
   });
 
+  it("tears an escaped session down once, however many presses overlap", async () => {
+    // The map half of the claim was always a synchronous `delete` up front. The
+    // escaped set was not, so two overlapping presses of the button both
+    // selected the same escaped record and both ran its teardown — a second
+    // gateway revoke, a second lease revoke, a second SIGTERM at a tree already
+    // inside its grace.
+    const order: string[] = [];
+    let escapes = 1;
+    const stop = vi.fn(async () => {
+      order.push("stop");
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return escapes > 0
+        ? { stopped: false, escaped: escapes }
+        : { stopped: true };
+    });
+    const revokeLease = vi.fn(async () => {
+      order.push("lease");
+    });
+    registerLocalHarnessSession(
+      record({ gateway: fakeGateway(order), stop, revokeLease }),
+    );
+    // First press leaves it escaped.
+    expect((await stopAllLocalHarnessSessions()).ok).toBe(false);
+    expect(stop).toHaveBeenCalledTimes(1);
+
+    // Two more presses land together. Exactly one of them may end it.
+    escapes = 0;
+    order.length = 0;
+    const [first, second] = await Promise.all([
+      stopAllLocalHarnessSessions(),
+      stopAllLocalHarnessSessions(),
+    ]);
+    expect(stop).toHaveBeenCalledTimes(2);
+    expect(order.filter((step) => step === "stop")).toHaveLength(1);
+    expect(order.filter((step) => step === "gw:revoke")).toHaveLength(1);
+    expect(order.filter((step) => step === "lease")).toHaveLength(1);
+    // One press did the work; the other found nothing left to do.
+    expect([first.stopped, second.stopped].sort()).toEqual([0, 1]);
+    expect(first.failed + second.failed).toBe(0);
+  });
+
   it("is fine with nothing to stop", async () => {
     expect(await stopAllLocalHarnessSessions()).toEqual({
       ok: true,

@@ -129,6 +129,29 @@ export function forgetLocalHarnessSessionRecord(
   return true;
 }
 
+/**
+ * Take a record out of BOTH collections, synchronously, and say whether this
+ * caller is the one that got it.
+ *
+ * The teardown steps — revoking a gateway, revoking a lease, a SIGTERM grace —
+ * must run once per session however many callers ask at once, and the only way
+ * to guarantee that is to claim before the first `await`. The map half of this
+ * was always here as a `delete` up front; the escaped set was not, so two
+ * overlapping presses of `/stop-all` both selected the same escaped record and
+ * both tore it down. A record is claimed when nothing can hand it to a second
+ * caller, which means leaving it in neither collection.
+ */
+function claimRecord(record: LocalHarnessSessionRecord): boolean {
+  const claimed =
+    sessions.get(record.sessionId) === record || unstopped.has(record);
+  if (!claimed) return false;
+  if (sessions.get(record.sessionId) === record) {
+    sessions.delete(record.sessionId);
+  }
+  unstopped.delete(record);
+  return true;
+}
+
 export function listLocalHarnessSessions(): LocalHarnessSessionRecord[] {
   return [...sessions.values()];
 }
@@ -150,7 +173,10 @@ export async function endLocalHarnessSession(
 ): Promise<{ stopped: boolean; errors: string[] }> {
   const record = sessions.get(sessionId);
   if (record === undefined) return { stopped: true, errors: [] };
-  sessions.delete(sessionId);
+  // Claimed, not merely deleted: the record may also be listed as escaped, and
+  // leaving it there would let a concurrent `stop-all` tear the same session
+  // down alongside this call.
+  if (!claimRecord(record)) return { stopped: true, errors: [] };
   return endRecord(record);
 }
 
@@ -256,14 +282,15 @@ export async function stopAllLocalHarnessSessions(): Promise<{
   stopped: number;
   failed: number;
 }> {
-  // Taken out of the map up front, so a record re-added by its own failed
-  // teardown is not immediately picked up and sent a second SIGTERM by this
-  // same pass.
-  const live = [...sessions.values()];
-  for (const record of live) sessions.delete(record.sessionId);
-  const escaped = [...unstopped].filter((record) => !live.includes(record));
+  // Every candidate is claimed synchronously, BEFORE the first `await`: a
+  // record re-added by its own failed teardown must not be picked up again by
+  // this same pass, and an overlapping press must not tear down a session this
+  // one already holds. The `Set` is because a record can be listed in both
+  // collections at once — escaped, with its id slot still free.
+  const candidates = [...new Set([...sessions.values(), ...unstopped])];
+  const mine = candidates.filter(claimRecord);
   const results = await Promise.all(
-    [...live, ...escaped].map((record) =>
+    mine.map((record) =>
       endRecord(record).catch(() => ({
         stopped: false,
         errors: ["unexpected"],
