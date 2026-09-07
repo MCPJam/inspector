@@ -414,6 +414,33 @@ export interface SwarmOverview {
   };
 }
 
+/**
+ * Human labels for the Sessions tab's run / goal groups, derived from the
+ * project's overview window (`getSwarmOverview`). The create flow only knows
+ * the runs IT launched, so a fresh page load has no labels at all and the
+ * groups fall back to an id suffix that names nothing to a reader.
+ *
+ * Run labels use the create flow's "Persona · Goal" shape so a wave launched
+ * in this session and one read back from the backend read the same.
+ */
+export function swarmGroupLabelsFromOverview(
+  overview: SwarmOverview | null | undefined
+): { runLabels: Map<string, string>; goalLabels: Map<string, string> } {
+  const runLabels = new Map<string, string>();
+  const goalLabels = new Map<string, string>();
+  for (const run of overview?.runs ?? []) {
+    const goalName = run.journeyName.trim();
+    if (!goalName) continue;
+    goalLabels.set(run.journeyRefId, goalName);
+    const personaName = run.personaName?.trim();
+    runLabels.set(
+      run.runId,
+      personaName ? `${personaName} · ${goalName}` : goalName
+    );
+  }
+  return { runLabels, goalLabels };
+}
+
 // ── Wave signals (deterministic anomaly candidates) ─────────────────────────
 //
 // Hand-mirrored from `convex/lib/swarmAnomalyMiner.ts` (two-repo layout). One

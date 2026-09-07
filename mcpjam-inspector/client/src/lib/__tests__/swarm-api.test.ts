@@ -11,11 +11,14 @@ import {
   journeySessionRowToThread,
   launchJourneyRun,
   LaunchJourneyRunError,
+  swarmGroupLabelsFromOverview,
 } from "@/lib/swarm-api";
 import type {
   PersonaTrackRecord,
   JourneyRollup,
   JourneySessionRow,
+  SwarmOverview,
+  SwarmOverviewRun,
 } from "@/lib/swarm-api";
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -275,5 +278,49 @@ describe("swarm rollup DTO contracts", () => {
     expect(groups.map((g) => g.runId)).toEqual(["goal-new", "goal-old", null]);
     expect(groups[0].rows.map((r) => r.id)).toEqual(["b", "c"]);
     expect(groups[2].rows.map((r) => r.id)).toEqual(["d"]);
+  });
+});
+
+describe("swarmGroupLabelsFromOverview", () => {
+  const overviewRun = (
+    runId: string,
+    journeyRefId: string,
+    journeyName: string,
+    personaName: string,
+  ): SwarmOverviewRun =>
+    ({
+      runId,
+      journeyRefId,
+      journeyName,
+      personaName,
+      journeyArchived: false,
+      createdAt: 0,
+      status: "completed",
+      summary: { total: 1, succeeded: 1, failed: 0, rateLimited: 0 },
+      findings: [],
+    }) as SwarmOverviewRun;
+
+  it("names runs 'Persona · Goal' and goals by journey name", () => {
+    const overview = {
+      runs: [
+        overviewRun("run-1", "goal-1", "Buy an electric kettle", "Impulse Buyer"),
+        overviewRun("run-2", "goal-1", "Buy an electric kettle", "Power User"),
+      ],
+    } as SwarmOverview;
+
+    const { runLabels, goalLabels } = swarmGroupLabelsFromOverview(overview);
+
+    expect(runLabels.get("run-1")).toBe("Impulse Buyer · Buy an electric kettle");
+    expect(runLabels.get("run-2")).toBe("Power User · Buy an electric kettle");
+    expect(goalLabels.get("goal-1")).toBe("Buy an electric kettle");
+  });
+
+  it("skips unnamed goals and tolerates a missing overview", () => {
+    const overview = {
+      runs: [overviewRun("run-1", "goal-1", "   ", "Impulse Buyer")],
+    } as SwarmOverview;
+
+    expect(swarmGroupLabelsFromOverview(overview).runLabels.size).toBe(0);
+    expect(swarmGroupLabelsFromOverview(undefined).goalLabels.size).toBe(0);
   });
 });

@@ -28,6 +28,20 @@ interface SwarmSessionsGroupedListProps {
   groupUnit?: "run" | "goal";
 }
 
+/** The persona every row in the group shares, or undefined when they differ. */
+function sharedPersonaLabel(
+  group: SwarmSessionRunGroup,
+): string | undefined {
+  let shared: string | undefined;
+  for (const row of group.rows) {
+    const label = row.personaLabel?.trim();
+    if (!label) return undefined;
+    if (shared && shared !== label) return undefined;
+    shared = label;
+  }
+  return shared;
+}
+
 function groupLabel(
   group: SwarmSessionRunGroup,
   runLabels: ReadonlyMap<string, string> | undefined,
@@ -36,8 +50,13 @@ function groupLabel(
   if (!group.runId) return "Ungrouped sessions";
   const known = runLabels?.get(group.runId);
   if (known) return known;
+  // Nothing named this group — a run older than the overview window, say.
+  // The id suffix disambiguates but says nothing, so lead with the persona
+  // the sessions were run as when they agree on one.
   const prefix = groupUnit === "goal" ? "Goal" : "Run";
-  return `${prefix} ${group.runId.slice(-6)}`;
+  const idLabel = `${prefix} ${group.runId.slice(-6)}`;
+  const persona = sharedPersonaLabel(group);
+  return persona ? `${persona} · ${idLabel}` : idLabel;
 }
 
 function groupTestId(
