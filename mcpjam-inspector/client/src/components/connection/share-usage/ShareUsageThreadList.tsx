@@ -38,6 +38,19 @@ interface ShareUsageThreadListProps {
   filterState?: UsageFilterState;
 }
 
+/**
+ * Radix wraps the scroll viewport's children in a `display: table` box, which
+ * is shrink-to-fit: a `truncate` row's min-content width is its full nowrap
+ * text, so the wrapper grows past the pane and the pane's `overflow-hidden`
+ * slices the trailing meta off instead of the title ellipsizing. Block display
+ * resolves row widths against the pane again, so dragging the split narrow
+ * truncates rather than clips. The container query lets rows drop low-value
+ * text at narrow widths — the pane is user-resizable, so viewport breakpoints
+ * would be measuring the wrong box.
+ */
+export const sessionListScrollClass =
+  "@container/session-list h-full [&_[data-slot=scroll-area-viewport]>div]:block!";
+
 export function ShareUsageThreadList({
   sourceType,
   sourceId,
@@ -100,7 +113,7 @@ export function ShareUsageThreadList({
 
     return (
       <div className="flex h-full items-center justify-center p-6">
-        <div className="text-center">
+        <div className="max-w-[36ch] text-center text-balance">
           <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
           <p className="text-sm font-medium text-muted-foreground">
             {emptyMessage}
@@ -112,7 +125,7 @@ export function ShareUsageThreadList({
   }
 
   return (
-    <ScrollArea className="h-full">
+    <ScrollArea className={sessionListScrollClass}>
       <div>
         {threads.map((thread) => (
           <ThreadCard
@@ -135,15 +148,17 @@ export function SessionListChrome({
   countLabel: ReactNode;
   children?: ReactNode;
 }) {
+  // `px-2` puts the count on the same 8px rule as the grouped list's inset, so
+  // the header text and the run blocks below share one left edge. The pills
+  // wrap instead of shrinking: three of them cannot fit one row at the pane's
+  // 22% minimum, and a truncated "All perso…" is worse than a second row.
   return (
-    <div className="shrink-0">
-      <div className="px-3 pt-2 pb-1.5">
-        <div className="text-sm font-semibold leading-5 text-card-foreground">
-          {countLabel}
-        </div>
+    <div className="min-w-0 shrink-0 border-b border-border px-2 py-2">
+      <div className="truncate text-sm font-semibold leading-5 text-card-foreground">
+        {countLabel}
       </div>
       {children ? (
-        <div className="flex min-h-9 items-center gap-1.5 border-b border-border px-3">
+        <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
           {children}
         </div>
       ) : null}

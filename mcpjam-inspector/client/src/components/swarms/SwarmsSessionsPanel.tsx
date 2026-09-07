@@ -433,8 +433,11 @@ export function SwarmsSessionsPanel({
                   }
                 />
               ) : (
-                <div className="flex h-full items-center justify-center px-6">
-                  <div className="text-center">
+                <div className="flex h-full items-center justify-center p-6">
+                  {/* A measure keeps the copy a readable block instead of one
+                      long line on a wide pane, and off the edges on a narrow
+                      one — this pane is dragged to both. */}
+                  <div className="max-w-[36ch] text-center text-balance">
                     <MessageSquare className="mx-auto mb-2 h-8 w-8 text-muted-foreground/50" />
                     <p className="text-sm text-muted-foreground">
                       {threads.length === 0
