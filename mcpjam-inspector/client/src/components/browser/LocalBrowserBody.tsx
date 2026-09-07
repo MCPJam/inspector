@@ -651,13 +651,24 @@ export function LocalBrowserBody({
           // the pane saying somebody else was driving a browser that no longer
           // existed, and never offering to open a new one. Anything else is a
           // busy machine, and the next tick asks again.
+          //
+          // SERIALISED like the success path, for the same reason: an older
+          // 404 landing behind a newer read that found the browser alive would
+          // tear down a session that is still there.
           if (
+            serial === issued &&
+            serial > applied &&
             error instanceof LocalBrowserRequestError &&
             error.status === 404
           ) {
+            applied = serial;
             stopped = true;
             setSession(null);
             setLease({ state: "free" });
+            // AND THE PICTURE. It is of a browser that no longer exists, and
+            // leaving it up under an "Open the browser" button is a pane
+            // showing a page nobody can click on any more.
+            setFrame(null);
             setError((prev) => (prev === SOMEBODY_ELSE_HAS_IT ? null : prev));
           }
         });

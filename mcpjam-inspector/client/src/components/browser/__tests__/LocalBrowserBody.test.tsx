@@ -546,6 +546,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
         await screen.findByRole("button", { name: /open the browser/i }),
       );
       await screen.findByRole("button", { name: /take control/i });
+      await deliverFrame();
       api.socket?.onmessage?.({
         data: JSON.stringify({
           type: "input_ack",
@@ -561,6 +562,10 @@ describe("the agent browser pane — when somebody else is driving", () => {
         await screen.findByRole("button", { name: /open the browser/i }),
       ).toBeTruthy();
       expect(screen.queryByText(/somebody else has taken control/i)).toBeNull();
+      // AND THE PICTURE IS GONE. It was of a browser that no longer exists,
+      // and leaving it up under an "Open the browser" button is a pane showing
+      // a page nobody can click on any more.
+      expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
     } finally {
       vi.useRealTimers();
     }
