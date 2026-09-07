@@ -114,6 +114,10 @@ import {
   parseHarnessExecutionTarget,
   type RawHarnessTargetInput,
 } from "../../utils/harness/local/request-target.js";
+import {
+  contextCredentialClass,
+  resolveLocalHarnessActor,
+} from "../../utils/harness/local/acting-user.js";
 import { convertToMcpjamModelMessages } from "../../utils/mcp-tool-result-model-output.js";
 import { type ExecutionScope } from "../../utils/execution-scope.js";
 import {
@@ -1179,9 +1183,34 @@ chatV2.post("/", async (c) => {
     // honoured is REFUSED here, before a stream opens, rather than silently
     // relocated to a cloud box: quietly moving a turn the user deliberately
     // scoped to their machine is the dishonesty this design removes.
+    //
+    // The acting user is resolved ONLY for an explicit local-native ask, by
+    // the same module and the same rules the consent route binds with, so the
+    // grant is verified against the identity that authenticated rather than
+    // one the body named or one nobody resolved at all. Every unrelated turn
+    // — hosted, BYOK, guest, anonymous desktop — skips this entirely and its
+    // authentication behaviour is exactly what it was.
+    const asksForLocalNative = body.harnessTarget?.kind === "local-native";
+    let localHarnessActingUserId: string | null = null;
+    if (asksForLocalNative) {
+      const actor = await resolveLocalHarnessActor({
+        authorizationHeader: requestAuthHeader,
+        contextCredential: contextCredentialClass(c),
+      });
+      if (!actor.ok) {
+        // The credential's own status, not a blanket 400: an expired session
+        // is a 401 the client re-authenticates from, and a deployment with no
+        // AuthKit at all is a 503 the operator fixes. Collapsing both into
+        // "your target is malformed" is what sends a signed-out user to
+        // re-pick a folder.
+        return c.json({ error: actor.message, reason: actor.reason }, actor.status);
+      }
+      localHarnessActingUserId = actor.actor.userId;
+    }
     const harnessTargetParse = parseHarnessExecutionTarget({
       body,
       grantTokenHeader: c.req.header(LOCAL_HARNESS_GRANT_HEADER),
+      actingUserId: localHarnessActingUserId,
       serverEnabled: LOCAL_HARNESS_ENABLED && !HOSTED_MODE,
       actorEligible:
         !isGuestChatRequest(requestAuthHeader) && !isScenarioSession,

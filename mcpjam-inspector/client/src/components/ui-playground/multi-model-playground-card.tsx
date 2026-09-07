@@ -9,6 +9,7 @@ import {
 import { Braces, Loader2 } from "lucide-react";
 import { StickToBottom } from "use-stick-to-bottom";
 import { ScrollToBottomButton } from "@/components/chat-v2/shared/scroll-to-bottom-button";
+import type { LocalHarnessTargetIds } from "@/lib/local-harness-consent";
 import type { ContentBlock } from "@modelcontextprotocol/client";
 import type { UIMessage } from "ai";
 import { cn } from "@/lib/utils";
@@ -148,6 +149,22 @@ interface MultiModelPlaygroundCardProps {
     engine: "local" | "cloud";
     consentToken: string | null;
   };
+  /**
+   * Local Claude Code execution for this LANE.
+   *
+   * Threaded like `personalComputerEngine` and for the same reason, with one
+   * extra rule: `requested` is answered per lane by the shared scope
+   * predicate, so a compare view whose columns run different hosts does not
+   * hand a Codex lane a Claude Code lane's local requirement. The controller
+   * itself lives once, in PlaygroundMain.
+   */
+  localHarnessExecution?: {
+    requested: boolean;
+    resolveSendTarget: () => {
+      target: LocalHarnessTargetIds;
+      token: string;
+    } | null;
+  };
   displayMode: DisplayMode;
   onDisplayModeChange: (mode: DisplayMode) => void;
   hostStyle: ScenarioHostStyle;
@@ -234,6 +251,7 @@ export function MultiModelPlaygroundCard({
   hostedContext,
   hostedOrgModelConfig,
   personalComputerEngine,
+  localHarnessExecution,
   displayMode,
   onDisplayModeChange,
   hostStyle,
@@ -353,6 +371,7 @@ export function MultiModelPlaygroundCard({
     hostedContext,
     hostedOrgModelConfig,
     ...(personalComputerEngine ? { personalComputerEngine } : {}),
+    ...(localHarnessExecution ? { localHarnessExecution } : {}),
     executionConfig: {
       ...executionConfig,
       modelId: String(model.id),
