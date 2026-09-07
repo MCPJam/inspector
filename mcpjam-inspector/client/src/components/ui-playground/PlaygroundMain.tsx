@@ -131,6 +131,12 @@ import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
 import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { LocalHarnessTrustDialog } from "@/components/harness/LocalHarnessTrustDialog";
+import {
+  LocalHarnessComposerNotice,
+  LocalHarnessReadyNotice,
+} from "@/components/harness/LocalHarnessComposerNotice";
+import type { ExecutionTargetChipData } from "@/components/chat-v2/chat-input/execution-target-chip";
 import { isLocalHarnessScope } from "@/lib/local-harness-scope";
 import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
@@ -911,6 +917,15 @@ export function PlaygroundMain({
   const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
     useHarnessBuiltinTools(previewedHostId);
 
+  // Hoisted above the local-harness controller below, which needs the acting
+  // user: an approval captured by one human does not describe what would
+  // happen for another. Unconditional and cheap (it skips when signed out), so
+  // reading it earlier changes nothing about who asks for it.
+  const currentUserForSender = useQuery(
+    "users:getCurrentUser" as any,
+    isConvexAuthenticated ? ({} as any) : "skip",
+  ) as { _id?: string } | undefined;
+
   // ── Local Claude Code execution ──────────────────────────────────────────
   //
   // Owned HERE, beside `useComputerEngine`, and passed down as an option — the
@@ -939,10 +954,14 @@ export function PlaygroundMain({
   const localHarness = useLocalHarnessController({
     projectId: convexProjectId,
     // The signed-in member as this surface knows it. Not an identity the
-    // server trusts — it resolves that itself — but a change to it invalidates
-    // a captured approval, because the human who clicked is not necessarily
-    // the human who would now run.
-    userKey: isConvexAuthenticated ? (convexProjectId ?? "member") : null,
+    // server trusts — it resolves that itself from the verified bearer — but a
+    // change to it invalidates a captured approval, because the human who
+    // clicked is not necessarily the human who would now run. Null while
+    // signed out, which is a reachable state rather than a hidden feature: the
+    // controller answers `needs-signin` and the dialog says so.
+    userKey: isConvexAuthenticated
+      ? (currentUserForSender?._id ?? null)
+      : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,
   });
@@ -956,6 +975,42 @@ export function PlaygroundMain({
     }),
     [localHarnessRequested, localHarnessResolveSendTarget],
   );
+
+  // ONE dialog for the whole surface. Six composers each owning their own
+  // would be six dialogs racing one approval, and a compare view would open
+  // several at once.
+  const [localHarnessDialog, setLocalHarnessDialog] = useState<{
+    trigger: "first_send" | "chip";
+  } | null>(null);
+  // Set after a COLD install finishes, so the composer can say what to do next
+  // rather than leaving the user to guess whether anything happened.
+  const [localHarnessJustReady, setLocalHarnessJustReady] = useState(false);
+  const localHarnessWasInstallingRef = useRef(false);
+  const localHarnessPhase = localHarness.phase;
+  useEffect(() => {
+    if (localHarnessPhase === "installing") {
+      localHarnessWasInstallingRef.current = true;
+      return;
+    }
+    if (!localHarnessWasInstallingRef.current) return;
+    localHarnessWasInstallingRef.current = false;
+    // Only after an install this surface watched: a runtime that was already
+    // there needs no announcement.
+    if (localHarnessPhase === "needs-consent" || localHarnessPhase === "ready") {
+      setLocalHarnessJustReady(true);
+    }
+  }, [localHarnessPhase]);
+  // A send in flight that is waiting for a WARM authorization to land. Held in
+  // a ref because the dialog's callback runs across an await and must not read
+  // a stale render's copy.
+  const localHarnessPendingSendRef = useRef<null | (() => void)>(null);
+  const localHarnessCancelSendRef = useRef<null | (() => void)>(null);
+  const localHarnessDialogOpenRef = useRef(false);
+  localHarnessDialogOpenRef.current = localHarnessDialog !== null;
+  // Read at SEND time by a callback defined above this line, so it has to be a
+  // ref rather than a closed-over render value.
+  const localHarnessRef = useRef(localHarness);
+  localHarnessRef.current = localHarness;
 
   // COMP-14 gate: composer attachments go into the sandbox only when the
   // previewed host actually attaches a computer (honesty rule — no computer, no
@@ -2084,6 +2139,24 @@ export function PlaygroundMain({
       playgroundEnvironment.isPreviewLoading ||
       !isSessionBootstrapComplete ||
       (!!environmentHostId && previewedHostId !== environmentHostId));
+  /**
+   * When a requested local turn cannot run AT ALL, and Send should say so.
+   *
+   * Deliberately narrow. Missing consent and a missing folder are NOT here:
+   * both `submitDisabled` paths — Enter and the button — refuse before
+   * `onSubmit` ever runs (`chat-input.tsx`), so disabling for them would make
+   * first-send setup unreachable, which is the one thing this flow cannot
+   * afford. Those states open the dialog instead.
+   *
+   * What IS here is work in flight (nothing to do but wait) and a machine that
+   * cannot run this at all. The composer notice carries the explanation, so
+   * the disabled Send is never unexplained.
+   */
+  const localHarnessBlocksSend =
+    localHarnessRequested &&
+    (localHarness.phase === "installing" ||
+      localHarness.phase === "authorizing" ||
+      localHarness.phase === "unavailable");
   const { composerDisabled, sendBlocked } = getChatComposerInteractivity({
     isStreamingActive: isStreamingActive || isPreparingServerForSend,
     composerDisabled:
@@ -2093,7 +2166,8 @@ export function PlaygroundMain({
       submitBlocked ||
       composer.submitGatedByServer ||
       isPreparingServerForSend ||
-      isEnvironmentTargetPending,
+      isEnvironmentTargetPending ||
+      localHarnessBlocksSend,
   });
 
   // Mirror of the `canEnableMultiModel` cleanup below: when the multi-host
@@ -2503,10 +2577,6 @@ export function PlaygroundMain({
     () => buildProjectOwnerProfileByUserId(senderActiveMembers),
     [senderActiveMembers],
   );
-  const currentUserForSender = useQuery(
-    "users:getCurrentUser" as any,
-    isConvexAuthenticated ? ({} as any) : "skip",
-  ) as { _id?: string } | undefined;
   const senderFallbackUserId =
     reactiveHistorySession?.userId ??
     loadedThreadOwnerUserId ??
@@ -3903,6 +3973,57 @@ export function PlaygroundMain({
     fileAttachments.length > 0;
 
   // Submit handler — shared by the composer form and eval Quick Run.
+  /**
+   * Can this scoped local send actually run — and if not, what does the user
+   * do about it?
+   *
+   * Same shape as `ensureThreadReadyForSend`, and the same rule: return false
+   * and the send does not happen, with the composer state intact. The
+   * distinction that matters here is between CAN INITIATE SETUP and CAN
+   * EXECUTE A TURN. They are not the same gate:
+   *
+   *   - a send with no workspace or no consent is how setup STARTS. Blocking
+   *     it (in `submitDisabled`, say) would make first-send setup unreachable,
+   *     because both Enter and the button are refused before `onSubmit` ever
+   *     runs;
+   *   - a send during setup, or with a hard unavailable state, cannot execute
+   *     and is refused with something to read.
+   *
+   * WARM: the runtime is verified and only consent is missing, so Allow awaits
+   * the grant and this returns true — the original send continues, once, after
+   * the context is re-checked. COLD: setup starts, this returns false, the
+   * draft stays, and the user presses Send again.
+   */
+  const ensureLocalHarnessReadyForSend = useCallback(async (): Promise<boolean> => {
+    if (!localHarnessRequested) return true;
+    const phase = localHarnessRef.current.phase;
+    if (phase === "ready") return true;
+
+    if (phase === "installing" || phase === "authorizing") {
+      // Setup is running. Saying so beats a dialog that would only report the
+      // same thing.
+      toast.info("Claude Code is still setting up on this machine.");
+      return false;
+    }
+    if (phase === "unavailable") {
+      toast.error(
+        localHarnessRef.current.reason ??
+          "This Inspector can't run Claude Code on this machine.",
+      );
+      return false;
+    }
+
+    // Deduplicated: repeated Send gestures while the dialog is open must not
+    // stack dialogs or capture a second approval.
+    if (localHarnessDialogOpenRef.current) return false;
+
+    return await new Promise<boolean>((resolve) => {
+      localHarnessPendingSendRef.current = () => resolve(true);
+      localHarnessCancelSendRef.current = () => resolve(false);
+      setLocalHarnessDialog({ trigger: "first_send" });
+    });
+  }, [localHarnessRequested]);
+
   const performComposerSubmit = useCallback(async (): Promise<boolean> => {
     if (!composerHasContent || sendBlocked) {
       return false;
@@ -3916,6 +4037,12 @@ export function PlaygroundMain({
       return false;
     }
     if (!(await ensureThreadReadyForSend())) {
+      return false;
+    }
+    // AFTER the other gates and before anything is consumed: a dialog that
+    // opened and was cancelled must leave the draft, the attachments and the
+    // prompt/skill results exactly as they were.
+    if (!(await ensureLocalHarnessReadyForSend())) {
       return false;
     }
 
@@ -4028,6 +4155,7 @@ export function PlaygroundMain({
     sendBlocked,
     ensureSelectedServerReadyForChat,
     ensureThreadReadyForSend,
+    ensureLocalHarnessReadyForSend,
     isCompareMode,
     displayMode,
     isWidgetFullscreen,
@@ -4398,6 +4526,63 @@ export function PlaygroundMain({
     />
   ) : null;
 
+  /**
+   * The composer's notice slot, with BOTH statements when both apply.
+   *
+   * `ChatInput` has one slot, and the as-run conversation-target disclosure
+   * already uses it — and that one is not decoration: it carries the only
+   * button that re-enables Send. So the local-harness status composes below
+   * it rather than replacing it. Overwriting it would disable the visible Send
+   * and hide the control that re-enables it.
+   */
+  const localHarnessNotice =
+    localHarnessInScope &&
+    (localHarness.phase !== "unavailable" || localHarnessRequested) ? (
+    <LocalHarnessComposerNotice
+      controller={localHarness}
+      onRetry={() => setLocalHarnessDialog({ trigger: "chip" })}
+    />
+    ) : null;
+  const localHarnessReadyNotice =
+    localHarnessInScope && localHarnessJustReady ? (
+      <LocalHarnessReadyNotice
+        onDismiss={() => setLocalHarnessJustReady(false)}
+      />
+    ) : null;
+  const composerNotice =
+    conversationTargetNotice || localHarnessNotice || localHarnessReadyNotice ? (
+      <div className="flex flex-col gap-2">
+        {conversationTargetNotice}
+        {localHarnessNotice}
+        {localHarnessReadyNotice}
+      </div>
+    ) : null;
+
+  /**
+   * The chip's data. Rendered only inside the shared scope, and only with the
+   * feature enabled — `phase: "unavailable"` is what the controller answers
+   * outside either, so one check covers both.
+   */
+  const executionTargetChip: ExecutionTargetChipData | undefined =
+    localHarnessInScope && localHarness.phase !== "unavailable"
+      ? {
+          target: localHarness.requestedTarget,
+          phase: localHarness.phase,
+          ...(localHarness.runtimeStatus?.state === "downloading"
+            ? { percent: localHarness.runtimeStatus.percent }
+            : {}),
+          ...(localHarness.workspace?.displayRoot
+            ? { displayRoot: localHarness.workspace.displayRoot }
+            : {}),
+          hostedAvailable: localHarness.hostedAvailable,
+          onSelect: (target) => {
+            localHarness.select(target);
+            track("local_harness_target_selected", { target });
+          },
+          onOpenDetails: () => setLocalHarnessDialog({ trigger: "chip" }),
+        }
+      : undefined;
+
   // Shared chat input props
   const sharedChatInputProps = {
     value: composer.input,
@@ -4451,8 +4636,15 @@ export function PlaygroundMain({
       // A reopened conversation whose composer does not describe it. The
       // notice rendered directly above the input says why and carries the
       // one-click way out.
-      needsConversationTargetAck,
-    notice: conversationTargetNotice,
+      needsConversationTargetAck ||
+      // Setup in flight, or a machine that cannot run this at all. Explicitly
+      // NOT missing consent or a missing folder: both Enter and the button are
+      // refused by this flag before `onSubmit` runs, so disabling for those
+      // would make first-send setup unreachable. The composer notice above
+      // carries the explanation for each state that does disable.
+      localHarnessBlocksSend,
+    notice: composerNotice,
+    ...(executionTargetChip ? { executionTarget: executionTargetChip } : {}),
     tokenUsage,
     selectedServers,
     mcpToolsTokenCount,
@@ -4851,8 +5043,10 @@ export function PlaygroundMain({
           // disclosure — and its "Continue here" button — itself. Disabling
           // Send without this would leave the user unable to send AND unable
           // to acknowledge, which is a worse failure than the one the gate
-          // exists to prevent.
-          notice={conversationTargetNotice}
+          // exists to prevent. The same composed element, for the same reason:
+          // the local-setup status has to be reachable from whichever composer
+          // is actually on screen.
+          notice={composerNotice}
           canSend={
             !sendBlocked && composerHasContent && !needsConversationTargetAck
           }
@@ -4882,6 +5076,44 @@ export function PlaygroundMain({
     // synchronously on the first render, so the fetch-source key is
     // stable from mount #1.
     <WidgetSurfaceProvider value="playground">
+      {/* ONE dialog for the surface. Rendered here rather than by a composer
+          because there are six composers and a compare view mounts several at
+          once — each owning its own would race one approval. */}
+      {localHarnessDialog !== null ? (
+        <LocalHarnessTrustDialog
+          open
+          onOpenChange={(next) => {
+            if (next) return;
+            setLocalHarnessDialog(null);
+            // A dialog that closes without authorizing releases the send it
+            // was gating. Leaving that promise pending would hang the composer
+            // on a dialog that is no longer on screen.
+            const cancel = localHarnessCancelSendRef.current;
+            localHarnessCancelSendRef.current = null;
+            localHarnessPendingSendRef.current = null;
+            cancel?.();
+          }}
+          controller={localHarness}
+          scopeKey={localHarnessScopeKey}
+          trigger={localHarnessDialog.trigger}
+          {...(window.electronAPI?.localHarness?.pickWorkspace
+            ? {
+                onPickWorkspace: () =>
+                  window.electronAPI!.localHarness!.pickWorkspace(),
+              }
+            : {})}
+          onAuthorized={() => {
+            setLocalHarnessDialog(null);
+            // WARM only: the grant is in hand, so the original send continues
+            // once. A cold install resolves through the cancel path instead —
+            // there is deliberately no queued send.
+            const resume = localHarnessPendingSendRef.current;
+            localHarnessPendingSendRef.current = null;
+            localHarnessCancelSendRef.current = null;
+            resume?.();
+          }}
+        />
+      ) : null}
       <div
         className={cn(
           "relative h-full flex flex-col overflow-hidden",

@@ -180,6 +180,18 @@ export interface LocalHarnessControllerState {
   chooseWorkspace: (
     selection: { path: string } | { useSuggested: true },
   ) => Promise<{ ok: true } | LocalHarnessError>;
+  /**
+   * Adopt a workspace some OTHER trusted caller already registered.
+   *
+   * The Electron picker runs in the MAIN process: it opens the OS dialog and
+   * calls the route itself, and hands the renderer back an opaque id and a
+   * tilde-shortened display root. There is no path to re-register — by design,
+   * because a renderer that could name a path could name `/`.
+   */
+  adoptWorkspace: (grant: {
+    workspaceGrantId: string;
+    displayRoot: string;
+  }) => void;
   /** Capture what the human approved. Does not download and does not mint. */
   captureApproval: (args: {
     expectations: LocalHarnessConsentExpectations;
@@ -570,6 +582,13 @@ export function useLocalHarnessController(
     [],
   );
 
+  const adoptWorkspace = useCallback(
+    (grant: { workspaceGrantId: string; displayRoot: string }) => {
+      setWorkspace(grant);
+    },
+    [],
+  );
+
   const captureApproval = useCallback(
     (capture: {
       expectations: LocalHarnessConsentExpectations;
@@ -741,6 +760,7 @@ export function useLocalHarnessController(
     select,
     refresh,
     chooseWorkspace,
+    adoptWorkspace,
     captureApproval,
     cancelApproval,
     startInstall,
@@ -751,3 +771,41 @@ export function useLocalHarnessController(
 }
 
 export type { LocalHarnessError };
+
+/**
+ * Does this host's harness run HERE, for labelling purposes only?
+ *
+ * A deliberately tiny read: the tools panel needs to say "runs on this
+ * machine" instead of "runs in sandbox", and getting that wrong is the one
+ * mistake `targets.ts` forbids by name — `local-native` has no host
+ * containment boundary, so calling it a sandbox tells the user their files are
+ * protected by something that does not exist.
+ *
+ * It does NOT mount the controller. A second availability fetch and a second
+ * install poll, in a panel that only wants a word, is a real cost for no
+ * benefit — and the two facts that decide the label (an explicit local target
+ * for this project, and a live grant) are both in local storage and both
+ * already have subscriptions. Anything more than "the user asked for local and
+ * has authorization" is the send path's business, and the send path re-derives
+ * it from scratch anyway.
+ */
+export function useLocalHarnessRunsHere(args: {
+  projectId: string | null | undefined;
+  harnessId: string | null | undefined;
+}): boolean {
+  const flagEnabled = useLocalHarnessEnabled();
+  const consentSnapshot = useSyncExternalStore(
+    subscribeLocalHarnessConsent,
+    () => readLocalHarnessConsentSnapshot(args.projectId),
+    () => null,
+  );
+  const storedTarget = useSyncExternalStore(
+    subscribeTarget,
+    () => (args.projectId ? loadStoredHarnessTarget(args.projectId) : null),
+    () => null,
+  );
+  if (HOSTED_MODE || !flagEnabled) return false;
+  if (args.harnessId !== "claude-code") return false;
+  if (storedTarget !== "local-native") return false;
+  return parseStoredLocalHarnessConsent(consentSnapshot) !== null;
+}

@@ -26,6 +26,24 @@ export interface ElectronAPI {
     isMaximized: () => Promise<boolean>;
   };
 
+  /**
+   * Local harness. `pickWorkspace` opens the OS directory dialog in the MAIN
+   * process and registers what the user chose, returning an opaque grant id
+   * and a tilde-shortened display root. The renderer never sees or sends a
+   * path — if it could name one, anything that can drive the renderer could
+   * name `/`.
+   *
+   * Optional: the npx build has no `electronAPI` at all, and a packaged app
+   * older than this preload would not carry the namespace either.
+   */
+  localHarness?: {
+    pickWorkspace: () => Promise<{
+      workspaceGrantId: string;
+      displayRoot: string;
+    } | null>;
+    keystoreAvailable: () => Promise<boolean>;
+  };
+
   // MCP operations (for future use)
   mcp: {
     connect: (config: any) => Promise<any>;
