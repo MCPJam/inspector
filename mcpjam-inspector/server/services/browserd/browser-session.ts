@@ -265,6 +265,30 @@ export async function ensureBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
   const contextMode = args.contextMode ?? "persistent";
+  if (contextMode === "ephemeral") {
+    // AN EPHEMERAL BROWSER MAY NOT RIDE THE PROJECT COMPUTER.
+    //
+    // There is exactly one hosted computer per (project, member), so every
+    // unattended run in a project resolves to the SAME daemon, the same tab
+    // and the same cookie jar — the sharing the ephemeral mode exists to
+    // prevent, and which the local engine already refuses by name
+    // (`owner_key_required`). Worse, the mode is part of session identity, so
+    // an ephemeral request against the box a member is using mid-session is a
+    // mismatch, and a mismatch is a relaunch: it `pkill`s their Chromium.
+    //
+    // An unattended run gets its own disposable box instead (its run sandbox,
+    // booted from the desktop template) — see `EnsureBrowserSessionArgs.target`.
+    // Until a caller names one, refusing is the only honest answer, and it
+    // refuses BEFORE `reserveDesktop` so nothing is provisioned or billed on
+    // the way to the error.
+    throw new BrowserSessionTargetError(
+      "ephemeral_requires_sandbox",
+      "an unattended hosted browser needs its own sandbox: the project " +
+        "computer is shared by every run in the project, so an ephemeral " +
+        "session there would share one profile and would restart the " +
+        "browser out from under whoever is using it",
+    );
+  }
   const { computerId } = await deps.reserveDesktop({
     bearer: args.bearer,
     projectId: args.projectId,
@@ -273,6 +297,23 @@ export async function ensureBrowserSession(
   return withKeyedLock(`browser-session:${computerId}`, () =>
     ensureOnComputer(deps, computerId, contextMode, args),
   );
+}
+
+/**
+ * The requested session cannot be served by the target it names.
+ *
+ * A sibling of `BrowserSessionInUseError`, and carries a `code` for the same
+ * reason `LocalBrowserUnavailableError` does: callers branch on the reason
+ * rather than on message text.
+ */
+export class BrowserSessionTargetError extends Error {
+  constructor(
+    readonly code: "ephemeral_requires_sandbox",
+    message: string,
+  ) {
+    super(message);
+    this.name = "BrowserSessionTargetError";
+  }
 }
 
 /**

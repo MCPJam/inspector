@@ -28,6 +28,7 @@ import {
   BROWSERD_SCRIPT_PATH,
   BROWSERD_USER_DATA_DIR,
   BrowserSessionInUseError,
+  BrowserSessionTargetError,
   ensureBrowserSession,
   type BrowserSessionDeps,
   type SessionClient,
@@ -674,8 +675,14 @@ describe("ensureBrowserSession — relaunch triggers", () => {
       leaseAction: leaseBackedBy(lease),
     });
 
+    // Driven through the ATTACH, which is the surface that still names an
+    // ephemeral mode on a computer: `ensureBrowserSession` now refuses one
+    // outright, and the ownership question this pins is the same either way.
     await expect(
-      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+      attachBrowserSession(f.deps, {
+        computerId: COMPUTER,
+        contextMode: "ephemeral",
+      }),
     ).rejects.toThrow(/lease_held/);
     expect(f.lookup).toHaveBeenNthCalledWith(
       1,
@@ -810,34 +817,30 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
 });
 
 describe("ensureBrowserSession — contextMode", () => {
-  it("boots an ephemeral session with no persistent profile (W6)", async () => {
+  it("REFUSES ephemeral on a computer target, before reserving anything", async () => {
+    // There is one hosted computer per (project, member), so an ephemeral
+    // session on it would be shared by every unattended run in the project —
+    // one profile, one cookie jar — and the mode mismatch against a persistent
+    // daemon relaunches it, pkilling the Chromium a person may be using. The
+    // refusal lands BEFORE `reserveDesktop`, so nothing is provisioned on the
+    // way to the error.
     const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
-    const handle = await ensureBrowserSession(f.deps, {
-      ...ARGS,
-      contextMode: "ephemeral",
-    });
-    expect(handle.contextMode).toBe("ephemeral");
-    // The daemon is told, so it launches with no user-data-dir at all: an
-    // eval's isolation is a property of the browser, not of remembering to
-    // clear cookies.
-    expect(f.boot).toHaveBeenCalledWith(
-      f.sandbox.browserd,
-      expect.objectContaining({ contextMode: "ephemeral" }),
-    );
-    expect(f.record).toHaveBeenCalledWith(
-      expect.objectContaining({ contextMode: "ephemeral" }),
-    );
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toMatchObject({ code: "ephemeral_requires_sandbox" });
+
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+    expect(f.lookup).not.toHaveBeenCalled();
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
   });
 
-  it("asks the store for the ephemeral mode, so a persistent row is never reused", async () => {
-    const f = makeFakes({ lookups: [liveLookup()] });
-    await ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" });
-    expect(f.lookup).toHaveBeenCalledWith(
-      expect.objectContaining({ expectedContextMode: "ephemeral" }),
-    );
-    // The live persistent row is NOT verified or reused for an eval.
-    expect(f.status).not.toHaveBeenCalled();
-    expect(f.boot).toHaveBeenCalled();
+  it("throws BrowserSessionTargetError, not a bare Error", async () => {
+    const f = makeFakes();
+    await expect(
+      ensureBrowserSession(f.deps, { ...ARGS, contextMode: "ephemeral" }),
+    ).rejects.toBeInstanceOf(BrowserSessionTargetError);
   });
 
   it("asks the store for the mode it intends to run in", async () => {
