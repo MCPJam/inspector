@@ -49,7 +49,11 @@ export function SidebarAutoCollapse({
   // applied even when the app deep-links straight into a wide surface.
   const lastAppliedWideRef = React.useRef<boolean | null>(null);
 
-  React.useEffect(() => {
+  // Layout, not passive: a passive effect runs after paint, so deep-linking
+  // into a wide surface painted the rail at its full 16rem and then animated
+  // it shut through the primitive's 200ms width transition. Running before
+  // paint means the first frame is already collapsed.
+  React.useLayoutEffect(() => {
     // Mobile has no inline sidebar to reclaim width from — it is a sheet that
     // is already closed by default.
     if (isMobile) {
