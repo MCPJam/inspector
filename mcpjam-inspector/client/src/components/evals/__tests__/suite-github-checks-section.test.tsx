@@ -32,22 +32,20 @@ const {
   // `repositoryId` is REQUIRED by the contract and is what the picker is keyed
   // on: two connected accounts can each have a `widgets`, so a name is not a
   // selector. `installationRef` says which installation the entry came from.
-  mockListInstallationRepos: vi.fn(
-    async (): Promise<unknown[]> => [
-      {
-        repositoryId: 101,
-        fullName: "mcpjam/inspector",
-        installationRef: "bind-1",
-        accountLogin: "mcpjam",
-      },
-      {
-        repositoryId: 102,
-        fullName: "mcpjam/backend",
-        installationRef: "bind-1",
-        accountLogin: "mcpjam",
-      },
-    ]
-  ),
+  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
+    {
+      repositoryId: 101,
+      fullName: "mcpjam/inspector",
+      installationRef: "bind-1",
+      accountLogin: "mcpjam",
+    },
+    {
+      repositoryId: 102,
+      fullName: "mcpjam/backend",
+      installationRef: "bind-1",
+      accountLogin: "mcpjam",
+    },
+  ]),
   mockNavigate: vi.fn(),
   mockToast: { error: vi.fn(), success: vi.fn() },
 }));
@@ -88,7 +86,7 @@ function renderSection(
   opts: {
     availability?: { state: "enabled" | "disabled" } | undefined;
     repos?: any[] | undefined;
-  } = {}
+  } = {},
 ) {
   // Read the key's PRESENCE, not its value: a destructuring default fires on an
   // explicit `undefined` too, which would silently turn the "still loading"
@@ -104,7 +102,7 @@ function renderSection(
       suiteId="suite-1"
       projectId="proj-1"
       organizationId="org-1"
-    />
+    />,
   );
 }
 
@@ -112,7 +110,7 @@ function renderSection(
 async function chooseOption(
   user: ReturnType<typeof userEvent.setup>,
   triggerLabel: string,
-  optionName: string
+  optionName: string,
 ) {
   await user.click(screen.getByLabelText(triggerLabel));
   await user.click(await screen.findByRole("option", { name: optionName }));
@@ -134,19 +132,19 @@ describe("SuiteGithubChecksSection", () => {
   it("lists only the repositories running THIS suite", async () => {
     renderSection({ repos: [CONNECTED_HERE, CONNECTED_ELSEWHERE] });
     expect(
-      await screen.findByTestId("suite-github-repo-mcpjam/mcp-check-fixture")
+      await screen.findByTestId("suite-github-repo-mcpjam/mcp-check-fixture"),
     ).toBeInTheDocument();
     // Connected to a different suite — showing it here would imply this suite
     // runs on it.
     expect(
-      screen.queryByTestId("suite-github-repo-mcpjam/inspector")
+      screen.queryByTestId("suite-github-repo-mcpjam/inspector"),
     ).not.toBeInTheDocument();
   });
 
   it("says so when no repository runs this suite", () => {
     renderSection({ repos: [CONNECTED_ELSEWHERE] });
     expect(
-      screen.getByText("No repositories run this suite yet.")
+      screen.getByText("No repositories run this suite yet."),
     ).toBeInTheDocument();
   });
 
@@ -164,8 +162,8 @@ describe("SuiteGithubChecksSection", () => {
     expect(trigger).toBeInTheDocument();
     await waitFor(() =>
       expect(
-        screen.queryByText("No repositories available to connect.")
-      ).not.toBeInTheDocument()
+        screen.queryByText("No repositories available to connect."),
+      ).not.toBeInTheDocument(),
     );
   });
 
@@ -201,7 +199,7 @@ describe("SuiteGithubChecksSection", () => {
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith({
       repoFullName: "mcpjam/inspector",
@@ -253,7 +251,7 @@ describe("SuiteGithubChecksSection", () => {
       () =>
         new Promise((resolve) => {
           resolveConnect = resolve as (result: unknown) => void;
-        })
+        }),
     );
     const user = userEvent.setup();
     const { unmount } = renderSection({ repos: [] });
@@ -263,7 +261,7 @@ describe("SuiteGithubChecksSection", () => {
     await chooseOption(user, "Outage policy", "Fail open");
     await user.click(screen.getByRole("button", { name: /Connect/ }));
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
 
     unmount();
@@ -280,13 +278,13 @@ describe("SuiteGithubChecksSection", () => {
 
     expect(
       screen.getByText(
-        /During an MCPJam outage or pause, the check reports neutral\./
-      )
+        /During an MCPJam outage or pause, the check reports neutral\./,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./
-      )
+        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./,
+      ),
     ).toBeInTheDocument();
     const page = document.body.textContent ?? "";
     for (const forbidden of [/merges proceed/i, /merges are blocked/i]) {
@@ -339,41 +337,33 @@ describe("SuiteGithubChecksSection repository identity", () => {
     await user.click(screen.getByRole("button", { name: /Connect/ }));
 
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith(
       expect.objectContaining({
         repoFullName: "widgets",
         installationRef: "bind-globex",
         repositoryId: 202,
-      })
+      }),
     );
   });
 
-  it("omits installationRef when the listing carried none", async () => {
-    // The compatibility window: an organization with no binding is still listed
-    // through the backend's pinned installation, and omitting the reference is
-    // what keeps that connect path reachable.
+  it("rejects a stale listing entry without installation identity", async () => {
     mockListInstallationRepos.mockResolvedValue([
       { repositoryId: 301, fullName: "mcpjam/pinned" },
     ]);
-    const user = userEvent.setup();
     renderSection({ repos: [] });
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
-
-    await chooseOption(user, "Repository", "mcpjam/pinned");
-    await chooseOption(user, "Outage policy", "Fail open");
-    await user.click(screen.getByRole("button", { name: /Connect/ }));
-
+    expect(
+      await screen.findByText(/No repositories available to connect\./)
+    ).toBeInTheDocument();
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole("button", { name: /Connect/ })).toBeDisabled(),
     );
-    const sent = mockConnectVerifiedRepo.mock.calls[0]?.[0] as Record<
-      string,
-      unknown
-    >;
-    expect(sent).not.toHaveProperty("installationRef");
-    expect(sent.repositoryId).toBe(301);
+    expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("option", { name: "mcpjam/pinned" }),
+    ).not.toBeInTheDocument();
   });
 });
 
@@ -395,20 +385,24 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
   }
 
   it("re-lists when an account is connected elsewhere", async () => {
     mockListInstallationRepos.mockReset();
-    mockListInstallationRepos
-      .mockResolvedValueOnce([])
-      .mockResolvedValue([{ repositoryId: 401, fullName: "acme/widgets" }]);
+    mockListInstallationRepos.mockResolvedValueOnce([]).mockResolvedValue([
+      {
+        repositoryId: 401,
+        fullName: "acme/widgets",
+        installationRef: "bind-acme",
+      },
+    ]);
 
     const user = userEvent.setup();
     const { rerender } = renderWithBindings([]);
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     mockBindings.value = [
@@ -426,22 +420,26 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
 
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     await user.click(screen.getByLabelText("Repository"));
     expect(
-      await screen.findByRole("option", { name: "acme/widgets" })
+      await screen.findByRole("option", { name: "acme/widgets" }),
     ).toBeInTheDocument();
   });
 
   it("does not re-list when the query re-delivers the same bindings", async () => {
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([
-      { repositoryId: 402, fullName: "acme/widgets" },
+      {
+        repositoryId: 402,
+        fullName: "acme/widgets",
+        installationRef: "bind-acme",
+      },
     ]);
     const rows = () => [
       {
@@ -456,7 +454,7 @@ describe("SuiteGithubChecksSection binding changes", () => {
 
     const { rerender } = renderWithBindings(rows());
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     // A fresh array with identical content, which is what every delivery of a
@@ -467,7 +465,7 @@ describe("SuiteGithubChecksSection binding changes", () => {
         suiteId="suite-1"
         projectId="proj-1"
         organizationId="org-1"
-      />
+      />,
     );
     await act(async () => {});
 

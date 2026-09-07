@@ -52,16 +52,14 @@ const {
   mockConnectVerifiedRepo: vi.fn(async (_args?: Record<string, unknown>) => ({
     configId: "cfg-new",
   })),
-  mockListInstallationRepos: vi.fn(
-    async (): Promise<unknown[]> => [
-      {
-        repositoryId: 2,
-        fullName: "mcpjam/other-repo",
-        installationRef: "bind-1",
-        accountLogin: "mcpjam",
-      },
-    ]
-  ),
+  mockListInstallationRepos: vi.fn(async (): Promise<unknown[]> => [
+    {
+      repositoryId: 2,
+      fullName: "mcpjam/other-repo",
+      installationRef: "bind-1",
+      accountLogin: "mcpjam",
+    },
+  ]),
   mockBindings: { value: undefined as unknown[] | undefined },
   mockStartInstallation: vi.fn(async () => ({
     installUrl: "https://github.com/apps/mcpjam/installations/new?state=abc",
@@ -157,7 +155,7 @@ function repo(
     private?: boolean;
     installationRef?: string | null;
     accountLogin?: string;
-  } = {}
+  } = {},
 ) {
   const key = fullName.trim().toLowerCase();
   if (!repositoryIds.has(key)) repositoryIds.set(key, (nextRepositoryId += 1));
@@ -181,7 +179,7 @@ function binding(
     installationRef?: string;
     status?: "active" | "suspended" | "removed" | "unbound";
     accountType?: "Organization" | "User";
-  } = {}
+  } = {},
 ) {
   return {
     installationRef: overrides.installationRef ?? `bind-${accountLogin}`,
@@ -236,7 +234,7 @@ function renderRoute(activeOrganizationId: string | null = "org-1") {
 async function chooseOption(
   user: ReturnType<typeof userEvent.setup>,
   triggerLabel: string,
-  optionName: string | RegExp
+  optionName: string | RegExp,
 ) {
   await user.click(screen.getByLabelText(triggerLabel));
   await user.click(await screen.findByRole("option", { name: optionName }));
@@ -245,7 +243,7 @@ async function chooseOption(
 /** Repository + suite + policy, in the order the page presents them. */
 async function fillConnectForm(
   user: ReturnType<typeof userEvent.setup>,
-  policyLabel: "Fail open" | "Fail closed" = "Fail closed"
+  policyLabel: "Fail open" | "Fail closed" = "Fail closed",
 ) {
   await chooseOption(user, "Repository", "mcpjam/other-repo");
   await chooseOption(user, "Suite", "Fixture suite");
@@ -300,7 +298,7 @@ describe("GithubChecksRoute availability gate", () => {
     mockRepos.value = [];
     renderRoute();
     expect(
-      screen.getByText(/No repositories connected yet/)
+      screen.getByText(/No repositories connected yet/),
     ).toBeInTheDocument();
     expect(screen.getByText("mcpjam.yaml")).toBeInTheDocument();
   });
@@ -311,7 +309,7 @@ describe("GithubChecksRoute availability gate", () => {
     renderRoute();
 
     fireEvent.click(
-      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture"),
     );
 
     expect(mockSetRepoEnabled).toHaveBeenCalledWith({
@@ -327,8 +325,8 @@ describe("GithubChecksRoute availability gate", () => {
 
     fireEvent.click(
       screen.getByLabelText(
-        "Enable conformance check for mcpjam/mcp-check-fixture"
-      )
+        "Enable conformance check for mcpjam/mcp-check-fixture",
+      ),
     );
 
     expect(mockSetRepoConformance).toHaveBeenCalledWith({
@@ -343,7 +341,7 @@ describe("GithubChecksRoute availability gate", () => {
     renderRoute();
 
     fireEvent.click(
-      screen.getByLabelText("Disconnect mcpjam/mcp-check-fixture")
+      screen.getByLabelText("Disconnect mcpjam/mcp-check-fixture"),
     );
 
     expect(mockDisconnectRepo).toHaveBeenCalledWith({ configId: "cfg-1" });
@@ -388,12 +386,12 @@ describe("GithubChecksRoute availability gate", () => {
       () =>
         new Promise((resolve) => {
           release = () => resolve({ changed: true });
-        })
+        }),
     );
     renderRoute();
 
     const toggle = screen.getByLabelText(
-      "Enable checks for mcpjam/mcp-check-fixture"
+      "Enable checks for mcpjam/mcp-check-fixture",
     );
     fireEvent.click(toggle);
     fireEvent.click(toggle);
@@ -412,10 +410,10 @@ describe("GithubChecksRoute availability gate", () => {
 
     // "Install the App" would be a lie when the real problem is an outage.
     expect(
-      await screen.findByText(/Could not load repositories from GitHub/)
+      await screen.findByText(/Could not load repositories from GitHub/),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/No repositories available/)
+      screen.queryByText(/No repositories available/),
     ).not.toBeInTheDocument();
   });
 
@@ -427,7 +425,7 @@ describe("GithubChecksRoute availability gate", () => {
     // would flash an install-the-App CTA at someone who has repos.
     expect(screen.getByText("Loading…")).toBeInTheDocument();
     expect(
-      screen.queryByText(/No repositories connected yet/)
+      screen.queryByText(/No repositories connected yet/),
     ).not.toBeInTheDocument();
   });
 });
@@ -438,9 +436,8 @@ describe("GithubChecksRoute availability gate", () => {
  * backend treats as fail-open without anyone having chosen that. So the policy
  * is required, unselected until picked, and described before it is picked.
  *
- * The connect itself goes to the server-VERIFIED action, which proves the
- * pinned installation can reach the repository before writing anything. The
- * unverified mutation is still deployed; nothing here may call it.
+ * The connect goes to the server-VERIFIED action, which proves the selected
+ * organization-owned installation can reach the repository before writing.
  */
 describe("GithubChecksRoute connect flow", () => {
   beforeEach(() => {
@@ -495,10 +492,10 @@ describe("GithubChecksRoute connect flow", () => {
     await user.click(screen.getByLabelText("Repository"));
 
     expect(
-      await screen.findByRole("option", { name: "mcpjam/other-repo" })
+      await screen.findByRole("option", { name: "mcpjam/other-repo" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("option", { name: /MCP-Check-Fixture/i })
+      screen.queryByRole("option", { name: /MCP-Check-Fixture/i }),
     ).not.toBeInTheDocument();
   });
 
@@ -522,7 +519,7 @@ describe("GithubChecksRoute connect flow", () => {
     await user.click(connectButton());
 
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
     expect(mockConnectVerifiedRepo).toHaveBeenCalledWith({
       repoFullName: "mcpjam/other-repo",
@@ -553,13 +550,13 @@ describe("GithubChecksRoute connect flow", () => {
     await waitFor(() => expect(toast.success).toHaveBeenCalled());
 
     expect(screen.getByLabelText("Repository")).toHaveTextContent(
-      "Select a repository"
+      "Select a repository",
     );
     expect(screen.getByLabelText("Suite")).toHaveTextContent("Select a suite");
     // Especially the policy: leaving it set would carry one repository's
     // decision silently onto the next one connected.
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Select an outage policy"
+      "Select an outage policy",
     );
   });
 
@@ -569,19 +566,19 @@ describe("GithubChecksRoute connect flow", () => {
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
     await fillConnectForm(user, "Fail closed");
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Fail closed"
+      "Fail closed",
     );
 
     rerender(routeTree("org-2"));
 
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Select an outage policy"
+      "Select an outage policy",
     );
     expect(screen.getByLabelText("Repository")).toHaveTextContent(
-      "Select a repository"
+      "Select a repository",
     );
   });
 
@@ -590,7 +587,7 @@ describe("GithubChecksRoute connect flow", () => {
     // App can see is not something a caller gets to enumerate. The page repeats
     // it verbatim rather than parsing GitHub detail out of it.
     mockConnectVerifiedRepo.mockRejectedValueOnce(
-      new Error("Repository is not accessible to the MCPJam GitHub App.")
+      new Error("Repository is not accessible to the MCPJam GitHub App."),
     );
     const user = userEvent.setup();
     renderRoute();
@@ -601,16 +598,16 @@ describe("GithubChecksRoute connect flow", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "Repository is not accessible to the MCPJam GitHub App."
-      )
+        "Repository is not accessible to the MCPJam GitHub App.",
+      ),
     );
     // Nothing was connected, so nothing is cleared: the administrator can fix
     // the App installation and press Connect again.
     expect(screen.getByLabelText("Repository")).toHaveTextContent(
-      "mcpjam/other-repo"
+      "mcpjam/other-repo",
     );
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Fail closed"
+      "Fail closed",
     );
   });
 
@@ -619,18 +616,18 @@ describe("GithubChecksRoute connect flow", () => {
 
     expect(
       screen.getByText(
-        /During an MCPJam outage or pause, the check reports neutral\./
-      )
+        /During an MCPJam outage or pause, the check reports neutral\./,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /During an MCPJam outage or pause, the check reports failed\./
-      )
+        /During an MCPJam outage or pause, the check reports failed\./,
+      ),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./
-      )
+        /Whether a failed or neutral check blocks merging depends on this repository's branch-protection settings\./,
+      ),
     ).toBeInTheDocument();
 
     // MCPJam sets a conclusion. Whether a conclusion stops a merge is branch
@@ -746,7 +743,7 @@ describe("GithubChecksRoute row outage policy", () => {
       () =>
         new Promise((resolve) => {
           release = () => resolve({ changed: true });
-        })
+        }),
     );
     const user = userEvent.setup();
     renderRoute();
@@ -766,7 +763,7 @@ describe("GithubChecksRoute row outage policy", () => {
 
     release?.();
     await waitFor(() =>
-      expect(screen.getByLabelText(POLICY_LABEL)).toBeEnabled()
+      expect(screen.getByLabelText(POLICY_LABEL)).toBeEnabled(),
     );
   });
 
@@ -781,7 +778,7 @@ describe("GithubChecksRoute row outage policy", () => {
     // Two different writes on one row. Sharing a pending set would freeze a
     // control the user has no reason to think is busy.
     expect(
-      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture"),
     ).toBeEnabled();
   });
 });
@@ -851,8 +848,8 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     expect(
       screen.getByText(
-        /MCPJam posts one comment per pull request and updates it in place\. Turning this off stops the comments and changes nothing else\./
-      )
+        /MCPJam posts one comment per pull request and updates it in place\. Turning this off stops the comments and changes nothing else\./,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -868,8 +865,8 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.success).toHaveBeenCalledWith(
-        "MCPJam will stop commenting on pull requests in this repository. This setting does not change whether the check itself runs."
-      )
+        "MCPJam will stop commenting on pull requests in this repository. This setting does not change whether the check itself runs.",
+      ),
     );
   });
 
@@ -893,7 +890,7 @@ describe("GithubChecksRoute pull-request comments", () => {
   it("shows the backend's own refusal when the write is rejected", async () => {
     mockRepos.value = [ROW];
     mockSetRepoFeedbackComments.mockRejectedValueOnce(
-      new Error("You are not an administrator of this organization.")
+      new Error("You are not an administrator of this organization."),
     );
     renderRoute();
 
@@ -901,8 +898,8 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "You are not an administrator of this organization."
-      )
+        "You are not an administrator of this organization.",
+      ),
     );
   });
 
@@ -918,8 +915,8 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        "We could not change pull-request comments for that repository. Nothing changed — try again."
-      )
+        "We could not change pull-request comments for that repository. Nothing changed — try again.",
+      ),
     );
   });
 
@@ -940,7 +937,7 @@ describe("GithubChecksRoute pull-request comments", () => {
       () =>
         new Promise((resolve) => {
           release = () => resolve({ changed: true });
-        })
+        }),
     );
     renderRoute();
 
@@ -953,14 +950,14 @@ describe("GithubChecksRoute pull-request comments", () => {
     // The enable toggle is a DIFFERENT write on the same row and must not be
     // frozen by this one.
     expect(
-      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture")
+      screen.getByLabelText("Enable checks for mcpjam/mcp-check-fixture"),
     ).toBeEnabled();
 
     await act(async () => {
       release?.();
     });
     await waitFor(() =>
-      expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled()
+      expect(screen.getByLabelText(COMMENTS_LABEL)).toBeEnabled(),
     );
   });
 
@@ -974,8 +971,8 @@ describe("GithubChecksRoute pull-request comments", () => {
 
     expect(
       screen.getByText(
-        /MCPJam will also post a comment on each pull request in this repository, updated in place as new commits land\. You can turn that off per repository after connecting\./
-      )
+        /MCPJam will also post a comment on each pull request in this repository, updated in place as new commits land\. You can turn that off per repository after connecting\./,
+      ),
     ).toBeInTheDocument();
   });
 });
@@ -1044,7 +1041,7 @@ describe("GithubChecksRoute repository visibility", () => {
     renderRoute();
 
     expect(
-      await screen.findByText(/Could not load repositories from GitHub/)
+      await screen.findByText(/Could not load repositories from GitHub/),
     ).toBeInTheDocument();
     // An outage is not evidence that anything is public.
     expect(screen.queryByText("Public")).not.toBeInTheDocument();
@@ -1092,7 +1089,7 @@ describe("GithubChecksRoute organization switching", () => {
         () =>
           new Promise((resolve) => {
             resolveStale = resolve as (repos: unknown[]) => void;
-          })
+          }),
       )
       .mockResolvedValue([
         repo("mcpjam/mcp-check-fixture", { private: false }),
@@ -1101,7 +1098,7 @@ describe("GithubChecksRoute organization switching", () => {
     const { rerender } = render(routeTree("org-1"));
     rerender(routeTree("org-2"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     expect(await screen.findByText("Public")).toBeInTheDocument();
 
@@ -1124,7 +1121,7 @@ describe("GithubChecksRoute organization switching", () => {
       () =>
         new Promise((resolve) => {
           resolveStaleConnect = resolve as (result: unknown) => void;
-        })
+        }),
     );
 
     const user = userEvent.setup();
@@ -1133,12 +1130,12 @@ describe("GithubChecksRoute organization switching", () => {
     await fillConnectForm(user, "Fail closed");
     await user.click(connectButton());
     await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
+      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1),
     );
 
     rerender(routeTree("org-2"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     await fillConnectForm(user, "Fail open");
 
@@ -1150,10 +1147,10 @@ describe("GithubChecksRoute organization switching", () => {
     expect(toast.success).not.toHaveBeenCalled();
     // …and the selections just made for THIS organization survive.
     expect(screen.getByLabelText("Repository")).toHaveTextContent(
-      "mcpjam/other-repo"
+      "mcpjam/other-repo",
     );
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Fail open"
+      "Fail open",
     );
   });
 });
@@ -1199,8 +1196,8 @@ describe("GithubChecksRoute binding changes", () => {
     // Where the user starts: nothing connected, so nothing to offer.
     expect(
       await screen.findByText(
-        /No repositories available\. Connect a GitHub account above first\./
-      )
+        /No repositories available\. Connect a GitHub account above first\./,
+      ),
     ).toBeInTheDocument();
     expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
 
@@ -1211,16 +1208,16 @@ describe("GithubChecksRoute binding changes", () => {
     rerender(routeTree("org-1"));
 
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     await waitFor(() =>
       expect(
-        screen.queryByText(/No repositories available/)
-      ).not.toBeInTheDocument()
+        screen.queryByText(/No repositories available/),
+      ).not.toBeInTheDocument(),
     );
     await user.click(screen.getByLabelText("Repository"));
     expect(
-      await screen.findByRole("option", { name: "acme/widgets" })
+      await screen.findByRole("option", { name: "acme/widgets" }),
     ).toBeInTheDocument();
   });
 
@@ -1230,7 +1227,7 @@ describe("GithubChecksRoute binding changes", () => {
 
     const { rerender } = render(routeTree("org-1"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     // Suspended, removed and unbound each stop an installation answering for
@@ -1239,7 +1236,7 @@ describe("GithubChecksRoute binding changes", () => {
     rerender(routeTree("org-1"));
 
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
   });
 
@@ -1249,7 +1246,7 @@ describe("GithubChecksRoute binding changes", () => {
 
     const { rerender } = render(routeTree("org-1"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     // A new array, equal content, and the rows in the other order — all three
@@ -1272,7 +1269,7 @@ describe("GithubChecksRoute binding changes", () => {
 
     const { rerender } = render(routeTree("org-1"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
 
     mockBindings.value = [binding("acme")];
@@ -1282,7 +1279,7 @@ describe("GithubChecksRoute binding changes", () => {
     expect(mockListInstallationRepos).toHaveBeenCalledTimes(1);
     // …and the listing that was in flight is still the one on screen.
     expect(
-      await screen.findByRole("combobox", { name: "Repository" })
+      await screen.findByRole("combobox", { name: "Repository" }),
     ).toBeInTheDocument();
   });
 
@@ -1300,14 +1297,14 @@ describe("GithubChecksRoute binding changes", () => {
         () =>
           new Promise((resolve) => {
             resolveStale = resolve as (repos: unknown[]) => void;
-          })
+          }),
       )
       .mockResolvedValue([repo("beta/gadgets", { accountLogin: "beta" })]);
 
     const user = userEvent.setup();
     const { rerender } = render(routeTree("org-1"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(1),
     );
     await chooseOption(user, "Repository", "acme/widgets");
     await chooseOption(user, "Outage policy", "Fail closed");
@@ -1318,22 +1315,22 @@ describe("GithubChecksRoute binding changes", () => {
     mockBindings.value = [binding("acme"), binding("beta")];
     rerender(routeTree("org-1"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(2),
     );
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Fail closed"
+      "Fail closed",
     );
 
     // Now the org changes while that refetch is still in flight.
     rerender(routeTree("org-2"));
     await waitFor(() =>
-      expect(mockListInstallationRepos).toHaveBeenCalledTimes(3)
+      expect(mockListInstallationRepos).toHaveBeenCalledTimes(3),
     );
     expect(screen.getByLabelText("Repository")).toHaveTextContent(
-      "Select a repository"
+      "Select a repository",
     );
     expect(screen.getByLabelText("Outage policy")).toHaveTextContent(
-      "Select an outage policy"
+      "Select an outage policy",
     );
 
     // org-1's answer, arriving late. It must not repopulate org-2's picker.
@@ -1342,10 +1339,10 @@ describe("GithubChecksRoute binding changes", () => {
     });
     await user.click(screen.getByLabelText("Repository"));
     expect(
-      await screen.findByRole("option", { name: "beta/gadgets" })
+      await screen.findByRole("option", { name: "beta/gadgets" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("option", { name: "acme/widgets" })
+      screen.queryByRole("option", { name: "acme/widgets" }),
     ).not.toBeInTheDocument();
   });
 });
@@ -1393,16 +1390,18 @@ describe("GithubChecksRoute installations", () => {
   it("offers both an install and a claim, and explains why claiming needs GitHub", async () => {
     renderRoute();
     expect(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+      await screen.findByRole("button", {
+        name: /Install on a GitHub account/,
+      }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Claim an existing installation/ })
+      screen.getByRole("button", { name: /Claim an existing installation/ }),
     ).toBeInTheDocument();
     // The whole reason the claim path needs an OAuth leg, in one sentence: the
     // App JWT can read every installation it has, so installing is not proof
     // that an installation is yours to connect here.
     expect(
-      screen.getByText(/is not on its own proof that it is yours to connect/i)
+      screen.getByText(/is not on its own proof that it is yours to connect/i),
     ).toBeInTheDocument();
   });
 
@@ -1410,14 +1409,16 @@ describe("GithubChecksRoute installations", () => {
     const user = userEvent.setup();
     renderRoute();
     await user.click(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+      await screen.findByRole("button", {
+        name: /Install on a GitHub account/,
+      }),
     );
 
     await waitFor(() => expect(mockStartInstallation).toHaveBeenCalledTimes(1));
     // The URL carries a one-time state the BACKEND minted and hashed. The page
     // only follows it.
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
-      "https://github.com/apps/mcpjam/installations/new?state=abc"
+      "https://github.com/apps/mcpjam/installations/new?state=abc",
     );
   });
 
@@ -1427,12 +1428,12 @@ describe("GithubChecksRoute installations", () => {
     await user.click(
       await screen.findByRole("button", {
         name: /Claim an existing installation/,
-      })
+      }),
     );
 
     await waitFor(() => expect(mockStartDirectClaim).toHaveBeenCalledTimes(1));
     expect(mockRedirectToGithub).toHaveBeenCalledWith(
-      "https://github.com/login/oauth/authorize?client_id=x"
+      "https://github.com/login/oauth/authorize?client_id=x",
     );
   });
 
@@ -1445,12 +1446,14 @@ describe("GithubChecksRoute installations", () => {
     renderRoute();
 
     await user.click(
-      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+      await screen.findByRole("button", {
+        name: /Install on a GitHub account/,
+      }),
     );
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
 
     const shown = String(
-      (toast.error as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      (toast.error as ReturnType<typeof vi.fn>).mock.calls[0][0],
     );
     expect(shown).toMatch(/already connected to a workspace/i);
     // Non-disclosure survives the trip through the UI.
@@ -1499,7 +1502,7 @@ describe("GithubChecksRoute installations", () => {
     mockBindings.value = [binding("acme", { status: "unbound" })];
     renderRoute();
     expect(
-      await screen.findByText(/Disconnected from this workspace/i)
+      await screen.findByText(/Disconnected from this workspace/i),
     ).toBeInTheDocument();
   });
 
@@ -1509,15 +1512,15 @@ describe("GithubChecksRoute installations", () => {
     renderRoute();
 
     await user.click(
-      await screen.findByRole("button", { name: "Disconnect acme" })
+      await screen.findByRole("button", { name: "Disconnect acme" }),
     );
     expect(
-      await screen.findByText(/Checks on its repositories stop immediately/i)
+      await screen.findByText(/Checks on its repositories stop immediately/i),
     ).toBeInTheDocument();
     // The limit matters as much as the consequence: reconnecting is not a
     // rebuild, and copy that implied otherwise would stop admins acting.
     expect(
-      screen.getByText(/suite and policy settings are kept/i)
+      screen.getByText(/suite and policy settings are kept/i),
     ).toBeInTheDocument();
     // Nothing has happened yet.
     expect(mockUnbindInstallation).not.toHaveBeenCalled();
@@ -1529,14 +1532,14 @@ describe("GithubChecksRoute installations", () => {
     renderRoute();
 
     await user.click(
-      await screen.findByRole("button", { name: "Disconnect acme" })
+      await screen.findByRole("button", { name: "Disconnect acme" }),
     );
     await user.click(await screen.findByRole("button", { name: "Disconnect" }));
 
     await waitFor(() =>
       expect(mockUnbindInstallation).toHaveBeenCalledWith({
         installationRef: "bind-xyz",
-      })
+      }),
     );
   });
 
@@ -1546,10 +1549,10 @@ describe("GithubChecksRoute installations", () => {
     renderRoute();
 
     await user.click(
-      await screen.findByRole("button", { name: "Disconnect acme" })
+      await screen.findByRole("button", { name: "Disconnect acme" }),
     );
     await user.click(
-      await screen.findByRole("button", { name: "Keep it connected" })
+      await screen.findByRole("button", { name: "Keep it connected" }),
     );
 
     expect(mockUnbindInstallation).not.toHaveBeenCalled();
@@ -1598,8 +1601,8 @@ describe("GithubChecksRoute connection status", () => {
     // stopped check is "my code did something" and none of these is that.
     expect(
       screen.getByText(
-        /not a problem with your pull requests|nothing is wrong/i
-      )
+        /not a problem with your pull requests|nothing is wrong/i,
+      ),
     ).toBeInTheDocument();
   });
 
@@ -1631,10 +1634,10 @@ describe("GithubChecksRoute connection status", () => {
 
     await user.click(screen.getByLabelText("Repository"));
     expect(
-      await screen.findByRole("option", { name: "acme/widgets · acme" })
+      await screen.findByRole("option", { name: "acme/widgets · acme" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("option", { name: "globex/widgets · globex" })
+      screen.getByRole("option", { name: "globex/widgets · globex" }),
     ).toBeInTheDocument();
   });
 
@@ -1651,37 +1654,24 @@ describe("GithubChecksRoute connection status", () => {
     await user.click(screen.getByLabelText("Repository"));
     // One repeated label on every row is a column of noise.
     expect(
-      await screen.findByRole("option", { name: "acme/widgets" })
+      await screen.findByRole("option", { name: "acme/widgets" }),
     ).toBeInTheDocument();
   });
 
-  it("sends no installationRef when the listing carried none", async () => {
-    // The compatibility window: the backend is still falling back to its pinned
-    // installation for an org with no binding, and omitting the reference is
-    // what keeps that connect path reachable.
-    mockRepos.value = [];
-    mockConnectVerifiedRepo.mockReset();
-    mockConnectVerifiedRepo.mockResolvedValue({ configId: "cfg-pinned" });
+  it("rejects a stale listing entry without installation identity", async () => {
     mockListInstallationRepos.mockResolvedValue([
-      repo("mcpjam/pinned-repo", { installationRef: null, accountLogin: "" }),
+      { repositoryId: 301, fullName: "mcpjam/pinned-repo" },
     ]);
-    const user = userEvent.setup();
+    mockRepos.value = [];
     renderRoute();
     await waitFor(() => expect(mockListInstallationRepos).toHaveBeenCalled());
-
-    await chooseOption(user, "Repository", "mcpjam/pinned-repo");
-    await chooseOption(user, "Suite", "Fixture suite");
-    await chooseOption(user, "Outage policy", "Fail closed");
-    await user.click(connectButton());
-
-    await waitFor(() =>
-      expect(mockConnectVerifiedRepo).toHaveBeenCalledTimes(1)
-    );
-    const sent = mockConnectVerifiedRepo.mock.calls[0]?.[0] as Record<
-      string,
-      unknown
-    >;
-    expect(sent).not.toHaveProperty("installationRef");
-    expect(sent.repositoryId).toBe(repositoryIds.get("mcpjam/pinned-repo"));
+    expect(
+      await screen.findByText(/No repositories available\./)
+    ).toBeInTheDocument();
+    await waitFor(() => expect(connectButton()).toBeDisabled());
+    expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
+    expect(
+      screen.queryByRole("option", { name: "mcpjam/pinned-repo" }),
+    ).not.toBeInTheDocument();
   });
 });
