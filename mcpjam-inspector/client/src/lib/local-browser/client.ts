@@ -166,7 +166,8 @@ export function actOnLocalBrowserLease(
 }
 
 /**
- * Tell the server somebody is still looking at this browser.
+ * Tell the server somebody is still looking at this browser, and hear back
+ * who holds it.
  *
  * The frame socket's heartbeat did this for every other engine; the native
  * Electron surface has no socket, so a watcher who is not holding the lease
@@ -177,7 +178,7 @@ export function actOnLocalBrowserLease(
 export function noteLocalBrowserWatch(
   args: { bootId: string },
   consentToken: string | null,
-): Promise<{ watching: boolean }> {
+): Promise<{ watching: boolean; lease?: LocalBrowserLease }> {
   return post("watch", args, consentToken);
 }
 

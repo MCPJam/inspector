@@ -179,6 +179,21 @@ const TABS_SNAPSHOT_BYTES = 4_096;
 /** `{"id":"","url":""},` — what one entry costs beyond its two strings. */
 const TAB_ENTRY_OVERHEAD = 24;
 
+/**
+ * Which entry a bound drops: the last, unless the last is the one on screen.
+ *
+ * The active tab goes only when it is all that is left — one entry over the
+ * bound on its own is not a tab anybody opened by hand, and no strip is better
+ * than no stream.
+ */
+function dropIndex(
+  list: ReadonlyArray<{ id: string }>,
+  activeTabId: string | undefined,
+): number {
+  const last = list.length - 1;
+  return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
+}
+
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
@@ -953,27 +968,43 @@ export class ChromiumDriver implements BrowserDriver {
     // that invents long tab ids cannot be answered with a truncated id — the
     // strip matches `active` against it — so what gives is the number of
     // entries, and in the last resort the strip itself.
+    //
+    // Two passes, and the cheap one first for a reason: a raw-length estimate
+    // is O(1) per entry and gets sixteen megabyte-long ids down to a handful
+    // before anything is serialised, and the exact measure below is then
+    // working on kilobytes rather than megabytes.
     const costOf = (tab: { id: string; url: string }): number =>
       tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
-    let cost = list.reduce((total, tab) => total + costOf(tab), 0);
-    while (list.length > 1 && cost > TABS_SNAPSHOT_BYTES) {
-      const at =
-        list[list.length - 1]!.id === this.activeTabId
-          ? list.length - 2
-          : list.length - 1;
-      cost -= costOf(list[at]!);
-      list.splice(at, 1);
+    let estimate = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && estimate > TABS_SNAPSHOT_BYTES) {
+      estimate -= costOf(list[dropIndex(list, this.activeTabId)]!);
+      list.splice(dropIndex(list, this.activeTabId), 1);
     }
-    // One entry that is over the bound on its own is not a tab anybody opened
-    // by hand. No strip is better than no stream.
-    if (cost > TABS_SNAPSHOT_BYTES) list.length = 0;
     // Only if it is still there: the strip highlights `active`, and pointing
     // at a tab that is not in the list reads as "no tab is on screen".
-    const active =
-      this.activeTabId && list.some((tab) => tab.id === this.activeTabId)
-        ? this.activeTabId
-        : undefined;
-    return { ...(active ? { active } : {}), list };
+    const payload = (): {
+      active?: string;
+      list: Array<{ id: string; url: string }>;
+    } => {
+      const active =
+        this.activeTabId && list.some((tab) => tab.id === this.activeTabId)
+          ? this.activeTabId
+          : undefined;
+      return { ...(active ? { active } : {}), list };
+    };
+    // MEASURED, not estimated. The estimate above misses two things, and both
+    // are under the caller's control: the payload repeats the active id in its
+    // own field, and `JSON.stringify` expands every quote, backslash and
+    // control character in an id — up to six bytes for one character. A sum of
+    // raw lengths is therefore not a bound on what goes on the wire, and the
+    // wire is where the 8 KiB record limit is enforced by dropping the stream.
+    while (
+      list.length > 0 &&
+      JSON.stringify(payload()).length > TABS_SNAPSHOT_BYTES
+    ) {
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    return payload();
   }
 
   async viewport(tabId?: string): Promise<TabViewport | null> {

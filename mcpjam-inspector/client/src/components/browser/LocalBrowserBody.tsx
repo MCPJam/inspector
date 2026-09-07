@@ -597,17 +597,28 @@ export function LocalBrowserBody({
    *
    * Only while this pane is on screen and the document is visible: a rail
    * behind another tab is not waiting for anything.
+   *
+   * THROUGH `watch`, NOT `ensure`. `ensure` starts a browser when the one it
+   * was asked about has gone — so a crash or a close under a waiting pane
+   * would launch a Chromium nobody asked for, and hand back a different boot's
+   * lease to a pane still looking at the old one. `watch` is keyed by this
+   * `bootId`: it can only describe the browser this pane is actually watching,
+   * and it answers 404 rather than starting anything when that browser is
+   * gone. It is also the truer statement — somebody IS watching, which is what
+   * keeps the idle sweep off a browser being waited for.
    */
   useEffect(() => {
     if (!session || !projectId || holding || lease.state === "free") return;
+    const bootId = session.bootId;
     const generation = railGeneration.current;
     let stopped = false;
     const timer = setInterval(() => {
       if (!activeRef.current) return;
       if (document.visibilityState !== "visible") return;
-      void ensureLocalBrowser(projectId, consentToken)
+      void noteLocalBrowserWatch({ bootId }, consentToken)
         .then((next) => {
           if (stopped || railGeneration.current !== generation) return;
+          if (!next.lease) return;
           setLease(next.lease);
           // Retract the message, and only it: the browser is available again.
           if (next.lease.state === "free") {
@@ -615,7 +626,9 @@ export function LocalBrowserBody({
           }
         })
         .catch(() => {
-          // The next tick asks again.
+          // A browser that has gone answers 404, and so does a machine that is
+          // busy. Either way the next tick asks again, and the pane's own
+          // measure is what discovers a browser that is not coming back.
         });
     }, LEASE_RECHECK_MS);
     return () => {

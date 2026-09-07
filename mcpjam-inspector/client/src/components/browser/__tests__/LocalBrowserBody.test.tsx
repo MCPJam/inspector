@@ -65,7 +65,9 @@ vi.mock("@/lib/local-browser/client", async () => {
     },
     noteLocalBrowserWatch: async (args: any) => {
       api.watches.push(args.bootId);
-      return { watching: true as const };
+      // The route reports who holds the browser as well as that somebody is
+      // watching it — which is how a refused pane hears about a hand-back.
+      return { watching: true as const, lease: api.lease };
     },
     openLocalBrowserFrameStream: () => {
       const socket = {
@@ -501,6 +503,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
       ).toBeNull();
 
       api.lease = { state: "free", holder: undefined };
+      const ensuresBefore = api.ensures.length;
       await vi.advanceTimersByTimeAsync(6_000);
       expect(
         await screen.findByRole("button", { name: /take control/i }),
@@ -508,6 +511,12 @@ describe("the agent browser pane — when somebody else is driving", () => {
       expect(
         screen.queryByText(/somebody else has taken control/i),
       ).toBeNull();
+      // THROUGH `watch`, not `ensure`. `ensure` starts a browser when the one
+      // it was asked about has gone, so a crash under a waiting pane would
+      // launch a Chromium nobody asked for and answer with a different boot's
+      // lease.
+      expect(api.ensures.length).toBe(ensuresBefore);
+      expect(api.watches).toContain("boot-proj-1");
     } finally {
       vi.useRealTimers();
     }

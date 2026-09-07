@@ -1679,6 +1679,24 @@ describe("ChromiumDriver — the human pane's tab strip", () => {
     expect(snapshot.list.map((tab) => tab.id)).toContain("t19");
   });
 
+  it("bounds the strip by what JSON actually costs, not by raw length", async () => {
+    // Every character here is two bytes once serialised, and the estimate that
+    // sums raw lengths cannot see that. Eight of these pass a 4 KiB
+    // raw-length budget and blow straight through it as JSON — which is the
+    // form the 8 KiB record limit is applied to, by dropping the stream.
+    const quotes = '"'.repeat(500);
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 8; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `${quotes}${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(4_096);
+    expect(snapshot.active).toBe(`${quotes}7`);
+  });
+
   it("bounds the strip in bytes, not just in entries", async () => {
     // A tab id is whatever the caller asked for — `getOrCreateTab` opens a
     // page under any string — so eight tabs is well inside the entry bound and

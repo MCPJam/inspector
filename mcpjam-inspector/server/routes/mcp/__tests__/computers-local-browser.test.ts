@@ -215,8 +215,46 @@ describe("POST /local-browser/watch", () => {
     const res = await watch({ bootId }, token);
 
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ watching: true });
+    expect(await res.json()).toMatchObject({
+      watching: true,
+      lease: { state: "free" },
+    });
     expect(browserState.touched).toEqual([bootId]);
+  });
+
+  it("says who has the browser, so a refused pane can hear the hand-back", async () => {
+    // The refusal reaches the pane on the frame socket. The HAND-BACK reaches
+    // it as nothing at all — the frames were flowing the whole time — so this
+    // is the only thing that can tell it. Answered HERE rather than by making
+    // the pane call `ensure`, which would START a browser when the watched one
+    // has gone: a Chromium nobody asked for, whose lease belongs to a
+    // different boot than the pane is looking at.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    const session = browserState.sessions.get(bootId)!;
+    session.lease.acquire("someone-else");
+
+    const held = await watch({ bootId }, token);
+    expect(await held.json()).toMatchObject({
+      watching: true,
+      lease: { state: "held", holder: "someone-else" },
+    });
+
+    session.lease.release("someone-else");
+    expect(await (await watch({ bootId }, token)).json()).toMatchObject({
+      lease: { state: "free" },
+    });
   });
 
   it("says so about a browser that has already gone", async () => {

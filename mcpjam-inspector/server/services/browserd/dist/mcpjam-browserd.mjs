@@ -3277,6 +3277,10 @@ var TABS_SNAPSHOT_MAX = 16;
 var TAB_URL_MAX = 256;
 var TABS_SNAPSHOT_BYTES = 4096;
 var TAB_ENTRY_OVERHEAD = 24;
+function dropIndex(list, activeTabId) {
+  const last = list.length - 1;
+  return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
+}
 var ChromiumDriver = class {
   context;
   settleOptions;
@@ -3863,15 +3867,19 @@ var ChromiumDriver = class {
       url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
     }));
     const costOf = (tab) => tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
-    let cost = list.reduce((total, tab) => total + costOf(tab), 0);
-    while (list.length > 1 && cost > TABS_SNAPSHOT_BYTES) {
-      const at = list[list.length - 1].id === this.activeTabId ? list.length - 2 : list.length - 1;
-      cost -= costOf(list[at]);
-      list.splice(at, 1);
+    let estimate = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && estimate > TABS_SNAPSHOT_BYTES) {
+      estimate -= costOf(list[dropIndex(list, this.activeTabId)]);
+      list.splice(dropIndex(list, this.activeTabId), 1);
     }
-    if (cost > TABS_SNAPSHOT_BYTES) list.length = 0;
-    const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
-    return { ...active ? { active } : {}, list };
+    const payload = () => {
+      const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
+      return { ...active ? { active } : {}, list };
+    };
+    while (list.length > 0 && JSON.stringify(payload()).length > TABS_SNAPSHOT_BYTES) {
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    return payload();
   }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;

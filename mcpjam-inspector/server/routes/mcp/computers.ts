@@ -293,7 +293,16 @@ computers.post("/local-browser/watch", async (c) => {
   // pane's next measure will discover it for itself.
   if (!session) return c.json({ watching: false }, 404);
   touchLocalBrowserSession(session.handle);
-  return c.json({ watching: true });
+  // AND who has it. A pane that has been refused its input needs to know when
+  // the other holder gives the browser back, and nothing on the frame socket
+  // says so — the frames were flowing the whole time. Answering here rather
+  // than making the pane call `ensure` is the difference between asking and
+  // STARTING: `ensure` launches a Chromium when the watched browser has gone,
+  // which is a browser nobody asked for on a machine whose own just crashed.
+  // This route is keyed by `bootId`, so it can only ever describe the browser
+  // the caller is actually looking at.
+  const lease = await session.client.lease?.();
+  return c.json({ watching: true, lease: lease ?? { state: "free" } });
 });
 
 /**
