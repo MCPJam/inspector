@@ -218,9 +218,18 @@ import { HostChipLogo } from "@/components/hosts/host-chip";
 import { SimpleCaseForm } from "../evaluate/simple-case/simple-case-form";
 import { CaseSuiteChips } from "../evaluate/simple-case/case-suite-chips";
 import {
+  caseHasOwnAssertion,
   deriveCaseKind,
+  initialToolsChoice,
   isSimpleCaseShape,
+  isToolCalledWithAssert,
+  readSimpleCase,
+  readStepChecks,
+  resolveToolsQuestion,
+  UNSET_TOOLS_BLOCK_REASON,
+  type ToolsChoice,
 } from "../evaluate/simple-case/simple-case-model";
+import { WorkspaceStepsPane } from "../evaluate/simple-case/workspace-steps-pane";
 import { CaseWorkspaceLayout } from "../evaluate/case-workspace/case-workspace-layout";
 import { InspectStrip } from "../evaluate/case-workspace/inspect-strip";
 import { NextRunSheet } from "../evaluate/case-workspace/next-run-sheet";
@@ -910,9 +919,17 @@ export function TestTemplateEditor({
   const getAccessToken = useConvexAccessToken();
   const simpleCaseEditorEnabled = simpleCaseEditor;
   const [deepEditor, setDeepEditor] = useState(false);
-  const [toolsChoiceBlockReason, setToolsChoiceBlockReason] = useState<
-    string | null
-  >(null);
+  /**
+   * The tool question's stored answer for the workspace form.
+   *
+   * The EDITOR owns it, not the form: it decides `isNegativeTest` on save and
+   * on quick run, so a value the form reported back through an effect would
+   * trail by one render — long enough for a save to send the wrong flag. It is
+   * seeded from the persisted case in the case-switch effect, in the same
+   * commit as `editForm`.
+   */
+  const [simpleToolsChoice, setSimpleToolsChoice] =
+    useState<ToolsChoice>("unset");
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Guards the first-Save insert of a prompt draft so a double-click can't
@@ -1240,6 +1257,17 @@ export function TestTemplateEditor({
     // runs=N still sees N selected when the editor opens. Clamp to [1, 10]
     // — the picker only exposes that range.
     setIterationOverride(Math.max(1, Math.min(10, currentTestCase.runs ?? 1)));
+    // Seed the tool question from what the case ALREADY says, in the same
+    // commit as `editForm`: the persisted `isNegativeTest` (never re-derived
+    // from step shape) plus its tool asserts. Without this, opening a positive
+    // CLI case would default to "unset" and its first save would rewrite the
+    // flag the author never touched.
+    setSimpleToolsChoice(
+      initialToolsChoice({
+        tools: readSimpleCase(steps).tools,
+        isNegativeTest: currentTestCase.isNegativeTest,
+      }),
+    );
     setDeepEditor(false);
   }, [currentTestCase?._id]);
 
@@ -1632,6 +1660,45 @@ export function TestTemplateEditor({
     return fingerprint(snapshotSteps) !== fingerprint(currentSteps);
   }, [replayIteration, currentSteps]);
 
+  /**
+   * The Evaluate surface has ONE chrome for every case: the workspace. It used
+   * to mount only for `isSimpleCaseShape`, so every CLI- and SDK-authored case
+   * (checks stored as assert steps) fell through to the old page. The form now
+   * renders those checks, and the deep step list lives inside the same
+   * workspace, so neither the shape nor the deep toggle swaps the page.
+   */
+  const useWorkspace = Boolean(simpleCaseEditorEnabled && editForm);
+
+  /**
+   * The tool question as shown, resolved from the stored choice plus what the
+   * case carries. `"unset"` is the only answer that blocks: a brand-new draft
+   * that asserts nothing would pass vacuously, and the backend rejects it
+   * (`POSITIVE_TEST_NO_ASSERTION`).
+   */
+  const workspaceToolsQuestion = useMemo(() => {
+    if (!useWorkspace || !editForm) return null;
+    return resolveToolsQuestion({
+      choice: simpleToolsChoice,
+      hasToolAsserts: editForm.steps.some(isToolCalledWithAssert),
+      hasOwnAssertion: caseHasOwnAssertion({
+        steps: editForm.steps,
+        expectedOutput: editForm.expectedOutput,
+        predicates: editForm.predicates,
+      }),
+    });
+  }, [useWorkspace, editForm, simpleToolsChoice]);
+
+  /**
+   * Negative is what the author CHOSE, never an inference from step shape.
+   * Deriving it (see `deriveIsNegativeTestFromSteps`, still used by /evals)
+   * reads "no toolCalledWith assert" as "expects no tools", which is true of
+   * every case whose route check is a `firstToolWas` step — flipping positive
+   * CLI cases to negative on save and failing them on the route at run time.
+   */
+  const workspaceIsNegative = workspaceToolsQuestion === "noTool";
+  const simpleToolsBlock =
+    workspaceToolsQuestion === "unset" ? UNSET_TOOLS_BLOCK_REASON : null;
+
   const hasUnsavedChanges = useMemo(() => {
     if (!editForm || !currentTestCase) return false;
 
@@ -1651,10 +1718,15 @@ export function TestTemplateEditor({
     const normalizedScenario = (editForm.scenario ?? "").trim();
     const normalizedCurrentScenario = (currentTestCase.scenario ?? "").trim();
 
-    const effectiveNegativeOnServer =
-      deriveIsNegativeTestFromSteps(currentSteps);
+    // What THIS editor would save as the negative flag. On the workspace that
+    // is the author's answer to the tool question; on /evals it stays derived.
+    // Using the derivation on the workspace would mark every positive CLI case
+    // dirty the moment it opened, and offer a Save that flips its flag.
+    const effectiveNegativeFlag = useWorkspace
+      ? workspaceIsNegative
+      : deriveIsNegativeTestFromSteps(currentSteps);
     const serverNegativeFlagMismatch =
-      (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeOnServer;
+      (currentTestCase.isNegativeTest ?? false) !== effectiveNegativeFlag;
 
     const normalizedMatchOptions = JSON.stringify(
       normalizeForComparison(editForm.matchOptions ?? null),
@@ -1687,7 +1759,14 @@ export function TestTemplateEditor({
       formKind !== currentKind ||
       serverNegativeFlagMismatch
     );
-  }, [editForm, currentAdvancedConfig, currentSteps, currentTestCase]);
+  }, [
+    editForm,
+    currentAdvancedConfig,
+    currentSteps,
+    currentTestCase,
+    useWorkspace,
+    workspaceIsNegative,
+  ]);
 
   const arePromptTurnsValid = useMemo(() => {
     if (!editForm) return true;
@@ -1712,17 +1791,23 @@ export function TestTemplateEditor({
     return areAllChecksValid(editForm.predicates.list);
   }, [editForm?.predicates]);
 
-  const useSimpleForm = Boolean(
-    simpleCaseEditorEnabled &&
-      editForm &&
-      isSimpleCaseShape(editForm.steps) &&
-      !deepEditor,
-  );
-  const simpleToolsBlock = useSimpleForm ? toolsChoiceBlockReason : null;
+  /**
+   * Step-authored checks are editable in the workspace form now, so an empty
+   * needle or tool name can be typed there. Gate on it the way case predicates
+   * are gated — workspace only, so /evals keeps saving inline asserts exactly
+   * as it does today.
+   */
+  const areStepChecksValid = useMemo(() => {
+    if (!useWorkspace || !editForm) return true;
+    return areAllChecksValid(
+      readStepChecks(editForm.steps).map((check) => check.predicate),
+    );
+  }, [useWorkspace, editForm]);
 
   const savePrimaryDisabled =
     !arePromptTurnsValid ||
     !arePredicatesValid ||
+    !areStepChecksValid ||
     isRunningCompare ||
     isSavingDraft ||
     Boolean(simpleToolsBlock);
@@ -1798,6 +1883,7 @@ export function TestTemplateEditor({
     isRunningCompare ||
     !canRun ||
     !arePromptTurnsValid ||
+    !areStepChecksValid ||
     Boolean(simpleToolsBlock);
 
   const runDisabledTooltip = useMemo(() => {
@@ -1985,7 +2071,13 @@ export function TestTemplateEditor({
 
 
   const buildSavePayload = (form: TestTemplate) => {
-    const isNegativeTest = deriveIsNegativeTestFromSteps(form.steps);
+    // On the workspace the author answers the tool question outright. Only the
+    // legacy /evals editor, which has no such control, still infers the flag
+    // from step shape — an inference that reads every `firstToolWas`-only case
+    // as "expects no tools".
+    const isNegativeTest = useWorkspace
+      ? workspaceIsNegative
+      : deriveIsNegativeTestFromSteps(form.steps);
     // `query`/`expectedToolCalls`/`expectedOutput` are denormalized display
     // projections of `steps` (the runner reads `steps`, never these). A
     // negative test expects no model tool calls, so its flattened display list
@@ -2542,7 +2634,7 @@ export function TestTemplateEditor({
             isNegativeTest: savePayload.isNegativeTest,
             // The simple form owns the count (saved with the case); the step
             // list still shows the per-run override select.
-            runs: useSimpleForm ? (editForm.runs ?? 1) : iterationOverride,
+            runs: useWorkspace ? (editForm.runs ?? 1) : iterationOverride,
             expectedOutput: savePayload.expectedOutput,
             steps: savePayload.steps,
             advancedConfig,
@@ -2634,7 +2726,7 @@ export function TestTemplateEditor({
         predicates: savePayload.predicates,
         matchOptions: savePayload.matchOptions,
         expectedOutput: savePayload.expectedOutput,
-        runs: useSimpleForm ? (editForm.runs ?? 1) : iterationOverride,
+        runs: useWorkspace ? (editForm.runs ?? 1) : iterationOverride,
         namedHostId: quickRunHostPlan.namedHostId,
       };
       for (const { modelValue, modelLabel } of preparedRuns) {
@@ -3206,6 +3298,47 @@ export function TestTemplateEditor({
         ),
       }
     : null;
+  /**
+   * Per-step verdicts for the workspace's deep step list, gated exactly like
+   * the form's overlay — only while the selected trial still matches the
+   * draft, so a stale run never paints ticks onto edited steps. The persisted
+   * map wins once it lands; `parseStepStatusById` returns an EMPTY map (never
+   * undefined) for an iteration with no per-step metadata, so fall back on
+   * `.size`, not on nullishness.
+   */
+  const workspaceStepStatusById = workspaceOverlayTrial
+    ? (workspaceOverlay?.stepStatusById?.size ?? 0) > 0
+      ? workspaceOverlay?.stepStatusById
+      : liveStepStatusById
+    : undefined;
+  const workspaceStepStatusByTurn =
+    workspaceOverlayTrial?.kind === "live" ? liveStepStatusByTurn : undefined;
+  /**
+   * "Inspecting <trial>" banner, shared by both left-column editors: the form
+   * hosts it in `inspectHeader`, the deep step list in its own pane header.
+   */
+  const workspaceInspectStrip =
+    workspaceLeftView.kind === "inspecting" ? (
+      <InspectStrip
+        iteration={workspaceLeftView.iteration}
+        edited={
+          !signaturesMatch(workspaceDraft, {
+            steps: workspaceLeftView.iteration.testCaseSnapshot?.steps,
+            predicates:
+              workspaceLeftView.iteration.testCaseSnapshot?.predicates,
+            matchOptions:
+              workspaceLeftView.iteration.testCaseSnapshot?.matchOptions,
+            expectedOutput:
+              workspaceLeftView.iteration.testCaseSnapshot?.expectedOutput,
+          })
+        }
+        onEditCase={() => setInspectIterationId(null)}
+      />
+    ) : null;
+  const workspaceInspectSteps =
+    workspaceLeftView.kind === "inspecting"
+      ? workspaceLeftView.iteration.testCaseSnapshot?.steps
+      : undefined;
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
@@ -3402,7 +3535,7 @@ export function TestTemplateEditor({
                     }}
                   />
                 ) : null}
-                {useSimpleForm ? (
+                {useWorkspace ? (
                   <CaseSuiteChips
                     models={selectedModelValues}
                     modelLabelByValue={modelLabelByValue}
@@ -3471,7 +3604,7 @@ export function TestTemplateEditor({
                       </TooltipContent>
                     </Tooltip>
                   )}
-                  {useSimpleForm ? null : (
+                  {useWorkspace ? null : (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <label className="inline-flex cursor-pointer items-center">
@@ -3500,7 +3633,7 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                   )}
-                {useSimpleForm ? null : (
+                {useWorkspace ? null : (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -3647,7 +3780,7 @@ export function TestTemplateEditor({
               </div>
             </div>
           </div>
-          {useSimpleForm ? (
+          {useWorkspace ? (
             <>
               <NextRunSheet
                 open={nextRunOpen}
@@ -3678,7 +3811,46 @@ export function TestTemplateEditor({
               />
               <CaseWorkspaceLayout
                 left={
-                  editForm && workspaceLeftView.kind === "inspecting" ? (
+                  editForm && deepEditor ? (
+                    // The Steps hatch stays INSIDE the workspace: same trial on
+                    // the right, one click back. It used to swap the whole page
+                    // for the old editor with no way back until the case
+                    // changed.
+                    <WorkspaceStepsPane
+                      header={workspaceInspectStrip}
+                      onBackToForm={() => setDeepEditor(false)}
+                    >
+                      <StepListEditor
+                        steps={workspaceInspectSteps ?? editForm.steps}
+                        onStepsChange={
+                          workspaceInspectSteps ? () => undefined : setSteps
+                        }
+                        readOnly={Boolean(workspaceInspectSteps)}
+                        availableTools={assertableTools}
+                        argumentMatching={
+                          resolveMatchOptions(
+                            suite?.defaultMatchOptions,
+                            editForm.matchOptions,
+                          ).argumentMatching
+                        }
+                        suiteServers={effectiveSuiteServers}
+                        projectServers={projectServers}
+                        evalValidationBorderClass={evalValidationBorderClass}
+                        stepStatusByTurn={
+                          workspaceInspectSteps
+                            ? undefined
+                            : workspaceStepStatusByTurn
+                        }
+                        stepStatusById={
+                          workspaceInspectSteps
+                            ? undefined
+                            : workspaceStepStatusById
+                        }
+                        syncedStepId={syncedStepId}
+                        onHoverStep={setSyncedStepId}
+                      />
+                    </WorkspaceStepsPane>
+                  ) : editForm && workspaceLeftView.kind === "inspecting" ? (
                     <SimpleCaseForm
                       key={`simple-case-inspect:${workspaceLeftView.iteration._id}`}
                       steps={
@@ -3703,28 +3875,7 @@ export function TestTemplateEditor({
                       onOpenDeepEditor={() => setDeepEditor(true)}
                       readOnly
                       onSelectInAppStep={setSyncedStepId}
-                      inspectHeader={
-                        <InspectStrip
-                          iteration={workspaceLeftView.iteration}
-                          edited={
-                            !signaturesMatch(workspaceDraft, {
-                              steps:
-                                workspaceLeftView.iteration.testCaseSnapshot
-                                  ?.steps,
-                              predicates:
-                                workspaceLeftView.iteration.testCaseSnapshot
-                                  ?.predicates,
-                              matchOptions:
-                                workspaceLeftView.iteration.testCaseSnapshot
-                                  ?.matchOptions,
-                              expectedOutput:
-                                workspaceLeftView.iteration.testCaseSnapshot
-                                  ?.expectedOutput,
-                            })
-                          }
-                          onEditCase={() => setInspectIterationId(null)}
-                        />
-                      }
+                      inspectHeader={workspaceInspectStrip}
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
@@ -3768,7 +3919,8 @@ export function TestTemplateEditor({
                       )}
                       isNegativeTest={currentTestCase.isNegativeTest}
                       onOpenDeepEditor={() => setDeepEditor(true)}
-                      onToolsChoiceBlockReasonChange={setToolsChoiceBlockReason}
+                      toolsChoice={simpleToolsChoice}
+                      onToolsChoiceChange={setSimpleToolsChoice}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
                       validationAttempted={simpleValidationAttempted}
@@ -3798,6 +3950,20 @@ export function TestTemplateEditor({
                           setMissingAppEvidenceStepId(null);
                         }
                       }}
+                    />
+                  ) : null
+                }
+                leftFooter={
+                  // Attachments used to hang off the old page only, so a case
+                  // opened on the workspace could not reach its own files.
+                  !isDraft && currentTestCase._id ? (
+                    <EvalAttachmentsEditor
+                      suiteId={suiteId}
+                      testCaseId={currentTestCase._id}
+                      value={
+                        (currentTestCase.attachments as
+                          EvalAttachment[] | undefined) ?? []
+                      }
                     />
                   ) : null
                 }
@@ -3974,61 +4140,7 @@ export function TestTemplateEditor({
                   ) : null}
 
                   <div className="space-y-4 pt-1">
-                    {editForm && useSimpleForm ? (
-                      // Keyed by case: the form holds the tools tri-state and
-                      // the stashed tools in local state, and carrying either
-                      // across a case switch would let a fresh prompt-only
-                      // draft inherit "tools" and save as a negative test.
-                      <SimpleCaseForm
-                        key={`simple-case:${currentTestCase?._id ?? "none"}`}
-                        steps={editForm.steps}
-                        onStepsChange={setSteps}
-                        matchOptions={editForm.matchOptions}
-                        kind={editForm.kind}
-                        onKindChange={(next) =>
-                          setEditForm((current) =>
-                            current ? { ...current, kind: next } : current,
-                          )
-                        }
-                        onMatchOptionsChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, matchOptions: next }
-                              : current,
-                          )
-                        }
-                        suiteDefaultMatchOptions={suite?.defaultMatchOptions}
-                        expectedOutput={editForm.expectedOutput}
-                        onExpectedOutputChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, expectedOutput: next }
-                              : current,
-                          )
-                        }
-                        predicates={editForm.predicates}
-                        onPredicatesChange={(next) =>
-                          setEditForm((current) =>
-                            current
-                              ? { ...current, predicates: next }
-                              : current,
-                          )
-                        }
-                        suiteDefaultPredicates={
-                          (suite?.defaultPredicates ?? []) as Predicate[]
-                        }
-                        availableTools={assertableTools.map((tool) =>
-                          typeof tool === "string" ? tool : tool.name,
-                        )}
-                        isNegativeTest={currentTestCase.isNegativeTest}
-                        onOpenDeepEditor={() => setDeepEditor(true)}
-                        onToolsChoiceBlockReasonChange={
-                          setToolsChoiceBlockReason
-                        }
-                        evalValidationBorderClass={evalValidationBorderClass}
-                        autoFocusPrompt={draftKind === "record"}
-                      />
-                    ) : editForm ? (
+                    {editForm ? (
                       <StepListEditor
                         steps={editForm.steps}
                         onStepsChange={setSteps}

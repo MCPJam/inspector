@@ -28,25 +28,33 @@ import {
   ToolCalledWithFields,
 } from "../../evals/checks-section";
 import {
+  caseHasOwnAssertion,
   displayCaseKind,
   inAppStepLabel,
   initialToolsChoice,
+  isPromptFirst,
+  leftoverSteps,
   matchOptionsForKind,
   MORE_CHECK_GROUPS,
+  NEGATIVE_CONTRADICTING_KINDS,
   readSimpleCase,
+  readStepChecks,
   removeStepById,
+  resolveToolsQuestion,
+  turnOrdinalByStepId,
   UNSET_TOOLS_BLOCK_REASON,
+  updateStepCheck,
   writeSimpleCase,
   type CaseKind,
   type InAppStep,
   type SimpleCaseTool,
   type ToolsChoice,
 } from "./simple-case-model";
+import { AlsoInThisCase } from "./also-in-this-case";
+import { StepCheckRows } from "./step-check-rows";
+import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "./status-dot";
 
-/** Per-step verdicts of the selected trial, shown only while it matches the draft. */
-export type SimpleCaseOverlay = {
-  stepStatusById?: Map<string, EvalStepStatus>;
-};
+export type { SimpleCaseOverlay };
 
 export type SimpleCaseFormProps = {
   steps: TestStep[];
@@ -64,7 +72,14 @@ export type SimpleCaseFormProps = {
   availableTools?: string[];
   isNegativeTest?: boolean;
   onOpenDeepEditor: () => void;
-  onToolsChoiceBlockReasonChange?: (reason: string | null) => void;
+  /**
+   * The tool question's stored answer. Controlled by the editor on the
+   * Evaluate surface, because it is what decides `isNegativeTest` on save —
+   * a value the form reported through an effect would trail the first render
+   * that could already save.
+   */
+  toolsChoice?: ToolsChoice;
+  onToolsChoiceChange?: (next: ToolsChoice) => void;
   evalValidationBorderClass?: string;
   autoFocusPrompt?: boolean;
   validationAttempted?: boolean;
@@ -78,32 +93,6 @@ export type SimpleCaseFormProps = {
   overlay?: SimpleCaseOverlay | null;
   onSelectInAppStep?: (stepId: string) => void;
 };
-
-function overlayStatus(
-  overlay: SimpleCaseOverlay | null | undefined,
-  stepId: string,
-): EvalStepStatus | undefined {
-  return overlay?.stepStatusById?.get(stepId);
-}
-
-function StatusDot({ status }: { status: EvalStepStatus | undefined }) {
-  if (!status || status === "running") return null;
-  const label =
-    status === "ok" ? "Passed" : status === "fail" ? "Failed" : "Skipped";
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase",
-        status === "ok" && "bg-success/50 text-foreground",
-        status === "fail" && "bg-destructive/50 text-destructive-foreground",
-        status === "skipped" && "bg-muted text-muted-foreground",
-      )}
-      data-testid="simple-case-step-status"
-    >
-      {label}
-    </span>
-  );
-}
 
 export function SimpleCaseForm({
   steps,
@@ -121,7 +110,8 @@ export function SimpleCaseForm({
   availableTools = [],
   isNegativeTest,
   onOpenDeepEditor,
-  onToolsChoiceBlockReasonChange,
+  toolsChoice: controlledToolsChoice,
+  onToolsChoiceChange,
   evalValidationBorderClass,
   autoFocusPrompt = false,
   validationAttempted = false,
@@ -142,32 +132,66 @@ export function SimpleCaseForm({
   );
   const kind = displayCaseKind(persistedKind, resolvedMatch);
 
-  const [toolsChoice, setToolsChoice] = useState<ToolsChoice>(() =>
-    initialToolsChoice({ tools: view.tools, isNegativeTest }),
-  );
+  const [uncontrolledToolsChoice, setUncontrolledToolsChoice] =
+    useState<ToolsChoice>(() =>
+      initialToolsChoice({ tools: view.tools, isNegativeTest }),
+    );
+  const toolsChoice = controlledToolsChoice ?? uncontrolledToolsChoice;
+  const setToolsChoice = (next: ToolsChoice) => {
+    setUncontrolledToolsChoice(next);
+    onToolsChoiceChange?.(next);
+  };
   const [stashedTools, setStashedTools] = useState<SimpleCaseTool[]>(
     () => view.tools,
   );
-  const [moreOpen, setMoreOpen] = useState(false);
 
-  useEffect(() => {
-    onToolsChoiceBlockReasonChange?.(
-      toolsChoice === "unset" ? UNSET_TOOLS_BLOCK_REASON : null,
-    );
-    return () => onToolsChoiceBlockReasonChange?.(null);
-  }, [toolsChoice, onToolsChoiceBlockReasonChange]);
+  const stepChecks = useMemo(() => readStepChecks(steps), [steps]);
+  const leftovers = useMemo(() => leftoverSteps(steps), [steps]);
+  const turnOrdinals = useMemo(() => turnOrdinalByStepId(steps), [steps]);
+  const promptFirst = isPromptFirst(steps);
+
+  // Open on load when the case already has checks, so a case whose whole
+  // grading lives here does not read as an empty form with a disclosure.
+  const [moreOpen, setMoreOpen] = useState(
+    () => stepChecks.length > 0 || (predicates?.list.length ?? 0) > 0,
+  );
 
   useEffect(() => {
     if (view.tools.length > 0 && toolsChoice !== "tools") {
       setToolsChoice("tools");
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [view.tools, toolsChoice]);
 
   const resolvedPredicates =
     resolveCasePredicates(suiteDefaultPredicates, predicates) ?? [];
-  const suiteToolCalledWithApplies =
-    toolsChoice === "noTool" &&
-    resolvedPredicates.some((predicate) => predicate.type === "toolCalledWith");
+
+  /**
+   * What the tool question shows. `"checks"` means the case names no route but
+   * is still graded by something it carries — the shape every CLI- and
+   * SDK-authored case has.
+   */
+  const question = resolveToolsQuestion({
+    choice: toolsChoice,
+    hasToolAsserts: view.tools.length > 0,
+    hasOwnAssertion: caseHasOwnAssertion({
+      steps,
+      expectedOutput,
+      predicates,
+    }),
+  });
+
+  // A negative case cannot also require a tool call — from the suite, this
+  // case, or a step. Advisory: the author's steps are never deleted to satisfy
+  // a toggle, and only `toolCalledWith` is rejected outright by the backend.
+  const negativeContradiction =
+    question === "noTool" &&
+    (resolvedPredicates.some((predicate) =>
+      NEGATIVE_CONTRADICTING_KINDS.has(predicate.type),
+    ) ||
+      stepChecks.some((check) =>
+        NEGATIVE_CONTRADICTING_KINDS.has(check.predicate.type),
+      ));
 
   const setKind = (next: CaseKind) => {
     if (readOnly) return;
@@ -251,7 +275,7 @@ export function SimpleCaseForm({
     caseList.filter((predicate) => kinds.includes(predicate.type));
 
   const promptReady = view.prompt.trim().length > 0;
-  const showUnsetError = validationAttempted && toolsChoice === "unset";
+  const showUnsetError = validationAttempted && question === "unset";
 
   return (
     <div className="space-y-6" data-testid="simple-case-form">
@@ -279,12 +303,20 @@ export function SimpleCaseForm({
           placeholder="Enter the user prompt…"
           autoFocus={autoFocusPrompt}
           aria-label="What does the user ask?"
-          readOnly={readOnly}
+          readOnly={readOnly || !promptFirst}
           className={cn(
             "resize-none bg-background font-mono text-sm leading-relaxed",
-            !view.prompt.trim() && evalValidationBorderClass,
+            promptFirst && !view.prompt.trim() && evalValidationBorderClass,
           )}
         />
+        {promptFirst ? null : (
+          <p
+            className="text-[11px] text-muted-foreground"
+            data-testid="simple-case-prompt-locked"
+          >
+            This case does not start with a prompt. Edit it in Steps.
+          </p>
+        )}
       </section>
 
       <section className="space-y-2" data-testid="simple-case-in-the-app">
@@ -394,15 +426,15 @@ export function SimpleCaseForm({
           <div className="flex flex-wrap items-center gap-2">
             <Button
               type="button"
-              variant={toolsChoice === "noTool" ? "secondary" : "outline"}
+              variant={question === "noTool" ? "secondary" : "outline"}
               size="sm"
               className="h-7 text-xs"
               onClick={chooseNoTool}
-              disabled={readOnly}
+              disabled={readOnly || !promptFirst}
             >
               No tool should be called
             </Button>
-            {toolsChoice === "noTool" ? (
+            {question === "noTool" ? (
               <Button
                 type="button"
                 variant="ghost"
@@ -415,6 +447,15 @@ export function SimpleCaseForm({
               </Button>
             ) : null}
           </div>
+          {question === "checks" ? (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="simple-case-tools-checks-hint"
+            >
+              No specific tool is required. This case is graded by the checks
+              below.
+            </p>
+          ) : null}
           {showUnsetError ? (
             <p
               className="text-[11px] text-destructive"
@@ -423,18 +464,18 @@ export function SimpleCaseForm({
               {UNSET_TOOLS_BLOCK_REASON}
             </p>
           ) : null}
-          {suiteToolCalledWithApplies ? (
+          {negativeContradiction ? (
             <p
               className="text-[11px] text-destructive"
               data-testid="simple-case-negative-contradiction"
             >
-              This case says no tool should be called, but a toolCalledWith
-              check still applies from the suite or this case. Those cannot both
-              hold.
+              This case says no tool should be called, but a check that requires
+              a tool call still applies — from the suite, this case, or a step.
+              Those cannot both hold.
             </p>
           ) : null}
 
-          {toolsChoice !== "noTool" ? (
+          {question !== "noTool" ? (
             <div className="space-y-3">
               {view.tools.map((tool, index) => (
                 <div
@@ -544,6 +585,9 @@ export function SimpleCaseForm({
           <CollapsibleContent className="space-y-4 pt-3">
             {MORE_CHECK_GROUPS.map((group) => {
               const rows = predicatesByGroup(group.kinds);
+              const stepRows = stepChecks.filter((check) =>
+                group.kinds.includes(check.predicate.type),
+              );
               const inherited = resolvedPredicates.filter(
                 (predicate) =>
                   group.kinds.includes(predicate.type) &&
@@ -554,6 +598,24 @@ export function SimpleCaseForm({
                   <h4 className="text-[11px] font-medium text-foreground">
                     {group.label}
                   </h4>
+                  {/*
+                   * Step-authored checks first, in execution order: they are
+                   * graded inline and fail-fast, so a failure here can stop the
+                   * case-level checks below from running at all. Editing one
+                   * rewrites its step in place — it never becomes a predicate.
+                   */}
+                  <StepCheckRows
+                    checks={stepRows}
+                    onChange={(stepId, next) =>
+                      onStepsChange(updateStepCheck(steps, stepId, next))
+                    }
+                    onRemove={(stepId) =>
+                      onStepsChange(removeStepById(steps, stepId))
+                    }
+                    availableTools={availableTools}
+                    readOnly={readOnly}
+                    overlay={overlay}
+                  />
                   <ChecksSection
                     value={rows}
                     onChange={(next) => {
@@ -579,6 +641,13 @@ export function SimpleCaseForm({
           </CollapsibleContent>
         </Collapsible>
       </section>
+
+      <AlsoInThisCase
+        steps={leftovers}
+        turnOrdinalByStepId={turnOrdinals}
+        onOpenDeepEditor={onOpenDeepEditor}
+        readOnly={readOnly}
+      />
     </div>
   );
 }
