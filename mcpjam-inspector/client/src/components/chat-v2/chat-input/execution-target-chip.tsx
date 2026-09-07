@@ -54,7 +54,15 @@ function chipFace(data: ExecutionTargetChipData): {
   tone: "normal" | "busy" | "attention";
   title: string;
 } {
-  if (data.target === "hosted") {
+  // Anything that is not an explicit local target runs hosted, and the phase
+  // labels below all assume local — so falling through to them with no target
+  // is how the chip came to say "This machine" over a turn bound for the
+  // cloud. `hostedAvailable === true` with nothing requested is exactly that
+  // case: a machine that HAS a cloud target and no choice recorded.
+  if (
+    data.target === "hosted" ||
+    (data.target === null && data.hostedAvailable === true)
+  ) {
     return {
       label: "Cloud",
       icon: Cloud,

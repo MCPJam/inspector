@@ -228,6 +228,16 @@ describe("phases", () => {
     await waitFor(() => expect(result.current.phase).toBe("needs-signin"));
   });
 
+  it("waits rather than saying 'sign in' while the member is still loading", async () => {
+    // `undefined` is the caller's Convex query in flight, not a signed-out
+    // user. Reading it as signed out told a signed-in member to sign in, and
+    // disabled Allow, for the whole window that query took — on a session that
+    // had already passed availability.
+    const { result } = render({ userKey: undefined });
+    await waitFor(() => expect(result.current.phase).toBe("loading"));
+    expect(result.current.reason).toBeNull();
+  });
+
   it("is unavailable out of scope, without fetching anything", async () => {
     const { result } = render({ inScope: false });
     await waitFor(() => expect(result.current.phase).toBe("unavailable"));
@@ -296,6 +306,41 @@ describe("phases", () => {
     });
     const { result } = render();
     await waitFor(() => expect(result.current.phase).toBe("ready"));
+  });
+
+  it("is not ready when the pack was rebuilt at the same version", async () => {
+    // The version matched and the TREE did not. Comparing the version alone
+    // kept the grant `ready` across a rebuild, so Send skipped the dialog and
+    // the server refused the runtime id the grant is bound to — a failed turn
+    // instead of the one screen that would have fixed it.
+    localStorage.setItem(
+      localHarnessConsentStorageKey(PROJECT),
+      JSON.stringify(
+        storedConsent({
+          runtime: {
+            runtimeId: "rt_1",
+            adapterVersion: "1.0.0",
+            digest: `sha256:${"b".repeat(64)}`,
+            packVersion: "3.4.0",
+          },
+        }),
+      ),
+    );
+    fetchAvailabilityMock.mockResolvedValue({
+      ok: true,
+      availability: {
+        ...AVAILABILITY,
+        runtimeStatus: {
+          state: "ready",
+          packVersion: "3.4.0",
+          runtimeRoot: "/r",
+          digest: DIGEST,
+        },
+      },
+    });
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).toBe("needs-consent"));
+    expect(result.current.resolveSendTarget()).toBeNull();
   });
 });
 

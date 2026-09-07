@@ -963,8 +963,11 @@ export function PlaygroundMain({
     // clicked is not necessarily the human who would now run. Null while
     // signed out, which is a reachable state rather than a hidden feature: the
     // controller answers `needs-signin` and the dialog says so.
+    // `undefined` while the member query is in flight, so the controller can
+    // tell "not answered yet" from "signed out" — it used to say `needs-signin`
+    // for that whole window, to a user who was signed in.
     userKey: isConvexAuthenticated
-      ? (currentUserForSender?._id ?? null)
+      ? (currentUserForSender?._id ?? undefined)
       : null,
     inScope: localHarnessInScope,
     scopeKey: localHarnessScopeKey,

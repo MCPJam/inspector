@@ -477,10 +477,16 @@ const localHarnessFixture = vi.hoisted(() => ({
   requestedTarget: "local-native" as string | null,
 }));
 vi.mock("@/hooks/useLocalHarnessTarget", () => ({
+  // ONLY `requestedTarget` is meaningful here — it is what the per-column
+  // derivation reads, and it is what these tests assert on. The rest is filler
+  // to satisfy the shape. `needs-consent` rather than `ready` because `ready`
+  // means a verified runtime AND a live grant, and `consent: null` below would
+  // make that an impossible state for anyone who later renders the dialog from
+  // this file.
   useLocalHarnessController: () => ({
     requestedTarget: localHarnessFixture.requestedTarget,
-    effectiveTarget: "local-native",
-    phase: "ready",
+    effectiveTarget: "hosted",
+    phase: "needs-consent",
     reason: null,
     availability: null,
     loading: false,

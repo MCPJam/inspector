@@ -147,7 +147,17 @@ export interface LocalHarnessPendingApproval {
   workspaceGrantId: string;
   workspaceDisplayRoot: string;
   /** The signed-in user at the moment of approval. */
-  userKey: string | null;
+  /**
+   * The signed-in member, `null` when signed OUT, `undefined` while the answer
+   * is still loading.
+   *
+   * The distinction matters: this is a Convex query result on the caller's
+   * side, and collapsing "not answered yet" into "signed out" made the phase
+   * `needs-signin` for the whole window that query was in flight — telling a
+   * signed-in user to sign in, and disabling Allow, on a session that had
+   * already passed availability.
+   */
+  userKey: string | null | undefined;
   /** The host/surface this approval was captured for. */
   scopeKey: string;
   approvedAt: number;
@@ -227,7 +237,17 @@ export interface UseLocalHarnessControllerArgs {
    * invalidates a captured approval, because the human who clicked is not
    * necessarily the human who would now run.
    */
-  userKey: string | null;
+  /**
+   * The signed-in member, `null` when signed OUT, `undefined` while the answer
+   * is still loading.
+   *
+   * The distinction matters: this is a Convex query result on the caller's
+   * side, and collapsing "not answered yet" into "signed out" made the phase
+   * `needs-signin` for the whole window that query was in flight — telling a
+   * signed-in user to sign in, and disabling Allow, on a session that had
+   * already passed availability.
+   */
+  userKey: string | null | undefined;
   /** True when the previewed host/surface is in local-harness scope. */
   inScope: boolean;
   /** Identifies the host/surface an approval was captured under. */
@@ -467,7 +487,7 @@ export function useLocalHarnessController(
     if (pendingApproval === null) return;
     const stale =
       pendingApproval.projectId !== (projectId ?? "") ||
-      pendingApproval.userKey !== userKey ||
+      (userKey !== undefined && pendingApproval.userKey !== userKey) ||
       pendingApproval.scopeKey !== scopeKey ||
       !inScope ||
       !offerable ||
@@ -518,6 +538,22 @@ export function useLocalHarnessController(
     return null;
   }, [offerable, inScope, storedTarget, availability]);
 
+  // A default that lives only in the memo above is invisible to every reader
+  // that does not mount this controller — `useLocalHarnessRunsHere` is one, on
+  // purpose, and it labels the tools panel. Recording it makes the stored
+  // target the single fact they all read, which is the only way the chip, the
+  // panel and the send path can agree.
+  //
+  // Not "inventing a preference nobody chose": this writes only what the
+  // server just said, that the machine has exactly one place to run. An
+  // explicit choice still overwrites it, and the chip still shows it.
+  useEffect(() => {
+    if (!offerable || !inScope || !projectId) return;
+    if (storedTarget !== null) return;
+    if (availability === null || availability.hostedAvailable !== false) return;
+    saveHarnessTarget(projectId, "local-native");
+  }, [offerable, inScope, projectId, storedTarget, availability]);
+
   const effectiveTarget: HarnessExecutionTarget =
     requestedTarget === "local-native" && consent !== null
       ? "local-native"
@@ -547,6 +583,8 @@ export function useLocalHarnessController(
       return { phase: "loading", reason: availabilityError.message };
     }
     if (loading || availability === null) return { phase: "loading", reason: null };
+    // Not yet known is not signed out.
+    if (userKey === undefined) return { phase: "loading", reason: null };
     if (userKey === null) {
       return {
         phase: "needs-signin",
@@ -602,9 +640,14 @@ export function useLocalHarnessController(
     }
     if (consent !== null && status.state === "ready") {
       const expected = availability.expectedPack;
+      // Version AND digest. A pack rebuilt at the same version is a different
+      // tree, and the tree is what consent named — so comparing the version
+      // alone kept a grant `ready` across a rebuild, skipped the dialog, and
+      // sent a turn the server refuses on the runtime id it is bound to.
       const staleRuntime =
         expected !== null &&
-        consent.runtime.packVersion !== expected.packVersion;
+        (consent.runtime.packVersion !== expected.packVersion ||
+          consent.runtime.digest !== expected.treeDigest);
       const stalePolicy =
         consent.target.policyVersion !== availability.policyVersion ||
         consent.target.permissionProfile !== availability.permissionProfile;
@@ -792,7 +835,7 @@ export function useLocalHarnessController(
         still !== null &&
         still.attemptId === approval.attemptId &&
         still.projectId === projectId &&
-        still.userKey === userKey;
+        (userKey === undefined || still.userKey === userKey);
       if (!contextHolds) {
         void revokeLocalHarnessGrantId(result.consent.grantId);
         return {
@@ -842,7 +885,7 @@ export function useLocalHarnessController(
   // now.
   const resolveSendTarget = useCallback(() => {
     if (!offerable || !inScope || !projectId) return null;
-    if (userKey === null) return null;
+    if (userKey === null || userKey === undefined) return null;
     const fresh = parseStoredLocalHarnessConsent(
       readLocalHarnessConsentSnapshot(projectId),
     );
@@ -856,7 +899,8 @@ export function useLocalHarnessController(
       const expected = availability.expectedPack;
       if (
         (expected !== null &&
-          fresh.runtime.packVersion !== expected.packVersion) ||
+          (fresh.runtime.packVersion !== expected.packVersion ||
+            fresh.runtime.digest !== expected.treeDigest)) ||
         fresh.target.policyVersion !== availability.policyVersion ||
         fresh.target.permissionProfile !== availability.permissionProfile ||
         (availability.machineId !== null &&
@@ -941,15 +985,19 @@ export function useLocalHarnessRunsHere(args: {
   );
   if (HOSTED_MODE || !flagEnabled) return false;
   if (args.harnessId !== "claude-code") return false;
-  // NOT `storedTarget === "local-native"`. The controller defaults to local on
-  // an Inspector with no cloud target and does not write a preference for it —
-  // nobody clicked anything — so requiring a stored value left the ordinary
-  // case labelled "runs in sandbox" while the agent ran as the OS user. That
-  // is the one label this product must never get wrong.
+  // BOTH facts, and the stored target is one of them.
   //
-  // A live grant is the honest signal: consent is only ever minted for local
-  // execution. An explicit `hosted` choice still wins over it, because a user
-  // who switched to cloud is not running here whatever they authorized earlier.
-  if (storedTarget === "hosted") return false;
+  // Accepting "anything but hosted" was an over-correction. It was meant for
+  // the Inspector with no cloud target, where the controller defaults to local
+  // and nobody clicks anything — that machine used to be labelled "runs in
+  // sandbox" while the agent ran as the OS user, which is the one label this
+  // product must never get wrong. But it also caught the machine that HAS a
+  // cloud target and no choice recorded: there the send goes hosted, and this
+  // claimed the tools were running on the user's own machine.
+  //
+  // The controller now records that default (see `saveHarnessTarget` above),
+  // so the strict read covers the case this was widened for, without claiming
+  // local for a turn that will not be.
+  if (storedTarget !== "local-native") return false;
   return parseStoredLocalHarnessConsent(consentSnapshot) !== null;
 }
