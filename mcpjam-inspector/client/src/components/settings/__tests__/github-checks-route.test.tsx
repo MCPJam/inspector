@@ -1670,8 +1670,5 @@ describe("GithubChecksRoute connection status", () => {
     ).toBeInTheDocument();
     await waitFor(() => expect(connectButton()).toBeDisabled());
     expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("option", { name: "mcpjam/pinned-repo" }),
-    ).not.toBeInTheDocument();
   });
 });

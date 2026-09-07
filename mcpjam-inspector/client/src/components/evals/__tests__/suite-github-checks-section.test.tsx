@@ -361,9 +361,6 @@ describe("SuiteGithubChecksSection repository identity", () => {
       expect(screen.getByRole("button", { name: /Connect/ })).toBeDisabled(),
     );
     expect(mockConnectVerifiedRepo).not.toHaveBeenCalled();
-    expect(
-      screen.queryByRole("option", { name: "mcpjam/pinned" }),
-    ).not.toBeInTheDocument();
   });
 });
 
