@@ -414,6 +414,52 @@ jobs:
             exit 1
           fi
 
+      # The packs are proven installable HERE, before anything irreversible.
+      #
+      # This gate used to live in `finalize`, which was too late to be a gate
+      # at all: by then `publish-packages` has pushed to npm and `finalize` has
+      # run `changeset version` and pushed the version commit and tag. Failing
+      # after that cannot unpublish a package or unpush a tag, and it consumes
+      # the changesets, so a re-run has no pending release to retry from.
+      #
+      # `artifact-gate` is the last point that still gates `publish-packages`,
+      # so a pack that does not verify stops the release rather than annotating
+      # one that already happened.
+      - name: Checkout code
+        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Download local harness runtime packs
+        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: local-harness-pack-*
+          path: .release-assets/runtime
+          merge-multiple: true
+
+      # The same check `finalize` runs against the published release, run here
+      # against the artifacts that release will be built from. They are the
+      # same bytes: a signature that does not verify, an asset that did not
+      # upload, or a manifest whose tree digest disagrees with the committed
+      # table all fail identically, and only one of the two placements can
+      # still stop the release.
+      - name: Built packs are installable by the shipped Inspector
+        if: ${{ success() && needs.preflight.outputs.build_harness_pack == 'true' }}
+        working-directory: mcpjam-inspector
+        env:
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
+          ASSET_DIR: ${{ github.workspace }}/.release-assets/runtime
+        run: |
+          node scripts/check-local-harness-release.mjs \
+            --version "$INSPECTOR_VERSION" \
+            --base-url "file://$ASSET_DIR/"
+
   # Building and smoke-testing the npm tarballs needs nothing from the desktop
   # builds or the backend deploy, so it runs alongside them instead of behind
   # them. Only the `changeset publish` call itself has to wait for the backend
