@@ -396,8 +396,13 @@ export function ServerPickerPanel({
           // width ever diverges enough to wrap.
           const shown: string[] = [];
           let budgetLeft = chipBudget;
-          for (const name of group.serverNames) {
-            if (shown.length > 0 && name.length > budgetLeft) break;
+          for (const [i, name] of group.serverNames.entries()) {
+            // `+N` takes width too. Without reserving for it, names that
+            // exactly filled the budget pushed the summary past it and the row
+            // wrapped anyway. `+1` is two characters, `+10` three.
+            const hiddenAfter = group.serverNames.length - i - 1;
+            const summary = hiddenAfter > 0 ? String(hiddenAfter).length + 1 : 0;
+            if (shown.length > 0 && name.length + summary > budgetLeft) break;
             shown.push(name);
             budgetLeft -= name.length;
           }

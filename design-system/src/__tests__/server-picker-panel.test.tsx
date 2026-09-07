@@ -251,6 +251,29 @@ describe("ServerPickerPanel — Server Groups tab", () => {
     expect(screen.queryByText(/^\+/)).toBeNull();
   });
 
+  it("leaves room for the +N chip itself", () => {
+    // The summary chip takes width too. Names that exactly fill the budget
+    // pushed `+N` past it, and the row wrapped — the thing fitting-to-width
+    // was supposed to stop. Budget 24: 10 + 10 = 20, and the third name (4)
+    // would fit on its own but not alongside a "+3".
+    render(
+      <ServerPickerPanel
+        {...onGroups({
+          groups: [
+            {
+              id: "g_edge",
+              name: "Group 1",
+              serverNames: ["abcdefghij", "abcdefghij", "abcd", "e", "f"],
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getAllByText("abcdefghij")).toHaveLength(2);
+    expect(screen.queryByText("abcd")).toBeNull();
+    expect(screen.getByText("+3")).toBeInTheDocument();
+  });
+
   it("always shows one chip, even for a name wider than the budget", () => {
     render(
       <ServerPickerPanel

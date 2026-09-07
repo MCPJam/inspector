@@ -192,11 +192,14 @@ export function ServerPicker({
     setConnecting([]);
   }, [project]);
   // Unmount is a project change too, as far as a write in flight is concerned:
+  // LAYOUT, so the bump lands in the unmount commit — a passive cleanup runs
+  // after it, and a promise settling in that gap still read the generation as
+  // current.
   // without this, a handshake completing after the user navigated away still
   // toasted and still wrote state. Its own effect, because a cleanup on the
   // one above would also fire on every project change — where the body has
   // already done the bump.
-  useEffect(
+  useLayoutEffect(
     () => () => {
       generation.current += 1;
     },

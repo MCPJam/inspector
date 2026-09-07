@@ -21,3 +21,6 @@ vitest/dist/
 # Local git worktrees checked out under the repo
 worktrees/
 wt-*/
+
+# Playwright MCP scratch output (screenshots, snapshots, console logs)
+.playwright-mcp/
