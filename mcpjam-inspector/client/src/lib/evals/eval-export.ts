@@ -277,7 +277,8 @@ export function buildSdkTestFile({
   usedPlaceholderFallback = false,
 }: SdkTestFileInput): string {
   const needsPartialArgMatching = anyTestCaseUsesPartialArgMatching(cases);
-  const sdkImports = ["  MCPClientManager,", "  TestAgent,", "  EvalTest,"];
+  const needsTurnType = cases.some((c) => c.promptTurns.length > 1);
+  const sdkImports = ["  MCPClientManager,", "  HostRunner,", "  EvalTest,"];
   if (needsPartialArgMatching) {
     sdkImports.push("  matchToolCallWithPartialArgs,");
   }
@@ -292,6 +293,19 @@ export function buildSdkTestFile({
     '  | { id: string; kind: "http"; url: string }',
     '  | { id: string; kind: "stdio"; command: string; args: string[] };',
     "",
+    // Annotated rather than `as const`: a const-asserted literal gives
+    // `expectedToolCalls.length` the LITERAL type of each turn's length, so the
+    // `expected.length === 0` guard below fails to compile (TS2367) on any case
+    // whose turns all declare the same non-zero number of calls.
+    ...(needsTurnType
+      ? [
+          "type ExportedTurn = {",
+          "  prompt: string;",
+          "  expectedToolCalls: { toolName: string; arguments: Record<string, unknown> }[];",
+          "};",
+          "",
+        ]
+      : []),
     "const SERVER_CONFIGS: ServerConnection[] = [",
     indentBlock(renderServerConnectionEntries(serverConnections), 2),
     "];",
@@ -317,7 +331,7 @@ export function buildSdkTestFile({
     "",
     `describe(SUITE_NAME, () => {`,
     "  let manager: MCPClientManager;",
-    "  let agent: TestAgent;",
+    "  let agent: HostRunner;",
     "",
     "  beforeAll(async () => {",
     "    manager = new MCPClientManager();",
@@ -333,7 +347,7 @@ export function buildSdkTestFile({
     "    }",
     "",
     "    const tools = await manager.getToolsForAiSdk(SERVER_IDS);",
-    "    agent = new TestAgent({",
+    "    agent = new HostRunner({",
     "      tools,",
     "      model: MODEL,",
     "      apiKey: LLM_API_KEY,",
@@ -501,7 +515,7 @@ function buildCaseTestBlock(
   if (promptTurns.length === 1 && firstTurn) {
     lines.push(
       "        test: async (agent) => {",
-      `          const result = await agent.prompt(${JSON.stringify(
+      `          const result = await agent.run(${JSON.stringify(
         firstTurn.prompt
       )});`
     );
@@ -515,12 +529,22 @@ function buildCaseTestBlock(
   } else {
     lines.push(
       "        test: async (agent) => {",
-      "          const turns =",
-      `${indentBlock(JSON.stringify(promptTurns, null, 2), 12)} as const;`,
-      "          const results: Awaited<ReturnType<typeof agent.prompt>>[] = [];",
+      "          const turns: ExportedTurn[] =",
+      `${indentBlock(
+        JSON.stringify(
+          promptTurns.map((turn) => ({
+            prompt: turn.prompt,
+            expectedToolCalls: turn.expectedToolCalls ?? [],
+          })),
+          null,
+          2
+        ),
+        12
+      )};`,
+      "          const results: Awaited<ReturnType<typeof agent.run>>[] = [];",
       "",
       "          for (const turn of turns) {",
-      "            const result = await agent.prompt(turn.prompt, {",
+      "            const result = await agent.run(turn.prompt, {",
       "              context: results.length > 0 ? results : undefined,",
       "            });",
       "            results.push(result);",
@@ -615,6 +639,53 @@ function anyTestCaseUsesPartialArgMatching(
   );
 }
 
+/**
+ * Per-turn state the exported file cannot evaluate.
+ *
+ * A turn carries more than `prompt` + `expectedToolCalls`: `checks` are
+ * deterministic predicates (including every ADVISORY `toolCalledWith`, which
+ * `stepsToPromptTurns` deliberately leaves as a predicate), `widgetChecks` are
+ * DOM-level, and `pinnedToolCall` marks a MODEL-FREE turn. The generated
+ * `test()` reads none of them, so they are named here rather than dropped
+ * silently — an author who sees the case pass locally needs to know what that
+ * pass did and did not cover.
+ */
+function describeUntranslatedTurnState(testCase: EvalExportCaseInput): string[] {
+  const notes: string[] = [];
+
+  testCase.promptTurns.forEach((turn, index) => {
+    const label = `turn ${index + 1}`;
+    for (const check of turn.checks ?? []) {
+      const role = (check as { role?: string }).role === "advisory"
+        ? "advisory"
+        : "gating";
+      notes.push(
+        `  ${label}: ${role} check "${String(
+          (check as { type?: string }).type ?? "unknown"
+        )}" is NOT evaluated by this file.`
+      );
+    }
+    for (const widgetCheck of turn.widgetChecks ?? []) {
+      notes.push(
+        `  ${label}: widget checks on "${widgetCheck.toolName}" need a hosted run; NOT evaluated here.`
+      );
+    }
+    if (turn.pinnedToolCall) {
+      notes.push(
+        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; this turn asserts nothing.`
+      );
+    }
+  });
+
+  if (notes.length === 0) {
+    return [];
+  }
+  return [
+    "Not carried over from MCPJam — run this case in the hosted suite to cover it:",
+    ...notes,
+  ];
+}
+
 function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
   const commentLines: string[] = [];
   if (testCase.scenario) {
@@ -628,6 +699,8 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
       `Model hints from MCPJam: ${testCase.modelHints.join(", ")}`
     );
   }
+
+  commentLines.push(...describeUntranslatedTurnState(testCase));
 
   const advancedConfig = testCase.advancedConfig ?? undefined;
   if (advancedConfig && Object.keys(advancedConfig).length > 0) {
