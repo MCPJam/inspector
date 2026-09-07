@@ -35,7 +35,7 @@ function record(
     workspaceGrantId: "ws_1",
     brokerRunId: "run_1",
     gateway: null,
-    stop: async () => undefined,
+    stop: async () => ({ stopped: true }),
     revokeLease: null,
     releaseRuntime: null,
     startedAt: Date.now(),
@@ -88,6 +88,7 @@ describe("ending one session", () => {
         },
         stop: async () => {
           order.push("stop");
+          return { stopped: true };
         },
       }),
     );
@@ -108,6 +109,7 @@ describe("ending one session", () => {
           },
           stop: async () => {
             order.push("stop");
+            return { stopped: true };
           },
         }),
       );
@@ -149,6 +151,7 @@ describe("ending one session", () => {
       record({
         stop: async () => {
           order.push("stop");
+          return { stopped: true };
         },
         releaseRuntime: async () => {
           order.push("release");
@@ -184,7 +187,7 @@ describe("ending one session", () => {
     const releaseRuntime = vi.fn(async () => undefined);
     registerLocalHarnessSession(
       record({
-        stop: async () => {
+        stop: async (): Promise<{ stopped: boolean }> => {
           throw new Error("SIGKILL refused");
         },
         releaseRuntime,
@@ -196,7 +199,7 @@ describe("ending one session", () => {
   });
 
   it("still ends the session when the reservation will not release", async () => {
-    const stop = vi.fn(async () => undefined);
+    const stop = vi.fn(async () => ({ stopped: true }));
     registerLocalHarnessSession(
       record({
         stop,
@@ -217,7 +220,7 @@ describe("ending one session", () => {
     // The abort path, the stop-all button and the turn's own teardown can all
     // arrive together. The record is dropped before any of the slow steps, so
     // the second caller finds nothing rather than sending a second SIGTERM.
-    const stop = vi.fn(async () => undefined);
+    const stop = vi.fn(async () => ({ stopped: true }));
     registerLocalHarnessSession(record({ stop }));
     const [first, second] = await Promise.all([
       endLocalHarnessSession("s1"),
@@ -233,18 +236,23 @@ describe("the stop-all brake", () => {
   it("ends every session even when one of them hangs on its grace", async () => {
     // Ended in parallel, so a tree sitting out a SIGTERM grace does not hold
     // up the rest — the whole point of the button is that it acts now.
-    let released: (() => void) | null = null;
+    let released: ((outcome: { stopped: boolean }) => void) | null = null;
     registerLocalHarnessSession(
       record({
         sessionId: "slow",
-        stop: () => new Promise<void>((r) => (released = r)),
+        stop: () =>
+          new Promise<{ stopped: boolean }>((r) => (released = r)),
       }),
     );
     registerLocalHarnessSession(record({ sessionId: "quick" }));
     const all = stopAllLocalHarnessSessions();
     await new Promise((r) => setTimeout(r, 20));
     expect(released).not.toBeNull();
-    (released as unknown as () => void)();
+    // Resolved WITH an outcome: an empty resolve now means "not stopped", which
+    // is the point of the tightened contract.
+    (released as unknown as (o: { stopped: boolean }) => void)({
+      stopped: true,
+    });
     expect(await all).toEqual({ ok: true, stopped: 2, failed: 0 });
     expect(listLocalHarnessSessions()).toEqual([]);
   });

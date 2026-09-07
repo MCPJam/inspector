@@ -35,7 +35,7 @@ export interface LocalHarnessSessionRecord {
    * given up on a proven stop, so this answer has to travel rather than be
    * assumed from "the call did not throw".
    */
-  stop: () => Promise<{ stopped: boolean; escaped?: number } | void>;
+  stop: () => Promise<{ stopped: boolean; escaped?: number }>;
   /** Revokes the lease server-side. Supplied by the turn; best-effort. */
   revokeLease: (() => Promise<void>) | null;
   /**
@@ -115,10 +115,16 @@ export async function endLocalHarnessSession(
     // A resolved call is not a stopped tree. `stopSession` reports escaped
     // children in its RESULT, and reading only the absence of a throw counted
     // those as a clean stop.
-    if (outcome && outcome.stopped === false) {
+    //
+    // Anything that is not an explicit `stopped: true` counts as not stopped.
+    // The type used to permit `void` — widened to fit a test fixture, which is
+    // the wrong direction for a contract — and `undefined` then slipped past
+    // this check as a success, releasing the reservation on the exact evidence
+    // the check exists to demand.
+    if (outcome?.stopped !== true) {
       stopped = false;
       errors.push(
-        `stop: ${outcome.escaped ?? "some"} process(es) escaped the session`,
+        `stop: ${outcome?.escaped ?? "some"} process(es) escaped the session`,
       );
     }
   } catch (error) {
