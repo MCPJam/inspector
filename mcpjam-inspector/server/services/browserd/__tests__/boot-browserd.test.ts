@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { bootBrowserd, type BrowserdSandbox } from "../boot-browserd";
+import {
+  bootBrowserd,
+  DISPLAY_GEOMETRY,
+  type BrowserdSandbox,
+} from "../boot-browserd";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const READY = (over: Record<string, unknown> = {}) =>
@@ -218,5 +222,35 @@ describe("the ready line's wire version", () => {
     await tick();
     fake.emit(READY({ protocolVersion: "one" }));
     await expect(p).rejects.toThrow();
+  });
+});
+
+
+describe("the X geometry", () => {
+  it("is the one the desktop template brings the display up at", () => {
+    // The template's own `geometry.json` (backend repo,
+    // `templates/desktop/geometry.json`, pinned there by
+    // `tests/scripts/desktopTemplateBuild.test.ts`) says the same thing. Two
+    // repositories agreeing by hand is two repositories drifting silently, and
+    // the drift shows up as a browser painting a page larger than the display
+    // it is captured from — a picture with its right-hand edge missing, and
+    // nothing in either repository to say so.
+    expect(DISPLAY_GEOMETRY).toBe("1024x768x24");
+  });
+
+  it("is what the fallback Xvfb is started with", async () => {
+    const fake = fakeSandbox({ displayUp: false });
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await vi.waitFor(() =>
+      expect(
+        fake.state.background.some((command) => command.startsWith("Xvfb")),
+      ).toBe(true),
+    );
+    fake.emit(READY());
+    await p;
+    const xvfb = fake.state.background.find((command) =>
+      command.startsWith("Xvfb"),
+    );
+    expect(xvfb).toContain(DISPLAY_GEOMETRY);
   });
 });

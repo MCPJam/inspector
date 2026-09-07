@@ -94,8 +94,18 @@ const DEFAULT_READY_TIMEOUT_MS = 30_000;
  */
 export const BROWSERD_DISPLAY = ":0";
 
-/** `@e2b/desktop`'s own default geometry, for the same parity reason. */
-const DISPLAY_GEOMETRY = "1024x768x24";
+/**
+ * `@e2b/desktop`'s own default geometry, for the same parity reason.
+ *
+ * ALSO THE TEMPLATE'S. The desktop image's start command brings up Xvfb at this
+ * size (`templates/desktop/geometry.json` in the backend repo), and this is the
+ * fallback used when a box has no X server yet. The two must agree: a browser
+ * painting a page larger than the display it is captured from is a picture with
+ * its right-hand edge missing, and nothing in either repository would say so.
+ * `boot-browserd.test.ts` pins the value on this side; the backend's
+ * `desktopTemplateBuild.test.ts` pins it on the other.
+ */
+export const DISPLAY_GEOMETRY = "1024x768x24";
 const DISPLAY_READY_ATTEMPTS = 20;
 const DISPLAY_POLL_MS = 500;
 
