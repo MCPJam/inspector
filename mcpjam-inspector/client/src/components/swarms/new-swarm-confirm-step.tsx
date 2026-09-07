@@ -1289,8 +1289,8 @@ export function NewSwarmConfirmStep({
             data-testid="new-swarm-persona-without-goal"
             className="text-sm leading-relaxed text-destructive"
           >
-            Add conversations or remove a persona. Every persona needs at least
-            one conversation.
+            Add a goal or remove the persona. Every persona needs at least one
+            conversation.
           </p>
         ) : null}
 

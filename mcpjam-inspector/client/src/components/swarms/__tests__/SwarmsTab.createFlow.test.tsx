@@ -2006,7 +2006,11 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
 
     fireEvent.click(screen.getByTestId("new-swarm-add-persona"));
 
-    expect(screen.getByTestId("new-swarm-persona-without-goal")).toBeVisible();
+    // Names the control the user actually has. "Add conversations" pointed at
+    // nothing on this screen.
+    expect(
+      screen.getByTestId("new-swarm-persona-without-goal"),
+    ).toHaveTextContent(/add a goal or remove the persona/i);
     expect(screen.getByTestId("new-swarm-launch")).toBeDisabled();
   });
 
