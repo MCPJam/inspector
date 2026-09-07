@@ -49,19 +49,32 @@ can read or change, it can read or change. Edits inside the folder run freely;
 commands still ask for approval in chat. If that is not what you want, run the
 host hosted, which is the default.
 
-Three things happen once, in this order, before your first local turn:
+**Setting up for the first time.** Type a prompt and press Send. A dialog
+appears — *Run Claude Code in ~/code/your-project?* — with one decision to make:
 
-1. **Install the local runtime.** About 200 MB, downloaded once and shared by
-   every project: Claude Code, its supporting runtime, and the Node it runs on.
-   MCPJam verifies the download's signature and then verifies the contents
-   again after extraction, and refuses anything that does not match what this
-   Inspector build expects.
-2. **Choose the project folder.** In the desktop app this opens your OS folder
-   picker. This is the directory the agent starts in.
-3. **Authorize.** The authorization is scoped to this project and this machine,
-   and it expires on its own. Changing the runtime, the folder, or the
-   permission profile means authorizing again — the old authorization does not
-   carry over, by design.
+- **Install & allow** (cold path) — the runtime is not yet on this machine.
+  MCPJam starts the ~200 MB download in the background, closes the dialog, and
+  leaves your draft in the composer. A progress notice appears below the input.
+  When setup finishes, press Send again to run your turn. Nothing fires
+  automatically after a download.
+- **Allow** (warm path) — the runtime is already installed and verified. MCPJam
+  mints the authorization and continues your original send immediately.
+
+The dialog shows the folder the agent will start in, and a **Details** section
+with the runtime version, digest, permission profile, and expiry. The
+authorization is scoped to this project and this machine, and expires after
+12 hours. Changing the runtime, the folder, or the permission profile means
+authorizing again — the old authorization does not carry over, by design.
+
+**Choosing a folder.** In the desktop app the dialog opens your OS folder
+picker. In `npx`, type the path directly into the dialog's folder field. The
+folder is where the agent starts, not a boundary it cannot leave. Filesystem
+roots (`/`, drive roots) are refused.
+
+**The execution target chip.** A small chip in the composer toolbar shows where
+the current turn will run — *This machine* or *Cloud*. On a machine with only
+one option it is an indicator; on a machine where both are available it is a
+picker.
 
 While a local turn runs, MCPJam keeps the model credential in the Inspector
 process and hands the agent only a per-session token that works with nothing
@@ -69,10 +82,10 @@ else. Stopping a session stops the whole process tree it started, including the
 agent binary. **Stop all local sessions** in the local-execution panel ends
 everything immediately.
 
-**When it is not offered.** Your platform is not supported,
-the runtime is not installed, you are signed in as a guest, the session is a
-shared scenario or swarm run, or the feature is not enabled for your account.
-The selector says which.
+**When it is not offered.** Your platform is not supported, the runtime is not
+installed, you are signed in as a guest, the session is a shared scenario or
+swarm run, or the feature is not enabled for your account. The chip and the
+dialog both say which.
 
 ## Host settings
 
