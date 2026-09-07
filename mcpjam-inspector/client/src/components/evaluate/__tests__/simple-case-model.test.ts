@@ -15,6 +15,7 @@ import {
   isPromptFirst,
   isSimpleCaseShape,
   isToolCalledWithAssert,
+  isStepCheckAssert,
   leftoverSteps,
   matchOptionsForKind,
   MORE_CHECK_GROUPS,
@@ -762,5 +763,50 @@ describe("isPromptFirst", () => {
         } as TestStep,
       ]),
     ).toBe(false);
+  });
+});
+
+describe("an advisory tool assert is not the route", () => {
+  const advisoryTool = {
+    id: "a1",
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: "get_me",
+      args: { args: {} },
+      role: "advisory",
+      severity: "warn",
+    },
+  } as unknown as TestStep;
+  const gatingTool = {
+    id: "a2",
+    kind: "assert",
+    assertion: { type: "toolCalledWith", toolName: "get_me", args: { args: {} } },
+  } as unknown as TestStep;
+
+  it("routes only on a gating tool assert", () => {
+    // `deriveExpectedToolCalls` and `stepsToPromptTurns` both skip an advisory
+    // `toolCalledWith`, so it never becomes a matcher expectation. Reading it
+    // as the route would show a Gate route on a case the backend does not
+    // route at all.
+    expect(isToolCalledWithAssert(gatingTool)).toBe(true);
+    expect(isToolCalledWithAssert(advisoryTool)).toBe(false);
+  });
+
+  it("files the advisory one as a step scorer instead, so it stays visible", () => {
+    expect(isStepCheckAssert(advisoryTool)).toBe(true);
+    expect(isStepCheckAssert(gatingTool)).toBe(false);
+    expect(readStepChecks([prompt("p1", "go"), advisoryTool])).toHaveLength(1);
+  });
+
+  it("keeps it out of the tool list the route question renders", () => {
+    expect(readSimpleCase([prompt("p1", "go"), advisoryTool]).tools).toEqual([]);
+    expect(readSimpleCase([prompt("p1", "go"), gatingTool]).tools).toHaveLength(1);
+  });
+
+  it("does not strand it in the leftover list", () => {
+    // `leftoverSteps` is the complement of what the form renders; a step that
+    // is neither the route nor a step check would vanish from every editor.
+    expect(leftoverSteps([prompt("p1", "go"), advisoryTool])).toEqual([]);
   });
 });

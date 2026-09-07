@@ -28,6 +28,7 @@ import {
 } from "@/shared/steps";
 import {
   MATCH_OPTIONS_DEFAULTS,
+  checkRole,
   type CasePredicates,
   type EvalMatchOptions,
   type Predicate,
@@ -206,11 +207,23 @@ function newStepId(kind: string): string {
   return `${kind}-${Date.now()}-${stepIdCounter}`;
 }
 
+/**
+ * A `toolCalledWith` assert that actually routes the case.
+ *
+ * GATING ONLY, and that qualifier is load-bearing. `deriveExpectedToolCalls`
+ * and `stepsToPromptTurns` both skip an advisory `toolCalledWith`, so an
+ * advisory one never becomes a matcher expectation — the runner grades it as
+ * an ordinary predicate instead. Treating it as the route here would show a
+ * Gate route on a case the backend does not route, which is the one thing the
+ * tool question exists to answer. It files as a step scorer instead
+ * (`isStepCheckAssert`), wearing its own Warn or Report role.
+ */
 export function isToolCalledWithAssert(step: TestStep): boolean {
   return (
     isAssertStep(step) &&
     !isWidgetAssertion(step.assertion) &&
-    step.assertion.type === "toolCalledWith"
+    step.assertion.type === "toolCalledWith" &&
+    checkRole(step.assertion) !== "advisory"
   );
 }
 
@@ -231,7 +244,7 @@ export function isStepCheckAssert(step: TestStep): boolean {
   return (
     isAssertStep(step) &&
     !isWidgetAssertion(step.assertion) &&
-    step.assertion.type !== "toolCalledWith"
+    !isToolCalledWithAssert(step)
   );
 }
 

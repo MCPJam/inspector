@@ -321,7 +321,7 @@ describe("SuiteScorerTable", () => {
     expect(container.textContent).not.toMatch(/Trend/i);
   });
 
-  it("degrades predicate Role to a Gate chip without checkPolicy", () => {
+  it("degrades predicate Role to a read-only chip without checkPolicy", () => {
     const { container } = renderTable({
       predicates: [{ type: "noToolErrors" }],
     });
@@ -330,5 +330,23 @@ describe("SuiteScorerTable", () => {
       '[data-scorer-id="predicate:0"]',
     ) as HTMLElement;
     expect(within(row).getByText("Gate")).toBeTruthy();
+  });
+
+  it("still reports an advisory check honestly when it cannot be edited", () => {
+    // A suite file or the CLI can author `role: "advisory"` on a backend that
+    // does not advertise check policy. Rendering that as "Gate" tells a reader
+    // the check will fail their trial when it cannot. Not being able to EDIT a
+    // role is not a reason to misreport it.
+    const { container } = renderTable({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
+      ],
+    });
+    expect(screen.queryByRole("group", { name: "Check role" })).toBeNull();
+    const row = container.querySelector(
+      '[data-scorer-id="predicate:0"]',
+    ) as HTMLElement;
+    expect(within(row).getByText("Warn")).toBeTruthy();
+    expect(within(row).queryByText("Gate")).toBeNull();
   });
 });

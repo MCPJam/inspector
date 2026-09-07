@@ -25,11 +25,20 @@ import {
 
 export function SuiteScorerLibraryMenu({
   onAdd,
+  kinds,
 }: {
   onAdd: (kind: Predicate["type"]) => void;
+  /**
+   * Which kinds this surface may offer. Omitted means every kind, which is
+   * the suite's answer. The case page passes a narrowed list because one kind
+   * is already owned by another control there (the route question owns
+   * `toolCalledWith`), and offering it twice would let a reader author a route
+   * that the route row then contradicts.
+   */
+  kinds?: readonly Predicate["type"][];
 }) {
   const syntheticMonitorsEnabled = useFeatureFlagEnabled("synthetic-monitors");
-  const categories = scorerLibraryCategories().map((category) => ({
+  const categories = scorerLibraryCategories(kinds).map((category) => ({
     ...category,
     kinds: category.kinds.filter(
       (kind) =>
