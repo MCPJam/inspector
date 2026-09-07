@@ -148,6 +148,25 @@ describe("/v1/organizations/:organizationId/spend-budget", () => {
     );
   });
 
+  it("stores the cent the caller wrote, not the float that arrived", async () => {
+    // JSON carries money as a float64, so `1.005` reaches the route as
+    // 1.00499999999999989 and a plain `Math.round(x * 100)` answers 100 — a
+    // cap one cent below what was asked for.
+    await request("PUT", { capUsd: 1.005 });
+    expect(convexMutationMock).toHaveBeenCalledWith(
+      "billing/spendBudgetSettings:setOrganizationSpendBudget",
+      expect.objectContaining({ capCredits: 101 }),
+    );
+  });
+
+  it("leaves a value genuinely below the half cent alone", async () => {
+    await request("PUT", { capUsd: 1.0049 });
+    expect(convexMutationMock).toHaveBeenCalledWith(
+      "billing/spendBudgetSettings:setOrganizationSpendBudget",
+      expect.objectContaining({ capCredits: 100 }),
+    );
+  });
+
   it("reads back the stored value rather than echoing the request", async () => {
     // A caller whose amount the backend rounded must see what was KEPT.
     convexQueryMock.mockResolvedValue(budgetView({ capCredits: 12550 }));

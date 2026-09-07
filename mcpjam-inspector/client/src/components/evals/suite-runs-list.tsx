@@ -14,13 +14,11 @@ import {
 } from "@mcpjam/design-system/tooltip";
 import {
   evalStatusLeftBorderClasses,
-  formatCostOrDash,
   formatDuration,
   formatRunId,
   formatTime,
   hasEnvironmentRun,
   runContextKeys,
-  sumIterationCost,
 } from "./helpers";
 import { computeIterationResult } from "./pass-criteria";
 import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "./types";
@@ -31,9 +29,9 @@ import {
 } from "./eval-surface-chrome";
 import { CrossHostDashboard } from "./cross-host/cross-host-dashboard";
 
-/** Shared column template: run label flexes; Acc/Dur/Cost fixed; Time + chevron share the tail. */
+/** Shared column template: run label flexes; Acc/Dur fixed; Time + chevron share the tail. */
 const RUNS_LIST_ROW_GRID =
-  "grid w-full grid-cols-[minmax(0,1fr)_3rem_3.5rem_4rem_minmax(9.5rem,1.15fr)_0.875rem] items-center gap-x-3";
+  "grid w-full grid-cols-[minmax(0,1fr)_3rem_3.5rem_minmax(9.5rem,1.15fr)_0.875rem] items-center gap-x-3";
 
 const RUNS_LIST_METRIC_HEADER_CLASS =
   "text-right text-[11px] font-medium uppercase tracking-[0.06em] tabular-nums";
@@ -250,7 +248,6 @@ export function SuiteRunsList({
         <div className="min-w-0 truncate">Run</div>
         <div className={RUNS_LIST_METRIC_HEADER_CLASS}>{accuracyLabel}</div>
         <div className={RUNS_LIST_METRIC_HEADER_CLASS}>Dur</div>
-        <div className={RUNS_LIST_METRIC_HEADER_CLASS}>Cost</div>
         <div className={cn(RUNS_LIST_METRIC_HEADER_CLASS, "truncate")}>
           Time
         </div>
@@ -336,28 +333,6 @@ function StandaloneRunRow({
         ? formatDuration(Date.now() - run.createdAt)
         : "—";
 
-  // The run's cost, with the coverage that produced it. A partial sum is
-  // labelled partial rather than passed off as the total: that difference is
-  // the whole reason the counts exist. A total that includes a figure the
-  // customer's own runner reported says so too — the money was spent, so it
-  // belongs in the total, but it is not MCPJam's measurement and must not
-  // read as one.
-  const runCost = sumIterationCost(runIterations ?? []);
-  const costLabel = formatCostOrDash(runCost.totalUsd);
-  const costTitle =
-    runCost.totalUsd === null
-      ? "No cost was recorded for this run."
-      : [
-          runCost.costedIterations < runCost.totalIterations
-            ? `Priced ${runCost.costedIterations} of ${runCost.totalIterations} trials.`
-            : null,
-          runCost.hasRunnerReported
-            ? "Includes cost reported by your runner, not measured by MCPJam."
-            : null,
-        ]
-          .filter(Boolean)
-          .join(" ") || undefined;
-
   const timestamp = run.completedAt ?? run.createdAt;
   const timestampLabel = formatTime(timestamp);
 
@@ -434,9 +409,6 @@ function StandaloneRunRow({
           {passRate !== null ? `${passRate}%` : "—"}
         </div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>{duration}</div>
-        <div className={RUNS_LIST_METRIC_CELL_CLASS} title={costTitle}>
-          {costLabel}
-        </div>
         <div
           className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={formatTime(timestamp)}
@@ -522,10 +494,7 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
-      return {
-        label: "Failed",
-        className: "bg-destructive/50 text-foreground",
-      };
+      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
     case "inconclusive":
       // Amber, not red: the run did not measure enough to decide, which is not
       // the same claim as a failure.
@@ -534,10 +503,7 @@ function runResultBadge(result: ReturnType<typeof computeEffectiveRunResult>) {
         className: "bg-warning/50 text-foreground",
       };
     case "cancelled":
-      return {
-        label: "Cancelled",
-        className: "bg-muted text-muted-foreground",
-      };
+      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
@@ -591,7 +557,10 @@ function GroupRunRows({
   const childStats = group.runs.map((run) => ({
     run,
     iterations: iterationsByRun.get(run._id) ?? [],
-    stats: computeRunEffectiveStats(run, iterationsByRun.get(run._id) ?? []),
+    stats: computeRunEffectiveStats(
+      run,
+      iterationsByRun.get(run._id) ?? [],
+    ),
   }));
 
   // Mean across children's effective pass rates. Children with a null
@@ -629,7 +598,12 @@ function GroupRunRows({
   const anyCancelled = effectiveResults.some((r) => r === "cancelled");
   const anyPending = effectiveResults.some((r) => r === "pending");
   const groupResult:
-    "running" | "failed" | "cancelled" | "passed" | "pending" | "timed_out" =
+    | "running"
+    | "failed"
+    | "cancelled"
+    | "passed"
+    | "pending"
+    | "timed_out" =
     anyRunning
       ? "running"
       : anyFailed
@@ -700,12 +674,6 @@ function GroupRunRows({
         </div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {maxDuration !== null ? formatDuration(maxDuration) : "—"}
-        </div>
-        <div
-          className={RUNS_LIST_METRIC_CELL_CLASS}
-          title="Cost is shown per run; expand the group to see it."
-        >
-          —
         </div>
         <div
           className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}

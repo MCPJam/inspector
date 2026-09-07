@@ -24,12 +24,22 @@ export function buildIterationUsageMetadata(
   const sum = input + output;
 
   if (sum < total) {
-    if (metadata.inputTokens === undefined && output > 0) {
+    // PRESENT, not positive. A provider reporting `{ inputTokens: 0,
+    // totalTokens: 100 }` has told us the whole split — no input, 100 output
+    // — but requiring the KNOWN half to be positive refused to reconcile it.
+    // The payload then went out as `{ inputTokens: 0, totalTokens: 100 }`,
+    // and the backend prices from the halves alone, so a 100-token turn was
+    // stamped `estimated` at $0.00. Zero is an answer; absent is not.
+    if (
+      metadata.inputTokens === undefined &&
+      metadata.outputTokens !== undefined
+    ) {
       metadata.inputTokens = total - output;
-    } else if (metadata.outputTokens === undefined && input > 0) {
+    } else if (
+      metadata.outputTokens === undefined &&
+      metadata.inputTokens !== undefined
+    ) {
       metadata.outputTokens = total - input;
-    } else if (input === 0 && output > 0) {
-      metadata.inputTokens = total - output;
     }
   }
 
@@ -54,7 +64,9 @@ export function buildIterationUsageMetadata(
  * Returns `undefined` when there is no token signal at all: an empty object
  * would claim the iteration reported usage when it reported nothing.
  */
-export function buildIterationUsagePayload(usage: UsageTotals):
+export function buildIterationUsagePayload(
+  usage: UsageTotals,
+):
   | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
   | undefined {
   const reconciled = buildIterationUsageMetadata(usage);

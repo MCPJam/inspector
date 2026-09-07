@@ -384,9 +384,16 @@ export function RunCaseRows({
                 title={
                   row.costUsd === null
                     ? "No trial in this case has a cost"
-                    : row.costedIterations < row.coverage.total
-                      ? `${row.costedIterations} of ${row.coverage.total} trials priced`
-                      : undefined
+                    : [
+                        row.costedIterations < row.coverage.total
+                          ? `${row.costedIterations} of ${row.coverage.total} trials priced`
+                          : null,
+                        row.hasRunnerReportedCost
+                          ? "Includes cost reported by your runner, not measured by MCPJam."
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined
                 }
               >
                 {formatCostOrDash(row.costUsd)}

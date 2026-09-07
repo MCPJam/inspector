@@ -216,6 +216,8 @@ export type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformCostCoverage,
+  PlatformCostCoverageSide,
   PlatformSpendBudget,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,

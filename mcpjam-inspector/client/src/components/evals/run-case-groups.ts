@@ -31,6 +31,15 @@ export type RunCaseGroup = {
   p50CostUsd: number | null;
   p95CostUsd: number | null;
   costedIterations: number;
+  /**
+   * True when any figure in `totalCostUsd` came from a customer's own runner.
+   *
+   * Travels with the total for the same reason `costedIterations` does: the
+   * number is real either way, but "MCPJam measured this" and "your runner
+   * told us this" are different claims, and a reader cannot tell them apart
+   * from the amount alone.
+   */
+  hasRunnerReportedCost: boolean;
   iterationResults: RunCaseIterationOutcome[];
 };
 
@@ -91,6 +100,7 @@ export function groupRunIterationsByTestCase(
         p50CostUsd: null,
         p95CostUsd: null,
         costedIterations: 0,
+        hasRunnerReportedCost: false,
         iterationResults: [],
       });
     }
@@ -127,6 +137,7 @@ export function groupRunIterationsByTestCase(
       p50CostUsd: percentile(costs, 0.5),
       p95CostUsd: percentile(costs, 0.95),
       costedIterations: costTotals.costedIterations,
+      hasRunnerReportedCost: costTotals.hasRunnerReported,
     };
   });
 

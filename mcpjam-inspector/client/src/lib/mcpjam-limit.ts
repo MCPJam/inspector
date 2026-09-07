@@ -159,6 +159,17 @@ const hasNestedSpendBudgetCode = (
 
   const values = Array.isArray(value) ? value : Object.values(value);
   for (const item of values) {
+    // A STRING LEAF CAN BE JSON. Servers routinely nest an encoded error
+    // inside `details` or a `message` field, and stopping at the string is
+    // how the budget code hides from this walk — leaving the deep scan below
+    // to read the same payload's rate-limit text and open the top-up dialog.
+    if (typeof item === "string") {
+      if (isSpendBudgetReachedCode(item)) return true;
+      for (const parsed of collectJsonCandidates(item)) {
+        if (hasNestedSpendBudgetCode(parsed, seen)) return true;
+      }
+      continue;
+    }
     if (hasNestedSpendBudgetCode(item, seen)) return true;
   }
 

@@ -18,28 +18,19 @@
  */
 import { Hono } from "hono";
 import { z } from "zod";
-import { ConvexHttpClient } from "convex/browser";
 import { getConvexBearerForRequest } from "../../utils/v1-convex-token.js";
 import { parseWithSchema, ErrorCode, WebRouteError } from "../web/errors.js";
+// The SHARED client, not another copy. `convex-client.ts` exists because this
+// exact factory once lived twice verbatim and its docblock names the failure:
+// two copies are two answers the day it needs a timeout, a retry policy, or a
+// second environment variable, and they diverge in one route rather than
+// loudly.
+import { createConvexClient } from "./convex-client.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
 
 const spendBudget = new Hono();
-
-function convexClient(token: string): ConvexHttpClient {
-  const url = process.env.CONVEX_URL;
-  if (!url) {
-    throw new WebRouteError(
-      500,
-      ErrorCode.INTERNAL_ERROR,
-      "Server missing CONVEX_URL configuration",
-    );
-  }
-  const client = new ConvexHttpClient(url);
-  client.setAuth(token);
-  return client;
-}
 
 /**
  * Dollars on the wire, credits in the store.
@@ -72,6 +63,23 @@ const putSchema = z
       .optional(),
   })
   .strict();
+
+/**
+ * Dollars → whole credits, rounding the half-cent the way the sender wrote it.
+ *
+ * JSON carries money as a float64, so `1.005` arrives as
+ * 1.00499999999999989 and a plain `Math.round(x * 100)` answers 100 — a cap
+ * one cent below what the caller asked for. The nudge by one epsilon lands
+ * such a value back on the half-cent it was written as, without moving a
+ * value genuinely below it (`1.0049` still rounds to 100).
+ *
+ * The console does not rely on this: it converts from the typed STRING, where
+ * the intended decimal still exists (`usdStringToCredits`). This is the best
+ * available answer for a caller who can only send a number.
+ */
+function usdToCredits(capUsd: number): number {
+  return Math.round((capUsd + Number.EPSILON) * 100);
+}
 
 type BudgetView = {
   capCredits: number | null;
@@ -117,7 +125,7 @@ function toBudgetDto(view: BudgetView) {
 // ceiling still needs to know it exists, because it is what refused their run.
 spendBudget.get("/organizations/:organizationId/spend-budget", async (c) => {
   const organizationId = c.req.param("organizationId");
-  const client = convexClient(await getConvexBearerForRequest(c));
+  const client = createConvexClient(await getConvexBearerForRequest(c));
 
   let view: BudgetView;
   try {
@@ -147,19 +155,14 @@ spendBudget.put("/organizations/:organizationId/spend-budget", async (c) => {
     );
   }
   const body = parseWithSchema(putSchema, parsedBody);
-  const client = convexClient(await getConvexBearerForRequest(c));
+  const client = createConvexClient(await getConvexBearerForRequest(c));
 
   try {
     await client.mutation(
       "billing/spendBudgetSettings:setOrganizationSpendBudget" as any,
       {
         organizationId,
-        // The typed decimal is already gone by the time JSON parsing hands
-        // this over — float64 has no exact 1.005 — so this rounds the value
-        // that actually arrived and cannot recover one that never did. The
-        // console converts from the typed STRING instead, where the intended
-        // decimal still exists (`usdStringToCredits`).
-        capCredits: Math.round(body.capUsd * 100),
+        capCredits: usdToCredits(body.capUsd),
         ...(body.alertPercents ? { alertPercents: body.alertPercents } : {}),
       } as any,
     );
@@ -190,7 +193,7 @@ spendBudget.put("/organizations/:organizationId/spend-budget", async (c) => {
 // counter survives on the backend: it is a record of spend, not of the budget.
 spendBudget.delete("/organizations/:organizationId/spend-budget", async (c) => {
   const organizationId = c.req.param("organizationId");
-  const client = convexClient(await getConvexBearerForRequest(c));
+  const client = createConvexClient(await getConvexBearerForRequest(c));
 
   try {
     await client.mutation(

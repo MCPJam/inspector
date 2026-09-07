@@ -521,19 +521,35 @@ export function gateInputFromPlatformRun(
   //     total would let a runner move its own gate.
   //   - an incomplete iterations page, handled by the `complete` check below,
   //     exactly as tokens and latency already are.
+  //
+  // THE DENOMINATOR IS THE BILLABLE POPULATION, not every iteration. Counting
+  // a BYOK trial in `total` would make `costed < total` true for every mixed
+  // suite forever, so the gate would answer `non_gateable` and never fire —
+  // which is the same as not having the gate, and the exact outcome the
+  // paragraph above says to avoid. An iteration is out of the denominator
+  // only when its own basis says a platform cost was never possible for it:
+  // `no_pricing` (not an MCPJam-billed model) or a runner-reported figure.
+  // Everything else stays in, including an iteration with no basis at all —
+  // "we do not know why this has no cost" is exactly the case coverage exists
+  // to refuse on.
   let costUsd: number | undefined;
   let costedIterations = 0;
+  let billableIterations = 0;
   for (const iteration of usable) {
     const usage = iteration.usage;
+    const basis = usage?.costBasis;
+    const neverBillable =
+      basis?.source === "sdk_runner" || basis?.reason === "no_pricing";
+    if (!neverBillable) billableIterations += 1;
     const cost = usage?.estimatedCostUsd;
     if (typeof cost !== "number") continue;
-    if (usage?.costBasis?.source === "sdk_runner") continue;
+    if (basis?.source === "sdk_runner") continue;
     costUsd = (costUsd ?? 0) + cost;
     costedIterations += 1;
   }
   const costCoverage =
-    usable.length > 0
-      ? { costed: costedIterations, total: usable.length }
+    billableIterations > 0
+      ? { costed: costedIterations, total: billableIterations }
       : undefined;
 
   // Same rule for latency: p95 over a partial set is not this run's p95.

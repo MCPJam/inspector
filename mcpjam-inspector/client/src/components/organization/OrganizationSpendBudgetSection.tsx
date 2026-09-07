@@ -9,13 +9,11 @@ import {
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
 import { Loader2, Wallet } from "lucide-react";
-import { useOrgModelUsageSummary } from "@/hooks/use-org-model-config";
 import {
   creditsToUsdString,
   usdStringToCredits,
   useOrgSpendBudget,
 } from "@/hooks/useOrgSpendBudget";
-import { UsageSummaryCard } from "./OrganizationModelsSection";
 
 /**
  * The organization's spend budget: a ceiling on MCPJam-billed spend per
@@ -45,6 +43,26 @@ function formatResetDate(ms: number): string {
   });
 }
 
+/**
+ * NO 30-DAY MODEL-USAGE BREAKDOWN HERE, on purpose.
+ *
+ * An earlier revision put `UsageSummaryCard` under the meter, reasoning that
+ * "what did we spend it on" follows "how much have we spent". Two things were
+ * wrong with it:
+ *
+ *   - it measures a DIFFERENT THING. The meter counts MCPJam-billed credits
+ *     and excludes BYOK by design; that card counts model-provider requests
+ *     including BYOK. Stacking the two under one heading invites exactly the
+ *     misreading this whole surface exists to prevent.
+ *   - its query is `requireOrgRole(..., 'admin')`. `useQuery` re-throws during
+ *     render, so a MEMBER opening this page threw into the ErrorBoundary and
+ *     lost the entire Budget section — destroying the read-only view a member
+ *     is supposed to get, which exists because the budget is what refused
+ *     their run.
+ *
+ * The card still lives on the Models section, where it is correctly gated and
+ * where its denominator matches its heading.
+ */
 export function OrganizationSpendBudgetSection({
   organizationId,
   isAdmin,
@@ -58,8 +76,6 @@ export function OrganizationSpendBudgetSection({
     setBudget,
     clearBudget,
   } = useOrgSpendBudget(organizationId);
-  const { summary: usageSummary, isLoading: isUsageLoading } =
-    useOrgModelUsageSummary(organizationId);
 
   const [capInput, setCapInput] = useState("");
   const [alertInput, setAlertInput] = useState("");
@@ -323,11 +339,6 @@ export function OrganizationSpendBudgetSection({
           )}
         </CardContent>
       </Card>
-
-      {/* "What did we spend it on" is the next question after "how much have
-          we spent", so the existing 30-day breakdown sits directly beneath the
-          meter rather than being rebuilt here. */}
-      <UsageSummaryCard summary={usageSummary} isLoading={isUsageLoading} />
     </div>
   );
 }

@@ -99,3 +99,24 @@ describe("buildIterationUsagePayload — an unmeasured trial", () => {
     ).toEqual({ inputTokens: 500, outputTokens: 0 });
   });
 });
+
+describe("buildIterationUsageMetadata — a reported zero half", () => {
+  it("reconciles the missing half when the known one is zero", () => {
+    // `{ inputTokens: 0, totalTokens: 100 }` is a complete statement: no
+    // input, 100 output. Requiring the known half to be POSITIVE refused to
+    // read it, and the backend — which prices from the halves alone — then
+    // stamped a 100-token turn as `estimated` at $0.00.
+    expect(
+      buildIterationUsageMetadata({ inputTokens: 0, totalTokens: 100 }),
+    ).toEqual({ inputTokens: 0, outputTokens: 100 });
+    expect(
+      buildIterationUsageMetadata({ outputTokens: 0, totalTokens: 100 }),
+    ).toEqual({ outputTokens: 0, inputTokens: 100 });
+  });
+
+  it("still refuses to invent a split from a bare total", () => {
+    // Neither half reported: there is no allocation to infer, and the backend
+    // answers `not_reported` rather than pricing a guess.
+    expect(buildIterationUsageMetadata({ totalTokens: 10 })).toEqual({});
+  });
+});

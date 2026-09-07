@@ -183,7 +183,13 @@ function costCoverage(value: unknown): Rec | undefined {
       const n = numOrNull(raw2);
       return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
     };
-    return { costed: count(inner.costed), total: count(inner.total) };
+    const costed = count(inner.costed);
+    const total = count(inner.total);
+    // `costed > total` is not a coverage reading, it is corrupt data — and it
+    // would slip past `costed < total`, which is how a gate ends up judging
+    // a cost regression on numbers that cannot both be true. Reported as
+    // nothing costed, which the gates already refuse.
+    return { costed: costed <= total ? costed : 0, total };
   };
   return { base: side(source.base), compare: side(source.compare) };
 }
@@ -389,7 +395,10 @@ export function toRunCompareDto(
       scoreDeltas: scoreDeltas(row.scoreDeltas),
       base: caseSide(row.base),
       compare: caseSide(row.compare),
-      metrics: caseMetrics(row.metrics),
+      // Absent stays absent. A backend that reports no per-case metrics is
+      // saying nothing; publishing `{ estimatedCostUsd: all-null }` on its
+      // behalf turns that silence into a measured claim of no cost.
+      ...(isRecord(row.metrics) ? { metrics: caseMetrics(row.metrics) } : {}),
     })),
   };
 }

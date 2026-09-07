@@ -700,6 +700,97 @@ describe("adapters", () => {
     ).toBe("incomplete");
   });
 
+  it("keeps a mixed BYOK suite gateable by counting only billable trials", () => {
+    // The bug this pins: counting a BYOK trial in the DENOMINATOR made
+    // `costed < total` true for every mixed suite, so a cost gate answered
+    // `non_gateable` forever — a gate that never fires, which is the same as
+    // not having one. A trial MCPJam never billed has no cost to contribute
+    // and never will, so it is out of the population entirely.
+    const run = {
+      id: "run_1",
+      suiteId: "s",
+      runNumber: 1,
+      status: "completed",
+      result: "passed",
+      summary: { total: 2, passed: 2 },
+      source: "sdk",
+      notes: null,
+      createdAt: 0,
+      completedAt: 1,
+      scoreIntegrity: "valid",
+    } as const;
+    const built = gateInputFromPlatformRun(run as never, {
+      complete: true,
+      items: [
+        {
+          id: "i1",
+          usage: {
+            estimatedCostUsd: 0.02,
+            costBasis: { status: "estimated", source: "gateway_pricing" },
+          },
+        },
+        {
+          id: "i2",
+          usage: {
+            costBasis: { status: "not_reported", reason: "no_pricing" },
+          },
+        },
+      ] as never,
+    });
+    expect(built.totals?.costCoverage).toEqual({ costed: 1, total: 1 });
+    expect(
+      evaluateGates(built, { maximumCostUsd: 0.5 }).verdicts.find(
+        (v) => v.gate === "maximumCostUsd"
+      )?.status
+    ).toBe("passed");
+  });
+
+  it("still refuses when a BILLABLE trial went unpriced", () => {
+    // `harness_mixed_models` is platform work we could not price, not work we
+    // were never going to bill. It stays in the denominator, so the total is
+    // knowably short and the gate refuses.
+    const run = {
+      id: "run_1",
+      suiteId: "s",
+      runNumber: 1,
+      status: "completed",
+      result: "passed",
+      summary: { total: 2, passed: 2 },
+      source: "sdk",
+      notes: null,
+      createdAt: 0,
+      completedAt: 1,
+      scoreIntegrity: "valid",
+    } as const;
+    const built = gateInputFromPlatformRun(run as never, {
+      complete: true,
+      items: [
+        {
+          id: "i1",
+          usage: {
+            estimatedCostUsd: 0.02,
+            costBasis: { status: "estimated", source: "gateway_pricing" },
+          },
+        },
+        {
+          id: "i2",
+          usage: {
+            costBasis: {
+              status: "not_reported",
+              reason: "harness_mixed_models",
+            },
+          },
+        },
+      ] as never,
+    });
+    expect(built.totals?.costCoverage).toEqual({ costed: 1, total: 2 });
+    expect(
+      evaluateGates(built, { maximumCostUsd: 0.5 }).verdicts.find(
+        (v) => v.gate === "maximumCostUsd"
+      )?.status
+    ).toBe("non_gateable");
+  });
+
   it("has no token total for an EMPTY iteration page, complete or not", () => {
     // `every` on an empty array is `true`: an empty-but-complete page would
     // otherwise sum to zero tokens and pass every cap ever written.
