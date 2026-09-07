@@ -18,7 +18,7 @@ import {
 } from "./launch-args";
 import { clearStaleSingletonLock } from "./profile-lock";
 import { capText, type ConsoleEntry } from "./observation-budget";
-import { parseAriaSnapshot } from "./aria-snapshot";
+import { PAGE_TEXT_FN } from "./page-text";
 import { WebMcpBridge, type CdpLike } from "./webmcp-bridge";
 
 /**
@@ -96,18 +96,7 @@ export type AnyPage = {
     value: string,
     options?: unknown,
   ): Promise<unknown>;
-  ariaSnapshot(options?: unknown): Promise<string>;
-  locator(selector: string): AnyLocator;
   on(event: string, handler: (payload: any) => void): void;
-};
-
-/**
- * The sliver of Playwright's `Locator` the daemon uses: narrow a selector to
- * its first match and take that element's aria snapshot.
- */
-export type AnyLocator = {
-  first(): AnyLocator;
-  ariaSnapshot(options?: unknown): Promise<string>;
 };
 
 /**
@@ -121,13 +110,6 @@ const CONSOLE_ENTRY_CAPTURE_BYTES = 4_000;
 
 /** Act timeouts: long enough for a slow page, short enough to stay a turn. */
 const ACT_TIMEOUT_MS = 15_000;
-
-/**
- * Accessibility capture timeout. Shorter than an act: an observation that
- * cannot be taken promptly is better answered as "unavailable" than held
- * open, because the caller has a screenshot and a DOM outline to fall back on.
- */
-const A11Y_TIMEOUT_MS = 5_000;
 
 /**
  * JPEG quality for model-facing captures. High enough that text stays legible
@@ -218,6 +200,16 @@ export function wrapPage(page: AnyPage): DriverPage {
       const buffer = await page.screenshot({
         type: "jpeg",
         quality: SCREENSHOT_JPEG_QUALITY,
+        // CSS PIXELS, always — the model's coordinate space (L5). Without
+        // this, Playwright captures at the device scale factor, so raising the
+        // display's sharpness would silently hand the model a 1536×1152 or
+        // 2048×1536 picture while `isPointInViewport` went on refusing
+        // anything past 1023×767. Every click the model computed from that
+        // screenshot would land at a fraction of where it aimed.
+        //
+        // At DPR 1 this produces byte-identical output to the call it
+        // replaces, which is what makes it safe to land before any DPR change.
+        scale: "css",
       });
       return buffer.toString("base64");
     },
@@ -256,22 +248,16 @@ export function wrapPage(page: AnyPage): DriverPage {
     },
 
     // --- observation --------------------------------------------------------
-    async a11ySnapshot(rootSelector?: string) {
-      // `page.accessibility` NO LONGER EXISTS in the pinned Playwright (1.62.1
-      // removed it), so the tree-shaped API this used to call resolved
-      // `undefined` for every page. `ariaSnapshot` is its successor: it answers
-      // YAML, which `parseAriaSnapshot` rebuilds into the tree the L9 budget
-      // needs, and it takes a selector root — which is what makes the omission
-      // marker's `rootSelector` retrieval verb real.
-      const target = rootSelector ? page.locator(rootSelector).first() : page;
+    async pageText() {
+      // Degrades rather than throwing, like every other read on this page: a
+      // navigation mid-read destroys the execution context and rejects, and a
+      // whole failed observation teaches the model less than an empty one it
+      // can retry.
       try {
-        const yaml = await target.ariaSnapshot({ timeout: A11Y_TIMEOUT_MS });
-        return parseAriaSnapshot(yaml);
+        const text = await page.evaluate<string>(`(${PAGE_TEXT_FN})()`);
+        return typeof text === "string" ? text : "";
       } catch {
-        // A selector that matches nothing, a detached element, or a page too
-        // busy to answer. `null` is the honest result; the driver turns an
-        // unmatched ROOT selector into an error rather than an empty tree.
-        return null;
+        return "";
       }
     },
     consoleEntries: () => consoleRing,
@@ -363,6 +349,14 @@ export interface LaunchBrowserdContextOptions {
    */
   contextMode?: "persistent" | "ephemeral";
   /**
+   * Device pixels per CSS pixel, from the box's own configuration.
+   *
+   * Honoured only in `persistent` mode — see `contextOptionsFor`. The CSS
+   * viewport is unchanged either way: the model's coordinate space is 1024×768
+   * whatever the display rasterises at.
+   */
+  deviceScaleFactor?: number;
+  /**
    * Which Chromium build to launch.
    *
    * Unset means Playwright's own default, which is what the hosted desktop
@@ -392,6 +386,27 @@ export interface LaunchBrowserdContextOptions {
  * instance (L8). Chromium cannot start its renderer sandbox as uid 0 (the image
  * builds as root), so the sandbox is disabled only in that case.
  */
+/**
+ * The context options, with the display's scale factor folded in.
+ *
+ * PERSISTENT ONLY. An ephemeral context is an eval or a swarm iteration, where
+ * the whole point of the pinned options is that a screenshot on one host
+ * matches a screenshot on another (L5) — so its scale factor stays 1 whatever
+ * the box is configured for, and hosted and local eval captures stay identical.
+ */
+export function contextOptionsFor(options: {
+  contextMode: "persistent" | "ephemeral";
+  deviceScaleFactor?: number;
+}): Omit<typeof BROWSERD_CONTEXT_OPTIONS, "deviceScaleFactor"> & {
+  deviceScaleFactor: number;
+} {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (options.contextMode !== "persistent" || dpr === 1) {
+    return BROWSERD_CONTEXT_OPTIONS;
+  }
+  return { ...BROWSERD_CONTEXT_OPTIONS, deviceScaleFactor: dpr };
+}
+
 export async function launchBrowserdContext(
   options: LaunchBrowserdContextOptions,
 ): Promise<DriverContext> {
@@ -419,7 +434,9 @@ export async function launchBrowserdContext(
       context = await browser.newContext({
         acceptDownloads: false,
         permissions: [],
-        ...BROWSERD_CONTEXT_OPTIONS,
+        // Ephemeral: `contextOptionsFor` pins the scale factor at 1 here
+        // whatever the box says, so eval captures match across hosts.
+        ...contextOptionsFor({ contextMode: "ephemeral" }),
       });
     } catch (error) {
       // Ownership of the browser transfers to `adaptContext` below. If we
@@ -450,7 +467,12 @@ export async function launchBrowserdContext(
     ...launchArgs,
     acceptDownloads: false,
     permissions: [],
-    ...BROWSERD_CONTEXT_OPTIONS,
+    ...contextOptionsFor({
+      contextMode: "persistent",
+      ...(options.deviceScaleFactor !== undefined
+        ? { deviceScaleFactor: options.deviceScaleFactor }
+        : {}),
+    }),
   });
   return adaptContext(context as unknown as AnyContext);
 }

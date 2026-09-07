@@ -5,6 +5,11 @@ import { SuiteHeader } from "../suite-header";
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  usePaginatedQuery: () => ({
+    results: [],
+    status: "Exhausted",
+    loadMore: vi.fn(),
+  }),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -546,5 +551,42 @@ describe("SuiteHeader", () => {
     );
 
     expect(onRerun).toHaveBeenCalledWith(baseSuite, { iterationOverride: 3 });
+  });
+
+  /**
+   * S5 — the settings header has no Done button. Saving lives in the commit bar.
+   */
+  describe("settings header", () => {
+    const editProps = {
+      ...baseProps,
+      isEditMode: true,
+      viewMode: "overview" as const,
+      selectedRunDetails: null,
+      readOnlyConfig: false,
+    };
+
+    it("has no Done button", () => {
+      renderWithProviders(<SuiteHeader {...editProps} />);
+      expect(screen.queryByRole("button", { name: /^Done$/ })).toBeNull();
+    });
+
+    it("edits the suite name through the settings draft", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      renderWithProviders(
+        <SuiteHeader
+          {...editProps}
+          settingsDraftName={{
+            value: "Test Suite",
+            onChange,
+          }}
+        />,
+      );
+      await user.click(screen.getByRole("button", { name: "Test Suite" }));
+      const input = screen.getByRole("textbox", { name: "Suite name" });
+      await user.clear(input);
+      await user.type(input, "Renamed");
+      expect(onChange).toHaveBeenCalled();
+    });
   });
 });

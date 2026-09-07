@@ -2,6 +2,7 @@ import {
   CommitGroup,
   EvalCase,
   EvalIteration,
+  EvalIterationCostBasis,
   EvalSuite,
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
@@ -12,6 +13,7 @@ import { computeIterationResult } from "./pass-criteria";
 import { toast } from "sonner";
 import { RESULT_STATUS } from "./constants";
 import { getBillingErrorMessage } from "@/lib/billing-entitlements";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * What servers can this suite see at run-time? Mirrors the precedence
@@ -41,17 +43,17 @@ export function getEffectiveSuiteServers(
     environment?: { servers?: string[] } | undefined;
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
-  }
+  },
 ): string[] {
   if (suite.serverAttachment) {
     return Array.from(
-      new Set(suite.serverAttachment.resolvedServerNames ?? [])
+      new Set(suite.serverAttachment.resolvedServerNames ?? []),
     );
   }
   const flatServers = suite.environment?.servers ?? [];
   const hostAttachmentServers =
     suite.hostAttachments?.flatMap(
-      (attachment) => attachment.resolvedServerNames ?? []
+      (attachment) => attachment.resolvedServerNames ?? [],
     ) ?? [];
   if (hostAttachmentServers.length === 0) {
     return flatServers;
@@ -76,7 +78,7 @@ function suiteDefaultRunPlan(serverIds: string[]): SuiteHostRunPlan {
 function hostAttachmentRunPlan(
   attachment: NonNullable<EvalSuite["hostAttachments"]>[number],
   fallbackServerIds: string[],
-  useAttachmentServerIds = true
+  useAttachmentServerIds = true,
 ): SuiteHostRunPlan {
   return {
     namedHostId: attachment.namedHostId,
@@ -94,7 +96,7 @@ export function buildSuiteHostRunPlans(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  fallbackServerIds = getEffectiveSuiteServers(suite)
+  fallbackServerIds = getEffectiveSuiteServers(suite),
 ): SuiteHostRunPlan[] {
   const suiteServerIds = fallbackServerIds;
   const attachments = suite.hostAttachments ?? [];
@@ -103,7 +105,7 @@ export function buildSuiteHostRunPlans(
     return [suiteDefaultRunPlan(suiteServerIds)];
   }
   return attachments.map((attachment) =>
-    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds)
+    hostAttachmentRunPlan(attachment, suiteServerIds, useAttachmentServerIds),
   );
 }
 
@@ -133,7 +135,7 @@ export function buildSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[]
+  fallbackServerIds?: string[],
 ): SuiteRunPlan[] {
   const envIds = suite.environmentIds ?? [];
   if (envIds.length > 0) {
@@ -168,7 +170,7 @@ export function countSuiteRunPlans(
     environmentIds?: string[];
   },
   environments?: Array<{ environmentId: string; name: string }>,
-  fallbackServerIds?: string[]
+  fallbackServerIds?: string[],
 ): number {
   return buildSuiteRunPlans(suite, environments, fallbackServerIds).length;
 }
@@ -179,12 +181,12 @@ export function getSelectedSuiteHostRunPlan(
     hostAttachments?: EvalSuite["hostAttachments"];
     serverAttachment?: EvalSuite["serverAttachment"];
   },
-  namedHostId: string | undefined
+  namedHostId: string | undefined,
 ): SuiteHostRunPlan {
   const suiteServerIds = getEffectiveSuiteServers(suite);
   const attachment = namedHostId
     ? suite.hostAttachments?.find(
-        (candidate) => candidate.namedHostId === namedHostId
+        (candidate) => candidate.namedHostId === namedHostId,
       )
     : null;
   if (!attachment) {
@@ -193,7 +195,7 @@ export function getSelectedSuiteHostRunPlan(
   return hostAttachmentRunPlan(
     attachment,
     suiteServerIds,
-    !suite.serverAttachment
+    !suite.serverAttachment,
   );
 }
 
@@ -202,7 +204,7 @@ export function formatTime(ts?: number) {
 }
 
 export function getIterationRecencyTimestamp(
-  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">
+  iteration: Pick<EvalIteration, "updatedAt" | "startedAt" | "createdAt">,
 ) {
   return iteration.updatedAt ?? iteration.startedAt ?? iteration.createdAt ?? 0;
 }
@@ -258,7 +260,7 @@ export type RunContextSource = {
 
 /** The Project Environment this run resolved at start, or `null` (legacy run). */
 export function runEnvironmentRef(
-  run: RunContextSource
+  run: RunContextSource,
 ): NonNullable<
   NonNullable<RunContextSource["configSnapshot"]>["environmentRef"]
 > | null {
@@ -296,7 +298,7 @@ export function runContextKey(run: RunContextSource): string {
  */
 export function runHostLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>
+  hostNamesById?: Map<string, string | null>,
 ): string | null {
   if (!run.namedHostId) return null;
   return hostNamesById?.get(run.namedHostId) ?? formatRunId(run.namedHostId);
@@ -313,7 +315,7 @@ export function runHostLabel(
  */
 export function runContextLabel(
   run: RunContextSource,
-  hostNamesById?: Map<string, string | null>
+  hostNamesById?: Map<string, string | null>,
 ): string | null {
   const ref = runEnvironmentRef(run);
   if (ref) return ref.name;
@@ -338,18 +340,28 @@ export function runRevisionLabel(run: RunContextSource): string | null {
  */
 export function buildHostNamesById(
   attachments:
-    | Array<{ namedHostId: string; hostName: string | null }>
-    | undefined,
-  projectHosts: Array<{ hostId: string; name: string }> | undefined
+    Array<{ namedHostId: string; hostName: string | null }> | undefined,
+  projectHosts:
+    Array<{ hostId: string; name: string; displayName?: string }> | undefined,
 ): Map<string, string | null> {
   const map = new Map<string, string | null>();
+  const projectHostById = new Map(
+    (projectHosts ?? []).map((host) => [host.hostId, host]),
+  );
   for (const host of projectHosts ?? []) {
-    map.set(host.hostId, host.name);
+    map.set(host.hostId, clientDisplayName(host));
   }
   for (const attachment of attachments ?? []) {
+    const projectHost = projectHostById.get(attachment.namedHostId);
+    const attachmentMatchesRawName =
+      projectHost !== undefined &&
+      attachment.hostName?.trim().toLowerCase() ===
+        projectHost.name.trim().toLowerCase();
     map.set(
       attachment.namedHostId,
-      attachment.hostName ?? map.get(attachment.namedHostId) ?? null
+      projectHost && (attachment.hostName === null || attachmentMatchesRawName)
+        ? clientDisplayName(projectHost)
+        : (attachment.hostName ?? map.get(attachment.namedHostId) ?? null),
     );
   }
   return map;
@@ -379,7 +391,7 @@ export function hasEnvironmentRun(runs: RunContextSource[]): boolean {
  * `"rev 2–7"` when they span. `null` when the group has no environment runs.
  */
 export function runContextRevisionSummary(
-  runs: RunContextSource[]
+  runs: RunContextSource[],
 ): string | null {
   const revisions = runs
     .map((run) => runEnvironmentRef(run)?.revision)
@@ -467,7 +479,7 @@ export function getTemplateKey(test: {
 export function aggregateSuite(
   _suite: EvalSuite,
   cases: EvalCase[],
-  iterations: EvalIteration[]
+  iterations: EvalIteration[],
 ): SuiteAggregate {
   // Backend already filters iterations by suite, so we use them directly
   const totals = iterations.reduce(
@@ -485,7 +497,7 @@ export function aggregateSuite(
       acc.tokens += it.tokensUsed || 0;
       return acc;
     },
-    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 }
+    { passed: 0, failed: 0, cancelled: 0, pending: 0, tokens: 0 },
   );
 
   const byCaseMap = new Map<string, SuiteAggregate["byCase"][number]>();
@@ -495,12 +507,12 @@ export function aggregateSuite(
     if (!byCaseMap.has(id)) {
       const c = cases.find((x) => x._id === id);
       const caseIterations = iterations.filter(
-        (iter) => iter.testCaseId === id
+        (iter) => iter.testCaseId === id,
       );
       const snapshots = caseIterations
         .map((iter) => iter.testCaseSnapshot)
         .filter((snapshot): snapshot is NonNullable<typeof snapshot> =>
-          Boolean(snapshot?.model || snapshot?.provider)
+          Boolean(snapshot?.model || snapshot?.provider),
         );
       // ONE representative iteration for the whole row. Title and model must be
       // read from the SAME iteration: sourcing the title from the first
@@ -525,9 +537,9 @@ export function aggregateSuite(
           return JSON.stringify(
             snapshot?.model || snapshot?.provider
               ? [snapshot.provider ?? "", snapshot.model ?? ""]
-              : [c?.models?.[0]?.provider ?? "", c?.models?.[0]?.model ?? ""]
+              : [c?.models?.[0]?.provider ?? "", c?.models?.[0]?.model ?? ""],
           );
-        })
+        }),
       );
       const hasMixedModels = modelKeys.size > 1;
       // Count total iterations for this test case
@@ -600,19 +612,19 @@ export function aggregateSuite(
 export function sortExploreCasesBySignal(
   cases: EvalCase[],
   aggregate: SuiteAggregate | null,
-  iterations: EvalIteration[]
+  iterations: EvalIteration[],
 ): EvalCase[] {
   const byCaseId = new Map(
-    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? []
+    aggregate?.byCase.map((row) => [row.testCaseId, row]) ?? [],
   );
 
   const latestIterationForCase = (
-    testCaseId: string
+    testCaseId: string,
   ): EvalIteration | undefined => {
     const forCase = iterations.filter((i) => i.testCaseId === testCaseId);
     if (forCase.length === 0) return undefined;
     return forCase.reduce((a, b) =>
-      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b
+      (a.updatedAt ?? 0) >= (b.updatedAt ?? 0) ? a : b,
     );
   };
 
@@ -680,6 +692,7 @@ export function evalStatusLeftBorderClasses(result: string): string {
       return "border-l-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "border-l-warning/50";
     case RESULT_STATUS.CANCELLED:
       return "border-l-muted";
@@ -705,6 +718,7 @@ export function evalStatusMiniBarClasses(result: string): string {
       return "bg-destructive/50";
     case RESULT_STATUS.PENDING:
     case "running":
+    case "grading":
       return "bg-warning/50 animate-pulse";
     case RESULT_STATUS.CANCELLED:
       return "bg-muted-foreground/50";
@@ -717,7 +731,7 @@ export function evalStatusMiniBarClasses(result: string): string {
 
 /** Left `border-l-*` for a suite overview row from `latestRun`. */
 export function evalOverviewEntryLeftBorderClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "border-l-transparent";
@@ -737,7 +751,7 @@ export function evalOverviewEntryLeftBorderClass(
 }
 
 export function evalOverviewEntryMiniBarClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "bg-muted-foreground/25";
@@ -758,7 +772,7 @@ export function evalOverviewEntryMiniBarClass(
  */
 /** Selected nested row: inset ring + tint so left status border stays the outcome rail. */
 export function evalOverviewEntrySelectedRowClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) {
@@ -777,7 +791,7 @@ export function evalOverviewEntrySelectedRowClass(
 }
 
 export function evalOverviewEntryOutcomeTitle(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
@@ -793,7 +807,7 @@ export function evalOverviewEntryOutcomeTitle(
 
 /** Short status label for compact list rows (sidebar). */
 export function evalOverviewEntryLastRunStatusLabel(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "No runs yet";
@@ -810,7 +824,7 @@ export function evalOverviewEntryLastRunStatusLabel(
 
 /** Tailwind classes for {@link evalOverviewEntryLastRunStatusLabel}. */
 export function evalOverviewEntryLastRunStatusClass(
-  entry: EvalSuiteOverviewEntry
+  entry: EvalSuiteOverviewEntry,
 ): string {
   const r = entry.latestRun;
   if (!r) return "text-muted-foreground";
@@ -851,7 +865,7 @@ export type SuitePassRateTrendDisplay = {
  * Prepare pass-rate trend for sidebar sparklines: last N segments, optional overflow badge, summary text.
  */
 export function formatSuitePassRateTrendForDisplay(
-  rawTrend: number[] | undefined | null
+  rawTrend: number[] | undefined | null,
 ): SuitePassRateTrendDisplay | null {
   if (!rawTrend?.length) return null;
   const len = rawTrend.length;
@@ -859,7 +873,7 @@ export function formatSuitePassRateTrendForDisplay(
   const percents = slice.map(toPercentEvalTrend);
   const olderHiddenCount = Math.max(
     0,
-    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS
+    len - SUITE_PASS_RATE_TREND_VISIBLE_SEGMENTS,
   );
   const showOlderRunsBadge = len > SUITE_PASS_RATE_TREND_BADGE_THRESHOLD;
   let good = 0;
@@ -940,7 +954,7 @@ export const formatters = {
  * the ones still asking for attention).
  */
 export function orderCommitGroupRunsByOutcome(
-  runs: EvalSuiteRun[]
+  runs: EvalSuiteRun[],
 ): EvalSuiteRun[] {
   const failed: EvalSuiteRun[] = [];
   const running: EvalSuiteRun[] = [];
@@ -972,7 +986,7 @@ export function orderCommitGroupRunsByOutcome(
  */
 export function getRunMetricSource(
   run: { source?: EvalSuiteRun["source"] } | null | undefined,
-  suiteSource?: "ui" | "sdk"
+  suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
   return (run?.source ?? suiteSource) === "sdk" ? "sdk" : "ui";
 }
@@ -983,7 +997,7 @@ export function getRunMetricSource(
  */
 export function getLatestRunMetricSource(
   runs: EvalSuiteRun[],
-  suiteSource?: "ui" | "sdk"
+  suiteSource?: "ui" | "sdk",
 ): "ui" | "sdk" {
   let latest: EvalSuiteRun | null = null;
   let latestTs = -1;
@@ -1002,7 +1016,7 @@ export function getLatestRunMetricSource(
  * Runs without a commitSha go into a "manual" group.
  */
 export function groupRunsByCommit(
-  overview: EvalSuiteOverviewEntry[]
+  overview: EvalSuiteOverviewEntry[],
 ): CommitGroup[] {
   const buckets = new Map<
     string,
@@ -1040,7 +1054,14 @@ export function groupRunsByCommit(
       const ts = run.completedAt ?? run.createdAt;
       if (ts > latestTimestamp) latestTimestamp = ts;
       if (!branch && run.ciMetadata?.branch) branch = run.ciMetadata.branch;
-      if (run.status === "running" || run.status === "pending")
+      // `grading` counts as running: the trials are done but the verdict is
+      // not, and a commit whose only run is held must not fall through every
+      // bucket to `passed` below.
+      if (
+        run.status === "running" ||
+        run.status === "pending" ||
+        run.status === "grading"
+      )
         summary.running++;
       else if (run.result === "passed") summary.passed++;
       else if (run.result === "failed") summary.failed++;
@@ -1104,7 +1125,7 @@ export function formatRelativeTime(timestamp?: number): string {
  * Group overview entries by tag and compute aggregated stats per tag.
  */
 export function groupSuitesByTag(
-  overview: EvalSuiteOverviewEntry[]
+  overview: EvalSuiteOverviewEntry[],
 ): TagGroupAggregate[] {
   const buckets = new Map<string, EvalSuiteOverviewEntry[]>();
 
@@ -1221,21 +1242,21 @@ export function iterationTokensP95(items: EvalIteration[]): number | null {
 /** Total ordering on runs: `runNumber` primary, `createdAt` as tiebreaker. */
 export function compareRunsBySequence(
   a: EvalSuiteRun,
-  b: EvalSuiteRun
+  b: EvalSuiteRun,
 ): number {
   return a.runNumber - b.runNumber || a.createdAt - b.createdAt;
 }
 
 /** Highest `runNumber` among completed runs (Convex `listTestSuiteRuns` is newest-first but we still sort defensively). */
 export function pickLatestCompletedRun(
-  runs: EvalSuiteRun[]
+  runs: EvalSuiteRun[],
 ): EvalSuiteRun | null {
   const completed = runs.filter((r) => r.status === "completed");
   if (completed.length === 0) {
     return null;
   }
   return completed.reduce((best, r) =>
-    r.runNumber > best.runNumber ? r : best
+    r.runNumber > best.runNumber ? r : best,
   );
 }
 
@@ -1254,14 +1275,163 @@ export function evalSuitePinsSandboxImage(
   suite: Pick<EvalSuite, "environment" | "environmentIds">,
   attachedEnvironments:
     | Array<{ environmentId: string; computerEnvironmentId?: string | null }>
-    | undefined
+    | undefined,
 ): boolean {
   if (suite.environment?.computerEnvironmentId) return true;
   return (suite.environmentIds ?? []).some((environmentId) =>
     Boolean(
       (attachedEnvironments ?? []).find(
-        (environment) => environment.environmentId === environmentId
-      )?.computerEnvironmentId
-    )
+        (environment) => environment.environmentId === environmentId,
+      )?.computerEnvironmentId,
+    ),
   );
+}
+
+// ── Cost ────────────────────────────────────────────────────────────────────
+//
+// One formatter, one em dash rule, one place to change either. Hoisted out of
+// `run-diff-view.tsx` when cost stopped being a diff-only concern and became
+// result data on iterations, cases, runs and the metric strip.
+
+/** The em dash every surface shows when no cost was observed. */
+export const COST_UNAVAILABLE = "—";
+
+/** The smallest amount four decimals can state without rounding to zero. */
+const SMALLEST_SHOWN_COST = 0.0001;
+
+/**
+ * A cost, in dollars.
+ *
+ * Sub-cent amounts get four decimals rather than rounding to `$0.00`: a
+ * single eval iteration frequently costs a fraction of a cent, and showing it
+ * as zero is the same lie as showing an unpriced one as zero.
+ *
+ * Below what four decimals can state, the answer is a BOUND (`<$0.0001`), not
+ * a rounded zero. Four decimals alone would print `$0.0000` for a real
+ * fraction of a cent — the same lie one decimal place further down, and the
+ * one place this surface must never tell. A bound stays true at any
+ * magnitude and stays short enough for a table cell, which chasing the first
+ * significant digit of, say, 1e-9 would not.
+ */
+export function formatCost(value: number): string {
+  const sign = value < 0 ? "-" : "";
+  const abs = Math.abs(value);
+  if (abs > 0 && abs < SMALLEST_SHOWN_COST) {
+    // The bound points the way the number lies: a tiny negative is GREATER
+    // than -$0.0001, and `-<$0.0001` would read as neither.
+    const bound = `$${SMALLEST_SHOWN_COST.toFixed(4)}`;
+    return sign === "-" ? `>-${bound}` : `<${bound}`;
+  }
+  if (abs > 0 && abs < 0.01) {
+    return `${sign}$${abs.toFixed(4)}`;
+  }
+  return `${sign}$${abs.toFixed(2)}`;
+}
+
+/**
+ * A cost that may not exist. `undefined` / `null` render as an em dash,
+ * NEVER as `$0.00`.
+ *
+ * This is the single rule that keeps the whole surface honest, and it is the
+ * same one the organization Usage card already applies: a cost we did not
+ * observe must not be presented as a cost of nothing.
+ */
+export function formatCostOrDash(value: number | null | undefined): string {
+  return typeof value === "number" ? formatCost(value) : COST_UNAVAILABLE;
+}
+
+/**
+ * Why this row has no cost, phrased for the person reading it.
+ *
+ * Returns `null` when a cost IS present and needs no explanation — except for
+ * a runner-reported one, which is real but not ours, and says so.
+ */
+export function costUnavailableReason(
+  basis: EvalIterationCostBasis | undefined,
+  /**
+   * The cost that IS on screen, when there is one.
+   *
+   * Without it a trial priced by an older writer — a number, but no basis
+   * recorded — got "No cost was recorded for this trial." hovering over its
+   * own price. The runner note still applies to a present cost, because that
+   * one explains whose measurement it is rather than why it is missing.
+   */
+  cost?: number | null,
+): string | null {
+  if (basis?.source === "sdk_runner") {
+    return "Reported by your runner — MCPJam did not price this run.";
+  }
+  if (typeof cost === "number") return null;
+  if (basis?.status === "estimated") return null;
+  switch (basis?.reason) {
+    case "no_pricing":
+      return "Not an MCPJam-billed model, so there is no cost to report.";
+    case "harness_mixed_models":
+      return "Harness runs mix models within a turn; their cost arrives with billed attribution.";
+    case "no_tokens":
+      return "This trial reported no token usage.";
+    default:
+      return "No cost was recorded for this trial.";
+  }
+}
+
+/** True when a cost figure came from a customer's runner, not from MCPJam. */
+export function isRunnerReportedCost(
+  basis: EvalIterationCostBasis | undefined,
+): boolean {
+  return basis?.source === "sdk_runner";
+}
+
+/**
+ * Total cost across iterations, with the COVERAGE that produced it.
+ *
+ * Coverage travels with the sum because the two are only meaningful
+ * together: summing the priced iterations and skipping the rest yields a
+ * number indistinguishable from a complete one, which is exactly how a
+ * partially-priced run reads as a cheap run.
+ *
+ * `totalUsd` is null when nothing was priced — not 0.
+ *
+ * A RUNNER-REPORTED iteration is INCLUDED in the total and flagged, rather
+ * than dropped. The money was spent, so excluding it would understate what
+ * the run cost — and would make the total disagree with the very rows a
+ * reader can see summing to it. What it must not do is pass silently as
+ * MCPJam's own measurement, which is what `hasRunnerReported` is for.
+ */
+export function sumIterationCost(
+  iterations: Array<Pick<EvalIteration, "usage">>,
+): {
+  totalUsd: number | null;
+  costedIterations: number;
+  totalIterations: number;
+  /** True when any contributing figure came from a customer's own runner. */
+  hasRunnerReported: boolean;
+} {
+  let totalUsd: number | null = null;
+  let costedIterations = 0;
+  let hasRunnerReported = false;
+  for (const iteration of iterations) {
+    const cost = iteration.usage?.estimatedCostUsd;
+    if (typeof cost !== "number") continue;
+    totalUsd = (totalUsd ?? 0) + cost;
+    costedIterations += 1;
+    if (isRunnerReportedCost(iteration.usage?.costBasis)) {
+      hasRunnerReported = true;
+    }
+  }
+  return {
+    totalUsd,
+    costedIterations,
+    totalIterations: iterations.length,
+    hasRunnerReported,
+  };
+}
+
+/** Per-iteration costs, for percentiles. Uncosted iterations are omitted. */
+export function iterationCosts(
+  iterations: Array<Pick<EvalIteration, "usage">>,
+): number[] {
+  return iterations
+    .map((iteration) => iteration.usage?.estimatedCostUsd)
+    .filter((value): value is number => typeof value === "number");
 }

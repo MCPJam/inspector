@@ -429,6 +429,11 @@ export const evalSuiteFileCaseSchema = z
     /** Optional analytics grouping label. `null` explicitly clears it. */
     intent: caseIntentUpdateSchema.optional(),
     /**
+     * Authored case kind. Absent means the editor derives it from
+     * matchOptions. `null` explicitly clears it.
+     */
+    kind: z.enum(["capability", "regression"]).nullable().optional(),
+    /**
      * The authored steps, reused VERBATIM from the canonical step union — this
      * is not a suite-file dialect of steps. Step `id`s are therefore required
      * here too: they carry per-step history and make the round-trip exact.

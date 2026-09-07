@@ -7,6 +7,7 @@ import { useComputersEnabled } from "@/hooks/useComputersEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import type { ProjectEnvironmentView } from "@/hooks/useProjectEnvironments";
 import type { EnvironmentLabelContext } from "@/lib/environment-label";
+import { clientDisplayName } from "@/lib/client-display-name";
 
 /**
  * The name lookups `@/lib/environment-label` needs, fetched once per SURFACE.
@@ -71,7 +72,7 @@ export function useEnvironmentLabelContext(
   );
 
   const hostNamesById = useMemo(
-    () => new Map(hosts.map((host) => [host.hostId, host.name])),
+    () => new Map(hosts.map((host) => [host.hostId, clientDisplayName(host)])),
     [hosts]
   );
   const imageNamesById = useMemo(

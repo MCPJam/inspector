@@ -146,7 +146,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       useMcpjamAgentSession({
         chatSessionId: SESSION_ID,
         projectId: "project-1",
-      })
+      }),
     );
   }
 
@@ -206,7 +206,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     // `ui_ask_user` be cancelled per conversation.
     expect(def.execute).toHaveBeenCalledWith(
       { target: "playground" },
-      { toolCallId: "tc-1", scope: SESSION_ID }
+      { toolCallId: "tc-1", scope: SESSION_ID },
     );
     expect(mockState.addToolOutput).toHaveBeenCalledWith({
       tool: "ui_navigate",
@@ -246,7 +246,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
 
     expect(def.execute).toHaveBeenCalled();
     expect(mockState.addToolOutput).toHaveBeenCalledWith(
-      expect.objectContaining({ toolCallId: "tc-unmount" })
+      expect.objectContaining({ toolCallId: "tc-unmount" }),
     );
   });
 
@@ -294,7 +294,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     try {
       render();
       await waitFor(() =>
-        expect(mockState.setMessages).toHaveBeenCalledWith(hydrated)
+        expect(mockState.setMessages).toHaveBeenCalledWith(hydrated),
       );
     } finally {
       fetchSpy.mockRestore();
@@ -310,7 +310,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
     vi.mocked(getChatHistoryDetail).mockReturnValue(
       new Promise((resolve) => {
         releaseHydration = resolve;
-      }) as any
+      }) as any,
     );
     const hydrated = [{ id: "old-1", role: "user", parts: [] }];
     vi.mocked(transcriptToUIMessages).mockReturnValue(hydrated as any);
@@ -331,7 +331,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
         expect(mockState.setMessages).toHaveBeenCalledWith([
           ...hydrated,
           ...live,
-        ])
+        ]),
       );
     } finally {
       fetchSpy.mockRestore();
@@ -365,7 +365,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       const { rerender } = renderHook(
         ({ id }: { id: string }) =>
           useMcpjamAgentSession({ chatSessionId: id, projectId: "project-1" }),
-        { initialProps: { id: "session-live" } }
+        { initialProps: { id: "session-live" } },
       );
       await new Promise((r) => setTimeout(r, 0));
       expect(mockState.setMessages).not.toHaveBeenCalled();
@@ -373,7 +373,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       // Switch in place to a fresh resumed session → must seed.
       rerender({ id: "session-fresh" });
       await waitFor(() =>
-        expect(mockState.setMessages).toHaveBeenCalledWith(hydrated)
+        expect(mockState.setMessages).toHaveBeenCalledWith(hydrated),
       );
     } finally {
       fetchSpy.mockRestore();
@@ -395,7 +395,7 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
       expect.objectContaining({
         toolCallId: "tc-2",
         output: expect.objectContaining({ isError: true }),
-      })
+      }),
     );
   });
 
@@ -419,6 +419,9 @@ describe("useMcpjamAgentSession — WebMCP UI tools", () => {
 
       expect(mockState.sendMessage).toHaveBeenCalledTimes(1);
       const payload = mockState.sendMessage.mock.calls[0][0];
+      expect(payload.metadata).toEqual({
+        timestampMs: expect.any(Number),
+      });
       expect(payload.parts).toEqual([
         {
           type: UI_CONTEXT_PART_TYPE,

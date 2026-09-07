@@ -27,6 +27,7 @@ import {
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
   listEvalSuitesOperation,
+  updateEvalSuiteOperation,
   listProjectPluginsOperation,
   listProjectServersOperation,
   listProjectsOperation,
@@ -861,6 +862,59 @@ describe("listEvalSuiteRunsOperation", () => {
   });
 });
 
+
+describe("updateEvalSuiteOperation", () => {
+  function makePatchClient(): {
+    client: PlatformApiClient;
+    patchBodies: Array<Record<string, unknown>>;
+  } {
+    const { client, fetchMock } = makeClient();
+    const fallback = fetchMock.getMockImplementation();
+    const patchBodies: Array<Record<string, unknown>> = [];
+    fetchMock.mockImplementation(
+      async (target: unknown, init?: RequestInit) => {
+        const path = new URL(String(target)).pathname;
+        if (
+          /^\/api\/v1\/projects\/[^/]+\/eval-suites\/[^/]+$/.test(path) &&
+          init?.method === "PATCH"
+        ) {
+          patchBodies.push(
+            JSON.parse(String(init.body)) as Record<string, unknown>
+          );
+          return Response.json({ ...SUITES[0], revisionNumber: 8 });
+        }
+        return fallback!(target, init);
+      }
+    );
+    return { client, patchBodies };
+  }
+
+  it("forwards expectedRevisionNumber so the edit is a compare-and-set", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed", expectedRevisionNumber: 7 },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([
+      { name: "renamed", expectedRevisionNumber: 7 },
+    ]);
+  });
+
+  it("omits expectedRevisionNumber when the caller did not supply one", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      { suite: "smoke", name: "renamed" },
+      { client }
+    );
+
+    expect(patchBodies).toEqual([{ name: "renamed" }]);
+    expect(patchBodies[0]).not.toHaveProperty("expectedRevisionNumber");
+  });
+});
+
 describe("runEvalSuiteOperation", () => {
   it("omits serverIds so the platform connects the suite's saved selection", async () => {
     const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
@@ -901,9 +955,14 @@ describe("runEvalSuiteOperation", () => {
     const createCall = fetchMock.mock.calls.find(([target]) =>
       String(target).endsWith("/eval-runs")
     );
+    // `serverNames` rides along PAIRED WITH `serverIds` by index. A launch
+    // that re-authors the suite's saved selection persists these names; when
+    // they were missing the platform stored the raw ids, and every surface
+    // that lists the suite showed an opaque id where the server name belongs.
     expect(JSON.parse(String((createCall?.[1] as RequestInit).body))).toEqual({
       suiteId: "suite-1",
       serverIds: ["server-http", "server-disabled"],
+      serverNames: ["Echo", "Retired"],
     });
   });
 
@@ -1068,6 +1127,24 @@ describe("runEvalCaseOperation", () => {
     });
   });
 
+  it("pairs serverNames with an explicit server override", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await runEvalCaseOperation.execute(
+      { suite: "Smoke", case: "echo works", servers: ["echo"] },
+      { client }
+    );
+
+    const runCall = fetchMock.mock.calls.find(
+      (call) =>
+        String(call[0]).endsWith("/eval-runs") &&
+        (call[1] as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((runCall?.[1] as RequestInit).body));
+    expect(body.serverIds).toEqual(["server-http"]);
+    expect(body.serverNames).toEqual(["Echo"]);
+  });
+
   it("requires a suite and a case", () => {
     expect(
       runEvalCaseOperation.inputSchema.safeParse({ suite: "Smoke" }).success
@@ -1137,6 +1214,65 @@ describe("createEvalSuiteOperation", () => {
         expect.objectContaining({ kind: "assert" }),
       ],
     });
+  });
+
+  it("attaches the named clients so the suite is not authored without one", async () => {
+    // An API-authored suite had no way to name its client: it read back with
+    // an empty Client everywhere it was listed, and `run_eval_suite`'s host
+    // selector — which only runs hosts ATTACHED to the suite — had nothing to
+    // select.
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        hosts: ["Claude", "host-chatgpt"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body.hosts).toEqual([{ host: "Claude" }, { host: "host-chatgpt" }]);
+  });
+
+  it("omits hosts entirely when no client is named", async () => {
+    const { client, fetchMock } = makeClient({ servers: HTTP_SERVERS });
+
+    await createEvalSuiteOperation.execute(
+      {
+        name: "Authored smoke",
+        servers: ["echo"],
+        model: "anthropic/claude-haiku-4.5",
+        cases: [
+          {
+            title: "echo works",
+            steps: [{ id: "s1", kind: "prompt", prompt: "say hi" }],
+          },
+        ],
+      },
+      { client }
+    );
+
+    const createCall = fetchMock.mock.calls.find(
+      ([target, init]) =>
+        String(target).endsWith("/eval-suites") &&
+        (init as RequestInit | undefined)?.method === "POST"
+    );
+    const body = JSON.parse(String((createCall?.[1] as RequestInit).body));
+    expect(body).not.toHaveProperty("hosts");
   });
 
   it("rejects stdio servers before creating the suite", async () => {
@@ -1913,6 +2049,7 @@ describe("operation catalog consistency", () => {
     get_conformance_report: { run: "r" },
     list_eval_suites: {},
     list_eval_suite_runs: { suite: "s" },
+    list_eval_suite_revisions: { suite: "s" },
     run_eval_suite: { suite: "s" },
     run_eval_case: { suite: "s", case: "c" },
     create_eval_suite: {
@@ -1947,6 +2084,15 @@ describe("operation catalog consistency", () => {
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
+    get_eval_run_route_facts: { project: "p", runId: "r" },
+    propose_eval_description_rewrite: {
+      project: "p",
+      runId: "r",
+      toolName: "t",
+    },
+    start_eval_description_experiment: { project: "p", experiment: "e" },
+    get_eval_description_experiment: { project: "p", experiment: "e" },
     list_eval_suite_stage_analytics: { project: "p", suite: "s" },
     // baseRunId is deliberately absent from the minimal input: omitting it is
     // the common path (compare against the nearest completed predecessor).
@@ -2224,6 +2370,12 @@ describe("operation catalog consistency", () => {
       // Stops a pending connection, releasing the slot it holds.
       "cancel_project_server_connection",
       "request_eval_run_judge",
+      // Description-rewrite experiment. Propose spends a small model budget
+      // to draft the rewrite; start launches two replay arms and spends
+      // eval-iteration credits. `get_eval_description_experiment` stays a
+      // read — it only polls the receipt.
+      "propose_eval_description_rewrite",
+      "start_eval_description_experiment",
       "connect_eval_check_repo",
       "create_eval_suite",
       "set_eval_suite_environments",

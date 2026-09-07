@@ -35,6 +35,28 @@ export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
 export const DEFAULT_QUEUE_KEY = "@session";
 
 /**
+ * The daemon's WIRE compatibility number, and the only thing a reuse decision
+ * may key off.
+ *
+ * Not the bundle hash. Every edit anywhere in the daemon's import graph rotates
+ * that hash, and a hash mismatch used to mean "relaunch now" — so a deploy
+ * carrying a one-line comment change killed every live hosted browser
+ * mid-session, including one somebody was typing a password into. During a wave
+ * of daemon work that is most deploys.
+ *
+ * This number answers the question that actually matters: can the inspector
+ * talk to the daemon that is already running? Bump it ONLY when the wire or a
+ * command's semantics change incompatibly — a new endpoint, a new optional
+ * field, a new frame kind negotiated per stream are all ADDITIVE and must not
+ * bump it. A hash that differs while this matches is an upgrade that can wait
+ * for the session to be idle (`browser-session.ts`, `upgradeAvailable`).
+ *
+ * History:
+ *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ */
+export const BROWSERD_PROTOCOL_VERSION = 1;
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.
@@ -59,6 +81,30 @@ export const BROWSERD_OBSERVATION_VIEWPORT = {
  * after your action" — a no-op that is indistinguishable from a click that
  * hit a dead area. Refusing is the only version the model can recover from.
  */
+/**
+ * The X display a hosted box draws on, derived from the viewport above.
+ *
+ * DERIVED, not configured: the "three places must agree" rule for the
+ * observation viewport now has a fourth member, and a display that disagreed
+ * with the page would show a browser painting past the edge of what is
+ * captured, with nothing in either repository to say so.
+ *
+ * `dpr` is 1 and staying there until a measurement says otherwise. Raising it
+ * is a MEASUREMENT, never a promise: the encoder's cost is quadratic in it, the
+ * desktop box has 2 vCPU, and the gate is x264 under 60% of one core at 20fps
+ * with Chromium and xfce on the same machine. `MCPJAM_HOSTED_BROWSER_DPR` is
+ * how a deployment tries a candidate without shipping one.
+ *
+ * The MODEL's coordinate space is unaffected either way: every capture it sees
+ * is CSS pixels (`scale: "css"`), and `isPointInViewport` still refuses
+ * anything past 1023×767.
+ */
+export const HOSTED_DISPLAY = {
+  dpr: 1,
+  width: BROWSERD_OBSERVATION_VIEWPORT.width,
+  height: BROWSERD_OBSERVATION_VIEWPORT.height,
+} as const;
+
 export function isPointInViewport(x: number, y: number): boolean {
   return (
     Number.isFinite(x) &&
@@ -123,6 +169,7 @@ export type BrowserAction =
       kind: "observe";
       mode:
         | "screenshot"
+        | "text"
         | "dom"
         | "a11y"
         | "console"
@@ -131,17 +178,53 @@ export type BrowserAction =
       /**
        * `a11y` only: scope the tree to the element this CSS selector matches,
        * instead of the whole page.
-       *
-       * This is the retrieval verb the L9 omission marker names. When the
-       * budget drops a subtree it tells the caller to re-observe with
-       * `{mode:"a11y", rootSelector:"<selector>"}`; without this field that
-       * instruction would point at a parameter that does not exist, and an
-       * omitted subtree would be unrecoverable — which is worse than
-       * truncating, because the marker promises otherwise.
        */
       rootSelector?: string;
+      /**
+       * `a11y` only: scope the tree to a ref from THIS tab's last observation.
+       *
+       * The retrieval verb the L9 omission marker names. It used to name
+       * `rootSelector` and a placeholder selector, which an AX node cannot
+       * supply — so the instruction pointed at something the caller could not
+       * type and an omitted subtree was, in practice, unrecoverable. A ref is
+       * the one handle on this tree the caller provably has, because the same
+       * observation handed it out.
+       */
+      rootRef?: string;
+      /**
+       * `a11y` only: `interactive` (default) keeps what can be acted on and the
+       * structure leading to it; `all` keeps the prose too.
+       *
+       * Interactive by default because that is what a tree is FOR here — the
+       * model reads a page's words with `{mode:"text"}`, and a budget spent on
+       * paragraphs is a budget not spent on the controls.
+       */
+      filter?: "interactive" | "all";
     }
-  | { kind: "webmcp_invoke"; toolKey: string; input: unknown }
+  | {
+      kind: "webmcp_invoke";
+      /**
+       * The tool's own name, as `observe {mode:"webmcp_tools"}` reported it.
+       *
+       * A NAME, not a composite key. The daemon resolves it against the live
+       * page, and the V1 layer's own `origin::name` key means nothing here —
+       * sending a composite looks for a tool literally called that, finds
+       * nothing, and answers `webmcp_tool_gone` for a tool sitting right
+       * there. Use `frameId` to disambiguate instead.
+       */
+      toolKey: string;
+      /**
+       * Invoke in THIS frame, when it still offers the tool.
+       *
+       * Name resolution prefers the main frame, so a subframe's tool would
+       * otherwise be shadowed by a same-named main-frame one. Optional, and
+       * safely ignored by an older daemon: resolution by name is the fallback
+       * on both sides, so a new caller works against an old daemon and an old
+       * caller against a new one.
+       */
+      frameId?: string;
+      input: unknown;
+    }
   | { kind: "webmcp_cancel"; invocationId: string };
 
 /**
@@ -310,6 +393,10 @@ export const BROWSERD_ERROR_CODES = [
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
   "stale_ref",
+  /** A ref this tab's last observation never issued. */
+  "unknown_ref",
+  /** The page could not answer an accessibility tree at all. */
+  "a11y_unavailable",
   "webmcp_unsupported",
   "webmcp_error",
   /** A dialog is open and waiting for the person who holds the lease. */

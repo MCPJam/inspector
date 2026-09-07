@@ -105,7 +105,8 @@ function write(value: unknown, ancestors: Set<object>): string {
       // resulting `join` emits empty fields — `[1,,3]` would canonicalize to
       // `"[1,,3]"`, which is not JSON and lets distinct configs collide.
       const entries: string[] = [];
-      for (let index = 0; index < value.length; index += 1) {
+      const length = value.length;
+      for (let index = 0; index < length; index += 1) {
         const entry = value[index];
         entries.push(entry === undefined ? "null" : write(entry, ancestors));
       }

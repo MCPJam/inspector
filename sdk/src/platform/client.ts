@@ -12,7 +12,10 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
@@ -36,6 +39,7 @@ import type {
   PlatformFileOwnedEvalSuiteSynced,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalStepResult,
   PlatformComputerAttached,
   PlatformComputerReset,
@@ -53,6 +57,7 @@ import type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformSpendBudget,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
   PlatformTraceDestinationDeleted,
@@ -1993,6 +1998,165 @@ export class PlatformApiClient {
   }
 
   /**
+   * ONE run's suite quality-gate report, evaluated by the platform against
+   * the suite's stored policy.
+   *
+   * A 404 after the run itself was retrieved is NEVER "no policy" —
+   * `not_configured` is a 200 report. A deployment that predates the route
+   * is FEATURE_NOT_SUPPORTED (bare 404 or 501), not proof the suite has
+   * none.
+   */
+  getEvalRunGate(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunGate> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's materialized route-facts document, addressed by run.
+   *
+   * `404` means one of two different things, and the API does not distinguish
+   * them on purpose: the run is not visible to this caller, or it has no
+   * document. Both are UNMEASURED to a reader, and separating them would leak
+   * the existence of runs in projects the caller cannot see.
+   *
+   * NOT backfilled, same as stage analytics: a run that terminalized before
+   * the materializer shipped has no row, and that absence is the honest
+   * answer. No client-side reconstruction exists to fall back on, by design.
+   */
+  getEvalRunRouteFacts(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRouteFacts> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft a rewritten tool description from a finished run's failed
+   * trials. SPENDS a small model budget; poll
+   * {@link getEvalDescriptionExperiment} rather than re-proposing.
+   *
+   * HTTP route lands in a follow-up. This client method is the typed
+   * half so a later inspector can call it.
+   */
+  proposeEvalDescriptionRewrite(
+    params: {
+      projectId: string;
+      runId: string;
+      toolName: string;
+      caseIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {
+        body: {
+          toolName: params.toolName,
+          ...(params.caseIds ? { caseIds: params.caseIds } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Launch the two-arm description experiment (original + rewrite).
+   * SPENDS eval-iteration credits: planned trials = cases × R × 2,
+   * refused over the cap (default 200, hard 400).
+   */
+  startEvalDescriptionExperiment(
+    params: {
+      projectId: string;
+      experimentId: string;
+      caseScope?: "all" | "affected";
+      iterationOverride?: number;
+      maxTrials?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}/start`,
+      {
+        body: {
+          ...(params.caseScope !== undefined
+            ? { caseScope: params.caseScope }
+            : {}),
+          ...(params.iterationOverride !== undefined
+            ? { iterationOverride: params.iterationOverride }
+            : {}),
+          ...(params.maxTrials !== undefined
+            ? { maxTrials: params.maxTrials }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * One description-experiment document, including its report when
+   * materialised. `404` means the experiment is not visible to this
+   * caller.
+   */
+  getEvalDescriptionExperiment(
+    params: { projectId: string; experimentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Experiments already attached to a source run. Empty list when none
+   * have been proposed — that is unmeasured, not an error.
+   */
+  listEvalDescriptionExperimentsForRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<{ items: PlatformEvalDescriptionExperiment[] }> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {},
+      options
+    );
+  }
+
+  /**
    * Request (or with `force`, regenerate) the eval run's insights —
    * serverQuality behind the common envelope. SPENDS the org's model budget;
    * poll `getEvalRun().insights` rather than re-requesting.
@@ -2099,6 +2263,31 @@ export class PlatformApiClient {
           outagePolicy: params.outagePolicy,
         },
       },
+      options
+    );
+  }
+
+  /**
+   * One page of a suite's settings history, newest first.
+   *
+   * Rows carry no snapshots; this answers "what changed and when", not "what
+   * did the whole configuration look like".
+   */
+  listEvalSuiteRevisions(
+    params: {
+      projectId: string;
+      suiteId: string;
+      cursor?: string;
+      limit?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformPage<PlatformEvalSuiteRevision>> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-suites/${encodeURIComponent(params.suiteId)}/revisions`,
+      { query: { cursor: params.cursor, limit: params.limit } },
       options
     );
   }
@@ -3322,6 +3511,80 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Read an organization's spend budget.
+   *
+   * Any member may read it. A member who cannot RAISE the ceiling still needs
+   * to know it exists, because it is what refused their run.
+   */
+  getSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Set or replace the spend budget. ORG ADMIN ONLY.
+   *
+   * `capUsd` is rounded to the cent, and the response is read back from the
+   * store rather than echoed — a caller that sent $50.004 sees what was kept.
+   *
+   * `alertPercents` REPLACES the whole set; omitting it leaves the stored one
+   * alone. Reaching the cap always alerts, so 100 is rejected: it would name
+   * the same threshold twice.
+   *
+   * Reaching the cap makes MCPJam-billed work refuse with
+   * `spend_budget_reached`. That is NOT the credit-exhausted refusal and must
+   * not be answered by selling credits — the organization set this ceiling on
+   * itself, and only raising or clearing it changes the answer.
+   */
+  setSpendBudget(
+    params: {
+      organizationId: string;
+      capUsd: number;
+      alertPercents?: number[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/organizations/${encodeURIComponent(organizationId)}/spend-budget`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Remove the ceiling, leaving the organization uncapped. ORG ADMIN ONLY.
+   *
+   * The window's spend counter SURVIVES: it is a record of what was spent,
+   * not of what the budget was, and clearing a budget does not unspend money.
+   * Setting a new cap therefore takes effect against the spend already made in
+   * the current window.
+   */
+  clearSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
       {},
       options
     );

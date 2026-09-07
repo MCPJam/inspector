@@ -45,13 +45,13 @@ Per platform, for `local-native`:
 | -------- | -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | linux    | Yes            | POSIX process groups; `/proc/<pid>/stat` gives an exact process birth identity                                                                                                               |
 | darwin   | Yes            | POSIX process groups; `ps -o lstart=` gives a second-granular birth identity                                                                                                                 |
-| win32    | **No**         | No process-group primitive here, and no Job Object implementation yet, so whole-tree cleanup cannot be guaranteed — and Job Objects would not be filesystem or network isolation in any case |
+| win32    | Yes            | No process group; the verified `mcpjam-job-launcher.exe` inside the pack puts the tree in a Job Object with `KILL_ON_JOB_CLOSE`, and PowerShell's `Get-Process` gives a FILETIME birth identity. Refused on a machine whose pack lacks the launcher. Not filesystem or network isolation, same as the other two |
 
 Per harness:
 
 | Harness     | Native                   | Why                                                                                                                                                                                                                                               |
 | ----------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| claude-code | Eligible (darwin, linux) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                             |
+| claude-code | Eligible (darwin, linux, win32) | `@ai-sdk/harness-claude-code@1.0.100` declares `supportsBuiltinToolApprovals: true` and maps `allow-reads`/`allow-edits` onto real approval callbacks                                                                                      |
 | codex       | **Never**                | `@ai-sdk/harness-codex@1.0.98` declares `supportsBuiltinToolApprovals: false` and rejects every mode but `allow-all`, starting Codex unrestricted. That is safe only when the sandbox provider IS the boundary. Hosted or verified-isolated only. |
 | cursor      | Not supported            | No AI SDK adapter to pin or audit                                                                                                                                                                                                                 |
 
@@ -70,6 +70,11 @@ native.**
 | `runtime-identity.ts`    | Managed-bundle tree digests, system-install discovery, and re-verification before spawn                                      |
 | `grants.ts`              | Workspace grants (opaque ids → canonical paths) and the local harness consent capability                                     |
 | `local-state-lock.ts`    | Reusable cross-process lock for security-sensitive local state mutations                                                     |
+| `runtime-install.ts`     | Downloads, verifies (signature → archive hash → tree digest), extracts, activates. Only from an explicit gesture              |
+| `runtime-lifecycle.ts`   | Who is installing and who is USING a runtime, across processes. Owner-recorded state on top of the lock above                |
+| `release-gate.ts`        | What this build may OFFER: manifest ∩ committed digests ∩ conformance evidence. Not a runtime health check                   |
+| `acting-user.ts`         | The one accepted credential class and the canonical id a grant binds to, shared by the consent route and the turn route      |
+| `suggested-workspace.ts` | The folder the launcher recorded. Never `process.cwd()`, which by then is the installed package root                         |
 | `confine.ts`             | Symlink-aware confinement for the Inspector file API                                                                         |
 | `session-env.ts`         | Allowlisted child environment and synthetic `$HOME`                                                                          |
 | `node-launcher.ts`       | Which absolute Node binary launches the bridge                                                                               |
@@ -381,18 +386,69 @@ behind it (a real bundle can never hash to zeroes), surfaced as
 `runtime-unavailable` carrying the underlying `bundle-digest-mismatch`. The flag
 enables the feature; it does not certify it.
 
+## Installing, and who else is holding the door
+
+`runtime-install.ts` downloads on an explicit gesture and nowhere else. The
+argument it was written around was against fetching UNASKED — at boot, on a
+poll, on a remount, on the way into a turn — and that argument is unchanged. A
+user clicking **Install & allow** is not that.
+
+`startRuntimeInstall` reserves in-process synchronously and awaits only the
+short cross-process reservation and the on-disk lookup, never the download, so
+its HTTP adapter can acknowledge in milliseconds (202) and let the client poll.
+`installRuntimePack` is the run-to-completion form the CLI and the tests use;
+both go through the same coordination, so `mcpjam-inspector harness install`
+JOINS a window's install rather than starting a competing extraction.
+
+Three processes reach one runtime root — two Inspector windows and the install
+CLI — and `runtime-lifecycle.ts` is what makes that safe:
+
+- an install ATTEMPT is claimed per `(root, harness, target, pack identity)`,
+  so two builds expecting different packs are two operations rather than one
+  wrong one;
+- a runtime USE is reserved before verification and held through process-tree
+  teardown, and activation refuses to replace a directory that has one;
+- ownership is re-checked immediately BEFORE the rename, not only before the
+  download — a download takes minutes;
+- only ESRCH proves an owner gone. Anything else is busy, never permission.
+  The staging sweep asks the owner record; a `.mcpjam-tmp-` prefix cannot tell
+  a live extraction from a dead one's leftovers.
+
+Activation moves the previous version aside instead of deleting it, so a crash
+between the two renames leaves something to put back — `recoverInterruptedActivation`
+does that on the next status read, rather than re-downloading 500 MB.
+
+**No version deletion.** `sweepOtherVersions` used to run after every
+activation and deleted the tree a running session in another process had
+already verified and was executing from. Verified versions now sit side by side
+and cost disk; reclaiming them safely needs an ownership answer spanning more
+than one install, which is not in this pass.
+
+`readRuntimeInstallStatus` is cheap and marker-based, for polling.
+`readVerifiedRuntimeStatus` is the one that proves a tree — through
+`resolveManagedBundle` and its per-process verification cache — because the
+marker records what was true at install time, so a pack whose bytes changed
+afterwards reports `ready` from its own marker forever. `corrupt` means exactly
+that case and leads to a repair; `failed` means a download that never landed
+and leads to Retry.
+
 ## What is not here yet
 
 Deliberately out of scope for this change, and none of it is faked:
 
 - **B1** the proof-bound local broker capability, and the scoped model gateway
   (`scopedEnv` is the seam it plugs into);
-- **I1's** UI: the Electron directory picker and loopback consent routes that
-  call `registerWorkspaceGrant` / `grantLocalHarnessConsent`;
-- **I2's** CI bundle build, SBOM, signing, and license review — until it lands,
-  the manifest digests are placeholders that cannot match a real tree;
+- **I2's** published pack artifacts: the build, SBOM, signing and license review
+  exist, but `pack-digests.generated.ts` is empty until a release runs them, so
+  the manifest has no digest that can match a real tree.
+  `scripts/check-local-harness-release.mjs` is what stops a release advertising
+  a target in that state;
 - **I5's** turn integration, suspend/continue, and staged materialization with
   diff-based apply-back;
 - **I6's** isolation backends (bubblewrap, Seatbelt);
-- **I7's** consent and diagnostics UI;
+- diagnostics UI beyond the composer's own status and the one trust dialog;
+- cancelling a download in flight (cancelling AUTHORIZATION already works: the
+  transfer may finish into the cache, but it can no longer mint consent or run
+  a turn for the cancelled flow);
+- reclaiming old verified runtime versions;
 - **I8's** rollout gating and the full cross-platform conformance run.

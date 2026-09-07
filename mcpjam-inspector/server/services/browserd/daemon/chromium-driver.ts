@@ -3,11 +3,10 @@
  * drives and PR (b)'s control plane authenticates, turning a `BrowserCommand`
  * into operations on a persistent, multi-tab browser context.
  *
- * W1 scope is deliberately the navigation + observation subset the wave's exit
- * criteria need ("browserd navigates + screenshots"): navigate / back / reload /
- * observe. The `act` verbs and the `webmcp_*` invocations arrive in W3 with the
- * six `browser_*` model tools; until then they return an explicit
- * `unimplemented` result rather than silently doing nothing.
+ * Every verb in the protocol is implemented here: navigate / back / reload /
+ * observe, the `act` verbs, and the `webmcp_*` invocations. (This header used
+ * to say the last two returned `unimplemented` "until W3" — they have been real
+ * since W3 landed, and the word survived only in this comment.)
  *
  * It is written entirely against the `DriverContext` / `DriverPage` boundary, so
  * every path here is unit-testable with fakes; the live Playwright context is
@@ -26,16 +25,30 @@ import {
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
-import { computeStateToken } from "./state-token";
+import { computeStateToken, shortHash } from "./state-token";
+import type { A11yNode } from "./observation-budget";
 import {
   capA11yTree,
   capConsole,
+  capText,
   capToolOutput,
   DEFAULT_A11Y_BUDGET,
   DEFAULT_CONSOLE_BUDGET,
   type A11yBudget,
   type ConsoleBudget,
 } from "./observation-budget";
+import {
+  DEFAULT_PAGE_TEXT_MAX_BYTES,
+  PAGE_TEXT_RETRIEVAL_HINT,
+} from "./page-text";
+import { readAxTree, resolveBackendNodeId } from "./cdp-a11y";
+import {
+  assignRefs,
+  filterInteractive,
+  parseRef,
+  type RefMap,
+} from "./a11y-refs";
+import { renderA11yTree } from "./a11y-render";
 import { WebMcpBridgeError } from "./webmcp-bridge";
 import { handoffNoteFor, leaseRefusalFor, type HandoffLease } from "./lease";
 import { createTabViewport, type TabViewport } from "./viewport";
@@ -86,12 +99,17 @@ export interface ChromiumDriverOptions {
    */
   lease?: Pick<
     HandoffLease,
-    "consumeResumedDirty" | "consumeResumedHeldSince" | "resumedFromKind" | "state"
+    | "consumeResumedDirty"
+    | "consumeResumedHeldSince"
+    | "resumedFromKind"
+    | "state"
   >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
   /** Byte budget for a WebMCP tool's returned output (L9). */
   webmcpOutputBytes?: number;
+  /** Byte budget for one `observe {mode:"text"}` (L9). */
+  pageTextBytes?: number;
 }
 
 /** Big enough for a real tool result, small enough not to blow a context. */
@@ -135,12 +153,54 @@ function parseScrollDelta(value: string | undefined): [number, number] {
   return [0, DEFAULT_SCROLL_STEP];
 }
 
+/**
+ * How much of a tab list may ride the heartbeat.
+ *
+ * The heartbeat is a frame-stream record, and a record over 8 KiB is REJECTED
+ * by the reader as `record too large` — which drops an otherwise healthy
+ * pane's whole stream. A page that opens twenty tabs with long URLs is not a
+ * reason for the picture to stop, so the strip is bounded here rather than
+ * discovered at the decoder.
+ */
+const TABS_SNAPSHOT_MAX = 16;
+/** And each URL: the strip shows a HOST, so a path is already more than it needs. */
+const TAB_URL_MAX = 256;
+/**
+ * And the whole strip, in bytes of JSON.
+ *
+ * Counting entries is not the same as bounding cost: a tab id is whatever the
+ * CALLER asked for — `getOrCreateTab` opens a page under any string — so
+ * sixteen tabs named with a kilobyte each is a heartbeat over the reader's
+ * limit and a stream that dies on a record it cannot take. Well under the 8
+ * KiB the reader allows, because the strip is not the only field in that
+ * message.
+ */
+const TABS_SNAPSHOT_BYTES = 4_096;
+/** `{"id":"","url":""},` — what one entry costs beyond its two strings. */
+const TAB_ENTRY_OVERHEAD = 24;
+
+/**
+ * Which entry a bound drops: the last, unless the last is the one on screen.
+ *
+ * The active tab goes only when it is all that is left — one entry over the
+ * bound on its own is not a tab anybody opened by hand, and no strip is better
+ * than no stream.
+ */
+function dropIndex(
+  list: ReadonlyArray<{ id: string }>,
+  activeTabId: string | undefined,
+): number {
+  const last = list.length - 1;
+  return list[last]?.id === activeTabId && list.length > 1 ? last - 1 : last;
+}
+
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
   private readonly settleOptions: SettleOptions;
   private readonly a11yBudget: A11yBudget;
   private readonly consoleBudget: ConsoleBudget;
   private readonly webmcpOutputBudgetBytes: number;
+  private readonly pageTextMaxBytes: number;
   private readonly lease:
     | Pick<
         HandoffLease,
@@ -152,12 +212,30 @@ export class ChromiumDriver implements BrowserDriver {
     | undefined;
   private readonly tabs = new Map<string, TabEntry>();
   /**
+   * Which tab is on screen.
+   *
+   * Load-bearing only for the HUMAN pane's video, which grabs the X display and
+   * therefore always shows whatever tab Chromium is displaying. A model
+   * `activate_tab` changes what a watching person sees, and without this the
+   * pane could not say so — the picture would simply become a different page.
+   */
+  private activeTabId: string | undefined;
+  /**
    * One viewport per tab, created on first watch.
    *
    * Lazy for the same reason the WebMCP bridge is: attaching a CDP session and
    * encoding JPEGs for a tab nobody is looking at is work done for nobody.
    */
   private readonly viewports = new Map<string, Promise<TabViewport | null>>();
+  /**
+   * The refs the LAST a11y observation of each tab handed out.
+   *
+   * One map per tab, replaced whole on every observation. It is state the
+   * driver must own rather than the model: a ref the model made up, or one it
+   * kept from two observations ago, has to be refusable — and only the side
+   * that minted them can tell the difference.
+   */
+  private readonly refs = new Map<string, RefMap>();
   /**
    * Tab creations already under way, by tabId.
    *
@@ -185,6 +263,8 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
+    this.pageTextMaxBytes =
+      options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -301,6 +381,7 @@ export class ChromiumDriver implements BrowserDriver {
     }
     if (action.verb === "activate_tab") {
       await page.bringToFront();
+      this.activeTabId = tabId;
       const frame = await this.snapshot(page);
       return this.observation(tabId, entry, { url: frame.url }, frame, permit);
     }
@@ -371,9 +452,10 @@ export class ChromiumDriver implements BrowserDriver {
     action: Extract<BrowserAction, { kind: "act" }>,
   ): Promise<void> {
     const target = action.target;
-    const point = target && "coordinates" in target
-      ? { x: target.coordinates[0], y: target.coordinates[1] }
-      : null;
+    const point =
+      target && "coordinates" in target
+        ? { x: target.coordinates[0], y: target.coordinates[1] }
+        : null;
     if (point && !isPointInViewport(point.x, point.y)) {
       // Refuse rather than dispatch. Chromium delivers a mouse event outside
       // the viewport quite happily; it hits nothing, and the caller reads an
@@ -483,6 +565,11 @@ export class ChromiumDriver implements BrowserDriver {
     try {
       const { invocationId, output } = await bridge.invoke({
         toolName: action.toolKey,
+        // Forwarded so a subframe's tool is not shadowed by a same-named one
+        // in the main frame. `invoke` falls back to name resolution when it is
+        // absent or when the frame no longer offers the tool, so an older
+        // caller that sends no frame still works.
+        ...(action.frameId ? { frameId: action.frameId } : {}),
         input: action.input,
       });
       const { output: capped, omitted } = capToolOutput(
@@ -587,7 +674,13 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+        return this.observation(
+          tabId,
+          entry,
+          { url: frame.url },
+          frame,
+          permit,
+        );
       }
       case "dom": {
         // The token is computed from the SAME snapshot returned as output, so
@@ -603,38 +696,64 @@ export class ChromiumDriver implements BrowserDriver {
       }
       case "screenshot":
         return this.observeScreenshot(tabId, entry, permit);
+      case "text": {
+        return this.observeText(tabId, entry, permit);
+      }
       case "a11y": {
-        // L9: the tree is reduced by omitting WHOLE subtrees (each replaced by
-        // a marker naming the retrieval verb), never by cutting one open.
-        const snapshot = await entry.page.a11ySnapshot(action.rootSelector);
-        if (action.rootSelector && snapshot === null) {
-          // The retrieval verb the omission marker names must fail LOUDLY when
-          // its selector finds nothing. Returning an empty tree would read as
-          // "that subtree is empty" — the opposite of "your selector was
-          // wrong" — and the caller would believe the page, not retry.
-          return {
-            ok: false,
-            error:
-              `unknown_selector: nothing on this page matches ` +
-              `"${action.rootSelector}"; re-observe the page and pick a ` +
-              `selector from what it shows`,
-          };
-        }
+        // filter → cap → number → render, in that order, and the order is
+        // load-bearing. Filtering first keeps the budget from being spent on
+        // prose the interactive view will not show; numbering after the cap
+        // keeps every ref in the map reachable in the text (a ref stamped on a
+        // node the budget then dropped would be a name for something the model
+        // cannot see); rendering last means the map and the text were built
+        // from one pass over one tree.
+        const raw = await this.readA11y(tabId, entry, action);
+        if (!raw.ok) return raw.error;
+        const filtered =
+          raw.filter === "interactive" && raw.tree
+            ? filterInteractive(raw.tree)
+            : raw.tree;
         const frame = await this.snapshot(entry.page);
         const { tree, omittedSubtrees, totalNodes } = capA11yTree(
-          snapshot,
+          filtered,
           this.a11yBudget,
         );
-        return this.observation(
+        const refs = assignRefs(tree);
+        const rendered = renderA11yTree(tree, {
+          interactiveOnly: raw.filter === "interactive",
+        });
+        const result = this.observation(
           tabId,
           entry,
           {
-            a11y: tree,
+            a11y: rendered,
+            refs: Object.fromEntries(
+              [...refs].map(([ref, entryValue]) => [
+                ref,
+                { role: entryValue.role, name: entryValue.name },
+              ]),
+            ),
             ...(omittedSubtrees > 0 ? { omittedSubtrees, totalNodes } : {}),
           },
           frame,
           permit,
         );
+        // COMMITTED ONLY IF THE OBSERVATION WAS HANDED OVER. A handoff landing
+        // mid-read discards the result — and refs stored anyway would be names
+        // for a page the model was never shown, guessable afterwards by a model
+        // that never received them. On that path the old map goes too: it
+        // described a page this tab may no longer be on.
+        if (!result.ok) {
+          this.refs.delete(tabId);
+          return result;
+        }
+        // Replaces the per-tab map wholesale: refs are valid for exactly one
+        // observation, and leaving an older map merged underneath is how `e7`
+        // comes to mean two things at once. Bound to the token the observation
+        // carries, so a ref used after the page moved is refused rather than
+        // resolved by name against whatever is there now.
+        this.refs.set(tabId, { stateToken: result.stateToken, entries: refs });
+        return result;
       }
       case "console": {
         const { entries, omitted } = capConsole(
@@ -674,6 +793,64 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
     }
+  }
+
+  /**
+   * Read the page's text, with a token that describes the state it was read
+   * from (P1) — the same guarantee `observeScreenshot` gives an image.
+   *
+   * Without the before/after sample, a page that navigated or re-rendered
+   * while the read was in flight returns the OLD prose under a token minted
+   * from the NEW state. `guardStaleness` would then admit an act chosen from
+   * text the page no longer shows, which is precisely the class of bug the
+   * state token exists to prevent.
+   *
+   * Prose is CUT rather than omitted. The a11y budget can drop a whole subtree
+   * because a tree has boundaries to drop at; running text has none, and a cut
+   * string with a counted marker is honest about exactly that.
+   */
+  private async observeText(
+    tabId: string,
+    entry: TabEntry,
+    permit: () => boolean,
+  ): Promise<BrowserCommandResult> {
+    const STABLE_ATTEMPTS = 2;
+    let before = await this.snapshot(entry.page);
+    for (let attempt = 0; attempt < STABLE_ATTEMPTS; attempt += 1) {
+      const text = await entry.page.pageText();
+      const after = await this.snapshot(entry.page);
+      const output = this.cappedText(text);
+      // Both must hold: a same-skeleton client-side route change moves the URL
+      // while `domSignal` does not, and would bind a new-route token to
+      // old-route prose (P1).
+      if (before.url === after.url && before.domSignal === after.domSignal) {
+        return this.observation(tabId, entry, output, after, permit);
+      }
+      before = after;
+    }
+    // Would not hold still within budget: hand the prose back but flag it
+    // unsettled, so nothing pins an act to text the page may have moved past.
+    if (!permit()) {
+      return this.leaseBlockedResult(
+        "a person has taken control of this browser; nothing was observed",
+      );
+    }
+    const text = await entry.page.pageText();
+    const after = await this.snapshot(entry.page);
+    return {
+      ...this.observation(tabId, entry, this.cappedText(text), after, permit),
+      settled: false,
+    };
+  }
+
+  /** The text observation's payload, cut to budget with the counted marker. */
+  private cappedText(text: string): Record<string, unknown> {
+    const capped = capText(
+      text,
+      this.pageTextMaxBytes,
+      PAGE_TEXT_RETRIEVAL_HINT,
+    );
+    return { text: capped, ...(capped !== text ? { truncated: true } : {}) };
   }
 
   /**
@@ -749,6 +926,95 @@ export class ChromiumDriver implements BrowserDriver {
    * is the right one: it is the person's own hands, and the lease is what says
    * the hands are theirs.
    */
+  /**
+   * What is open, and which one is on screen.
+   *
+   * For the human pane, not for the model: the video stream grabs the X
+   * display, so a model `activate_tab` silently changes what a watching person
+   * is looking at. The pane draws its own tab strip from this (kiosk hides
+   * Chromium's) and says so when the active one moves.
+   *
+   * Deliberately cheap and synchronous — it reads the driver's own map rather
+   * than asking Chromium — because it runs on every heartbeat of every open
+   * stream.
+   */
+  tabsSnapshot(): {
+    active?: string;
+    list: Array<{ id: string; url: string }>;
+  } {
+    const live = [...this.tabs.entries()]
+      // A page can close ITSELF — `window.close()`, a crashed renderer — with
+      // nothing routed through the driver, and the strip then showed a
+      // phantom tab and could mark the closed id active.
+      .filter(([, entry]) => !entry.page.isClosed());
+    // THE ACTIVE ONE IS NOT WHAT A BOUND DROPS. It is the tab the video is
+    // showing, and cutting at sixteen sent a strip that did not contain it —
+    // so `active` fell away below and the picture changed with nothing
+    // highlighted, which reads as "no tab is on screen". Position is kept:
+    // it takes the last slot rather than jumping to the front, because a
+    // strip that reorders itself when a tab is activated is its own puzzle.
+    const activeAt = this.activeTabId
+      ? live.findIndex(([id]) => id === this.activeTabId)
+      : -1;
+    const ordered =
+      activeAt >= TABS_SNAPSHOT_MAX
+        ? [...live.slice(0, TABS_SNAPSHOT_MAX - 1), live[activeAt]!]
+        : live.slice(0, TABS_SNAPSHOT_MAX);
+    const list = ordered.map(([id, entry]) => ({
+      id,
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
+    }));
+    // Then by SIZE, dropping from the end and never the active one. A caller
+    // that invents long tab ids cannot be answered with a truncated id — the
+    // strip matches `active` against it — so what gives is the number of
+    // entries, and in the last resort the strip itself.
+    //
+    // Two passes, and the cheap one first for a reason: a raw-length estimate
+    // is O(1) per entry and gets sixteen megabyte-long ids down to a handful
+    // before anything is serialised, and the exact measure below is then
+    // working on kilobytes rather than megabytes.
+    const costOf = (tab: { id: string; url: string }): number =>
+      tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
+    let estimate = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && estimate > TABS_SNAPSHOT_BYTES) {
+      estimate -= costOf(list[dropIndex(list, this.activeTabId)]!);
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    // Only if it is still there: the strip highlights `active`, and pointing
+    // at a tab that is not in the list reads as "no tab is on screen".
+    const payload = (): {
+      active?: string;
+      list: Array<{ id: string; url: string }>;
+    } => {
+      const active =
+        this.activeTabId && list.some((tab) => tab.id === this.activeTabId)
+          ? this.activeTabId
+          : undefined;
+      return { ...(active ? { active } : {}), list };
+    };
+    // A SOLE ENTRY THAT THE ESTIMATE ALREADY REJECTS never reaches the
+    // serialiser. The estimate only ever undercounts, so "over budget by raw
+    // length" is proof; and the alternative was stringifying a megabyte of
+    // caller-chosen id on every heartbeat of every open stream, only to throw
+    // it away — attacker-priced CPU, several times a second.
+    if (list.length === 1 && estimate > TABS_SNAPSHOT_BYTES) list.length = 0;
+    // MEASURED, not estimated, and in BYTES rather than characters. The
+    // estimate above misses three things, all of them under the caller's
+    // control: the payload repeats the active id in its own field,
+    // `JSON.stringify` expands every quote, backslash and control character in
+    // an id, and a `.length` counts UTF-16 units — so one CJK character is 1
+    // there and 3 on the wire, and an emoji 2 and 4. The wire is where the 8
+    // KiB record limit is enforced, by dropping the stream, so the wire's own
+    // unit is the only one worth counting in.
+    while (
+      list.length > 0 &&
+      Buffer.byteLength(JSON.stringify(payload()), "utf8") > TABS_SNAPSHOT_BYTES
+    ) {
+      list.splice(dropIndex(list, this.activeTabId), 1);
+    }
+    return payload();
+  }
+
   async viewport(tabId?: string): Promise<TabViewport | null> {
     const key = tabId ?? DEFAULT_TAB;
     const live = this.tabs.get(key);
@@ -977,6 +1243,9 @@ export class ChromiumDriver implements BrowserDriver {
       }
       const entry: TabEntry = { page, navCounter: 0 };
       this.tabs.set(tabId, entry);
+      // A new tab is the one Chromium shows, which is what the human pane's
+      // video will be grabbing a moment later.
+      this.activeTabId = tabId;
       return entry;
     })();
     this.pendingTabs.set(tabId, creating);
@@ -987,9 +1256,157 @@ export class ChromiumDriver implements BrowserDriver {
     }
   }
 
+  /**
+   * Read the tree for an a11y observation, rooted where the caller asked.
+   *
+   * Three ways to be rooted and they fail differently, which is the reason
+   * this is not inline: a `rootRef` the driver never issued is the model's
+   * mistake and must say so; a `rootSelector` that matches nothing is the
+   * page's answer and must not read as "that subtree is empty"; a page that
+   * cannot produce a tree at all is neither, and telling a model its selector
+   * was wrong in that case sends it hunting for a bug that is not there.
+   */
+  private async readA11y(
+    tabId: string,
+    entry: TabEntry,
+    action: {
+      rootSelector?: string;
+      rootRef?: string;
+      filter?: "interactive" | "all";
+    },
+  ): Promise<
+    | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
+    | { ok: false; error: BrowserCommandResult }
+  > {
+    const filter = action.filter ?? "interactive";
+    const cdp = await entry.page.cdp();
+    if (!cdp) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page cannot answer an accessibility tree; " +
+            'observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    let rootBackendNodeId: number | undefined;
+    if (action.rootRef !== undefined) {
+      const parsed = parseRef(action.rootRef);
+      const map = this.refs.get(tabId);
+      // The token is the page the refs were minted against. Without this
+      // check a ref survives a navigation, and scoping to it would read a
+      // node id that a DIFFERENT document happens to reuse — or fall through
+      // to name-matching and answer with a same-named element on a page the
+      // model never asked about.
+      if (map && !this.refsStillDescribe(tabId, entry, map)) {
+        this.refs.delete(tabId);
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `stale_ref: ${action.rootRef} was issued for a page this tab has ` +
+              "since left; re-observe and use a ref from the new page",
+          },
+        };
+      }
+      const known = parsed ? map?.entries.get(parsed) : undefined;
+      if (!known?.backendDOMNodeId) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_ref: ${action.rootRef} is not a ref from this tab's last ` +
+              "observation; re-observe and use a ref it names",
+          },
+        };
+      }
+      rootBackendNodeId = known.backendDOMNodeId;
+    } else if (action.rootSelector !== undefined) {
+      const resolved = await resolveBackendNodeId(cdp, action.rootSelector);
+      if (resolved === null) {
+        return {
+          ok: false,
+          error: {
+            ok: false,
+            error:
+              `unknown_selector: nothing on this page matches ` +
+              `"${action.rootSelector}"; re-observe the page and pick a ` +
+              `selector from what it shows`,
+          },
+        };
+      }
+      rootBackendNodeId = resolved;
+    }
+    const read = await readAxTree(cdp, rootBackendNodeId);
+    if (!read.ok) {
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            "a11y_unavailable: this page could not answer an accessibility " +
+            'tree; observe {mode:"text"} or {mode:"screenshot"} instead',
+        },
+      };
+    }
+    if (rootBackendNodeId !== undefined && read.tree === null) {
+      // The root resolved when it was issued and is gone now. An empty tree
+      // here would read as "that subtree is empty" — the model would believe
+      // the page rather than re-observing.
+      return {
+        ok: false,
+        error: {
+          ok: false,
+          error:
+            `stale_ref: the element ${action.rootRef ?? action.rootSelector} ` +
+            "named is no longer on this page; re-observe and pick one it shows",
+        },
+      };
+    }
+    return { ok: true, tree: read.tree, filter };
+  }
+
+  /**
+   * Do this tab's refs still describe the page it is on?
+   *
+   * Compares page IDENTITY (which navigation, which URL) and not content: a
+   * DOM that mutated under a ref is what `stale_ref` recovery by role and name
+   * exists to survive, and refusing every ref after any mutation would make
+   * them useless on exactly the pages that need them.
+   */
+  private refsStillDescribe(
+    tabId: string,
+    entry: TabEntry,
+    map: RefMap,
+  ): boolean {
+    const minted = map.stateToken;
+    if (!minted) return false;
+    return (
+      minted.tabId === tabId &&
+      minted.navCounter === entry.navCounter &&
+      minted.urlHash === shortHash(entry.page.url())
+    );
+  }
+
   /** Forget a tab and everything attached to it. */
   private async dropTab(tabId: string): Promise<void> {
     this.tabs.delete(tabId);
+    if (this.activeTabId === tabId) {
+      // Chromium shows SOMETHING after a close, and the most recently
+      // registered remaining tab is the best answer available without asking
+      // the browser — which would be a round trip on a path that runs whenever
+      // a tab goes away.
+      const remaining = [...this.tabs.keys()];
+      this.activeTabId = remaining[remaining.length - 1];
+    }
+    // Refs name nodes in a page that is going away. Left behind, they would be
+    // handed to a recreated tab of the same name and resolve — by role and
+    // name — against a document that never issued them.
+    this.refs.delete(tabId);
     await this.dropViewport(tabId);
   }
 
@@ -1006,5 +1423,20 @@ export class ChromiumDriver implements BrowserDriver {
     if (!viewport) return;
     this.viewports.delete(tabId);
     await viewport.then((v) => v?.dispose()).catch(() => {});
+  }
+}
+
+/**
+ * A page's URL, or an empty string.
+ *
+ * `page.url()` throws on a closed page, and this runs on a heartbeat that must
+ * never take a stream down — a tab that is closing is exactly the case where a
+ * snapshot is most likely to be read.
+ */
+function safeUrl(page: { url(): string }): string {
+  try {
+    return page.url();
+  } catch {
+    return "";
   }
 }

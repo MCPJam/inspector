@@ -12,6 +12,7 @@ import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEna
 import { EnvironmentToolsPane } from "./panes/EnvironmentToolsPane";
 import { MultiServerToolsPaneInner } from "./panes/MultiServerToolsPane";
 import { usePlaygroundChatHistoryBridge } from "./playground-chat-history-bridge";
+import { useLocalHarnessRunsHere } from "@/hooks/useLocalHarnessTarget";
 import { cn } from "@/lib/utils";
 
 type LeftRailTab = "sessions" | "tools";
@@ -145,8 +146,15 @@ function ToolsBody({
   // When the previewed host runs a harness (e.g. Claude Code), surface its
   // native built-in tools so the panel isn't empty/tool-less. Resolved once
   // here and fed into BOTH the multi-server pane and the zero-server fallback.
-  const { tools: harnessBuiltinTools } =
+  const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
     useHarnessBuiltinTools(previewedHostId);
+  // Whether those built-ins execute on the USER'S machine rather than in a
+  // cloud sandbox — the label the panel puts on them, and the one claim about
+  // containment the product must never get wrong.
+  const builtinToolsRunLocally = useLocalHarnessRunsHere({
+    projectId,
+    harnessId: previewedHarnessId,
+  });
   // ENVIRONMENT MODE: the panes below read the browser's own connections,
   // which environment turns never create (the backend connects per message) —
   // so they'd report "No tools found" while tools execute fine in chat. Read
@@ -177,13 +185,19 @@ function ToolsBody({
       <MultiServerToolsPaneInner
         activeServerNames={state.activeServerNames}
         builtinTools={harnessBuiltinTools}
+        builtinToolsRunLocally={builtinToolsRunLocally}
       />
     );
   }
 
   // Zero-server → reuse the existing PlaygroundLeft (empty/onboarding state),
   // but suppress its inline LoggerView since the logger lives in the right rail.
-  return <ZeroServerToolsBody builtinTools={harnessBuiltinTools} />;
+  return (
+    <ZeroServerToolsBody
+      builtinTools={harnessBuiltinTools}
+      builtinToolsRunLocally={builtinToolsRunLocally}
+    />
+  );
 }
 
 /**
@@ -195,8 +209,10 @@ function ToolsBody({
  */
 function ZeroServerToolsBody({
   builtinTools,
+  builtinToolsRunLocally,
 }: {
   builtinTools: HarnessBuiltinToolInfo[];
+  builtinToolsRunLocally: boolean;
 }) {
   const state = usePlaygroundStateContext();
   const [isAddServerOpen, setIsAddServerOpen] = useState(false);
@@ -224,6 +240,7 @@ function ZeroServerToolsBody({
         onDeleteRequest={state.savedRequestsHook.handleDeleteRequest}
         showLogger={false}
         builtinTools={builtinTools}
+        builtinToolsRunLocally={builtinToolsRunLocally}
         hasConnectedServer={false}
         // The Evals embedded chat provides no connect handler; there the
         // button keeps its Servers navigation.

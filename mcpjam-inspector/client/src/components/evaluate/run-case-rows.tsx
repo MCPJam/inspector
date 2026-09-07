@@ -22,6 +22,7 @@ import {
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
+import { formatCostOrDash } from "../evals/helpers";
 import {
   caseRowReasonLabel,
   type CaseRowIterationCell,
@@ -268,6 +269,7 @@ export function RunCaseRows({
   rows,
   defaultOpenKey,
   pills,
+  routeLines,
   onOpenIteration,
   renderBody,
 }: {
@@ -275,6 +277,8 @@ export function RunCaseRows({
   defaultOpenKey: string | null;
   /** Per-row change pills. A row with no entry gets none, never "Unchanged". */
   pills?: ReadonlyMap<string, RunChangePill>;
+  /** Per-row route one-liners, keyed by `row.key`. Same pattern as `pills`. */
+  routeLines?: ReadonlyMap<string, string>;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -346,6 +350,14 @@ export function RunCaseRows({
                 <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
                   {breakText(row)}
                 </span>
+                {routeLines?.get(row.key) ? (
+                  <span
+                    className="mt-0.5 block text-[12px] text-muted-foreground"
+                    data-testid={`route-line-${row.key}`}
+                  >
+                    {routeLines.get(row.key)}
+                  </span>
+                ) : null}
                 {note ? (
                   <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
                     {note}
@@ -366,6 +378,29 @@ export function RunCaseRows({
               )}
               <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
                 {formatRunCaseLatencyMs(row.p50Ms)}
+              </span>
+              <span
+                // Wider than the latency cell beside it: a cost renders as
+                // `$1234.56` or `<$0.0001`, both longer than any duration
+                // this column shows, and clipping a money figure is worse
+                // than the space it costs to show it.
+                className="hidden w-24 shrink-0 truncate text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
+                title={
+                  row.costUsd === null
+                    ? "No trial in this case has a cost"
+                    : [
+                        row.costedIterations < row.coverage.total
+                          ? `${row.costedIterations} of ${row.coverage.total} trials priced`
+                          : null,
+                        row.hasRunnerReportedCost
+                          ? "Includes cost reported by your runner, not measured by MCPJam."
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" ") || undefined
+                }
+              >
+                {formatCostOrDash(row.costUsd)}
               </span>
             </button>
             {open ? (

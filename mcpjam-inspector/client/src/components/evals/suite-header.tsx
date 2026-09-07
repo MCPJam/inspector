@@ -22,7 +22,6 @@ import {
   RotateCw,
   Settings,
   Sparkles,
-  X,
 } from "lucide-react";
 import {
   Popover,
@@ -130,6 +129,12 @@ interface SuiteHeaderProps {
    */
   iterationOverride?: number;
   onIterationOverrideChange?: (value: number | undefined) => void;
+  /** Settings sheet: name edits flow into the draft instead of saving on blur. */
+  settingsDraftName?: {
+    value: string;
+    onChange: (value: string) => void;
+    error?: string;
+  };
 }
 
 export function SuiteHeader(props: SuiteHeaderProps) {
@@ -171,6 +176,7 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     runsViewMode = "runs",
     runDetailKpiStrip,
     omitRunDetailIdentity = false,
+    settingsDraftName,
   } = props;
 
   const showTestCaseCtas =
@@ -197,8 +203,8 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     latestRunForMetadata?.status === "pending";
 
   useEffect(() => {
-    setEditedName(suite.name);
-  }, [suite.name]);
+    setEditedName(settingsDraftName?.value ?? suite.name);
+  }, [settingsDraftName?.value, suite.name]);
 
   const handleNameClick = useCallback(() => {
     setIsEditingName(true);
@@ -258,36 +264,56 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     replayableLatestRun != null && replayingRunId === replayableLatestRun._id;
 
   if (isEditMode) {
-    // Settings sheet header — matches the body's max-w-2xl column so the
-    // title sits flush over the form. Title is light-weight (semibold,
-    // not text-xl bold) so the eyebrow-labelled sections below carry the
-    // visual rhythm; Done is a ghost chip, not a heavy outline button.
+    const nameValue = settingsDraftName?.value ?? suite.name;
+    const nameError = settingsDraftName?.error;
+
+    const handleDraftNameChange = (value: string) => {
+      setEditedName(value);
+      settingsDraftName?.onChange(value);
+    };
+
+    const handleDraftNameBlur = () => {
+      setIsEditingName(false);
+      setEditedName(nameValue);
+    };
+
+    const handleDraftNameKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === "Enter") {
+        handleDraftNameBlur();
+      } else if (e.key === "Escape") {
+        setIsEditingName(false);
+        setEditedName(nameValue);
+      }
+    };
+
     return (
-      <div className="mb-1 flex w-full max-w-2xl items-center justify-between gap-4 px-6 pt-8 mx-auto min-w-0">
-        {/* READ-ONLY in the settings sheet. Renaming lives in the sheet's own
-            Name row now, and leaving the inline editor here too gave one field
-            two writers: this one commits on blur, immediately, with no review,
-            no note and no revision precondition. Using it while a draft held an
-            unsaved name marked the sheet as "changed elsewhere" for the
-            person's own action, and the next save overwrote the rename with the
-            stale draft. */}
-        <div className="min-w-0 flex-1 pr-2">
-          <h1
-            className="truncate text-lg font-semibold tracking-tight"
-            title={suite.name}
-          >
-            {suite.name}
-          </h1>
+      <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
+        <div className="min-w-0" data-setting-key="name">
+          {isEditingName ? (
+            <input
+              type="text"
+              value={editedName}
+              onChange={(e) => handleDraftNameChange(e.target.value)}
+              onBlur={handleDraftNameBlur}
+              onKeyDown={handleDraftNameKeyDown}
+              autoFocus
+              aria-label="Suite name"
+              className="h-8 min-w-0 w-full max-w-full rounded-md border border-input bg-background px-2 text-lg font-semibold tracking-tight focus:outline-none focus:ring-2 focus:ring-ring"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={handleNameClick}
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold tracking-tight hover:text-foreground/80"
+              title={nameValue}
+            >
+              {nameValue}
+            </button>
+          )}
+          {nameError ? (
+            <p className="mt-1 text-xs text-destructive">{nameError}</p>
+          ) : null}
         </div>
-        <Button
-          variant="ghost"
-          size="sm"
-          className="h-8 gap-1.5 text-muted-foreground hover:text-foreground"
-          onClick={() => onViewModeChange("overview")}
-        >
-          Done
-          <X className="h-3.5 w-3.5" />
-        </Button>
       </div>
     );
   }

@@ -6,6 +6,7 @@
  *
  *   GET  /session?ensure=1   → where to watch, and who holds the browser
  *   POST /lease              → take control / keep it / hand it back
+ *   POST /input              → the held browser gets this person's pointer/keys
  *   POST /keepalive          → "this panel is still open"
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
@@ -51,6 +52,12 @@ import {
   liveBrowserSessionDeps,
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
+import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
 
@@ -59,13 +66,24 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
  *  short enough that a closed laptop parks the lease rather than holding the
  *  browser hostage. */
 const LEASE_TTL_MS = 2 * 60_000;
-/** Don't touch computer activity more than once a minute per panel. */
-const ACTIVITY_TOUCH_THROTTLE_MS = 60_000;
+
+/**
+ * The most events one input request may carry, and what counts as one.
+ *
+ * Both now live in `shared/browser-pane-input.ts`, because the frame socket
+ * validates the same shape (V-2) and the local route validates it too. Three
+ * copies drifted silently: an event type added in one place was dropped by the
+ * others with a 200 and no page change.
+ */
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+const isInputEvent = isBrowserPaneInputEvent as (
+  value: unknown,
+) => value is ViewportInputEvent;
 
 type Claims = { userId: string; computerId: string; projectId: string };
 
 type AuthFailure = { status: 401 | 503; error: string };
-type AuthResult = { ok: true; claims: Claims } | { ok: false } & AuthFailure;
+type AuthResult = { ok: true; claims: Claims } | ({ ok: false } & AuthFailure);
 
 /** Deps seam so the route is testable without E2B or a live Convex. */
 export interface BrowserPanelDeps {
@@ -93,7 +111,7 @@ export interface BrowserPanelDeps {
   createClient?: (session: {
     publicOrigin: string;
     browserdToken: string;
-  }) => Pick<BrowserdClient, "lease" | "leaseAction">;
+  }) => Pick<BrowserdClient, "lease" | "leaseAction" | "sendInput">;
   configured?: () => boolean;
 }
 
@@ -172,7 +190,11 @@ export function createComputerBrowserPanelRoutes(
     const lookup = await lookupSession({
       computerId,
       expectedBundleHash: bundleHash(),
-      expectedContextMode: "persistent",
+      // `"any"`: the panel is about THIS COMPUTER'S browser, whatever profile
+      // it happens to be running. Pinning `persistent` here reported "no
+      // browser" for a box that plainly had one, and — worse — paired with an
+      // attach that then relaunched it into the other mode.
+      expectedContextMode: "any",
     });
     return lookup.session;
   }
@@ -194,12 +216,33 @@ export function createComputerBrowserPanelRoutes(
     }
   }
 
+  /**
+   * Is this lease THIS caller's?
+   *
+   * Answered here because the pane cannot answer it. The holder is the
+   * authenticated user id, which the client never sees and must not have to
+   * guess: a pane that tracked "I acquired it" in its own state would forget
+   * across a reload and then tell somebody who still holds the browser that
+   * a stranger has it — with no way to hand it back, since only the holder
+   * may. One boolean the server already knows removes that whole class.
+   */
+  function heldByCaller(
+    lease: BrowserdLeaseState | { state: "unknown" },
+    userId: string,
+  ): boolean {
+    return (
+      (lease.state === "held" || lease.state === "parked") &&
+      "holder" in lease &&
+      lease.holder === userId
+    );
+  }
+
   const app = new Hono();
 
   app.get("/session", async (c) => {
     const auth = await authorize(c);
     if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
-    const { computerId } = auth.claims;
+    const { computerId, userId } = auth.claims;
 
     try {
       const ensure = c.req.query("ensure") === "1";
@@ -222,14 +265,21 @@ export function createComputerBrowserPanelRoutes(
           409,
         );
       }
+      // NEITHER `streamUrl` NOR `streamPassword`. They used to be here, and
+      // the panel put them straight into an iframe `src` — which made a
+      // full desktop-control credential readable from the DOM, from
+      // `document.referrer`, and from anything that logs iframe sources. The
+      // browser now watches through `/computers/browser/stream`, which
+      // authenticates upstream on the server with a password that never
+      // leaves it.
+      const lease = await readLease(session);
       return c.json({
         ok: true,
         computerId,
         bootId: session.bootId,
-        streamUrl: session.streamUrl,
-        streamPassword: session.streamPassword,
         contextMode: session.contextMode,
-        lease: await readLease(session),
+        lease,
+        yours: heldByCaller(lease, userId),
       });
     } catch (error) {
       reportRouteFailure("browser panel session lookup failed", error, {
@@ -286,7 +336,12 @@ export function createComputerBrowserPanelRoutes(
         took: outcome.took,
       });
       return c.json(
-        { ok: outcome.took, lease: outcome.lease, bootId: session.bootId },
+        {
+          ok: outcome.took,
+          lease: outcome.lease,
+          bootId: session.bootId,
+          yours: heldByCaller(outcome.lease, userId),
+        },
         outcome.took ? 200 : 409,
       );
     } catch (error) {
@@ -303,6 +358,131 @@ export function createComputerBrowserPanelRoutes(
       });
       return c.json(
         { ok: false, error: "Failed to change the browser lease." },
+        502,
+      );
+    }
+  });
+
+  /**
+   * Forward a person's pointer and keys to the browser they hold.
+   *
+   * The hosted twin of `/api/mcp/computers/local-browser/input`, and the other
+   * half of the frame socket: frames stream out, input comes back as ordinary
+   * requests. The daemon gates every event on the lease being THIS holder's,
+   * which is why the holder below cannot come from the caller.
+   *
+   * NOT a browser command. Input arrives at up to twenty batches a second
+   * while somebody drags, and every command spends a slot from an idempotency
+   * ledger that stops issuing ids once exhausted.
+   */
+  app.post("/input", async (c) => {
+    const auth = await authorize(c);
+    if (!auth.ok) return c.json({ ok: false, error: auth.error }, auth.status);
+    const { computerId, userId } = auth.claims;
+
+    // `null` is VALID JSON, so `c.req.json()` resolves rather than throwing —
+    // and `body.events` on it then threw a TypeError that escaped every try
+    // below and surfaced as a 500 for what is plainly a bad request.
+    const parsed: unknown = await c.req.json().catch(() => undefined);
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      Array.isArray(parsed)
+    ) {
+      return c.json({ ok: false, error: "Expected a JSON object." }, 400);
+    }
+    const body = parsed as { events?: unknown; tabId?: unknown };
+    // Sliced rather than refused, matching the local route: the daemon caps at
+    // the same number and is the enforcement point, since it is reachable on
+    // its own public host and a cap that lives only here is one an attacker
+    // skips.
+    const batch = Array.isArray(body.events)
+      ? body.events.slice(0, INPUT_BATCH_LIMIT)
+      : [];
+    if (batch.length === 0) {
+      return c.json(
+        { ok: false, error: "At least one event is required." },
+        400,
+      );
+    }
+    // Refused whole rather than filtered: dropping the bad ones would deliver
+    // a batch that is missing, say, the `mouse_up` of a drag, and the page
+    // would be left holding a button down with nothing to say why.
+    if (!batch.every(isInputEvent)) {
+      return c.json({ ok: false, error: "invalid_input" }, 400);
+    }
+    const events = batch as ViewportInputEvent[];
+
+    try {
+      const session = await currentSession(computerId);
+      if (!session) {
+        return c.json({ ok: false, error: "no_browser_session" }, 409);
+      }
+      const outcome = await createClient(session).sendInput({
+        // The authenticated USER, exactly as `/lease` derives it. The daemon
+        // admits input when `holder === lease.holder`, so a holder read off the
+        // request body would let anyone who echoed the right id type into
+        // somebody else's held session — which is a password field, mid-login.
+        holder: userId,
+        events,
+        ...(typeof body.tabId === "string" ? { tabId: body.tabId } : {}),
+      });
+      if (!outcome.ok) {
+        // The daemon's own codes, unchanged. A 423 is the ORDINARY answer
+        // while the agent is driving, not a failure: a pane that showed it as
+        // an error would be reporting a browser working exactly as designed.
+        //
+        // Passed through by name rather than collapsed into 423, because 423
+        // means "somebody else has this browser" and answering it to a batch
+        // that was merely malformed or oversized would send a pane looking for
+        // a lease holder who does not exist.
+        //
+        // And ONLY the daemon's own 423 becomes a 423. Everything else it can
+        // answer — a 401 because the stored bearer no longer matches the boot,
+        // a 500, an origin refusal — is an upstream failure, and dressing one
+        // up as a lease refusal tells the pane to wait for a hand-back from a
+        // holder who does not exist, forever.
+        const status =
+          outcome.status === 400 ||
+          outcome.status === 404 ||
+          outcome.status === 413 ||
+          outcome.status === 423
+            ? outcome.status
+            : 502;
+        return c.json({ ok: false, error: outcome.error }, status);
+      }
+      // A person typing is REAL USE, and `kind: "command"` says so. The panel
+      // keepalive stops counting once the last real command is old enough —
+      // which is exactly the case here, because somebody who took control to
+      // solve a CAPTCHA issues no agent commands at all. Left as a panel
+      // touch, their box would hibernate while they were typing into it.
+      //
+      // Throttled through the shared per-computer window: input arrives twenty
+      // times a second and a touch is a control-plane write. Only on a
+      // dispatch that actually landed — refused input reached no page, and
+      // must not hold a machine awake.
+      if (shouldTouchActivity(computerId)) {
+        void touchSession({
+          sessionId: session.sessionId,
+          kind: "command",
+        }).catch(() => {});
+        void touchActivity({ computerId }).catch(() => {});
+      }
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof BrowserdClientError) {
+        return c.json(
+          { ok: false, error: "The browser did not accept the input." },
+          502,
+        );
+      }
+      reportRouteFailure("browser panel input failed", error, {
+        source: "computer-browser-panel.input",
+        hop: "mcpjam_internal",
+        context: { computerId },
+      });
+      return c.json(
+        { ok: false, error: "Failed to send input to the browser." },
         502,
       );
     }
@@ -346,19 +526,6 @@ export function createComputerBrowserPanelRoutes(
   return app;
 }
 
-/** Per-computer throttle for the activity touch. */
-const lastActivityTouchAt = new Map<string, number>();
-
-function shouldTouchActivity(computerId: string): boolean {
-  const now = Date.now();
-  const previous = lastActivityTouchAt.get(computerId) ?? 0;
-  if (now - previous < ACTIVITY_TOUCH_THROTTLE_MS) return false;
-  lastActivityTouchAt.set(computerId, now);
-  return true;
-}
-
-export function resetPanelActivityThrottleForTests(): void {
-  lastActivityTouchAt.clear();
-}
+export { resetActivityThrottleForTests as resetPanelActivityThrottleForTests } from "../../utils/computers/activity-touch.js";
 
 export default createComputerBrowserPanelRoutes();

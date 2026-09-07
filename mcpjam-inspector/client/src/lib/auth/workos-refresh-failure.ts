@@ -1,4 +1,5 @@
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
+import { isSignOutInProgress } from "@/lib/auth/sign-out-latch";
 import { reportCaught } from "@/lib/error-reporting";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
@@ -21,6 +22,12 @@ import { useSessionRefreshStore } from "@/stores/session-refresh-store";
  * authkit skips this callback from its INITIAL state, so a signed-out visitor
  * is never redirected.
  *
+ * A sign-out in flight is the one rejection that is NOT a dead session
+ * surprising us — it is the session we just deliberately revoked, seen by a
+ * refresh timer that keeps ticking through the logout navigation. Acting on it
+ * would send `signIn()` over the top of that navigation and land the user on
+ * the login page instead of the signed-out app. See `sign-out-latch`.
+ *
  * Lives here rather than inline in `main.tsx` so it is testable: `main.tsx`
  * calls `initSentry()` and `createRoot()` at module scope and cannot be
  * imported from a test.
@@ -32,6 +39,7 @@ export function handleWorkosRefreshFailure({
     state?: Record<string, string>;
   }) => void | Promise<void>;
 }): void {
+  if (isSignOutInProgress()) return;
   reportCaught(new Error("WorkOS session refresh failed"), {
     source: "workos_refresh_failure",
     level: "warning",

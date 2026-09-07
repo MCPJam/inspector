@@ -159,6 +159,12 @@ export function resolveRunHistoryVerdict(
   if (run.status === "pending") {
     return { verdict: "pending", label: "Pending" };
   }
+  // Held for its judge: execution is over, the verdict is not. The pass rate
+  // below is pre-judge, so reading Ship or Hold off it would publish a
+  // decision the judge may still reverse.
+  if (run.status === "grading") {
+    return { verdict: "running", label: "Grading" };
+  }
   if (run.status === "cancelled" || run.result === "cancelled") {
     return { verdict: "cancelled", label: "Cancelled" };
   }

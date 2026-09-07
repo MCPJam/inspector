@@ -82,8 +82,10 @@ export default defineConfig({
     // fails on the optional `chromium-bidi` dependency.
     "playwright",
     "playwright-core",
-    // Reached only from `webmcp-inspector/electron-webview-provider.ts`, and
-    // only through a runtime `await import("electron")` gated on ELECTRON_APP.
+    // Reached from `webmcp-inspector/electron-webview-provider.ts` and from
+    // `browserd/electron/**` (the desktop app's browser engine), and in both
+    // cases only through a runtime `await import("electron")` guarded by
+    // `process.versions.electron`.
     // Inside the desktop app the server runs in the Electron main process, so
     // the import resolves; this bundle is the STANDALONE server, where it never
     // runs — but esbuild would still try to follow the specifier and fail the

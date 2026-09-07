@@ -192,6 +192,7 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   set_eval_suite_schedule: { command: "cloud eval schedule" },
   set_eval_suite_environments: { command: "cloud eval environments set" },
   list_eval_suite_runs: { command: "cloud eval runs" },
+  list_eval_suite_revisions: { command: "cloud eval revisions" },
   run_eval_suite: { command: "cloud eval run" },
   cancel_eval_run: { command: "cloud eval cancel" },
   request_eval_run_judge: { command: "cloud eval judge" },
@@ -209,6 +210,19 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   // the bare command and the test would still pass with `--run` deleted.
   get_eval_run_stage_analytics: {
     command: "cloud eval stage-analytics --run",
+  },
+  get_eval_run_gate: {
+    command: "cloud eval gate --run",
+  },
+  get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
+  propose_eval_description_rewrite: {
+    command: "cloud eval description-experiment propose --run --tool",
+  },
+  start_eval_description_experiment: {
+    command: "cloud eval description-experiment start --experiment",
+  },
+  get_eval_description_experiment: {
+    command: "cloud eval description-experiment get --experiment",
   },
   list_eval_suite_stage_analytics: {
     command: "cloud eval stage-analytics --suite",

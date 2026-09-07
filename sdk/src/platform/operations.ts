@@ -19,6 +19,10 @@ import {
   caseIntentSchema,
   caseIntentUpdateSchema,
 } from "../contract/stage-intent.js";
+import {
+  parseSuiteGatePolicyForAuthoring,
+  suiteGatePolicySchema,
+} from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -78,7 +82,10 @@ import type {
   PlatformEvalStepResult,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
@@ -90,6 +97,7 @@ import type {
   PlatformEvalSuiteCreated,
   PlatformEvalSuiteDeleted,
   PlatformEvalSuiteDetail,
+  PlatformEvalSuiteRevision,
   PlatformEvalRunGroupCreated,
   PlatformAdhocEnvironment,
   PlatformAdhocEnvironmentBody,
@@ -4112,7 +4120,10 @@ export const runEvalSuiteOperation: PlatformOperation<
             ? { allAttached: input.allAttached }
             : {}),
           ...(overrideServers
-            ? { serverIds: overrideServers.map((server) => server.id) }
+            ? {
+                serverIds: overrideServers.map((server) => server.id),
+                serverNames: overrideServers.map((server) => server.name),
+              }
             : {}),
         });
 
@@ -4246,6 +4257,11 @@ export const runEvalSuiteOperation: PlatformOperation<
             body: {
               suiteId: suite.id,
               ...(plan.serverIds ? { serverIds: plan.serverIds } : {}),
+              // Paired with `serverIds` by index. A launch that re-authors the
+              // suite's saved selection persists these NAMES; without them the
+              // platform stores the raw ids and the suite reads back with an
+              // opaque id where the server name belongs.
+              ...(plan.serverNames ? { serverNames: plan.serverNames } : {}),
               ...(plan.target?.kind === "environment"
                 ? { environmentId: plan.target.id }
                 : {}),
@@ -4585,7 +4601,12 @@ export const runEvalCaseOperation: PlatformOperation<
             suiteId: suite.id,
             caseIds: [testCase.id],
             ...(overrideServers
-              ? { serverIds: overrideServers.map((server) => server.id) }
+              ? {
+                  serverIds: overrideServers.map((server) => server.id),
+                  // Index-paired names, so an override persists as names
+                  // rather than ids. See the same pairing in run_eval_suite.
+                  serverNames: overrideServers.map((server) => server.name),
+                }
               : {}),
             // MUTUALLY EXCLUSIVE, and enforced above by
             // `assertRunTargetSelectorsCoherent`: `compose` with `environment`
@@ -4698,6 +4719,12 @@ const evalCaseInput = z.object({
     .describe(
       "Optional analytics grouping label for this case. It does not change scoring or verdicts."
     ),
+  kind: z
+    .enum(["capability", "regression"])
+    .optional()
+    .describe(
+      "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
+    ),
   runs: z
     .number()
     .int()
@@ -4782,6 +4809,13 @@ const createEvalSuiteInput = z.strictObject({
     .describe(
       "Project server names or IDs the suite runs against. Must be HTTP servers; stdio servers can never run hosted."
     ),
+  hosts: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Client (host) names or IDs to attach the suite to, in attach order. Same vocabulary update_eval_suite uses. A suite with no attached host runs under its own execution config and reports no client anywhere it is listed. Attaching also makes the host selectable on run_eval_suite, which only runs hosts ATTACHED to the suite."
+    ),
   model: z
     .string()
     .trim()
@@ -4813,6 +4847,8 @@ export type CreateEvalSuiteResult = {
   suite: { id: string; name: string | null };
   /** The HTTP servers the suite was configured against. */
   servers: Array<{ id: string; name?: string }>;
+  /** The clients (hosts) attached to the suite; empty when none were named. */
+  hosts: Array<{ id: string; name?: string }>;
   caseUpsert: PlatformEvalSuiteCreated["caseUpsert"];
 };
 
@@ -4823,7 +4859,7 @@ export const createEvalSuiteOperation: PlatformOperation<
   name: "create_eval_suite",
   title: "Create MCPJam eval suite",
   description:
-    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
+    "Create a runnable eval suite from authored test cases. Specify a name, a default model, the project HTTP servers it runs against, optionally the clients (hosts) to attach it to, and one or more cases. Each case is an ordered `steps` array (prompt / toolCall / interact / assert) plus optional expected-output / negative-test. Returns the new suite id; run it with run_eval_suite. Does NOT run the suite — authoring is free. Servers must be HTTP; stdio servers can never run hosted.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     {
@@ -4852,6 +4888,9 @@ export const createEvalSuiteOperation: PlatformOperation<
           ...(input.description ? { description: input.description } : {}),
           serverIds: servers.map((server) => server.id),
           serverNames: servers.map((server) => server.name),
+          ...(input.hosts?.length
+            ? { hosts: input.hosts.map((host) => ({ host })) }
+            : {}),
           model: input.model,
           ...(input.provider ? { provider: input.provider } : {}),
           // Ergonomic case shape; the backend normalizes per-case defaults
@@ -4868,6 +4907,7 @@ export const createEvalSuiteOperation: PlatformOperation<
         id: server.id,
         name: server.name,
       })),
+      hosts: created.hosts ?? [],
       caseUpsert: created.caseUpsert,
     };
   },
@@ -4908,6 +4948,12 @@ const caseFieldsShape = {
     .optional()
     .describe(
       "Optional analytics grouping label for this case. It does not change scoring or verdicts."
+    ),
+  kind: z
+    .enum(["capability", "regression"])
+    .optional()
+    .describe(
+      "Authored case kind for the simple editor. Absent means the editor derives it from matchOptions."
     ),
   // The unified test-step model REPLACES the old kind / prompt / turns /
   // expectedToolCalls / renderCheck authoring fields (Phase 2.5 clean break).
@@ -5301,10 +5347,125 @@ const updateEvalSuiteInput = z.strictObject({
             .describe(
               "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
+          role: z
+            .enum(["advisory", "gating"])
+            .optional()
+            .describe(
+              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+            ),
+          severity: z
+            .literal("warn")
+            .optional()
+            .describe(
+              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+            ),
+          rubric: z
+            .union([
+              z.object({
+                criteria: z
+                  .array(
+                    z.object({
+                      id: z
+                        .string()
+                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                        .describe(
+                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                        ),
+                      label: z.string().trim().min(1).max(200),
+                      description: z.string().max(1000).optional(),
+                      required: z.boolean().optional(),
+                    })
+                  )
+                  .min(1)
+                  .max(25),
+              }),
+              z.null(),
+            ])
+            .optional()
+            .describe(
+              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+            ),
         })
         .optional(),
+      repetitions: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+        ),
+      passThreshold: z
+        .number()
+        .min(0)
+        .max(1)
+        .optional()
+        .describe(
+          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+        ),
+      validity: z
+        .object({
+          minEligibleTrials: z.number().int().min(1).optional(),
+          minCompletionRate: z.number().min(0).max(1).optional(),
+          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+        })
+        .strict()
+        .optional()
+        .describe(
+          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+        ),
+      qualityGate: z
+        .union([suiteGatePolicySchema, z.null()])
+        .optional()
+        .describe(
+          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+        ),
     })
     .optional(),
+  expectedRevisionNumber: z
+    .number()
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+    ),
+  revisionNote: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+    ),
+}).superRefine((body, ctx) => {
+  if (body.settings?.qualityGate === undefined) return;
+  if (body.expectedRevisionNumber === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedRevisionNumber"],
+      message:
+        "expectedRevisionNumber is required when settings.qualityGate is present.",
+    });
+  }
+  const note = body.revisionNote?.trim() ?? "";
+  if (note.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["revisionNote"],
+      message: "revisionNote is required when settings.qualityGate is present.",
+    });
+  }
+  if (body.settings.qualityGate !== null) {
+    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
+    if (!parsed.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["settings", "qualityGate"],
+        message: parsed.message,
+      });
+    }
+  }
 });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
@@ -5315,7 +5476,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
   name: "update_eval_suite",
   title: "Update MCPJam eval suite",
   description:
-    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, and LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available). Only the fields you pass change.",
+    "Edit an eval suite's settings: name, description, environment servers, computer image, execution config (model/system prompt/temperature), hosts, minimum accuracy, minimum iterations, match options, checks, LLM-as-judge (enabled/model/autoRun/threshold — autoRun is what makes grading happen; enabled alone only makes the judge available), and the verdict policy v2 fields (repetitions/passThreshold/validity — fractions, and the v2 replacement for minimumAccuracy). Only the fields you pass change.",
   readOnly: false,
   permalink: derivePermalinks((result) => [
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
@@ -5335,6 +5496,8 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "executionConfig",
       "hosts",
       "settings",
+      "expectedRevisionNumber",
+      "revisionNote",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
@@ -5853,6 +6016,13 @@ const updateEvalCaseInput = z.object({
     .describe(
       "Analytics grouping label. Omit to preserve it; pass null to clear it. It never changes scoring or verdicts."
     ),
+  kind: z
+    .enum(["capability", "regression"])
+    .nullable()
+    .optional()
+    .describe(
+      "Authored case kind. Omit to preserve it; pass null to clear it."
+    ),
 });
 export type UpdateEvalCaseInput = z.infer<typeof updateEvalCaseInput>;
 
@@ -6125,6 +6295,11 @@ export type EvalRunScopedInput = z.infer<typeof evalRunScopedInput>;
  * for a terminal run: while a run is still going its verdict does not exist
  * yet, so the extra request would buy a `notEstablished` a poller already knows
  * from `status`.
+ *
+ * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has run
+ * every trial but has not been decided — its `result` is `pending` — so
+ * fetching a summary for it would return exactly the `notEstablished` this set
+ * exists to avoid asking for.
  */
 const TERMINAL_EVAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",
@@ -6343,6 +6518,82 @@ export const listEvalRunIterationsOperation: PlatformOperation<
   },
 };
 
+const evalSuiteRevisionsInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+  cursor: z
+    .string()
+    .min(1)
+    .optional()
+    .describe("Opaque pagination cursor from a previous response."),
+  limit: z
+    .number()
+    .int()
+    .min(1)
+    .max(100)
+    .optional()
+    .describe("Maximum number of revisions to return per page (newest first)."),
+});
+
+export type ListEvalSuiteRevisionsInput = z.infer<
+  typeof evalSuiteRevisionsInput
+>;
+
+export type ListEvalSuiteRevisionsResult = {
+  project: SelectedProjectInfo;
+  suite: { id: string; name: string | null };
+  items: PlatformEvalSuiteRevision[];
+  nextCursor?: string;
+};
+
+export const listEvalSuiteRevisionsOperation: PlatformOperation<
+  ListEvalSuiteRevisionsInput,
+  ListEvalSuiteRevisionsResult
+> = {
+  name: "list_eval_suite_revisions",
+  title: "List MCPJam eval suite revisions",
+  description:
+    "List a suite's settings history, newest first: one entry per committed edit, with who made it, which stored fields moved, the note they left, how many runs were launched against it, and the revision group that ties one request's writes together. Rows carry no configuration snapshots. Pass a revisionNumber back as expectedRevisionNumber on update_eval_suite to make an edit a compare-and-set.",
+  readOnly: true,
+  // The suite, not the revision: a revision has no page of its own, and the
+  // settings sheet's history panel is reached from the suite.
+  permalink: derivePermalinks((result) => [
+    {
+      type: "eval_suite" as const,
+      id: result.suite.id,
+      projectId: result.project?.id,
+    },
+  ]),
+  inputSchema: evalSuiteRevisionsInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const suite = await resolveSuite(client, project, input.suite, signal);
+    const page = await client.listEvalSuiteRevisions(
+      {
+        projectId: project.id,
+        suiteId: suite.id,
+        cursor: input.cursor,
+        limit: input.limit,
+      },
+      { signal }
+    );
+    return {
+      project: toSelectedProjectInfo(project),
+      suite: { id: suite.id, name: suite.name },
+      items: page.items,
+      ...(page.nextCursor ? { nextCursor: page.nextCursor } : {}),
+    };
+  },
+};
+
 const evalIterationTraceInput = evalRunScopedInput.extend({
   iterationId: z
     .string()
@@ -6522,6 +6773,370 @@ export const getEvalRunStageAnalyticsOperation: PlatformOperation<
       }
       throw error;
     }
+  },
+};
+
+export type GetEvalRunGateResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  report: PlatformEvalRunGate;
+};
+
+/**
+ * A bare 404 — the route is not there — as opposed to the route saying the
+ * run is not visible.
+ *
+ * Unlike stage analytics, a retrieved run NEVER has "no document": the
+ * evaluator answers `not_configured` as a 200 report. A 404 after the run
+ * was retrieved is a missing route (or an upstream fault), never proof
+ * that no policy exists.
+ */
+function isSuiteGateRouteUnavailable(error: unknown): boolean {
+  if (!(error instanceof PlatformApiError)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+function suiteGateRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run quality-gate evaluation. That is a fact about the deployment, not about the run — do not report the run as having no policy.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunGateOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunGateResult
+> = {
+  name: "get_eval_run_gate",
+  title: "Get MCPJam eval run quality gate",
+  description:
+    "Get ONE run's suite quality-gate report: the stored suite policy evaluated against this run. Outcomes are passed, failed, non_gateable, or not_configured. not_configured means the suite has no active conditions — it is a 200 report, never an absent route. The run is fetched first, so a run that does not exist or is not visible fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. A 404 after the run was retrieved is NEVER proof that no policy exists. A run waiver never covers this report; compose it with the flag/base report separately.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const report = await client.getEvalRunGate(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        report,
+      };
+    } catch (error) {
+      if (isSuiteGateRouteUnavailable(error)) {
+        throw suiteGateRouteUnavailableError();
+      }
+      throw error;
+    }
+  },
+};
+
+const ROUTE_FACTS_READING_RULES =
+  "Population is the TRIAL. Substitution is named only for the one-to-one in-catalog shape: exactly one expected name missing and exactly one unexpected in-catalog name observed. Cosine similarity is not a diagnostic. " +
+  "`catalogState` is `loaded` or `notLoaded`; catalog-not-loaded forbids substitution and unexpected tools read as `catalogNotLoaded`, never as in- or outside-catalog. " +
+  "A ZERO DENOMINATOR MEANS NOT MEASURED — never 0% and never 100%: `notMeasured` is not zero. " +
+  "`endedWithQuestion` stays `notMeasured` until a producer exists; it is not a zero and it is not a pass. " +
+  "This document is REPORT-ONLY and never a verdict: nothing here writes `result`, feeds a gate, or changes a pass/fail. " +
+  "There is NO BACKFILL: a run that terminalized before route-facts measurement shipped has no document and never will, and that absence is unmeasured, never zeros.";
+
+export type GetEvalRunRouteFactsResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  /**
+   * Whether this run has a route-facts document at all.
+   *
+   * `measured` — `routeFacts` is the run's document. `unmeasured` — the run
+   * was RETRIEVED and has no document, which is the only path on which that
+   * claim is honest. A deployment that does not serve the route, and a run
+   * that could not be retrieved, are errors instead: see the operation's
+   * execute body.
+   */
+  routeFactsState: "measured" | "unmeasured";
+  routeFacts: PlatformEvalRouteFacts | null;
+};
+
+function routeFactsRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run route facts. That is a fact about the deployment, not about the run — do not report the run as unmeasured.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunRouteFactsOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunRouteFactsResult
+> = {
+  name: "get_eval_run_route_facts",
+  title: "Get MCPJam eval run route facts",
+  description:
+    "Get ONE run's materialized tool-route facts: which ordered tool paths the trials took, which expected tools were missing, which unexpected tools were observed, and which one-to-one in-catalog substitutions occurred — overall and per case. This is the ROUTE half of the run story: `get_eval_run`'s `decisionSummary` says where a trial stopped, and this says which paths the trials actually walked. " +
+    ROUTE_FACTS_READING_RULES +
+    ' ABSENCE IS THREE DIFFERENT FACTS and this operation keeps them apart. The run is fetched first, so a run that does not exist or is not visible to you fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. Only when the run WAS retrieved and its document is absent does the result say `routeFactsState: "unmeasured"` with `routeFacts: null` — and that state is permanent, because there is no backfill.',
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    // THE RUN FIRST, and this ordering is the whole point. The route-facts
+    // route answers 404 for two different facts on purpose — the run is not
+    // visible, or it has no document — and the API declines to separate them
+    // so it does not leak the existence of runs in projects the caller cannot
+    // see. So the separation happens HERE, where the caller's own scope is
+    // already resolved: retrieving the run first turns "404" into "this run
+    // exists and has no routes document", which is the only footing on which
+    // "unmeasured" is an honest claim rather than a guess that reads
+    // identically to a typo.
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const routeFacts = await client.getEvalRunRouteFacts(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        routeFactsState: "measured",
+        routeFacts,
+      };
+    } catch (error) {
+      if (isStageAnalyticsRouteUnavailable(error)) {
+        throw routeFactsRouteUnavailableError();
+      }
+      if (error instanceof PlatformApiError && error.status === 404) {
+        return {
+          project: toSelectedProjectInfo(project),
+          runId: run.id,
+          suiteId: run.suiteId,
+          routeFactsState: "unmeasured",
+          routeFacts: null,
+        };
+      }
+      throw error;
+    }
+  },
+};
+
+const proposeEvalDescriptionRewriteInput = evalRunScopedInput.extend({
+  toolName: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Tool whose description should be rewritten. Must appear in the source run's tool snapshot."
+    ),
+  caseIds: z
+    .array(z.string().trim().min(1))
+    .min(1)
+    .optional()
+    .describe(
+      "Restrict the proposal's evidence to these case ids. Omit to use every case that expected the tool and failed at least once."
+    ),
+});
+
+export type ProposeEvalDescriptionRewriteInput = z.infer<
+  typeof proposeEvalDescriptionRewriteInput
+>;
+
+export type ProposeEvalDescriptionRewriteResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const proposeEvalDescriptionRewriteOperation: PlatformOperation<
+  ProposeEvalDescriptionRewriteInput,
+  ProposeEvalDescriptionRewriteResult
+> = {
+  name: "propose_eval_description_rewrite",
+  title: "Propose an eval description rewrite",
+  description:
+    "Draft a rewritten tool description from a finished eval run's failed trials: the tool's current description and input schema, sibling tool names, the expected vs observed calls, and the failing prompts. SPENDS a small model budget (worst case about $0.10) and returns immediately with a proposing receipt — poll get_eval_description_experiment until status is proposed (or failed). Does not launch runs, write a verdict, or change a gate. Report-only throughout.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: proposeEvalDescriptionRewriteInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.proposeEvalDescriptionRewrite(
+      {
+        projectId: project.id,
+        runId: input.runId,
+        toolName: input.toolName,
+        ...(input.caseIds ? { caseIds: input.caseIds } : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const startEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z
+    .string()
+    .trim()
+    .min(1)
+    .describe(
+      "Description-experiment id, as returned by propose_eval_description_rewrite."
+    ),
+  caseScope: z
+    .enum(["all", "affected"])
+    .optional()
+    .describe(
+      "Which cases to replay. Default all, so the regression check is contemporaneous. affected skips non-matching cases and the report says checked: false."
+    ),
+  iterationOverride: z
+    .number()
+    .int()
+    .min(1)
+    .max(10)
+    .optional()
+    .describe(
+      "Repetitions per case per arm (1–10). Default is the source run's."
+    ),
+  maxTrials: z
+    .number()
+    .int()
+    .min(1)
+    .max(400)
+    .optional()
+    .describe(
+      "Refuse the launch if plannedTrials (cases × repetitions × 2) exceeds this. Default 200; hard cap 400."
+    ),
+});
+
+export type StartEvalDescriptionExperimentInput = z.infer<
+  typeof startEvalDescriptionExperimentInput
+>;
+
+export type StartEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const startEvalDescriptionExperimentOperation: PlatformOperation<
+  StartEvalDescriptionExperimentInput,
+  StartEvalDescriptionExperimentResult
+> = {
+  name: "start_eval_description_experiment",
+  title: "Start an eval description experiment",
+  description:
+    "Launch the two-arm description-rewrite experiment: one ORIGINAL replay of the source run and one REWRITE replay that applies the proposed description. SPENDS eval-iteration credits — plannedTrials = cases × repetitions × 2, refused over the cap (default 200, hard 400) — plus whatever the suite's judge auto-run costs on both arms. Returns immediately with a launching receipt; poll get_eval_description_experiment. Report-only: nothing writes result, a gate, or a verdict. Emulated engine only in v1; a harness source is refused.",
+  readOnly: false,
+  risk: "spend",
+  permalink: noPermalink("mutation-only"),
+  inputSchema: startEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.startEvalDescriptionExperiment(
+      {
+        projectId: project.id,
+        experimentId: input.experiment,
+        ...(input.caseScope !== undefined
+          ? { caseScope: input.caseScope }
+          : {}),
+        ...(input.iterationOverride !== undefined
+          ? { iterationOverride: input.iterationOverride }
+          : {}),
+        ...(input.maxTrials !== undefined
+          ? { maxTrials: input.maxTrials }
+          : {}),
+      },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
+  },
+};
+
+const getEvalDescriptionExperimentInput = z.object({
+  project: z
+    .string()
+    .trim()
+    .min(1)
+    .optional()
+    .describe(PROJECT_SELECTOR_DESCRIPTION),
+  experiment: z.string().trim().min(1).describe("Description-experiment id."),
+});
+
+export type GetEvalDescriptionExperimentInput = z.infer<
+  typeof getEvalDescriptionExperimentInput
+>;
+
+export type GetEvalDescriptionExperimentResult = {
+  project: SelectedProjectInfo;
+  experiment: PlatformEvalDescriptionExperiment;
+};
+
+export const getEvalDescriptionExperimentOperation: PlatformOperation<
+  GetEvalDescriptionExperimentInput,
+  GetEvalDescriptionExperimentResult
+> = {
+  name: "get_eval_description_experiment",
+  title: "Get an eval description experiment",
+  description:
+    "Read one description-experiment document: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison (Newcombe interval in points, per-case bars, regression line, evidence label) once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(
+      result.experiment.sourceRunId,
+      result.experiment.suiteId,
+      result.project?.id
+    ),
+  ]),
+  inputSchema: getEvalDescriptionExperimentInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const experiment = await client.getEvalDescriptionExperiment(
+      { projectId: project.id, experimentId: input.experiment },
+      { signal }
+    );
+    return { project: toSelectedProjectInfo(project), experiment };
   },
 };
 
@@ -14852,6 +15467,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalSuiteOperation,
   getEvalRunDisclosureOperation,
   updateEvalSuiteOperation,
+  listEvalSuiteRevisionsOperation,
   deleteEvalSuiteOperation,
   setEvalSuiteScheduleOperation,
   setEvalSuiteEnvironmentsOperation,
@@ -14864,6 +15480,11 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   generateEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
+  getEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   listEvalRunIterationsOperation,

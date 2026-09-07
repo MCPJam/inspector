@@ -28,15 +28,30 @@ function controllableExecutor() {
     if (!p) throw new Error(`executor never called for ${commandId}`);
     return p;
   }
+  // Cleared on settle, so a SECOND call with the same id (only reachable for
+  // untracked reads, which re-execute) waits for its own invocation rather
+  // than resolving the previous one's already-settled promise.
   async function release(commandId: string, result: BrowserCommandResult) {
-    (await waitForCall(commandId)).resolve(result);
+    const p = await waitForCall(commandId);
+    pending.delete(commandId);
+    p.resolve(result);
   }
   async function throwFor(commandId: string, error: unknown) {
-    (await waitForCall(commandId)).reject(error);
+    const p = await waitForCall(commandId);
+    pending.delete(commandId);
+    p.reject(error);
   }
   return { executor, calls, release, throwFor };
 }
 
+/**
+ * A command with SIDE EFFECTS, which is what at-most-once exists to protect.
+ *
+ * Deliberately not an `observe`: reads are exempt from id tracking (they have
+ * nothing to protect and would spend the per-boot budget for nothing), so
+ * testing the de-duplication rules with one would assert the opposite of the
+ * behaviour every rule below describes.
+ */
 function cmd(
   commandId: string,
   overrides: Partial<BrowserCommand> = {},
@@ -44,9 +59,20 @@ function cmd(
   return {
     commandId,
     source: "chat",
-    action: { kind: "observe", mode: "url" },
+    action: { kind: "webmcp_invoke", toolKey: "origin::pay", input: {} },
     ...overrides,
   };
+}
+
+/** A read: same envelope, no side effects, not tracked by id. */
+function readCmd(
+  commandId: string,
+  overrides: Partial<BrowserCommand> = {},
+): BrowserCommand {
+  return cmd(commandId, {
+    action: { kind: "observe", mode: "url" },
+    ...overrides,
+  });
 }
 
 describe("browserd CommandQueue", () => {
@@ -281,5 +307,74 @@ describe("browserd CommandQueue", () => {
     const b = await q.submit(cmd("b", { tabId: "tab-1" }));
     expect(a).toMatchObject({ result: { ok: false } });
     expect(b).toMatchObject({ result: { ok: true, output: "recovered" } });
+  });
+});
+
+/**
+ * Reads are exempt from at-most-once, and that exemption is what keeps the
+ * daemon alive under a watching inspector.
+ *
+ * Every tracked id is remembered for the whole boot — as a result, then as a
+ * tombstone — against `maxCommandsPerBoot`. The WebMCP inspector polls the
+ * page's tool list for as long as somebody is watching, which is thousands of
+ * observations an hour: enough to exhaust the budget in a day and leave the
+ * daemon answering `at_capacity` to every command, including the ones whose
+ * duplicates actually matter.
+ */
+describe("browserd CommandQueue — reads are not rationed", () => {
+  it("re-executes a duplicate observe rather than replaying a stale answer", async () => {
+    const { executor, calls, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a");
+
+    const first = q.submit(readCmd("obs-1"));
+    await release("obs-1", { ok: true, output: { url: "https://a.test" } });
+    expect(await first).toMatchObject({ status: "ok" });
+
+    // Same id, and it runs again — correct for a read, which should answer
+    // with what the page looks like NOW rather than what it looked like then.
+    const second = q.submit(readCmd("obs-1"));
+    await release("obs-1", { ok: true, output: { url: "https://b.test" } });
+    expect(await second).toMatchObject({
+      status: "ok",
+      result: { ok: true, output: { url: "https://b.test" } },
+    });
+    expect(calls).toHaveLength(2);
+  });
+
+  it("spends no part of the per-boot budget", async () => {
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", {
+      maxRetained: 2,
+      maxCommandsPerBoot: 2,
+    });
+
+    // Far more observations than the ceiling would ever allow.
+    for (let i = 0; i < 10; i += 1) {
+      const p = q.submit(readCmd(`obs-${i}`));
+      await release(`obs-${i}`, { ok: true, output: {} });
+      expect(await p).toMatchObject({ status: "ok" });
+    }
+    expect(q.retainedCount).toBe(0);
+    expect(q.tombstoneCount).toBe(0);
+
+    // ...and the budget is still entirely available to a command that needs it.
+    const write = q.submit(cmd("pay-1"));
+    await release("pay-1", { ok: true, output: {} });
+    expect(await write).toMatchObject({ status: "ok" });
+  });
+
+  it("still queues reads behind the tab FIFO, and still caps their depth", async () => {
+    // Exempt from ID TRACKING, not from ordering or admission control: a
+    // viewer must not be able to stampede the browser with observations.
+    const { executor, release } = controllableExecutor();
+    const q = new CommandQueue(executor, "boot-a", { perQueueDepthCap: 1 });
+
+    const first = q.submit(readCmd("obs-a", { tabId: "t1" }));
+    await tick();
+    const second = await q.submit(readCmd("obs-b", { tabId: "t1" }));
+    expect(second).toMatchObject({ status: "busy" });
+
+    await release("obs-a", { ok: true, output: {} });
+    expect(await first).toMatchObject({ status: "ok" });
   });
 });

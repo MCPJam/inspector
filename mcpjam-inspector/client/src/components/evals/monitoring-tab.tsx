@@ -26,6 +26,8 @@ export type ScheduledRunStat = {
   status:
     | "pending"
     | "running"
+    /** Held for its gating judge. Not terminal; `result` is still "pending". */
+    | "grading"
     | "completed"
     | "failed"
     | "cancelled"
@@ -53,7 +55,14 @@ function formatTimestamp(timestamp: number): string {
 }
 
 function segmentClass(stat: ScheduledRunStat): string {
-  if (stat.status === "running" || stat.status === "pending") {
+  // `grading` belongs with the in-progress states: every trial has run, but
+  // the verdict does not exist yet, and painting it by `result` would colour
+  // the segment for a "pending" nobody is going to see.
+  if (
+    stat.status === "running" ||
+    stat.status === "pending" ||
+    stat.status === "grading"
+  ) {
     return "bg-warning/50 hover:bg-warning/70";
   }
   if (stat.result === "passed") return "bg-success/70 hover:bg-success";

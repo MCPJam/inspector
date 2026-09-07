@@ -169,7 +169,8 @@ export const evalRunMeasurementUnitSchema = z.enum(EVAL_RUN_MEASUREMENT_UNITS);
 /**
  * Why no verdict was established.
  *
- *   - `runNotTerminal`           — the run is still pending or running. Poll it.
+ *   - `runNotTerminal`           — the run is still pending, running, or held
+ *                                   in `grading` for its judge. Poll it.
  *   - `runStatusNotAVerdict`     — a legacy run that stopped at `cancelled`,
  *     `timed_out` or `failed`. Its stored summary describes the iterations it
  *     happened to record, not the run it was asked to perform, so gating on it
@@ -648,6 +649,13 @@ export type EvalRunDecisionAssemblyInput = {
  * Mirrors the CLI's `TERMINAL_RUN_STATUSES`; kept here because the summary is
  * assembled on the server too, and a server that read "still running" as
  * "no verdict" for a finished run would report `notEstablished` forever.
+ *
+ * `grading` IS DELIBERATELY ABSENT. A run held for its gating judge has
+ * finished every trial but has not been decided: its `result` is `pending` and
+ * `finalizeAfterJudge` is what will set it. Adding it here would let a reader
+ * quote a stale `verdictSummary` — the one written before the judge's rows
+ * landed — as the run's verdict, which is precisely the number the hold exists
+ * to prevent anybody using.
  */
 const TERMINAL_RUN_STATUSES: ReadonlySet<string> = new Set([
   "completed",

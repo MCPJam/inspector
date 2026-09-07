@@ -1,0 +1,349 @@
+/**
+ * Which stage each of a suite's graders measures.
+ *
+ * The thing worth pinning here is TOTALITY. The settings page groups graders
+ * by stage, so a predicate kind this map does not place is a grader that
+ * silently disappears from the page — and the page then reads as "that stage
+ * has no grader" for a suite that is measuring it. A missing kind is therefore
+ * not a cosmetic gap, it is a page that lies about what a suite checks.
+ *
+ * The routing itself is NOT re-asserted here. It lives in
+ * `@mcpjam/sdk/contract`, where the analyzer derives its own selection routing
+ * from the same table; restating each kind's stage in this file would create a
+ * second opinion, and the one that goes stale is the one on the settings page.
+ * What is asserted is that every kind lands SOMEWHERE, exactly once, and that
+ * the few placements the settings page depends on hold.
+ */
+
+import { describe, expect, it } from "vitest";
+import {
+  PREDICATE_KINDS,
+  USER_VALUE_STAGES,
+  type UserValueStage,
+} from "@mcpjam/sdk/contract";
+import type { Predicate } from "@mcpjam/sdk/predicates";
+import {
+  groupGradersByStage,
+  judgeMode,
+  STAGE_EMPTY_COPY,
+  stageConfigStates,
+  stageEmptyIsGap,
+} from "../suite-grading-model";
+
+/** A structurally-valid predicate of each kind, for the totality sweep. */
+function samplePredicate(kind: string): Predicate {
+  const base = { type: kind } as Record<string, unknown>;
+  // Only the fields the label formatter reads; the model never validates.
+  if (
+    kind.startsWith("tool") ||
+    kind.startsWith("first") ||
+    kind.startsWith("widget")
+  )
+    base.toolName = "search";
+  if (kind === "responseContains") base.needle = "hi";
+  if (kind === "responseMatches") base.pattern = "hi";
+  if (kind === "tokenBudgetUnder") base.tokens = 100;
+  if (kind === "turnCountUnder") base.turns = 3;
+  if (kind === "widgetRenderLatencyUnder") base.ms = 500;
+  return base as Predicate;
+}
+
+describe("groupGradersByStage", () => {
+  it("places every predicate kind the schema admits, exactly once", () => {
+    const unplaced: string[] = [];
+    for (const kind of PREDICATE_KINDS) {
+      const model = groupGradersByStage({
+        predicates: [samplePredicate(kind)],
+      });
+      const inStages = USER_VALUE_STAGES.flatMap(
+        (stage) => model.byStage[stage],
+      ).filter((row) => row.kind === "predicate");
+      const total = inStages.length;
+      if (total !== 1) unplaced.push(`${kind} landed in ${total} groups`);
+    }
+    expect(
+      unplaced,
+      `Predicate kinds the settings page cannot place — a kind that lands nowhere makes its stage read as ungraded:\n  ${unplaced.join(
+        "\n  ",
+      )}`,
+    ).toEqual([]);
+  });
+
+  it("gives every stage a list, even an empty one", () => {
+    const model = groupGradersByStage({ predicates: [] });
+    for (const stage of USER_VALUE_STAGES) {
+      expect(Array.isArray(model.byStage[stage]), stage).toBe(true);
+    }
+  });
+
+  it("files tool selection at selection and arguments at the tool call", () => {
+    const model = groupGradersByStage({
+      predicates: [samplePredicate("toolCalledAtLeastOnce")],
+    });
+    const selection = model.byStage.selection.map((row) => row.id);
+    expect(selection).toContain("match:toolCallOrder");
+    expect(selection).toContain("match:maxExtraToolCalls");
+    expect(selection).toContain("predicate:0");
+    // The matcher is ONE stored object but two different judgements: order and
+    // extras are about which tool the model reached for, arguments about
+    // whether the call it made was usable.
+    expect(model.byStage.call.map((row) => row.id)).toEqual([
+      "match:argumentMatching",
+    ]);
+    expect(model.byStage.selection.map((row) => row.id)).not.toContain(
+      "match:argumentMatching",
+    );
+  });
+
+  it("files the ceiling kinds with every other check, not in a bucket", () => {
+    // The Limits tab lifted these two out for PRESENTATION only —
+    // `GRADER_PRESENTATION_GROUP` carries no analytical weight. With the tab
+    // gone they file where the contract puts them, and they remain fully
+    // valid, evaluable checks that the Checks list still shows and grades.
+    const model = groupGradersByStage({
+      predicates: [
+        samplePredicate("tokenBudgetUnder"),
+        samplePredicate("turnCountUnder"),
+        samplePredicate("responseContains"),
+      ],
+    });
+    // All three, in authored order, in one group — no bucket, nothing lifted.
+    expect(
+      model.byStage.userValue
+        .filter((row) => row.kind === "predicate")
+        .map((row) => row.id),
+    ).toEqual(["predicate:0", "predicate:1", "predicate:2"]);
+    expect(
+      model.byStage.userValue
+        .filter((row) => row.kind === "predicate")
+        .map((row) => row.label)
+        .slice(0, 2),
+    ).toEqual(["Token budget under 100", "Fewer than 3 user turns"]);
+  });
+
+  it("reads the judge's role from the config, advisory by default", () => {
+    const withoutRole = groupGradersByStage({ predicates: [] });
+    const judge = withoutRole.byStage.userValue.find(
+      (row) => row.judgeSlot === "goalCompletion",
+    );
+    expect(judge?.role).toBe("advisory");
+
+    const gating = groupGradersByStage({
+      predicates: [],
+      judgeConfig: { goalCompletion: { role: "gating" } },
+    });
+    expect(
+      gating.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
+    ).toBe("gating");
+
+    // Anything that is not the literal "gating" is advisory. The default has
+    // to fail CLOSED: a suite whose role field is absent, misspelled, or from
+    // a future build must never be shown as gating on a page people read to
+    // decide whether the judge can fail their build.
+    const odd = groupGradersByStage({
+      predicates: [],
+      judgeConfig: { goalCompletion: { role: "GATING" as never } },
+    });
+    expect(
+      odd.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
+    ).toBe("advisory");
+
+    const groundedness = withoutRole.byStage.userValue.find(
+      (row) => row.judgeSlot === "groundedness",
+    );
+    expect(groundedness?.role).toBe("advisory");
+    expect(groundedness?.label).toBe("Groundedness judge");
+  });
+
+  it("reads a predicate's role from checkRole", () => {
+    const model = groupGradersByStage({
+      predicates: [
+        samplePredicate("responseContains"),
+        {
+          ...samplePredicate("noToolErrors"),
+          role: "advisory",
+          severity: "warn",
+        },
+      ],
+    });
+    const predicates = USER_VALUE_STAGES.flatMap(
+      (stage) => model.byStage[stage],
+    ).filter((row) => row.kind === "predicate");
+    expect(predicates.map((row) => row.role)).toEqual(["gating", "advisory"]);
+    expect(predicates.map((row) => row.severity)).toEqual([undefined, "warn"]);
+    expect(
+      USER_VALUE_STAGES.flatMap((stage) => model.byStage[stage])
+        .filter((row) => row.kind === "match")
+        .every((row) => row.role === "gating"),
+    ).toBe(true);
+  });
+
+  it("places an unknown predicate kind without throwing", () => {
+    const model = groupGradersByStage({
+      predicates: [{ type: "somethingNewFromTheBackend" } as never],
+    });
+    const row = model.byStage.userValue.find(
+      (candidate) => candidate.kind === "predicate",
+    );
+    expect(row?.label).toBe("somethingNewFromTheBackend");
+  });
+
+  it("reads the suite's own pins rather than layering defaults over them", () => {
+    // `resolveMatchOptions(suite, case, runOverride)` takes three LAYERS, not a
+    // value and its defaults. Passing the defaults as the second argument would
+    // override the suite's pins with them, so this suite — which pins strict
+    // ordering — would report "Any order".
+    const model = groupGradersByStage({
+      matchOptions: { toolCallOrder: "strict" },
+      predicates: [],
+    });
+    const order = model.byStage.selection.find(
+      (row) => row.matchField === "toolCallOrder",
+    );
+    expect(order?.label).toContain("Strict order");
+  });
+});
+
+describe("STAGE_EMPTY_COPY", () => {
+  it("never borrows the run-state word for a config state", () => {
+    // "Not measured" describes a RUN — a stage no trial reached, or one the
+    // analyzer could not decide. On a settings page nothing has been observed
+    // at all, so the phrase would state an observation nobody made.
+    for (const stage of USER_VALUE_STAGES) {
+      expect(STAGE_EMPTY_COPY[stage].toLowerCase()).not.toContain(
+        "not measured",
+      );
+    }
+  });
+
+  it("distinguishes a runner-measured stage from an ungraded one", () => {
+    const runnerMeasured: UserValueStage[] = [
+      "connection",
+      "discovery",
+      "call",
+    ];
+    for (const stage of runnerMeasured) {
+      expect(stageEmptyIsGap(stage), stage).toBe(false);
+      expect(STAGE_EMPTY_COPY[stage]).toContain("Observed by the runner");
+    }
+    for (const stage of ["selection", "response", "userValue"] as const) {
+      expect(stageEmptyIsGap(stage), stage).toBe(true);
+      expect(STAGE_EMPTY_COPY[stage]).toBe("No grader");
+    }
+  });
+});
+
+describe("stageConfigStates", () => {
+  function statesFor(input: Parameters<typeof groupGradersByStage>[0]) {
+    const model = groupGradersByStage(input);
+    return stageConfigStates(model, judgeMode(input.judgeConfig));
+  }
+
+  function stateOf(
+    states: ReturnType<typeof stageConfigStates>,
+    stage: (typeof states)[number]["stage"],
+  ) {
+    return states.find((row) => row.stage === stage);
+  }
+
+  it("reads the default suite as runner / gated / gap / judge on request", () => {
+    const states = statesFor({ predicates: [] });
+    expect(stateOf(states, "connection")).toMatchObject({
+      state: "runner",
+      gates: 0,
+      warn: 0,
+      report: 0,
+    });
+    expect(stateOf(states, "discovery")).toMatchObject({
+      state: "runner",
+      gates: 0,
+      warn: 0,
+      report: 0,
+    });
+    expect(stateOf(states, "selection")).toMatchObject({
+      state: "gated",
+      gates: 2,
+      warn: 0,
+      report: 0,
+    });
+    expect(stateOf(states, "call")).toMatchObject({
+      state: "gated",
+      gates: 1,
+      warn: 0,
+      report: 0,
+    });
+    expect(stateOf(states, "response")).toMatchObject({
+      state: "gap",
+      gates: 0,
+      warn: 0,
+      report: 0,
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeOnRequest",
+      gates: 0,
+      warn: 0,
+      report: 0,
+      judge: "manual",
+    });
+  });
+
+  it("counts warn and report separately from gates", () => {
+    const states = statesFor({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" },
+        { type: "responseContains", needle: "hi", role: "advisory" },
+      ],
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      gates: 0,
+      warn: 1,
+      report: 1,
+    });
+  });
+
+  it("autoRun: true is judgeAutomatic", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { autoRun: true } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeAutomatic",
+      judge: "automatic",
+    });
+  });
+
+  it("role: gating is gated", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { role: "gating" } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "gated",
+      judge: "gating",
+    });
+  });
+
+  it("enabled: false is judgeOff", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { enabled: false } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeOff",
+      judge: "off",
+    });
+  });
+
+  it("a userValue predicate beside a manual judge is gated with judge: manual", () => {
+    const states = statesFor({
+      predicates: [samplePredicate("responseContains")],
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "gated",
+      gates: 1,
+      judge: "manual",
+    });
+  });
+});

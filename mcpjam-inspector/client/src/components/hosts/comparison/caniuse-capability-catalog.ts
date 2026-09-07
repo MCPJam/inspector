@@ -5,21 +5,29 @@ import {
   type SupportLevel,
 } from "@/lib/host-config-field-schema";
 import type { HostListItem } from "@/hooks/useClients";
-import {
-  getSupportLevel,
-  isSupportField,
-} from "./support-level";
+import { getSupportLevel, isSupportField } from "./support-level";
 import type { HostConfigDtoV2 } from "@/lib/client-config-v2";
 
 export const CANIUSE_LAST_VERIFIED_DATE = "2026-08-14";
 
 export const PUBLIC_CAN_I_USE_INLINE_PRESET_IDS = [
+  // Ranked order for the caniuse chip row. Grouped by vendor — the two
+  // Anthropic siblings follow Claude, Codex follows ChatGPT — with VS Code and
+  // Slackbot pinned rightmost in that order.
+  //
+  // `claude-code` and `codex` appear here but carry no "Verify against your
+  // server" link: that is driven separately by FLAG_GATED_HOST_IDS, because
+  // the link auto-creates a host and the app refuses while the rollout flag is
+  // off. Listing them here changes their position, not their verify state.
   "preset:claude",
+  "preset:claude-desktop",
+  "preset:claude-code",
   "preset:chatgpt",
+  "preset:codex",
   "preset:copilot",
   "preset:cursor",
-  "preset:slack",
   "preset:vscode",
+  "preset:slack",
 ] as const;
 
 const PUBLIC_CAN_I_USE_EXCLUDED_FIELD_IDS = new Set([
@@ -156,8 +164,7 @@ export function clientCompareFieldsWithData(
 ): ReadonlyArray<HostConfigFieldDef> {
   const publicFields = new Set(publicCaniuseFieldsWithData(subjects));
   return CLIENT_COMPARE_FIELDS.filter(
-    (field) =>
-      field.id === "mcpProtocolVersion" || publicFields.has(field),
+    (field) => field.id === "mcpProtocolVersion" || publicFields.has(field),
   );
 }
 

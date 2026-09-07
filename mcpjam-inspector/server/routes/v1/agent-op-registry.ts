@@ -71,6 +71,11 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getEvalRunDisclosureOperation,
@@ -82,6 +87,7 @@ import {
   listEvalCasesOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listClientsOperation,
   setClientServersOperation,
@@ -1559,6 +1565,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
   { operation: getEvalCaseOperation, tier: "direct" },
   { operation: listEvalSuiteRunsOperation, tier: "direct" },
   {
+    operation: listEvalSuiteRevisionsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- When a suite's results change without an obvious cause, read `list_eval_suite_revisions` before blaming the server: it says who last edited the suite's settings, which stored fields moved, and when. A revision's `revisionNumber` is also what makes an edit safe — pass the one you read as `expectedRevisionNumber` on `update_eval_suite` and a suite someone else changed in between is refused instead of overwritten.",
+    ],
+  },
+  {
     operation: getEvalRunOperation,
     tier: "direct",
     promptNotes: [
@@ -1573,6 +1586,28 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
       "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalRunGateOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_gate` returns the stored suite quality-gate report for ONE run: passed, failed, non_gateable, or not_configured. `not_configured` means the suite has no active conditions — it is a real report, never an absent route. A deployment that does not serve the route is a different fact: do not report that as 'no policy'. A run waiver never covers this report.",
+    ],
+  },
+  {
+    operation: getEvalRunRouteFactsOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_route_facts` returns the MEASURED DESCRIPTION of which tool paths a run's trials took. The population is the trial. Substitution is named only for the one-to-one in-catalog shape (exactly one expected name missing and exactly one unexpected in-catalog name observed). Read `catalogState`: `loaded` means unexpected tools can be in- or outside-catalog; `notLoaded` forbids substitution and unexpected tools read as `catalogNotLoaded`. A zero denominator is NOT MEASURED, never 0%. `endedWithQuestion` stays notMeasured until a producer exists. Report-only: never a verdict.",
+      "- An ABSENT route-facts document means the run predates route measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalDescriptionExperimentOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_description_experiment` returns one description-rewrite experiment: status, the proposed rewrite, the two arm run ids when launched, and the report-only comparison once both arms are terminal. Report-only: never a verdict. A missing report is unmeasured, never zeros.",
     ],
   },
   {
@@ -1789,6 +1824,34 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     },
     promptNotes: [
       "- `request_eval_run_judge` returns a pending receipt, not results. Read the grades from `get_eval_run`'s `judges.goalCompletion` once its `status` is `completed`; requesting again only spends again.",
+    ],
+  },
+  {
+    operation: proposeEvalDescriptionRewriteOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Draft a rewritten description for ${named(input, "toolName") ?? "(unnamed tool)"} from run ${named(input, "runId") ?? "(unnamed)"}`,
+      buttonLabel: "Propose the rewrite",
+      kind: "generate",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `propose_eval_description_rewrite` returns a proposing receipt, not a finished rewrite. Poll `get_eval_description_experiment` until status is proposed (or failed). Requesting again spends again.",
+    ],
+  },
+  {
+    operation: startEvalDescriptionExperimentOperation,
+    tier: "gated",
+    proposal: {
+      describe: (input) =>
+        `Launch the two-arm description experiment ${named(input, "experiment") ?? "(unnamed)"} (original + rewrite)`,
+      buttonLabel: "Start the experiment",
+      kind: "start",
+      confirmSeverity: "spend",
+    },
+    promptNotes: [
+      "- `start_eval_description_experiment` launches TWO replayed runs (original + rewrite) and spends eval-iteration credits for both. Poll `get_eval_description_experiment`. Emulated engine only; a harness source is refused.",
     ],
   },
 

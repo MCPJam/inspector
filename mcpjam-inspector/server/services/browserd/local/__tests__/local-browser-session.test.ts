@@ -1,6 +1,15 @@
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import {
   ensureLocalBrowserSession,
+  findLocalBrowserSession,
   getLocalBrowserProfileDir,
   killLocalBrowserSessions,
   listLocalBrowserSessions,
@@ -8,12 +17,17 @@ import {
   LOCAL_BROWSER_MAX_LIFETIME_MS,
   LocalBrowserUnavailableError,
   resetLocalBrowserSessionsForTests,
+  resolveLocalBrowserSurface,
   shutdownLocalBrowserSessions,
   sweepLocalBrowserSessions,
   touchLocalBrowserSession,
   type LocalBrowserDeps,
 } from "../local-browser-session";
 import { fakeContext } from "../../daemon/__tests__/fake-page";
+import {
+  contextSurfaceCount,
+  contextSurfaceFor,
+} from "../../electron/agent-surface";
 import type { DriverContext } from "../../daemon/browser-page";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -37,8 +51,10 @@ afterAll(async () => {
 
 function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
   const launched: Array<Record<string, unknown>> = [];
-  const contexts: Array<{ ctx: DriverContext; setConnected(v: boolean): void }> =
-    [];
+  const contexts: Array<{
+    ctx: DriverContext;
+    setConnected(v: boolean): void;
+  }> = [];
   let now = 1_000_000;
   const deps: LocalBrowserDeps = {
     async launch(options) {
@@ -47,9 +63,17 @@ function makeDeps(over: Partial<LocalBrowserDeps> = {}) {
       contexts.push({ ctx: context, setConnected });
       return context;
     },
+    async launchElectron() {
+      launched.push({ electron: true });
+      const { context, setConnected } = fakeContext();
+      contexts.push({ ctx: context, setConnected });
+      return context;
+    },
+    runtime: () => "playwright",
     chromiumInstalled: async () => true,
     probeProfileOwner: async () => ({ live: false }),
-    profileDirFor: (projectId: string) => join(profileRoot, projectId, "profile"),
+    profileDirFor: (projectId: string) =>
+      join(profileRoot, projectId, "profile"),
     now: () => now,
     env: {},
     ...over,
@@ -72,8 +96,14 @@ afterEach(async () => {
 describe("local browser session", () => {
   it("keeps ONE browser per project across turns", async () => {
     const { deps, launched } = makeDeps();
-    const first = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
-    const second = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
 
     expect(launched).toHaveLength(1);
     expect(second.bootId).toBe(first.bootId);
@@ -118,7 +148,9 @@ describe("local browser session", () => {
   });
 
   it("opens a real window only when asked, and only where one can exist", async () => {
-    const headed = makeDeps({ env: { MCPJAM_BROWSER_HEADED: "1", DISPLAY: ":0" } });
+    const headed = makeDeps({
+      env: { MCPJAM_BROWSER_HEADED: "1", DISPLAY: ":0" },
+    });
     await ensureLocalBrowserSession({ projectId: "proj-a" }, headed.deps);
     expect(headed.launched[0]).toMatchObject({ headless: false });
 
@@ -127,9 +159,10 @@ describe("local browser session", () => {
     const noDisplay = makeDeps({ env: { MCPJAM_BROWSER_HEADED: "1" } });
     await ensureLocalBrowserSession({ projectId: "proj-a" }, noDisplay.deps);
     expect(noDisplay.launched[0]).toMatchObject({
-      headless: process.platform === "win32" || process.platform === "darwin"
-        ? false
-        : true,
+      headless:
+        process.platform === "win32" || process.platform === "darwin"
+          ? false
+          : true,
     });
   });
 
@@ -217,7 +250,10 @@ describe("local browser session", () => {
     // Taking control IS using it. Reaping here closes the window someone is
     // typing a password into.
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     await handle.client.leaseAction!({ action: "acquire", holder: "rail-1" });
 
     advance(LOCAL_BROWSER_IDLE_MS + 1);
@@ -262,7 +298,10 @@ describe("local browser session", () => {
 
   it("reaps once the person hands it back", async () => {
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     await handle.client.leaseAction!({ action: "acquire", holder: "rail-1" });
     advance(LOCAL_BROWSER_IDLE_MS + 1);
     await sweepLocalBrowserSessions(at());
@@ -275,7 +314,10 @@ describe("local browser session", () => {
 
   it("watching the pane defers the reap", async () => {
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     advance(LOCAL_BROWSER_IDLE_MS - 1);
     touchLocalBrowserSession(handle, at());
     advance(LOCAL_BROWSER_IDLE_MS - 1);
@@ -285,10 +327,16 @@ describe("local browser session", () => {
 
   it("replaces a browser that died instead of handing back a dead handle", async () => {
     const { deps, contexts, launched } = makeDeps();
-    const first = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const first = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     // The user closed the window, or Chromium crashed.
     contexts[0].setConnected(false);
-    const second = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const second = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     expect(launched).toHaveLength(2);
     expect(second.bootId).not.toBe(first.bootId);
   });
@@ -299,6 +347,73 @@ describe("local browser session", () => {
     await ensureLocalBrowserSession({ projectId: "proj-b" }, deps);
     await killLocalBrowserSessions();
     expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+
+  it("brings its own Chromium in the desktop app, with nothing to install", async () => {
+    // The packaged app ships no `node_modules`, so the Playwright launcher
+    // cannot work there at all. Asking `chromiumInstalled()` would also show
+    // the consent screen a download prompt for a browser the user has open.
+    const installed = vi.fn<() => Promise<boolean>>().mockResolvedValue(false);
+    const { deps, launched } = makeDeps({
+      runtime: () => "electron",
+      chromiumInstalled: installed,
+      launch: async () => {
+        throw new Error("the Playwright launcher must not run under Electron");
+      },
+    });
+
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+
+    expect(handle.runtime).toBe("electron");
+    // Still the LOCAL engine: the tools, the lease, the pane and the approval
+    // rules are identical, and only the context factory differs.
+    expect(handle.engine).toBe("local");
+    expect(installed).not.toHaveBeenCalled();
+    expect(launched).toEqual([{ electron: true }]);
+  });
+
+  it("does not probe a singleton lock it does not own", async () => {
+    // Electron's profile is a session PARTITION, not a directory we create and
+    // lock. The app's own `requestSingleInstanceLock` is what guarantees one
+    // owner, which is the thing the probe exists to establish.
+    const probe = vi.fn(async () => ({ live: false }));
+    const { deps } = makeDeps({
+      runtime: () => "electron",
+      probeProfileOwner: probe,
+    });
+
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
+
+    expect(probe).not.toHaveBeenCalled();
+    expect(handle.profileDir).toBeUndefined();
+  });
+
+  it("gives each project its own Electron partition", async () => {
+    const partitions: Array<string | undefined> = [];
+    const { deps } = makeDeps({
+      runtime: () => "electron",
+      async launchElectron(options) {
+        partitions.push(options.partitionKey);
+        return fakeContext().context;
+      },
+    });
+
+    await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    await ensureLocalBrowserSession({ projectId: "proj-b" }, deps);
+    await ensureLocalBrowserSession(
+      { projectId: "proj-a", contextMode: "ephemeral", ownerKey: "run-1" },
+      deps,
+    );
+
+    // An ephemeral run gets no partition key at all: naming one would make
+    // Electron persist it, which is the opposite of what ephemeral means.
+    expect(partitions).toEqual(["proj-a", "proj-b", undefined]);
   });
 
   it("rejects a project key that would escape the profile root", async () => {
@@ -350,7 +465,10 @@ describe("local browser session — shutdown does not leave a browser behind", (
     // to hold. A dead session whose lease was never released used to refresh
     // its own timestamp on every sweep and never be collected.
     const { deps, contexts, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     const session = listLocalBrowserSessions().find(
       (s) => s.handle.bootId === handle.bootId,
     );
@@ -375,7 +493,10 @@ describe("local browser session — the reaper decides on current facts", () => 
     // A turn that lands in that window has already been handed this browser,
     // and closing it now acts on a reading that is no longer true.
     const { deps, advance, at } = makeDeps();
-    const handle = await ensureLocalBrowserSession({ projectId: "proj-a" }, deps);
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-a" },
+      deps,
+    );
     advance(LOCAL_BROWSER_IDLE_MS + 1);
 
     // The sweep decides synchronously, then awaits the lock. The use lands in
@@ -450,5 +571,121 @@ describe("local browser session — the reaper decides on current facts", () => 
     ).rejects.toMatchObject({ code: "disabled" });
     expect(closed).toEqual([true]);
     expect(listLocalBrowserSessions()).toHaveLength(0);
+  });
+});
+
+describe("local browser session — the pane's own view of it", () => {
+  /** Deps whose Electron launch RECORDS what it was asked for. */
+  function electronDeps(env: NodeJS.ProcessEnv = {}) {
+    const calls: Array<Record<string, unknown>> = [];
+    const made = makeDeps({
+      runtime: () => "electron",
+      env,
+      async launchElectron(options) {
+        calls.push(options as unknown as Record<string, unknown>);
+        const { context } = fakeContext();
+        return context;
+      },
+    });
+    return { ...made, calls };
+  }
+
+  it("says `frames` for a Chromium in another process", () => {
+    // There is no view to place: a Playwright browser is a separate process,
+    // and a screencast is the only thing it can offer.
+    expect(resolveLocalBrowserSurface({}, "playwright")).toBe("frames");
+    expect(
+      resolveLocalBrowserSurface(
+        { MCPJAM_BROWSER_NATIVE_SURFACE: "false" },
+        "playwright",
+      ),
+    ).toBe("frames");
+  });
+
+  it("says `native` in the desktop app, and only the exact string turns it off", () => {
+    // A typo must not silently drop the whole path back to JPEGs — the same
+    // rule every other switch in this wave follows.
+    expect(resolveLocalBrowserSurface({}, "electron")).toBe("native");
+    expect(
+      resolveLocalBrowserSurface(
+        { MCPJAM_BROWSER_NATIVE_SURFACE: "false" },
+        "electron",
+      ),
+    ).toBe("frames");
+    for (const value of ["", "FALSE", "0", "no", "true"]) {
+      expect(
+        resolveLocalBrowserSurface(
+          { MCPJAM_BROWSER_NATIVE_SURFACE: value },
+          "electron",
+        ),
+      ).toBe("native");
+    }
+  });
+
+  it("builds the context with views, and registers them by boot id", async () => {
+    const { deps, calls } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-n" },
+      deps,
+    );
+    expect(calls[0]).toMatchObject({ nativeSurface: true });
+    expect(calls[0]!.surface).toBeTruthy();
+    // BY BOOT ID, which is what the renderer knows and the only thing it may
+    // name: a renderer that could address a surface by index could reach
+    // another project's browser by guessing.
+    expect(contextSurfaceFor(handle.bootId)).toBe(calls[0]!.surface);
+  });
+
+  it("gives the surface the daemon's lease, not the renderer's word for it", async () => {
+    // THE INPUT GATE IS SERVER-AUTHORITATIVE. A real view is something a person
+    // can click into, so what decides whether it is shown has to be the same
+    // authority that already refuses the model's commands.
+    const { deps } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-l" },
+      deps,
+    );
+    const surface = contextSurfaceFor(handle.bootId)!;
+    surface.setPaneHolder("rail-1");
+    const { client } = findLocalBrowserSession(handle.bootId)!;
+    // Through the CLIENT, which is the path the pane's route actually takes:
+    // the lease is enforced inside the handler, and a test that reached past
+    // it would prove nothing about the route.
+    expect(surface.inputAllowed()).toBe(false);
+    expect(surface.isShown()).toBe(false);
+    const act = (action: "acquire" | "resume", holder: string) =>
+      client.leaseAction!({ action, holder });
+    await act("acquire", "rail-1");
+    expect(surface.inputAllowed()).toBe(true);
+    await act("resume", "rail-1");
+    await act("acquire", "someone-else");
+    expect(surface.inputAllowed()).toBe(false);
+  });
+
+  it("forgets the surface when the browser goes", async () => {
+    const { deps } = electronDeps();
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-f" },
+      deps,
+    );
+    expect(contextSurfaceCount()).toBe(1);
+    await killLocalBrowserSessions();
+    expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
+    expect(contextSurfaceCount()).toBe(0);
+  });
+
+  it("restores the pre-wave shape when the kill switch is set", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` — hidden windows and frames over a
+    // socket, exactly as before, with nothing for a pane to place.
+    const { deps, calls } = electronDeps({
+      MCPJAM_BROWSER_NATIVE_SURFACE: "false",
+    });
+    const handle = await ensureLocalBrowserSession(
+      { projectId: "proj-k" },
+      deps,
+    );
+    expect(calls[0]).toMatchObject({ nativeSurface: false });
+    expect(calls[0]!.surface).toBeUndefined();
+    expect(contextSurfaceFor(handle.bootId)).toBeUndefined();
   });
 });

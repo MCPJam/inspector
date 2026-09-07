@@ -17,13 +17,18 @@
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
 import {
+  BROWSERD_PROTOCOL_VERSION,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
 } from "../protocol";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
-import type { ViewportFrame, ViewportInputEvent } from "./viewport";
+import type {
+  ViewportCounters,
+  ViewportFrame,
+  ViewportInputEvent,
+} from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
 import {
   HandoffLease,
@@ -32,6 +37,26 @@ import {
   type LeaseRefusal,
   type LeaseState,
 } from "./lease";
+
+/**
+ * The most input events one request may carry.
+ *
+ * Mirrors `INPUT_BATCH_LIMIT` at the inspector's own edge
+ * (`routes/mcp/computers.ts`), deliberately duplicated rather than shared: this
+ * daemon answers on a public host of its own, so a cap enforced only by the
+ * caller is a cap that is not enforced.
+ */
+const MAX_INPUT_EVENTS = 64;
+
+/**
+ * The frame interval a person's input buys, and for how long.
+ *
+ * 33ms is 30fps — the ceiling the transports can actually carry — and 1.5s is
+ * long enough to cover the echo of a gesture and the settle after it without
+ * keeping a page at full rate because somebody clicked once.
+ */
+const INPUT_BOOST_INTERVAL_MS = 33;
+const INPUT_BOOST_WINDOW_MS = 1_500;
 
 /** A parsed inbound request; the adapter fills this from a Node req. */
 export interface DaemonRequest {
@@ -43,6 +68,15 @@ export interface DaemonRequest {
   authorization: string | undefined;
   /** The raw request body (already size-limited by the adapter). */
   body: string;
+  /**
+   * The URL's query, when the adapter bothered to parse it.
+   *
+   * Optional because nothing routed through `handle` reads it — the JSON API
+   * takes its arguments in the body. It exists for the STREAMING route, which
+   * the adapter serves itself (a chunked response cannot come back as a
+   * `DaemonResponse`) and which needs `tabId`/`holder` before it can subscribe.
+   */
+  query?: URLSearchParams;
 }
 
 /** What the handler wants written back. `body` undefined → empty response. */
@@ -65,7 +99,7 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health" | "viewport">;
+  driver: Pick<BrowserDriver, "health" | "viewport" | "tabsSnapshot">;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -78,14 +112,70 @@ export interface BrowserdHandlerDeps {
    * hold the screenshot of someone's password field.
    */
   lease?: HandoffLease;
+  /**
+   * What this daemon can do beyond the baseline protocol.
+   *
+   * Additive capabilities are ANNOUNCED, never assumed: a relay that asked for
+   * `codec=h264` from a daemon too old to encode it would get an error stream
+   * instead of a picture, and the reader has no way to tell that apart from a
+   * dead browser. Empty here; `"h264"` arrives with the video encoder.
+   */
+  features?: readonly string[];
+  /**
+   * The sha256 of the running bundle, for OBSERVABILITY and the lazy-upgrade
+   * decision — never for admission. See `BROWSERD_PROTOCOL_VERSION`.
+   */
+  bundleHash?: string;
+  /** Which profile mode this daemon launched with. */
+  contextMode?: "persistent" | "ephemeral";
+  /**
+   * Did the box start this daemon itself (baked into the image), or did an
+   * inspector replica boot it? Only `"prelaunch"` is adoptable without a boot.
+   */
+  startedBy?: "prelaunch" | "inspector";
+  /**
+   * Re-encode at a different tier.
+   *
+   * Absent on a box with no encoder, where `/v1/policy` is a no-op that still
+   * answers 200 — the caller's picture is a JPEG, whose quality this endpoint
+   * does not govern.
+   */
+  setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
 }
 
 export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
-  private readonly driver: Pick<BrowserDriver, "health" | "viewport">;
+  private readonly driver: Pick<
+    BrowserDriver,
+    "health" | "viewport" | "tabsSnapshot"
+  >;
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
+  private readonly features: readonly string[];
+  private readonly bundleHash: string | undefined;
+  private readonly contextMode: "persistent" | "ephemeral" | undefined;
+  private readonly startedBy: "prelaunch" | "inspector";
+  private readonly setVideoTier: BrowserdHandlerDeps["setVideoTier"];
+  /**
+   * How many frame streams are open, asked of the stream host.
+   *
+   * A FUNCTION set after construction, because the stream host is built from
+   * this handler (it borrows `authorize` and `subscribeFrames`) and so cannot
+   * exist yet when the constructor runs. Absent until then, which reads as
+   * "unknown" rather than as zero: an upgrade decision must not conclude
+   * "nobody is watching" from a wire that was never connected.
+   */
+  private watchers: (() => number) | undefined;
+  /**
+   * When a command or a person's input last touched the page.
+   *
+   * `null` until something does. The number itself is never interpreted here —
+   * it goes out on `/v1/status` and the INSPECTOR decides what counts as
+   * quiet, so changing that threshold does not need a daemon deploy (which is
+   * the very thing this whole compatibility mechanism exists to avoid).
+   */
+  private lastActivityAt: number | null = null;
 
   constructor(deps: BrowserdHandlerDeps) {
     this.queue = deps.queue;
@@ -93,6 +183,52 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.features = deps.features ?? [];
+    this.bundleHash = deps.bundleHash;
+    this.contextMode = deps.contextMode;
+    this.startedBy = deps.startedBy ?? "inspector";
+    this.setVideoTier = deps.setVideoTier;
+  }
+
+  /**
+   * What is open and which tab is on screen, for a stream's heartbeat.
+   *
+   * `undefined` from a driver that has no concept of tabs, which the pane
+   * reads as "this engine cannot tell you" rather than as "no tabs".
+   */
+  tabsSnapshot():
+    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
+    return this.driver.tabsSnapshot?.();
+  }
+
+  /** Let the stream host report itself on `/v1/status`. See `watchers`. */
+  attachFrameCounters(watchers: () => number): void {
+    this.watchers = watchers;
+  }
+
+  /**
+   * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
+   * the refusal to write back.
+   *
+   * Extracted so the STREAMING route can share it. That route cannot go through
+   * `handle` — its response is a chunked body, not a `DaemonResponse` — and a
+   * second copy of an auth check is how one of them quietly stops matching the
+   * other. Order matters and is preserved: an unauthenticated request carrying
+   * an Origin gets 401, not 403, so a caller learns nothing about the second
+   * check from failing the first.
+   */
+  authorize(req: DaemonRequest): DaemonResponse | undefined {
+    // No `WWW-Authenticate` (browserd is not an OAuth resource server) and no
+    // body — a 401 says nothing about why.
+    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
+      return { status: 401 };
+    }
+    // DNS-rebinding defence: every legitimate caller is server-side and sends no
+    // Origin, so any Origin at all is rejected.
+    if (req.origin !== undefined) {
+      return { status: 403, body: { error: "cross_origin_forbidden" } };
+    }
+    return undefined;
   }
 
   async handle(req: DaemonRequest): Promise<DaemonResponse> {
@@ -109,17 +245,8 @@ export class BrowserdRequestHandler {
         : { status: 503, body: { ok: false, detail: health.detail } };
     }
 
-    // Everything else is authenticated. No `WWW-Authenticate` (browserd is not
-    // an OAuth resource server) and no body — a 401 says nothing about why.
-    if (!constantTimeEquals(presentedBearer(req.authorization), this.token)) {
-      return { status: 401 };
-    }
-
-    // DNS-rebinding defence: every legitimate caller is server-side and sends no
-    // Origin, so any Origin at all is rejected.
-    if (req.origin !== undefined) {
-      return { status: 403, body: { error: "cross_origin_forbidden" } };
-    }
+    const refusal = this.authorize(req);
+    if (refusal) return refusal;
 
     if (req.path === "/v1/commands") {
       if (req.method !== "POST") {
@@ -140,11 +267,31 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "GET" } };
       }
       const health = await this.driver.health();
+      // The compatibility fields ride on BOTH answers. An unhealthy daemon is
+      // still a daemon of a particular protocol, and the caller's next decision
+      // — reuse, upgrade when idle, or relaunch now — needs the number whether
+      // or not Chromium is currently answering.
+      const identity = {
+        bootId: this.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        features: this.features,
+        startedBy: this.startedBy,
+        ...(this.bundleHash ? { bundleHash: this.bundleHash } : {}),
+        ...(this.contextMode ? { contextMode: this.contextMode } : {}),
+        // What "nobody is using this browser" is made of. Reported as FACTS,
+        // never as a verdict: the caller applies its own quiet threshold, so
+        // changing that threshold does not need a daemon deploy.
+        lease: this.lease.state().state,
+        ...(this.watchers ? { watchers: this.watchers() } : {}),
+        ...(this.lastActivityAt === null
+          ? {}
+          : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }),
+      };
       return health.ok
-        ? { status: 200, body: { ok: true, bootId: this.bootId } }
+        ? { status: 200, body: { ok: true, ...identity } }
         : {
             status: 503,
-            body: { ok: false, detail: health.detail, bootId: this.bootId },
+            body: { ok: false, detail: health.detail, ...identity },
           };
     }
 
@@ -158,7 +305,119 @@ export class BrowserdRequestHandler {
       return this.handleLease(req);
     }
 
+    // The quality tier a watcher asked for.
+    //
+    // NOT a lease-gated path: it changes how the picture is ENCODED, not what
+    // it shows, and a person watching over somebody else's shoulder on a bad
+    // link needs to be able to turn the bitrate down. Last writer wins across
+    // the (at most four) subscribers, which is the honest shape of one shared
+    // encoder — a per-subscriber tier would need a per-subscriber encoder.
+    if (req.path === "/v1/policy") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePolicy(req);
+    }
+
+    // Human input, which does NOT travel with the frames.
+    //
+    // One direction each: frames stream out over `/v1/frames`, input comes back
+    // as ordinary requests. That split is the local engine's (its pane POSTs to
+    // `/local-browser/input` while its socket only ever receives), and it is why
+    // the frame transport can be a one-way body instead of a socket.
+    if (req.path === "/v1/input") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handleInput(req);
+    }
+
     return { status: 404 };
+  }
+
+  private handlePolicy(req: DaemonRequest): DaemonResponse {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    // `JSON.parse("null")` is a successful parse of a non-object, and reading
+    // a property off it throws — a 500 where this endpoint has a 400 to give.
+    const tier =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { tier?: unknown }).tier
+        : undefined;
+    if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
+      return {
+        status: 400,
+        body: { error: "invalid_tier", bootId: this.bootId },
+      };
+    }
+    // A box with no encoder answers 200 and does nothing: the caller's picture
+    // is a JPEG, whose quality this endpoint does not govern, and reporting a
+    // failure would send a pane looking for a problem it does not have.
+    this.setVideoTier?.(tier);
+    return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
+  }
+
+  private async handleInput(req: DaemonRequest): Promise<DaemonResponse> {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId },
+      };
+    }
+    const { holder, tabId, events } = parsed as {
+      holder?: unknown;
+      tabId?: unknown;
+      events?: unknown;
+    };
+    if (typeof holder !== "string" || holder.length === 0) {
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
+    }
+    if (!Array.isArray(events)) {
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId },
+      };
+    }
+    // CAPPED HERE, not only at the inspector's edge. The daemon is reachable on
+    // its own public host, so a cap that lives only in the caller is a cap an
+    // attacker skips — and each event is a synchronous CDP round trip.
+    if (events.length > MAX_INPUT_EVENTS) {
+      return {
+        status: 413,
+        body: { error: "too_many_events", bootId: this.bootId },
+      };
+    }
+    this.lastActivityAt = Date.now();
+    const outcome = await this.dispatchInput({
+      ...(typeof tabId === "string" ? { tabId } : {}),
+      holder,
+      events: events as ViewportInputEvent[],
+    });
+    if (outcome.ok)
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
+    return {
+      status: outcome.error === "unknown_tab" ? 404 : 423,
+      body: { error: outcome.error, bootId: this.bootId },
+    };
   }
 
   private async handleCommand(req: DaemonRequest): Promise<DaemonResponse> {
@@ -166,7 +425,10 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body) as CommandRequestBody;
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
     if (!isValidCommand(parsed?.command)) {
       return {
@@ -174,6 +436,11 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
+    // Recorded BEFORE the lease gate, on purpose. A command the lease refuses
+    // is still evidence that somebody is trying to use this browser right now,
+    // and an upgrade that relaunched the daemon between an agent's refusal and
+    // its retry would be exactly as disruptive as one taken mid-turn.
+    this.lastActivityAt = Date.now();
 
     // HANDOFF GATE. A person holds (or has parked) the browser, so nothing
     // model-driven runs and — just as importantly — nothing OBSERVES: this
@@ -264,6 +531,21 @@ export class BrowserdRequestHandler {
          * quiet page. The transport calls this on its own heartbeat.
          */
         revalidate: () => void;
+        /**
+         * Is the tab this subscription was made against still the live one?
+         *
+         * `TabViewport.dispose()` clears its listeners SILENTLY — no callback,
+         * no terminal event — so a closed tab, a crashed renderer or a
+         * `driver.close()` leaves a subscriber holding a subscription that will
+         * simply never fire again. Over a socket that is indistinguishable from
+         * a page nobody is touching. The transport asks on its heartbeat and
+         * ends the stream when the answer turns false.
+         */
+        stillCurrent: () => Promise<boolean>;
+        /** This viewport's own drop accounting; see below. */
+        counters: () => ViewportCounters;
+        noteTransportDrop: () => void;
+        subscriberCount: () => number;
       }
     | { ok: false; error: string }
   > {
@@ -313,6 +595,76 @@ export class BrowserdRequestHandler {
         const lost = this.watcherRefusal(args.holder);
         if (lost) revoke(lost);
       },
+      // Identity, not existence: `viewport(tabId)` re-creates a viewport for a
+      // tab that was closed and reopened, so "something is there" would answer
+      // true while this subscription pointed at a dead object.
+      //
+      // ANSWERS RATHER THAN THROWS, because the only caller is a heartbeat and
+      // a heartbeat has nowhere to put an exception. `viewport()` throws on
+      // ordinary paths — a closing context says "this browser is shutting
+      // down", and the Electron engine refuses past its tab cap — and a
+      // rejection escaping into that tick both stopped the tick (so the lease
+      // went unchecked for the life of the stream) and, being unhandled, ended
+      // the daemon process. "I could not confirm this is still your tab" is
+      // false, and false is already the answer that ends the stream cleanly.
+      stillCurrent: async () => {
+        if (!live) return false;
+        try {
+          return (await this.driver.viewport?.(args.tabId)) === viewport;
+        } catch {
+          return false;
+        }
+      },
+      /**
+       * What this viewport has seen and thrown away, plus whose it is.
+       *
+       * Rides the heartbeat rather than a route of its own: the numbers are
+       * only interesting to somebody already reading this stream, and a
+       * separate endpoint would need its own auth, its own cadence and its own
+       * way of naming which viewport it meant.
+       */
+      counters: () => viewport.counters(),
+      /** A frame this viewport published that the transport could not take. */
+      noteTransportDrop: () => viewport.noteTransportDrop(),
+      subscriberCount: () => viewport.subscriberCount(),
+    };
+  }
+
+  /**
+   * The lease gate, without subscribing to a tab's frames.
+   *
+   * The VIDEO stream needs exactly this and nothing else: its pixels come from
+   * the X display rather than from a tab's screencast, so `subscribeFrames`
+   * would start a `Page.startScreencast` and a JPEG encoder that nobody reads —
+   * on a box the agent is also using — purely to borrow the lease check.
+   *
+   * PER SUBSCRIBER, deliberately. One encoder serves every watcher, but who may
+   * SEE it is asked of each of them separately: a person taking the browser
+   * ends the other watchers' streams with their own `lease_held` while the
+   * encoder keeps running for the holder's own pane. End reasons are about who
+   * may look, not about who is encoding.
+   */
+  watchLease(args: {
+    holder?: string;
+    onRevoked?: (reason: LeaseRefusal) => void;
+  }):
+    | { ok: true; revalidate: () => void; release: () => void }
+    | { ok: false; error: LeaseRefusal } {
+    const refusal = this.watcherRefusal(args.holder);
+    if (refusal) return { ok: false, error: refusal };
+    let live = true;
+    return {
+      ok: true,
+      revalidate: () => {
+        if (!live) return;
+        const lost = this.watcherRefusal(args.holder);
+        if (!lost) return;
+        live = false;
+        args.onRevoked?.(lost);
+      },
+      release: () => {
+        live = false;
+      },
     };
   }
 
@@ -349,6 +701,13 @@ export class BrowserdRequestHandler {
       () => stillTheirs() === undefined,
       args.holder,
     );
+    // AFTER the dispatch, so the boost covers the repaint it caused rather
+    // than the frame before it — and only when there WAS a dispatch: an empty
+    // batch changed nothing on the page, and raising the screencast to 30fps
+    // for a second and a half over it is a box paying for nothing.
+    if (args.events.length > 0) {
+      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    }
     return { ok: true };
   }
 
@@ -380,11 +739,17 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body) as typeof parsed;
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
     const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
     if (!holder) {
-      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
     }
     const ttlMs =
       typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs)
@@ -393,7 +758,8 @@ export class BrowserdRequestHandler {
     // Anything but the exact string is a person: a mislabelled script would
     // make the resume note tell the model a human was here, and the note's
     // whole job is to say what actually touched the page.
-    const kind: LeaseHolderKind = parsed?.kind === "script" ? "script" : "human";
+    const kind: LeaseHolderKind =
+      parsed?.kind === "script" ? "script" : "human";
 
     let state: LeaseState;
     switch (parsed?.action) {
@@ -478,7 +844,11 @@ export class BrowserdRequestHandler {
         }
         return {
           status: 200,
-          body: { status: "ok", result: outcome.result, bootId: outcome.bootId },
+          body: {
+            status: "ok",
+            result: outcome.result,
+            bootId: outcome.bootId,
+          },
         };
       case "busy":
         return {

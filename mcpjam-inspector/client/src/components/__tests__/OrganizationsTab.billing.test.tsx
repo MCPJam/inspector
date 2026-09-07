@@ -168,6 +168,24 @@ function billingStatusFixture(
   };
 }
 
+/**
+ * Mimics Chrome's built-in page translation, which moves every text node into
+ * a `<font>` wrapper it inserts in the node's place.
+ */
+function translateTextNodes(root: HTMLElement): void {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const textNodes: Text[] = [];
+  while (walker.nextNode()) {
+    textNodes.push(walker.currentNode as Text);
+  }
+
+  for (const textNode of textNodes) {
+    const wrapper = document.createElement("font");
+    textNode.parentNode?.insertBefore(wrapper, textNode);
+    wrapper.appendChild(textNode);
+  }
+}
+
 function createBillingHookState(overrides: Record<string, unknown>) {
   return {
     billingStatus: undefined,
@@ -1581,6 +1599,38 @@ describe("OrganizationsTab billing", () => {
     for (const button of teamButtons) {
       expect(button).toBeDisabled();
     }
+  });
+
+  it("clears the plan CTA spinner after a page translator rewrites its label", () => {
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({
+        billingStatus: billingStatusFixture(),
+        isStartingPlanChange: true,
+        pendingPlanChangeTarget: "team",
+      })
+    );
+
+    const { rerender } = render(
+      <OrganizationsTab organizationId="org-1" section="billing" />
+    );
+
+    const pendingButton = within(getPlanColumn("Team")).getByRole("button", {
+      name: /Loading/,
+    });
+    translateTextNodes(pendingButton);
+
+    mockUseOrganizationBilling.mockReturnValue(
+      createBillingHookState({ billingStatus: billingStatusFixture() })
+    );
+
+    // The spinner's label sits next to an icon, so React deletes it as its own
+    // text node. While the translator holds that node inside a `<font>`, the
+    // deletion used to throw NotFoundError from `removeChild`.
+    rerender(<OrganizationsTab organizationId="org-1" section="billing" />);
+
+    expect(
+      within(getPlanColumn("Team")).getByRole("button", { name: "Upgrade" })
+    ).toBeInTheDocument();
   });
 
   it("opens the dedicated cancellation flow when downgrading from a paid plan to Free", async () => {

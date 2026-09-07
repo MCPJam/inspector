@@ -43,6 +43,13 @@ import {
 } from "../daemon/chromium-launch.js";
 import type { DriverContext } from "../daemon/browser-page.js";
 import { probeSingletonOwner } from "../daemon/profile-lock.js";
+import { launchElectronContext } from "../electron/electron-context.js";
+import {
+  createContextSurface,
+  forgetContextSurface,
+  registerContextSurface,
+  type ContextSurface,
+} from "../electron/agent-surface.js";
 import { createInProcessBrowserdClient } from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
@@ -73,9 +80,76 @@ export function getLocalBrowserProfileDir(projectId: string): string {
   return dir;
 }
 
+/**
+ * Which Chromium this machine's browser actually is.
+ *
+ * `playwright` downloads and launches one; `electron` drives the one the
+ * desktop app already IS. They are the same engine to everything above —
+ * `ComputerEngine` stays `"local"` and the tools, the lease, the pane and the
+ * approval rules are untouched — because the only real difference is which
+ * factory builds the `DriverContext`.
+ */
+export type LocalBrowserRuntime = "playwright" | "electron";
+
+/**
+ * Which runtime this process can drive.
+ *
+ * `process.versions.electron` rather than the `ELECTRON_APP` env var: the var
+ * says how the app was STARTED, and a dev server started with it set is still
+ * a plain Node process with no `BrowserWindow` to open. This asks the only
+ * question that matters, and it cannot be wrong.
+ */
+export function resolveLocalBrowserRuntime(): LocalBrowserRuntime {
+  return process.versions.electron ? "electron" : "playwright";
+}
+
+/**
+ * How the pane will SEE this machine's browser.
+ *
+ * `native` is a real `WebContentsView` parented into the app's own window —
+ * Chromium, a few hundred microseconds from the pixels. `frames` is the JPEG
+ * screencast every other engine uses, and the only thing a Playwright browser
+ * in another process can offer.
+ *
+ * The pane has to be told rather than guess: it decides whether to open a
+ * frame socket at all, and a pane that opened one against a native surface
+ * would pay for an encode nobody looks at — while a pane that DIDN'T, against
+ * an engine with no views, would show a permanently blank rail.
+ *
+ * READ AT CALL TIME, from `env`, so `MCPJAM_BROWSER_NATIVE_SURFACE=false`
+ * takes the whole feature out without a rebuild. Anything other than the exact
+ * string leaves it on, matching every other switch in this wave.
+ */
+export function resolveLocalBrowserSurface(
+  env: NodeJS.ProcessEnv = process.env,
+  runtime: LocalBrowserRuntime = resolveLocalBrowserRuntime(),
+): "native" | "frames" {
+  if (runtime !== "electron") return "frames";
+  return (env.MCPJAM_BROWSER_NATIVE_SURFACE ?? "") === "false"
+    ? "frames"
+    : "native";
+}
+
 /** Everything this module needs from the outside, injectable for tests. */
 export interface LocalBrowserDeps {
   launch(options: LaunchBrowserdContextOptions): Promise<DriverContext>;
+  /**
+   * Hidden `BrowserWindow`s, for the packaged desktop app.
+   *
+   * The packaged app ships no `node_modules`, so `launch` above cannot work
+   * there at all — `import("playwright")` rejects. This is the same engine
+   * reaching a Chromium that is already on the machine.
+   */
+  launchElectron(options: {
+    contextMode: BrowserContextMode;
+    partitionKey?: string;
+    /** Tabs as views the pane can show natively, rather than hidden windows. */
+    nativeSurface?: boolean;
+    /** The surface those views register with, bound to this boot's lease. */
+    surface?: ContextSurface;
+  }): Promise<DriverContext>;
+  /** Which of the two this process can actually use. */
+  runtime(): LocalBrowserRuntime;
   chromiumInstalled(): Promise<boolean>;
   probeProfileOwner(
     dir: string,
@@ -94,6 +168,8 @@ export interface LocalBrowserDeps {
 
 const liveDeps = (): LocalBrowserDeps => ({
   launch: launchBrowserdContext,
+  launchElectron: launchElectronContext,
+  runtime: resolveLocalBrowserRuntime,
   chromiumInstalled: isChromiumInstalled,
   probeProfileOwner: probeSingletonOwner,
   profileDirFor: getLocalBrowserProfileDir,
@@ -187,7 +263,8 @@ function sessionKey(args: EnsureLocalBrowserArgs): string {
  */
 function wantsHeadedWindow(env: NodeJS.ProcessEnv): boolean {
   if (env.MCPJAM_BROWSER_HEADED !== "1") return false;
-  if (process.platform === "win32" || process.platform === "darwin") return true;
+  if (process.platform === "win32" || process.platform === "darwin")
+    return true;
   return Boolean(env.DISPLAY || env.WAYLAND_DISPLAY);
 }
 
@@ -260,8 +337,12 @@ async function startSession(
   // afterwards. The install probe below is an await too: read this first or a
   // kill during that probe is invisible and the launch survives the sweep.
   const bornAt = killGeneration;
+  const runtime = deps.runtime();
 
-  if (!(await deps.chromiumInstalled())) {
+  // Electron BRINGS its Chromium: there is nothing to install, and asking
+  // would show the consent screen a download prompt for a browser the user
+  // already has open.
+  if (runtime === "playwright" && !(await deps.chromiumInstalled())) {
     // Never install from inside a chat turn: the download is hundreds of
     // megabytes and the model would sit in a tool call for minutes with no way
     // to say why. The consent screen installs it, with progress.
@@ -275,9 +356,15 @@ async function startSession(
   }
   const contextMode: BrowserContextMode = args.contextMode ?? "persistent";
   const persistent = contextMode === "persistent";
-  const profileDir = persistent
-    ? deps.profileDirFor(args.projectId)
-    : undefined;
+  // Electron's profile is a session PARTITION, not a directory we create and
+  // lock: `persist:mcpjam-browser-<key>` is the whole of it, managed by
+  // Electron inside the app's own userData. So no directory, and no singleton
+  // probe — the app's `requestSingleInstanceLock` already guarantees that one
+  // process owns it, which is the thing the probe exists to establish.
+  const profileDir =
+    persistent && runtime === "playwright"
+      ? deps.profileDirFor(args.projectId)
+      : undefined;
 
   if (profileDir) {
     await mkdir(profileDir, { recursive: true, mode: 0o700 });
@@ -301,16 +388,40 @@ async function startSession(
     }
   }
 
-  const context = await deps.launch({
-    userDataDir: profileDir ?? "",
-    headless: !wantsHeadedWindow(deps.env),
-    // The FULL Chromium build, not the headless shell: `headless: true` alone
-    // selects `chromium-headless-shell`, which is the old headless — a
-    // different binary with a different compositor path and a fingerprint that
-    // public sites recognise and block.
-    channel: "chromium",
-    contextMode,
-  });
+  /**
+   * The pane's own view of this browser, when it can have one.
+   *
+   * Created BEFORE the context, because the context registers each tab with it
+   * as the tab is made — and the first tab is made during the launch below.
+   *
+   * `MCPJAM_BROWSER_NATIVE_SURFACE=false` restores the pre-V-3 shape exactly:
+   * hidden windows and frames over a socket. Read at call time so a deployment
+   * can flip it without a rebuild.
+   */
+  const nativeSurface =
+    resolveLocalBrowserSurface(deps.env, runtime) === "native";
+  const surface = nativeSurface ? createContextSurface() : undefined;
+
+  const context =
+    runtime === "electron"
+      ? await deps.launchElectron({
+          contextMode,
+          nativeSurface,
+          ...(surface ? { surface } : {}),
+          ...(persistent
+            ? { partitionKey: validateLocalProjectKey(args.projectId) }
+            : {}),
+        })
+      : await deps.launch({
+          userDataDir: profileDir ?? "",
+          headless: !wantsHeadedWindow(deps.env),
+          // The FULL Chromium build, not the headless shell: `headless: true`
+          // alone selects `chromium-headless-shell`, which is the old headless
+          // — a different binary with a different compositor path and a
+          // fingerprint that public sites recognise and block.
+          channel: "chromium",
+          contextMode,
+        });
 
   // The launch is the long await in this function, and a sweep can begin
   // inside it. A Chromium registered after the drain has already run is one
@@ -324,7 +435,27 @@ async function startSession(
     );
   }
 
-  const lease = new HandoffLease();
+  /**
+   * The lease drives the native surface, and the DAEMON owns the lease.
+   *
+   * This is the whole shape of the input gate: a real `WebContentsView` in the
+   * user's window is a browser somebody can click into, so what decides whether
+   * it is shown and whether it accepts input has to be the same authority that
+   * already refuses the model's commands. A renderer-side check would be a
+   * suggestion.
+   */
+  const lease = new HandoffLease(
+    surface
+      ? {
+          onChange: (state) =>
+            surface.setLease(
+              state.state === "free"
+                ? { state: "free" }
+                : { state: state.state, holder: state.holder },
+            ),
+        }
+      : {},
+  );
   const driver = new ChromiumDriver(context, { lease });
   // A per-boot bearer even in-process. Nothing else can reach this handler, but
   // the token is what makes the in-process client the SAME client as hosted —
@@ -333,9 +464,14 @@ async function startSession(
   const token = randomBytes(32).toString("hex");
   const stack = buildBrowserdStack(driver, { token, lease });
   const client = createInProcessBrowserdClient(stack, token);
+  // BY BOOT ID, which is what the renderer knows and the only thing it may
+  // name: a renderer that could address a surface by index could reach another
+  // project's browser by guessing.
+  if (surface) registerContextSurface(stack.bootId, surface);
 
   const handle: LocalBrowserSessionHandle = {
     engine: "local",
+    runtime,
     bootId: stack.bootId,
     client,
     contextMode,
@@ -477,7 +613,10 @@ export async function sweepLocalBrowserSessions(
       // merely has not expired yet: the sweep runs every 30 s, so refreshing
       // there would push `lastUsedAt` forward forever and the idle reap could
       // never fire at all.
-      if (session.context.isConnected() && session.lease.state().state === "held") {
+      if (
+        session.context.isConnected() &&
+        session.lease.state().state === "held"
+      ) {
         session.lastUsedAt = now;
       }
       continue;
@@ -522,6 +661,10 @@ function disposeSession(session: LocalSession): Promise<void> {
   if (session.disposal) return session.disposal;
   session.disposing = true;
   session.disposal = (async () => {
+    // FIRST, so a pane that is mid-resize cannot reparent a view into a window
+    // whose context is already closing. The context's own `close()` disposes
+    // the surface too; this is the registry entry, which nothing else drops.
+    forgetContextSurface(session.stack.bootId);
     session.stack.server.close();
     await Promise.race([
       session.driver.close(),

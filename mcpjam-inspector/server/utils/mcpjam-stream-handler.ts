@@ -1503,6 +1503,8 @@ const USER_OWNED_DENIAL_CODES = new Set<string>([
   // convex billing guard
   "billing_limit_reached",
   "billing_feature_not_included",
+  // convex org spend budget (admin-set cap) — a refusal, not a fault
+  "spend_budget_reached",
 ]);
 
 /** Exported for the capture-policy tests; see {@link USER_OWNED_DENIAL_CODES}. */

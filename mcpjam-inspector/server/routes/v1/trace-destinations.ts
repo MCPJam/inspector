@@ -79,7 +79,7 @@ const traceDestinations = new Hono();
  */
 function translateReadError(
   error: unknown,
-  isScopingPreflight = false
+  isScopingPreflight = false,
 ): WebRouteError {
   return translateConvexReadError(error, {
     scope: "v1.traceDestinations",
@@ -425,10 +425,16 @@ traceDestinations.get(
   "/organizations/:organizationId/trace-destinations/:destinationId",
   async (c) => {
     const client = createConvexClient(await getConvexBearerForRequest(c));
+    // `true`, like the list route and every write preflight: this read
+    // DECIDES whether the caller may see an id they supplied, so a refusal it
+    // cannot attribute has to read as 404. Left at the default, a
+    // cross-organization probe answered 502 where a missing id answered 404 —
+    // an existence oracle, and a Sentry page per probe.
     const row = await readDestination(
       client,
       c.req.param("destinationId"),
       c.req.param("organizationId"),
+      true,
     );
     return v1Resource(c, toTraceDestinationDto(row));
   },

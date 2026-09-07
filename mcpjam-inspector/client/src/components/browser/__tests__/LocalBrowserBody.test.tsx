@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -13,6 +13,10 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  /** Every "somebody is looking at this" the pane sent, by boot id. */
+  watches: [] as string[],
+  /** Make `watch` answer 404, as it does for a browser that has gone. */
+  watchMissing: false,
   /** Holds the next lease answer open, so a test can move the pane under it. */
   leaseGate: null as Promise<void> | null,
   /** The last socket handed to the pane, so a test can deliver a frame. */
@@ -61,6 +65,17 @@ vi.mock("@/lib/local-browser/client", async () => {
       api.inputs.push(args);
       return { ok: true as const };
     },
+    noteLocalBrowserWatch: async (args: any) => {
+      api.watches.push(args.bootId);
+      // The route is keyed by `bootId` and answers 404 when that browser has
+      // gone — crashed, closed, or reaped.
+      if (api.watchMissing) {
+        throw new actual.LocalBrowserRequestError("No such local browser", 404);
+      }
+      // The route reports who holds the browser as well as that somebody is
+      // watching it — which is how a refused pane hears about a hand-back.
+      return { watching: true as const, lease: api.lease };
+    },
     openLocalBrowserFrameStream: () => {
       const socket = {
         readyState: 1,
@@ -86,7 +101,9 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.watches = [];
   api.leaseGate = null;
+  api.watchMissing = false;
   api.socket = null;
   window.sessionStorage.clear();
 });
@@ -135,7 +152,9 @@ describe("the agent browser pane", () => {
       leaseHeld: false,
     };
     renderBody();
-    expect(await screen.findByTestId("rail-browser-needs-chromium")).toBeTruthy();
+    expect(
+      await screen.findByTestId("rail-browser-needs-chromium"),
+    ).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: /install/i }));
     await waitFor(() => expect(api.installs).toBe(1));
   });
@@ -158,7 +177,9 @@ describe("the agent browser pane", () => {
     );
     expect(await screen.findByText(/agent is driving/i)).toBeTruthy();
 
-    await userEvent.click(screen.getByRole("button", { name: /take control/i }));
+    await userEvent.click(
+      screen.getByRole("button", { name: /take control/i }),
+    );
     expect(await screen.findByText(/you have control/i)).toBeTruthy();
     expect(screen.getByRole("button", { name: /hand back/i })).toBeTruthy();
   });
@@ -265,11 +286,7 @@ describe("the agent browser pane — driving it", () => {
     await deliverFrame();
 
     view.rerender(
-      <LocalBrowserBody
-        projectId="proj-2"
-        consentGranted
-        consentToken="tok"
-      />,
+      <LocalBrowserBody projectId="proj-2" consentGranted consentToken="tok" />,
     );
 
     await waitFor(() =>
@@ -316,6 +333,33 @@ describe("the agent browser pane — driving it", () => {
   });
 });
 
+describe("the agent browser pane — when the grant goes away", () => {
+  it("STOPS SHOWING the browser the moment consent is revoked", async () => {
+    // The picture is of somebody's signed-in browser. The pane's own
+    // placeholder cannot enforce this — the surface renders a frame whenever
+    // there is one — so before this the last captured frame stayed on screen
+    // after the grant was withdrawn. The socket does close on its own, its
+    // nonce carrying a consent fingerprint, but not before the next frame and
+    // never for the one already in state.
+    const view = renderBody();
+    // The socket only opens once a browser is running.
+    await userEvent.click(
+      await screen.findByRole("button", { name: /open the browser/i }),
+    );
+    await deliverFrame();
+
+    view.rerender(
+      <LocalBrowserBody
+        projectId="proj-1"
+        consentGranted={false}
+        consentToken={null}
+      />,
+    );
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+    expect(screen.getByTestId("rail-browser-unconsented")).toBeTruthy();
+  });
+});
+
 describe("the agent browser pane — a hold you can get back", () => {
   it("keeps its lease identity across a reload", async () => {
     // A hold that runs out PARKS, and only its holder may hand it back. With
@@ -352,5 +396,213 @@ describe("the agent browser pane — a hold you can get back", () => {
     );
     expect(await screen.findByText(/has control/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /hand back/i })).toBeNull();
+  });
+});
+
+describe("the agent browser pane — the desktop app's own browser", () => {
+  /** Pretend to be the desktop app, with or without the native channel. */
+  const asDesktopApp = (over: { available?: boolean; api?: boolean } = {}) => {
+    api.status = {
+      installed: true,
+      install: { status: "ready" },
+      running: false,
+      leaseHeld: false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...({ runtime: "electron", surface: "native" } as any),
+    };
+    if (over.api === false) return;
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      agentBrowser: {
+        capability: async () => ({ available: over.available ?? true }),
+        setViewport: async () => ({ shown: true, inputAllowed: false }),
+      },
+    };
+  };
+
+  afterEach(() => {
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+  });
+
+  it("shows the page itself, and opens no frame socket at all", async () => {
+    // THE POINT OF THE WHOLE PATH. The browser is a view in this very process;
+    // a socket here would make the engine encode JPEGs at 30 fps that nobody
+    // ever draws.
+    asDesktopApp();
+    renderBody();
+    // The slot FIRST: `capability()` resolves a tick after mount, and the pane
+    // swaps component trees when it does — a button found before that is a
+    // detached node by the time a click reaches it.
+    expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures).toContain("proj-1"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(api.socket).toBeNull();
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("still says somebody is watching, with no socket to say it", async () => {
+    // The frame socket's heartbeat was the only evidence the idle reap ever
+    // saw. Without a replacement, a person watching the agent work — and not
+    // holding the lease — has their browser closed while they are looking at
+    // it.
+    asDesktopApp();
+    renderBody();
+    await screen.findByTestId("rail-browser-native-slot");
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
+  });
+
+  it("falls back to frames when the box turned the native surface off", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false`. The server built its context with
+    // hidden windows, so there is no view to place — and a pane that branched
+    // anyway would render a slot nothing ever paints into.
+    asDesktopApp();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api.status as any).surface = "frames";
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
+  });
+
+  it("falls back to frames in a desktop app that has no channel to ask", async () => {
+    // A shipped app older than this wave reports `runtime: "electron"` exactly
+    // as a new one does and has no `agentBrowser` at all.
+    asDesktopApp({ api: false });
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
+  });
+
+  it("falls back to frames when this Electron has no WebContentsView", async () => {
+    asDesktopApp({ available: false });
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
+  });
+});
+
+describe("the agent browser pane — when somebody else is driving", () => {
+  it("asks again until they hand it back", async () => {
+    // The refusal arrives on the frame socket. The HAND-BACK arrives as
+    // nothing at all — the frames were flowing the whole time, so there is no
+    // reconnect, no `hello`, and no ack to carry the news. Without a re-read
+    // the pane goes on saying somebody else is driving and withholds Take
+    // control (offered only on a free lease) until the page is reloaded.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+      expect(
+        screen.queryByRole("button", { name: /take control/i }),
+      ).toBeNull();
+
+      api.lease = { state: "free", holder: undefined };
+      const ensuresBefore = api.ensures.length;
+      const watchesBefore = api.watches.length;
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(
+        await screen.findByRole("button", { name: /take control/i }),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(/somebody else has taken control/i),
+      ).toBeNull();
+      // THROUGH `watch`, not `ensure`. `ensure` starts a browser when the one
+      // it was asked about has gone, so a crash under a waiting pane would
+      // launch a Chromium nobody asked for and answer with a different boot's
+      // lease.
+      expect(api.ensures.length).toBe(ensuresBefore);
+      // COUNTED, not merely present: this pane is not the native surface, so
+      // nothing else beats on `watch` — but an assertion that a name appears
+      // somewhere in a list would have passed on an earlier call rather than
+      // on the one this test is about.
+      expect(api.watches.length).toBeGreaterThan(watchesBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers to open a new one when the browser it was waiting for has gone", async () => {
+    // `watch` is keyed by `bootId`, so its 404 is an ANSWER: that browser is
+    // not coming back. Retrying past it left the pane saying somebody else was
+    // driving a browser that no longer existed, with no way out but a reload.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      await deliverFrame();
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+
+      api.watchMissing = true;
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/somebody else has taken control/i)).toBeNull();
+      // AND THE PICTURE IS GONE. It was of a browser that no longer exists,
+      // and leaving it up under an "Open the browser" button is a pane showing
+      // a page nobody can click on any more.
+      expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops asking the moment the grant is withdrawn", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const view = renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+
+      view.rerender(
+        <LocalBrowserBody
+          projectId="proj-1"
+          consentGranted={false}
+          consentToken="tok"
+        />,
+      );
+      const watchesAfterRevoke = api.watches.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      // Every call this poll makes carries the consent token. A pane whose
+      // grant has been withdrawn asking again every five seconds is a pane
+      // arguing with a decision the person already made.
+      expect(api.watches.length).toBe(watchesAfterRevoke);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

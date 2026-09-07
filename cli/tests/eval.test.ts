@@ -286,10 +286,21 @@ interface EvalFixtureOptions {
   /** Non-terminal keeps `--wait` polling until its deadline. */
   runCaseStatus?:
     | "running"
+    | "grading"
     | "completed"
     | "cancelled"
     | "timed_out"
     | "failed";
+  /**
+   * A status PER POLL, so a test can watch a run move.
+   *
+   * The last entry repeats once the sequence is exhausted, which is what lets
+   * a "still grading forever" fixture be one short array. Overrides
+   * `runCaseStatus` when supplied.
+   */
+  runCaseStatusSequence?: ReadonlyArray<
+    "running" | "grading" | "completed" | "cancelled" | "timed_out" | "failed"
+  >;
   /** Stamp the fixture's `run-case` as decided under verdict policy 2. */
   runCasePolicyVersion2?: boolean;
   runCaseIterationFetchError?: boolean;
@@ -306,9 +317,24 @@ interface EvalFixtureOptions {
   stageAnalyticsRouteMissing?: boolean;
   /** Like `runCaseIterationFetchError`, but the wire code is UNAUTHORIZED. */
   runCaseIterationFetchAuthError?: boolean;
+  /**
+   * The stored suite quality-gate report `GET /eval-runs/run-1/gate` answers.
+   * Absent leaves the route unimplemented, so the fixture's generic enveloped
+   * 404 stands — which the CLI reads as "no report", never as a failure.
+   */
+  runOneSuiteGate?: unknown;
+  /** Makes the gate route answer 500: a transport failure, not a verdict. */
+  runOneSuiteGateError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
   /** A terminal execution state distinct from the result verdict. */
-  runOneStatus?: "completed" | "cancelled";
+  runOneStatus?: "completed" | "cancelled" | "grading";
+  /**
+   * A status PER POLL for `run-1`, so an `eval gate --wait` test can watch a
+   * run move. The last entry repeats once exhausted; overrides `runOneStatus`.
+   */
+  runOneStatusSequence?: ReadonlyArray<
+    "running" | "grading" | "completed" | "cancelled"
+  >;
   /** Makes `GET /eval-runs/run-1/iterations` answer 500. */
   runOneIterationFetchError?: boolean;
   /**
@@ -446,6 +472,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     message: "token expired",
   });
   let runCasePollCount = 0;
+  let runOnePollCount = 0;
   let networkFailureArmed = false;
   const sockets = new Set<import("node:net").Socket>();
   const server: Server = createServer(async (req, res) => {
@@ -687,6 +714,25 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     ) {
       stageAnalyticsListQueries.push(url.search);
       res.end(JSON.stringify({ items: [STAGE_ANALYTICS_DOCUMENT] }));
+      return;
+    }
+    // Description experiments: the propose route, answering the receipt the
+    // real route answers — a `proposing` document the caller polls.
+    if (
+      url.pathname ===
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed/description-experiments" &&
+      (req.method ?? "GET") === "POST"
+    ) {
+      res.statusCode = 202;
+      res.end(
+        JSON.stringify({
+          id: "exp-1",
+          suiteId: "suite-1",
+          sourceRunId: "run-failed",
+          toolName: "tool_a",
+          status: "proposing",
+        })
+      );
       return;
     }
     if (
@@ -981,10 +1027,18 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
         options.authFailure === "poll"
           ? undefined
           : options.runCaseResult ?? "passed";
+      const sequenced = options.runCaseStatusSequence
+        ? options.runCaseStatusSequence[
+            Math.min(
+              runCasePollCount - 1,
+              options.runCaseStatusSequence.length - 1
+            )
+          ] ?? "completed"
+        : undefined;
       const status =
         options.authFailure === "poll"
           ? "running"
-          : options.runCaseStatus ?? "completed";
+          : sequenced ?? options.runCaseStatus ?? "completed";
       const policy2 =
         options.runCasePolicyVersion2 || result === "inconclusive";
       res.end(
@@ -1125,15 +1179,44 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       return;
     }
     if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/gate" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.runOneSuiteGateError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({ code: "INTERNAL", message: "gate read exploded" })
+        );
+        return;
+      }
+      if (options.runOneSuiteGate !== undefined) {
+        res.end(JSON.stringify(options.runOneSuiteGate));
+        return;
+      }
+    }
+
+    if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
     ) {
-      const status = options.runOneStatus ?? "completed";
+      runOnePollCount += 1;
+      const status = options.runOneStatusSequence
+        ? options.runOneStatusSequence[
+            Math.min(
+              runOnePollCount - 1,
+              options.runOneStatusSequence.length - 1
+            )
+          ] ?? "completed"
+        : options.runOneStatus ?? "completed";
       // A cancelled run is an EXECUTION state, not a verdict: it carries no
       // result at all, distinct from an inconclusive result on a completed
-      // run — both are "incomplete" gate-wise, for different reasons.
+      // run — both are "incomplete" gate-wise, for different reasons. A run
+      // held in `grading` carries no verdict either — its `result` is the
+      // backend's `pending`, which is not one of the four this fixture emits.
       const result =
-        status === "cancelled" ? null : options.runOneResult ?? "passed";
+        status === "cancelled" || status === "grading" || status === "running"
+          ? null
+          : options.runOneResult ?? "passed";
       res.end(
         JSON.stringify({
           id: "run-1",
@@ -2699,6 +2782,82 @@ test("eval stage-analytics reads one run's funnel", async () => {
   }
 });
 
+test("eval description-experiment propose resolves the project like its siblings", async () => {
+  // The propose input schema REQUIRES `project`, and the command validates
+  // before the cloud CLI fills it in — so without `projectOptional`, omitting
+  // --project was a usage error on the one command where it should not be.
+  const fixture = await startEvalFixture();
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "description-experiment",
+          "propose",
+          "--run",
+          "run-failed",
+          "--tool",
+          "tool_a",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0, run.stderr);
+    const document = JSON.parse(run.stdout.trim());
+    assert.equal(document.project.id, "proj-alpha");
+    assert.equal(document.experiment.id, "exp-1");
+    assert.equal(document.experiment.status, "proposing");
+    assert.ok(
+      fixture.requestUrls.includes(
+        "/api/v1/projects/proj-alpha/eval-runs/run-failed/description-experiments"
+      ),
+      fixture.requestUrls.join("\n")
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval description-experiment start refuses out-of-range flags before any request", async () => {
+  // The operation schema holds the documented limits; the command validates
+  // against it so a bad flag is a usage error, not a request.
+  const fixture = await startEvalFixture();
+  try {
+    for (const [flag, value, field] of [
+      ["--iterations", "11", "iterationOverride"],
+      ["--max-trials", "401", "maxTrials"],
+      ["--case-scope", "some", "caseScope"],
+    ] as const) {
+      const run = await captureProcessOutput(() =>
+        main(
+          evalArgv(
+            fixture.baseUrl,
+            "description-experiment",
+            "start",
+            "--experiment",
+            "exp-1",
+            flag,
+            value
+          ),
+          { telemetry: telemetryDisabled }
+        )
+      );
+      assert.equal(
+        run.result.exitCode,
+        2,
+        `accepted ${flag} ${value}: ${run.stderr}`
+      );
+      assert.match(run.stderr, new RegExp(`Invalid input:.*${field}`));
+    }
+    assert.equal(fixture.authHeaders.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval stage-analytics lists a suite's runs and forwards paging", async () => {
   const fixture = await startEvalFixture();
   try {
@@ -3839,6 +3998,88 @@ test("eval run --wait still prints the launch receipt when the wait times out", 
     const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
     assert.equal(failure.error.code, "OPERATIONAL_ERROR");
     assert.deepEqual(failure.error.details.runIds, ["run-case"]);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+/**
+ * B10e — the wait polls THROUGH a run held for its gating judge.
+ *
+ * `grading` means every trial finished and the run is waiting for the judge
+ * that may still take a green away. A CLI that stopped there would report a run
+ * with no verdict — and a CLI that let its default budget expire during the
+ * hold would report a run whose verdict is minutes away as a timeout, which is
+ * an infrastructure answer to a question the platform is about to answer.
+ */
+test("eval run --wait keeps polling through `grading` and reports the judge's verdict", async () => {
+  const fixture = await startEvalFixture({
+    runCaseStatusSequence: ["running", "grading", "completed"],
+    runCaseResult: "passed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // The verdict the judge produced, not a timeout and not a "still grading".
+    assert.equal(run.result.exitCode, 0);
+    const receipt = JSON.parse(run.stdout.trim());
+    assert.equal(receipt.runs[0].status, "completed");
+    assert.equal(receipt.runs[0].result, "passed");
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval run --wait with an explicit --wait-timeout does not extend for grading", async () => {
+  // A caller who named a budget meant it. Silently spending 31 more minutes of
+  // a CI job's wall clock is not a favour, so the extension is default-only.
+  const fixture = await startEvalFixture({ runCaseStatus: "grading" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Exit 5: no valid verdict observed. NEVER 1 — a judge that has not
+    // answered is an absence of verdict, not a regression.
+    assert.equal(run.result.exitCode, 5);
+    const stderrLines = run.stderr.trim().split("\n");
+    const failure = JSON.parse(stderrLines[stderrLines.length - 1]);
+    assert.equal(failure.error.code, "OPERATIONAL_ERROR");
+    // The per-run cause names the status it gave up on, so a reader learns the
+    // run was WAITING FOR ITS JUDGE rather than stuck mid-execution.
+    assert.match(failure.error.details.waitErrors[0].error, /still grading/);
   } finally {
     process.exitCode = 0;
     await fixture.close();
@@ -6637,6 +6878,88 @@ test("eval gate --reporter html renders a cancelled run's INCOMPLETE outcome as 
   }
 });
 
+/**
+ * B10e — `eval gate --wait` polls THROUGH a run held for its gating judge.
+ *
+ * The gate is where holding the run matters most: gating on a held run's
+ * stored summary would gate on the numbers written before the judge's rows
+ * landed, which is precisely the verdict the hold exists to be able to
+ * withdraw.
+ */
+test("eval gate --wait keeps polling through `grading` and gates on the judge's verdict", async () => {
+  const fixture = await startEvalFixture({
+    runOneStatusSequence: ["running", "grading", "completed"],
+    runOneResult: "passed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Decided on the run the judge finished, not on the summary it was
+    // holding while the judge ran.
+    assert.equal(run.result.exitCode, 0);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("eval gate --wait with an explicit --wait-timeout does not extend for grading", async () => {
+  const fixture = await startEvalFixture({ runOneStatus: "grading" });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--wait",
+          "--wait-timeout",
+          "1",
+          "--min-pass-rate-percent",
+          "100",
+          "--format",
+          "json"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    // Exit 3 — incomplete. A wait timeout is INFRASTRUCTURE, never a verdict:
+    // the run may yet pass, and reporting it as a regression is the one thing
+    // the gate's exit-code contract forbids.
+    assert.equal(run.result.exitCode, 3);
+    const report = JSON.parse(run.stdout.trim());
+    const waitVerdict = report.gate.verdicts.find(
+      (verdict: { gate: string }) => verdict.gate === "wait"
+    );
+    assert.equal(waitVerdict.status, "non_gateable");
+    assert.match(waitVerdict.message, /still grading/);
+  } finally {
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
 test("eval run --wait adopts the six-code contract under verdict policy 2 (E1)", async () => {
   // Inverse of the old sentinel: `eval run --wait` now DOES report a
   // verdict-shaped exit code. A completed "failed" run is the sole producer
@@ -7326,3 +7649,118 @@ test("merge: a local --out write failure never masks a real verdict failure", as
     await fixture.close();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The stored suite quality gate, as `eval gate` composes it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SUITE_GATE_FAILED = {
+  schemaVersion: 1,
+  evaluatorVersion: 1,
+  policy: { maximumPassRateDrop: 0.03 },
+  policyHash: "hash-1",
+  outcome: "failed",
+  conditions: [
+    {
+      condition: "maximumPassRateDrop",
+      status: "failed",
+      message: '"refund" pass rate 1 -> 0.9 (drop 0.1)',
+      observed: 0.1,
+      threshold: 0.03,
+    },
+  ],
+};
+
+test("a stored suite-gate failure fails a passing run, and names the condition", async () => {
+  const fixture = await startEvalFixture({ runOneSuiteGate: SUITE_GATE_FAILED });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "0"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 1, run.stdout + run.stderr);
+    // The condition rides into the verdict list, so the human output — and
+    // every reporter built from the same report — says WHY CI went red.
+    const printed = run.stdout + run.stderr;
+    assert.ok(
+      printed.includes("suiteGate:maximumPassRateDrop"),
+      `expected the failing condition to be named:\n${printed}`
+    );
+  } finally {
+    // The command exited non-zero on purpose; leaving that on the process
+    // would fail the whole FILE after every test in it passed.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("a suite-gate read failure never rewrites a measured verdict", async () => {
+  // Reading the gate is infrastructure. A 500 there must not turn a MEASURED
+  // regression (exit 1) into an infrastructure answer (exit 3) — the exact
+  // inversion `evalGateExitCode`'s contract forbids.
+  const failing = await startEvalFixture({
+    runOneSuiteGateError: true,
+    runOneResult: "failed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture0(failing),
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 1, run.stdout + run.stderr);
+  } finally {
+    process.exitCode = 0;
+    await failing.close();
+  }
+
+  // An otherwise-green run is the one case that becomes incomplete: a
+  // configured gate that could not be read is never a pass.
+  const passing = await startEvalFixture({ runOneSuiteGateError: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture0(passing),
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "0"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 3, run.stdout + run.stderr);
+  } finally {
+    process.exitCode = 0;
+    await passing.close();
+  }
+});
+
+function fixture0(f: { baseUrl: string }): string {
+  return f.baseUrl;
+}

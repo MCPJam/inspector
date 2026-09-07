@@ -1003,6 +1003,12 @@ export class MCPClientManager {
        * what `toolTaskSeamOptionsFor` returns for it.
        */
       tasks?: ToolTaskSeamOptions;
+      /**
+       * Rewrite `description` on named tools. Description ONLY — name,
+       * input schema, and `_meta` stay byte-identical. Applied in the
+       * converter after visibility filtering.
+       */
+      toolDescriptionOverrides?: Readonly<Record<string, string>>;
     } = {}
   ): Promise<AiSdkTool> {
     const ids = Array.isArray(serverIds)
@@ -1021,6 +1027,7 @@ export class MCPClientManager {
             needsApproval: options.needsApproval,
             includeAppOnly: options.includeAppOnly,
             modelVisibleMcpToolResults: options.modelVisibleMcpToolResults,
+            toolDescriptionOverrides: options.toolDescriptionOverrides,
             readResource: async ({ uri, options: readOptions }) => {
               const { requestOptions, settle } = this.applyCancellationPolicy(
                 id,

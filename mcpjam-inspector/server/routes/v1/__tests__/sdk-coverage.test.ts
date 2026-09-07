@@ -49,6 +49,11 @@ function appInventory(): Set<string> {
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
+  // Spend budget — the organization's ceiling on MCPJam-billed spend.
+  "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
+  "put /organizations/{organizationId}/spend-budget": "setSpendBudget",
+  "delete /organizations/{organizationId}/spend-budget": "clearSpendBudget",
+
   // Trace destinations — where an organization's traces are streamed.
   "get /organizations/{organizationId}/trace-destinations":
     "listTraceDestinations",
@@ -209,10 +214,23 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   "patch /projects/{projectId}/eval-suites/{suiteId}/schedule":
     "setEvalSuiteSchedule",
   "get /projects/{projectId}/eval-suites/{suiteId}/runs": "listEvalSuiteRuns",
+  "get /projects/{projectId}/eval-suites/{suiteId}/revisions":
+    "listEvalSuiteRevisions",
   "get /projects/{projectId}/eval-suites/{suiteId}/stage-analytics":
     "listEvalSuiteStageAnalytics",
   "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
     "getEvalRunStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/gate": "getEvalRunGate",
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts":
+    "getEvalRunRouteFacts",
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "proposeEvalDescriptionRewrite",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "listEvalDescriptionExperimentsForRun",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start":
+    "startEvalDescriptionExperiment",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}":
+    "getEvalDescriptionExperiment",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":

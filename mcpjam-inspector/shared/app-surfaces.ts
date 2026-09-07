@@ -719,6 +719,11 @@ export const APP_SURFACES = [
       // reasoning again: listed for route coverage, kept out of
       // `userActivities` while `trace-destinations` is off.
       "organizations/:orgId/observability",
+      // Spend budget. Unlike the three above this is NOT behind a flag, so it
+      // earns a `userActivities` entry: an admin looking for "where do I cap
+      // what this org can spend" is a question the agent should be able to
+      // answer with a route.
+      "organizations/:orgId/budget",
     ],
     navSegments: ["organizations"],
     title: "Organizations",
@@ -728,6 +733,7 @@ export const APP_SURFACES = [
       "Manage organization members",
       "Review or change billing",
       "Configure allowed models and provider keys",
+      "Set or raise the organization's spend budget",
     ],
     agentTools: {
       kind: "none",
@@ -782,10 +788,12 @@ export const APP_SURFACES = [
       "Invoke a page tool with structured input and read its result",
       "Review the activity timeline across navigations, with screenshots",
     ],
-    // The browser runs on the machine running this inspector, so a hosted
-    // replica has nothing to open. The routes are local-only for the same
-    // reason; this keeps the tab from appearing where it cannot work.
-    hostedBlocked: true,
+    // No longer hostedBlocked. It was, because the browser ran on the machine
+    // running this inspector and a hosted replica had nothing to open — but a
+    // hosted session drives a browser on the member's own MCPJam computer
+    // instead, so the surface works there. Client visibility is still gated on
+    // the `webmcp-inspector-enabled` flag, and the server on its own hosted
+    // switch.
     agentTools: {
       kind: "none",
       reason:

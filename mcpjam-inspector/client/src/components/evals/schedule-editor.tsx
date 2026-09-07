@@ -26,7 +26,6 @@ import {
   SelectValue,
 } from "@mcpjam/design-system/select";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 
 const INTERVAL_OPTIONS: Array<{ minutes: number; label: string }> = [
   { minutes: 5, label: "Every 5 minutes" },
@@ -42,6 +41,8 @@ export type SuiteSchedule = {
   enabled: boolean;
   state: "active" | "paused_quota" | "paused_auth" | "paused_failures";
   consecutiveFailures?: number;
+  /** The user a scheduled run executes as; absent on older backends. */
+  createdByUserId?: string;
   /**
    * The pinned project environment scheduled runs launch with. Required by
    * `setSuiteSchedule` when the suite attaches ≥2 environments; single-env
@@ -50,7 +51,19 @@ export type SuiteSchedule = {
   environmentId?: string;
 };
 
-const PAUSE_COPY: Record<Exclude<SuiteSchedule["state"], "active">, string> = {
+/**
+ * Why a schedule paused itself, in the words the person who owns it needs.
+ *
+ * EXPORTED because the Automations row renders the same three sentences at the
+ * top of the section, and a second copy is a second thing to keep true: the
+ * resume affordance below and the state chip above have to agree about what
+ * happened, or a reader gets one story from the chip and another from the
+ * banner.
+ */
+export const PAUSE_COPY: Record<
+  Exclude<SuiteSchedule["state"], "active">,
+  string
+> = {
   paused_quota:
     "Paused — the organization's eval iteration quota was exhausted. Resume after the quota resets or upgrade the plan.",
   paused_auth:
@@ -109,12 +122,11 @@ export function ScheduleEditor({
       attachedEnvironmentIdsKey ? attachedEnvironmentIdsKey.split(",") : [],
     [attachedEnvironmentIdsKey]
   );
-  // Flag-gated: with the kill-switch off, the environment pin control, its
-  // query, and its write are all suppressed even for a suite that already has
-  // ≥2 attached environments.
-  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
-  const requiresEnvironmentPin =
-    projectEnvironmentsEnabled && attachedEnvironmentIds.length >= 2;
+  // NOT flag-gated. A suite that fans out over ≥2 cells has to say which one a
+  // scheduled run uses, whatever minted them — and a client × model matrix is
+  // exactly that suite. Suppressing the pin on the named-environments flag left
+  // such a suite scheduling silently against its first cell.
+  const requiresEnvironmentPin = attachedEnvironmentIds.length >= 2;
   const persistedEnvironmentId = schedule?.environmentId;
   const [draftEnvironmentId, setDraftEnvironmentId] = useState<
     string | undefined
@@ -229,7 +241,7 @@ export function ScheduleEditor({
             }
           }}
         >
-          <SelectTrigger className="h-8 w-44 text-xs">
+          <SelectTrigger className="h-8 w-44 text-xs" aria-label="Schedule interval">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

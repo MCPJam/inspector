@@ -1159,6 +1159,7 @@ Create a runnable eval suite from authored test cases (does not run it).
 | `--model <model>` | No | Suite-level default model (overrides the file) |
 | `--provider <provider>` | No | Suite-level default provider (overrides the file) |
 | `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
+| `--host <id-or-name...>` | No | Clients (hosts) to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --host` has nothing to select |
 
 ### `cloud eval list`
 
@@ -1572,10 +1573,21 @@ run before evaluating it.
 | `--min-effect-size-percent <0-100>` | No | Smallest pass-rate drop worth failing on, as a percentage (default 1); requires `--baseline` or `--baseline-sha` |
 | `--gate-deterministic-regressions` | No | Fail if a deterministic gating scorer flipped from passed to failed; requires `--baseline` or `--baseline-sha` |
 | `--max-p95-latency-increase-ms <ms>` | No | Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires `--baseline` or `--baseline-sha` |
+| `--max-cost-usd <usd>` | No | Fail if the run's MCPJam-billed cost exceeded this many dollars. Accepts decimals (`0.05`) |
+| `--max-cost-increase-percent <percent>` | No | Fail if cost rose by more than this percentage of the baseline's; requires `--baseline` or `--baseline-sha`. Values above 100 are allowed — a run costing three times its baseline is a 200% increase |
 | `--wait` | No | Poll until the run reaches a terminal status |
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000) |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the structured eval and gate report to stdout. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the report to a file; defaults to `json-summary`, or uses `--reporter` when present |
+
+Both cost gates report **non-gateable** (exit 3) rather than passing when the
+cost is unknown or only partly measured. Cost is stamped per iteration and is
+absent whenever the model was not MCPJam-billed (your own API key), the run
+used a harness (which mixes models within a turn), or the trial reported no
+tokens — so a total built from some of the run is smaller than the truth, and
+gating a ceiling against it would pass exactly the runs least understood. A
+`--max-cost-increase-percent` gate is also non-gateable when the baseline cost
+nothing, since a percentage of zero is undefined.
 
 Report files are flushed before gate exit codes are set, including failed and
 incomplete gate outcomes.
@@ -1958,6 +1970,23 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--judge <on\|off>` | No | Turn LLM-as-judge grading on/off. `on` both enables the judge and sets it to grade every run as it completes; `off` stops both |
 | `--judge-model <id>` | No | Judge model ID |
 | `--judge-threshold <0-1>` | No | Judge pass threshold, 0–1 (a case passes when its score is at or above it) |
+
+### `cloud eval revisions`
+
+List a suite's settings history, newest first: one entry per committed edit,
+with who made it, which stored fields moved, the note they left, and how many
+runs were launched against it. Rows carry no configuration snapshots.
+
+| Flag | Required | Description |
+|------|----------|-------------|
+| `--suite <id-or-name>` | Yes | Eval suite name or ID |
+| `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
+| `--limit <n>` | No | Maximum revisions to return, 1–100 (defaults to 25) |
+| `--cursor <cursor>` | No | Pagination cursor from a previous page |
+
+```bash
+mcpjam cloud eval revisions --suite "Asana MCP Evals" --format json
+```
 
 ### `cloud eval checks list`
 

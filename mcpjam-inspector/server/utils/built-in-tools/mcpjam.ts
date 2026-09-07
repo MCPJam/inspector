@@ -47,6 +47,11 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   getEvalRunStepsOperation,
   getServerPromptOperation,
@@ -55,6 +60,7 @@ import {
   searchSessionsOperation,
   listEvalRunIterationsOperation,
   listEvalSuiteRunsOperation,
+  listEvalSuiteRevisionsOperation,
   listEvalSuitesOperation,
   listProjectsOperation,
   createProjectServerOperation,
@@ -161,6 +167,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   getConformanceReportOperation,
   listEvalSuitesOperation,
   listEvalSuiteRunsOperation,
+  // The suite's settings HISTORY. In-product because it answers the first
+  // question after an unexplained change in results — who edited this suite,
+  // and when — and because its `revisionNumber` is what turns an
+  // `update_eval_suite` into a compare-and-set rather than a last-write-wins.
+  listEvalSuiteRevisionsOperation,
   // Read-only, checked BEFORE a launch decision — placed ahead of the two run
   // operations it exists to inform. `run_eval_suite` already fetches and
   // returns its own disclosure on the receipt, so this is for when a caller
@@ -172,6 +183,11 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // The measured description beside the decision: how much of the run was
   // measured at all, per stage. Reads, so they ride with the run read.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
+  getEvalRunRouteFactsOperation,
+  getEvalDescriptionExperimentOperation,
+  proposeEvalDescriptionRewriteOperation,
+  startEvalDescriptionExperimentOperation,
   listEvalSuiteStageAnalyticsOperation,
   compareEvalRunOperation,
   waiveEvalGateOperation,
@@ -557,6 +573,12 @@ const APPROVAL_REQUIRED_IDS = new Set([
   // useful if you can ask for them — but the spend is the user's to approve,
   // so it sits here with `cancel_eval_run` rather than executing on request.
   requestEvalRunJudgeOperation.name,
+  // The description-rewrite experiment: proposing SPENDS one model call and
+  // starting SPENDS eval-iteration credits across two replayed runs. Same
+  // rule as the judge request — advertised so the agent can drive the loop,
+  // approved by the user because the spend is theirs.
+  proposeEvalDescriptionRewriteOperation.name,
+  startEvalDescriptionExperimentOperation.name,
   // Dials a third party's server for minutes and, with the opt-in, spends the
   // organization's credits. Reading grades is only useful if you can ask for
   // one, so these are advertised rather than excluded — but the asking is the

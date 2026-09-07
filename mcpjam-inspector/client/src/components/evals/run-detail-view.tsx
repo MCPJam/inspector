@@ -708,6 +708,7 @@ export function RunDetailView({
         error={serverQualityError}
         onRetry={() => requestServerQuality(true)}
         source={source}
+        hostNamesById={hostNamesById}
         embedded={embeddedInResultsSplit}
       />
     ) : null;
@@ -1100,6 +1101,12 @@ export function RunDetailView({
           selectedRunDetails.configSnapshot?.environmentPluginVersions
         }
         skillsExcluded={selectedRunDetails.configSnapshot?.skillsExcluded}
+        {...(selectedRunDetails.configSnapshot?.toolDescriptionOverride
+          ? {
+              toolDescriptionOverride:
+                selectedRunDetails.configSnapshot.toolDescriptionOverride,
+            }
+          : {})}
       />
 
       {runClient && !showAccuracyHero && !embeddedInResultsSplit ? (

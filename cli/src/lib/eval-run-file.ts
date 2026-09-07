@@ -106,6 +106,7 @@ export function fileCaseToCreateBody(
     id: testCase.id,
     title: testCase.title,
     ...(testCase.intent !== undefined ? { intent: testCase.intent } : {}),
+    ...(testCase.kind !== undefined ? { kind: testCase.kind } : {}),
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,
@@ -140,6 +141,7 @@ export function fileCaseToUpdateBody(
     // A file re-sync is authoritative: unlike an ordinary PATCH, a missing
     // label must clear the old one rather than preserve stale attribution.
     intent: testCase.intent ?? null,
+    kind: testCase.kind ?? null,
     steps: testCase.steps,
     iterations: testCase.repetitions,
     repetitions: testCase.repetitions,

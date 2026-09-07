@@ -109,6 +109,7 @@ const MCP_APPS_CAPABILITY_KEYS = [
   "resourcePrefersBorder",
   "downloadFile",
   "requestTeardown",
+  "safeAreaInsets",
   "widgetDisplayModeRequests",
 ] as const satisfies ReadonlyArray<keyof McpAppsCapabilities>;
 
