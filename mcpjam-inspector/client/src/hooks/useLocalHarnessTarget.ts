@@ -179,7 +179,10 @@ export interface LocalHarnessControllerState {
   refresh: () => void;
   chooseWorkspace: (
     selection: { path: string } | { useSuggested: true },
-  ) => Promise<{ ok: true } | LocalHarnessError>;
+  ) => Promise<
+    | { ok: true; workspace: { workspaceGrantId: string; displayRoot: string } }
+    | LocalHarnessError
+  >;
   /**
    * Adopt a workspace some OTHER trusted caller already registered.
    *
@@ -258,6 +261,20 @@ export function useLocalHarnessController(
   const observedAttemptRef = useRef<string | null>(null);
 
   const [workspace, setWorkspace] = useState<{
+    workspaceGrantId: string;
+    displayRoot: string;
+  } | null>(null);
+  /**
+   * The same value, readable synchronously.
+   *
+   * `captureApproval` runs in the SAME tick as the registration that precedes
+   * it — the dialog registers the suggested folder and then captures what the
+   * user approved — and a `useState` value does not update until the next
+   * render. Reading the render closure there meant the very first
+   * **Install & allow** captured nothing and reported "choose a folder" for a
+   * folder that had just been registered.
+   */
+  const workspaceRef = useRef<{
     workspaceGrantId: string;
     displayRoot: string;
   } | null>(null);
@@ -570,20 +587,26 @@ export function useLocalHarnessController(
   const chooseWorkspace = useCallback(
     async (
       selection: { path: string } | { useSuggested: true },
-    ): Promise<{ ok: true } | LocalHarnessError> => {
+    ): Promise<
+      | { ok: true; workspace: { workspaceGrantId: string; displayRoot: string } }
+      | LocalHarnessError
+    > => {
       const result = await registerLocalHarnessWorkspace(selection);
       if (!result.ok) return result;
-      setWorkspace({
+      const registered = {
         workspaceGrantId: result.workspaceGrantId,
         displayRoot: result.displayRoot,
-      });
-      return { ok: true };
+      };
+      workspaceRef.current = registered;
+      setWorkspace(registered);
+      return { ok: true, workspace: registered };
     },
     [],
   );
 
   const adoptWorkspace = useCallback(
     (grant: { workspaceGrantId: string; displayRoot: string }) => {
+      workspaceRef.current = grant;
       setWorkspace(grant);
     },
     [],
@@ -594,13 +617,15 @@ export function useLocalHarnessController(
       expectations: LocalHarnessConsentExpectations;
       scopeKey: string;
     }): LocalHarnessPendingApproval | null => {
-      if (!projectId || workspace === null) return null;
+      // The REF, not the render's copy: see `workspaceRef`.
+      const chosen = workspaceRef.current ?? workspace;
+      if (!projectId || chosen === null) return null;
       const approval: LocalHarnessPendingApproval = {
         attemptId: `approval_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`,
         expectations: capture.expectations,
         projectId,
-        workspaceGrantId: workspace.workspaceGrantId,
-        workspaceDisplayRoot: workspace.displayRoot,
+        workspaceGrantId: chosen.workspaceGrantId,
+        workspaceDisplayRoot: chosen.displayRoot,
         userKey,
         scopeKey: capture.scopeKey,
         approvedAt: Date.now(),
@@ -623,14 +648,24 @@ export function useLocalHarnessController(
 
   const startInstall = useCallback(async () => {
     const approval = pendingApprovalRef.current;
+    if (approval === null) {
+      // A ~200 MB download is a thing a human asks for. There is exactly one
+      // gesture that asks — **Install & allow** — and it captures an approval
+      // first, so an install with none behind it is a caller that found
+      // another way in. Refused rather than trusted to be the dialog.
+      return {
+        ok: false as const,
+        kind: "forbidden" as const,
+        status: null,
+        message:
+          "Nothing was approved for this setup, so no download was started.",
+      };
+    }
     const result = await startLocalHarnessRuntimeInstall({
-      expectedPack:
-        approval === null
-          ? null
-          : {
-              packVersion: approval.expectations.packVersion,
-              treeDigest: approval.expectations.treeDigest,
-            },
+      expectedPack: {
+        packVersion: approval.expectations.packVersion,
+        treeDigest: approval.expectations.treeDigest,
+      },
     });
     if (!result.ok) return result;
     // The acknowledgement names the attempt to observe. Selecting it here,
@@ -749,6 +784,7 @@ export function useLocalHarnessController(
     // one; an explicit choice this session outranks it.
     workspace:
       workspace ??
+      workspaceRef.current ??
       (consent !== null
         ? {
             workspaceGrantId: consent.target.workspaceGrantId,

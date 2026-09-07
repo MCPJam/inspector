@@ -418,7 +418,14 @@ describe("polling", () => {
     });
     const { result } = render();
     await waitFor(() => expect(result.current.phase).toBe("installing"));
+    // Through the real gesture: an install with no approval behind it is
+    // refused, so the attempt to observe would never be selected either.
     await act(async () => {
+      await result.current.chooseWorkspace({ useSuggested: true });
+      result.current.captureApproval({
+        expectations: EXPECTATIONS,
+        scopeKey: "host-1:claude-code",
+      });
       await result.current.startInstall();
     });
     await new Promise((r) => setTimeout(r, 1_500));
@@ -436,6 +443,36 @@ describe("pending approval", () => {
     });
     return rendered;
   }
+
+  it("sees a workspace registered in the SAME tick", async () => {
+    // The dialog registers the suggested folder and captures the approval
+    // without a render in between. Reading the render closure there meant the
+    // very first Install & allow captured nothing and reported "choose a
+    // folder" for a folder that had just been registered.
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    let approval: unknown;
+    await act(async () => {
+      await rendered.result.current.chooseWorkspace({ useSuggested: true });
+      approval = rendered.result.current.captureApproval({
+        expectations: EXPECTATIONS,
+        scopeKey: "host-1:claude-code",
+      });
+    });
+    expect(approval).toMatchObject({ workspaceGrantId: "ws_1" });
+  });
+
+  it("returns the registered workspace, so a caller need not wait for state", async () => {
+    const rendered = render();
+    await waitFor(() => expect(rendered.result.current.loading).toBe(false));
+    const outcome = await act(async () =>
+      rendered.result.current.chooseWorkspace({ useSuggested: true }),
+    );
+    expect(outcome).toMatchObject({
+      ok: true,
+      workspace: { workspaceGrantId: "ws_1", displayRoot: "~/code/project" },
+    });
+  });
 
   it("is captured only by an explicit approval, and downloads nothing", async () => {
     const { result } = await readyToApprove();
@@ -657,6 +694,17 @@ describe("authorizing", () => {
 });
 
 describe("installing", () => {
+  it("refuses to download with nothing approved behind it", async () => {
+    // A ~200 MB download is a thing a human asks for, and there is exactly one
+    // gesture that asks. An install with no approval is a caller that found
+    // another way in.
+    const { result } = render();
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    const outcome = await act(async () => result.current.startInstall());
+    expect(outcome).toMatchObject({ ok: false });
+    expect(startInstallMock).not.toHaveBeenCalled();
+  });
+
   it("sends the approved pack so the server can refuse a different one", async () => {
     startInstallMock.mockResolvedValue({
       ok: true,
