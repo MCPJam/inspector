@@ -243,8 +243,29 @@ describe("audioDailyLimitMiddleware", () => {
     expect(audioDailyLimitWindowCountForTests()).toBeLessThanOrEqual(
       AUDIO_DAILY_WINDOW_MAX_ENTRIES
     );
+    // The exhausted window survives the churn: no eviction, so filling the map
+    // is not a way to clear your own ceiling.
     expect((await hit(app, asGuest("203.0.113.5"))).status).toBe(429);
-    // A new address arriving at a full map is refused, not silently admitted.
-    expect((await hit(app, asGuest("203.0.113.99"))).status).toBe(429);
+  });
+
+  it("admits an unmetered caller at a full map rather than refusing everyone", async () => {
+    // The window is a DAY, so a full map stays full for a day. Refusing new
+    // callers would let anyone holding 10k addresses deny guest voice to every
+    // other guest on the replica — trading a cost problem the backend already
+    // bounds for an availability problem nothing bounds.
+    const app = await appFor({ hosted: true, limit: 3 });
+    const { AUDIO_DAILY_WINDOW_MAX_ENTRIES } = await import(
+      "../audio-daily-limit"
+    );
+
+    for (let i = 0; i < AUDIO_DAILY_WINDOW_MAX_ENTRIES + 50; i++) {
+      const octet = Math.floor(i / 250);
+      const host = i % 250;
+      await hit(app, asGuest(`198.51.${octet}.${host}`, `guest-${i}`));
+    }
+
+    // An address that never had a window gets through unmetered here; the
+    // backend's per-IP daily spend cap is what still bounds it.
+    expect((await hit(app, asGuest("203.0.113.99"))).status).toBe(200);
   });
 });

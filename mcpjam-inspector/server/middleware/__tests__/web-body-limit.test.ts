@@ -64,8 +64,9 @@ describe("webBodyLimit", () => {
   // The audio carve-out had no coverage at all before MJ-002, which is part of
   // why it sat at 25MB — a number nothing asserted and nothing explained.
   it("admits an audio body up to the audio cap", async () => {
-    // 180s of uncompressed 16-bit 16kHz mono WAV as base64 (~7.7MB) is the
-    // largest payload the product can legitimately produce; it must transcribe.
+    // 8MB clears 180s of 16-bit 16kHz mono WAV (~7.3MB base64) — the shape a
+    // non-browser API caller is most likely to send — so it must transcribe.
+    // The browser's own opus recording is ~1.8MB and nowhere near this.
     const res = await buildApp().request("/api/web/audio/transcriptions", {
       method: "POST",
       body: "x".repeat(8 * 1024 * 1024),

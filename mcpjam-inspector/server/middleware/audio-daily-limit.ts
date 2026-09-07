@@ -85,9 +85,27 @@ const UNATTESTED_CLIENT_KEY = "_unattested";
 const DAILY_WINDOW_MS = 24 * 60 * 60_000;
 
 /**
- * Bounded, and it FAILS CLOSED at the bound — safe here only because every key
- * is an attested address or the single pooled one, so a caller cannot churn
- * keys to fill it.
+ * Bounded. At the bound this limiter DEGRADES rather than refusing, which is
+ * the opposite of what `conformance-run-rate-limit.ts`, `bench.ts` and
+ * `passthrough-rate-limit.ts` do — deliberately, and for the reason
+ * `passthrough-rate-limit.ts` itself states when it explains why ITS ip map
+ * fails closed: "Nothing sits under it."
+ *
+ * Something sits under this one. The backend caps guest voice spend at
+ * $0.20/day per identity and $1.00/day per IP hash
+ * (`convex/usage/rateLimit.ts`), and that is the authoritative ceiling; this is
+ * a volume brake in front of it. Refusing new callers at a full map would
+ * therefore trade a cost problem that is already bounded for an availability
+ * problem that is not — and the trade is worse here than in those other
+ * limiters because this window is a DAY, so a full map stays full for a day
+ * rather than draining in ten minutes. Someone with 10k attestable addresses
+ * could otherwise turn a spend brake into a day-long voice outage for every
+ * guest on the replica.
+ *
+ * Not an LRU either: evicting the oldest entry to make room would hand a
+ * churner a way to clear their own exhausted window, which is the one property
+ * a ceiling cannot give up. New callers simply go unmetered here until a window
+ * expires, and stay metered by the backend throughout.
  */
 const WINDOW_MAX_ENTRIES = 10_000;
 const windows = new Map<string, { count: number; windowStart: number }>();
@@ -128,22 +146,21 @@ function clientBudget(c: Context) {
     : { key: UNATTESTED_CLIENT_KEY, limit: UNATTESTED_DAILY_LIMIT };
 }
 
-function rateLimited(c: Context, message: string, windowStart?: number) {
-  return c.json(
-    { code: ErrorCode.RATE_LIMITED, message },
-    429,
-    windowStart === undefined
-      ? undefined
-      : {
-          // A fixed window, so the wait is exactly the remainder of it.
-          "Retry-After": String(
-            Math.max(
-              1,
-              Math.ceil((windowStart + DAILY_WINDOW_MS - Date.now()) / 1000)
-            )
-          ),
-        }
-  );
+/**
+ * The only 429 this middleware produces, so `Retry-After` is unconditional —
+ * the published spec promises it on every rate-limited response, and an
+ * optional header is how that promise gets broken by a later branch.
+ */
+function rateLimited(c: Context, message: string, windowStart: number) {
+  return c.json({ code: ErrorCode.RATE_LIMITED, message }, 429, {
+    // A fixed window, so the wait is exactly the remainder of it.
+    "Retry-After": String(
+      Math.max(
+        1,
+        Math.ceil((windowStart + DAILY_WINDOW_MS - Date.now()) / 1000)
+      )
+    ),
+  });
 }
 
 export async function audioDailyLimitMiddleware(
@@ -181,14 +198,12 @@ export async function audioDailyLimitMiddleware(
   }
 
   if (windows.size >= WINDOW_MAX_ENTRIES) {
-    // FAIL CLOSED rather than evict. Evicting the oldest entry bounds memory
-    // but hands whoever owned it a fresh daily allowance — so a churner could
-    // reset their own exhausted bucket by filling the map, defeating the
-    // ceiling at exactly the scale it matters.
-    return rateLimited(
-      c,
-      "Voice transcription is temporarily unavailable for guests. Try again later or sign in."
-    );
+    // Full: admit without metering rather than refuse. See the comment on
+    // WINDOW_MAX_ENTRIES — the backend's per-identity and per-IP daily spend
+    // caps still apply to this request, so the cost stays bounded, while
+    // refusing here would let anyone holding 10k addresses deny guest voice to
+    // everyone else on this replica for a day.
+    return next();
   }
   windows.set(key, { count: 1, windowStart: now });
 

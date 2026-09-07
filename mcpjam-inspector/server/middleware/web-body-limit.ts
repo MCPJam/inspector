@@ -25,18 +25,29 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 // work rather than bounding SPEND. Transcription is billed per audio-minute, so
 // the body size IS the per-request cost.
 //
-// Sized instead from the longest recording the product can produce. The client
-// stops a recording at VOICE_GLOBAL_MAX_SECONDS = 180s
-// (client/src/components/chat-v2/chat-input.tsx), so 180s of the largest
-// accepted encoding is the worst legitimate payload:
+// Be precise about what a byte cap can and cannot do here, because the obvious
+// reading is wrong: it does NOT bound billable audio minutes. Bitrate is the
+// caller's choice, so 10MB of base64 is ~16 minutes of 64kbps Opus but only 3
+// minutes of 16kHz WAV. Bounding DURATION would mean decoding the payload, and
+// the `audioDurationSeconds` field the route accepts is caller-supplied and
+// unverified. The real spend ceiling is the backend's daily budget
+// (`convex/usage/rateLimit.ts`: $0.20/day per guest, $1.00/day per IP hash);
+// this is a coarse per-request bound in front of it.
 //
-//   webm/opus mono @64kbps (what MediaRecorder emits)  1.44MB -> ~1.9MB base64
-//   m4a/AAC @128kbps (generous)                        2.88MB -> ~3.8MB base64
-//   wav, 16-bit 16kHz mono (uncompressed — binding)    5.76MB -> ~7.7MB base64
+// 10MB, sized against 180s payloads — the longest the first-party recorder can
+// produce (VOICE_GLOBAL_MAX_SECONDS in client/src/components/chat-v2/
+// chat-input.tsx), as base64:
 //
-// `wav` is in SUPPORTED_AUDIO_FORMATS, so it sets the floor. 10MB clears it
-// with margin and cuts the ceiling an unauthenticated caller could reach by
-// 2.5x (MJ-002). Resize from this table, not by taste.
+//   webm/opus mono @64kbps (what MediaRecorder emits)   ~1.8MB   5x headroom
+//   m4a/AAC @128kbps                                    ~3.7MB
+//   wav, 16-bit 16kHz mono                              ~7.3MB   fits
+//   wav, 16-bit 22.05kHz mono                          ~10.1MB   REJECTED
+//   wav, 16-bit 44.1kHz stereo                         ~40.4MB   also >25MB
+//
+// The trade is deliberate: a non-browser caller posting three minutes of WAV
+// above 16kHz gets a 413 where 25MB would have taken it. Nothing the product
+// itself emits comes close to the cap, and the failure is a clean 413 rather
+// than a truncated transcript. Resize from this table, not by taste.
 export const AUDIO_WEB_BODY_LIMIT = 10 * 1024 * 1024; // 10MB
 
 export function webBodyLimit() {
