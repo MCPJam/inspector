@@ -1924,6 +1924,49 @@ export function PlaygroundMain({
     requireToolApproval,
   ]);
 
+  // ── The same question, asked once per COLUMN ─────────────────────────────
+  //
+  // `localHarnessExecutionOption` above answers for the PREVIEWED host, which
+  // is the right answer for the single composer and the wrong one for a
+  // compare grid: there each column runs its own host, and only the columns
+  // running Claude Code have anything to do with local execution.
+  //
+  // Handing every column the page's answer is precisely the inheritance
+  // `isLocalHarnessScope` exists to stop. A Codex column would arrive at
+  // `use-chat-session` with `requested: true`, fail the authorization check
+  // that only a Claude Code turn can satisfy, and block Send behind a dialog
+  // that could never unblock it — the local target is not a thing that lane
+  // can ever have.
+  //
+  // Keyed by `compareId` (the column's hostId) rather than by harness, so a
+  // grid comparing two Claude Code hosts still gets one entry each.
+  const localHarnessExecutionByColumn = useMemo(() => {
+    const byColumn = new Map<string, typeof localHarnessExecutionOption>();
+    for (const column of multiHostColumns) {
+      const columnInScope = isLocalHarnessScope({
+        // This column's own host, not the previewed one.
+        harnessId: column.hostConfig?.harness ?? null,
+        hostedMode: HOSTED_MODE,
+        environmentId: isEnvironmentMode
+          ? (playgroundEnvironment.environmentId ?? null)
+          : null,
+        requiresWebChatApi: isEnvironmentMode,
+      });
+      byColumn.set(column.compareId, {
+        requested:
+          columnInScope && localHarness.requestedTarget === "local-native",
+        resolveSendTarget: localHarnessResolveSendTarget,
+      });
+    }
+    return byColumn;
+  }, [
+    multiHostColumns,
+    isEnvironmentMode,
+    playgroundEnvironment.environmentId,
+    localHarness.requestedTarget,
+    localHarnessResolveSendTarget,
+  ]);
+
   const handleMultiModelTranscriptSync = useCallback(
     (compareId: string, transcript: UIMessage[]) => {
       compareTranscriptsRef.current[compareId] = cloneUiMessages(transcript);
@@ -5354,7 +5397,11 @@ export function PlaygroundMain({
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
                           personalComputerEngine={personalComputerEngineOption}
-                          localHarnessExecution={localHarnessExecutionOption}
+                          localHarnessExecution={
+                            localHarnessExecutionByColumn.get(
+                              column.compareId,
+                            ) ?? localHarnessExecutionOption
+                          }
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
