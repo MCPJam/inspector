@@ -267,6 +267,16 @@ export function IterationDetails({
   syncedStepId?: string | null;
   onSyncStep?: (stepId: string | null) => void;
 }) {
+  // The Scores list prints the same judge number the review panel hides.
+  // Own the flag here so hiding starts on first paint (before the panel's
+  // read lands) and so a trial switch cannot leave the previous trial's
+  // reveal open on this one.
+  const reviewActive = Boolean(enableJudgeReview && iteration.suiteRunId);
+  const [judgeHidden, setJudgeHidden] = useState(reviewActive);
+  useEffect(() => {
+    setJudgeHidden(reviewActive);
+  }, [iteration._id, reviewActive]);
+
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
   ) as unknown as (args: { iterationId: string }) => Promise<any>;
@@ -922,6 +932,7 @@ export function IterationDetails({
           scores={scores ?? []}
           evaluationConfig={parseEvaluationConfig(iteration.metadata)}
           integrity={integrity}
+          hideJudgeRows={reviewActive && judgeHidden}
         />
       </div>
     );
@@ -1078,6 +1089,7 @@ export function IterationDetails({
               key={iteration._id}
               iterationId={iteration._id}
               judgeCase={judgeCase}
+              onVisibilityChange={setJudgeHidden}
             />
           ) : (
             <JudgeVerdictPanel judgeCase={judgeCase} />
