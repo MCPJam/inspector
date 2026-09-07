@@ -391,7 +391,15 @@ export function isFilesystemRoot(canonicalPath: string): boolean {
   return (
     canonicalPath === sep ||
     canonicalPath === "/" ||
-    /^[A-Za-z]:[\\/]?$/.test(canonicalPath)
+    // A drive root: `C:`, `C:\`, `C:/`.
+    /^[A-Za-z]:[\\/]?$/.test(canonicalPath) ||
+    // A UNC share root: `\\server\share` and its trailing-separator form, and
+    // a bare `\\server`. Scoping a session to a whole network share is the
+    // same mistake as scoping it to a whole volume, and the earlier rule
+    // covered only the volume — a test even asserted `//server/share` was an
+    // ordinary directory, which encoded the wrong belief rather than a gap.
+    // Anything BELOW the share (`\\server\share\project`) stays acceptable.
+    /^[\\/]{2}[^\\/]+([\\/][^\\/]+)?[\\/]?$/.test(canonicalPath)
   );
 }
 

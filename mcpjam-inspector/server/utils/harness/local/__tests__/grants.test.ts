@@ -109,13 +109,25 @@ describe("workspace grants", () => {
       expect(isFilesystemRoot(root)).toBe(true);
     }
     expect(isFilesystemRoot("/")).toBe(true);
-    // A directory ON a volume is not the volume.
+    // A UNC SHARE root is a root too. An earlier version of this test asserted
+    // the opposite, which is how the gap got written down as intended.
+    for (const share of [
+      "\\\\server\\share",
+      "\\\\server\\share\\",
+      "//server/share",
+      "//server/share/",
+      "\\\\server",
+    ]) {
+      expect(isFilesystemRoot(share)).toBe(true);
+    }
+    // A directory ON a volume, or BELOW a share, is neither.
     for (const notRoot of [
       "C:\\code",
       "C:/code",
       "C:\\code\\project",
       "/home/user/code",
-      "//server/share",
+      "\\\\server\\share\\project",
+      "//server/share/project",
     ]) {
       expect(isFilesystemRoot(notRoot)).toBe(false);
     }
