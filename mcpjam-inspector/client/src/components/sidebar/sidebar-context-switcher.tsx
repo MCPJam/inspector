@@ -237,6 +237,16 @@ export function SidebarContextSwitcher({
         org.myRole === "member")
   );
 
+  // Never default the dialog to an organization it will not offer: the Select
+  // would show its placeholder while Create still submitted the filtered-out
+  // id. `isCreateDisabled` normally closes this off before the dialog opens,
+  // but it resolves a render behind the membership list.
+  const defaultCreateOrganizationId = creatableOrganizations.some(
+    (org) => org._id === activeOrganizationId
+  )
+    ? activeOrganizationId
+    : creatableOrganizations[0]?._id;
+
   const openCreateProjectDialog = () => {
     if (isCreateDisabled) return;
     setShowCreateProjectDialog(true);
@@ -556,7 +566,7 @@ export function SidebarContextSwitcher({
         open={showCreateProjectDialog}
         onOpenChange={setShowCreateProjectDialog}
         organizations={creatableOrganizations}
-        defaultOrganizationId={activeOrganizationId}
+        defaultOrganizationId={defaultCreateOrganizationId}
         defaultName={defaultProjectName}
         onCreate={onCreateProject}
       />

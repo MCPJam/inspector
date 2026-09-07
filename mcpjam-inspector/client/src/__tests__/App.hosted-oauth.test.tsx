@@ -1564,6 +1564,7 @@ describe("App hosted OAuth callback handling", () => {
     (mockUseAppState as any).mockImplementation(() => ({
       ...createAppStateMock(),
       activeOrganizationId: "org-a",
+      isCloudSyncActive: true,
       handleCreateProject: handleCreateProjectSpy,
       handleSwitchProject: handleSwitchProjectSpy,
     }));
@@ -1593,11 +1594,13 @@ describe("App hosted OAuth callback handling", () => {
     expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
   });
 
-  it("creating a local project switches state, since no URL can name it", async () => {
+  it("creating a local project selects it through the create itself", async () => {
     // The one case the URL cannot carry: a local-fallback id is a UUID, which
-    // `buildProjectPath` refuses to put in the canonical position. State is
-    // the only thing that can select it, so `switchTo: false` alone would
-    // leave a guest on the project they were already in.
+    // `buildProjectPath` refuses to put in the canonical position. The
+    // selection has to happen inside `handleCreateProject`, atomically with
+    // the create — `handleSwitchProject` afterwards validates against the
+    // project map from the render it was created in, which cannot contain a
+    // project dispatched a moment ago, and answers "Project not found".
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/servers");
@@ -1607,6 +1610,7 @@ describe("App hosted OAuth callback handling", () => {
     const handleSwitchProjectSpy = vi.fn();
     (mockUseAppState as any).mockImplementation(() => ({
       ...createAppStateMock(),
+      isCloudSyncActive: false,
       handleCreateProject: handleCreateProjectSpy,
       handleSwitchProject: handleSwitchProjectSpy,
     }));
@@ -1629,7 +1633,12 @@ describe("App hosted OAuth callback handling", () => {
       await getLastSidebarProps().onCreateProject?.("Scratch");
     });
 
-    expect(handleSwitchProjectSpy).toHaveBeenCalledWith(localProjectId);
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Scratch", true, {
+      organizationId: undefined,
+    });
+    // Never through `handleSwitchProject`: its stale-map check would reject
+    // the id and leave the user on the project they were already in.
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe("/servers");
   });
 

@@ -519,6 +519,39 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
+  it("selects a local project in the same call that creates it", async () => {
+    // App relies on this being atomic for the local/guest path: no URL can
+    // name a local id, and switching afterwards through `handleSwitchProject`
+    // does not work — it validates against the project map captured in the
+    // render it was created in, which cannot contain a project dispatched a
+    // moment ago, and answers "Project not found".
+    const appState = createAppState({});
+    const { result, dispatch } = renderUseProjectState({
+      appState,
+      isAuthenticated: false,
+      hasSignedInUser: false,
+      hasOrganizations: false,
+    });
+
+    let createdId = "";
+    await act(async () => {
+      createdId = await result.current.handleCreateProject("Scratch", true);
+    });
+
+    expect(createdId).toBeTruthy();
+    expect(createProjectMock).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "CREATE_PROJECT",
+        project: expect.objectContaining({ id: createdId, name: "Scratch" }),
+      }),
+    );
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SWITCH_PROJECT",
+      projectId: createdId,
+    });
+  });
+
   it("does not ensure a default project until organization selection resolves", async () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];

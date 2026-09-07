@@ -4628,31 +4628,33 @@ export default function App() {
    * not contain, so the coordinator switches organization first and then the
    * project, once the subscription delivers the new row.
    *
-   * `switchTo` is deliberately false. Pre-selecting the new project would be
+   * `switchTo` is off in cloud mode. Pre-selecting the new project would be
    * the state-then-URL ordering this whole surface just stopped using, and for
    * a cross-organization create the write is undone on the next render anyway:
    * `activeProjectId` is derived from the organization-FILTERED project map,
    * which does not contain a project in the org being moved to.
    *
-   * A local-fallback project is the exception, and the only reason the switch
-   * is not purely a navigation: its id is a UUID, which `buildProjectPath`
-   * refuses to put in the canonical position, so `/p/<id>` cannot name it and
-   * state is the only thing that can select it.
+   * Local fallback is the exception, and the only reason the switch is not
+   * purely a navigation: a local id is a UUID, which `buildProjectPath` refuses
+   * to put in the canonical position, so no URL can name the project and state
+   * is the only thing that can select it. That selection has to happen INSIDE
+   * `handleCreateProject`, atomically with the create — calling
+   * `handleSwitchProject` afterwards does not work, because it validates the id
+   * against the project map captured in the render it was created in, which
+   * cannot contain a project dispatched a moment ago, and answers
+   * "Project not found".
    */
   const handleSidebarCreateProject = useCallback(
     async (name: string, organizationId?: string) => {
-      const projectId = await handleCreateProject(name, false, {
+      const projectId = await handleCreateProject(name, !isCloudSyncActive, {
         organizationId,
       });
-      if (!projectId) return projectId;
-      if (isProjectIdShape(projectId)) {
+      if (projectId && isProjectIdShape(projectId)) {
         navigateToTarget(buildProjectSwitchTarget(projectId));
-      } else {
-        await handleSwitchProject(projectId);
       }
       return projectId;
     },
-    [handleCreateProject, handleSwitchProject, navigateToTarget],
+    [handleCreateProject, isCloudSyncActive, navigateToTarget],
   );
 
   /**
