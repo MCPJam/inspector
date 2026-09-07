@@ -264,8 +264,13 @@ describe("audioDailyLimitMiddleware", () => {
       await hit(app, asGuest(`198.51.${octet}.${host}`, `guest-${i}`));
     }
 
-    // An address that never had a window gets through unmetered here; the
-    // backend's per-IP daily spend cap is what still bounds it.
-    expect((await hit(app, asGuest("203.0.113.99"))).status).toBe(200);
+    // More than `limit` times, deliberately. One 200 would prove nothing — a
+    // fresh window would also return 200 for its first three. Only an
+    // UNMETERED caller keeps passing past the limit; a regression to
+    // refusing-at-full-map fails on the first, and a regression to metering
+    // fails on the fourth.
+    for (let i = 0; i < 6; i++) {
+      expect((await hit(app, asGuest("203.0.113.99"))).status).toBe(200);
+    }
   });
 });

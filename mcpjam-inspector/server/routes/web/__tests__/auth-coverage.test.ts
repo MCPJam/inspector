@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import type { Hono } from "hono";
 import webRoutes from "../index.js";
 import { createWebTestApp } from "./helpers/test-app.js";
 
@@ -71,10 +72,9 @@ const PUBLIC_SUCCESS_ROUTES = new Map<string, string>([
  * Render a registered path into one a request can actually hit: `:param` and
  * any `*` become a concrete segment.
  *
- * Wildcards are RENDERED, not skipped. Today every `*` path on this router is
- * an `ALL`-method `.use()` and the method filter already drops those — but a
- * future `web.get("/foo/*", handler)` is a real endpoint, and skipping it would
- * leave exactly the blind spot this suite exists to close.
+ * Wildcards are RENDERED, not skipped: `harnessMcp.all("/:serverId/*")` is a
+ * callable endpoint, and so is any future `web.get("/foo/*", handler)`.
+ * Skipping them would leave exactly the blind spot this suite exists to close.
  */
 function concretePath(path: string): string {
   return path
@@ -82,22 +82,83 @@ function concretePath(path: string): string {
     .replace(/\*/g, "probe");
 }
 
-type Probe = { key: string; method: string; path: string };
+/**
+ * Marks a response as "nothing matched this path". Hono records `.use()`
+ * middleware and `.all()` handlers identically — both are method `ALL` — so
+ * there is no structural way to tell a callable endpoint from a middleware
+ * mount. (Handler arity happens to differ today, which is a coincidence of how
+ * the functions are written, not a contract.)
+ *
+ * So don't classify them statically: ask the router. Send the request and see
+ * whether anything answers. A middleware-only path falls through to this
+ * sentinel; an `.all()` endpoint answers for itself. That is also the only
+ * question the sweep actually cares about — "can an anonymous caller get a
+ * response here" — and it is why `harnessMcp.all("/:serverId")` is now covered.
+ */
+const UNROUTED = "__probe_unrouted__";
+
+function withSentinel(app: Hono): Hono {
+  app.notFound((c) => c.json({ [UNROUTED]: true }, 404));
+  return app;
+}
+
+async function isUnrouted(response: Response): Promise<boolean> {
+  if (response.status !== 404) return false;
+  try {
+    return (await response.clone().json())?.[UNROUTED] === true;
+  } catch {
+    return false;
+  }
+}
+
+type Probe = {
+  key: string;
+  /** Methods to try. An `ALL` route answers any of them. */
+  methods: string[];
+  path: string;
+  /** True when registered against a concrete verb, so it must be reachable. */
+  isConcreteVerb: boolean;
+};
 
 function probes(): Probe[] {
   const seen = new Set<string>();
   const out: Probe[] = [];
   for (const route of webRoutes.routes) {
     const method = route.method.toUpperCase();
-    // `.use()` middleware registers as ALL — not an endpoint anyone can call.
-    if (!HTTP_METHODS.has(method)) continue;
+    const isConcreteVerb = HTTP_METHODS.has(method);
+    // Everything else is `ALL` — either `.use()` middleware or an `.all()`
+    // endpoint. Probed either way; the sentinel sorts them out at runtime.
+    if (!isConcreteVerb && method !== "ALL") continue;
 
     const key = `${method} /api/web${route.path}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ key, method, path: `/api/web${concretePath(route.path)}` });
+    out.push({
+      key,
+      methods: isConcreteVerb ? [method] : ["POST", "GET"],
+      path: `/api/web${concretePath(route.path)}`,
+      isConcreteVerb,
+    });
   }
   return out;
+}
+
+/** The first response from any method that something actually answered. */
+async function probeResponse(
+  app: Hono,
+  probe: Probe
+): Promise<{ method: string; response: Response } | null> {
+  for (const method of probe.methods) {
+    const response = await app.request(probe.path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      // A body for the verbs that take one, so a route cannot appear to refuse
+      // merely because its parse failed.
+      ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
+    });
+    if (!(await isUnrouted(response))) return { method, response };
+  }
+  return null;
 }
 
 describe("/api/web — credential-less requests", () => {
@@ -107,44 +168,39 @@ describe("/api/web — credential-less requests", () => {
     expect(probes().length).toBeGreaterThan(80);
   });
 
-  it("lands every probe on a real handler", async () => {
-    // A 404 means the rendered path missed its route, and a missed route would
-    // sail through the sweep below as a non-2xx "pass" — a silent hole in the
-    // coverage, not a result. Checked separately so the failure says which it
-    // is: an unreachable probe is a bug in `concretePath`, not in the router.
-    const { app } = createWebTestApp();
+  it("lands every verb-registered probe on a real handler", async () => {
+    // A route registered as GET/POST/… is definitely an endpoint, so if nothing
+    // answers it the rendered path missed — and a missed route would sail
+    // through the sweep below as a non-2xx "pass", a silent hole in the
+    // coverage rather than a result. Checked separately so the failure says
+    // which it is: unreachable means `concretePath` is wrong, not the router.
+    //
+    // Keyed on the sentinel, NOT on the bare status: a matched handler is
+    // free to answer 404 for a resource that does not exist, and reading that
+    // as a routing miss would fail this suite for a route that is working.
+    const app = withSentinel(createWebTestApp().app);
     const unreachable: string[] = [];
 
     for (const probe of probes()) {
-      const response = await app.request(probe.path, {
-        method: probe.method,
-        headers: { "Content-Type": "application/json" },
-        ...(probe.method === "GET" || probe.method === "DELETE"
-          ? {}
-          : { body: "{}" }),
-      });
-      if (response.status === 404) unreachable.push(probe.key);
+      if (!probe.isConcreteVerb) continue;
+      if (!(await probeResponse(app, probe))) unreachable.push(probe.key);
     }
 
     expect(unreachable).toEqual([]);
   });
 
   it("never succeeds on a route that is not documented as public", async () => {
-    const { app } = createWebTestApp();
+    const app = withSentinel(createWebTestApp().app);
     const succeeded: string[] = [];
 
     for (const probe of probes()) {
       if (PUBLIC_SUCCESS_ROUTES.has(probe.key)) continue;
 
-      const response = await app.request(probe.path, {
-        method: probe.method,
-        headers: { "Content-Type": "application/json" },
-        // A body for the verbs that take one, so a route cannot appear to
-        // refuse merely because its parse failed.
-        ...(probe.method === "GET" || probe.method === "DELETE"
-          ? {}
-          : { body: "{}" }),
-      });
+      const answered = await probeResponse(app, probe);
+      // Nothing answered: a middleware-only mount, not an endpoint. The
+      // verb-registered routes are held to reachability in the test above.
+      if (!answered) continue;
+      const { response } = answered;
 
       if (response.status >= 200 && response.status < 300) {
         succeeded.push(`${probe.key} -> ${response.status}`);

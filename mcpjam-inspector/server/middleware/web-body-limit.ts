@@ -27,8 +27,8 @@ export const DEFAULT_WEB_BODY_LIMIT = 1024 * 1024; // 1MB
 //
 // Be precise about what a byte cap can and cannot do here, because the obvious
 // reading is wrong: it does NOT bound billable audio minutes. Bitrate is the
-// caller's choice, so 10MB of base64 is ~16 minutes of 64kbps Opus but only 3
-// minutes of 16kHz WAV. Bounding DURATION would mean decoding the payload, and
+// caller's choice, so 10MB of base64 is ~16 minutes of 64kbps Opus but only
+// ~4 minutes of 16kHz mono WAV. Bounding DURATION would mean decoding it, and
 // the `audioDurationSeconds` field the route accepts is caller-supplied and
 // unverified. The real spend ceiling is the backend's daily budget
 // (`convex/usage/rateLimit.ts`: $0.20/day per guest, $1.00/day per IP hash);
