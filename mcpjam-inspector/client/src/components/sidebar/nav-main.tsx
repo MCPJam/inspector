@@ -121,11 +121,13 @@ export function NavMain({ items, label, onItemClick, learnMore }: NavMainProps) 
         getButtonClassName(item),
         // Tighten the icon→label gap on badged rows so a long label + badge
         // (e.g. "XAA Debugger" + "New") fits on one line at the 12rem width.
-        item.badge && "gap-1.5"
+        // The rail is 32px — a badge has nowhere to go, so this only applies
+        // while the sidebar is expanded.
+        item.badge && sidebarOpen && "gap-1.5"
       )}
     >
       {item.icon && <item.icon className="h-4 w-4" />}
-      {item.badge ? (
+      {item.badge && sidebarOpen ? (
         // A <div> (not a <span>) sidesteps the sidebar's
         // [&>span:last-child]:truncate rule (which otherwise clips the badge).
         // Tight tracking + compact gaps/badge keep the full title AND the badge

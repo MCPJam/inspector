@@ -719,7 +719,9 @@ export function MCPSidebar({
               </div>
             ) : (
               <SidebarTrigger
-                className="size-7 shrink-0"
+                // Match the 32px nav icons. size-7 (28px) sat 2px off the
+                // column once this rail became the default on wide surfaces.
+                className="size-8 shrink-0"
                 aria-label="Expand sidebar"
               />
             )}
@@ -797,7 +799,7 @@ export function MCPSidebar({
                   />
                   {/* Add subtle divider between sections (except after the last section) */}
                   {sectionIndex < visibleNavigationSections.length - 1 && (
-                    <div className="mx-4 my-1 border-t border-border/50" />
+                    <div className="mx-4 my-1 border-t border-border/50 group-data-[collapsible=icon]:mx-2" />
                   )}
                 </React.Fragment>
               );
@@ -815,7 +817,7 @@ export function MCPSidebar({
                       aria-label={item.title}
                       onClick={() => handleNavClick(item.url)}
                       className={cn(
-                        "flex size-7 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                        "flex size-8 items-center justify-center rounded-md text-sidebar-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                         isNavItemActive(item) &&
                           "bg-sidebar-accent text-sidebar-accent-foreground",
                       )}
