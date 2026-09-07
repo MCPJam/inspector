@@ -361,6 +361,46 @@ describe("browser-sessions-client", () => {
     });
   });
 
+  it("REFUSES a row whose target is not the one asked about", async () => {
+    // The row that selects the shape is the row that must be pinned. Without
+    // this, a computer lookup handed a sandbox-shaped row parses as `sandbox`
+    // and rides out through the overload's cast as a ComputerBrowserSession —
+    // whose `computerId`, `streamUrl` and `streamPassword` are then three
+    // `undefined`s used as a daemon address and a VNC password.
+    const SANDBOX_ROW = {
+      sessionId: "session-sbx",
+      sandboxRowId: "sbxrow-1",
+      bootId: "boot-1",
+      browserdToken: "token-1",
+      browserdPort: 8791,
+      publicOrigin: "https://origin.example",
+      bundleHash: "hash-1",
+      contextMode: "ephemeral",
+    };
+    stubFetch(200, { session: SANDBOX_ROW });
+    expect(
+      (
+        await lookupBrowserSession({
+          computerId: "computer-1",
+          expectedBundleHash: "hash-1",
+          expectedContextMode: "any",
+        })
+      ).session,
+    ).toBeNull();
+
+    // ...and the mirror: a computer row answered to a sandbox lookup.
+    stubFetch(200, { session: SESSION });
+    expect(
+      (
+        await lookupBrowserSession({
+          sandboxRowId: "sbxrow-1",
+          expectedBundleHash: "hash-1",
+          expectedContextMode: "ephemeral",
+        })
+      ).session,
+    ).toBeNull();
+  });
+
   it("a 400 on a COMPUTER lookup stays unreachable", async () => {
     // The mirror of the record case. Every computer caller predates the
     // unsupported-target branch and read a 400 as unreachable; a malformed

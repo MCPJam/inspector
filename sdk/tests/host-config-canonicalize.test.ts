@@ -298,7 +298,7 @@ describe("canonicalizeHostConfigV2 — browserToolPolicy", () => {
       canonicalizeHostConfigV2(
         base({
           browserToolPolicy: {
-            mode: "allow_all",
+            mode: "allowlist",
             toolAllowlist: [7 as never],
           },
         })
@@ -307,10 +307,37 @@ describe("canonicalizeHostConfigV2 — browserToolPolicy", () => {
     expect(() =>
       canonicalizeHostConfigV2(
         base({
-          browserToolPolicy: { mode: "allow_all", toolAllowlist: ["  "] },
+          browserToolPolicy: { mode: "allowlist", toolAllowlist: ["  "] },
         })
       )
     ).toThrow(/toolAllowlist entries must be non-empty strings/);
+  });
+
+  it("refuses a toolAllowlist in a mode that would never read it", async () => {
+    // Both readers in the browser builder gate on `mode === "allowlist"`, so a
+    // toolAllowlist anywhere else changes nothing a run does. Hashing it would
+    // give two configs that behave identically two identities; dropping it
+    // silently would let an author believe they had narrowed a policy that in
+    // fact permits every tool. Same choice `skillSelection` makes for
+    // `skillIds` under `all_visible`.
+    for (const mode of ["allow_all", "read_only"] as const) {
+      expect(() =>
+        canonicalizeHostConfigV2(
+          base({
+            browserToolPolicy: { mode, toolAllowlist: ["browser_observe"] },
+          })
+        )
+      ).toThrow(/toolAllowlist is only meaningful with mode "allowlist"/);
+    }
+    // `originAllowlist` is NOT mode-specific: it gates navigation in every
+    // mode, so it stays legal — and stays hashed — everywhere.
+    expect(
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: { mode: "read_only", originAllowlist: ["a.test"] },
+        })
+      ).browserToolPolicy
+    ).toEqual({ mode: "read_only", originAllowlist: ["a.test"] });
   });
 
   it("refuses an `allowlist` mode that names nothing (it would mean everything)", () => {

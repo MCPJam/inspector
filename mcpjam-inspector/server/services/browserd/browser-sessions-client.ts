@@ -272,7 +272,24 @@ async function postServiceAuthorized(
   }
 }
 
-function parseSession(raw: unknown): BrowserSessionRecord | null {
+function parseSession(
+  raw: unknown,
+  /**
+   * The target the CALLER asked about. A row is only a row for the target it
+   * was requested for: the overloads hand a `{ computerId }` lookup back as a
+   * `ComputerBrowserSessionLookup`, so a sandbox-shaped row slipping through
+   * that cast would reach `handleFromRecord` and the stream route as a
+   * computer session with no `computerId`, `streamUrl` or `streamPassword` —
+   * three `undefined`s standing in for a daemon address and a VNC password.
+   *
+   * The control plane keys its lookup by the id it was handed and so should
+   * never answer with the other shape. But this parser already refuses a
+   * computer row carrying no stream and a sandbox row carrying one, on the
+   * principle that the wire is not trusted to be self-consistent; pinning the
+   * target is that same check applied to the field that SELECTS the shape.
+   */
+  expectedTarget: BrowserSessionRecord["target"],
+): BrowserSessionRecord | null {
   if (!isRecord(raw)) return null;
   const {
     sessionId,
@@ -316,6 +333,7 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
     contextMode,
   } as const;
   if (typeof sandboxRowId === "string" && sandboxRowId.length > 0) {
+    if (expectedTarget !== "sandbox") return null;
     // A per-run box. The stream is not merely optional here — its PRESENCE
     // would mean the backend recorded desktop-control credentials for a box
     // nobody is watching, which is a row we should not act on.
@@ -323,6 +341,7 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
     return { ...common, target: "sandbox", sandboxRowId };
   }
   if (
+    expectedTarget !== "computer" ||
     typeof computerId !== "string" ||
     computerId.length === 0 ||
     // REQUIRED on a computer: the panel reaches the stream with this password,
@@ -431,7 +450,10 @@ export async function lookupBrowserSession(
   const staleSession = parseStaleSession(raw.staleSession);
   return {
     reachable: true,
-    session: parseSession(raw.session),
+    session: parseSession(
+      raw.session,
+      targetsSandbox(args) ? "sandbox" : "computer",
+    ),
     ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
     stale === "context_mode_changed" ||
@@ -445,10 +467,11 @@ export async function lookupBrowserSession(
 }
 
 /**
- * Whether this request addresses a PER-RUN box. The only place the distinction
- * matters client-side is reading a 400: that shape is new, so a refusal of it
- * is evidence about the backend's version, while the computer shape has been
- * accepted since the beginning and a refusal there is about the payload.
+ * Whether this request addresses a PER-RUN box. Two places client-side care:
+ * reading a 400 — that shape is new, so a refusal of it is evidence about the
+ * backend's version, while the computer shape has been accepted since the
+ * beginning and a refusal there is about the payload — and pinning the shape a
+ * returned row is allowed to have.
  */
 function targetsSandbox(args: BrowserSessionTargetArgs): boolean {
   return args.sandboxRowId !== undefined;

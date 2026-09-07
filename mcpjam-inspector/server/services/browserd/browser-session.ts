@@ -941,21 +941,42 @@ async function ensureOnSandbox(
   const sandbox = await deps.connect(target.sandboxId);
   const connectedAt = Date.now();
   let handle: BrowserdHandle | undefined;
+  const reuseAgain = async () =>
+    trySandboxReuse(
+      deps,
+      await deps.store.lookup(lookupArgs),
+      contextMode,
+      target.sandboxId,
+      args.signal,
+    );
   try {
+    // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
+    //
+    // `killBrowserd` is a `pkill` on the box, so it would reap a daemon
+    // another party booted in the meantime and leave their row addressing
+    // nothing — and the record compare-and-swap below cannot repair that,
+    // because it fires after the kill and the damage IS the kill. The computer
+    // path fences this with a control-plane relaunch claim; a per-run box
+    // needs no such thing, because the work that owns it is claimed exactly
+    // once a layer up (a swarm attempt whose claim came back `applied: false`
+    // skips before it ever provisions, and two eval runners of one run mint
+    // distinct iteration ids, hence distinct boxes). So there is no second
+    // driver to serialize against.
+    //
+    // Re-reading the store before the kill is nonetheless worth its one round
+    // trip: connecting to a box takes seconds, it costs a fraction of the
+    // desktop boot it guards, and it means the kill is conditional on what we
+    // still believe is there rather than on a lookup from before we connected.
+    const raced = await reuseAgain();
+    if (raced) return raced;
+
     await sandbox.killBrowserd();
     const outcome = await bootAndPublish<SandboxHostedBrowserSessionHandle>(
       deps,
       {
         sandbox,
         contextMode,
-        reuseAgain: async () =>
-          trySandboxReuse(
-            deps,
-            await deps.store.lookup(lookupArgs),
-            contextMode,
-            target.sandboxId,
-            args.signal,
-          ),
+        reuseAgain,
         publish: (booted) => {
           handle = booted;
           return deps.store.record({

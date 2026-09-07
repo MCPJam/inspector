@@ -438,13 +438,26 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   return Array.from(seen).sort();
 }
 
-// Allowed keys on browserToolPolicy, and the closed set of modes. Explicit
-// construction below keeps stray keys out of the canonical JSON; this set
-// makes a stray key a loud error rather than a silent drop (the `computer`
-// precedent).
+// Allowed keys on browserToolPolicy, PER MODE, and the closed set of modes.
+// Explicit construction below keeps stray keys out of the canonical JSON;
+// these sets make a stray key a loud error rather than a silent drop (the
+// `computer` precedent), and the split by mode is the `skillSelection`
+// precedent one function down.
+//
+// `toolAllowlist` is mode-specific because its only two readers both gate on
+// `mode === "allowlist"`: in any other mode it changes nothing a run does.
+// Hashing an inert field would give two configs that behave identically two
+// different identities — and dropping it silently would let an author believe
+// they had narrowed a policy that in fact permits everything. `originAllowlist`
+// is NOT mode-specific: it gates navigation in every mode.
+const BROWSER_TOOL_POLICY_BASE_KEYS = ["mode", "originAllowlist"] as const;
+const BROWSER_TOOL_POLICY_KEYS_BY_MODE: Record<string, ReadonlySet<string>> = {
+  allow_all: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  read_only: new Set(BROWSER_TOOL_POLICY_BASE_KEYS),
+  allowlist: new Set([...BROWSER_TOOL_POLICY_BASE_KEYS, "toolAllowlist"]),
+};
 const BROWSER_TOOL_POLICY_KEYS = new Set([
-  "mode",
-  "originAllowlist",
+  ...BROWSER_TOOL_POLICY_BASE_KEYS,
   "toolAllowlist",
 ]);
 const BROWSER_TOOL_POLICY_MODES = new Set([
@@ -524,6 +537,15 @@ function canonicalizeBrowserToolPolicy(
         .map((m) => `"${m}"`)
         .join(", ")}`
     );
+  }
+  const allowedForMode = BROWSER_TOOL_POLICY_KEYS_BY_MODE[mode]!;
+  for (const key of Object.keys(value)) {
+    if (!allowedForMode.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${key} is only meaningful with mode ` +
+          `"allowlist", not "${mode}"`
+      );
+    }
   }
   const originAllowlist = canonicalizeBrowserAllowlist(
     value.originAllowlist,

@@ -28,7 +28,7 @@
  * (bootstrap MUST resolve before discovery decides whether to delegate).
  */
 import { z } from "zod";
-import { HOSTED_MODE } from "../../config.js";
+import { HOSTED_MODE, hostedBrowserEnabled } from "../../config.js";
 import { logger } from "../logger.js";
 import {
   getConvexHttpUrl,
@@ -184,6 +184,26 @@ export function isHostedDesktopProvisionable(): boolean | null {
  */
 export function isHostedBrowserRefused(): boolean {
   return refusesOnVerdict(isHostedBrowserExposable());
+}
+
+/**
+ * Can this replica advertise a hosted browser AT ALL — the rollout env flag
+ * and the backend gate above, together?
+ *
+ * One definition because there are now two kinds of caller and they must not
+ * disagree: `resolveHostTools` asks at tool-resolution time, and the eval and
+ * swarm runners ask BEFORE PROVISIONING, because a desktop box is booked for
+ * the life of a run and a resolver that then suppresses every browser tool
+ * would leave that box paid for and idle. The backend refuses its own half of
+ * this (`desktop_not_advertised`, `desktop_unavailable`), but it cannot see an
+ * inspector-side env flag, so the provisioning side has to ask here.
+ *
+ * NOT a substitute for the resolver's own checks: this says nothing about a
+ * local engine, a guest actor, or bash co-tenancy, all of which are per-turn
+ * facts rather than deployment ones.
+ */
+export function hostedBrowserAdvertisable(): boolean {
+  return hostedBrowserEnabled() && !isHostedBrowserRefused();
 }
 
 /**

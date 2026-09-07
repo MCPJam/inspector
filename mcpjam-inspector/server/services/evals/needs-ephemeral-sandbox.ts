@@ -59,6 +59,20 @@ export function needsEphemeralEvalSandbox(args: {
   builtInToolIds?: readonly string[] | undefined;
   /** The host config's declared unattended browser policy, unparsed. */
   browserToolPolicy?: unknown;
+  /**
+   * Can THIS replica advertise a hosted browser at all — the env flag and the
+   * backend's own gate, exactly as `resolveHostTools` reads them?
+   *
+   * Passed in rather than read here so the rule stays pure and testable, and
+   * DEFAULTS TO TRUE so a caller that does not know the answer keeps the old
+   * behaviour. It matters because the two decisions are made in different
+   * places: a desktop box is provisioned before the tool resolver runs, so a
+   * replica with `HOSTED_BROWSER_TOOLS_ENABLED` off would boot and pay for a
+   * desktop and then suppress every tool that box exists for. The backend
+   * refuses its own half of this (`desktop_not_advertised`,
+   * `desktop_unavailable`), but it cannot see an inspector-side env flag.
+   */
+  hostedBrowserAvailable?: boolean;
   runId: unknown;
 }): EphemeralEvalSandboxNeed {
   if (args.runId === null || args.runId === undefined) {
@@ -68,7 +82,11 @@ export function needsEphemeralEvalSandbox(args: {
     (args.builtInToolIds ?? []).includes(BROWSER_BUILT_IN_TOOL_ID) &&
     parseBrowserToolPolicy(args.browserToolPolicy, {
       source: "needs-ephemeral-sandbox",
-    }) !== undefined;
+      // The delivery parse a few lines later in the runner reports a malformed
+      // policy; this one only decides whether to book a box.
+      quiet: true,
+    }) !== undefined &&
+    args.hostedBrowserAvailable !== false;
   if (wantsBrowser) {
     // A browser needs the DESKTOP image whatever else is true. A pinned
     // environment alongside it is refused by the control plane

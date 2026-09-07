@@ -108,6 +108,44 @@ describe("needsEphemeralEvalSandbox", () => {
     ).toEqual({ needed: true, runtimeKind: "desktop-browser" });
   });
 
+  it("boots NO desktop when this replica cannot advertise a hosted browser", () => {
+    // The desktop is booked before the tool resolver runs, so without this the
+    // iteration pays for a box `resolveHostTools` then refuses to hand a
+    // single tool to. The backend refuses its own half of this
+    // (`desktop_not_advertised`, `desktop_unavailable`) but cannot see an
+    // inspector-side env flag, so the provisioning side has to ask.
+    expect(
+      needsEphemeralEvalSandbox({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: POLICY,
+        hostedBrowserAvailable: false,
+        runId: RUN,
+      })
+    ).toEqual({ needed: false, runtimeKind: "terminal" });
+
+    // ...but a run that needs a box for ANOTHER reason still gets one — a
+    // terminal one, which is what it would have had without the browser.
+    expect(
+      needsEphemeralEvalSandbox({
+        harness: "claude-code",
+        builtInToolIds: ["browser"],
+        browserToolPolicy: POLICY,
+        hostedBrowserAvailable: false,
+        runId: RUN,
+      })
+    ).toEqual({ needed: true, runtimeKind: "terminal" });
+
+    // Absent means "caller cannot say", which must keep the old behaviour.
+    expect(
+      needsEphemeralEvalSandbox({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: POLICY,
+        hostedBrowserAvailable: undefined,
+        runId: RUN,
+      })
+    ).toEqual({ needed: true, runtimeKind: "desktop-browser" });
+  });
+
   it("needs BOTH halves: the tool attached AND a policy declared", () => {
     // Nothing in an unattended run can approve a click, so a policy-less
     // `browser` advertises no tools at all — booting a desktop box for it

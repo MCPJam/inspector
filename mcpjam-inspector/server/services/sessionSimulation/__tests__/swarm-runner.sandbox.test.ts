@@ -297,15 +297,27 @@ function terminalReports(): Array<Record<string, unknown>> {
 
 beforeEach(() => {
   vi.stubEnv("CONVEX_HTTP_URL", "https://convex.site");
+  // A deployment that CAN run hosted browsers. The desktop trigger asks the
+  // same two gates `resolveHostTools` does, so without this every browser
+  // target below would correctly decline to book a box — see the
+  // "declines to book a desktop" case for the other side of it.
+  vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "1");
   let seq = 0;
-  provisionJourneySandboxMock.mockReset().mockImplementation(async () => {
+  provisionJourneySandboxMock.mockReset().mockImplementation(async (...args) => {
     seq += 1;
+    const requested = (args[0] as { runtimeKind?: string } | undefined)
+      ?.runtimeKind;
     return {
       ok: true,
       value: {
         sandboxId: `sbx_${seq}`,
         sandboxRowId: `row_${seq}`,
         workdir: "/home/user",
+        // A current control plane answers with the kind it ACTUALLY booted.
+        // Echoing the request is what that looks like; a backend that predates
+        // per-run desktops omits the field, which the runner now refuses
+        // rather than silently accepting a browser-less box.
+        ...(requested ? { runtimeKind: requested } : {}),
       },
     };
   });
@@ -488,6 +500,55 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     });
   });
 
+  it("declines to book a desktop when this replica cannot advertise a browser", async () => {
+    // The box is booked before the tool resolver runs, so without this gate a
+    // replica with the rollout flag off would hold a paid desktop for the
+    // whole attempt and then suppress every tool it exists for. The backend
+    // refuses its own half of this, but cannot see an inspector-side env flag.
+    vi.stubEnv("HOSTED_BROWSER_TOOLS_ENABLED", "");
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILS the attempt when the control plane answers with a TERMINAL box", async () => {
+    // Version skew: a backend that predates per-run desktops ignores the
+    // requested kind and answers without one. Accepting it would run the whole
+    // session on a box where the registry suppresses `browser` — no tools, no
+    // error, and an attempt that reads as "the model never chose to browse".
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: true,
+      value: { sandboxId: "sbx_t", sandboxRowId: "row_t", workdir: "/home/user" },
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("does not support per-run");
+    // The box we could not use is handed back rather than left to the GC.
+    expect(releaseSandboxMock).toHaveBeenCalledWith(
+      expect.objectContaining({ sandboxRowId: "row_t" })
+    );
+    // Not retried: the answer cannot change.
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+  });
+
   it("gives two SESSIONS of one browser target two DISTINCT desktop boxes", async () => {
     await startJourneyRun(
       baseOpts(
@@ -551,9 +612,10 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
   });
 
   it("names the DESKTOP budget when capacity is what it waited on", async () => {
-    // A desktop wait is a different sentence — and a different remedy — from
-    // "this deployment is full": one browser swarm holds 3 of the org's 4
-    // desktop slots, so a second one waits.
+    // A desktop refusal is a different sentence — and a different remedy —
+    // from "this deployment is full": the message names WHICH budget ran out
+    // and passes the backend's own ceiling through, rather than restating a
+    // number this side does not own.
     provisionJourneySandboxMock.mockImplementation(async () => ({
       ok: false,
       status: 503,

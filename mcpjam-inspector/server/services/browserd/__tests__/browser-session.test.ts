@@ -1297,11 +1297,33 @@ describe("ensureBrowserSession — sandbox target", () => {
     expect(f.sandbox.disconnect).toHaveBeenCalled();
   });
 
-  it("adopts the winner when its record loses the compare-and-swap", async () => {
-    // The record CAS is the ONLY cross-replica backstop on this path — there
-    // is no claim and no fence — so it has to still work.
+  it("adopts a winner that appeared while we were connecting, WITHOUT killing it", async () => {
+    // `killBrowserd` is a pkill on the box, so it would reap a daemon somebody
+    // booted during our connect and leave their row addressing nothing — and
+    // the record CAS cannot repair that, because it fires after the kill and
+    // the damage IS the kill. Hence the re-read immediately before it.
     const f = makeFakes({
       lookups: [
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    // The whole point: their daemon survives, and we never paid the boot.
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("adopts the winner when its record loses the compare-and-swap", async () => {
+    // The record CAS is the cross-replica backstop of last resort on this path
+    // — there is no claim and no fence — so it has to still work when the
+    // winner appears too late for the pre-kill re-read to see it.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
         { reachable: true, session: null },
         liveSandboxLookup({ bootId: "boot-winner" }),
       ],
@@ -1344,7 +1366,17 @@ describe("ensureBrowserSession — sandbox target", () => {
 
     // A DIFFERENT row must not wait behind it: two iterations of one eval run
     // concurrently, which is the whole point of a box per run.
+    //
+    // Row A gets a FRESH slow status here. Reusing the one above would leave
+    // its `mockImplementationOnce` already spent, so row A would resolve
+    // instantly and the interleaving this half exists to prove would look
+    // identical under a single global lock.
     order.length = 0;
+    const statusA2 = slowStatus("row-a");
+    const oneAgain = makeFakes({ lookups: [liveSandboxLookup()] });
+    (oneAgain.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusA2, sendCommand: vi.fn() }),
+    );
     const statusB = slowStatus("row-b");
     const two = makeFakes({
       lookups: [liveSandboxLookup({ sandboxRowId: "sbxrow-2" })],
@@ -1353,7 +1385,7 @@ describe("ensureBrowserSession — sandbox target", () => {
       () => ({ status: statusB, sendCommand: vi.fn() }),
     );
     await Promise.all([
-      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+      ensureBrowserSession(oneAgain.deps, SANDBOX_ARGS),
       ensureBrowserSession(two.deps, {
         ...SANDBOX_ARGS,
         target: {
@@ -1363,10 +1395,13 @@ describe("ensureBrowserSession — sandbox target", () => {
         },
       }),
     ]);
-    // Interleaved rather than serialized: the second row started before the
-    // first finished.
-    expect(order[0]).toBe("row-a-second");
-    expect(order).toContain("row-b-start");
+    // THE assertion that separates a keyed lock from a global one: row B got
+    // in while row A was still holding. A single lock would order these
+    // ["row-a-start", "row-a-end", "row-b-start", "row-b-end"].
+    expect(order.indexOf("row-b-start")).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf("row-b-start")).toBeLessThan(
+      order.indexOf("row-a-end"),
+    );
   });
 });
 

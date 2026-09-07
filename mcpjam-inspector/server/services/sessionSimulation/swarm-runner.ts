@@ -24,11 +24,13 @@ import {
   releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
+  targetWantsBrowser,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
@@ -333,6 +335,45 @@ function bindSessionEmit(
   };
 }
 
+/**
+ * WHAT this target needs the box FOR, in operator-facing words plus the
+ * `toolId` the UI keys its notice on.
+ *
+ * Until phase 6 the answer was always `bash`, so the copy could hardcode
+ * "shell". A harness-only target reached the same branches next, and a
+ * BROWSER-only target after that — which the two-branch version described as
+ * "the undefined harness", because it fell through to the harness arm with no
+ * harness to name. Every arm below names something the target actually
+ * declared.
+ *
+ * `bash` and `browser` are mutually exclusive on a host config, so no arm has
+ * to describe both.
+ */
+function describeSandboxConsumer(target: PinnedHostExecutionSpec): {
+  label: string;
+  toolId: string;
+} {
+  if (targetWantsBash(target)) {
+    return target.harness
+      ? {
+          label: `the shell and the ${target.harness} harness`,
+          toolId: "bash",
+        }
+      : { label: "the shell", toolId: "bash" };
+  }
+  if (target.harness) {
+    return targetWantsBrowser(target)
+      ? {
+          label: `the ${target.harness} harness and the browser`,
+          toolId: "harness",
+        }
+      : { label: `the ${target.harness} harness`, toolId: "harness" };
+  }
+  // Browser-only. Reached whenever the target declares neither a shell nor a
+  // harness, which for a box-needing target means the browser is why.
+  return { label: "the browser", toolId: "browser" };
+}
+
 async function runJourneyFanOut(
   opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub }
 ): Promise<void> {
@@ -503,7 +544,7 @@ async function runJourneyFanOut(
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
         harnessTargetIntent = harnessNeedsBox
-          ? sandboxIntentFor(target)
+          ? sandboxIntentFor(target, hostedBrowserAdvertisable())
           : undefined;
         //
         // AND the same preflight interactive chat runs. Until phase 6 the swarm
@@ -767,20 +808,13 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = targetWantsBash(target)
-          ? target.harness
-            ? {
-                label: `the shell and the ${target.harness} harness`,
-                toolId: "bash",
-              }
-            : { label: "the shell", toolId: "bash" }
-          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        const sandboxConsumer = describeSandboxConsumer(target);
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target);
+          const intent = sandboxIntentFor(target, hostedBrowserAdvertisable());
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits

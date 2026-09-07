@@ -48,11 +48,19 @@ export function describeAttemptSandboxRefusal(refusal: {
     return refusal.error;
   }
   if (refusal.status === 503 && refusal.resource === "desktop") {
+    // The backend's own sentence already names the budget and its ceiling, so
+    // this adds only what IT cannot know: which resource ran out, and what
+    // actually happens next. Deliberately no numbers of our own — the target
+    // fan-out width and the per-org desktop ceiling are owned elsewhere (the
+    // runner's `MAX_CONCURRENT_TARGETS`, and the control plane), and a copy of
+    // either here would drift into a confident lie. Deliberately not "waits
+    // for one to finish" either: provisioning retries for about two minutes
+    // and then fails the attempt.
     return (
-      `Waiting on desktop (browser) capacity for this organization: ` +
-      `${refusal.error} A swarm runs up to 3 targets at once and an ` +
-      `organization holds at most 4 desktop boxes, so a second browser swarm ` +
-      `waits for one to finish.`
+      "Ran out of desktop (browser) capacity for this organization: " +
+      `${refusal.error} Browser sessions each hold a desktop box for their ` +
+      "whole attempt, so concurrent browser runs compete for that budget; " +
+      "this attempt retried and then gave up."
     );
   }
   return refusal.error;
@@ -101,21 +109,42 @@ export function targetWantsHarnessBox(
  * carrying `browser` always has a computer — the catalog's `requiresComputer`
  * — so this only states which fact is load-bearing.)
  */
-export function targetWantsBrowser(target: PinnedHostExecutionSpec): boolean {
+export function targetWantsBrowser(
+  target: PinnedHostExecutionSpec,
+  /**
+   * Can THIS replica advertise a hosted browser at all — the env flag and the
+   * backend's own gate, exactly as `resolveHostTools` reads them? DEFAULTS TO
+   * TRUE so a caller that does not know keeps the old behaviour.
+   *
+   * The two decisions happen in different places: the desktop box is
+   * provisioned before the tool resolver runs, so a replica with
+   * `HOSTED_BROWSER_TOOLS_ENABLED` off would pay for a desktop for the life of
+   * the attempt and then suppress every tool that box exists for. The backend
+   * refuses its own half (`desktop_not_advertised`, `desktop_unavailable`) but
+   * cannot see an inspector-side env flag.
+   */
+  hostedBrowserAvailable = true
+): boolean {
   return (
+    hostedBrowserAvailable &&
     (target.builtInToolIds ?? []).includes(BROWSER_TOOL_ID) &&
     parseBrowserToolPolicy(target.browserToolPolicy, {
       source: "swarm-sandbox",
+      // Same as the eval predicate: the delivery parse does the reporting.
+      quiet: true,
     }) !== undefined
   );
 }
 
 /** Any consumer of the per-attempt box. */
-export function targetWantsSandbox(target: PinnedHostExecutionSpec): boolean {
+export function targetWantsSandbox(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable = true
+): boolean {
   return (
     targetWantsBash(target) ||
     targetWantsHarnessBox(target) ||
-    targetWantsBrowser(target)
+    targetWantsBrowser(target, hostedBrowserAvailable)
   );
 }
 
@@ -135,9 +164,13 @@ export type SandboxIntent =
   | { kind: "skip"; reason?: string };
 
 export function sandboxIntentFor(
-  target: PinnedHostExecutionSpec
+  target: PinnedHostExecutionSpec,
+  /** See `targetWantsBrowser`. Defaults to true for callers that cannot say. */
+  hostedBrowserAvailable = true
 ): SandboxIntent {
-  if (!targetWantsSandbox(target)) return { kind: "skip" };
+  if (!targetWantsSandbox(target, hostedBrowserAvailable)) {
+    return { kind: "skip" };
+  }
   // A BROWSER target boots the stock DESKTOP image, so it needs no environment
   // pin and the two pin branches below do not apply to it. Deliberately BEFORE
   // them, and deliberately not conditioned on a pin either way: a target that
@@ -147,7 +180,7 @@ export function sandboxIntentFor(
   // an author reads is the same on the eval and journey surfaces — and
   // quietly downgrading here would hand the session a browser that cannot
   // start, with nothing saying why.
-  if (targetWantsBrowser(target)) {
+  if (targetWantsBrowser(target, hostedBrowserAvailable)) {
     return { kind: "provision", runtimeKind: "desktop-browser" };
   }
   if (target.computerEnvironment) {
@@ -284,6 +317,32 @@ export async function provisionAttemptSandbox(args: {
     // straight past this bounded retry, turning the hang the deadline exists to
     // contain into a worse failure. Treat an unusable body as transient.
     if (result.ok && result.value?.sandboxId && result.value?.sandboxRowId) {
+      // What ACTUALLY booted, read off the response rather than the request: a
+      // reuse answers with the row's own kind, and a browser on a terminal
+      // image would fail with nothing saying why.
+      const bootedKind = result.value.runtimeKind ?? "terminal";
+      if (
+        args.runtimeKind === "desktop-browser" &&
+        bootedKind !== "desktop-browser"
+      ) {
+        // FAIL, do not downgrade. The registry suppresses `browser` for a
+        // terminal binding, so accepting this box would run the whole session
+        // with no browser tools and still report it a success — the attempt
+        // would read as "the model never chose to browse". A control plane
+        // that answers a desktop request with a terminal box is one that
+        // predates per-run desktops, which retrying cannot change.
+        await releaseAttemptSandbox(result.value.sandboxRowId);
+        return {
+          ok: false,
+          retryable: false,
+          code: "desktop_downgraded",
+          message:
+            "This target advertises the browser tool, which needs a desktop " +
+            "computer, but the control plane provisioned a terminal one — it " +
+            "does not support per-run desktop boxes yet. Remove the browser " +
+            "tool from this target, or update the deployment.",
+        };
+      }
       return {
         ok: true,
         sandbox: {
@@ -293,10 +352,7 @@ export async function provisionAttemptSandbox(args: {
             // The CONTROL-PLANE row, which a browser session is recorded
             // against and every teardown keys on. `bash` never needed it.
             sandboxRowId: result.value.sandboxRowId,
-            // What ACTUALLY booted, read off the response rather than the
-            // request: a reuse answers with the row's own kind, and a browser
-            // on a terminal image would fail with nothing saying why.
-            runtimeKind: result.value.runtimeKind ?? "terminal",
+            runtimeKind: bootedKind,
             ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
           },
         },

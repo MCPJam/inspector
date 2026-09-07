@@ -205,7 +205,7 @@ export interface EvalSandbox {
    * plane answers with the row's own kind, so a caller can never believe it
    * holds a desktop box when it holds a terminal one.
    */
-  runtimeKind?: "terminal" | "desktop-browser";
+  runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
 }
@@ -232,7 +232,7 @@ export async function provisionEvalSandbox(args: {
   bearer: string;
   runId: string;
   iterationId?: string;
-  runtimeKind?: "terminal" | "desktop-browser";
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<EvalSandbox>> {
   return postJson<EvalSandbox>(
@@ -288,7 +288,7 @@ export interface JourneySandbox {
   /** Working directory the target's host configured (backend-resolved). */
   workdir?: string;
   /** What ACTUALLY booted — on a reuse, the row's kind, not the request's. */
-  runtimeKind?: "terminal" | "desktop-browser";
+  runtimeKind?: RuntimeKind;
   /** What the live box advertises (`["bash","browser"]` for a desktop). */
   capabilities?: string[];
 }
@@ -321,7 +321,7 @@ export async function provisionJourneySandbox(args: {
   runId: string;
   targetId: string;
   sessionIdx: number;
-  runtimeKind?: "terminal" | "desktop-browser";
+  runtimeKind?: RuntimeKind;
   signal?: AbortSignal;
 }): Promise<ControlPlaneResult<JourneySandbox>> {
   return postJson<JourneySandbox>(

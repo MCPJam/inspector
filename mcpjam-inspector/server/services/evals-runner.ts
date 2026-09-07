@@ -57,6 +57,7 @@ import {
   provisionEvalSandbox,
   releaseEvalSandbox,
 } from "../utils/computers/control-plane-client.js";
+import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import { seedEvalCaseAttachments } from "../utils/computers/eval-attachments-seed.js";
 import { logger } from "../utils/logger";
 import { captureMcpAppWidgetSnapshots } from "../utils/mcp-app-widget-capture";
@@ -4827,6 +4828,10 @@ const runHostedIterationWithBrowser = async (
       harness: resolvedExecution.harness,
       builtInToolIds: resolvedExecution.builtInToolIds,
       browserToolPolicy: resolvedExecution.browserToolPolicy,
+      // The SAME two gates `resolveHostTools` reads a moment later. Without
+      // them this books a desktop box the resolver then refuses to hand any
+      // tool to — paid, idle, and for the whole iteration.
+      hostedBrowserAvailable: hostedBrowserAdvertisable(),
       runId,
     });
     if (sandboxNeed.needed) {
@@ -4864,6 +4869,24 @@ const runHostedIterationWithBrowser = async (
             runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
           }
         : undefined;
+    // FAIL, do not downgrade. `resolveHostTools` suppresses `browser` for a
+    // terminal binding, so a desktop request answered with a terminal box
+    // would run the iteration with no browser tools at all and score it as an
+    // ordinary result — the transcript reads as a model that never chose to
+    // browse. A control plane that answers this way predates per-run desktops.
+    // Throwing lands in the catch below, which releases the box and records a
+    // failed iteration rather than a misleading passing one.
+    if (
+      sandboxNeed.runtimeKind === "desktop-browser" &&
+      sandboxBinding?.runtimeKind !== "desktop-browser"
+    ) {
+      throw new Error(
+        "This eval declares a browser tool policy, which needs a desktop " +
+          "computer, but the control plane provisioned a terminal one — it " +
+          "does not support per-run desktop boxes yet. Remove the browser " +
+          "tool from this host config, or update the deployment.",
+      );
+    }
     builtInTools = buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
