@@ -113,17 +113,17 @@ const CHIP =
   "rounded-full border-transparent bg-muted px-2 py-0 text-[11px] font-normal text-muted-foreground";
 
 /**
- * Roughly what a chip occupies, in pixels.
+ * Roughly what a chip occupies in the row, in pixels.
  *
- * Measured in the app at 11px: `big-mcp` 47px, `Excalidraw (App)` 86px,
- * `no-existe.invalid` 85px — about 4.4px a character plus a flat 16px of
- * padding, and 4px of gap after it. Counting CHARACTERS instead dropped the
- * padding, so a two-chip row was cut to one with 42px still free.
+ * Measured on the rendered chips at 11px, gap included: `big-mcp` (7) 58px,
+ * `Excalidraw (App)` (16) 100px, `+1` (2) 30px. That is ~4.7px a character on
+ * a flat ~25px — the padding and the gap, which a count of CHARACTERS does not
+ * see, and ignoring them cut a two-chip row to one with 42px still free.
  *
  * ponytail: a formula, not a measurement. Swap in a real one only if a font
  * change makes it wrong enough to wrap.
  */
-const chipWidth = (text: string) => 20 + text.length * 4.4;
+const chipWidth = (text: string) => 25 + text.length * 4.7;
 
 /**
  * Tabs as the design draws them: no container strip, the two split evenly
