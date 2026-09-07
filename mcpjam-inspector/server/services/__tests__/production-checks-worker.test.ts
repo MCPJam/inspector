@@ -124,11 +124,21 @@ describe("executeClaimedCheck", () => {
     expect(calls).toHaveLength(1);
     expect(calls[0].path).toBe("/internal/v1/production-checks/complete");
     expect(calls[0].body.passed).toBe(true);
+    // The advisory row still travels, and still says it did not pass — what
+    // it must NOT carry is the check policy. `criterionResultValidator` on the
+    // backend is a closed `v.object`, so an extra key fails argument
+    // validation, the completion 500s, the row stays `running`, and recovery
+    // re-claims it into the same 500 forever. The advisory reduction is
+    // carried by `passed` above, which is the field the verdict reads.
     expect(calls[0].body.criterionResults[0]).toMatchObject({
       criterionId: "crit-advisory",
       passed: false,
-      role: "advisory",
     });
+    expect(Object.keys(calls[0].body.criterionResults[0]).sort()).toEqual([
+      "criterionId",
+      "passed",
+      "reason",
+    ]);
   });
 
   it("grades an EMPTY transcript rather than skipping it", async () => {
