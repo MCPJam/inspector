@@ -297,9 +297,33 @@ describe("buildCaseScorecard — the route question", () => {
       ...base,
       steps: [{ id: "t1", kind: "toolCall", toolName: "get_me" } as TestStep],
     });
-    expect(card.route.route).toEqual({ kind: "locked", reason: "modelFree" });
+    expect(card.route.route).toEqual({
+      kind: "locked",
+      reason: "modelFree",
+      tools: [],
+    });
     expect(card.route.editable).toBe(false);
     expect(card.unsetBlockReason).toBeNull();
+  });
+
+  it("still carries a locked case's tool asserts, so they cannot vanish", () => {
+    // They are steps in this case, and `leftoverSteps` does not list a
+    // `toolCalledWith` — a locked question that dropped them would remove them
+    // from every editor on the surface.
+    const card = buildCaseScorecard({
+      ...base,
+      steps: [
+        { id: "t1", kind: "toolCall", toolName: "render" } as TestStep,
+        assert("a1", {
+          type: "toolCalledWith",
+          toolName: "get_me",
+          args: { args: {} },
+        } as Predicate),
+      ],
+    });
+    const route = card.route.route;
+    expect(route?.kind).toBe("locked");
+    expect(route?.kind === "locked" && route.tools).toHaveLength(1);
   });
 
   it("locks the route on a case that does not start with a prompt", () => {
@@ -310,7 +334,11 @@ describe("buildCaseScorecard — the route question", () => {
         prompt("p1", "hi"),
       ],
     });
-    expect(card.route.route).toEqual({ kind: "locked", reason: "pinnedFirst" });
+    expect(card.route.route).toEqual({
+      kind: "locked",
+      reason: "pinnedFirst",
+      tools: [],
+    });
   });
 });
 

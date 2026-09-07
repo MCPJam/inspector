@@ -43,6 +43,7 @@ const getGuestBearerTokenMock = vi.hoisted(() =>
 const useAuthMock = vi.hoisted(() => ({
   getAccessToken: vi.fn().mockResolvedValue("token"),
 }));
+const convexClientMock = vi.hoisted(() => ({ query: vi.fn() }));
 const useConvexAuthMock = vi.hoisted(() => ({
   isAuthenticated: false,
   isLoading: false,
@@ -184,7 +185,11 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => useConvexAuthMock,
-  useConvex: () => ({ query: vi.fn() }),
+  // ONE client, not a fresh object per render. `useConvex()` returns a stable
+  // client from context in the app, and any hook that lists it as an effect
+  // dependency (capability probes do) re-fires forever against a mock that
+  // does not — the failure lands as a heap OOM, not a React warning.
+  useConvex: () => convexClientMock,
 }));
 
 describe("TestTemplateEditor run view from route", () => {
@@ -963,10 +968,15 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
-    expect(screen.getAllByTestId("simple-case-step-check")).toHaveLength(3);
     expect(
-      screen.getByTestId("simple-case-tools-checks-hint"),
-    ).toBeInTheDocument();
+      screen
+        .getAllByTestId("case-scorecard-row")
+        .filter((row) => row.getAttribute("data-provenance") === "step"),
+    ).toHaveLength(3);
+    expect(screen.getByTestId("case-route-row")).toHaveAttribute(
+      "data-route",
+      "checks",
+    );
     // Opening a case must not make it dirty: Save appears only on a change.
     expect(screen.queryAllByRole("button", { name: /^save/i })).toHaveLength(0);
     expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
@@ -980,6 +990,11 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
+    await user.click(
+      screen.getByRole("button", {
+        name: 'Edit Response contains "marcelo@mcpjam.com"',
+      }),
+    );
     await user.type(screen.getByLabelText("Needle"), "!");
     await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
 
@@ -1000,6 +1015,56 @@ describe("TestTemplateEditor run view from route", () => {
       type: "responseContains",
       needle: "marcelo@mcpjam.com!",
     });
+  });
+
+  it("saves the per-case judge opt-out", async () => {
+    // The only per-case judge control the backend admits.
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("switch", { name: "Skip the judge for this case" }),
+    );
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      judgeConfigOverride: { goalCompletion: { enabled: false } },
+    });
+  });
+
+  it("clears a stored judge opt-out with null, not by omitting it", async () => {
+    // Omitting the field preserves it on the backend, so turning the switch
+    // back off would look like it worked and change nothing.
+    const user = userEvent.setup();
+    activeCaseDoc = {
+      ...goldenCaseDoc,
+      judgeConfigOverride: { goalCompletion: { enabled: false } },
+    };
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    const skip = screen.getByRole("switch", {
+      name: "Skip the judge for this case",
+    });
+    expect(skip).toHaveAttribute("aria-checked", "true");
+    await user.click(skip);
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(
+      updateTestCaseMutationMock.mock.calls.at(-1)?.[0].judgeConfigOverride,
+    ).toBeNull();
   });
 
   it("quick-runs a step-authored case with the negative flag off", async () => {

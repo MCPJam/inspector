@@ -10,6 +10,7 @@ import {
 import { useConvexAuth, useMutation, useQuery } from "convex/react";
 import { track } from "@/lib/analytics";
 import { useActorCanQuery } from "@/hooks/use-actor-can-query";
+import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { mintCaseId } from "@mcpjam/sdk/contract";
 import {
   Circle,
@@ -175,6 +176,7 @@ import type {
   EvalIteration,
   EvalSuiteRun,
   RunColumnTab,
+  EvalJudgeConfigOverride,
 } from "./types";
 import type { EvalExportDraftInput } from "@/lib/evals/eval-export";
 import type { EvalChatHandoff } from "@/lib/eval-chat-handoff";
@@ -263,6 +265,11 @@ interface TestTemplate {
   predicates?: CasePredicates;
   /** Authored rubric for the model judge. Empty string clears it. */
   expectedOutput?: string;
+  /**
+   * The one per-case judge override the backend admits: opt out. No per-case
+   * model, threshold or role exists to write.
+   */
+  judgeConfigOverride?: EvalJudgeConfigOverride;
   kind?: "capability" | "regression";
 }
 
@@ -1256,6 +1263,7 @@ export function TestTemplateEditor({
       matchOptions: currentTestCase.matchOptions,
       predicates: currentTestCase.predicates,
       expectedOutput: currentTestCase.expectedOutput ?? "",
+      judgeConfigOverride: currentTestCase.judgeConfigOverride,
       kind: currentTestCase.kind,
     });
     // Seed the transient picker from the persisted runs so a user who saved
@@ -1677,6 +1685,19 @@ export function TestTemplateEditor({
   const useWorkspace = Boolean(simpleCaseEditorEnabled && editForm);
 
   /**
+   * Whether this deployment accepts a role on a check.
+   *
+   * Three states, and two of them behave identically: `unavailable` (the query
+   * was refused) and `loading` both render the read-only chip, which is the
+   * page exactly as it was before roles existed. A settings surface that
+   * offered the control while it could not know is worse than one that waits.
+   */
+  const caseCapabilities = useSuiteCapabilities(
+    useWorkspace ? (suiteId ?? null) : null,
+  );
+
+
+  /**
    * The tool question as shown, resolved from the stored choice plus what the
    * case carries. `"unset"` is the only answer that blocks: a brand-new draft
    * that asserts nothing would pass vacuously, and the backend rejects it
@@ -1758,6 +1779,12 @@ export function TestTemplateEditor({
     ).trim();
     const formKind = editForm.kind ?? null;
     const currentKind = currentTestCase.kind ?? null;
+    const normalizedJudgeOverride = JSON.stringify(
+      normalizeForComparison(editForm.judgeConfigOverride ?? null),
+    );
+    const normalizedCurrentJudgeOverride = JSON.stringify(
+      normalizeForComparison(currentTestCase.judgeConfigOverride ?? null),
+    );
 
     return (
       editForm.title !== currentTestCase.title ||
@@ -1769,6 +1796,7 @@ export function TestTemplateEditor({
       normalizedPredicates !== normalizedCurrentPredicates ||
       normalizedExpectedOutput !== normalizedCurrentExpectedOutput ||
       formKind !== currentKind ||
+      normalizedJudgeOverride !== normalizedCurrentJudgeOverride ||
       serverNegativeFlagMismatch
     );
   }, [
@@ -2127,6 +2155,11 @@ export function TestTemplateEditor({
       advancedConfig: normalizeAdvancedConfig(form.advancedConfig),
       matchOptions: form.matchOptions,
       predicates: normalizedPredicates,
+      // Omitted when undefined: `createTestCase` admits no `null` for this
+      // field, and `handleSave` supplies the null-clear on the update path.
+      ...(form.judgeConfigOverride !== undefined
+        ? { judgeConfigOverride: form.judgeConfigOverride }
+        : {}),
       ...(form.kind !== undefined ? { kind: form.kind } : {}),
     };
   };
@@ -2234,6 +2267,9 @@ export function TestTemplateEditor({
         matchOptions: savePayload.matchOptions ?? null,
         // Same null-clears-the-field convention for the predicate override.
         predicates: savePayload.predicates ?? null,
+        // And for the judge opt-out, so turning the switch back off actually
+        // removes the stored override rather than leaving it in place.
+        judgeConfigOverride: savePayload.judgeConfigOverride ?? null,
       });
       track("eval_test_case_edited", {
         location: "test_template_editor",
@@ -3888,6 +3924,16 @@ export function TestTemplateEditor({
                       readOnly
                       onSelectInAppStep={setSyncedStepId}
                       inspectHeader={workspaceInspectStrip}
+                      snapshotPredicates={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.predicates as Predicate[] | undefined
+                      }
+                      suiteJudgeConfig={
+                        workspaceTrialRun?.configSnapshot?.judgeConfig ??
+                        suite?.judgeConfig
+                      }
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
                     />
                   ) : editForm ? (
                     <SimpleCaseForm
@@ -3935,6 +3981,18 @@ export function TestTemplateEditor({
                       onToolsChoiceChange={setSimpleToolsChoice}
                       stashedTools={simpleStashedTools}
                       onStashedToolsChange={setSimpleStashedTools}
+                      judgeConfigOverride={editForm.judgeConfigOverride}
+                      onJudgeConfigOverrideChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, judgeConfigOverride: next }
+                            : current,
+                        )
+                      }
+                      suiteJudgeConfig={suite?.judgeConfig}
+                      suiteJudgeRubric={suite?.judgeRubric}
+                      capabilities={caseCapabilities.capabilities}
+                      onOpenSuiteSettings={onOpenSuiteSettings}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
                       validationAttempted={simpleValidationAttempted}

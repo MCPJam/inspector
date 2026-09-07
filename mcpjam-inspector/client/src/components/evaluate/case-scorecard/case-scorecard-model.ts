@@ -160,7 +160,17 @@ export type RouteState =
   | { kind: "noTool" }
   | { kind: "checks" }
   | { kind: "unset" }
-  | { kind: "locked"; reason: "pinnedFirst" | "modelFree" };
+  /**
+   * No model turn for a route claim to be about. Existing tool asserts are
+   * still carried and still shown, read-only: they are steps in this case, and
+   * a locked question that HID them would drop them from every editor on the
+   * surface — `leftoverSteps` does not list them either, by construction.
+   */
+  | {
+      kind: "locked";
+      reason: "pinnedFirst" | "modelFree";
+      tools: SimpleCaseTool[];
+    };
 
 /**
  * What the judge will actually do to this case, read off the suite plus the
@@ -417,13 +427,14 @@ export function judgeFacts(input: {
 
 /** The route question's current answer, from the same inputs the form uses. */
 function resolveRoute(input: CaseScorecardInput): RouteState {
+  const locked = readSimpleCase(input.steps);
   if (isModelFree(input.steps)) {
-    return { kind: "locked", reason: "modelFree" };
+    return { kind: "locked", reason: "modelFree", tools: locked.tools };
   }
   if (!isPromptFirst(input.steps)) {
-    return { kind: "locked", reason: "pinnedFirst" };
+    return { kind: "locked", reason: "pinnedFirst", tools: locked.tools };
   }
-  const view = readSimpleCase(input.steps);
+  const view = locked;
   const question = resolveToolsQuestion({
     choice: input.toolsChoice,
     hasToolAsserts: view.tools.length > 0,

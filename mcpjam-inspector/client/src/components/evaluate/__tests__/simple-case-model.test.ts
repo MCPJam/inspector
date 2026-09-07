@@ -9,7 +9,6 @@ import {
   caseHasOwnAssertion,
   deriveCaseKind,
   displayCaseKind,
-  EXCLUDED_FROM_MORE_CHECKS,
   inAppStepLabel,
   initialToolsChoice,
   isPromptFirst,
@@ -18,7 +17,6 @@ import {
   isStepCheckAssert,
   leftoverSteps,
   matchOptionsForKind,
-  MORE_CHECK_GROUPS,
   readSimpleCase,
   readStepChecks,
   resolveToolsQuestion,
@@ -396,33 +394,15 @@ describe("matchOptionsForKind carries argument matching over", () => {
   });
 });
 
-describe("More checks groups partition the predicate catalog", () => {
-  it("files every predicate kind exactly once, or excludes it on purpose", () => {
-    const filed = new Map<string, string[]>();
-    for (const group of MORE_CHECK_GROUPS) {
-      for (const kind of group.kinds) {
-        filed.set(kind, [...(filed.get(kind) ?? []), group.id]);
-      }
-    }
-    for (const kind of Object.keys(PREDICATE_KIND_LABELS)) {
-      const groups = filed.get(kind) ?? [];
-      const excluded = EXCLUDED_FROM_MORE_CHECKS.has(
-        kind as Parameters<typeof EXCLUDED_FROM_MORE_CHECKS.has>[0],
-      );
-      expect(
-        { kind, groups, excluded },
-        `predicate kind "${kind}" must be in exactly one More checks group or excluded on purpose`,
-      ).toSatisfy(
-        (entry: { groups: string[]; excluded: boolean }) =>
-          (entry.groups.length === 1 && !entry.excluded) ||
-          (entry.groups.length === 0 && entry.excluded),
-      );
-    }
-    for (const kind of EXCLUDED_FROM_MORE_CHECKS) {
-      expect(kind in PREDICATE_KIND_LABELS).toBe(true);
-    }
-  });
-});
+/*
+ * The partition guard moved. It used to pin `MORE_CHECK_GROUPS` — the form's
+ * own three-way grouping — against the predicate catalog. That grouping is
+ * gone; the equivalent invariant now lives in `case-scorecard-model.test.ts`
+ * as "offers every predicate kind exactly once, or the route owns it", over
+ * the shared scorer library. The guard is the same: a kind added to the
+ * catalog fails until somebody files it, rather than silently disappearing
+ * from the only place it can be authored.
+ */
 
 describe("inAppStepLabel", () => {
   it("names a role locator by its accessible name, never by the role object", () => {
