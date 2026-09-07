@@ -603,7 +603,8 @@ describe("UserTestingScenarioDetail", () => {
     });
 
     it("persists the description on blur, only when it changed", () => {
-      renderDetail({ description: "Old copy" });
+      // BB-202 moved this field off the header row and into Edit.
+      renderEdit({ description: "Old copy" });
 
       const textarea = screen.getByTestId("user-testing-description");
       // Blur with no edit: no write.
@@ -616,6 +617,45 @@ describe("UserTestingScenarioDetail", () => {
         scenarioId: "cb-1",
         description: "New copy",
       });
+    });
+
+    it("flushes a focused draft when Edit closes without a blur", () => {
+      // Navigating out of Edit unmounts the field, and React fires no blur on
+      // unmount — the typed text would be dropped and the focus guard would
+      // latch, freezing the reseed for the rest of this instance's life.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      const textarea = screen.getByTestId("user-testing-description");
+      fireEvent.focus(textarea);
+      fireEvent.change(textarea, { target: { value: "Typed then left" } });
+      rerender(detail({ description: "Old copy" }));
+
+      expect(updateScenarioMock).toHaveBeenCalledWith({
+        scenarioId: "cb-1",
+        description: "Typed then left",
+      });
+    });
+
+    it("keeps the description out of the header, where it crowded the tabs", () => {
+      renderDetail({ description: "Old copy" });
+
+      expect(
+        screen.queryByTestId("user-testing-description"),
+      ).not.toBeInTheDocument();
+      // The tabs the field used to sit beside.
+      expect(screen.getByRole("button", { name: "Insights" })).toBeVisible();
+      expect(screen.getByRole("button", { name: "Sessions" })).toBeVisible();
+    });
+
+    it("lets a long study name shrink instead of pushing the tabs off", () => {
+      renderDetail({ name: "S".repeat(200) });
+
+      // The design-system button ships shrink-0; the header has to override it,
+      // or the name keeps full width and the tab row is what gives.
+      const classes = screen.getByTitle("S".repeat(200)).className.split(/\s+/);
+      expect(classes).toContain("shrink");
+      expect(classes).not.toContain("shrink-0");
+      expect(classes).toContain("min-w-0");
     });
   });
 

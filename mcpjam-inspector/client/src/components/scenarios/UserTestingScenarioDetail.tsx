@@ -69,7 +69,6 @@ import {
 } from "@/lib/app-navigation";
 import { buildScenarioLink } from "@/lib/scenario-session";
 import { toast } from "@/lib/toast";
-import { cn } from "@/lib/utils";
 import { ActionableFindings } from "@/components/shared/actionable-insights/actionable-findings";
 
 /**
@@ -342,6 +341,19 @@ export function UserTestingScenarioDetail({
     }
   };
 
+  // The field lives on Edit, and leaving Edit unmounts it without firing blur.
+  // React drops the typed text, and `descriptionFocusedRef` stays true for the
+  // life of this instance — which survives the flip — freezing the reseed above
+  // and letting a later blur write the stale draft over a teammate's edit.
+  // Flush on the way out instead.
+  useEffect(() => {
+    if (editMode || !descriptionFocusedRef.current) return;
+    void persistDescription();
+    // Deliberately keyed on the Edit→detail flip alone: `persistDescription`
+    // is rebuilt every render and would retrigger this.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editMode]);
+
   // The URL is the stash for both the tab and the opened session: the gates
   // above remount this route during a cold boot, so state captured on first
   // mount wouldn't survive to the last one.
@@ -443,27 +455,10 @@ export function UserTestingScenarioDetail({
         onSave={handleRename}
         variant="h1"
         placeholder="Scenario name"
-        className="-ml-2 shrink-0 px-2 text-xl font-semibold tracking-tight"
+        // `shrink` overrides the design-system button's own shrink-0, which
+        // otherwise keeps the name at full width and pushes the tabs off.
+        className="-ml-2 min-w-0 shrink px-2 text-xl font-semibold tracking-tight"
         inputClassName="min-w-[8rem] max-w-full text-xl font-semibold tracking-tight"
-      />
-      <TextareaAutosize
-        aria-label="Scenario description"
-        data-testid="user-testing-description"
-        value={descriptionDraft}
-        onChange={(e) => setDescriptionDraft(e.target.value)}
-        onFocus={() => {
-          descriptionFocusedRef.current = true;
-        }}
-        onBlur={() => void persistDescription()}
-        minRows={1}
-        maxRows={4}
-        maxLength={2000}
-        placeholder="Add a description…"
-        className={cn(
-          "min-h-0 min-w-[12rem] flex-1 resize-none border-0 bg-transparent px-0 py-0 text-sm",
-          "text-muted-foreground shadow-none placeholder:text-muted-foreground/60",
-          "focus-visible:border-0 focus-visible:ring-0",
-        )}
       />
       {/* Host-backed scenarios get no Environment section — nothing else on
           Edit names the client they run against, so the header does. */}
@@ -556,6 +551,32 @@ export function UserTestingScenarioDetail({
                 <h1 className="text-xl font-semibold tracking-tight text-foreground">
                   Settings
                 </h1>
+
+                {/* Off the header row as of BB-202: a field that grows next to
+                    the title crowds the tabs. Still the only editor for it. */}
+                <section
+                  className="space-y-4"
+                  data-testid="user-testing-description-section"
+                >
+                  <h2 className="text-lg font-medium tracking-tight text-foreground">
+                    Description
+                  </h2>
+                  <TextareaAutosize
+                    aria-label="Scenario description"
+                    data-testid="user-testing-description"
+                    value={descriptionDraft}
+                    onChange={(e) => setDescriptionDraft(e.target.value)}
+                    onFocus={() => {
+                      descriptionFocusedRef.current = true;
+                    }}
+                    onBlur={() => void persistDescription()}
+                    minRows={2}
+                    maxRows={8}
+                    maxLength={2000}
+                    placeholder="Add a description…"
+                    className="resize-none text-sm"
+                  />
+                </section>
 
                 {environmentError ? (
                   <div
