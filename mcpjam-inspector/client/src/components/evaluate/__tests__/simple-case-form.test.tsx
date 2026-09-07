@@ -59,6 +59,8 @@ function StatefulForm(
       onToolsChoiceBlockReasonChange={props.onToolsChoiceBlockReasonChange}
       availableTools={["list_incidents", "get_incident"]}
       isNegativeTest={props.isNegativeTest}
+      validationAttempted={props.validationAttempted}
+      onStartRecording={props.onStartRecording}
     />
   );
 }
@@ -125,7 +127,7 @@ describe("SimpleCaseForm", () => {
     ]);
   });
 
-  it("reports the unset-tools block reason", async () => {
+  it("reports the unset-tools block reason without painting the error", async () => {
     const { onToolsChoiceBlockReasonChange } = renderForm({
       isNegativeTest: false,
     });
@@ -134,9 +136,69 @@ describe("SimpleCaseForm", () => {
         UNSET_TOOLS_BLOCK_REASON,
       );
     });
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("shows the unset-tools error only after a Save or Run attempt", () => {
+    renderForm({ isNegativeTest: false, validationAttempted: true });
     expect(screen.getByTestId("simple-case-tools-unset")).toHaveTextContent(
       UNSET_TOOLS_BLOCK_REASON,
     );
+  });
+
+  it("disables Start recording until the prompt is non-empty", async () => {
+    const user = userEvent.setup();
+    const onStartRecording = vi.fn();
+    renderForm({
+      steps: [{ id: "turn-1", kind: "prompt", prompt: "" }],
+      isNegativeTest: false,
+      onStartRecording,
+    });
+    const start = screen.getByTestId("simple-case-start-recording");
+    expect(start).toBeDisabled();
+    await user.type(
+      screen.getByLabelText("What does the user ask?"),
+      "Open the canvas",
+    );
+    expect(screen.getByTestId("simple-case-start-recording")).toBeEnabled();
+    await user.click(screen.getByTestId("simple-case-start-recording"));
+    expect(onStartRecording).toHaveBeenCalled();
+  });
+
+  it("renders an in-app row and deletes exactly that step", async () => {
+    const user = userEvent.setup();
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "create_view",
+      action: { kind: "click", target: { testId: "canvas" } },
+    };
+    const { onStepsChange } = renderForm({
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "Draw" },
+        interact,
+        {
+          id: "a1",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "create_view",
+            args: { args: {} },
+          },
+        },
+      ],
+      isNegativeTest: false,
+    });
+    expect(screen.getByTestId("simple-case-in-app-row")).toHaveTextContent(
+      "Click canvas",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Remove Click canvas" }),
+    );
+    const next = onStepsChange.mock.calls.at(-1)?.[0] as TestStep[];
+    expect(next.map((step) => step.id)).toEqual(["turn-1", "a1"]);
   });
 
   it("round-trips the rubric", async () => {
@@ -212,7 +274,9 @@ describe("SimpleCaseForm", () => {
         }}
       />,
     );
-    expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Adopt route" }));
     expect(
       screen.queryByTestId("simple-case-tools-unset"),

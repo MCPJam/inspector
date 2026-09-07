@@ -863,7 +863,10 @@ describe("TestTemplateEditor run view from route", () => {
     await waitFor(() => {
       expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
-    expect(screen.getByText("What does the user ask?")).toBeInTheDocument();
+    expect(screen.getByText("User asks")).toBeInTheDocument();
+    expect(
+      screen.getByLabelText("What does the user ask?"),
+    ).toBeInTheDocument();
     expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
   });
 
@@ -983,8 +986,11 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: /run$/i })[0],
     ).toBeDisabled();

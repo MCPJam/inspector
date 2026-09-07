@@ -1,17 +1,23 @@
 /**
- * Pure model for the flag-gated simple case editor.
+ * Pure model for the Evaluate simple case editor.
  *
- * A case is "simple" when it is one prompt plus zero or more
- * `toolCalledWith` asserts — the shape the three-question form can
- * author without loss. Kind is derived from resolved matchOptions
- * (PR1–PR5); a persisted `kind` field arrives later (PR7).
+ * A case is "simple" when it is one prompt plus any sequence of interact
+ * steps, widget asserts, and non-widget `toolCalledWith` asserts — the shape
+ * the three-section form can author without loss. Anything else (a second
+ * prompt, a `toolCall`, a non-tool inline predicate) still opens the step
+ * list, losslessly.
  */
 
 import {
   isAssertStep,
+  isInteractStep,
   isPromptStep,
   isWidgetAssertion,
+  WIDGET_ASSERTION_LABELS,
+  type InteractAction,
+  type InteractStep,
   type TestStep,
+  type WidgetAssertion,
 } from "@/shared/steps";
 import {
   MATCH_OPTIONS_DEFAULTS,
@@ -95,8 +101,15 @@ export type SimpleCaseTool = {
   arguments: Record<string, unknown>;
 };
 
+export type WidgetAssertStep = Extract<TestStep, { kind: "assert" }> & {
+  assertion: WidgetAssertion;
+};
+
+export type InAppStep = InteractStep | WidgetAssertStep;
+
 export type SimpleCaseView = {
   prompt: string;
+  inApp: InAppStep[];
   tools: SimpleCaseTool[];
   noTool: boolean;
 };
@@ -123,6 +136,14 @@ export function isToolCalledWithAssert(step: TestStep): boolean {
     !isWidgetAssertion(step.assertion) &&
     step.assertion.type === "toolCalledWith"
   );
+}
+
+export function isWidgetAssertStep(step: TestStep): step is WidgetAssertStep {
+  return isAssertStep(step) && isWidgetAssertion(step.assertion);
+}
+
+export function isInAppStep(step: TestStep): step is InAppStep {
+  return isInteractStep(step) || isWidgetAssertStep(step);
 }
 
 /**
@@ -178,21 +199,27 @@ export function matchOptionsForKind(
 }
 
 /**
- * `steps[0]` is a prompt and every other step is a non-widget
- * `toolCalledWith` assert. Prompt-only is simple. A second prompt,
- * `toolCall`, `interact`, widget assert, or any other inline predicate
- * is not.
+ * `steps[0]` is a prompt and every later step is an interact, a widget
+ * assert, or a non-widget `toolCalledWith` assert. Prompt-only is simple.
+ * A second prompt, `toolCall`, or any other inline predicate is not.
  */
 export function isSimpleCaseShape(steps: TestStep[]): boolean {
   if (!Array.isArray(steps) || steps.length === 0) return false;
   if (!isPromptStep(steps[0])) return false;
-  return steps.slice(1).every(isToolCalledWithAssert);
+  return steps
+    .slice(1)
+    .every((step) => isInAppStep(step) || isToolCalledWithAssert(step));
 }
 
 export function readSimpleCase(steps: TestStep[]): SimpleCaseView {
   const prompt = isPromptStep(steps[0]) ? steps[0].prompt : "";
+  const inApp: InAppStep[] = [];
   const tools: SimpleCaseTool[] = [];
   for (const step of steps) {
+    if (isInAppStep(step)) {
+      inApp.push(step);
+      continue;
+    }
     if (!isToolCalledWithAssert(step) || !isAssertStep(step)) continue;
     const assertion = step.assertion;
     if (isWidgetAssertion(assertion) || assertion.type !== "toolCalledWith") {
@@ -204,14 +231,34 @@ export function readSimpleCase(steps: TestStep[]): SimpleCaseView {
       arguments: assertion.args.args ?? {},
     });
   }
-  return { prompt, tools, noTool: tools.length === 0 };
+  return { prompt, inApp, tools, noTool: tools.length === 0 };
+}
+
+function toolAssertStep(
+  id: string,
+  tool: WriteSimpleCaseView["tools"][number],
+): TestStep {
+  return {
+    id,
+    kind: "assert",
+    assertion: {
+      type: "toolCalledWith",
+      toolName: tool.toolName,
+      args: { args: tool.arguments ?? {} },
+    },
+  };
 }
 
 /**
- * Rewrite the simple-case slice of `prevSteps`. Keeps step 0's id when it
- * is already a prompt, and reuses existing `toolCalledWith` assert ids by
- * index (or an explicit `id` on the incoming tool). `noTool` drops only
- * `toolCalledWith` asserts so flipping back can restore from caller state.
+ * Rewrite the simple-case slice of `prevSteps` without reordering surviving
+ * steps. The executor runs the flat list in order and fail-fast, so
+ * bucket-and-concat would change grading.
+ *
+ * - Every existing step keeps its index and id.
+ * - A newly chosen tool assert is spliced after the last existing tool
+ *   assert (or at the end).
+ * - `noTool` removes `toolCalledWith` asserts in place.
+ * - Interact / widget-assert rows are left where they are.
  */
 export function writeSimpleCase(
   prevSteps: TestStep[],
@@ -223,28 +270,109 @@ export function writeSimpleCase(
     kind: "prompt",
     prompt: view.prompt,
   };
-
-  const leftover = prevSteps
-    .slice(prevPrompt ? 1 : 0)
-    .filter((step) => !isToolCalledWithAssert(step));
+  const rest = prevPrompt ? prevSteps.slice(1) : [...prevSteps];
 
   if (view.noTool) {
-    return [promptStep, ...leftover];
+    return [
+      promptStep,
+      ...rest.filter((step) => !isToolCalledWithAssert(step)),
+    ];
   }
 
-  const prevTools = prevSteps.filter(isToolCalledWithAssert);
-  const toolSteps: TestStep[] = view.tools.map((tool, index) => {
-    const prev = prevTools[index];
-    return {
-      id: tool.id ?? prev?.id ?? newStepId("assert"),
-      kind: "assert",
-      assertion: {
-        type: "toolCalledWith",
-        toolName: tool.toolName,
-        args: { args: tool.arguments ?? {} },
-      },
-    };
+  const prevTools = rest.filter(isToolCalledWithAssert);
+  const assigned = view.tools.map((tool, index) => {
+    const id = tool.id ?? prevTools[index]?.id ?? newStepId("assert");
+    return { ...tool, id };
   });
+  const assignedById = new Map(assigned.map((tool) => [tool.id, tool]));
+  const prevToolIds = new Set(prevTools.map((step) => step.id));
 
-  return [promptStep, ...toolSteps, ...leftover];
+  const kept: TestStep[] = [];
+  for (const step of rest) {
+    if (isToolCalledWithAssert(step)) {
+      const incoming = assignedById.get(step.id);
+      if (!incoming) continue;
+      kept.push(toolAssertStep(step.id, incoming));
+      continue;
+    }
+    kept.push(step);
+  }
+
+  const brandNew = assigned.filter((tool) => !prevToolIds.has(tool.id));
+  if (brandNew.length === 0) {
+    return [promptStep, ...kept];
+  }
+
+  let lastToolIdx = -1;
+  for (let i = kept.length - 1; i >= 0; i -= 1) {
+    if (isToolCalledWithAssert(kept[i]!)) {
+      lastToolIdx = i;
+      break;
+    }
+  }
+  const insertAt = lastToolIdx === -1 ? kept.length : lastToolIdx + 1;
+  kept.splice(
+    insertAt,
+    0,
+    ...brandNew.map((tool) => toolAssertStep(tool.id, tool)),
+  );
+  return [promptStep, ...kept];
+}
+
+export function removeStepById(steps: TestStep[], stepId: string): TestStep[] {
+  return steps.filter((step) => step.id !== stepId);
+}
+
+/**
+ * The locator's most readable handle, in the recorder's own precedence
+ * (testId → role+name → text → css). On the contract `role` is an object,
+ * `{ role, name?, exact? }`, never a string.
+ */
+function locatorTarget(action: InteractAction): string {
+  const target = "target" in action ? action.target : undefined;
+  if (!target || typeof target !== "object") return "";
+  const locator = target as {
+    testId?: string;
+    role?: { role?: string; name?: string };
+    text?: string;
+    css?: string;
+  };
+  return (
+    locator.testId?.trim() ||
+    locator.role?.name?.trim() ||
+    locator.text?.trim() ||
+    locator.role?.role?.trim() ||
+    locator.css?.trim() ||
+    ""
+  );
+}
+
+function capitalize(value: string): string {
+  return value.length === 0 ? value : value[0]!.toUpperCase() + value.slice(1);
+}
+
+/** Verb + target for an *In the app* row, `browserStepLabel` style. */
+export function inAppStepLabel(step: InAppStep): string {
+  if (isInteractStep(step)) {
+    const verb = capitalize(step.action.kind);
+    const target = locatorTarget(step.action);
+    return target ? `${verb} ${target}` : verb;
+  }
+  const kindLabel = WIDGET_ASSERTION_LABELS[step.assertion.kind];
+  if (step.assertion.kind === "textVisible") {
+    return `${kindLabel} · ${step.assertion.text}`;
+  }
+  if (step.assertion.kind === "inputValue") {
+    return step.assertion.equals
+      ? `${kindLabel} · ${step.assertion.equals}`
+      : kindLabel;
+  }
+  if (step.assertion.kind === "widgetToolCalled") {
+    return `${kindLabel} · ${step.assertion.calledToolName}`;
+  }
+  const target = locatorTarget({
+    kind: "click",
+    target: step.assertion.target,
+  });
+  return target ? `${kindLabel} · ${target}` : kindLabel;
 }

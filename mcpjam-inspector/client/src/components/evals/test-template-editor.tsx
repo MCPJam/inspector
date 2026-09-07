@@ -124,6 +124,7 @@ function loadSteps(testCase: unknown): TestStep[] {
 }
 import { normalizeToolChoice } from "@/shared/tool-choice";
 import {
+  resolveCasePredicates,
   resolveMatchOptions,
   type EvalMatchOptions,
   type CasePredicates,
@@ -220,6 +221,19 @@ import {
   deriveCaseKind,
   isSimpleCaseShape,
 } from "../evaluate/simple-case/simple-case-model";
+import { CaseWorkspaceLayout } from "../evaluate/case-workspace/case-workspace-layout";
+import { InspectStrip } from "../evaluate/case-workspace/inspect-strip";
+import { NextRunSheet } from "../evaluate/case-workspace/next-run-sheet";
+import { TrialHeader } from "../evaluate/case-workspace/trial-header";
+import {
+  createAttemptId,
+  leftViewFor,
+  paneViewFor,
+  selectedTrialIteration,
+  type SelectedTrial,
+} from "../evaluate/case-workspace/selected-trial";
+import { signaturesMatch } from "../evaluate/case-workspace/case-snapshot-signature";
+import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
 import { RouteRollupCard } from "../evaluate/simple-case/route-rollup-card";
 import {
@@ -996,6 +1010,15 @@ export function TestTemplateEditor({
   // frozen trace. No grading — the eval runner is out of this path. Past-run
   // review (`replayIteration`) still wins, so opening a run shows its trace.
   const [liveRecordMode, setLiveRecordMode] = useState<boolean>(false);
+  const [inspectIterationId, setInspectIterationId] = useState<string | null>(
+    null,
+  );
+  const [nextRunOpen, setNextRunOpen] = useState(false);
+  const [simpleValidationAttempted, setSimpleValidationAttempted] =
+    useState(false);
+  const [missingAppEvidenceStepId, setMissingAppEvidenceStepId] = useState<
+    string | null
+  >(null);
   // A past iteration selected from the Runs tab to replay in the Preview pane.
   const [replayIteration, setReplayIteration] = useState<EvalIteration | null>(
     null,
@@ -1140,6 +1163,10 @@ export function TestTemplateEditor({
     initializedSelectionCaseRef.current = null;
     appliedReplayAnchorRef.current = null;
     setReplayIteration(null);
+    setInspectIterationId(null);
+    setSimpleValidationAttempted(false);
+    setMissingAppEvidenceStepId(null);
+    setNextRunOpen(false);
   }, [selectedTestCaseId]);
 
   useEffect(() => {
@@ -1159,6 +1186,7 @@ export function TestTemplateEditor({
     if (routeCompareAnchorIteration == null) return; // still loading / not found
     appliedReplayAnchorRef.current = anchorId;
     setReplayIteration(routeCompareAnchorIteration);
+    setInspectIterationId(routeCompareAnchorIteration._id);
     setShowSpecOverride(false);
     setPreviewTab("preview");
   }, [
@@ -2028,6 +2056,7 @@ export function TestTemplateEditor({
     if (!editForm || isSavingDraft) return;
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
       return;
     }
@@ -2078,6 +2107,7 @@ export function TestTemplateEditor({
     if (!editForm || !currentTestCase) return;
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
       return;
     }
@@ -2399,6 +2429,7 @@ export function TestTemplateEditor({
     }
 
     if (simpleToolsBlock) {
+      setSimpleValidationAttempted(true);
       toast.error(simpleToolsBlock);
       return;
     }
@@ -2509,7 +2540,9 @@ export function TestTemplateEditor({
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,
             isNegativeTest: savePayload.isNegativeTest,
-            runs: iterationOverride,
+            // The simple form owns the count (saved with the case); the step
+            // list still shows the per-run override select.
+            runs: useSimpleForm ? (editForm.runs ?? 1) : iterationOverride,
             expectedOutput: savePayload.expectedOutput,
             steps: savePayload.steps,
             advancedConfig,
@@ -2596,6 +2629,14 @@ export function TestTemplateEditor({
         }
       }
       const startedAt = Date.now();
+      const launchSnapshot = {
+        steps: savePayload.steps,
+        predicates: savePayload.predicates,
+        matchOptions: savePayload.matchOptions,
+        expectedOutput: savePayload.expectedOutput,
+        runs: useSimpleForm ? (editForm.runs ?? 1) : iterationOverride,
+        namedHostId: quickRunHostPlan.namedHostId,
+      };
       for (const { modelValue, modelLabel } of preparedRuns) {
         const prior = previous[modelValue];
         const isRetrying =
@@ -2617,6 +2658,8 @@ export function TestTemplateEditor({
           error: null,
           previewTrace: comparePreviewTrace,
           previewExpectedToolCalls,
+          attemptId: createAttemptId(),
+          launchSnapshot: { ...launchSnapshot, modelValue },
         };
       }
       for (const { modelValue, modelLabel, error } of preparationFailures) {
@@ -2632,6 +2675,8 @@ export function TestTemplateEditor({
       return next;
     });
     setReplayIteration(null);
+    setInspectIterationId(null);
+    setMissingAppEvidenceStepId(null);
     if (selectedModelValues.length > 1) {
       // Multi-model compare keeps the dedicated side-by-side grid view.
       openRunView("run_compare");
@@ -3086,6 +3131,90 @@ export function TestTemplateEditor({
     suiteRuns,
   );
 
+  const inspectIteration =
+    inspectIterationId == null
+      ? null
+      : ([
+          replayIteration,
+          routeCompareAnchorIteration,
+          ...recentIterations,
+        ].find((it) => it?._id === inspectIterationId) ?? null);
+  const workspaceDraft = {
+    steps: editForm?.steps,
+    predicates: resolveCasePredicates(
+      (suite?.defaultPredicates ?? []) as Predicate[],
+      editForm?.predicates,
+    ),
+    matchOptions: resolveMatchOptions(
+      suite?.defaultMatchOptions,
+      editForm?.matchOptions,
+    ),
+    expectedOutput: editForm?.expectedOutput ?? "",
+  };
+  const workspacePaneView = paneViewFor({
+    explicit: replayIteration
+      ? {
+          iteration: replayIteration,
+          source:
+            replayIteration._id === routeCompareAnchorIteration?._id
+              ? "route"
+              : "history",
+        }
+      : null,
+    liveRecordMode,
+    showLive: showRunInPreview,
+    liveRecord: previewRecord,
+    latestCandidates: [
+      routeCompareAnchorIteration,
+      ...recentIterations,
+      lastSavedIteration,
+    ],
+    specTrace: specPreviewTrace,
+    showSpecOverride,
+  });
+  const workspaceSelectedTrial: SelectedTrial | null =
+    workspacePaneView.kind === "trial" ? workspacePaneView.trial : null;
+  const workspaceLeftView = leftViewFor({
+    inspect: inspectIteration,
+    draft: workspaceDraft,
+    selected: workspaceSelectedTrial,
+  });
+  const workspaceOverlayTrial =
+    workspaceLeftView.kind === "editing"
+      ? workspaceLeftView.overlay?.trial
+      : null;
+  const workspaceOverlayIteration = selectedTrialIteration(
+    workspaceOverlayTrial ?? null,
+  );
+  // Narrowed once here: TypeScript does not carry a discriminant narrowed on
+  // `workspacePaneView.trial.kind` into the JSX callbacks below.
+  const workspaceLiveRecord =
+    workspacePaneView.kind === "trial" &&
+    workspacePaneView.trial.kind === "live"
+      ? workspacePaneView.trial.record
+      : null;
+  const workspacePersistedIteration =
+    workspacePaneView.kind === "trial" &&
+    workspacePaneView.trial.kind === "persisted"
+      ? workspacePaneView.trial.iteration
+      : null;
+  const workspaceOverlay = workspaceOverlayIteration
+    ? {
+        stepStatusById: parseStepStatusById(
+          workspaceOverlayIteration.metadata as
+            Parameters<typeof parseStepStatusById>[0] | undefined,
+        ),
+      }
+    : null;
+  const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
+    ?.suiteRunId
+    ? (suiteRuns.find(
+        (run) =>
+          run._id ===
+          selectedTrialIteration(workspaceSelectedTrial)?.suiteRunId,
+      ) ?? null)
+    : null;
+
   const latestAvailableResult = latestAvailableIteration
     ? computeIterationResult(latestAvailableIteration)
     : null;
@@ -3276,10 +3405,12 @@ export function TestTemplateEditor({
                 {useSimpleForm ? (
                   <CaseSuiteChips
                     models={selectedModelValues}
+                    modelLabelByValue={modelLabelByValue}
                     trials={editForm?.runs ?? 1}
                     hostLabel={
                       selectedQuickRunHostOption?.label ?? suiteHostLabel
                     }
+                    onOpen={() => setNextRunOpen(true)}
                     onOpenSuiteSettings={onOpenSuiteSettings}
                   />
                 ) : quickRunHostOptions.length > 0 ? (
@@ -3369,6 +3500,7 @@ export function TestTemplateEditor({
                     </TooltipContent>
                   </Tooltip>
                   )}
+                {useSimpleForm ? null : (
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
@@ -3400,6 +3532,7 @@ export function TestTemplateEditor({
                       : "Record: open a live playground to click widgets"}
                   </TooltipContent>
                 </Tooltip>
+                )}
                 {runDisabledTooltip ? (
                   <Tooltip>
                     <TooltipTrigger asChild>
@@ -3514,6 +3647,311 @@ export function TestTemplateEditor({
               </div>
             </div>
           </div>
+          {useSimpleForm ? (
+            <>
+              <NextRunSheet
+                open={nextRunOpen}
+                onOpenChange={setNextRunOpen}
+                trials={editForm?.runs ?? 1}
+                onTrialsChange={(next) =>
+                  setEditForm((current) =>
+                    current ? { ...current, runs: next } : current,
+                  )
+                }
+                hostValue={
+                  quickRunHostOptions.length > 0
+                    ? (quickRunHostSelection ?? "")
+                    : suiteHostLabel
+                }
+                hostOptions={quickRunHostOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+                onHostChange={setQuickRunHostSelection}
+                modelValue={selectedModelValues[0] ?? ""}
+                modelOptions={modelOptions.map((option) => ({
+                  value: option.value,
+                  label: option.label,
+                }))}
+                onModelChange={(value) => setSelectedModelValues([value])}
+                onOpenSuiteSettings={onOpenSuiteSettings}
+              />
+              <CaseWorkspaceLayout
+                left={
+                  editForm && workspaceLeftView.kind === "inspecting" ? (
+                    <SimpleCaseForm
+                      key={`simple-case-inspect:${workspaceLeftView.iteration._id}`}
+                      steps={
+                        workspaceLeftView.iteration.testCaseSnapshot?.steps ??
+                        editForm.steps
+                      }
+                      onStepsChange={() => undefined}
+                      matchOptions={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.matchOptions
+                      }
+                      onMatchOptionsChange={() => undefined}
+                      expectedOutput={
+                        workspaceLeftView.iteration.testCaseSnapshot
+                          ?.expectedOutput
+                      }
+                      onExpectedOutputChange={() => undefined}
+                      onPredicatesChange={() => undefined}
+                      availableTools={assertableTools.map((tool) =>
+                        typeof tool === "string" ? tool : tool.name,
+                      )}
+                      onOpenDeepEditor={() => setDeepEditor(true)}
+                      readOnly
+                      onSelectInAppStep={setSyncedStepId}
+                      inspectHeader={
+                        <InspectStrip
+                          iteration={workspaceLeftView.iteration}
+                          edited={
+                            !signaturesMatch(workspaceDraft, {
+                              steps:
+                                workspaceLeftView.iteration.testCaseSnapshot
+                                  ?.steps,
+                              predicates:
+                                workspaceLeftView.iteration.testCaseSnapshot
+                                  ?.predicates,
+                              matchOptions:
+                                workspaceLeftView.iteration.testCaseSnapshot
+                                  ?.matchOptions,
+                              expectedOutput:
+                                workspaceLeftView.iteration.testCaseSnapshot
+                                  ?.expectedOutput,
+                            })
+                          }
+                          onEditCase={() => setInspectIterationId(null)}
+                        />
+                      }
+                    />
+                  ) : editForm ? (
+                    <SimpleCaseForm
+                      key={`simple-case:${currentTestCase?._id ?? "none"}`}
+                      steps={editForm.steps}
+                      onStepsChange={setSteps}
+                      matchOptions={editForm.matchOptions}
+                      kind={editForm.kind}
+                      onKindChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, kind: next } : current,
+                        )
+                      }
+                      onMatchOptionsChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, matchOptions: next }
+                            : current,
+                        )
+                      }
+                      suiteDefaultMatchOptions={suite?.defaultMatchOptions}
+                      expectedOutput={editForm.expectedOutput}
+                      onExpectedOutputChange={(next) =>
+                        setEditForm((current) =>
+                          current
+                            ? { ...current, expectedOutput: next }
+                            : current,
+                        )
+                      }
+                      predicates={editForm.predicates}
+                      onPredicatesChange={(next) =>
+                        setEditForm((current) =>
+                          current ? { ...current, predicates: next } : current,
+                        )
+                      }
+                      suiteDefaultPredicates={
+                        (suite?.defaultPredicates ?? []) as Predicate[]
+                      }
+                      availableTools={assertableTools.map((tool) =>
+                        typeof tool === "string" ? tool : tool.name,
+                      )}
+                      isNegativeTest={currentTestCase.isNegativeTest}
+                      onOpenDeepEditor={() => setDeepEditor(true)}
+                      onToolsChoiceBlockReasonChange={setToolsChoiceBlockReason}
+                      evalValidationBorderClass={evalValidationBorderClass}
+                      autoFocusPrompt={draftKind === "record"}
+                      validationAttempted={simpleValidationAttempted}
+                      recording={liveRecordMode}
+                      recordEntryPrimary={draftKind === "record"}
+                      onStartRecording={() => {
+                        setShowSpecOverride(false);
+                        setCaptureMode("record");
+                        setLiveRecordMode(true);
+                      }}
+                      onStopRecording={() => setLiveRecordMode(false)}
+                      onAddCheck={() => setCaptureMode("assert")}
+                      overlay={workspaceOverlay}
+                      onSelectInAppStep={(stepId) => {
+                        setSyncedStepId(stepId);
+                        const liveSteps =
+                          workspaceSelectedTrial?.kind === "live"
+                            ? workspaceSelectedTrial.record
+                                .streamingLiveBrowserSteps
+                            : undefined;
+                        if (
+                          workspaceSelectedTrial?.kind === "live" &&
+                          (liveSteps?.length ?? 0) === 0
+                        ) {
+                          setMissingAppEvidenceStepId(stepId);
+                        } else {
+                          setMissingAppEvidenceStepId(null);
+                        }
+                      }}
+                    />
+                  ) : null
+                }
+                header={
+                  workspacePaneView.kind === "recording" ? (
+                    <div className="flex items-center gap-2 border-b border-border px-4 py-1.5">
+                      <span className="text-[11px] text-muted-foreground">
+                        Click widgets to record ·
+                      </span>
+                      <CaptureModeToggle
+                        mode={captureMode}
+                        onChange={setCaptureMode}
+                      />
+                    </div>
+                  ) : (
+                    <TrialHeader
+                      trial={workspaceSelectedTrial}
+                      chain={
+                        selectedTrialIteration(workspaceSelectedTrial)
+                          ?.suiteRunId
+                          ? trialChains.chains.get(
+                              selectedTrialIteration(workspaceSelectedTrial)!
+                                ._id,
+                            )
+                          : selectedTrialIteration(workspaceSelectedTrial)
+                            ? chainForQuickRunIteration(
+                                recentIterations.find(
+                                  (it) =>
+                                    it._id ===
+                                    selectedTrialIteration(
+                                      workspaceSelectedTrial,
+                                    )?._id,
+                                ) ??
+                                  selectedTrialIteration(
+                                    workspaceSelectedTrial,
+                                  )!,
+                              )
+                            : null
+                      }
+                      run={workspaceTrialRun}
+                      judgeCase={resolveIterationJudge(
+                        selectedTrialIteration(workspaceSelectedTrial),
+                        suiteRuns,
+                      )}
+                      iterations={recentIterations}
+                      suiteRuns={suiteRuns}
+                      hostNamesById={hostNamesById}
+                      defaultHostLabel={suiteHostLabel}
+                      hasHostAttachments={hasHostAttachments}
+                      onSelectIteration={(it) => {
+                        setReplayIteration(it);
+                        setInspectIterationId(it._id);
+                        setShowSpecOverride(false);
+                        setMissingAppEvidenceStepId(null);
+                      }}
+                    />
+                  )
+                }
+                evidence={
+                  <>
+                    {missingAppEvidenceStepId ? (
+                      <div
+                        className="border-b border-border px-4 py-2 text-[11px] text-muted-foreground"
+                        data-testid="case-workspace-no-app-evidence"
+                      >
+                        No app evidence was captured for this step
+                      </div>
+                    ) : null}
+                    {workspacePaneView.kind === "recording" ? (
+                      <EvalLiveChatPanel
+                        key={`eval-live:${currentTestCase?._id ?? "none"}`}
+                        projectId={projectId}
+                        caseServerNames={effectiveSuiteServers}
+                        initialPrompt={liveChatFirstPrompt}
+                        autoRun={!!liveChatFirstPrompt}
+                        ensureServersReady={ensureServersReady}
+                        evalChatHandoff={liveChatHandoff}
+                        recorder={previewRecorder}
+                      />
+                    ) : workspaceLiveRecord ? (
+                      <RunColumn
+                        record={workspaceLiveRecord}
+                        testCase={currentTestCase}
+                        authoredSteps={editForm?.steps ?? currentSteps}
+                        trialChainSlot={trialChainSlotFor(
+                          workspaceLiveRecord.iteration ?? null,
+                        )}
+                        serverNames={connectedServerList}
+                        projectId={projectId}
+                        onContinueInChat={onContinueInChat}
+                        onStreamingTraceLoaded={() =>
+                          clearCompareStreamingState(
+                            workspaceLiveRecord.modelValue,
+                          )
+                        }
+                        activeTab={
+                          runColumnTabByModel[workspaceLiveRecord.modelValue] ??
+                          "chat"
+                        }
+                        onTabChange={(tab) =>
+                          handleRunColumnTabChange(
+                            workspaceLiveRecord.modelValue,
+                            tab,
+                          )
+                        }
+                        onRetry={() =>
+                          void handleRunCompare({
+                            modelValues: [workspaceLiveRecord.modelValue],
+                            sessionMode: "reuse",
+                          })
+                        }
+                        baselineHostStyle={hostConfigBaseline?.hostStyle}
+                        syncedStepId={syncedStepId}
+                        onSyncStep={setSyncedStepId}
+                      />
+                    ) : workspacePersistedIteration ? (
+                      <IterationDetails
+                        iteration={workspacePersistedIteration}
+                        testCase={currentTestCase}
+                        serverNames={effectiveSuiteServers}
+                        layoutMode="full"
+                        judgeCase={resolveIterationJudge(
+                          workspacePersistedIteration,
+                          suiteRuns,
+                        )}
+                        enableJudgeReview
+                        trialChainSlot={trialChainSlotFor(
+                          workspacePersistedIteration,
+                        )}
+                        syncedStepId={syncedStepId}
+                        onSyncStep={setSyncedStepId}
+                      />
+                    ) : workspacePaneView.kind === "spec" &&
+                      specPreviewTrace ? (
+                      <div className="flex h-full min-h-0 flex-col overflow-hidden p-3">
+                        <TraceViewer
+                          trace={specPreviewTrace}
+                          forcedViewMode="chat"
+                          hideToolbar
+                          fillContent
+                          chromeDensity="compact"
+                        />
+                      </div>
+                    ) : (
+                      <div className="grid h-full place-items-center px-6 text-center text-sm text-muted-foreground">
+                        Start typing a prompt — the conversation will build
+                        here.
+                      </div>
+                    )}
+                  </>
+                }
+              />
+            </>
+          ) : (
           <div className="flex min-h-0 min-w-0 flex-1">
             <div className="flex w-1/2 min-h-0 flex-col gap-5 overflow-y-auto overscroll-y-contain border-r border-border px-4 py-5 sm:px-6">
               {replayIteration && !showSpecOverride ? (
@@ -3815,6 +4253,7 @@ export function TestTemplateEditor({
               }
             />
           </div>
+          )}
         </div>
       ) : (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
