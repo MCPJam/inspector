@@ -19,6 +19,10 @@ import {
   caseIntentSchema,
   caseIntentUpdateSchema,
 } from "../contract/stage-intent.js";
+import {
+  parseSuiteGatePolicyForAuthoring,
+  suiteGatePolicySchema,
+} from "../contract/suite-gate.js";
 import { readEvalRunDecisionSummary } from "../eval-decision-summary.js";
 import type { PlatformApiClient } from "./client.js";
 import { PlatformApiError } from "./errors.js";
@@ -81,6 +85,7 @@ import type {
   PlatformEvalRouteFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiver,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunJudgeRequested,
@@ -5372,6 +5377,12 @@ const updateEvalSuiteInput = z.strictObject({
         .describe(
           "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
         ),
+      qualityGate: z
+        .union([suiteGatePolicySchema, z.null()])
+        .optional()
+        .describe(
+          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+        ),
     })
     .optional(),
   expectedRevisionNumber: z
@@ -5382,6 +5393,41 @@ const updateEvalSuiteInput = z.strictObject({
     .describe(
       "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
     ),
+  revisionNote: z
+    .string()
+    .max(500)
+    .optional()
+    .describe(
+      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+    ),
+}).superRefine((body, ctx) => {
+  if (body.settings?.qualityGate === undefined) return;
+  if (body.expectedRevisionNumber === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedRevisionNumber"],
+      message:
+        "expectedRevisionNumber is required when settings.qualityGate is present.",
+    });
+  }
+  const note = body.revisionNote?.trim() ?? "";
+  if (note.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["revisionNote"],
+      message: "revisionNote is required when settings.qualityGate is present.",
+    });
+  }
+  if (body.settings.qualityGate !== null) {
+    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
+    if (!parsed.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["settings", "qualityGate"],
+        message: parsed.message,
+      });
+    }
+  }
 });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
@@ -5413,6 +5459,7 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "hosts",
       "settings",
       "expectedRevisionNumber",
+      "revisionNote",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
@@ -6685,6 +6732,83 @@ export const getEvalRunStageAnalyticsOperation: PlatformOperation<
           analyticsState: "unmeasured",
           analytics: null,
         };
+      }
+      throw error;
+    }
+  },
+};
+
+export type GetEvalRunGateResult = {
+  project: SelectedProjectInfo;
+  runId: string;
+  suiteId: string;
+  report: PlatformEvalRunGate;
+};
+
+/**
+ * A bare 404 — the route is not there — as opposed to the route saying the
+ * run is not visible.
+ *
+ * Unlike stage analytics, a retrieved run NEVER has "no document": the
+ * evaluator answers `not_configured` as a 200 report. A 404 after the run
+ * was retrieved is a missing route (or an upstream fault), never proof
+ * that no policy exists.
+ */
+function isSuiteGateRouteUnavailable(error: unknown): boolean {
+  if (!(error instanceof PlatformApiError)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+function suiteGateRouteUnavailableError(): PlatformApiError {
+  return new PlatformApiError(
+    "This MCPJam deployment does not serve eval run quality-gate evaluation. That is a fact about the deployment, not about the run — do not report the run as having no policy.",
+    "FEATURE_NOT_SUPPORTED",
+    { status: 501 }
+  );
+}
+
+export const getEvalRunGateOperation: PlatformOperation<
+  EvalRunScopedInput,
+  GetEvalRunGateResult
+> = {
+  name: "get_eval_run_gate",
+  title: "Get MCPJam eval run quality gate",
+  description:
+    "Get ONE run's suite quality-gate report: the stored suite policy evaluated against this run. Outcomes are passed, failed, non_gateable, or not_configured. not_configured means the suite has no active conditions — it is a 200 report, never an absent route. The run is fetched first, so a run that does not exist or is not visible fails as a run-not-found error. A deployment that does not serve this route fails as an explicit deployment error. A 404 after the run was retrieved is NEVER proof that no policy exists. A run waiver never covers this report; compose it with the flag/base report separately.",
+  readOnly: true,
+  permalink: derivePermalinks((result) => [
+    evalRunRef(result.runId, result.suiteId, result.project?.id),
+  ]),
+  inputSchema: evalRunScopedInput,
+  async execute(input, { client, signal, onScopeResolved }) {
+    const { project } = await resolveProjectOrThrow(
+      { client, signal, onScopeResolved },
+      input.project
+    );
+    const run = await client.getEvalRun(
+      { projectId: project.id, runId: input.runId },
+      { signal }
+    );
+    try {
+      const report = await client.getEvalRunGate(
+        { projectId: project.id, runId: input.runId },
+        { signal }
+      );
+      return {
+        project: toSelectedProjectInfo(project),
+        runId: run.id,
+        suiteId: run.suiteId,
+        report,
+      };
+    } catch (error) {
+      if (isSuiteGateRouteUnavailable(error)) {
+        throw suiteGateRouteUnavailableError();
       }
       throw error;
     }
@@ -15318,6 +15442,7 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   generateEvalCasesOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   proposeEvalDescriptionRewriteOperation,
   startEvalDescriptionExperimentOperation,

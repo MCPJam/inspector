@@ -2534,6 +2534,59 @@
         }
       }
     },
+    "/projects/{projectId}/eval-runs/{runId}/gate": {
+      "get": {
+        "operationId": "getEvalRunGate",
+        "tags": [
+          "Eval runs"
+        ],
+        "summary": "Get one run's suite quality-gate report",
+        "description": "ONE run's stored suite quality-gate report (`SuiteGateReportV1`): passed, failed, non_gateable, or not_configured.\n\n`not_configured` is a 200 report — the suite has no active conditions — never a missing route. A 404 means the run is not visible. A deployment that predates the evaluator answers 501 FEATURE_NOT_SUPPORTED; that is a fact about the deployment, not proof the suite has no policy. A run waiver never covers this report.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/projectId"
+          },
+          {
+            "$ref": "#/components/parameters/runId"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The run's suite quality-gate report.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "description": "SuiteGateReportV1"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          },
+          "501": {
+            "description": "This deployment does not serve quality-gate evaluation."
+          },
+          "502": {
+            "$ref": "#/components/responses/ServerUnreachable"
+          }
+        }
+      }
+    },
     "/projects/{projectId}/eval-suites/{suiteId}/schedule": {
       "patch": {
         "operationId": "updateEvalSuiteSchedule",

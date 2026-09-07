@@ -96,6 +96,8 @@ import {
   type StructuredRunReport,
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
+import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
+import type { SuiteGateReportV1 } from "@mcpjam/sdk/contract";
 import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
@@ -1109,6 +1111,21 @@ const RUN_POLL_INTERVAL_MS = 3000;
 const GRADING_WAIT_EXTENSION_MS = 31 * 60_000;
 
 /**
+ * A positively identified missing gate route — never a 404 envelope, which
+ * would mean the run is not visible and is not proof the suite has no policy.
+ */
+function isSuiteGateRouteUnsupported(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return (
+    error.code === "FEATURE_NOT_SUPPORTED" ||
+    error.code === "NOT_IMPLEMENTED" ||
+    error.status === 501 ||
+    error.status === 405 ||
+    (error.status === 404 && error.codeSource === "status")
+  );
+}
+
+/**
  * Poll a run to a terminal status.
  *
  * The extension is granted ONCE, on first observing `grading`. A run held for
@@ -1267,6 +1284,12 @@ async function runEvalGate(
        * other way silently enables the gate on every invocation.
        */
       gatingScoreErrors?: boolean;
+      /**
+       * Commander models `--no-suite-policy` as the NEGATION of an implicit
+       * `--suite-policy`, so the field is `suitePolicy` and it is `false`
+       * exactly when the user passed the flag.
+       */
+      suitePolicy?: boolean;
     },
   command: Command
 ): Promise<void> {
@@ -1305,6 +1328,7 @@ async function runEvalGate(
   const resolved = resolveCloudProjectArgs(options);
 
   let decisionSummary: EvalRunDecisionSummary | undefined;
+  let resolvedProjectId: string | undefined;
   let outcome: {
     report: GateReport;
     run?: PlatformEvalRun;
@@ -1332,6 +1356,7 @@ async function runEvalGate(
           );
         }
         const project = resolution.project;
+        resolvedProjectId = project.id;
         let deadline = Date.now() + waitTimeoutMs;
         let gradingExtended = false;
         let run = await client.getEvalRun(
@@ -1661,7 +1686,59 @@ async function runEvalGate(
     outcome.report,
     activeWaiverForRun(outcome.run)
   );
-  const exitCode = evalGateExitCode(report);
+  // THE SUITE POLICY, folded in AFTER the base waiver and never waived by
+  // it. `--no-suite-policy` skips only this call. A missing route is a
+  // documented compatibility skip; any other failure is incomplete — never
+  // proof the suite has no policy, and never a green.
+  let suiteGate: SuiteGateReportV1 | undefined;
+  let suiteGateSkip: string | undefined;
+  let composedOutcome = report.outcome;
+  if (options.suitePolicy !== false && resolvedProjectId) {
+    const fetched = await runPlatformCommand(
+      platformOptionsOf(command),
+      globalOptions.timeout,
+      async ({ client, signal }) => {
+        try {
+          return {
+            kind: "report" as const,
+            report: await client.getEvalRunGate(
+              { projectId: resolvedProjectId!, runId },
+              { signal }
+            ),
+          };
+        } catch (error) {
+          if (isSuiteGateRouteUnsupported(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "This MCPJam deployment does not serve stored suite quality-gate evaluation.",
+            };
+          }
+          return {
+            kind: "error" as const,
+            message: error instanceof Error ? error.message : String(error),
+          };
+        }
+      }
+    );
+    if (fetched.kind === "report") {
+      suiteGate = fetched.report;
+      composedOutcome = composeSuiteGateWithBaseReport({
+        base: { outcome: report.outcome },
+        suite: fetched.report,
+      }).outcome;
+    } else if (fetched.kind === "skip") {
+      suiteGateSkip = fetched.message;
+    } else {
+      suiteGateSkip = fetched.message;
+      composedOutcome = "incomplete";
+    }
+  }
+  const composedReport: GateReport = {
+    ...report,
+    outcome: composedOutcome === "unavailable" ? "incomplete" : composedOutcome,
+  };
+  const exitCode = evalGateExitCode(composedReport);
   const structured = needsReport
     ? buildEvalRunReport(
         outcome.run
@@ -1677,8 +1754,8 @@ async function runEvalGate(
             ]
           : [],
         {
-          cases: [gateReportCase(report, outcome.baselineProvenance)],
-          verdict: gateOutcomeVerdict(report.outcome),
+          cases: [gateReportCase(composedReport, outcome.baselineProvenance)],
+          verdict: gateOutcomeVerdict(composedReport.outcome),
           ...(decisionSummary ? { decisionSummary } : {}),
           ...(outcome.baselineProvenance
             ? { metadata: { baselineComparison: outcome.baselineProvenance } }
@@ -1699,16 +1776,21 @@ async function runEvalGate(
     writeResult(
       globalOptions.format === "json"
         ? {
-            gate: report,
+            gate: composedReport,
             exitCode,
+            ...(suiteGate ? { suiteGate } : {}),
+            ...(suiteGateSkip ? { suiteGateSkip } : {}),
             ...(decisionSummary ? { decisionSummary } : {}),
           }
-        : { gate: report, exitCode },
+        : { gate: composedReport, exitCode },
       globalOptions.format
     );
   }
   if (globalOptions.format === "human" && !reporter) {
-    process.stderr.write(`${formatGateReport(report)}\n`);
+    process.stderr.write(`${formatGateReport(composedReport)}\n`);
+    if (suiteGateSkip) {
+      process.stderr.write(`${suiteGateSkip}\n`);
+    }
     writeEvalDecisionSummary(
       globalOptions.format,
       decisionSummary,
@@ -4420,6 +4502,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--out <path>",
       "Atomically write the structured report selected by --reporter (default: json-summary)"
+    )
+    .option(
+      "--no-suite-policy",
+      "Skip the stored suite quality-gate; evaluate only the flag/base report"
     )
     .action(
       async (

@@ -22,8 +22,13 @@ import type {
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
+  SuiteGatePolicyV1,
+  SuiteGateReportV1,
   UserValueStage,
 } from "../contract/index.js";
+
+/** `GET /projects/{p}/eval-runs/{runId}/gate` — the stored suite policy's answer. */
+export type PlatformEvalRunGate = SuiteGateReportV1;
 
 /**
  * Response of
@@ -1435,6 +1440,11 @@ export interface PlatformEvalSuiteSettings {
    * checking `verdictPolicyVersion`.
    */
   policy?: "legacy" | "v2";
+  /**
+   * Live quality-gate policy. `null` when the suite has none. Absent on
+   * older API deployments that predate B2.
+   */
+  qualityGate?: SuiteGatePolicyV1 | null;
 }
 
 /** Suite-level defaults under verdict policy 2. Fractions, never percents. */

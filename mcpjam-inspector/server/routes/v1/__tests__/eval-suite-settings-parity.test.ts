@@ -3,6 +3,7 @@ import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { updateSuiteSchema } from "../evals.js";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
+  QUALITY_GATE_REQUEST_SAMPLES,
   SAMPLE_BY_PATH,
 } from "@/shared/eval-suite-settings-manifest";
 
@@ -116,6 +117,50 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key} names operation "${row.op}", which is not in ALL_OPERATIONS`
       ).toBe(true);
     }
+  });
+
+  it("accepts every refined quality-gate request sample", () => {
+    for (const sample of QUALITY_GATE_REQUEST_SAMPLES) {
+      const parsed = updateSuiteSchema.safeParse(sample.body);
+      expect(
+        parsed.success,
+        `${sample.name} should be accepted: ${
+          parsed.success ? "" : parsed.error.message
+        }`
+      ).toBe(true);
+    }
+  });
+
+  it("refuses a quality-gate write without a revision note or precondition", () => {
+    const missingNote = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingNote.success).toBe(false);
+
+    const missingRevision = updateSuiteSchema.safeParse({
+      revisionNote: "Tighten the bar.",
+      settings: { qualityGate: { noGatingScoreErrors: true } },
+    });
+    expect(missingRevision.success).toBe(false);
+  });
+
+  it("refuses previous_completed and comparative conditions without a baseline", () => {
+    const previous = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Try previous run.",
+      settings: {
+        qualityGate: { baseline: { kind: "previous_completed" } },
+      },
+    });
+    expect(previous.success).toBe(false);
+
+    const drop = updateSuiteSchema.safeParse({
+      expectedRevisionNumber: 3,
+      revisionNote: "Drop without a baseline.",
+      settings: { qualityGate: { maximumPassRateDrop: 0.05 } },
+    });
+    expect(drop.success).toBe(false);
   });
 
   it("gives every `excluded:` row a substantive reason", () => {

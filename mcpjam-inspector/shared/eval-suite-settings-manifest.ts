@@ -197,3 +197,98 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
   "environment.computerEnvironment": "Playwright",
   environmentIds: ["env_1"],
 };
+
+/**
+ * Full PATCH bodies that exercise `settings.qualityGate` against the
+ * refined schema. A standalone leaf is not enough: the refine requires
+ * `expectedRevisionNumber` and `revisionNote`, and comparative leaves
+ * require a baseline.
+ */
+export const QUALITY_GATE_REQUEST_SAMPLES: ReadonlyArray<{
+  name: string;
+  body: Record<string, unknown>;
+}> = [
+  {
+    name: "full object",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Tighten the release bar for the next cut.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumPassRateDrop: 0.05,
+          noDeterministicRegressions: true,
+          maximumP95LatencyIncreaseMs: 250,
+          noGatingScoreErrors: true,
+        },
+      },
+    },
+  },
+  {
+    name: "baseline only",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Pin the comparison run.",
+      settings: {
+        qualityGate: { baseline: { kind: "run", runId: "run_baseline" } },
+      },
+    },
+  },
+  {
+    name: "maximum drop",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Cap observed pass-rate drop.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumPassRateDrop: 0.03,
+        },
+      },
+    },
+  },
+  {
+    name: "deterministic regressions",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Fail a flipped deterministic scorer.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "commit_sha", commitSha: "abc1234" },
+          noDeterministicRegressions: true,
+        },
+      },
+    },
+  },
+  {
+    name: "p95 latency",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Cap p95 growth.",
+      settings: {
+        qualityGate: {
+          baseline: { kind: "run", runId: "run_baseline" },
+          maximumP95LatencyIncreaseMs: 0,
+        },
+      },
+    },
+  },
+  {
+    name: "gating-score errors",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Fail on gating scorer errors.",
+      settings: {
+        qualityGate: { noGatingScoreErrors: true },
+      },
+    },
+  },
+  {
+    name: "null clear",
+    body: {
+      expectedRevisionNumber: 3,
+      revisionNote: "Remove the stored quality-gate policy.",
+      settings: { qualityGate: null },
+    },
+  },
+];

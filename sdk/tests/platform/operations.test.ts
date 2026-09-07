@@ -2002,6 +2002,7 @@ describe("operation catalog consistency", () => {
     generate_eval_cases: { suite: "s", prompt: "q" },
     get_eval_run: { project: "p", runId: "r" },
     get_eval_run_stage_analytics: { project: "p", runId: "r" },
+    get_eval_run_gate: { project: "p", runId: "r" },
     get_eval_run_route_facts: { project: "p", runId: "r" },
     propose_eval_description_rewrite: {
       project: "p",
