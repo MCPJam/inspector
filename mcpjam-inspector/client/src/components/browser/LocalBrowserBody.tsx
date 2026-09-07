@@ -631,7 +631,10 @@ export function LocalBrowserBody({
           // back to what it was BEFORE the newer read — and if that older
           // answer said `free`, the pane would offer Take control for a
           // browser the server is about to refuse.
-          if (serial <= applied) return;
+          // The LATEST issued, not merely the latest applied: a newer request
+          // that failed leaves `applied` where it was, and an older answer
+          // arriving behind it would then be taken as current.
+          if (serial !== issued || serial <= applied) return;
           applied = serial;
           if (!next.lease) return;
           setLease(next.lease);
