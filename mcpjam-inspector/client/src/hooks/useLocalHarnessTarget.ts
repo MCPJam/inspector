@@ -417,17 +417,35 @@ export function useLocalHarnessController(
         // A late response from a SUPERSEDED attempt is dropped. Without this a
         // slow poll from the previous attempt can overwrite the state of the
         // retry that replaced it.
-        if (
+        //
+        // Dropped, and nothing more: this used to `return` out of `tick`, which
+        // is where the next poll is scheduled — so one straggler ended the
+        // polling loop, and whatever was actually installing went unwatched
+        // until a remount.
+        const supersededStraggler =
           observed !== null &&
           incoming !== null &&
           incoming !== observed &&
-          result.status.state !== "ready"
-        ) {
-          return;
-        }
-        setRuntimeStatus(result.status);
-        if (incoming !== null && observed === null) {
-          observedAttemptRef.current = incoming;
+          result.status.state !== "ready";
+        if (!supersededStraggler) {
+          setRuntimeStatus(result.status);
+          if (incoming !== null && observed === null) {
+            observedAttemptRef.current = incoming;
+          }
+          // Let the latch go at a terminal result. It exists to recognise
+          // stragglers from the attempt being watched, and once that attempt
+          // has ENDED a different id is necessarily a newer attempt rather
+          // than an older straggler. Holding it made a retry started in
+          // another Inspector window unobservable here: every poll of it was
+          // read as superseded, and this window sat on `failed` while the
+          // install it describes was already running.
+          if (
+            result.status.state === "ready" ||
+            result.status.state === "failed" ||
+            result.status.state === "interrupted"
+          ) {
+            observedAttemptRef.current = null;
+          }
         }
       }
       if (!cancelled) timer = setTimeout(() => void tick(), POLL_INTERVAL_MS);
