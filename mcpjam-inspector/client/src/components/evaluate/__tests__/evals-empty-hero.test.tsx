@@ -23,9 +23,13 @@ describe("EvalsEmptyHero", () => {
     );
 
     expect(screen.getByTestId("evals-empty-hero")).toBeTruthy();
-    expect(screen.getByText("Create your first eval suite")).toBeTruthy();
     expect(
-      screen.getByText("Start from a server you've already connected."),
+      screen.getByText("Automate the checks you'd run by hand"),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "We generate cases from a server you already use, then keep running them in CI.",
+      ),
     ).toBeTruthy();
     expect(screen.queryByText("What a suite looks like")).toBeNull();
 
@@ -54,7 +58,7 @@ describe("EvalsEmptyHero", () => {
     ).toBeTruthy();
   });
 
-  it("keeps Create suite and Try sample suite alongside project server cards", () => {
+  it("keeps Try sample suite alongside project server cards, not a third Create suite", () => {
     const onCreateSuiteFromServer = vi.fn();
     render(
       <EvalsEmptyHero
@@ -74,13 +78,14 @@ describe("EvalsEmptyHero", () => {
       screen.getByRole("button", { name: "Create suite from payments-server" }),
     ).toBeTruthy();
     // The quickstart has no other entry point in the product, so a project
-    // that already has servers must not lose it.
+    // that already has servers must not lose it. Create suite does: header
+    // plus the cards, so a third ghost under them is gone.
     expect(
       screen.getByRole("button", { name: /^try sample suite$/i }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: /^create suite$/i }),
-    ).toBeTruthy();
+      screen.queryByRole("button", { name: /^create suite$/i }),
+    ).toBeNull();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Create suite from checkout-server" }),

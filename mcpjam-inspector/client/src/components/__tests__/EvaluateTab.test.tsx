@@ -376,7 +376,7 @@ describe("EvaluateTab", () => {
     expect(screen.getByRole("heading", { name: "Evaluate" })).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We generate cases from live discovery, or describe behaviors in chat, or import your existing tests.",
+        "The manual pass you'd do before a ship, automated and run whenever the server changes.",
       ),
     ).toBeInTheDocument();
     expect(
