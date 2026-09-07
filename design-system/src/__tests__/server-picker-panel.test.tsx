@@ -278,6 +278,28 @@ describe("ServerPickerPanel — Server Groups tab", () => {
     expect(screen.getByText("+1")).toBeInTheDocument();
   });
 
+  it("charges a wide glyph what it actually draws", () => {
+    // CJK and emoji render about twice as wide as latin at the same size, so
+    // a per-character estimate let two of them in and the row wrapped — the
+    // thing fitting-to-width exists to stop.
+    render(
+      <ServerPickerPanel
+        {...onGroups({
+          groups: [
+            {
+              id: "g_cjk",
+              name: "Group CJK",
+              serverNames: ["日本語サーバー", "中文服务器", "한국어서버"],
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("日本語サーバー")).toBeInTheDocument();
+    expect(screen.queryByText("中文服务器")).toBeNull();
+    expect(screen.getByText("+2")).toBeInTheDocument();
+  });
+
   it("always shows one chip, even for a name wider than the room", () => {
     render(
       <ServerPickerPanel

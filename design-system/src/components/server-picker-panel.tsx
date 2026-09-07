@@ -115,15 +115,23 @@ const CHIP =
 /**
  * Roughly what a chip occupies in the row, in pixels.
  *
- * Measured on the rendered chips at 11px, gap included: `big-mcp` (7) 58px,
- * `Excalidraw (App)` (16) 100px, `+1` (2) 30px. That is ~4.7px a character on
- * a flat ~25px — the padding and the gap, which a count of CHARACTERS does not
- * see, and ignoring them cut a two-chip row to one with 42px still free.
+ * Measured in the app at 11px: 16px of padding plus 4px of gap, then 5.13px a
+ * latin character, 11px a CJK one, 14px an emoji. Characters alone dropped the
+ * padding and cut a two-chip row to one with 42px still free; treating every
+ * character as equal let two CJK names in and wrapped it.
+ *
+ * `[...text]` so a surrogate pair counts once, not twice. Emoji are charged
+ * the CJK rate, which under-reads them slightly — the flat 22 and the summary
+ * reserve absorb it.
  *
  * ponytail: a formula, not a measurement. Swap in a real one only if a font
  * change makes it wrong enough to wrap.
  */
-const chipWidth = (text: string) => 25 + text.length * 4.7;
+const WIDE =
+  /[\u1100-\u115F\u2E80-\u303E\u3041-\u33FF\u3400-\u4DBF\u4E00-\u9FFF\uA000-\uA4CF\uAC00-\uD7A3\uF900-\uFAFF\uFE30-\uFE6F\uFF00-\uFF60\uFFE0-\uFFE6]|[\u{1F300}-\u{1FAFF}]|[\u{20000}-\u{3FFFD}]/u;
+
+const chipWidth = (text: string) =>
+  22 + [...text].reduce((w, ch) => w + (WIDE.test(ch) ? 11.5 : 5.2), 0);
 
 /**
  * Tabs as the design draws them: no container strip, the two split evenly
