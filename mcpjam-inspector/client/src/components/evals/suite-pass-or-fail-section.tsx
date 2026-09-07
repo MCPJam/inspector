@@ -17,18 +17,11 @@
  * a grader IS (a gate, a warn, or a report), never what a run DID.
  */
 
-import { useMemo } from "react";
 import type { UserValueStage } from "@mcpjam/sdk/contract";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
-import { ChecksSection } from "./checks-section";
-import {
-  BUDGET_PREDICATE_KINDS,
-  isBudgetPredicate,
-  mergeBudgetPredicates,
-} from "./suite-grading-model";
 import { SuiteScorerTable } from "./suite-scorer-table";
 import type { GroundednessRunEvidence } from "./suite-judge-card";
 import type { EvalJudgeConfig } from "./types";
@@ -103,54 +96,6 @@ export function SuitePassOrFailSection({
       passOrFailHint={PASS_OR_FAIL_HINT}
       judgeHint={JUDGE_HINT}
       groundednessEvidence={groundednessEvidence}
-    />
-  );
-}
-
-/**
- * Budgets, as their own row — and as their own editor.
- *
- * A token ceiling and a turn ceiling both file at `userValue` analytically —
- * `GRADER_PRESENTATION_GROUP` says so and nothing derives a verdict from this
- * grouping — but reading them beside "did the answer contain the right thing"
- * makes neither legible. So they are lifted out of the stage list and shown
- * here.
- *
- * EDITABLE. This row used to be a read-only summary that told the reader to
- * go add a ceiling from Checks: the tab named a setting and then refused to
- * set it, and half its own instruction was false — the Checks menu offers a
- * token budget and has never offered a turn budget. It edits the SAME
- * `defaultPredicates` array the Checks editor does, filtered to the two
- * ceiling kinds, so a ceiling written here is the same check written there
- * and both lists show it.
- */
-export function SuiteBudgetsSection({
-  predicates,
-  onPredicatesChange,
-}: {
-  predicates: Predicate[];
-  onPredicatesChange: (
-    next: Predicate[] | ((previous: Predicate[]) => Predicate[]),
-  ) => void;
-}) {
-  const budgets = useMemo(
-    () => predicates.filter(isBudgetPredicate),
-    [predicates],
-  );
-  return (
-    <ChecksSection
-      title=""
-      value={budgets}
-      allowedKinds={BUDGET_PREDICATE_KINDS}
-      emptyStateText="No ceilings — a trial may spend whatever it needs."
-      onChange={(nextBudgets) =>
-        // The updater form, not the resolved list: the reducer holds the
-        // authoritative draft, and a check added to Checks in the same commit
-        // would be lost by an array computed from this render's copy.
-        onPredicatesChange((previous) =>
-          mergeBudgetPredicates(previous, nextBudgets),
-        )
-      }
     />
   );
 }

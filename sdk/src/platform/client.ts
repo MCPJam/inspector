@@ -57,6 +57,7 @@ import type {
   PlatformPersonaDeleted,
   PlatformSecret,
   PlatformSecretDeleted,
+  PlatformSpendBudget,
   PlatformTraceDestination,
   PlatformTraceDestinationBackfillJob,
   PlatformTraceDestinationDeleted,
@@ -3510,6 +3511,80 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/secrets/${encodeURIComponent(params.secretId)}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Read an organization's spend budget.
+   *
+   * Any member may read it. A member who cannot RAISE the ceiling still needs
+   * to know it exists, because it is what refused their run.
+   */
+  getSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "GET",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Set or replace the spend budget. ORG ADMIN ONLY.
+   *
+   * `capUsd` is rounded to the cent, and the response is read back from the
+   * store rather than echoed — a caller that sent $50.004 sees what was kept.
+   *
+   * `alertPercents` REPLACES the whole set; omitting it leaves the stored one
+   * alone. Reaching the cap always alerts, so 100 is rejected: it would name
+   * the same threshold twice.
+   *
+   * Reaching the cap makes MCPJam-billed work refuse with
+   * `spend_budget_reached`. That is NOT the credit-exhausted refusal and must
+   * not be answered by selling credits — the organization set this ceiling on
+   * itself, and only raising or clearing it changes the answer.
+   */
+  setSpendBudget(
+    params: {
+      organizationId: string;
+      capUsd: number;
+      alertPercents?: number[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    const { organizationId, ...body } = params;
+    return this.request(
+      "PUT",
+      `/organizations/${encodeURIComponent(organizationId)}/spend-budget`,
+      { body },
+      options
+    );
+  }
+
+  /**
+   * Remove the ceiling, leaving the organization uncapped. ORG ADMIN ONLY.
+   *
+   * The window's spend counter SURVIVES: it is a record of what was spent,
+   * not of what the budget was, and clearing a budget does not unspend money.
+   * Setting a new cap therefore takes effect against the spend already made in
+   * the current window.
+   */
+  clearSpendBudget(
+    params: { organizationId: string },
+    options?: RequestOptions
+  ): Promise<PlatformSpendBudget> {
+    return this.request(
+      "DELETE",
+      `/organizations/${encodeURIComponent(
+        params.organizationId
+      )}/spend-budget`,
       {},
       options
     );

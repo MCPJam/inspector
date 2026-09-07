@@ -944,6 +944,21 @@ describe("describeCheckFailure", () => {
     });
   });
 
+  it("names the org spend budget from either canonical marker", () => {
+    expect(
+      describeCheckFailure(new Error("spend_budget_reached"))
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    expect(
+      describeCheckFailure(
+        new Error('{"code":"ORGANIZATION_SPEND_BUDGET_REACHED"}')
+      )
+    ).toMatchObject({ failureReason: "spend_budget_reached" });
+    // A build error that merely mentions a budget keeps its own message.
+    expect(
+      describeCheckFailure(new Error("build failed: budget.ts not found"))
+    ).toMatchObject({ failureReason: "build failed: budget.ts not found" });
+  });
+
   it("bounds the failure reason", () => {
     expect(
       describeCheckFailure(new Error("x".repeat(1_000))).failureReason.length

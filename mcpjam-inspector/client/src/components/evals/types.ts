@@ -464,6 +464,38 @@ export type EvalCase = {
   _creationTime?: number; // Convex auto field
 };
 
+/**
+ * Why a stored `estimatedCostUsd` is absent, or what produced it.
+ * Hand-mirrored from `convex/lib/tokenUsage.ts`.
+ */
+export type EvalIterationCostBasis = {
+  status: "not_reported" | "provider_reported" | "estimated";
+  /**
+   * `gateway_pricing` is MCPJam pricing MCPJam's own token counts.
+   * `sdk_runner` is a figure a customer's runner supplied, which MCPJam
+   * neither computed nor verified — surfaces badge it rather than presenting
+   * it as MCPJam's own.
+   */
+  source?: "gateway_pricing" | "sdk_runner";
+  modelId?: string;
+  inputUsdPerToken?: number;
+  outputUsdPerToken?: number;
+  cachedInputUsdPerToken?: number;
+  pricingRefreshedAt?: number;
+  reason?: "no_pricing" | "no_tokens" | "harness_mixed_models";
+};
+
+export type EvalIterationUsage = {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  /** Absent means NO COST WAS OBSERVED. Never render it as $0. */
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
+  costBasis?: EvalIterationCostBasis;
+};
 export type EvalIteration = {
   _id: string;
   testCaseId?: string;
@@ -558,6 +590,18 @@ export type EvalIteration = {
     arguments: Record<string, any>;
   }>;
   tokensUsed: number;
+  /**
+   * Structured token usage plus the COST the backend stamped from it.
+   *
+   * Hand-mirrored from `convex/lib/tokenUsage.ts` (`EvalIterationUsage`);
+   * nothing checks this at build time, so keep the two in step by hand.
+   *
+   * `estimatedCostUsd` absent is never "$0" — it is "no cost was observed",
+   * and `costBasis.reason` says which kind. The backend deliberately omits
+   * the number rather than writing a zero, so every reader here must render
+   * an em dash rather than a currency amount.
+   */
+  usage?: EvalIterationUsage;
   error?: string;
   errorDetails?: string;
   resultSource?: "reported" | "derived";
@@ -582,12 +626,7 @@ export type EditorMode = "config" | "run";
 
 /** Compare run column trace mode — same values as TraceViewer view modes. */
 export type RunColumnTab =
-  | "timeline"
-  | "chat"
-  | "raw"
-  | "tools"
-  | "browser"
-  | "steps";
+  "timeline" | "chat" | "raw" | "tools" | "browser" | "steps";
 
 export type CompareRunRecord = {
   modelValue: string;
@@ -896,10 +935,7 @@ export type EvalSuiteRun = {
   verdictPolicyIntegrityError?: string;
   stoppedAt?: number;
   stopReason?:
-    | "user_cancelled"
-    | "run_timeout"
-    | "iteration_timeout"
-    | "stale_worker";
+    "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
@@ -965,11 +1001,7 @@ export type EvalSuiteRun = {
       testCaseId?: string;
       title: string;
       status:
-        | "new_failure"
-        | "still_failing"
-        | "fixed"
-        | "new_case"
-        | "removed_case";
+        "new_failure" | "still_failing" | "fixed" | "new_case" | "removed_case";
       summary: string;
     }>;
   };
@@ -996,10 +1028,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
     workflowInsights: Array<{
       caseKey: string;
@@ -1015,10 +1044,7 @@ export type EvalSuiteRun = {
       evidence?: string[];
       confidence?: "low" | "medium" | "high";
       attribution?:
-        | "server_design"
-        | "agent_behavior"
-        | "test_design"
-        | "unknown";
+        "server_design" | "agent_behavior" | "test_design" | "unknown";
     }>;
   };
   // Goal-completion judge (advisory LLM-as-judge): grades each case's final
@@ -1135,10 +1161,7 @@ export type EvalRunDiffSide = {
 
 /** Delivery channel a pinned skill reached the run through. */
 export type EvalRunSkillChannel =
-  | "host"
-  | "environment"
-  | "plugin"
-  | "mcp-server";
+  "host" | "environment" | "plugin" | "mcp-server";
 
 /** One skill's identity + content fingerprint on one side of a comparison. */
 export type EvalRunSkillSide = {

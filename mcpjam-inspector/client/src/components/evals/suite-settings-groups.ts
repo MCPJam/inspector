@@ -6,7 +6,6 @@ export const SUITE_SETTINGS_HEADER_KEYS = ["name"] as const satisfies readonly E
 export const SUITE_SETTINGS_GROUPS = [
   { id: "grading", label: "Grading", rows: ["policy", "passOrFail"] },
   { id: "runs", label: "Where it runs", rows: ["computerEnvironment", "environments"] },
-  { id: "limits", label: "Limits", rows: ["budgets"] },
   { id: "triggers", label: "Triggers", rows: ["schedule", "githubChecks"] },
   { id: "danger", label: "Delete suite", rows: ["deleteSuite"] },
 ] as const;

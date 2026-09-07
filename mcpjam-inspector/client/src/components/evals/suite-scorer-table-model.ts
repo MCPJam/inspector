@@ -404,13 +404,6 @@ function rowsForStage(
     }
   }
 
-  if (stage === "userValue") {
-    for (const row of model.budgets) {
-      const next = predicateTableRow(row, predicates);
-      if (next) rows.push(next);
-    }
-  }
-
   if (rows.length === 0 && !stageEmptyIsGap(stage)) {
     rows.push(observedRow(stage));
   }

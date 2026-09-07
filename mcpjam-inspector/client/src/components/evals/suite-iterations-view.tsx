@@ -52,10 +52,7 @@ import { RunDiffView } from "./run-diff-view";
 import { TestTemplateEditor } from "./test-template-editor";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
 import { PassCriteriaSelector } from "./pass-criteria-selector";
-import {
-  SuiteBudgetsSection,
-  SuitePassOrFailSection,
-} from "./suite-pass-or-fail-section";
+import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
 import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
 import { useGroundedness } from "./use-groundedness";
@@ -197,7 +194,6 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
       "judgeRubric",
     ],
     computerEnvironment: ["computerEnvironmentId"],
-    budgets: ["defaultPredicates"],
   };
 
 function LedgerRowChips({
@@ -2457,29 +2453,6 @@ export function SuiteIterationsView({
                           ) : null}
                         </SuiteSettingsRow>
                       ) : null}
-                    </SuiteSettingsSectionChain>
-                  </section>
-                ) : null}
-
-                {activeGroupId === "limits" ? (
-                  <section data-step-id="limits">
-                    <SuiteSettingsSectionChain>
-                      <SuiteSettingsRow
-                        settingKey="budgets"
-                        data-subsection-id="budgets"
-                        accessory={
-                          <LedgerRowChips
-                            dirty={rowIsDirty("budgets")}
-                            conflict={rowIsConflict("budgets")}
-                          />
-                        }
-                        hint="Ceilings on what a trial may spend."
-                      >
-                        <SuiteBudgetsSection
-                          predicates={draftDefaultPredicates}
-                          onPredicatesChange={setDraftDefaultPredicates}
-                        />
-                      </SuiteSettingsRow>
                     </SuiteSettingsSectionChain>
                   </section>
                 ) : null}

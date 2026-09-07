@@ -1931,6 +1931,23 @@ export interface PlatformCaseScoreDelta {
   value: PlatformNumericDiff;
 }
 
+/**
+ * Cost coverage for one side of a comparison.
+ *
+ * Travels with the cost rather than beside it: a 40% drop across full
+ * coverage is a regression signal, and the same 40% with half the compare
+ * side unpriced is an artifact of what we managed to price.
+ */
+export interface PlatformCostCoverageSide {
+  costed: number;
+  total: number;
+}
+
+export interface PlatformCostCoverage {
+  base: PlatformCostCoverageSide;
+  compare: PlatformCostCoverageSide;
+}
+
 export interface PlatformRunCompareCaseSide {
   outcome: "passed" | "failed" | "absent";
   /** Iteration ids are public; `traceBlobIds` are NOT and never appear here. */
@@ -1950,6 +1967,19 @@ export interface PlatformRunCompareCase {
   scoreDeltas: PlatformCaseScoreDelta[];
   base: PlatformRunCompareCaseSide;
   compare: PlatformRunCompareCaseSide;
+  /** Per-case cost, with the coverage that produced it. Optional for the
+   * same reason as the run-level block above. */
+  metrics?: {
+    estimatedCostUsd: PlatformNumericDiff;
+    /**
+     * OPTIONAL for the same reason it is optional at the run level, and the
+     * projection omits it on the same condition: a deployment predating cost
+     * coverage sends no block, and absence means "no opinion", never "fully
+     * covered". Declaring it required here would promise typed consumers a
+     * field the wire does not always carry.
+     */
+    costCoverage?: PlatformCostCoverage;
+  };
 }
 
 export interface PlatformRunCompareSide {
@@ -2025,6 +2055,16 @@ export interface PlatformRunCompare {
     wallDurationMs: PlatformNumericDiff;
     totalTokens: PlatformNumericDiff;
     estimatedCostUsd: PlatformNumericDiff;
+    /**
+     * How many iterations on each side actually contributed a cost.
+     *
+     * OPTIONAL because a deployment predating cost coverage answers without
+     * it, and absence must not read as "fully covered" — a gate that assumed
+     * so would judge a cost regression on a partial sum from an older
+     * platform. `undefined` means the deployment has no opinion; a present
+     * block with `costed < total` means it does and the answer is partial.
+     */
+    costCoverage?: PlatformCostCoverage;
   };
   scoreContract: PlatformScoreContractDiff;
   /**
@@ -2708,6 +2748,31 @@ export interface PlatformEvalCasesGenerated {
   skipped?: Array<{ title: string; error: string }>;
 }
 
+/** What produced a stored cost, or why there is none. */
+export interface PlatformEvalIterationCostBasis {
+  status: "not_reported" | "provider_reported" | "estimated";
+  source?: "gateway_pricing" | "sdk_runner";
+  modelId?: string;
+  inputUsdPerToken?: number;
+  outputUsdPerToken?: number;
+  cachedInputUsdPerToken?: number;
+  pricingRefreshedAt?: number;
+  reason?: "no_pricing" | "no_tokens" | "harness_mixed_models";
+}
+
+export interface PlatformEvalIterationUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  /** Absent means NO COST WAS OBSERVED. Never treat it as zero. */
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
+  costBasis?: PlatformEvalIterationCostBasis;
+  [key: string]: unknown;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -2752,8 +2817,23 @@ export interface PlatformEvalIteration {
   /** Wall-clock duration; null until terminal. */
   durationMs: number | null;
   tokensUsed: number | null;
-  /** Structured token usage (input/output/cached/reasoning) when available. */
-  usage: Record<string, unknown> | null;
+  /**
+   * Structured token usage when available, plus the cost the platform priced
+   * from it and the basis it used.
+   *
+   * `estimatedCostUsd` ABSENT means no cost was observed — never that the
+   * trial was free. `costBasis.reason` says which: `no_pricing` (not an
+   * MCPJam-billed model), `harness_mixed_models`, or `no_tokens`.
+   *
+   * `costBasis.source` distinguishes a figure MCPJam computed from its own
+   * token counts (`gateway_pricing`) from one a customer's runner reported
+   * (`sdk_runner`), which MCPJam neither computed nor verified. Gate totals
+   * EXCLUDE the latter — see `gateInputFromPlatformRun`.
+   *
+   * Narrowed from `Record<string, unknown>` so a gate reading cost does not
+   * have to re-guess the shape. Unknown keys still round-trip.
+   */
+  usage: PlatformEvalIterationUsage | null;
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
@@ -3236,6 +3316,50 @@ export interface PlatformSecretDeleted {
  * read back. That is the contract, not a default: the only code that decrypts
  * them builds an outbound OTLP request and returns nothing to a caller.
  */
+/**
+ * An organization's ceiling on MCPJam-billed spend for the current billing
+ * window.
+ *
+ * Dollars on the wire, credits in the store, and BOTH are reported so a
+ * caller never has to know the conversion (1 credit = 1¢) to check its own
+ * arithmetic against the ledger's.
+ *
+ * This governs MCPJam-billed spend only. Work run on your own provider keys
+ * is recorded but never counted against the cap, because MCPJam did not
+ * charge you for it.
+ */
+export interface PlatformSpendBudget {
+  /** The ceiling in USD. `null` means uncapped — the default. */
+  capUsd: number | null;
+  /** The same ceiling in credits, as stored. `null` when uncapped. */
+  capCredits: number | null;
+  /**
+   * Whole percents of the cap that raise an alert. Reaching the cap always
+   * alerts, so 100 never appears here.
+   */
+  alertPercents: number[];
+  /** Spend so far in this window. Present and meaningful even when uncapped. */
+  spentUsd: number;
+  spentCredits: number;
+  /**
+   * The window is the organization's BILLING ANCHOR period, not the calendar
+   * month: a budget that reset on the 1st while credits reset on the 14th
+   * would be a ceiling on the wrong thing.
+   */
+  windowStartAt: number;
+  windowEndsAt: number;
+  /** Thresholds already alerted in this window; each fires at most once. */
+  alertedPercents: number[];
+  /** When the cap was reached, if it has been. `null` otherwise. */
+  capReachedAt: number | null;
+  updatedAt: number | null;
+  /** The accepted range for `capUsd`, so a client can validate before sending. */
+  minCapUsd: number;
+  maxCapUsd: number;
+  /** False for a personal organization, which cannot carry a budget. */
+  supported: boolean;
+}
+
 export interface PlatformTraceDestination {
   id: string;
   organizationId: string;
