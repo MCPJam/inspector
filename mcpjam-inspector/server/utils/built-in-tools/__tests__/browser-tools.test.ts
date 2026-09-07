@@ -1014,6 +1014,71 @@ describe("buildBrowserTools — an unattended hosted run has no box of its own",
     const { result } = build({ engine: "hosted" });
     expect(Object.keys(result!.tools)).toHaveLength(6);
   });
+
+  it("BUILDS them when the run brought a box of its own", () => {
+    const { result } = build({
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+    });
+    expect(Object.keys(result!.tools)).toHaveLength(6);
+  });
+
+  it("ensureSession receives the sandbox target, and the run still names itself", () => {
+    // Both are load-bearing and INDEPENDENT: the target says which box, and
+    // the owner key says which run — the local engine has no target and keys
+    // on the run alone, so dropping either would silently share something.
+    const seen: Array<Record<string, unknown>> = [];
+    const ensureSession = vi.fn(async (args: any) => {
+      seen.push(args);
+      return {
+        engine: "hosted" as const,
+        target: "sandbox" as const,
+        sessionId: "s",
+        sandboxRowId: "row_1",
+        sandboxId: "sbx_1",
+        bootId: "b",
+        client: { sendCommand: async () => OK } as never,
+        contextMode: args.contextMode,
+        reused: false,
+      };
+    });
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      runKey: "iteration-7",
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      ensureSession: ensureSession as never,
+    });
+
+    return run(built!.tools, "browser_observe", {}).then(() => {
+      expect(seen[0]).toMatchObject({
+        contextMode: "ephemeral",
+        ownerKey: "iteration-7",
+        target: {
+          kind: "sandbox",
+          sandboxRowId: "row_1",
+          sandboxId: "sbx_1",
+        },
+      });
+    });
+  });
+
+  it("still refuses a bound run that cannot name itself", () => {
+    const suppressed: Array<{ id: string; reason: string }> = [];
+    const built = buildBrowserTools({
+      authHeader: "Bearer u",
+      projectId: "project-1",
+      engine: "hosted",
+      approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
+      sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
+      onToolSuppressed: (info) => suppressed.push(info),
+    });
+    expect(built).toBeUndefined();
+    expect(suppressed[0]?.reason).toContain("name the run");
+  });
 });
 
 describe("buildBrowserTools — an unattended run must name itself", () => {

@@ -23,6 +23,13 @@ import type { ExecutionScope } from "../execution-scope";
 
 const computer = { kind: "personal", workdir: "/srv" };
 
+/** A per-run box that actually booted the desktop image. */
+const DESKTOP_BINDING = {
+  sandboxId: "sbx_desktop_1",
+  sandboxRowId: "row_desktop_1",
+  runtimeKind: "desktop-browser" as const,
+};
+
 describe("resolveHostTools — builtInToolIds", () => {
   it("resolves web_search to a runnable tool", () => {
     const tools = resolveHostTools(
@@ -647,7 +654,7 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("requires a computer, refuses guests, and refuses unbound journey sessions", () => {
+  it("requires a computer OR a desktop binding, refuses guests and unbound journeys", () => {
     withFlag("1", () => {
       expect(
         resolveHostTools({ builtInToolIds: ["browser"] }, browserCtx),
@@ -664,6 +671,149 @@ describe("resolveHostTools — browser", () => {
           { ...browserCtx, isJourneySession: true },
         ),
       ).toBeUndefined();
+      // ...but a run that brought its OWN desktop box needs NO host-config
+      // computer at all: the box IS the computer, and it arrives on `ctx`.
+      expect(
+        Object.keys(
+          resolveHostTools(
+            { builtInToolIds: ["browser"] },
+            { ...browserCtx, sandboxBinding: DESKTOP_BINDING },
+          ) ?? {},
+        ),
+      ).toContain("browser_act");
+    });
+  });
+});
+
+/**
+ * W6: a browser bound to the RUN'S OWN BOX.
+ *
+ * The binding is what turns an unattended browser from a shared hazard into
+ * an isolated machine, so what these pin is which gates it clears and which
+ * it does not: it clears "you need a computer" and the bash co-tenancy rule
+ * (a disposable box holds no human profile), and it does NOT clear being the
+ * wrong kind of box.
+ */
+describe("resolveHostTools — browser on a per-run sandbox", () => {
+  const unattended = {
+    kind: "unattended" as const,
+    policy: { mode: "allow_all" as const },
+  };
+
+  function withFlag<T>(value: string | undefined, run: () => T): T {
+    const previous = process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    if (value === undefined) delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+    else process.env.HOSTED_BROWSER_TOOLS_ENABLED = value;
+    try {
+      return run();
+    } finally {
+      if (previous === undefined) {
+        delete process.env.HOSTED_BROWSER_TOOLS_ENABLED;
+      } else {
+        process.env.HOSTED_BROWSER_TOOLS_ENABLED = previous;
+      }
+    }
+  }
+
+  it("builds the browser for an unattended run bound to a DESKTOP box", () => {
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          isJourneySession: true,
+          sandboxBinding: DESKTOP_BINDING,
+        },
+      );
+      expect(Object.keys(tools ?? {})).toContain("browser_navigate");
+    });
+  });
+
+  it("suppresses it on a TERMINAL box, and says why", () => {
+    // A browser on a terminal image fails with nothing saying why — there is
+    // no X server for Chromium to draw on.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: { sandboxId: "sbx_1", sandboxRowId: "row_1" },
+          onToolSuppressed: (info) => suppressed.push(info),
+        },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
+        "not a desktop",
+      );
+    });
+  });
+
+  it("suppresses it for ANY unattended hosted run with no binding at all", () => {
+    // Generalized from the journey-only gate: an eval is in exactly the same
+    // position, and the hosted engine has one computer per project+member.
+    withFlag("1", () => {
+      const suppressed: Array<{ id: string; reason: string }> = [];
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"], computer },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          onToolSuppressed: (info) => suppressed.push(info),
+        },
+      );
+      expect(tools).toBeUndefined();
+      expect(suppressed.find((s) => s.id === "browser")?.reason).toContain(
+        "disposable",
+      );
+    });
+  });
+
+  it("exempts a bound box from the bash co-tenancy rule — and only a bound box", () => {
+    // The rule guards a HUMAN's cookies and daemon token. A disposable box is
+    // created for one run, signed into nothing and destroyed with it.
+    withFlag("1", () => {
+      const bound = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: DESKTOP_BINDING,
+        },
+      );
+      expect(Object.keys(bound ?? {})).toContain("browser_act");
+
+      const unbound = resolveHostTools(
+        { builtInToolIds: ["bash", "browser"], computer },
+        { ...ctx, browserApprovalDelivery: { kind: "attested" as const } },
+      );
+      expect(Object.keys(unbound ?? {})).toEqual([BASH_TOOL_NAME]);
+    });
+  });
+
+  it("suppresses a binding that predates the control-plane row id", () => {
+    // A browser session is RECORDED against the row; a binding with only a
+    // vendor id names a box no replica could later find.
+    withFlag("1", () => {
+      const tools = resolveHostTools(
+        { builtInToolIds: ["browser"] },
+        {
+          ...ctx,
+          browserApprovalDelivery: unattended,
+          runKey: "iteration-7",
+          sandboxBinding: {
+            sandboxId: "sbx_1",
+            runtimeKind: "desktop-browser" as const,
+          },
+        },
+      );
+      expect(tools).toBeUndefined();
     });
   });
 });

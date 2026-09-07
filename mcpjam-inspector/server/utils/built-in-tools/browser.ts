@@ -119,11 +119,29 @@ export interface BrowserToolsOptions {
    * disagree: a run with nobody watching that inherits a signed-in profile is
    * a run whose verdict was decided by the previous one.
    */
+  /**
+   * The PER-RUN BOX this turn's browser runs on, when the run brought one.
+   *
+   * Absent ⇒ the hosted engine's project computer (interactive turns) or the
+   * local one. Present ⇒ a disposable desktop the caller already provisioned:
+   * the run owns it, so the isolation an unattended browser needs is a
+   * property of the machine rather than of a lock or a lease.
+   *
+   * Trusted by construction — it reaches the registry on `ctx`, never on a
+   * host config, so nothing parsed from a member-readable run snapshot can
+   * produce one.
+   */
+  sandboxTarget?: { sandboxRowId: string; sandboxId: string };
   ensureSession?: (args: {
     bearer: string;
     projectId: string;
     contextMode: BrowserContextMode;
     ownerKey?: string;
+    target?: {
+      kind: "sandbox";
+      sandboxRowId: string;
+      sandboxId: string;
+    };
     signal?: AbortSignal;
   }) => Promise<BrowserSessionHandle>;
   /** Surfaced to the run when a tool is deliberately not advertised. */
@@ -276,6 +294,9 @@ class BrowserTurnState {
       projectId: this.opts.projectId,
       contextMode: this.contextMode,
       ...(this.ownerKey ? { ownerKey: this.ownerKey } : {}),
+      ...(this.opts.sandboxTarget
+        ? { target: { kind: "sandbox" as const, ...this.opts.sandboxTarget } }
+        : {}),
       ...(signal ? { signal } : {}),
     });
     return this.session;
@@ -394,8 +415,8 @@ export function buildBrowserTools(
   // one browser and one cookie jar — so a run that cannot name itself gets no
   // browser at all rather than somebody else's session.
   const ownerKey = unattended ? unattendedOwnerKey(opts) : undefined;
-  if (unattended && engine === "hosted") {
-    // NOBODY IS WATCHING, AND THE HOSTED BROWSER IS THE MEMBER'S OWN BOX.
+  if (unattended && engine === "hosted" && !opts.sandboxTarget) {
+    // NOBODY IS WATCHING, AND THE HOSTED BROWSER WOULD BE THE MEMBER'S OWN BOX.
     //
     // The hosted engine reserves the one desktop computer this (project,
     // member) has, so every unattended run in a project would drive the same
@@ -405,9 +426,10 @@ export function buildBrowserTools(
     // model must never be shown tools whose every call is that refusal, so it
     // is suppressed at build time too.
     //
-    // The unattended path comes back when the run brings its OWN box — the
-    // per-run sandbox, booted from the desktop template — which arrives as an
-    // explicit target rather than as the project computer.
+    // A run that brought its OWN box passes: `sandboxTarget` names a
+    // disposable desktop nothing else can resolve to. The registry decides
+    // that (it is the only layer that can see a trusted binding); this stays
+    // as defence in depth, because the failure it prevents is silent.
     logger.warn(
       "[built-in-tools] browser tools not advertised: an unattended hosted run has no sandbox of its own",
       { projectId: opts.projectId },
@@ -835,7 +857,24 @@ function defaultEnsureSession(
         ...(ownerKey ? { ownerKey } : {}),
       });
   }
-  return ensureLiveBrowserSession;
+  // Hosted. `target` decides WHICH BOX — the run's own disposable desktop when
+  // it brought one, the member's project computer otherwise — and everything
+  // else about this file stays engine- and box-blind.
+  return async ({ bearer, projectId, contextMode, target, signal }) =>
+    target
+      ? ensureLiveBrowserSession({
+          bearer,
+          projectId,
+          contextMode,
+          target,
+          ...(signal ? { signal } : {}),
+        })
+      : ensureLiveBrowserSession({
+          bearer,
+          projectId,
+          contextMode,
+          ...(signal ? { signal } : {}),
+        });
 }
 
 /**
