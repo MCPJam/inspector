@@ -28,8 +28,14 @@ export interface LocalHarnessSessionRecord {
   /** The broker run id, for revoking the lease server-side. */
   brokerRunId: string | null;
   gateway: LocalModelGateway | null;
-  /** Ends the supervised tree. Supplied by the turn that created the session. */
-  stop: () => Promise<void>;
+  /**
+   * Ends the supervised tree, and says whether it is actually down.
+   *
+   * `stopped: false` means something escaped. The reservation below is only
+   * given up on a proven stop, so this answer has to travel rather than be
+   * assumed from "the call did not throw".
+   */
+  stop: () => Promise<{ stopped: boolean; escaped?: number } | void>;
   /** Revokes the lease server-side. Supplied by the turn; best-effort. */
   revokeLease: (() => Promise<void>) | null;
   /**
@@ -105,18 +111,32 @@ export async function endLocalHarnessSession(
   }
   let stopped = true;
   try {
-    await record.stop();
+    const outcome = await record.stop();
+    // A resolved call is not a stopped tree. `stopSession` reports escaped
+    // children in its RESULT, and reading only the absence of a throw counted
+    // those as a clean stop.
+    if (outcome && outcome.stopped === false) {
+      stopped = false;
+      errors.push(
+        `stop: ${outcome.escaped ?? "some"} process(es) escaped the session`,
+      );
+    }
   } catch (error) {
     stopped = false;
     errors.push(`stop: ${messageOf(error)}`);
   }
-  // AFTER the stop, and on this path too: ending a session here used to leave
+  // AFTER the stop, and only if it worked. Ending a session here used to leave
   // the runtime reservation held for the life of the process, so the stop-all
   // button freed every session and still blocked the next reinstall or repair.
-  try {
-    await record.releaseRuntime?.();
-  } catch (error) {
-    errors.push(`runtime release: ${messageOf(error)}`);
+  // But giving it up while something escaped is the worse failure: the
+  // reservation is what stops `activateVerifiedPack` replacing the directory
+  // those children are still executing from.
+  if (stopped) {
+    try {
+      await record.releaseRuntime?.();
+    } catch (error) {
+      errors.push(`runtime release: ${messageOf(error)}`);
+    }
   }
   if (errors.length > 0) {
     logger.warn("[local-harness] session teardown had failures", {

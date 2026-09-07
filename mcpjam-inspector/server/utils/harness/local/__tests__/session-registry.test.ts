@@ -159,6 +159,42 @@ describe("ending one session", () => {
     expect(order).toEqual(["stop", "release"]);
   });
 
+  it("keeps the reservation when the tree escaped the stop", async () => {
+    // `stopSession` reports escaped children in its RESULT, not by throwing.
+    // Releasing on "the call did not reject" handed the version directory back
+    // while those children were still executing from it, which is exactly what
+    // `activateVerifiedPack` consults the reservation to avoid.
+    const releaseRuntime = vi.fn(async () => undefined);
+    registerLocalHarnessSession(
+      record({
+        stop: async () => ({ stopped: false, escaped: 2 }),
+        releaseRuntime,
+      }),
+    );
+    const result = await endLocalHarnessSession("s1");
+    expect(result.stopped).toBe(false);
+    expect(result.errors.join(" ")).toMatch(/escaped/);
+    // Held, deliberately: an over-held reservation is reclaimed once its owner
+    // is provably gone. A released one is a tree executing from a directory
+    // another process is free to replace.
+    expect(releaseRuntime).not.toHaveBeenCalled();
+  });
+
+  it("keeps the reservation when the stop throws", async () => {
+    const releaseRuntime = vi.fn(async () => undefined);
+    registerLocalHarnessSession(
+      record({
+        stop: async () => {
+          throw new Error("SIGKILL refused");
+        },
+        releaseRuntime,
+      }),
+    );
+    const result = await endLocalHarnessSession("s1");
+    expect(result.stopped).toBe(false);
+    expect(releaseRuntime).not.toHaveBeenCalled();
+  });
+
   it("still ends the session when the reservation will not release", async () => {
     const stop = vi.fn(async () => undefined);
     registerLocalHarnessSession(

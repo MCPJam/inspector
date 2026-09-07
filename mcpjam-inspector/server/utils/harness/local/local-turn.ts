@@ -455,11 +455,16 @@ async function prepareWithReservedRuntime(outer: {
         // reservation is what stops another process replacing the directory
         // these children execute from, so releasing it while they are still
         // alive is the one ordering that must not happen.
-        try {
-          await supervisor.stopSession(args.sessionId);
-        } finally {
-          await outer.releaseRuntimeUse();
-        }
+        //
+        // And only when the stop SUCCEEDED. `stopSession` answers
+        // `{ stopped, escaped }`, and a `finally` that released regardless
+        // handed the directory back while escaped children were still
+        // executing from it — `activateVerifiedPack` would then be free to
+        // replace it. A tree that cannot be proven down keeps its claim; the
+        // reservation outliving a leak is the safe direction, and the janitor
+        // reclaims it once the owner is provably gone.
+        const stop = await supervisor.stopSession(args.sessionId);
+        if (stop.stopped) await outer.releaseRuntimeUse();
       }
     });
 
@@ -471,9 +476,7 @@ async function prepareWithReservedRuntime(outer: {
       workspaceGrantId: plan.target.workspaceGrantId,
       brokerRunId: broker.runId,
       gateway: started,
-      stop: async () => {
-        await supervisor.stopSession(args.sessionId);
-      },
+      stop: async () => await supervisor.stopSession(args.sessionId),
       revokeLease: () => revokeLease(broker.runId, args.bearer),
       releaseRuntime: outer.releaseRuntimeUse,
       startedAt: Date.now(),
