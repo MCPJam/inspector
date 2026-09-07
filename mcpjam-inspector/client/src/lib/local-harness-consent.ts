@@ -434,7 +434,25 @@ export async function startLocalHarnessRuntimeInstall(args: {
   if (!response.ok) {
     return errorFromStatus(response.status, body);
   }
-  const status = (body?.status ?? {}) as LocalHarnessRuntimeStatus;
+  // A body with no usable runtime state is not a successful install.
+  // `(body?.status ?? {})` reported one anyway: the caller stored `{}` as the
+  // runtime status, phase derivation read `undefined` off it, and the UI
+  // settled somewhere between "installing" and "ready" on the strength of a
+  // response that never said either.
+  const rawStatus = body?.status;
+  if (
+    typeof rawStatus !== "object" ||
+    rawStatus === null ||
+    typeof (rawStatus as { state?: unknown }).state !== "string"
+  ) {
+    return {
+      ok: false,
+      kind: "malformed",
+      status: response.status,
+      message: "the install response carried no runtime status",
+    };
+  }
+  const status = rawStatus as LocalHarnessRuntimeStatus;
   if (response.status === 200 || body?.state === "ready") {
     return { ok: true, kind: "ready", status };
   }

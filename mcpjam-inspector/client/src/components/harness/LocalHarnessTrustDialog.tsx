@@ -195,7 +195,21 @@ export function LocalHarnessTrustDialog({
   const handlePick = async () => {
     if (!onPickWorkspace) return;
     setError(null);
-    const picked = await onPickWorkspace();
+    // The Electron side can refuse (an unreadable directory, a path outside
+    // what the main process will register). Called as `void handlePick()`, an
+    // uncaught rejection here left the dialog looking as though the click had
+    // done nothing at all — no error, no recovery, no picker.
+    let picked: Awaited<ReturnType<NonNullable<typeof onPickWorkspace>>>;
+    try {
+      picked = await onPickWorkspace();
+    } catch (error) {
+      setError(
+        error instanceof Error
+          ? error.message
+          : "That folder could not be registered.",
+      );
+      return;
+    }
     if (picked === null) return;
     // The main process already registered it and handed back an opaque id and
     // a display root. Re-registering would mean sending the tilde-shortened

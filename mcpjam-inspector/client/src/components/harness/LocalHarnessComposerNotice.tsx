@@ -92,7 +92,9 @@ export function LocalHarnessComposerNotice({
         </span>
         {/* Explicit, always. Nothing retries a 200 MB download on a poll, a
             reload or a remount. */}
-        <Button size="sm" variant="outline" onClick={onRetry}>
+        {/* `type="button"`: this renders inside the composer's <form>, and a
+            <button> with no type submits it. Retry sent the draft. */}
+        <Button size="sm" type="button" variant="outline" onClick={onRetry}>
           Retry
         </Button>
       </div>
@@ -102,11 +104,16 @@ export function LocalHarnessComposerNotice({
   if (phase === "unavailable") {
     // Only reachable when the user explicitly asked for local — the caller
     // renders nothing otherwise. Send is disabled in this state, so the
-    // explanation has to be here or the disabling is unexplained.
+    // explanation has to be here or the disabling is unexplained. A live
+    // region for the same reason: the controller resolves this phase after
+    // mount, so without one the text appears silently next to a Send button
+    // that has already gone inert.
     return (
       <div
         className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground"
         data-testid="local-harness-composer-notice"
+        role="status"
+        aria-live="polite"
       >
         {controller.reason ??
           "This Inspector can't run Claude Code on this machine."}
@@ -119,6 +126,8 @@ export function LocalHarnessComposerNotice({
       <div
         className="flex items-center justify-between gap-3 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-foreground"
         data-testid="local-harness-composer-notice"
+        role="status"
+        aria-live="polite"
       >
         <span>
           {controller.reason ??
@@ -149,7 +158,8 @@ export function LocalHarnessReadyNotice({ onDismiss }: { onDismiss: () => void }
       aria-live="polite"
     >
       <span>Ready — press Send to continue.</span>
-      <Button size="sm" variant="ghost" onClick={onDismiss}>
+      {/* Same as Retry above: untyped, this submits the composer it sits in. */}
+      <Button size="sm" type="button" variant="ghost" onClick={onDismiss}>
         Dismiss
       </Button>
     </div>
