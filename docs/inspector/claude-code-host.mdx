@@ -261,11 +261,12 @@ None of these fall back to the emulated engine — a turn that says it ran the r
 
 | Condition | What you see |
 |---|---|
-| The local runtime is not installed | The Native option is offered but not selectable, with an Install step in the authorization sheet. |
+| The local runtime is not installed | The trust dialog opens with **Install & allow**. Setup starts on approval; the draft is preserved; press Send again when the progress notice clears. |
 | The runtime on disk does not match what this Inspector expects | Refused — reinstall it. MCPJam will not launch a runtime it cannot verify. |
-| Your platform cannot prove whole-tree cleanup | Native is not offered, and says why: MCPJam could not guarantee that stopping a session stops everything it started. |
-| The authorization expired, or the runtime, folder or permissions changed | Refused, with the authorization sheet — the old authorization does not cover the new terms. |
-| Guest, shared scenario session, or swarm run | Native is not offered; the turn runs hosted. |
+| Your platform cannot prove whole-tree cleanup | Local execution is not offered, and the chip and dialog both say why: MCPJam could not guarantee that stopping a session stops everything it started. |
+| The authorization expired, or the runtime, folder or permissions changed | Refused — the trust dialog reopens. The old authorization does not cover the new terms. |
+| Setup failed or was interrupted | A notice appears in the composer with a **Retry** button. Retry reopens the dialog rather than silently re-downloading. |
+| Guest, shared scenario session, or swarm run | Local execution is not offered; the turn runs hosted. |
 | The agent's control channel is reachable from your network | The session stops rather than proceeding. A local agent's control channel is never published to the LAN. |
 
 **Eval-specific pre-flight refusals** (harness eval runs only):
