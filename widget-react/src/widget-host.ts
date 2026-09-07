@@ -243,10 +243,25 @@ export interface WidgetMount {
   at: number;
 }
 
+/** New mounts use an opaque string; numbers remain valid for saved data. */
+export type CspMountId = string | number;
+
+/** What MCPJam meant to install before the sandbox proxy serialized it. */
+export interface CspApplicationIntent {
+  csp?: McpUiResourceCsp;
+  cspDirectives?: Record<string, string[]>;
+  permissive: boolean;
+}
+
 export interface CspViolation {
   directive: string;
   effectiveDirective?: string;
   blockedUri: string;
+  /** Id of the exact inner iframe mount that emitted this event. */
+  mountId?: CspMountId;
+  /** The policy that caused this specific violation. */
+  originalPolicy?: string;
+  disposition?: "enforce" | "report";
   sourceFile?: string | null;
   lineNumber?: number | null;
   columnNumber?: number | null;
@@ -299,6 +314,8 @@ export interface WidgetSandboxApplied {
    * forced because the frame's document was unreachable).
    */
   viewMode?: "url" | "srcdoc" | "srcdoc-fallback";
+  /** Id of the currently displayed inner iframe mount. */
+  mountId?: CspMountId;
   /** The view's document URL as reported by the proxy. */
   viewUrl?: string;
   /**
@@ -321,6 +338,17 @@ export interface WidgetSandboxInfo {
     clipboardWrite?: {};
   };
   headerString?: string;
+  /** Latest proxy mount, retained for consumers that show current state. */
+  activeMountId?: CspMountId;
+  /** Applied policies keyed by proxy mount id so remounts cannot mix data. */
+  appliedPoliciesByMount?: Record<
+    string,
+    {
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
+    }
+  >;
   violations: CspViolation[];
   widgetDeclared?: {
     connect_domains?: string[];
@@ -416,9 +444,19 @@ export interface WidgetDebugSink {
    */
   setWidgetAppliedCsp: (
     toolCallId: string,
-    applied: { headerString: string; mode: "permissive" | "widget-declared" }
+    applied: {
+      mountId: CspMountId;
+      headerString: string;
+      mode: "permissive" | "widget-declared";
+      intent?: CspApplicationIntent;
+    }
   ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
+  reportCspViolation: (
+    toolCallId: string,
+    serverId: string,
+    violation: CspViolation
+  ) => void;
   clearCspViolations: (toolCallId: string) => void;
   setWidgetModelContext: (
     toolCallId: string,
