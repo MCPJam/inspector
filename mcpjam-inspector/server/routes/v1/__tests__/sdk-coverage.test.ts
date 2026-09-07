@@ -215,6 +215,16 @@ const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
     "listEvalSuiteStageAnalytics",
   "get /projects/{projectId}/eval-runs/{runId}/stage-analytics":
     "getEvalRunStageAnalytics",
+  "get /projects/{projectId}/eval-runs/{runId}/route-facts":
+    "getEvalRunRouteFacts",
+  "post /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "proposeEvalDescriptionRewrite",
+  "get /projects/{projectId}/eval-runs/{runId}/description-experiments":
+    "listEvalDescriptionExperimentsForRun",
+  "post /projects/{projectId}/eval-description-experiments/{experimentId}/start":
+    "startEvalDescriptionExperiment",
+  "get /projects/{projectId}/eval-description-experiments/{experimentId}":
+    "getEvalDescriptionExperiment",
   "get /projects/{projectId}/eval-suites/{suiteId}/cases": "listEvalCases",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases": "createEvalCase",
   "post /projects/{projectId}/eval-suites/{suiteId}/cases/batch":

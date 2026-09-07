@@ -84,6 +84,23 @@ describe("mcpToolOptionsFor", () => {
     ).toEqual({ toolCallCancellation: { modern: false } });
   });
 
+  it("omits an empty or absent description-override record", () => {
+    // Absent and `{}` are the same instruction (no override) and must not
+    // take the options overload on their own. A rewrite arm sends a
+    // non-empty `{ [toolName]: description }`.
+    expect(
+      mcpToolOptionsFor({ toolDescriptionOverrides: undefined })
+    ).toBeUndefined();
+    expect(mcpToolOptionsFor({ toolDescriptionOverrides: {} })).toBeUndefined();
+  });
+
+  it("includes a non-empty description-override record", () => {
+    const overrides = { search: "Find documents by query." };
+    expect(
+      mcpToolOptionsFor({ toolDescriptionOverrides: overrides })
+    ).toEqual({ toolDescriptionOverrides: overrides });
+  });
+
   it("reproduces the emulated engine's full object", () => {
     // The shape `chat-v2-orchestration` built by hand before this helper
     // existed, from the same host-derived inputs.

@@ -367,6 +367,36 @@ describe("case intent", () => {
   });
 });
 
+describe("case kind", () => {
+  it("accepts capability and regression and omits when absent", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: "regression" } : entry
+      ),
+    };
+    const loaded = loadOrThrow(serializeEvalSuiteFile(authored));
+    expect(loaded.authored.cases[0]?.kind).toBe("regression");
+    expect(loaded.resolved.cases[0]?.kind).toBe("regression");
+
+    const omitted = loadOrThrow(serializeEvalSuiteFile(MINIMAL));
+    expect(omitted.authored.cases[0]?.kind).toBeUndefined();
+    expect(omitted.resolved.cases[0]?.kind).toBeUndefined();
+  });
+
+  it("treats an explicit null kind as absent in the runner view", () => {
+    const authored: EvalSuiteFile = {
+      ...MINIMAL,
+      cases: MINIMAL.cases.map((entry, index) =>
+        index === 0 ? { ...entry, kind: null } : entry
+      ),
+    };
+    const loaded = loadOrThrow(asText(authored));
+    expect(loaded.authored.cases[0]?.kind).toBeNull();
+    expect(loaded.resolved.cases[0]?.kind).toBeUndefined();
+  });
+});
+
 describe("findings", () => {
   const duplicateCaseIds = asText(
     payload(findFixture(data.reject, "duplicate case ids"))

@@ -29,20 +29,20 @@ describe("AppChromePanel", () => {
   it("insets itself when the desktop header is showing", () => {
     const cls = panelClasses(false, false);
     expect(cls).toContain("rounded-t-2xl");
-    expect(cls).toContain("shadow-[0_2px_3px_#00000033]");
+    expect(cls).toContain("shadow-chrome-panel");
   });
 
   it("goes flush when the desktop header is hidden", () => {
     const cls = panelClasses(true, false);
     expect(cls).not.toContain("rounded-t-2xl");
-    expect(cls).not.toContain("shadow-[0_2px_3px_#00000033]");
+    expect(cls).not.toContain("shadow-chrome-panel");
   });
 
   it("stays inset on mobile even with the header marked hidden", () => {
     // `AppChromeHeader` renders on mobile regardless, so the bar IS there.
     const cls = panelClasses(true, true);
     expect(cls).toContain("rounded-t-2xl");
-    expect(cls).toContain("shadow-[0_2px_3px_#00000033]");
+    expect(cls).toContain("shadow-chrome-panel");
   });
 
   it("always paints the working surface and renders its children", () => {

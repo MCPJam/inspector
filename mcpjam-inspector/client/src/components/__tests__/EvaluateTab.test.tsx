@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   handleGenerateTests: vi.fn(),
   handleRerun: vi.fn(),
   handleCancelRun: vi.fn(),
+  useEvalHandlers: vi.fn(),
   confirmDelete: vi.fn(async () => true),
   setSuiteToDelete: vi.fn(),
   getEffectiveSuiteServers: vi.fn((..._args: unknown[]): string[] => []),
@@ -214,33 +215,36 @@ vi.mock("../evals/use-eval-mutations", () => ({
 }));
 
 vi.mock("../evals/use-eval-handlers", () => ({
-  useEvalHandlers: () => ({
-    deletingSuiteId: null,
-    suiteToDelete: null,
-    setSuiteToDelete: mocks.setSuiteToDelete,
-    runToDelete: null,
-    setRunToDelete: vi.fn(),
-    testCaseToDelete: null,
-    setTestCaseToDelete: vi.fn(),
-    deletingRunId: null,
-    deletingTestCaseId: null,
-    rerunningSuiteId: null,
-    cancellingRunId: null,
-    runningTestCaseId: null,
-    isGeneratingTests: false,
-    handleGenerateTests: mocks.handleGenerateTests,
-    handleCreateTestCase: vi.fn(),
-    handleRerun: mocks.handleRerun,
-    handleCancelRun: mocks.handleCancelRun,
-    handleDelete: vi.fn(),
-    handleDeleteRun: vi.fn(),
-    directDeleteRun: vi.fn().mockResolvedValue(undefined),
-    directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
-    handleRunTestCase: vi.fn().mockResolvedValue(undefined),
-    confirmDelete: mocks.confirmDelete,
-    confirmDeleteRun: vi.fn(),
-    confirmDeleteTestCase: vi.fn(),
-  }),
+  useEvalHandlers: (props: unknown) => {
+    mocks.useEvalHandlers(props);
+    return {
+      deletingSuiteId: null,
+      suiteToDelete: null,
+      setSuiteToDelete: mocks.setSuiteToDelete,
+      runToDelete: null,
+      setRunToDelete: vi.fn(),
+      testCaseToDelete: null,
+      setTestCaseToDelete: vi.fn(),
+      deletingRunId: null,
+      deletingTestCaseId: null,
+      rerunningSuiteId: null,
+      cancellingRunId: null,
+      runningTestCaseId: null,
+      isGeneratingTests: false,
+      handleGenerateTests: mocks.handleGenerateTests,
+      handleCreateTestCase: vi.fn(),
+      handleRerun: mocks.handleRerun,
+      handleCancelRun: mocks.handleCancelRun,
+      handleDelete: vi.fn(),
+      handleDeleteRun: vi.fn(),
+      directDeleteRun: vi.fn().mockResolvedValue(undefined),
+      directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
+      handleRunTestCase: vi.fn().mockResolvedValue(undefined),
+      confirmDelete: mocks.confirmDelete,
+      confirmDeleteRun: vi.fn(),
+      confirmDeleteTestCase: vi.fn(),
+    };
+  },
 }));
 
 vi.mock("../evals/use-eval-queries", () => ({
@@ -352,6 +356,14 @@ describe("EvaluateTab", () => {
         expect.objectContaining({ name: "server-a" }),
         expect.objectContaining({ name: "server-b" }),
       ]),
+    });
+  });
+
+  it("keeps handler-driven navigation on /evaluate", () => {
+    render(<EvaluateTab projectId="ws-1" />);
+
+    expect(mocks.useEvalHandlers.mock.calls.at(-1)?.[0]).toMatchObject({
+      evalsNavigationContext: "evaluate",
     });
   });
 

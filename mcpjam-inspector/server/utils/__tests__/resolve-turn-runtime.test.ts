@@ -401,6 +401,12 @@ describe("classifyTurnFailure (exported single source of truth)", () => {
       "failed",
     );
     expect(classifyTurnFailure("run 14290 aborted")).toBe("failed");
+    // The exact port, not just a longer one: `:429` is the whole number.
+    expect(classifyTurnFailure("connect ECONNREFUSED 127.0.0.1:429")).toBe(
+      "failed",
+    );
+    expect(classifyTurnFailure("listen EADDRINUSE 0.0.0.0:429")).toBe("failed");
+    expect(classifyTurnFailure("turn took 1.429 seconds")).toBe("failed");
   });
 
   it("does NOT over-match 'capacity'/'recap'/'escape' as rate_limited", () => {

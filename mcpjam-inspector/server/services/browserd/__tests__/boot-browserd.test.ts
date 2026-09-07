@@ -5,13 +5,18 @@ const tick = () => new Promise((r) => setTimeout(r, 0));
 const READY = (over: Record<string, unknown> = {}) =>
   `${JSON.stringify({ event: "listening", host: "0.0.0.0", port: 8791, bootId: "boot-1", ...over })}\n`;
 
-function fakeSandbox() {
+function fakeSandbox(over: { displayUp?: boolean } = {}) {
   const state = {
     command: "",
     envs: {} as Record<string, string>,
     onStdout: (_c: string) => {},
     kills: 0,
+    /** Every foreground command the boot ran, in order. */
+    ran: [] as string[],
+    /** Every background command, in order — Xvfb and xfce4 land here. */
+    background: [] as string[],
   };
+  let displayUp = over.displayUp ?? true;
   let resolveWait!: () => void;
   let rejectWait!: (e: unknown) => void;
   const waitPromise = new Promise<void>((res, rej) => {
@@ -20,6 +25,15 @@ function fakeSandbox() {
   });
   const sandbox: BrowserdSandbox = {
     async runBackground(command, options) {
+      state.background.push(command);
+      if (command.startsWith("Xvfb")) {
+        // A started Xvfb is what makes the next probe answer "up".
+        displayUp = true;
+        return { kill: async () => true, wait: () => new Promise(() => {}) };
+      }
+      if (command === "startxfce4") {
+        return { kill: async () => true, wait: () => new Promise(() => {}) };
+      }
       state.command = command;
       state.envs = options.envs;
       state.onStdout = options.onStdout;
@@ -30,6 +44,10 @@ function fakeSandbox() {
         },
         wait: () => waitPromise,
       };
+    },
+    async run(command) {
+      state.ran.push(command);
+      return { exitCode: displayUp ? 0 : 1 };
     },
     getHost: (port) => `box-${port}.e2b.dev`,
   };
@@ -117,6 +135,39 @@ describe("bootBrowserd", () => {
     const fake = fakeSandbox();
     const p = bootBrowserd(fake.sandbox, { ...OPTS, readyTimeoutMs: 20 });
     await expect(p).rejects.toThrow(/within 20ms/);
+  });
+
+  it("gives the daemon a DISPLAY — Chromium is headed and E2B shells inherit no image ENV", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.DISPLAY).toBe(":0");
+  });
+
+  it("starts Xvfb (and xfce) when the box has no X server, then boots the daemon", async () => {
+    // The hosted path only ever `connect`s to a backend-provisioned desktop,
+    // and nothing in that flow runs `@e2b/desktop`'s `_start()`.
+    const fake = fakeSandbox({ displayUp: false });
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY());
+    const handle = await p;
+    expect(handle.bootId).toBe("boot-1");
+    expect(fake.state.background[0]).toMatch(/^Xvfb :0 /);
+    expect(fake.state.background).toContain("startxfce4");
+    expect(fake.state.command).toContain("mcpjam-browserd.mjs");
+  });
+
+  it("does not start Xvfb when the display is already up", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.background.some((c) => c.startsWith("Xvfb"))).toBe(false);
+    expect(fake.state.ran[0]).toContain("xdpyinfo -display :0");
   });
 
   it("stop() reaps the daemon", async () => {

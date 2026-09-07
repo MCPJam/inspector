@@ -60,11 +60,33 @@ export interface BrowserSessionLookup {
    * absence means "no row existed", which is equally load-bearing.
    */
   observedSessionId?: string;
+  /**
+   * Just enough of a STALE row to ask its daemon who is holding it.
+   *
+   * The caller's next move after a stale answer is to `pkill` that daemon, and
+   * the only thing between that and a person mid-login is asking its lease
+   * first — which needs an address. `session: null` alone gave none, and
+   * because the backend checks the bundle hash before anything else, that is
+   * the state EVERY box is in immediately after a deploy.
+   *
+   * Absent means nobody to ask: either the box is not serving, or the backend
+   * predates this field. The caller must treat both the same way it always
+   * did, which is the graceful degradation this rollout needs — the inspector
+   * ships before the control plane does.
+   */
+  staleSession?: {
+    publicOrigin: string;
+    browserdToken: string;
+    bootId: string;
+    contextMode: BrowserContextMode;
+  };
 }
 
 const LOOKUP_PATH = "/browser-runtime/session/lookup";
 const RECORD_PATH = "/browser-runtime/session/record";
 const TOUCH_PATH = "/browser-runtime/session/touch";
+const RELAUNCH_CLAIM_PATH = "/browser-runtime/relaunch/claim";
+const RELAUNCH_RELEASE_PATH = "/browser-runtime/relaunch/release";
 
 /** Above the backend's own latency and far below any turn deadline. */
 const REQUEST_TIMEOUT_MS = 10_000;
@@ -222,6 +244,33 @@ function parseSession(raw: unknown): BrowserSessionRecord | null {
 }
 
 /**
+ * The narrow shape the backend returns for a stale row — every field or none.
+ *
+ * A partial answer is refused rather than patched up: the point of these three
+ * is to reach one specific daemon and ask it a question, and two out of three
+ * reaches nothing. Absent is a valid answer (older backend, or a box that is
+ * not serving), and the caller already handles it.
+ */
+function parseStaleSession(
+  raw: unknown,
+): BrowserSessionLookup["staleSession"] | undefined {
+  if (!isRecord(raw)) return undefined;
+  const { publicOrigin, browserdToken, bootId, contextMode } = raw;
+  if (
+    typeof publicOrigin !== "string" ||
+    publicOrigin.length === 0 ||
+    typeof browserdToken !== "string" ||
+    browserdToken.length === 0 ||
+    typeof bootId !== "string" ||
+    bootId.length === 0 ||
+    (contextMode !== "persistent" && contextMode !== "ephemeral")
+  ) {
+    return undefined;
+  }
+  return { publicOrigin, browserdToken, bootId, contextMode };
+}
+
+/**
  * Is there a plausibly-live daemon for this computer at exactly this bundle?
  * Staleness is the backend's verdict; daemon liveness is then re-verified by
  * the caller against `/v1/status` — the row alone never admits.
@@ -253,9 +302,11 @@ export async function lookupBrowserSession(args: {
   if (!isRecord(raw)) return { reachable: false, session: null };
   const stale = raw.stale;
   const observedSessionId = raw.observedSessionId;
+  const staleSession = parseStaleSession(raw.staleSession);
   return {
     reachable: true,
     session: parseSession(raw.session),
+    ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
     stale === "context_mode_changed" ||
     stale === "box_unavailable"
@@ -345,4 +396,67 @@ export async function touchBrowserSession(args: {
     args.signal,
   );
   return { counted: isRecord(raw) && raw.counted === true };
+}
+
+/**
+ * How a relaunch claim can fail to be taken.
+ *
+ * `claimed` is an ANSWER: another replica is relaunching this box right now,
+ * and the caller must not proceed. `unavailable` is the absence of one — an
+ * unconfigured deployment, a transport failure, or a control plane that
+ * predates the route — and the caller proceeds exactly as it did before the
+ * claim existed. Collapsing the two would either brick every relaunch on a
+ * backend that has not deployed yet, or let a real conflict through.
+ */
+export type BrowserRelaunchClaim =
+  { ok: true } | { ok: false; reason: "claimed" | "unavailable" };
+
+/**
+ * Take the exclusive right to relaunch this computer's browser.
+ *
+ * Held across the `pkill` and the boot, and given back once the session is
+ * recorded. The lease fence cannot do this job: the race it misses is exactly
+ * the one where there is no daemon yet to hold a lease on, and the record
+ * compare-and-swap cannot either, because it fires long after the kill.
+ */
+export async function claimBrowserRelaunch(args: {
+  computerId: string;
+  /** This attempt's identity; only it may release the claim. */
+  claimId: string;
+  ttlMs?: number;
+  signal?: AbortSignal;
+}): Promise<BrowserRelaunchClaim> {
+  const raw = await postServiceAuthorized(
+    RELAUNCH_CLAIM_PATH,
+    {
+      computerId: args.computerId,
+      claimId: args.claimId,
+      ...(args.ttlMs === undefined ? {} : { ttlMs: args.ttlMs }),
+    },
+    args.signal,
+  );
+  // 409 is the route's "somebody else has it" and arrives as the shared
+  // conflict sentinel; `null` is every other non-answer.
+  if (raw === CONFLICT) return { ok: false, reason: "claimed" };
+  if (!isRecord(raw)) return { ok: false, reason: "unavailable" };
+  return { ok: true };
+}
+
+/**
+ * Give the relaunch claim back.
+ *
+ * Best-effort and never throws: a claim that is not released expires on its
+ * own, which is the whole reason it has a TTL. Refusing to finish a relaunch
+ * because the release call failed would turn a slow network into a wedged box.
+ */
+export async function releaseBrowserRelaunch(args: {
+  computerId: string;
+  claimId: string;
+  signal?: AbortSignal;
+}): Promise<void> {
+  await postServiceAuthorized(
+    RELAUNCH_RELEASE_PATH,
+    { computerId: args.computerId, claimId: args.claimId },
+    args.signal,
+  ).catch(() => null);
 }

@@ -15,7 +15,10 @@ function isUIResourceShape(value: unknown): boolean {
   return false;
 }
 import { buildPersistedExecutionReplay } from "./persisted-execution-replay";
-import { extractTextFromToolResult } from "./tool-result-text";
+import {
+  extractDisplayFromToolResult,
+  extractTextFromToolResult,
+} from "./tool-result-text";
 import { getToolServerId } from "./tool-server";
 import { detectUIType, getUIResourceUri, UIType } from "./widget-detection";
 import {
@@ -129,8 +132,7 @@ export function snapshotsToTraceWidgetSnapshots(
       widgetHtmlUrl: snap.widgetHtmlUrl,
       toolOutput: snap.toolOutput,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
-      injectedOpenAiCompatCapabilities:
-        snap.injectedOpenAiCompatCapabilities,
+      injectedOpenAiCompatCapabilities: snap.injectedOpenAiCompatCapabilities,
     };
   });
 }
@@ -176,8 +178,7 @@ export function buildToolRenderOverridesFromSnapshots(
       widgetPermissive: snap.widgetPermissive,
       prefersBorder: snap.prefersBorder,
       injectedOpenAiCompat: snap.injectedOpenAiCompat,
-      injectedOpenAiCompatCapabilities:
-        snap.injectedOpenAiCompatCapabilities,
+      injectedOpenAiCompatCapabilities: snap.injectedOpenAiCompatCapabilities,
     });
     overrides[snap.toolCallId] = replay.renderOverride;
   }
@@ -211,8 +212,16 @@ export interface AdaptedTraceResult {
   sourceMessageIndexToFocusUiMessageId: Record<number, string>;
 }
 
-type ToolResultDisplay = "sibling-text" | "attached-to-tool";
+type ToolResultDisplay = "sibling-text" | "attached-to-tool" | "tool-card";
 type TraceDisplayMode = "markdown" | "json-markdown";
+type TraceDisplayAttachment =
+  | { kind: "text"; text: string; mode: "markdown" }
+  | {
+      kind: "json";
+      value: unknown;
+      text: string;
+      mode: "json-markdown";
+    };
 
 interface TraceToolResultEntry {
   part: TraceContentPart;
@@ -531,8 +540,7 @@ function createReplayOverride(
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities:
-      snapshot.injectedOpenAiCompatCapabilities,
+    injectedOpenAiCompatCapabilities: snapshot.injectedOpenAiCompatCapabilities,
   }).renderOverride;
 }
 
@@ -547,8 +555,7 @@ function createLiveSnapshotOverride(snapshot: TraceWidgetSnapshot) {
     widgetPermissive: snapshot.widgetPermissive,
     prefersBorder: snapshot.prefersBorder,
     injectedOpenAiCompat: snapshot.injectedOpenAiCompat,
-    injectedOpenAiCompatCapabilities:
-      snapshot.injectedOpenAiCompatCapabilities,
+    injectedOpenAiCompatCapabilities: snapshot.injectedOpenAiCompatCapabilities,
   } satisfies ToolRenderOverride;
 }
 
@@ -556,12 +563,21 @@ function getTraceDisplayAttachment(params: {
   displayedOutput: unknown;
   adaptedOutput: unknown;
   canReplayWidget: boolean;
-}): { text: string; mode: TraceDisplayMode } | null {
-  const extractedText = extractTextFromToolResult(params.displayedOutput);
-  if (extractedText) {
+}): TraceDisplayAttachment | null {
+  const display = extractDisplayFromToolResult(params.displayedOutput);
+  if (display?.kind === "text") {
     return {
-      text: extractedText,
+      kind: "text",
+      text: display.text,
       mode: "markdown",
+    };
+  }
+  if (display?.kind === "json") {
+    return {
+      kind: "json",
+      value: display.value,
+      text: toMarkdownJson(display.value) ?? "",
+      mode: "json-markdown",
     };
   }
 
@@ -575,6 +591,8 @@ function getTraceDisplayAttachment(params: {
   }
 
   return {
+    kind: "json",
+    value: params.adaptedOutput,
     text: jsonMarkdown,
     mode: "json-markdown",
   };
@@ -648,7 +666,7 @@ function buildToolParts(params: {
   }
 
   const traceDisplayAttachment =
-    !isError && params.matchedResult
+    params.toolResultDisplay !== "tool-card" && !isError && params.matchedResult
       ? getTraceDisplayAttachment({
           displayedOutput,
           adaptedOutput,
@@ -695,10 +713,12 @@ function buildToolParts(params: {
   parts.push(toolPart);
 
   if (isError) {
-    parts.push({
-      type: "text",
-      text: `Tool error: ${errorText}`,
-    });
+    if (params.toolResultDisplay !== "tool-card") {
+      parts.push({
+        type: "text",
+        text: `Tool error: ${errorText}`,
+      });
+    }
     return parts;
   }
 
@@ -706,15 +726,25 @@ function buildToolParts(params: {
     return parts;
   }
 
-  if (params.toolResultDisplay === "attached-to-tool") {
+  if (
+    params.toolResultDisplay === "attached-to-tool" ||
+    params.toolResultDisplay === "tool-card"
+  ) {
     return parts;
   }
 
   if (traceDisplayAttachment) {
-    parts.push({
-      type: "text",
-      text: traceDisplayAttachment.text,
-    });
+    if (traceDisplayAttachment.kind === "json") {
+      parts.push({
+        type: "data-result",
+        data: traceDisplayAttachment.value,
+      } as any);
+    } else {
+      parts.push({
+        type: "text",
+        text: traceDisplayAttachment.text,
+      });
+    }
   }
 
   return parts;

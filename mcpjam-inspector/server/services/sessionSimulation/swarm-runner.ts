@@ -296,8 +296,9 @@ function terminalForOutcome(
 }
 
 /**
- * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit within the
- * shared core's `rate_limited` bucket (both fold there via `classifyTurnFailure`).
+ * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
+ * shared core's `rate_limited` bucket and the `failed` attempts whose message
+ * carries an account denial code.
  * An account-wide limit is the org cap (WHOLE-RUN stop); a provider 429 on one
  * host's own key is a per-HOST stop. A missing message defaults to the narrower
  * per-host stop — never escalate to a whole-run halt on ambiguous signal.
@@ -1227,7 +1228,15 @@ async function runJourneyFanOut(
             modelSource: modelId,
           });
 
-          if (outcome === "rate_limited") {
+          // An account-wide denial arrives under EITHER terminal: only the
+          // `*_rate_limit` codes carry wording `classifyTurnFailure` folds into
+          // `rate_limited`, so `wallet_locked` and the billing codes land in
+          // `failed` and would never reach the whole-run stop below.
+          const accountLimitFailure =
+            outcome === "failed" &&
+            !abortedBySpendCap &&
+            isAccountLimit(errorMessage, errorReason);
+          if (outcome === "rate_limited" || accountLimitFailure) {
             const cause = classifyRateLimit(errorMessage);
             if (cause === "org_spend_cap") {
               // WHOLE-RUN stop: halt all hosts + cancel in-flight turns. The

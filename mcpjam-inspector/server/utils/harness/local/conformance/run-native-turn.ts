@@ -284,7 +284,30 @@ const freePort = () =>
  * for a zombie on both macOS and Linux; an empty answer means the pid is gone
  * outright.
  */
+/**
+ * Windows has none of `ps`, `pgrep` or `lsof`, and Git Bash's MSYS `ps` only
+ * sees MSYS processes — so on the windows leg these helpers would answer
+ * "nothing running, nothing listening" for a tree that is very much alive,
+ * and the verdicts below would either pass vacuously or fail by construction.
+ * Each helper therefore has a Windows arm that asks the OS directly:
+ * `tasklist` for liveness, `netstat -ano` for listeners, and CIM for the
+ * parent/child tree. Still deliberately NOT the code under test.
+ */
+const WIN = process.platform === "win32";
+const powershell = (script: string) =>
+  execFileP("powershell.exe", ["-NoProfile", "-NonInteractive", "-InputFormat", "None", "-Command", script], {
+    windowsHide: true,
+  });
+
 async function running(pid: number): Promise<boolean> {
+  if (WIN) {
+    try {
+      const { stdout } = await execFileP("tasklist", ["/FI", `PID eq ${pid}`, "/NH", "/FO", "CSV"]);
+      return stdout.includes(`"${pid}"`);
+    } catch {
+      return false;
+    }
+  }
   let state: string;
   try {
     state = (await execFileP("ps", ["-o", "stat=", "-p", String(pid)])).stdout.trim();
@@ -305,11 +328,13 @@ async function descendants(pid: number): Promise<number[]> {
   const walk = async (p: number) => {
     let kids = "";
     try {
-      kids = (await execFileP("pgrep", ["-P", String(p)])).stdout;
+      kids = WIN
+        ? (await powershell(`Get-CimInstance Win32_Process -Filter "ParentProcessId=${p}" | ForEach-Object { $_.ProcessId }`)).stdout
+        : (await execFileP("pgrep", ["-P", String(p)])).stdout;
     } catch {
       return;
     }
-    for (const k of kids.split("\n").map((s) => Number(s.trim())).filter(Boolean)) {
+    for (const k of kids.split(/\r?\n/).map((s) => Number(s.trim())).filter(Boolean)) {
       out.push(k);
       await walk(k);
     }
@@ -326,6 +351,20 @@ async function psLine(pid: number, withEnv = false) {
   }
 }
 async function listeners(pid: number) {
+  if (WIN) {
+    // `  TCP    127.0.0.1:53123    0.0.0.0:0    LISTENING    1234`, for v4 and
+    // v6 alike (`[::1]:53123`). Shaped like the lsof answer below so the
+    // loopback verdict's regex reads both.
+    try {
+      return (await execFileP("netstat", ["-ano"])).stdout
+        .split(/\r?\n/)
+        .map((l) => l.trim().split(/\s+/))
+        .filter((f) => f[0] === "TCP" && f[3] === "LISTENING" && f[4] === String(pid))
+        .map((f) => `${f[1]} (LISTEN)`);
+    } catch {
+      return [];
+    }
+  }
   try {
     return (await execFileP("lsof", ["-nP", "-a", "-p", String(pid), "-iTCP", "-sTCP:LISTEN"])).stdout
       .split("\n").slice(1).filter(Boolean).map((l) => l.split(/\s+/).slice(-2).join(" "));
@@ -548,7 +587,11 @@ async function main() {
   const upstreamKeyInEnv = envDump.includes(UPSTREAM_KEY_CANARY);
   note(`upstream key in any child env: ${upstreamKeyInEnv ? "LEAKED" : "absent (good)"}`);
   note(`session capability in child env: ${envDump.includes(CAPABILITY) ? "present (env delivery fallback, as designed)" : "absent"}`);
-  const bridgeListeners = await listeners(bridgePid);
+  // The whole supervised tree, not the root alone. On Windows the root is the
+  // Job Object launcher and the socket belongs to the node process under it;
+  // on POSIX the union is a superset of the old check and stricter for it —
+  // any listener anywhere in the tree that is off loopback fails the run.
+  const bridgeListeners = (await Promise.all([bridgePid, ...kids].map(listeners))).flat();
   note(`bridge listeners: ${JSON.stringify(bridgeListeners)}`);
   const homeLeak = envDump.match(/HOME=([^\s]+)/g)?.slice(0, 2);
   note(`child HOME values: ${JSON.stringify(homeLeak)}`);
@@ -645,7 +688,25 @@ async function main() {
   // the workspace path coming back is `pwd`'s own output making the whole round
   // trip — request, approval, execution, result, model.
   if ((turn2.parts["tool-result"] ?? 0) < 1) failures.push(`turn2 produced no tool-result, so the approved Bash never ran (parts=${JSON.stringify(turn2.parts)})`);
-  if (!turn2.text.includes(plan.workspacePath)) failures.push("turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model)");
+  // Where `pwd` ran, in every spelling it can legitimately come back in. On
+  // POSIX the CLI's cwd resolves through the `project` symlink to the
+  // canonical workspace and that is what `pwd` prints. Windows resolves no
+  // junction in a cwd, and Git Bash prints `/d/a/…` — so there the answer is
+  // the workspace or the session's `work\project` junction, in native or
+  // MSYS form. All four name the granted directory and nothing else.
+  const pwdSpellings = [plan.workspacePath];
+  if (WIN) {
+    const { toAdapterPath } = await import("../adapter-path.js");
+    const link = join(sessionStateDir, "work", "project");
+    pwdSpellings.push(toAdapterPath(plan.workspacePath, "win32"), link, toAdapterPath(link, "win32"));
+  }
+  // Windows paths are case-insensitive and the vendor CLI's shell tool hands
+  // back a MIXED spelling (`D:\a/_temp/…` — a drive-native prefix with the
+  // shell's forward slashes after it), so there the comparison folds case and
+  // separators. POSIX stays exact.
+  const foldWin = (s: string) => s.toLowerCase().replace(/\//g, "\\");
+  const pwdText = WIN ? foldWin(turn2.text) : turn2.text;
+  if (!pwdSpellings.some((p) => pwdText.includes(WIN ? foldWin(p) : p))) failures.push(`turn2's approved Bash did not run in the granted workspace (no pwd output came back through the model; accepted ${JSON.stringify(pwdSpellings)})`);
 
   gw.child.kill("SIGTERM");
   await new Promise((r) => setTimeout(r, 200));

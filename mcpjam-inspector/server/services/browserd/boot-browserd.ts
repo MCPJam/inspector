@@ -32,6 +32,17 @@ export interface BrowserdSandbox {
       onStdout: (chunk: string) => void;
     },
   ): Promise<{ kill: () => Promise<unknown>; wait: () => Promise<unknown> }>;
+  /**
+   * Run a short foreground command and report its exit code.
+   *
+   * Resolves for a FAILING command too, rather than throwing: the display
+   * check below asks `xdpyinfo` a question whose answer is its exit status,
+   * and the E2B SDK turns a non-zero exit into a rejection.
+   */
+  run(
+    command: string,
+    options?: { envs?: Record<string, string> },
+  ): Promise<{ exitCode: number }>;
   /** The public HTTPS host for a sandbox port. */
   getHost(port: number): string;
 }
@@ -51,6 +62,8 @@ export interface BootBrowserdOptions {
    * the persistent profile a playground login depends on.
    */
   contextMode?: "persistent" | "ephemeral";
+  /** The X display browserd's Chromium draws on. Defaults to `:0`. */
+  display?: string;
 }
 
 export interface BrowserdHandle {
@@ -66,6 +79,88 @@ export interface BrowserdHandle {
 }
 
 const DEFAULT_READY_TIMEOUT_MS = 30_000;
+
+/**
+ * The X display a desktop box draws on — `:0`, the same one `@e2b/desktop`
+ * defaults to, so a box we bootstrap and a box that SDK created look alike.
+ */
+export const BROWSERD_DISPLAY = ":0";
+
+/** `@e2b/desktop`'s own default geometry, for the same parity reason. */
+const DISPLAY_GEOMETRY = "1024x768x24";
+const DISPLAY_READY_ATTEMPTS = 20;
+const DISPLAY_POLL_MS = 500;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+async function displayIsUp(
+  sandbox: BrowserdSandbox,
+  display: string,
+): Promise<boolean> {
+  try {
+    const { exitCode } = await sandbox.run(
+      `xdpyinfo -display ${display} >/dev/null 2>&1`,
+    );
+    return exitCode === 0;
+  } catch {
+    // A command that cannot even run is not a display.
+    return false;
+  }
+}
+
+/**
+ * Make sure something is drawing on `display` before the daemon launches a
+ * HEADED Chromium at it.
+ *
+ * The desktop image bakes Xfce, Xvfb and noVNC, but nothing in it STARTS them:
+ * that is `@e2b/desktop`'s `Sandbox.create`, via its internal `_start()`. The
+ * hosted path never calls that — the computer is provisioned by the backend and
+ * this process only ever `connect`s, which the desktop SDK does not override.
+ * So a freshly provisioned desktop box has no X server, Playwright refuses to
+ * launch headed ("Looks like you launched a headed browser without having a
+ * XServer running"), and browserd dies before its ready line — surfacing as
+ * `browserd exited before it reported listening (exit status 1)`.
+ *
+ * Idempotent by construction: a display that is already up (a warm box, a
+ * relaunch, a box the desktop SDK did create) short-circuits on the first
+ * probe, so this costs one command on the common path.
+ *
+ * Xfce is best-effort. The browser only needs an X server; the window manager
+ * is what makes the noVNC stream look like a desktop rather than a bare root
+ * window, and failing the whole boot over cosmetics would be wrong.
+ */
+export async function ensureDisplay(
+  sandbox: BrowserdSandbox,
+  display: string = BROWSERD_DISPLAY,
+): Promise<void> {
+  if (await displayIsUp(sandbox, display)) return;
+
+  await sandbox.runBackground(
+    `Xvfb ${display} -ac -screen 0 ${DISPLAY_GEOMETRY} -retro -dpi 96 -nolisten tcp -nolisten unix`,
+    { envs: {}, onStdout: () => {} },
+  );
+
+  for (let attempt = 0; attempt < DISPLAY_READY_ATTEMPTS; attempt++) {
+    if (await displayIsUp(sandbox, display)) {
+      await sandbox
+        .runBackground("startxfce4", {
+          envs: { DISPLAY: display },
+          onStdout: () => {},
+        })
+        .catch(() => {
+          // Cosmetic; see above.
+        });
+      return;
+    }
+    await sleep(DISPLAY_POLL_MS);
+  }
+  throw new Error(
+    `no X display on ${display}: Xvfb did not come up within ${
+      (DISPLAY_READY_ATTEMPTS * DISPLAY_POLL_MS) / 1000
+    }s`,
+  );
+}
 
 interface BrowserdReadyLine {
   port: number;
@@ -98,6 +193,10 @@ function buildEnv(
     MCPJAM_BROWSERD_TOKEN: bearer,
     MCPJAM_BROWSERD_PORT: String(options.port),
     MCPJAM_BROWSERD_USER_DATA_DIR: options.userDataDir,
+    // Chromium is launched HEADED here and finds its X server through this
+    // variable alone: E2B command shells do not inherit the image's Dockerfile
+    // `ENV`, so an image-level `DISPLAY` would not reach the daemon.
+    DISPLAY: options.display ?? BROWSERD_DISPLAY,
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
@@ -157,21 +256,26 @@ export function bootBrowserd(
       });
     };
 
-    void sandbox
-      .runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
-        envs: env,
-        onStdout: (chunk) => {
-          if (settled) return;
-          carry += chunk;
-          let index: number;
-          while ((index = carry.indexOf("\n")) >= 0) {
-            const line = carry.slice(0, index);
-            carry = carry.slice(index + 1);
-            const ready = parseReadyLine(line);
-            if (ready) finish(ready);
-          }
-        },
-      })
+    // Chained rather than awaited before this promise is built: the boot's
+    // ready-line choreography (and its timeout) must own every failure path,
+    // including "the box never got an X server".
+    void ensureDisplay(sandbox, options.display)
+      .then(() =>
+        sandbox.runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
+          envs: env,
+          onStdout: (chunk) => {
+            if (settled) return;
+            carry += chunk;
+            let index: number;
+            while ((index = carry.indexOf("\n")) >= 0) {
+              const line = carry.slice(0, index);
+              carry = carry.slice(index + 1);
+              const ready = parseReadyLine(line);
+              if (ready) finish(ready);
+            }
+          },
+        }),
+      )
       .then((command) => {
         started = command;
         // The deadline may have fired before the handle existed; reap here.

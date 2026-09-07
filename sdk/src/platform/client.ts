@@ -12,6 +12,8 @@ import type {
   PlatformEvalIteration,
   PlatformEvalRun,
   PlatformEvalRunDecisionSummary,
+  PlatformEvalRouteFacts,
+  PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
@@ -1988,6 +1990,142 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/stage-analytics`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's materialized route-facts document, addressed by run.
+   *
+   * `404` means one of two different things, and the API does not distinguish
+   * them on purpose: the run is not visible to this caller, or it has no
+   * document. Both are UNMEASURED to a reader, and separating them would leak
+   * the existence of runs in projects the caller cannot see.
+   *
+   * NOT backfilled, same as stage analytics: a run that terminalized before
+   * the materializer shipped has no row, and that absence is the honest
+   * answer. No client-side reconstruction exists to fall back on, by design.
+   */
+  getEvalRunRouteFacts(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRouteFacts> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/route-facts`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Draft a rewritten tool description from a finished run's failed
+   * trials. SPENDS a small model budget; poll
+   * {@link getEvalDescriptionExperiment} rather than re-proposing.
+   *
+   * HTTP route lands in a follow-up. This client method is the typed
+   * half so a later inspector can call it.
+   */
+  proposeEvalDescriptionRewrite(
+    params: {
+      projectId: string;
+      runId: string;
+      toolName: string;
+      caseIds?: string[];
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
+      {
+        body: {
+          toolName: params.toolName,
+          ...(params.caseIds ? { caseIds: params.caseIds } : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * Launch the two-arm description experiment (original + rewrite).
+   * SPENDS eval-iteration credits: planned trials = cases × R × 2,
+   * refused over the cap (default 200, hard 400).
+   */
+  startEvalDescriptionExperiment(
+    params: {
+      projectId: string;
+      experimentId: string;
+      caseScope?: "all" | "affected";
+      iterationOverride?: number;
+      maxTrials?: number;
+    },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "POST",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}/start`,
+      {
+        body: {
+          ...(params.caseScope !== undefined
+            ? { caseScope: params.caseScope }
+            : {}),
+          ...(params.iterationOverride !== undefined
+            ? { iterationOverride: params.iterationOverride }
+            : {}),
+          ...(params.maxTrials !== undefined
+            ? { maxTrials: params.maxTrials }
+            : {}),
+        },
+      },
+      options
+    );
+  }
+
+  /**
+   * One description-experiment document, including its report when
+   * materialised. `404` means the experiment is not visible to this
+   * caller.
+   */
+  getEvalDescriptionExperiment(
+    params: { projectId: string; experimentId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalDescriptionExperiment> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-description-experiments/${encodeURIComponent(
+        params.experimentId
+      )}`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * Experiments already attached to a source run. Empty list when none
+   * have been proposed — that is unmeasured, not an error.
+   */
+  listEvalDescriptionExperimentsForRun(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<{ items: PlatformEvalDescriptionExperiment[] }> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/description-experiments`,
       {},
       options
     );

@@ -160,6 +160,8 @@ export type ResolvedEvalSuiteFileCase = {
   title: string;
   /** Authored analytics grouping label; absent remains unlabelled. */
   intent?: string;
+  /** Authored case kind; absent means derive from matchOptions. */
+  kind?: "capability" | "regression";
   steps: EvalSuiteFileCase["steps"];
   assertions: NonNullable<EvalSuiteFileCase["assertions"]>;
   expectedOutput?: string;
@@ -553,6 +555,9 @@ function resolveCase(
     ...(typeof authoredCase.intent === "string"
       ? { intent: authoredCase.intent }
       : {}),
+    ...(authoredCase.kind === "capability" || authoredCase.kind === "regression"
+      ? { kind: authoredCase.kind }
+      : {}),
     steps: authoredCase.steps,
     assertions: authoredCase.assertions ?? [],
     ...(authoredCase.expectedOutput === undefined
@@ -624,6 +629,7 @@ const CASE_KEY_ORDER = [
   "id",
   "title",
   "intent",
+  "kind",
   "disabled",
   "model",
   "repetitions",

@@ -425,7 +425,10 @@ function classifyByMessageHttp(message: string): string | undefined {
   // A bare 429 needs no http/status prefix — the local-BYOK swarm path drops
   // the status field and leaves only this wording. Narrower than "rate limit"
   // on purpose: that also matches MCPJam's own account limit, a different slug.
-  if (/\b429\b|too many requests/i.test(message)) return "provider/quota";
+  // Not preceded by `:` or `.`, so a port (`127.0.0.1:429`) or a decimal stays
+  // a transport error and keeps reaching `messageSlug`.
+  if (/(?:^|[^\w.:])429\b|too many requests/i.test(message))
+    return "provider/quota";
   return undefined;
 }
 
