@@ -80,6 +80,14 @@ export type SimpleCaseFormProps = {
    */
   toolsChoice?: ToolsChoice;
   onToolsChoiceChange?: (next: ToolsChoice) => void;
+  /**
+   * Tools set aside by "No tool should be called", so "Use tools instead" can
+   * put them back. Lifted with `toolsChoice`: the choice now survives the trip
+   * through the Steps pane, and a stash that did not would leave that undo
+   * affordance pointing at nothing.
+   */
+  stashedTools?: SimpleCaseTool[];
+  onStashedToolsChange?: (next: SimpleCaseTool[]) => void;
   evalValidationBorderClass?: string;
   autoFocusPrompt?: boolean;
   validationAttempted?: boolean;
@@ -112,6 +120,8 @@ export function SimpleCaseForm({
   onOpenDeepEditor,
   toolsChoice: controlledToolsChoice,
   onToolsChoiceChange,
+  stashedTools: controlledStashedTools,
+  onStashedToolsChange,
   evalValidationBorderClass,
   autoFocusPrompt = false,
   validationAttempted = false,
@@ -141,14 +151,27 @@ export function SimpleCaseForm({
     setUncontrolledToolsChoice(next);
     onToolsChoiceChange?.(next);
   };
-  const [stashedTools, setStashedTools] = useState<SimpleCaseTool[]>(
-    () => view.tools,
-  );
+  const [uncontrolledStashedTools, setUncontrolledStashedTools] = useState<
+    SimpleCaseTool[]
+  >(() => view.tools);
+  const stashedTools = controlledStashedTools ?? uncontrolledStashedTools;
+  const setStashedTools = (next: SimpleCaseTool[]) => {
+    setUncontrolledStashedTools(next);
+    onStashedToolsChange?.(next);
+  };
 
   const stepChecks = useMemo(() => readStepChecks(steps), [steps]);
   const leftovers = useMemo(() => leftoverSteps(steps), [steps]);
   const turnOrdinals = useMemo(() => turnOrdinalByStepId(steps), [steps]);
   const promptFirst = isPromptFirst(steps);
+  /**
+   * A case that does not open on a prompt has no model turn for a route claim
+   * to be about — a pinned `toolCall` render check grades the call the SPEC
+   * makes, not one the model chose. Lock the whole question rather than only
+   * its buttons: leaving Add reachable let a `toolCalledWith` assert be
+   * appended to a pinned turn, where it can never match.
+   */
+  const routeLocked = readOnly || !promptFirst;
 
   // Open on load when the case already has checks, so a case whose whole
   // grading lives here does not read as an empty form with a disclosure.
@@ -423,31 +446,41 @@ export function SimpleCaseForm({
               ? "Which route should it take?"
               : "Which tool should handle it?"}
           </Label>
-          <div className="flex flex-wrap items-center gap-2">
-            <Button
-              type="button"
-              variant={question === "noTool" ? "secondary" : "outline"}
-              size="sm"
-              className="h-7 text-xs"
-              onClick={chooseNoTool}
-              disabled={readOnly || !promptFirst}
-            >
-              No tool should be called
-            </Button>
-            {question === "noTool" ? (
+          {promptFirst ? (
+            <div className="flex flex-wrap items-center gap-2">
               <Button
                 type="button"
-                variant="ghost"
+                variant={question === "noTool" ? "secondary" : "outline"}
                 size="sm"
                 className="h-7 text-xs"
-                onClick={chooseTools}
+                onClick={chooseNoTool}
                 disabled={readOnly}
               >
-                Use tools instead
+                No tool should be called
               </Button>
-            ) : null}
-          </div>
-          {question === "checks" ? (
+              {question === "noTool" ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={chooseTools}
+                  disabled={readOnly}
+                >
+                  Use tools instead
+                </Button>
+              ) : null}
+            </div>
+          ) : (
+            <p
+              className="text-[11px] text-muted-foreground"
+              data-testid="simple-case-route-locked"
+            >
+              This case runs a pinned tool call, so no model route applies. Edit
+              it in Steps.
+            </p>
+          )}
+          {question === "checks" && promptFirst ? (
             <p
               className="text-[11px] text-muted-foreground"
               data-testid="simple-case-tools-checks-hint"
@@ -489,7 +522,7 @@ export function SimpleCaseForm({
                     </p>
                     <div className="flex items-center gap-1">
                       <StatusDot status={overlayStatus(overlay, tool.id)} />
-                      {readOnly ? null : (
+                      {routeLocked ? null : (
                         <Button
                           type="button"
                           variant="ghost"
@@ -533,11 +566,11 @@ export function SimpleCaseForm({
                       );
                     }}
                     availableTools={availableTools}
-                    readOnly={readOnly}
+                    readOnly={routeLocked}
                   />
                 </div>
               ))}
-              {readOnly ? null : (
+              {routeLocked ? null : (
                 <AddToolRow availableTools={availableTools} onAdd={addTool} />
               )}
             </div>

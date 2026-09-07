@@ -120,6 +120,12 @@ export type ToolsChoice = "unset" | "tools" | "noTool";
  * It also closes a hole in the stored tri-state — `"tools"` with zero rows and
  * no other assertion used to pass the unset block and save as a derived
  * negative; it now resolves back to `"unset"` and blocks.
+ *
+ * A named route outranks a stored `"noTool"`: choosing "no tool" removes the
+ * `toolCalledWith` asserts, so the two can only coexist when one was added
+ * afterwards in the step list. Reading that as positive is the safe answer —
+ * the backend rejects a negative case that kept a tool assert
+ * (`NEGATIVE_TEST_HAS_TOOL_CALLS`), and the form warns about the pair.
  */
 export type ToolsQuestion = ToolsChoice | "checks";
 

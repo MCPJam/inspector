@@ -225,6 +225,7 @@ import {
   isToolCalledWithAssert,
   readSimpleCase,
   readStepChecks,
+  type SimpleCaseTool,
   resolveToolsQuestion,
   UNSET_TOOLS_BLOCK_REASON,
   type ToolsChoice,
@@ -930,6 +931,10 @@ export function TestTemplateEditor({
    */
   const [simpleToolsChoice, setSimpleToolsChoice] =
     useState<ToolsChoice>("unset");
+  /** Lifted with the choice, so "Use tools instead" survives the Steps pane. */
+  const [simpleStashedTools, setSimpleStashedTools] = useState<
+    SimpleCaseTool[]
+  >([]);
   const [editForm, setEditForm] = useState<TestTemplate | null>(null);
   const [isEditingTitle, setIsEditingTitle] = useState(false);
   // Guards the first-Save insert of a prompt draft so a double-click can't
@@ -1262,12 +1267,14 @@ export function TestTemplateEditor({
     // from step shape) plus its tool asserts. Without this, opening a positive
     // CLI case would default to "unset" and its first save would rewrite the
     // flag the author never touched.
+    const seededTools = readSimpleCase(steps).tools;
     setSimpleToolsChoice(
       initialToolsChoice({
-        tools: readSimpleCase(steps).tools,
+        tools: seededTools,
         isNegativeTest: currentTestCase.isNegativeTest,
       }),
     );
+    setSimpleStashedTools(seededTools);
     setDeepEditor(false);
   }, [currentTestCase?._id]);
 
@@ -1677,6 +1684,11 @@ export function TestTemplateEditor({
    */
   const workspaceToolsQuestion = useMemo(() => {
     if (!useWorkspace || !editForm) return null;
+    // A model-free case (a pinned `toolCall` render check) has no model turn
+    // for a route claim to be about, and the form locks the question for it.
+    // Asking it anyway would block Save on a shape that used to save fine —
+    // the old page never showed this question at all.
+    if (isModelFree(editForm.steps)) return null;
     return resolveToolsQuestion({
       choice: simpleToolsChoice,
       hasToolAsserts: editForm.steps.some(isToolCalledWithAssert),
@@ -1825,7 +1837,7 @@ export function TestTemplateEditor({
     if (!arePromptTurnsValid && editForm) {
       return getStepsBlockReason(editForm.steps);
     }
-    if (!arePredicatesValid) {
+    if (!arePredicatesValid || !areStepChecksValid) {
       return "Fix invalid checks before saving.";
     }
     return null;
@@ -2632,8 +2644,8 @@ export function TestTemplateEditor({
             query: savePayload.query,
             expectedToolCalls: savePayload.expectedToolCalls,
             isNegativeTest: savePayload.isNegativeTest,
-            // The simple form owns the count (saved with the case); the step
-            // list still shows the per-run override select.
+            // The workspace owns the count (saved with the case, edited in the
+            // Next run sheet); only the old page has the per-run override.
             runs: useWorkspace ? (editForm.runs ?? 1) : iterationOverride,
             expectedOutput: savePayload.expectedOutput,
             steps: savePayload.steps,
@@ -3921,6 +3933,8 @@ export function TestTemplateEditor({
                       onOpenDeepEditor={() => setDeepEditor(true)}
                       toolsChoice={simpleToolsChoice}
                       onToolsChoiceChange={setSimpleToolsChoice}
+                      stashedTools={simpleStashedTools}
+                      onStashedToolsChange={setSimpleStashedTools}
                       evalValidationBorderClass={evalValidationBorderClass}
                       autoFocusPrompt={draftKind === "record"}
                       validationAttempted={simpleValidationAttempted}

@@ -1019,6 +1019,48 @@ describe("TestTemplateEditor run view from route", () => {
     expect(request.testCaseOverrides.isNegativeTest).toBe(false);
   });
 
+  it("does not block a model-free render check behind the tool question", async () => {
+    // A pinned `toolCall` case has no model turn, so the tool question does not
+    // apply — and asking it anyway blocked Save on a shape the old page saved
+    // fine. It also must not be relabelled negative: `isNegativeTest` stays
+    // whatever the case already carried.
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      steps: [
+        {
+          id: "call-1",
+          kind: "toolCall",
+          serverName: "srv",
+          toolName: "render_widget",
+          arguments: {},
+        },
+      ],
+    } as typeof activeCaseDoc;
+    const user = userEvent.setup();
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("simple-case-route-locked")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("What does a good answer accomplish?"),
+      "renders",
+    );
+    await user.click(screen.getAllByRole("button", { name: /^save/i })[0]!);
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      isNegativeTest: false,
+    });
+  });
+
   it("saves a no-tool simple case as a negative test", async () => {
     const user = userEvent.setup();
     activeCaseDoc = {

@@ -102,7 +102,9 @@ function StatefulForm(
       }}
       suiteDefaultPredicates={props.suiteDefaultPredicates}
       onOpenDeepEditor={props.onOpenDeepEditor ?? vi.fn()}
+      toolsChoice={props.toolsChoice}
       onToolsChoiceChange={props.onToolsChoiceChange}
+      stashedTools={props.stashedTools}
       availableTools={["list_incidents", "get_incident"]}
       isNegativeTest={props.isNegativeTest}
       validationAttempted={props.validationAttempted}
@@ -440,23 +442,69 @@ describe("SimpleCaseForm leftover steps", () => {
     expect(onOpenDeepEditor).toHaveBeenCalled();
   });
 
-  it("locks the prompt box on a case that does not start with a prompt", async () => {
-    const user = userEvent.setup();
-    const { onStepsChange } = renderForm({
-      steps: pinnedFirst,
-      isNegativeTest: false,
-    });
+  it("locks the prompt box and the route on a pinned-first case", () => {
+    renderForm({ steps: pinnedFirst, isNegativeTest: false });
 
     expect(screen.getByTestId("simple-case-prompt-locked")).toBeInTheDocument();
     expect(screen.getByLabelText("What does the user ask?")).toHaveAttribute(
       "readonly",
     );
-    // The tool question cannot rewrite the head of the list either — a click
-    // here used to splice an empty model turn in front of the pinned call.
-    await user.click(
-      screen.getByRole("button", { name: "No tool should be called" }),
-    );
-    expect(onStepsChange).not.toHaveBeenCalled();
+    // No model turn means no route to claim. Every control that would rewrite
+    // the head of the list is gone: "No tool" used to splice an empty model
+    // turn in front of the pinned call, and Add would append a tool assert to
+    // a turn where it can never match.
+    expect(screen.getByTestId("simple-case-route-locked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "No tool should be called" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Add" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("simple-case-tools-checks-hint"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps a pinned-first case's existing tool rows read-only", () => {
+    renderForm({
+      steps: [
+        ...pinnedFirst,
+        {
+          id: "t1",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "list_incidents",
+            args: { args: {} },
+          },
+        },
+      ],
+      isNegativeTest: false,
+    });
+
+    expect(screen.getAllByTestId("simple-case-tool-row")).toHaveLength(1);
+    expect(
+      screen.queryByRole("button", { name: "Remove list_incidents" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("restores stashed tools handed back by the editor after a remount", async () => {
+    const user = userEvent.setup();
+    // The Steps pane unmounts the form, so the stash lives in the editor. A
+    // form-local stash would leave "Use tools instead" restoring nothing.
+    const { onStepsChange } = renderForm({
+      steps: promptOnly,
+      isNegativeTest: true,
+      toolsChoice: "noTool",
+      stashedTools: [
+        { id: "t-stashed", toolName: "list_incidents", arguments: {} },
+      ],
+    });
+
+    await user.click(screen.getByRole("button", { name: "Use tools instead" }));
+
+    const next = onStepsChange.mock.calls.at(-1)?.[0] as TestStep[];
+    expect(next.map((step) => step.id)).toEqual(["turn-1", "t-stashed"]);
   });
 });
 
