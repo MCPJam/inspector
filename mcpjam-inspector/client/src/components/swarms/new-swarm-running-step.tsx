@@ -34,7 +34,9 @@ import {
   type SwarmCellLiveStatus,
 } from "@/components/swarms/use-journey-run-stream";
 import {
+  attemptTargetKey,
   buildSwarmRunTargets,
+  findAttemptForSelection,
   findTargetCellForChatSessionId,
   summaryTargetKey,
   type SwarmTargetColumn,
@@ -530,15 +532,19 @@ function collectSessionSlots(args: {
   const slots: SessionSlot[] = [];
 
   // Attempts are claimed with the SAME id the client mints below, so the
-  // chatSessionId join is exact. `(hostId, sessionIdx)` is the fallback for
-  // an attempt that failed before it could claim one.
+  // chatSessionId join is exact. The target slot is the fallback for an attempt
+  // that failed before it could claim one — keyed by target rather than host,
+  // or two environments sharing a host would read each other's outcome.
   const attemptByChatSessionId = new Map<string, JourneyRunAttempt>();
-  const attemptByHostSlot = new Map<string, JourneyRunAttempt>();
+  const attemptByTargetSlot = new Map<string, JourneyRunAttempt>();
   for (const attempt of snap.attempts) {
     if (attempt.chatSessionId) {
       attemptByChatSessionId.set(attempt.chatSessionId, attempt);
     }
-    attemptByHostSlot.set(`${attempt.hostId}#${attempt.sessionIdx}`, attempt);
+    attemptByTargetSlot.set(
+      `${attemptTargetKey(attempt)}#${attempt.sessionIdx}`,
+      attempt
+    );
   }
 
   for (let index = 0; index < snap.sessionsPerTarget; index++) {
@@ -568,7 +574,7 @@ function collectSessionSlots(args: {
       (fromEnvelope?.envelope.chatSessionId
         ? attemptByChatSessionId.get(fromEnvelope.envelope.chatSessionId)
         : undefined) ??
-      attemptByHostSlot.get(`${target.hostId}#${index}`) ??
+      attemptByTargetSlot.get(`${columnKey}#${index}`) ??
       null;
 
     slots.push({
@@ -905,17 +911,7 @@ export function NewSwarmRunningStep({
     if (!selection) return null;
     const snap = snapshots[selection.runId];
     if (!snap) return null;
-    return (
-      snap.attempts.find(
-        (entry) => entry.chatSessionId === selection.chatSessionId
-      ) ??
-      snap.attempts.find(
-        (entry) =>
-          entry.hostId === selection.hostId &&
-          entry.sessionIdx === selection.sessionIndex
-      ) ??
-      null
-    );
+    return findAttemptForSelection(snap.attempts, selection);
   }, [selection, snapshots]);
 
   // Three of twelve sessions can be throttled while the swarm keeps working.
@@ -923,7 +919,7 @@ export function NewSwarmRunningStep({
   // the run banner below only speaks when NO session ran at all.
   const providerRateLimit = useMemo(() => {
     let count = 0;
-    let label: string | null = null;
+    const labels = new Set<string>();
     for (const snap of Object.values(snapshots)) {
       for (const attempt of snap.attempts) {
         if (attempt.status !== "rate_limited") continue;
@@ -931,9 +927,13 @@ export function NewSwarmRunningStep({
           attempt.errorMessage,
           attempt.errorCode,
         );
-        if (isAccountLimit(info.message, info.code)) continue;
+        // The code comes off the attempt, not the humanized info: that only
+        // carries a code through for the codes it words itself, so the
+        // whole-run `spend_cap_exceeded` finalize reaches here carrying none.
+        if (isAccountLimit(info.message, attempt.errorCode ?? info.code)) {
+          continue;
+        }
         count += 1;
-        if (label) continue;
         // "The host's configured provider", per the ticket — joined on the
         // attempt's own chatSessionId. Two environments can share a host and
         // pin different models, so matching on hostId would let the banner name
@@ -945,10 +945,14 @@ export function NewSwarmRunningStep({
               (row) => row.chatSessionId === attempt.chatSessionId,
             )
           : undefined;
-        label = providerLabelForModelId(session?.modelId);
+        labels.add(providerLabelForModelId(session?.modelId));
       }
     }
-    return count > 0 ? { count, label: label ?? "Your provider" } : null;
+    if (count === 0) return null;
+    // Two providers throttling in the same run name neither: the banner would
+    // otherwise blame whichever attempt was read first for both.
+    const [only] = labels;
+    return { count, label: labels.size === 1 ? (only ?? null) : null };
   }, [snapshots]);
 
   const selectedRunStatus = selection
@@ -1051,12 +1055,14 @@ export function NewSwarmRunningStep({
             ) : null}
             {providerRateLimit ? (
               <div
-                className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200"
+                className="rounded-md border border-warning bg-warning/20 px-3 py-2 text-sm text-warning-foreground"
                 data-testid="new-swarm-running-rate-limit"
                 role="status"
               >
                 <p className="font-medium">
-                  {providerRateLimit.label} rate-limited this key.
+                  {providerRateLimit.label
+                    ? `${providerRateLimit.label} rate-limited this key.`
+                    : "Your providers rate-limited these keys."}
                 </p>
                 <p className="mt-0.5">
                   {providerRateLimit.count === 1

@@ -134,7 +134,28 @@ const CHAT_SESSION_ID = swarmAttemptChatSessionId(
   0,
 );
 
-function renderStep() {
+const ENV_1 = {
+  environmentId: "env-1",
+  projectId: "proj-1",
+  name: "Prod-like",
+  hostId: "host-1",
+  revision: 1,
+};
+
+const ENV_2 = {
+  environmentId: "env-2",
+  projectId: "proj-1",
+  name: "Staging",
+  hostId: "host-1",
+  revision: 1,
+};
+
+function renderStep(
+  columns: Array<{ key: string; label: string }> = [
+    { key: "environment:env-1", label: "Prod-like" },
+  ],
+  environments: Array<typeof ENV_1> = [ENV_1],
+) {
   return render(
     <div className="h-[40rem]">
       <NewSwarmRunningStep
@@ -149,22 +170,26 @@ function renderStep() {
             label: "run",
           },
         ]}
-        fallbackColumns={[{ key: "environment:env-1", label: "Prod-like" }]}
-        environments={[
-          {
-            environmentId: "env-1",
-            projectId: "proj-1",
-            name: "Prod-like",
-            hostId: "host-1",
-            revision: 1,
-          },
-        ]}
+        fallbackColumns={columns}
+        environments={environments}
         onLeave={vi.fn()}
         onOpenSession={vi.fn()}
       />
     </div>,
   );
 }
+
+const TWO_ENV_COLUMNS = [
+  { key: "environment:env-1", label: "Prod-like" },
+  { key: "environment:env-2", label: "Staging" },
+];
+
+const HOST_ENV_2 = {
+  hostId: "host-1",
+  hostName: "MCPJam",
+  targetId: "environment:env-2",
+  environmentRef: { environmentId: "env-2", name: "Staging", revision: 1 },
+};
 
 async function openTheSession() {
   const chips = await screen.findAllByTestId("new-swarm-running-session");
@@ -229,19 +254,48 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
 
   it("does NOT show the provider card for MCPJam's own account limit", async () => {
     // Same amber cell, opposite advice — this one IS lifted by credit or BYOK,
-    // so the provider copy would send the user to the wrong place.
+    // so the provider copy would send the user to the wrong place. The attempt
+    // row carries the denial, which is what both surfaces have to read: the
+    // live stream text alone leaves the run banner naming a provider.
+    const accountLimit = "Daily credit limit reached. (user_rate_limit, HTTP 429)";
+    attempt.errorMessage = accountLimit;
+    attempt.errorCode = "user_rate_limit";
     (
       streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string }
-    ).errorMessage = "Daily credit limit reached. (user_rate_limit, HTTP 429)";
+    ).errorMessage = accountLimit;
     renderStep();
     await openTheSession();
 
     expect(
       screen.queryByTestId("swarm-live-pane-rate-limit"),
     ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
     expect(screen.getByTestId("swarm-live-pane")).toHaveTextContent(
       "Daily credit limit reached.",
     );
+  });
+
+  it("does NOT show the provider card for a spend cap stored as a bare code", async () => {
+    // What the whole-run finalize actually writes: `spend_cap_exceeded` and no
+    // message at all. `humanizeSwarmAttemptError` carries a code through only
+    // for the codes it words itself, so reading the code back off its result
+    // leaves both surfaces blaming the user's provider for MCPJam's own cap.
+    attempt.errorCode = "spend_cap_exceeded";
+    attempt.errorMessage = null;
+    (
+      streamState.sessions[CHAT_SESSION_ID] as { errorMessage: string | null }
+    ).errorMessage = null;
+    renderStep();
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("new-swarm-running-rate-limit"),
+    ).not.toBeInTheDocument();
   });
 
   it("points at the limited sessions from above the table, without a click", async () => {
@@ -252,7 +306,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
     const summary = await screen.findByTestId("new-swarm-running-rate-limit");
     expect(summary).toHaveTextContent("Anthropic rate-limited this key.");
     expect(summary).toHaveTextContent("1 session stopped.");
-    expect(summary.className).toContain("amber");
+    expect(summary.className).toContain("warning");
   });
 
   it("says nothing when no session was rate-limited", async () => {
@@ -275,19 +329,7 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       { hostId: "host-1", environmentId: "env-2" },
       0,
     );
-    snapshotHosts = [
-      HOST_ENV_1,
-      {
-        hostId: "host-1",
-        hostName: "MCPJam",
-        targetId: "environment:env-2",
-        environmentRef: {
-          environmentId: "env-2",
-          name: "Staging",
-          revision: 1,
-        },
-      },
-    ];
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
     hostSummaries = [
       { ...SUMMARY_ENV_1, succeeded: 1, rateLimited: 0 },
       { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
@@ -311,49 +353,78 @@ describe("NewSwarmRunningStep — provider rate-limit card", () => {
       },
     ];
 
-    render(
-      <div className="h-[40rem]">
-        <NewSwarmRunningStep
-          projectId="proj-1"
-          runs={[
-            {
-              runId: "run-1",
-              journeyId: "j-1",
-              personaId: "p-1",
-              personaName: "Async Documentation Writer",
-              personaRole: "Writer",
-              label: "run",
-            },
-          ]}
-          fallbackColumns={[
-            { key: "environment:env-1", label: "Prod-like" },
-            { key: "environment:env-2", label: "Staging" },
-          ]}
-          environments={[
-            {
-              environmentId: "env-1",
-              projectId: "proj-1",
-              name: "Prod-like",
-              hostId: "host-1",
-              revision: 1,
-            },
-            {
-              environmentId: "env-2",
-              projectId: "proj-1",
-              name: "Staging",
-              hostId: "host-1",
-              revision: 1,
-            },
-          ]}
-          onLeave={vi.fn()}
-          onOpenSession={vi.fn()}
-        />
-      </div>,
-    );
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
 
     const summary = await screen.findByTestId("new-swarm-running-rate-limit");
     expect(summary).toHaveTextContent("OpenAI rate-limited this key.");
     expect(summary).not.toHaveTextContent(/Anthropic/);
+  });
+
+  it("names no provider when two of them throttled the same run", async () => {
+    // One label for two providers blames whichever attempt was read first. The
+    // count still has to be right — both sessions did stop.
+    const otherChatSessionId = swarmAttemptChatSessionId(
+      "run-1",
+      { hostId: "host-1", environmentId: "env-2" },
+      0,
+    );
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      SUMMARY_ENV_1,
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    attempts = [
+      { ...attempt, chatSessionId: CHAT_SESSION_ID },
+      {
+        ...attempt,
+        chatSessionId: otherChatSessionId,
+        targetId: "environment:env-2",
+      },
+    ];
+    sessionRows = [
+      { ...sessionRow, modelId: "anthropic/claude-opus-5" },
+      {
+        ...sessionRow,
+        id: "s-2",
+        chatSessionId: otherChatSessionId,
+        modelId: "openai/gpt-5",
+      },
+    ];
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+
+    const summary = await screen.findByTestId("new-swarm-running-rate-limit");
+    expect(summary).toHaveTextContent(
+      "Your providers rate-limited these keys.",
+    );
+    expect(summary).toHaveTextContent("2 sessions stopped.");
+    expect(summary).not.toHaveTextContent(/Anthropic|OpenAI/);
+  });
+
+  it("keeps an unclaimed attempt inside its own target", async () => {
+    // An attempt that never claimed a chatSessionId falls back to its slot. Two
+    // environments on one host share `(hostId, sessionIdx)`, so the slot has to
+    // be keyed by target or this session reads the sibling's refusal.
+    snapshotHosts = [HOST_ENV_1, HOST_ENV_2];
+    hostSummaries = [
+      { ...SUMMARY_ENV_1, succeeded: 1, rateLimited: 0 },
+      { ...SUMMARY_ENV_1, targetId: "environment:env-2" },
+    ];
+    // The refused sibling comes FIRST: a join that reads `(hostId, sessionIdx)`
+    // returns it for either target, so ordering is what exposes the bug.
+    attempts = [
+      { ...attempt, chatSessionId: "", targetId: "environment:env-2" },
+      { ...attempt, chatSessionId: "", status: "succeeded" },
+    ];
+    streamState.cellStatus = {};
+    streamState.sessions = {};
+
+    renderStep(TWO_ENV_COLUMNS, [ENV_1, ENV_2]);
+    await openTheSession();
+
+    expect(
+      screen.queryByTestId("swarm-live-pane-rate-limit"),
+    ).not.toBeInTheDocument();
   });
 
   it("shows the card when only the attempt row knows the session was throttled", async () => {

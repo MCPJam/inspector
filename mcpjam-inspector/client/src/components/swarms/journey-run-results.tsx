@@ -497,13 +497,22 @@ export function SwarmLiveStreamPane({
   const isStreaming = outcome === "running" || outcome === "pending";
   // A rate-limited session is either MCPJam's account limit or the user's own
   // provider throttling their key. Only the second gets the card — the first is
-  // lifted by credit or BYOK, and this copy would point at the wrong fix.
+  // lifted by credit or BYOK, and this copy would point at the wrong fix. The
+  // attempt row decides it: a whole-run spend-cap finalize stamps its code with
+  // no message, so the stream's text alone cannot tell the two apart.
   const rateLimitInfo =
     outcome === "rate_limited"
-      ? humanizeSwarmAttemptError(live?.errorMessage ?? null)
+      ? humanizeSwarmAttemptError(
+          attempt?.errorMessage ?? live?.errorMessage ?? null,
+          attempt?.errorCode,
+        )
       : null;
   const providerRateLimit =
-    rateLimitInfo && !isAccountLimit(rateLimitInfo.message, rateLimitInfo.code)
+    rateLimitInfo &&
+    !isAccountLimit(
+      rateLimitInfo.message,
+      attempt?.errorCode ?? rateLimitInfo.code,
+    )
       ? describeProviderRateLimit(
           providerLabelForModelId(convexSession?.modelId),
         )
