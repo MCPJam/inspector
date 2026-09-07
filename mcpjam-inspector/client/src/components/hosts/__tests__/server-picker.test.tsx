@@ -435,7 +435,11 @@ describe("ServerPicker — Connect while a handshake is in flight", () => {
 describe("ServerPicker — a handshake left behind by a project switch", () => {
   it("does not withhold Connect from a same-named server in the next project", async () => {
     mockState.runtime = { alpha: { connectionStatus: "disconnected" } };
-    mockState.ensureReady = vi.fn(() => new Promise(() => {}));
+    let settleFirst: ((v: unknown) => void) | undefined;
+    mockState.ensureReady = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise((r) => (settleFirst = r)))
+      .mockImplementation(() => new Promise(() => {}));
     const onChange = vi.fn();
     const { rerender } = render(
       <ServerPicker projectId="p_1" value={null} onChange={onChange} />,
@@ -454,9 +458,30 @@ describe("ServerPicker — a handshake left behind by a project switch", () => {
     // The popover stays open across the rerender — clicking the trigger again
     // would just close it.
     rerender(<ServerPicker projectId="p_2" value={null} onChange={onChange} />);
-    expect(
-      await screen.findByRole("button", { name: "Connect alpha" }),
-    ).toBeInTheDocument();
+    const reoffered = await screen.findByRole("button", {
+      name: "Connect alpha",
+    });
+
+    // Start the NEW project's handshake, then let the OLD one settle. Its
+    // cleanup must not drop this project's entry and re-offer Connect while
+    // this handshake is still pending.
+    fireEvent.click(reoffered);
+    await waitFor(() => expect(mockState.ensureReady).toHaveBeenCalledTimes(2));
+    // Settled INSIDE act so its whole chain — result, toast, cleanup — has run
+    // before the assertions. A `waitFor` here passes on the first tick, before
+    // the stale completion lands, and proves nothing.
+    await act(async () => {
+      settleFirst?.({
+        readyServerNames: [],
+        missingServerNames: [],
+        failedServerNames: ["alpha"],
+        reauthServerNames: [],
+      });
+    });
+
+    expect(screen.queryByRole("button", { name: "Connect alpha" })).toBeNull();
+    // And its toast belongs to a screen the user left.
+    expect(toast.error).not.toHaveBeenCalled();
   });
 });
 

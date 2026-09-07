@@ -267,6 +267,12 @@ export function ServerPicker({
   const handleConnect = useCallback(
     async (serverName: string) => {
       if (!actions) return;
+      // Fenced like every other awaited path. Clearing `connecting` on the
+      // switch re-exposes the row, but this handshake still settles — and its
+      // cleanup would then drop the NEW project's entry for a same-named
+      // server, re-offering Connect while that one is still pending. Its
+      // toasts belong to a screen the user has left, too.
+      const isCurrent = sinceNow();
       setConnecting((names) =>
         names.includes(serverName) ? names : [...names, serverName],
       );
@@ -278,6 +284,7 @@ export function ServerPicker({
       };
       try {
         const result = await actions.ensureServersReady([serverName]);
+        if (!isCurrent()) return;
         if (result.readyServerNames.includes(serverName)) return;
         if (result.reauthServerNames.includes(serverName)) {
           toast.error(`${serverName} needs authorizing before it can connect.`, goToServers);
@@ -285,13 +292,16 @@ export function ServerPicker({
         }
         toast.error(`${serverName} didn't connect.`, goToServers);
       } catch (err) {
+        if (!isCurrent()) return;
         const raw = err instanceof Error ? err.message : "";
         toast.error(
           raw ? `${serverName} didn't connect: ${raw}` : `${serverName} didn't connect.`,
           goToServers,
         );
       } finally {
-        setConnecting((names) => names.filter((name) => name !== serverName));
+        if (isCurrent()) {
+          setConnecting((names) => names.filter((name) => name !== serverName));
+        }
       }
     },
     [actions],
