@@ -677,6 +677,12 @@ export interface PrepareChatV2Options {
    * is captured at connect time and goes stale the moment the user saves.
    */
   toolCallCancellation?: { legacy?: boolean; modern?: boolean };
+  /**
+   * Per-tool description rewrites for a description-experiment REWRITE arm.
+   * Forwarded to `mcpToolOptionsFor` so `getToolsForAiSdk` applies them
+   * before the model sees the catalog.
+   */
+  toolDescriptionOverrides?: Readonly<Record<string, string>>;
   modelDefinition: ModelDefinition;
   systemPrompt?: string;
   temperature?: number;
@@ -1159,6 +1165,7 @@ export async function prepareChatV2(
     tasks,
     serverLabels,
     toolCallCancellation,
+    toolDescriptionOverrides,
   } = options;
 
   // Drop ids the manager hasn't registered (server disabled/disconnected, or
@@ -1176,6 +1183,7 @@ export async function prepareChatV2(
     modelVisibleMcpToolResults,
     tasks,
     toolCallCancellation,
+    toolDescriptionOverrides,
   });
 
   // 1. Get MCP + skill tools

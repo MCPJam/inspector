@@ -268,6 +268,7 @@ export function RunCaseRows({
   rows,
   defaultOpenKey,
   pills,
+  routeLines,
   onOpenIteration,
   renderBody,
 }: {
@@ -275,6 +276,8 @@ export function RunCaseRows({
   defaultOpenKey: string | null;
   /** Per-row change pills. A row with no entry gets none, never "Unchanged". */
   pills?: ReadonlyMap<string, RunChangePill>;
+  /** Per-row route one-liners, keyed by `row.key`. Same pattern as `pills`. */
+  routeLines?: ReadonlyMap<string, string>;
   onOpenIteration?: (target: {
     testCaseId: string;
     iterationId: string;
@@ -346,6 +349,14 @@ export function RunCaseRows({
                 <span className="mt-0.5 block text-[12.5px] text-muted-foreground">
                   {breakText(row)}
                 </span>
+                {routeLines?.get(row.key) ? (
+                  <span
+                    className="mt-0.5 block text-[12px] text-muted-foreground"
+                    data-testid={`route-line-${row.key}`}
+                  >
+                    {routeLines.get(row.key)}
+                  </span>
+                ) : null}
                 {note ? (
                   <span className="mt-0.5 block text-[11.5px] text-muted-foreground">
                     {note}

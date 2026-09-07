@@ -397,6 +397,7 @@ export const startSuiteRunWithRecorder = async ({
   idempotencyKey,
   sourceHash,
   skillsOverride,
+  toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
 }: EvalRunProvenance & {
@@ -508,6 +509,14 @@ export const startSuiteRunWithRecorder = async ({
    */
   skillsOverride?: "exclude";
   /**
+   * The REWRITE arm of a description-experiment. `{ experimentId }` only —
+   * the backend loads the experiment and copies its proposal onto
+   * `configSnapshot.toolDescriptionOverride`. Must be declared here or a
+   * reconstruction of the mutation args would silently drop it and launch
+   * an ORIGINAL arm.
+   */
+  toolDescriptionOverride?: { experimentId: string };
+  /**
    * Compose-and-run: accept a project-scoped, non-archived environment that
    * is not a suite member. Forwarded to `startTestSuiteRun`.
    */
@@ -564,6 +573,9 @@ export const startSuiteRunWithRecorder = async ({
         ...(idempotencyKey ? { idempotencyKey } : {}),
         ...(sourceHash ? { sourceHash } : {}),
         ...(skillsOverride ? { skillsOverride } : {}),
+        ...(toolDescriptionOverride
+          ? { toolDescriptionOverride }
+          : {}),
         ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
         ...(importApprovals && importApprovals.length
           ? { importApprovals }
@@ -857,6 +869,21 @@ export const startSuiteRunWithRecorder = async ({
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
       | { mode?: unknown }
+      | undefined,
+    /**
+     * The run's FROZEN description-experiment marker, straight off its own
+     * snapshot. The runner applies `{ [toolName]: description }` and stamps
+     * `metadata.descriptionExperiment` from this — never from the launch
+     * body's experimentId alone, which does not carry the proposal text.
+     */
+    toolDescriptionOverride: (response?.configSnapshot as any)
+      ?.toolDescriptionOverride as
+      | {
+          experimentId?: string;
+          toolName?: string;
+          description?: string;
+          proposalHash?: string;
+        }
       | undefined,
   };
 };

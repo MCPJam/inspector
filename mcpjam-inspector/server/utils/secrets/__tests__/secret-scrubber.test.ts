@@ -11,6 +11,9 @@
 import { describe, expect, it } from "vitest";
 import {
   createSecretScrubber,
+  escapeDepthOf,
+  escapedFormTailsOf,
+  literalAnchorOf,
   MIN_SCRUBBABLE_LENGTH,
 } from "../secret-scrubber";
 
@@ -244,6 +247,159 @@ describe("scrubDeep", () => {
     const inner = JSON.parse(JSON.parse(scrubbed).output);
     expect(inner.apiKey).toBe("[secret:ODD_KEY]");
     expect(scrubbed).not.toContain("abcdefgh");
+  });
+
+  it("reads escape depth off the payload's escaping, not off its size", () => {
+    // The bound that keeps scrub work proportional to the escaping a payload
+    // actually carries. Asserted directly because it is otherwise visible only
+    // as a timing difference — and it has already been undone once by an edit
+    // that every correctness test still passed.
+    const megabyteOfProse = "lorem ipsum dolor sit amet. ".repeat(40_000);
+    expect(megabyteOfProse.length).toBeGreaterThan(1_000_000);
+    expect(escapeDepthOf(megabyteOfProse)).toBe(1);
+
+    // Depth d costs a run of 2^d - 1 backslashes for a quote-bearing value
+    // (1, 3, 7, 15 …) and 2^(d-1) for a newline-bearing one (1, 2, 4, 8 …).
+    // The bound has to assume the CHEAPER of the two, or it would under-count
+    // the depth a newline-bearing value can reach — so it must rise with the
+    // run and stay at or above the depth that run proves, which for the
+    // quote-bearing value below leaves slack rather than cutting close.
+    expect(escapeDepthOf("no backslashes here")).toBe(1);
+    expect(escapeDepthOf("a\\b")).toBe(2);
+    let carrier: string = 'abcdefgh"i';
+    for (let depth = 1; depth <= 8; depth++) {
+      carrier = JSON.stringify({ v: carrier });
+      expect(escapeDepthOf(carrier)).toBeGreaterThanOrEqual(depth);
+    }
+  });
+
+  it("scrubs a credential whose escaped form outgrows any fixed byte cutoff", () => {
+    // The second cliff, in the guard added to close the first one. Forms double
+    // in length, so a fixed byte cutoff is a depth cutoff wearing a disguise: a
+    // 64 KiB cap stopped at depth 16, and a body nested 17 deep — 640 KiB, well
+    // under what the ingest path will persist — contained only the depth-17
+    // form. None of the fifteen generated needles matched it, and the
+    // credential came back out by decoding the layers.
+    //
+    // The bound has to be the haystack, which cannot be outgrown by definition.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+
+    let carrier: string = quoted.value;
+    for (let i = 0; i < 17; i++) carrier = JSON.stringify({ v: carrier });
+    // Precondition: big enough that a byte cutoff bites, and really 17 deep.
+    expect(carrier.length).toBeGreaterThan(600_000);
+
+    const scrubbed = scrubber.scrubSerializedJson(carrier);
+    expect(scrubbed).not.toContain("abcdefgh");
+
+    let decoded: unknown = JSON.parse(scrubbed);
+    for (let i = 1; i < 17; i++) {
+      decoded = JSON.parse((decoded as { v: string }).v);
+    }
+    expect((decoded as { v: string }).v).toBe("[secret:ODD_KEY]");
+  });
+
+  it("generates nothing for a payload that cannot contain the secret", () => {
+    // The depth bound alone is not enough. One pathological run of backslashes
+    // reports a deep escaping, and every registered secret would then be dragged
+    // out to twenty-odd exponentially growing forms — for a payload that plainly
+    // contains none of them. Measured at 1 MiB of solid backslashes, that was
+    // ~100 MiB of needles across 50 secrets, none of which could ever match.
+    //
+    // The precondition is exact rather than a heuristic: escaping never rewrites
+    // a value's ordinary characters, so its longest such run appears verbatim in
+    // every form at every depth.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    expect(literalAnchorOf(quoted.value)).toBe("abcdefgh");
+
+    const scrubber = createSecretScrubber([quoted])!;
+    const solidBackslashes = "\\".repeat(200_000);
+    // Precondition: this really does report a deep escaping.
+    expect(escapeDepthOf(solidBackslashes)).toBeGreaterThan(15);
+
+    // The gate is the point: without it this input's reported depth would build
+    // twenty exponentially growing forms for a secret it cannot contain.
+    expect(scrubber.needleCountFor(solidBackslashes)).toBe(0);
+    expect(scrubber.scrubString(solidBackslashes)).toBe(solidBackslashes);
+    // And the anchor being present still finds the value, so the gate is a
+    // precondition and not a second cliff.
+    const withSecret = `${solidBackslashes}${quoted.value}`;
+    expect(scrubber.needleCountFor(withSecret)).toBeGreaterThan(0);
+    expect(scrubber.scrubString(withSecret)).toContain("[secret:ODD_KEY]");
+  });
+
+  it("still bounds a value made only of escapable characters", () => {
+    // It has no literal anchor, so the anchor test is vacuous for it — which
+    // would leave exactly this value building its forms against a pathological
+    // payload. The tail characters cover that case: every escaped form ends
+    // each character in a literal that re-escaping never removes.
+    const oddball = { name: "WEIRD", value: '"""\\\\""""' };
+    expect(literalAnchorOf(oddball.value)).toBe("");
+    expect([...escapedFormTailsOf(oddball.value)].sort()).toEqual(['"', "\\"]);
+
+    const scrubber = createSecretScrubber([oddball])!;
+    // A payload of solid backslashes holds no `"`, so no ESCAPED form can occur
+    // in it. One needle survives — the raw value, which has no anchor to be
+    // gated on and costs nothing to register. What the tails prevent is the
+    // twenty exponentially growing forms this payload's depth would otherwise
+    // ask for.
+    const solidBackslashes = "\\".repeat(200_000);
+    expect(scrubber.needleCountFor(solidBackslashes)).toBe(1);
+    expect(scrubber.scrubString(solidBackslashes)).toBe(solidBackslashes);
+
+    // And it is still found where it genuinely appears.
+    expect(scrubber.scrubString(`x${oddball.value}y`)).toBe("x[secret:WEIRD]y");
+  });
+
+  it("does not gate the RAW form on tail characters", () => {
+    // A newline-bearing value's raw form contains newlines, not the letter `n`
+    // its escaped form ends with. Gating the raw needle on tails would stop it
+    // being found in ordinary unescaped output.
+    const pem = { name: "PEM_KEY", value: "-----BEGIN-----\nabcdefgh\n" };
+    expect(escapedFormTailsOf(pem.value).has("n")).toBe(true);
+    const scrubber = createSecretScrubber([pem])!;
+    // No literal `n` anywhere except inside the value itself.
+    const payload = `>>>${pem.value}<<<`;
+    expect(scrubber.scrubString(payload)).toBe(">>>[secret:PEM_KEY]<<<");
+  });
+
+  it("leaves a large UNESCAPED payload untouched, and cheaply", () => {
+    // The depth bound is read off the input's own longest backslash run, not
+    // off its size. Prose carrying no escaping at all resolves to depth 1 no
+    // matter how large it is, so a megabyte of tool output does not drag every
+    // registered secret out to twenty-odd escaped forms.
+    //
+    // This asserts the CORRECTNESS half of that (the payload survives intact);
+    // the cost half is not something a unit test can pin without becoming a
+    // timing flake, so it lives in the comment on the bound itself.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+    const prose = "lorem ipsum dolor sit amet. ".repeat(40_000);
+
+    // Unescaped prose is depth 1 however large, so one needle per secret.
+    expect(scrubber.needleCountFor(prose)).toBe(0); // anchor absent
+    expect(scrubber.needleCountFor(`${prose}${quoted.value}`)).toBe(2);
+    expect(scrubber.scrubString(prose)).toBe(prose);
+    // Still finds a genuine occurrence in a payload of that size.
+    expect(scrubber.scrubString(`${prose}${quoted.value}`)).toBe(
+      `${prose}[secret:ODD_KEY]`,
+    );
+  });
+
+  it("terminates on a payload that is mostly backslashes", () => {
+    // The pathological input for a run-derived bound: a long backslash run
+    // implies a deep escaping that nothing here is actually carrying. The
+    // ceiling and the form-length guard have to stop it rather than building
+    // forms that double all the way up.
+    const quoted = { name: "ODD_KEY", value: 'abcdefgh"i' };
+    const scrubber = createSecretScrubber([quoted])!;
+    const slashes = "\\".repeat(100_000);
+
+    expect(scrubber.scrubString(slashes)).toBe(slashes);
+    expect(scrubber.scrubString(`${slashes}${quoted.value}`)).toContain(
+      "[secret:ODD_KEY]",
+    );
   });
 
   it("scrubs a credential nested past any fixed escape depth", () => {

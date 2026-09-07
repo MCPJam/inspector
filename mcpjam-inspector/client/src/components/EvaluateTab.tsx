@@ -276,6 +276,9 @@ function EvaluateTabContent({
     connectedServerNames,
     ensureServersReady,
     latestRunBySuiteId,
+    // Shared handlers default to `/evals`. Without this, Add case / Record /
+    // post-run landing would dump the reader onto the old tab.
+    evalsNavigationContext: "evaluate",
     projectServers,
     isDirectGuest,
     availableModels,
@@ -1169,6 +1172,9 @@ function EvaluateTabContent({
           onCreateTestCase={async () =>
             handlers.handleCreateTestCase(selectedSuite._id)
           }
+          onRecordTestCase={() =>
+            handlers.handleRecordTestCase(selectedSuite._id)
+          }
           onGenerateTestCases={() => void handleGenerateMore()}
           canGenerateTestCases={generateState.canGenerate}
           generateTestCasesDisabledReason={generateState.disabledReason}
@@ -1195,6 +1201,7 @@ function EvaluateTabContent({
           hideRunActions
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
+          evaluateCaseEditor
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {

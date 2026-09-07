@@ -88,6 +88,14 @@ export interface SupervisedSpawnRequest {
    *  root is written to the durable registry; short-lived helpers are tracked
    *  in memory, because a record we cannot outlive is noise. */
   role: "root" | "helper";
+  /**
+   * Windows only: the digest-verified Job Object launcher from the resolved
+   * runtime (`ResolvedRuntime.jobLauncherPath`). Spawned in FRONT of
+   * `executable`, so the process and everything it starts land in a job that
+   * dies with the launcher. Ignored on every other platform; required for a
+   * win32 root.
+   */
+  jobLauncherPath?: string;
 }
 
 export interface SupervisedProcessHandle {
@@ -96,6 +104,19 @@ export interface SupervisedProcessHandle {
   stderr: ReadableStream<Uint8Array>;
   wait: () => Promise<{ exitCode: number }>;
   kill: () => Promise<void>;
+  /**
+   * The first bytes the process wrote to stderr, kept by the supervisor
+   * regardless of who is reading the stream. `stderr` above is handed to the
+   * adapter, which takes the reader lock; a provider diagnosing a bridge that
+   * died cannot read it again, and this is what it reads instead.
+   */
+  stderrHead: () => string;
+  /** Likewise for stdout, where some bridges put their startup complaints. */
+  stdoutHead: () => string;
+  /** The recorded exit, or null while the process is still running. Read it
+   *  BEFORE stopping the process: a stop on Windows is `TerminateProcess`,
+   *  which reports exit code 1 and would be mistaken for the process's own. */
+  exited: () => { exitCode: number } | null;
 }
 
 export class SupervisorError extends Error {}
@@ -294,6 +315,29 @@ export class LocalHarnessSupervisor {
     }
     assertArgvAllowed(request.args);
 
+    // Windows: the verified Job Object launcher goes in front of the process.
+    // `supportsOwnershipProof('win32')` only answers true once runtime
+    // resolution has verified one, so a root reaching here without a path is
+    // a wiring fault rather than a policy outcome — refused all the same,
+    // because the alternative is a tree that "stop" cannot reach.
+    const jobLauncher =
+      this.platform === "win32" ? request.jobLauncherPath : undefined;
+    if (this.platform === "win32" && jobLauncher === undefined) {
+      if (request.role === "root") {
+        throw new SupervisorError(
+          "refusing to start a root process on win32 without the verified " +
+            "Job Object launcher: without it, stopping the session could not " +
+            "be guaranteed to stop everything it started",
+        );
+      }
+    }
+    if (jobLauncher !== undefined && !isAbsolute(jobLauncher)) {
+      throw new SupervisorError(
+        "the Job Object launcher must be an absolute path inside the " +
+          "verified runtime pack",
+      );
+    }
+
     // Read SYNCHRONOUSLY, before anything can yield: this is the value a stop
     // landing mid-launch will change.
     const stopGenerationAtEntry =
@@ -391,10 +435,23 @@ export class LocalHarnessSupervisor {
       );
     }
 
-    const child = spawn(request.executable, [...request.args], {
+    // On Windows the launcher is the process we hold and record: its pid is
+    // the root, its birth identity is the one verified before a kill, and its
+    // exit — by any route — is what takes the job down.
+    const [spawnExecutable, spawnArgs] =
+      jobLauncher !== undefined
+        ? [jobLauncher, [request.executable, ...request.args]]
+        : [request.executable, [...request.args]];
+    // The launcher's stdin is a LIFELINE, not an input: it exits — closing
+    // its job, which kills the tree — the moment stdin reaches EOF. That is
+    // the property that makes an Inspector crash leave no orphans on Windows.
+    // So it gets a pipe this process holds open and never writes to; `ignore`
+    // would hand it the NUL device, which is EOF at once, and the tree would
+    // die before it could be identified (exit 143, nothing on stderr).
+    const child = spawn(spawnExecutable, spawnArgs, {
       cwd: request.workingDirectory,
       env: request.env,
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: [jobLauncher !== undefined ? "pipe" : "ignore", "pipe", "pipe"],
       // POSIX: become a process-group leader so the whole tree can be signalled.
       detached: this.platform !== "win32",
       // Belt and braces — the default is already false, but this is the single
@@ -413,12 +470,33 @@ export class LocalHarnessSupervisor {
     // slot that the promise, built later, reads or subscribes to.
     const out = bufferedStream(this.limits.maxOutputBytesPerStream);
     const err = bufferedStream(this.limits.maxOutputBytesPerStream);
-    child.stdout?.on("data", (chunk: Buffer) =>
-      out.push(new Uint8Array(chunk)),
-    );
-    child.stderr?.on("data", (chunk: Buffer) =>
-      err.push(new Uint8Array(chunk)),
-    );
+    let stdoutHead = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      if (stdoutHead.length < 1024) {
+        stdoutHead += chunk.toString(
+          "utf8",
+          0,
+          Math.min(chunk.length, 1024 - stdoutHead.length),
+        );
+      }
+      out.push(new Uint8Array(chunk));
+    });
+    // The first bytes of stderr, kept aside for the one error below that most
+    // needs them: a root that cannot be identified is usually a root that
+    // died at once, and its own last words are the diagnosis. Without this,
+    // every early bridge crash on a platform whose identity probe takes a few
+    // seconds reads as "could not read the birth identity".
+    let stderrHead = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      if (stderrHead.length < 2048) {
+        stderrHead += chunk.toString(
+          "utf8",
+          0,
+          Math.min(chunk.length, 2048 - stderrHead.length),
+        );
+      }
+      err.push(new Uint8Array(chunk));
+    });
 
     let exitResult: { exitCode: number } | null = null;
     let notifyExit: ((result: { exitCode: number }) => void) | null = null;
@@ -516,15 +594,34 @@ export class LocalHarnessSupervisor {
     // Read the birth identity immediately: this is the value that later proves
     // a pid still belongs to us. Reading it after any further await would race
     // a fast exit and a pid reuse.
-    const birthIdentity = await readProcessBirthIdentity(pid, this.platform);
+    const probe = await probeProcess(pid, this.platform);
+    const birthIdentity = probe.state === "alive" ? probe.identity : null;
     entry.birthIdentity = birthIdentity;
     if (request.role === "root" && birthIdentity === null) {
       // Started, but unidentifiable — we could not guarantee cleanup, so we
-      // refuse rather than run a tree we cannot prove we own.
+      // refuse rather than run a tree we cannot prove we own. Say WHY: "gone"
+      // and "could not look" are different failures with different fixes,
+      // and a root that exited before it could be identified has usually
+      // said something on stderr.
       await abandon();
+      const recordedExit = (): { exitCode: number } | null => exitResult;
+      const exit = recordedExit();
+      const why =
+        probe.state === "gone"
+          ? "the process had already exited"
+          : probe.state === "unknown"
+            ? `the probe could not look (${probe.reason})`
+            : "the process could not be identified";
+      const exited =
+        exit !== null ? `exit code ${exit.exitCode}` : "no exit recorded yet";
+      const said =
+        stderrHead.trim().length > 0
+          ? `; stderr: ${JSON.stringify(stderrHead.trim().slice(0, 1024))}`
+          : "";
       throw new SupervisorError(
-        "could not read the process birth identity for the harness root; " +
-          "refusing to run a tree this Inspector cannot prove it owns",
+        `could not read the process birth identity for the harness root — ` +
+          `${why} (${exited})${said}; refusing to run a tree this Inspector ` +
+          `cannot prove it owns`,
       );
     }
 
@@ -664,6 +761,9 @@ export class LocalHarnessSupervisor {
         await killTree();
         await exited;
       },
+      stderrHead: () => stderrHead,
+      stdoutHead: () => stdoutHead,
+      exited: () => exitResult,
     };
   }
 

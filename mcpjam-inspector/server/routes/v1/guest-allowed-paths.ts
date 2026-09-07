@@ -116,6 +116,25 @@ const GUEST_ALLOWED_V1_RULES: readonly GuestRule[] = [
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/stage-analytics$/,
     methods: ["GET"],
   },
+  // Route facts for one run, which the Evaluate run page reads for its
+  // per-case routes. Same argument as stage analytics: it is counts over the
+  // iterations a guest can already GET, with no prompt, response or tool
+  // argument in it. GET-only, for the reason stated above.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/route-facts$/,
+    methods: ["GET"],
+  },
+  // One description-experiment document. Same argument as route-facts: the
+  // Evaluate run page reads it, and a guest can already GET the source run.
+  // GET-only — propose and start spend.
+  {
+    pattern: /^\/projects\/[^/]+\/eval-description-experiments\/[^/]+$/,
+    methods: ["GET"],
+  },
+  {
+    pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/description-experiments$/,
+    methods: ["GET"],
+  },
   {
     pattern: /^\/projects\/[^/]+\/eval-runs\/[^/]+\/iterations\/[^/]+\/trace$/,
   },

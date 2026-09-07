@@ -3,6 +3,7 @@ import {
   isSignOutInProgress,
   markSignOutInProgress,
   resetSignOutLatchForTests,
+  SIGN_OUT_REQUEST_TIMEOUT_MS,
   SIGN_OUT_SUPPRESSION_WINDOW_MS,
 } from "../sign-out-latch";
 
@@ -48,6 +49,17 @@ describe("sign-out latch", () => {
     markSignOutInProgress(start);
 
     expect(isSignOutInProgress(start - 60_000)).toBe(false);
+  });
+
+  it("gives the logout request less time than it suppresses failures for", () => {
+    // The Electron sign-out waits on its logout request and then navigates
+    // itself. If that wait could outlast the window, the latch would lapse
+    // while the logout was still in flight and the refresh timer would
+    // redirect to the hosted login page — the hijack this module exists to
+    // stop. The two constants are only correct relative to each other.
+    expect(SIGN_OUT_REQUEST_TIMEOUT_MS).toBeLessThan(
+      SIGN_OUT_SUPPRESSION_WINDOW_MS,
+    );
   });
 
   it("re-arms on a second sign-out attempt", () => {

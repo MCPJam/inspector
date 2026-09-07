@@ -3044,6 +3044,16 @@ describe("file-owned case bodies and idempotency", () => {
     assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).intent, null);
   });
 
+  test("case bodies preserve an authored kind and clear a removed one", () => {
+    const loaded = loadEvalSuiteFile(VALID_SUITE_FILE);
+    assert.equal(loaded.ok, true);
+    if (!loaded.ok) return;
+    const labelled = { ...loaded.resolved.cases[0], kind: "regression" as const };
+    assert.equal(fileCaseToCreateBody(labelled).kind, "regression");
+    assert.equal(fileCaseToUpdateBody(labelled).kind, "regression");
+    assert.equal(fileCaseToUpdateBody(loaded.resolved.cases[0]).kind, null);
+  });
+
   test("derived idempotency keys differ when run knobs differ", () => {
     const shared = {
       sourceHash: "a".repeat(64),

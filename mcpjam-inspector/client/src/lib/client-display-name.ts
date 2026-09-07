@@ -8,9 +8,20 @@ function nameKey(name: string): string {
   return name.trim().toLowerCase();
 }
 
-function stableClientOrder(
-  left: ClientDisplayNameSource,
-  right: ClientDisplayNameSource,
+/**
+ * The order display names are allocated in: oldest first, ties broken by id.
+ * The first client of a name group keeps it unsuffixed and later ones take
+ * `#2`, `#3`, …
+ *
+ * Exported because anything that has to AGREE with the resulting labels has to
+ * agree on this order. Compare rewrites a selected preset onto the live host
+ * that shadows it, and picking that host by array order — the order the list
+ * query happens to return — would sometimes land on the client labeled
+ * "Claude #2" while "Claude" sat next to it.
+ */
+export function stableClientOrder(
+  left: Pick<ClientDisplayNameSource, "hostId" | "createdAt">,
+  right: Pick<ClientDisplayNameSource, "hostId" | "createdAt">,
 ): number {
   return (
     left.createdAt - right.createdAt || left.hostId.localeCompare(right.hostId)

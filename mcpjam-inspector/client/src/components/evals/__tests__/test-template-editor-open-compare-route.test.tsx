@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { PreferencesStoreProvider } from "@/stores/preferences/preferences-provider";
 import { TestTemplateEditor } from "../test-template-editor";
 import type { EvalIteration } from "../types";
+import { STAGE_ANALYZER_VERSION } from "@mcpjam/sdk/contract";
 
 function renderWithProviders(
   ui: ReactElement,
@@ -35,6 +36,7 @@ const updateTestCaseMutationMock = vi.hoisted(() => vi.fn());
 const streamEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const runEvalTestCaseMock = vi.hoisted(() => vi.fn());
 const mockTraceViewer = vi.hoisted(() => vi.fn());
+const flagMock = vi.hoisted(() => vi.fn(() => false));
 const getGuestBearerTokenMock = vi.hoisted(() =>
   vi.fn().mockResolvedValue("guest-token"),
 );
@@ -157,6 +159,10 @@ vi.mock("posthog-js", () => ({
   default: { capture: vi.fn() },
 }));
 
+vi.mock("posthog-js/react", () => ({
+  useFeatureFlagEnabled: flagMock,
+}));
+
 vi.mock("@/lib/PosthogUtils", () => ({
   detectEnvironment: () => "test",
   detectPlatform: () => "web",
@@ -178,6 +184,7 @@ vi.mock("convex/react", () => ({
   useQuery: (name: unknown, args: unknown) => useQueryMock(name, args),
   useAction: () => vi.fn(),
   useConvexAuth: () => useConvexAuthMock,
+  useConvex: () => ({ query: vi.fn() }),
 }));
 
 describe("TestTemplateEditor run view from route", () => {
@@ -299,6 +306,7 @@ describe("TestTemplateEditor run view from route", () => {
   beforeEach(() => {
     activeCaseDoc = caseDoc;
     vi.clearAllMocks();
+    flagMock.mockReturnValue(false);
     mockTraceViewer.mockReset();
     useMutationMock.mockImplementation((name: string) => {
       if (name === "testSuites:updateTestCase") {
@@ -832,6 +840,372 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByText("Prompt steps")).not.toBeInTheDocument();
   });
 
+  it("renders the simple form for a single-turn case on the Evaluate surface", async () => {
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        onExportDraft={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(screen.getByText("What does the user ask?")).toBeInTheDocument();
+    expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the flat step-list editor for a multi-turn case on the Evaluate surface", async () => {
+    activeCaseDoc = {
+      ...caseDoc,
+      steps: [
+        { id: "p1", kind: "prompt", prompt: "first" },
+        { id: "p2", kind: "prompt", prompt: "second" },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        onExportDraft={vi.fn()}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getAllByText("User prompt").length).toBeGreaterThan(0);
+    });
+    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
+    expect(screen.getByText("Steps")).toBeInTheDocument();
+  });
+
+  it("saves a no-tool simple case as a negative test", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
+        {
+          id: "a1",
+          kind: "assert",
+          assertion: {
+            type: "toolCalledWith",
+            toolName: "list_incidents",
+            args: { args: {} },
+          },
+        },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(
+      screen.getByRole("button", { name: "No tool should be called" }),
+    );
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(updateTestCaseMutationMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        isNegativeTest: true,
+        expectedToolCalls: [],
+      }),
+    );
+  });
+
+  it("blocks Run while the simple-form tools choice is unset", async () => {
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      query: "Find the latest incidents",
+      steps: [
+        { id: "turn-1", kind: "prompt", prompt: "Find the latest incidents" },
+      ],
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-tools-unset")).toBeInTheDocument();
+    });
+    expect(
+      screen.getAllByRole("button", { name: /run$/i })[0],
+    ).toBeDisabled();
+  });
+
+  it("mounts the step list from the simple form Steps link", async () => {
+    const user = userEvent.setup();
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[baseIteration]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Steps" }));
+    await waitFor(() => {
+      expect(screen.getByText("User prompt")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
+  });
+
+  it("shows the quick-run chain in the latest-traced pane", async () => {
+    const quickRun: EvalIteration = {
+      ...baseIteration,
+      _id: "quick-1",
+      suiteRunId: undefined,
+      blob: "trace",
+      metadata: {
+        stageResults: [
+          { stage: "connection", state: "passed" },
+          { stage: "discovery", state: "passed" },
+          { stage: "selection", state: "passed" },
+          { stage: "call", state: "failed", reason: "argumentMismatch" },
+          { stage: "response", state: "notReached", reason: "earlierStageFailed" },
+          { stage: "userValue", state: "notReached", reason: "earlierStageFailed" },
+        ],
+        firstFailedStage: "call",
+        failureCategory: "arguments",
+        stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+      },
+    };
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[quickRun]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        trialChainEnabled
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("iteration-trial-chain")).toBeInTheDocument();
+  });
+
+  it("shows the quick-run chain in RunColumn after a just-finished run", async () => {
+    const user = userEvent.setup();
+    streamEvalTestCaseMock.mockImplementation(
+      async (
+        _request: unknown,
+        onEvent: (event: {
+          type: "complete";
+          iterationId: string;
+          iteration: EvalIteration;
+        }) => void,
+      ) => {
+        onEvent({
+          type: "complete",
+          iterationId: "quick-run-1",
+          iteration: {
+            ...baseIteration,
+            _id: "quick-run-1",
+            suiteRunId: undefined,
+            blob: "trace",
+            metadata: {
+              stageResults: [
+                { stage: "connection", state: "passed" },
+                { stage: "discovery", state: "passed" },
+                { stage: "selection", state: "passed" },
+                { stage: "call", state: "failed", reason: "argumentMismatch" },
+                {
+                  stage: "response",
+                  state: "notReached",
+                  reason: "earlierStageFailed",
+                },
+                {
+                  stage: "userValue",
+                  state: "notReached",
+                  reason: "earlierStageFailed",
+                },
+              ],
+              firstFailedStage: "call",
+              failureCategory: "arguments",
+              stageAnalyzerVersion: STAGE_ANALYZER_VERSION,
+            },
+          },
+        });
+      },
+    );
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        trialChainEnabled
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getAllByRole("button", { name: /run$/i })[0],
+      ).toBeInTheDocument();
+    });
+    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+    await waitFor(() => {
+      expect(screen.getByTestId("trial-chain-panel")).toBeInTheDocument();
+    });
+  });
+
+  it("shows the observational route rollup for a multi-trial quick run", async () => {
+    const metadata = { compareRunId: "cmp_rollup" };
+    const trials: EvalIteration[] = [
+      {
+        ...baseIteration,
+        _id: "t1",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 10,
+        actualToolCalls: [
+          { toolName: "search", arguments: {} },
+          { toolName: "get", arguments: {} },
+        ],
+        metadata,
+      },
+      {
+        ...baseIteration,
+        _id: "t2",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 11,
+        actualToolCalls: [
+          { toolName: "search", arguments: {} },
+          { toolName: "get", arguments: {} },
+        ],
+        metadata,
+      },
+      {
+        ...baseIteration,
+        _id: "t3",
+        suiteRunId: undefined,
+        blob: "trace",
+        createdAt: 12,
+        actualToolCalls: [{ toolName: "list", arguments: {} }],
+        metadata,
+      },
+    ];
+    activeCaseDoc = { ...caseDoc, lastMessageRun: "t3" };
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={trials}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        trialChainEnabled
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("route-rollup-card")).toBeInTheDocument();
+    });
+    const card = screen.getByTestId("route-rollup-card");
+    expect(card).toHaveTextContent("Across 3 trials");
+    expect(card).toHaveTextContent("same route in 2 of 3");
+    expect(card).toHaveTextContent("Observational");
+    expect(card).not.toHaveTextContent(/pass|fail|verdict/i);
+  });
+
   it("runs compare across case-configured models and reuses the compare session id for per-model retry", async () => {
     const user = userEvent.setup();
 
@@ -917,6 +1291,8 @@ describe("TestTemplateEditor run view from route", () => {
       promptTurns: undefined,
       expectedToolCalls: [],
       lastMessageRun: undefined,
+      expectedOutput: "Names the latest incident and its status",
+      kind: "capability" as const,
     };
 
     useQueryMock.mockImplementation((name: string) => {
@@ -972,6 +1348,8 @@ describe("TestTemplateEditor run view from route", () => {
         runs: 1,
         expectedToolCalls: [],
         isNegativeTest: true,
+        expectedOutput: "Names the latest incident and its status",
+        kind: "capability",
         steps: [
           expect.objectContaining({
             id: "turn-1",

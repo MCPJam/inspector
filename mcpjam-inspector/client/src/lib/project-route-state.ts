@@ -26,7 +26,11 @@ export type ProjectRouteState =
   | { status: "unscoped" }
   | { status: "resolving"; requestedProjectId: string }
   | { status: "ready"; projectId: string }
-  | { status: "inaccessible"; requestedProjectId: string };
+  | {
+      status: "inaccessible";
+      requestedProjectId: string;
+      reason: "malformed" | "timed-out" | "not-a-member";
+    };
 
 /**
  * What the caller must DO to move resolution forward. Separate from the
@@ -54,8 +58,7 @@ export interface ProjectRouteResolutionInput {
   activeOrgProjectIds: ReadonlySet<string>;
   /** ALL projects the viewer belongs to; undefined while still loading. */
   allProjects:
-    | ReadonlyArray<{ _id: string; organizationId?: string }>
-    | undefined;
+    ReadonlyArray<{ _id: string; organizationId?: string }> | undefined;
   activeOrganizationId: string | undefined;
   /**
    * The resolving state is bounded: something upstream can stall (a query
@@ -67,7 +70,7 @@ export interface ProjectRouteResolutionInput {
 }
 
 export function resolveProjectRouteState(
-  input: ProjectRouteResolutionInput
+  input: ProjectRouteResolutionInput,
 ): ProjectRouteResolution {
   const {
     requestedProjectId,
@@ -89,14 +92,16 @@ export function resolveProjectRouteState(
     state: { status: "resolving", requestedProjectId },
     effect: { kind: "none" },
   };
-  const inaccessible: ProjectRouteResolution = {
-    state: { status: "inaccessible", requestedProjectId },
+  const inaccessible = (
+    reason: Extract<ProjectRouteState, { status: "inaccessible" }>["reason"],
+  ): ProjectRouteResolution => ({
+    state: { status: "inaccessible", requestedProjectId, reason },
     effect: { kind: "none" },
-  };
+  });
 
   // A malformed id can never become accessible, so it does not wait for auth:
   // `/p/none/servers` and `/p/<typo>/servers` are answered immediately.
-  if (!isProjectIdShape(requestedProjectId)) return inaccessible;
+  if (!isProjectIdShape(requestedProjectId)) return inaccessible("malformed");
 
   // The URL already matches the app's state. Checked before any loading gate
   // so a refresh on the project you are already in renders without a spinner.
@@ -107,7 +112,7 @@ export function resolveProjectRouteState(
     };
   }
 
-  if (hasExceededResolveBudget) return inaccessible;
+  if (hasExceededResolveBudget) return inaccessible("timed-out");
 
   // 1. Auth first: membership is the only thing that can answer this URL, and
   //    it does not exist yet.
@@ -128,15 +133,15 @@ export function resolveProjectRouteState(
   if (allProjects === undefined) return resolving;
 
   const match = allProjects.find(
-    (project) => project._id === requestedProjectId
+    (project) => project._id === requestedProjectId,
   );
-  if (!match) return inaccessible;
+  if (!match) return inaccessible("not-a-member");
 
   if (!match.organizationId) {
     // An organization-less project can never enter an organization-filtered
     // set, so waiting for one would hang forever. With no organization filter
     // active it lands in the unfiltered set on a later pass.
-    return activeOrganizationId ? inaccessible : resolving;
+    return activeOrganizationId ? inaccessible("not-a-member") : resolving;
   }
 
   if (match.organizationId !== activeOrganizationId) {

@@ -1,25 +1,21 @@
 /**
- * The accessibility tree over raw CDP.
+ * The accessibility tree over raw CDP — the ONE reader, for every engine.
  *
- * The Playwright engine gets its tree from `ariaSnapshot`, which returns YAML
- * that `parseAriaSnapshot` rebuilds. Electron has no Playwright, so it reads
- * the same tree from `Accessibility.getFullAXTree` — the domain `ariaSnapshot`
- * is itself built on — and shapes it into the `A11yNode` the L9 budget already
- * knows how to trim.
- *
- * WHY IT LIVES HERE AND NOT IN `daemon/`. I-2b replaces `ariaSnapshot` for
- * every engine and moves this next to the driver, gated on a golden fixture
- * proving the CDP tree reads at least as well as today's YAML. That gate
- * matters for the Playwright engine, which has output a model already depends
- * on. It does not apply to Electron, which has no a11y output at all today —
- * so this ships here, serving the one engine that would otherwise have none,
- * and moves when the fixture says the other engine may follow.
+ * It used to live under `electron/` because Playwright had its own path:
+ * `locator.ariaSnapshot()` returned YAML that a hand-written parser rebuilt
+ * into a tree. That parser is gone and both engines read
+ * `Accessibility.getFullAXTree` — the domain `ariaSnapshot` is itself built on
+ * — through `DriverPage.cdp()`. Two consequences, and both are the point:
+ * a tree observed on one engine now reads identically on the other, and every
+ * node keeps its `backendDOMNodeId`, which is what an act can be aimed at. YAML
+ * had no node identity in it at all, so no amount of parsing could have
+ * produced a ref that survived the trip back.
  *
  * Pure CDP and dependency-free: unit-testable against a fake `CdpLike`.
  */
 
-import type { A11yNode } from "../daemon/observation-budget";
-import type { CdpLike } from "../daemon/webmcp-bridge";
+import type { A11yNode } from "./observation-budget";
+import type { CdpLike } from "./webmcp-bridge";
 
 /**
  * Roles that carry no meaning of their own.
@@ -106,23 +102,38 @@ function scalar(value: AxValue | undefined): string | number | undefined {
 }
 
 /**
+ * The outcome of a read: whether the page could ANSWER, and what it said.
+ *
+ * The two used to collapse into `null`, and the driver reported the result as
+ * a successful observation of a page with no controls. Those are opposite
+ * instructions: "there is nothing to click here" tells a model to go
+ * elsewhere, while "I could not read this page" tells it to look again or
+ * fall back to text. A reader that cannot tell them apart makes the model
+ * confidently wrong about a page it never read.
+ */
+export type AxTreeRead = { ok: true; tree: A11yNode | null } | { ok: false };
+
+/**
  * Read the tree, rooted at the whole document or at one node.
  *
- * Resolves `null` when the tree cannot be had — the domain is unavailable, the
- * page is mid-navigation, the root matched nothing. The driver distinguishes
- * "no tree" from "root selector matched nothing" by whether it asked for a
- * root, so this must not invent an empty tree for either case.
+ * `{ok: false}` means the page could not answer at all — the domain is
+ * unavailable, the page is mid-navigation. `{ok: true, tree: null}` means it
+ * answered with nothing, which for a requested root means that root is gone;
+ * the driver decides what each means, because only it knows whether it asked
+ * for a root.
  */
 export async function readAxTree(
   cdp: CdpLike,
   rootBackendNodeId?: number,
-): Promise<A11yNode | null> {
+): Promise<AxTreeRead> {
   try {
     await cdp.send("Accessibility.enable");
     const response = (await cdp.send("Accessibility.getFullAXTree")) as
       { nodes?: AxNode[] } | undefined;
     const nodes = response?.nodes;
-    if (!nodes || nodes.length === 0) return null;
+    // No nodes at all is the page failing to answer, not a page with nothing
+    // in it: every document has at least a root.
+    if (!nodes || nodes.length === 0) return { ok: false };
 
     const byId = new Map<string, AxNode>();
     for (const node of nodes) byId.set(node.nodeId, node);
@@ -130,7 +141,9 @@ export async function readAxTree(
     const root = rootBackendNodeId
       ? nodes.find((n) => n.backendDOMNodeId === rootBackendNodeId)
       : nodes[0];
-    if (!root) return null;
+    // A requested root that is not in the tree ANSWERED — with "that element
+    // is gone". The whole-document case cannot reach this.
+    if (!root) return { ok: true, tree: null };
 
     // `getFullAXTree` answers a flat list joined by ids, and a malformed or
     // cyclic set would otherwise walk forever. Visiting each id once bounds it.
@@ -138,12 +151,16 @@ export async function readAxTree(
     const built = build(root, byId, seen);
     // A root that folds away entirely (a bare `generic` wrapper) still has to
     // answer with its children rather than with nothing.
-    if (built.length === 0) return null;
-    return built.length === 1
-      ? built[0]!
-      : { role: "RootWebArea", children: built };
+    if (built.length === 0) return { ok: true, tree: null };
+    return {
+      ok: true,
+      tree:
+        built.length === 1
+          ? built[0]!
+          : { role: "RootWebArea", children: built },
+    };
   } catch {
-    return null;
+    return { ok: false };
   }
 }
 
@@ -186,6 +203,12 @@ function build(
 
   const built: A11yNode = {};
   if (typeof role === "string") built.role = role;
+  // Carried so an act can be aimed at what an observation named. This is the
+  // whole reason the tree is read over CDP rather than parsed out of YAML:
+  // without a node identity, a ref could only ever be a guess at a coordinate.
+  if (typeof node.backendDOMNodeId === "number") {
+    built.backendDOMNodeId = node.backendDOMNodeId;
+  }
   if (name !== undefined) built.name = String(name);
   const value = scalar(node.value);
   if (value !== undefined) built.value = value;
