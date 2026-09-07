@@ -273,6 +273,44 @@ describe('announcementFor', () => {
     assert.strictEqual(text, ':white_check_mark: Approved by <@U1>.');
   });
 
+  it('still says Cancelled when a cancellation carries a resource', () => {
+    // The link shortcut speaks for approvals. A cancel that returns a resource
+    // would otherwise be announced as "Approved — follow it here", which tells
+    // the channel the opposite of what happened.
+    const text = announcementFor(
+      { operation: 'cancel_eval_run', kind: 'cancel', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/Approved/.test(text));
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled when a cancellation carries a runUrl', () => {
+    const text = announcementFor({ operation: 'cancel_eval_run', kind: 'cancel', runUrl: 'https://app/run/1' }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('still says Cancelled for a pre-`kind` server that carries a resource', () => {
+    // The copy below recognises a cancellation two ways, by `kind` and by
+    // operation name. The link shortcut has to recognise both, or the wrong
+    // announcement stays reachable through the older one.
+    const text = announcementFor({ operation: 'cancel_eval_run', resource: { url: 'https://app/x' } }, 'U1');
+    assert.match(text, /Cancelled by <@U1>/);
+    assert.ok(!/follow it here/.test(text));
+  });
+
+  it('keeps the link for a NEWER server whose unknown kind carries a resource', () => {
+    // Only cancellations lose the shortcut. An unrecognised kind is still an
+    // approval, and the server-built link is the most useful thing to say.
+    const text = announcementFor(
+      { operation: 'some_new_op', kind: 'teleport', resource: { url: 'https://app/x' } },
+      'U1',
+    );
+    assert.match(text, /<https:\/\/app\/x\|follow it here>/);
+  });
+
   it('does not let an UNKNOWN kind fall through to the operation-name table', () => {
     // A kind we do not recognise means a NEWER server, and the name table is
     // older than the kind vocabulary — consulting it would announce a

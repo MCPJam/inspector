@@ -47,7 +47,17 @@ export function announcementFor(outcome, userId) {
     (outcome.resource && typeof outcome.resource.url === 'string' ? outcome.resource.url : null) ??
     outcome.runUrl ??
     null;
-  if (url) return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+
+  // A cancellation is not an approval, so the URL shortcut must not speak for
+  // one. Both spellings of "this was a cancel" are checked, because the copy
+  // below has two: `kind` when the server sends one, the operation name as the
+  // older-server fallback. Recognising only the first would leave the same
+  // wrong announcement reachable through the second.
+  const cancelled = outcome.kind === 'cancel' || (outcome.kind == null && outcome.operation === 'cancel_eval_run');
+
+  if (url && !cancelled) {
+    return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
+  }
 
   switch (outcome.kind) {
     case 'cancel':

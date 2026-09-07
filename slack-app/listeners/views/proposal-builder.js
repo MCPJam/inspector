@@ -211,11 +211,18 @@ export function buildProposalBlocks(proposals) {
     if (!proposal?.actionId) continue;
     // Server first. It knows what the operation is; this bot only knows what
     // it knew at build time.
-    const label = String(
-      proposal.buttonLabel ||
-        BUTTON_LABELS[/** @type {keyof typeof BUTTON_LABELS} */ (proposal.operation)] ||
-        'Approve',
-    ).slice(0, MAX_BUTTON_LABEL);
+    // `capChars`, not `slice`: the cap counts UTF-16 units, so a server-sent
+    // label with an emoji straddling the limit would be cut mid surrogate pair
+    // and the lone half can make Slack reject the whole message. The confirm
+    // label two lines down already caps this way.
+    const label = capChars(
+      String(
+        proposal.buttonLabel ||
+          BUTTON_LABELS[/** @type {keyof typeof BUTTON_LABELS} */ (proposal.operation)] ||
+          'Approve',
+      ),
+      MAX_BUTTON_LABEL,
+    );
     blocks.push({
       type: 'section',
       text: {
