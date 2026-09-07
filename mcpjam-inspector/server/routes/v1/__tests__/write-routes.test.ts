@@ -1631,6 +1631,93 @@ describe("v1 write routes", () => {
       expect(authoredArgs.tests[0].provider).toBe("anthropic");
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
+
+    it("attaches the named clients after authoring the suite", async () => {
+      // A suite authored over the API had no way to name its client, so every
+      // CLI/MCP/SDK-created suite read back with an empty Client — and the
+      // run route's host selector, which only accepts an ATTACHED host, had
+      // nothing to select.
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { listServers: () => ["s1"], disconnectAllServers },
+      });
+      authorEvalSuiteMock.mockResolvedValue({
+        suiteId: "suite_new",
+        suiteName: "Fresh suite",
+        caseUpsert: { committed: [{ name: "echo works" }], failed: [] },
+      });
+      mockConvexQueries({
+        "hosts:listHosts": () => [{ hostId: "host_claude", name: "Claude" }],
+        "testSuites:getTestSuite": () => ({
+          _id: "suite_new",
+          projectId: "p1",
+          name: "Fresh suite",
+          environment: {
+            servers: ["Echo"],
+            serverBindings: [{ serverName: "Echo", projectServerId: "s1" }],
+          },
+        }),
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hosts: [{ host: "Claude", servers: ["Echo"] }],
+        }
+      );
+
+      expect(res.status).toBe(201);
+      expect((await res.json()) as { hosts?: unknown }).toMatchObject({
+        hosts: [{ id: "host_claude" }],
+      });
+      expect(convexMutationMock).toHaveBeenCalledWith(
+        "testSuites:updateTestSuite",
+        {
+          suiteId: "suite_new",
+          hostAttachments: [
+            { namedHostId: "host_claude", selectedServerIds: ["s1"] },
+          ],
+        }
+      );
+    });
+
+    it("rejects an unknown client BEFORE authoring anything", async () => {
+      // Resolving after the write would leave a half-created suite behind for
+      // a request that was never satisfiable.
+      const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+      createAuthorizedManagerMock.mockResolvedValue({
+        manager: { listServers: () => ["s1"], disconnectAllServers },
+      });
+      mockConvexQueries({
+        "hosts:listHosts": () => [{ hostId: "host_claude", name: "Claude" }],
+      });
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-suites",
+        {
+          name: "Fresh suite",
+          serverIds: ["s1"],
+          serverNames: ["Echo"],
+          model: "anthropic/claude-haiku-4.5",
+          tests: [VALID_CASE],
+          hosts: [{ host: "Nope" }],
+        }
+      );
+
+      expect(res.status).toBe(404);
+      expect(authorEvalSuiteMock).not.toHaveBeenCalled();
+      expect(convexMutationMock).not.toHaveBeenCalled();
+      expect(disconnectAllServers).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("eval-run concurrency gate", () => {
