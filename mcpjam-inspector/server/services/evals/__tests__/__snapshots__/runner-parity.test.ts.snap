@@ -522,10 +522,6 @@ exports[`runner parity (golden Convex payload + event sequence) > hosted-batch h
       "resultSource": "reported",
       "status": "setup_failed",
       "tokensUsed": 0,
-      "usage": {
-        "inputTokens": 0,
-        "outputTokens": 0,
-      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -2333,10 +2329,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-batch mo
       "resultSource": "reported",
       "status": "setup_failed",
       "tokensUsed": 0,
-      "usage": {
-        "inputTokens": 0,
-        "outputTokens": 0,
-      },
     },
     "ref": "testSuites:updateTestIteration",
   },
@@ -4666,10 +4658,6 @@ exports[`runner parity (golden Convex payload + event sequence) > local-stream p
       "resultSource": "reported",
       "status": "failed",
       "tokensUsed": 0,
-      "usage": {
-        "inputTokens": 0,
-        "outputTokens": 0,
-      },
     },
     "ref": "testSuites:updateTestIteration",
   },
