@@ -413,7 +413,10 @@ function blockingReason(
     case "unavailable":
       return (
         reason ??
-        "This Inspector can't run Claude Code on this machine, so turns run hosted."
+        // NOT "so turns run hosted": `localHarnessBlocksSend` disables Send in
+        // this phase, so the turn does not run anywhere. Saying it falls back
+        // to the cloud describes the one behaviour this design removed.
+        "This Inspector can't run Claude Code on this machine."
       );
     case "failed":
       return FAILURE_COPY[installFailureReason(reason)] ?? FAILURE_COPY.unknown;
