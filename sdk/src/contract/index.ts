@@ -758,3 +758,68 @@ export {
   suiteGateScoreRowSchema,
   suiteGateScorerSummarySchema,
 } from "./suite-gate.js";
+
+// ── per-run scorer rollup (R2-B0 / D4 + D10) ─────────────────────────────────
+/**
+ * Contract and pure comparability helpers for a per-run scorer rollup.
+ *
+ * R2-B0 is contract-only: no Convex table, no UI, no CLI. R2-B1 mirrors
+ * these shapes; R2-B2 consumes the deployed document. Every digest is the
+ * full normalized snapshot — never an undocumented approximation.
+ */
+export type {
+  EvalScorerRollupV1,
+  ScorerRollupConfiguredTrialV1,
+  ScorerRollupEffectiveModelIdentityV1,
+  ScorerRollupEntryV1,
+  ScorerRollupExecutionIdentityV1,
+  ScorerRollupFrozenExecutionDimension,
+  ScorerRollupHostHarnessIdentityV1,
+  ScorerRollupMaterializationState,
+  ScorerRollupObservedWeightV1,
+  ScorerRollupParityBlocker,
+  ScorerRollupParityKey,
+  ScorerRollupSchemaVersion,
+  ScorerRollupScoreIntegrity,
+  ScorerRollupServerEnvironmentIdentityV1,
+  ScorerRollupSourceVersion,
+  ScorerRollupTruncationV1,
+} from "./scorer-rollup.js";
+export {
+  MAX_SCORER_ROLLUP_ENTRIES,
+  SCORER_ROLLUP_FROZEN_EXECUTION_DIMENSIONS,
+  SCORER_ROLLUP_PARITY_BLOCKERS,
+  SCORER_ROLLUP_SCHEMA_ID,
+  SCORER_ROLLUP_SCHEMA_VERSION,
+  SCORER_ROLLUP_SOURCE_VERSION,
+  countableOf,
+  evalScorerRollupSchema,
+  evalScorerRollupStructuralSchema,
+  isScorerRollupParityBlocker,
+  meanValueOf,
+  normalizeScorerRollupConfiguredTrials,
+  normalizeScorerRollupExecutionIdentity,
+  normalizeScorerRollupObservedPopulation,
+  passRateOf,
+  scorerRollupConfiguredTrialFingerprint,
+  scorerRollupConfiguredTrialIdentity,
+  scorerRollupConfiguredTrialSchema,
+  scorerRollupEffectiveModelIdentitySchema,
+  scorerRollupEntryKey,
+  scorerRollupEntryStructuralSchema,
+  scorerRollupExecutionFingerprint,
+  scorerRollupExecutionIdentity,
+  scorerRollupExecutionIdentitySchema,
+  scorerRollupFrozenExecutionBlockers,
+  scorerRollupHostHarnessIdentitySchema,
+  scorerRollupObservedPopulationFingerprint,
+  scorerRollupObservedPopulationIdentity,
+  scorerRollupObservedWeightSchema,
+  scorerRollupParityBlockers,
+  scorerRollupSchemaVersionSchema,
+  scorerRollupServerEnvironmentIdentitySchema,
+  scorerRollupSourceVersionSchema,
+  scorerRollupTruncationSchema,
+  scorerRollupsComparable,
+  stampScorerRollupIdentities,
+} from "./scorer-rollup.js";
