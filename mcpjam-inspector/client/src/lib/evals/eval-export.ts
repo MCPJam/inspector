@@ -702,8 +702,12 @@ function describeUntranslatedTurnState(testCase: EvalExportCaseInput): string[] 
       );
     }
     if (turn.pinnedToolCall) {
+      // Deliberately not "asserts nothing": a NEGATIVE case's callback is a
+      // single `results.every(... toolsCalled().length === 0)`, which covers
+      // this turn like any other. What is true in both branches is that the
+      // pinned call never runs and the turn prompts with an empty string.
       notes.push(
-        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; this turn asserts nothing.`
+        `  ${label}: pinned (model-free) call "${turn.pinnedToolCall.toolName}" is NOT replayed; the turn sends an empty prompt and only the case's own assertions apply.`
       );
     }
   });
