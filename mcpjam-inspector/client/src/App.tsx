@@ -88,6 +88,7 @@ import {
   SidebarProvider,
   useSidebar,
 } from "./components/ui/sidebar";
+import { SidebarAutoCollapse } from "./components/sidebar/sidebar-auto-collapse";
 import { AgentSidePanelMount } from "./components/mcpjam-agent/AgentSidePanelMount";
 import { AppChromePanel } from "@/components/app-chrome-panel";
 import {
@@ -5080,6 +5081,10 @@ export default function App() {
 
   const appContent = (
     <SidebarProvider defaultOpen={true}>
+      {/* Wide working surfaces (Playground, Evaluate, OAuth Debugger, Swarms)
+          collapse the sidebar to its icon rail; navigating back out of them
+          expands it again. */}
+      <SidebarAutoCollapse activeTab={activeTab} />
       <AppChromeSidebar
         hidden={playgroundOnboarding}
         onNavigate={handleNavigate}
