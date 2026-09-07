@@ -869,7 +869,7 @@ function isValidCommand(value) {
   return typeof candidate.commandId === "string" && candidate.commandId.length > 0 && typeof candidate.source === "string" && typeof candidate.action === "object" && candidate.action !== null && (candidate.tabId === void 0 || typeof candidate.tabId === "string") && (candidate.holder === void 0 || typeof candidate.holder === "string");
 }
 
-// server/services/browserd/frame-stream.ts
+// shared/browserd-frame-stream.ts
 var FRAME_STREAM_VERSION = 1;
 var FRAME_STREAM_HEADER_BYTES = 24;
 var FRAME_STREAM_KIND = {

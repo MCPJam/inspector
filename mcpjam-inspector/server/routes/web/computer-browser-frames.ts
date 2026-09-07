@@ -52,6 +52,10 @@ import { BrowserdClient } from "../../services/browserd/browserd-client.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import { browserdBundleHash } from "../../services/browserd/live-session-deps.js";
 import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "../../services/browserd/frame-stream.js";
+import {
   createFrameRelayStats,
   pongFor,
   type DaemonFrameCounters,
@@ -99,8 +103,16 @@ export interface BrowserFramesDeps {
     holder: string;
     tabId?: string;
     signal: AbortSignal;
+    /**
+     * One frame, as the DAEMON produced it — raw JPEG bytes, not base64.
+     *
+     * The seam hands the bytes over rather than a string because the relay now
+     * decides the wire: a pane on the binary wire gets these forwarded almost
+     * verbatim, and base64ing them first only to un-base64 them would be a
+     * third more bytes and two conversions for nothing.
+     */
     onFrame: (frame: {
-      data: string;
+      jpeg: Uint8Array;
       deviceWidth: number;
       deviceHeight: number;
       scale: number;
@@ -179,16 +191,8 @@ export function createComputerBrowserFramesWsHandler(
         holder: args.holder,
         ...(args.tabId ? { tabId: args.tabId } : {}),
         signal: args.signal,
-        onFrame: (frame) =>
-          args.onFrame({
-            // The pane reads base64, as the local one does.
-            data: Buffer.from(frame.jpeg).toString("base64"),
-            deviceWidth: frame.deviceWidth,
-            deviceHeight: frame.deviceHeight,
-            scale: frame.scale,
-            ts: frame.ts,
-            seq: frame.seq,
-          }),
+        // Straight through: the relay owns the wire decision, not this seam.
+        onFrame: (frame) => args.onFrame(frame),
         ...(args.onStats
           ? { onStats: (stats) => args.onStats?.(stats) }
           : {}),
@@ -212,6 +216,14 @@ export function createComputerBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const tabId = c.req.query("tabId") ?? undefined;
+    /**
+     * Does this pane want the daemon's own bytes instead of a JSON envelope?
+     *
+     * NEGOTIATED, not assumed. A client that predates V-4b sends no `wire`
+     * param and keeps getting base64 in JSON — which is what makes shipping
+     * this safe while an old bundle is still cached in somebody's tab.
+     */
+    const binaryWire = c.req.query("wire") === "binary";
 
     // Resolved BEFORE the upgrade wherever possible, but reported as a close
     // code: once an upgrade has been requested there is no HTTP status left to
@@ -377,6 +389,10 @@ export function createComputerBrowserFramesWsHandler(
               type: "hello",
               features: ["input"],
               codecs: ["jpeg"],
+              // Echoed rather than assumed: the pane asked in its query, and
+              // this is the server agreeing. A pane that asked and did not hear
+              // back keeps its JSON parser armed.
+              wire: binaryWire ? "binary" : "json",
             }),
           );
         } catch {
@@ -445,8 +461,40 @@ export function createComputerBrowserFramesWsHandler(
             // reports the drift between two boxes and calls it latency. This
             // one is stamped by the hop the pane can actually compare against
             // — it measured this replica's round trip with its own ping.
-            const stamped = { ...frame, relayTs: Date.now() };
-            const payload = JSON.stringify({ type: "frame", frame: stamped });
+            if (binaryWire) {
+              // The daemon's record, forwarded — byte for byte except the
+              // timestamp, which is rewritten to THIS hop's clock. No base64,
+              // no JSON: a third of the bytes and none of the parse.
+              const bytes = encodeFrameStreamRecord({
+                kind: FRAME_STREAM_KIND.frame,
+                deviceWidth: frame.deviceWidth,
+                deviceHeight: frame.deviceHeight,
+                scale: frame.scale,
+                ts: Date.now(),
+                seq: frame.seq,
+                jpeg: frame.jpeg,
+              });
+              // `ws.send` wants an ArrayBuffer-backed view; the encoder's
+              // output already is one, but its type is widened by the shared
+              // module's `Uint8Array<ArrayBufferLike>`.
+              const view = new Uint8Array(bytes);
+              stats?.offer(view.byteLength, () => ws.send(view));
+              return;
+            }
+            const payload = JSON.stringify({
+              type: "frame",
+              frame: {
+                // The pane reads base64 on the JSON wire, as the local one
+                // does. One release of this, then it is only the fallback.
+                data: Buffer.from(frame.jpeg).toString("base64"),
+                deviceWidth: frame.deviceWidth,
+                deviceHeight: frame.deviceHeight,
+                scale: frame.scale,
+                ts: frame.ts,
+                seq: frame.seq,
+                relayTs: Date.now(),
+              },
+            });
             stats?.offer(payload.length, () => ws.send(payload));
           },
           // The daemon's side of the accounting, merged into the same `stats`

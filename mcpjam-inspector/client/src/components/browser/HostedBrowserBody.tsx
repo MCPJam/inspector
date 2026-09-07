@@ -12,6 +12,7 @@ import {
   type PaneFrame,
 } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
@@ -306,6 +307,10 @@ export function HostedBrowserBody({
      * was open.
      */
     let openedSocket: WebSocket | null = null;
+    /** Decodes the binary pixel path; null until the socket is open. */
+    let wire: ReturnType<typeof createFrameWireReader> | null = null;
+    /** The last bitmap this socket produced, so teardown can release it. */
+    let lastBitmap: ImageBitmap | undefined;
     let ping: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -320,8 +325,46 @@ export function HostedBrowserBody({
       }
       if (closed) return;
 
-      const opened = openHostedBrowserFrameStream({ token });
+      // The daemon's own bytes. A relay too old to negotiate this ignores the
+      // parameter and keeps sending JSON, which the handler below still reads.
+      const opened = openHostedBrowserFrameStream({ token, wire: "binary" });
       stream = opened;
+      wire = createFrameWireReader({
+        onFrame: (decoded) => {
+          if (closed) return;
+          paneFrameStats.noteTransport("jpeg-binary");
+          paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+          frameSeqRef.current = decoded.seq;
+          tokenRetriesRef.current = 0;
+          setNotice(null);
+          if (leaseIsStale.current) {
+            leaseIsStale.current = false;
+            void refresh();
+          }
+          lastBitmap = decoded.bitmap;
+          setFrame({
+            bitmap: decoded.bitmap,
+            deviceWidth: decoded.deviceWidth,
+            deviceHeight: decoded.deviceHeight,
+            scale: decoded.scale,
+            ts: decoded.relayTs,
+            relayTs: decoded.relayTs,
+            seq: decoded.seq,
+          });
+        },
+        onHeartbeat: (daemon) => {
+          // MERGED, not assigned: the relay's own counters arrive on the
+          // `stats` message and the daemon's ride the frame wire, at different
+          // cadences. Writing the whole object from either would blank the
+          // other's numbers between ticks.
+          if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+        },
+        onFatal: () => {
+          // A reader that has lost its place in a byte stream can never find
+          // it again, so the connection goes rather than the record.
+          opened.close();
+        },
+      });
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
       // Until this socket's own `hello` says otherwise. A reconnect must not
@@ -329,6 +372,14 @@ export function HostedBrowserBody({
       socketInputRef.current = false;
       paneFrameStats.noteTransport("jpeg-json");
       opened.socket.onmessage = (event) => {
+        // The pixel path is bytes and the control path is text, on one socket.
+        // Branching on the DATA rather than on what `hello` promised keeps a
+        // pane correct against a relay that answered `json` and a relay that
+        // answered `binary` alike.
+        if (typeof event.data !== "string") {
+          wire?.push(event.data as ArrayBuffer);
+          return;
+        }
         try {
           const raw = String(event.data);
           const parsed = JSON.parse(raw) as {
@@ -482,6 +533,11 @@ export function HostedBrowserBody({
 
     return () => {
       closed = true;
+      wire?.close();
+      // The pane releases each bitmap as the next one replaces it; the LAST
+      // one has no successor, and this is the thing that knows the stream is
+      // over.
+      lastBitmap?.close();
       if (ping) clearInterval(ping);
       if (retry) clearTimeout(retry);
       if (socketRef.current === openedSocket) {

@@ -20,6 +20,19 @@ import {
   paneFrameStats,
 } from "@/lib/browser-pane/frame-stats";
 
+/** A stand-in for a decoded picture, which records being released. */
+function fakeBitmap() {
+  const bitmap = {
+    width: 1024,
+    height: 768,
+    closed: false,
+    close() {
+      bitmap.closed = true;
+    },
+  };
+  return bitmap as unknown as ImageBitmap & { closed: boolean };
+}
+
 const FRAME = {
   data: "Zm9v",
   deviceWidth: 1024,
@@ -271,13 +284,20 @@ describe("the pane surface — stats for nerds", () => {
     vi.useFakeTimers();
     try {
       vi.setSystemTime(1_000_000);
+      // The binary wire: the picture arrived decoded, so the draw — and the
+      // moment it is honest to call it painted — is synchronous.
       renderSurface({
-        frame: { ...FRAME, ts: 1, relayTs: 999_980, seq: 4 },
+        frame: {
+          ...FRAME,
+          data: undefined,
+          bitmap: fakeBitmap(),
+          ts: 1,
+          relayTs: 999_980,
+          seq: 4,
+        },
       });
-      // A frame that arrived is not a frame that was seen: the load event is
-      // the only honest moment to record one.
-      expect(paneFrameStats.report().captureToPaint.n).toBe(0);
-      fireEvent.load(screen.getByTestId("rail-browser-frame"));
+      // The sandbox's `ts` is a million milliseconds out; a pane that used it
+      // would report sixteen minutes of latency on a healthy stream.
       expect(paneFrameStats.report().captureToPaint).toMatchObject({
         n: 1,
         p50: 20,
@@ -285,5 +305,29 @@ describe("the pane surface — stats for nerds", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("releases the bitmap a newer frame replaces", () => {
+    // An `ImageBitmap` holds a decoded surface the garbage collector cannot
+    // see the cost of. At 30 fps a pane that never closed them would hold a
+    // second of decoded video at all times.
+    const first = fakeBitmap();
+    const second = fakeBitmap();
+    const { view } = renderSurface({
+      frame: { ...FRAME, data: undefined, bitmap: first, seq: 1 },
+    });
+    expect(first.closed).toBe(false);
+    view.rerender(
+      <BrowserPaneSurface
+        frame={{ ...FRAME, data: undefined, bitmap: second, seq: 2 }}
+        holding
+        control="you"
+        onInput={() => {}}
+      />,
+    );
+    expect(first.closed).toBe(true);
+    // The one on screen is NOT closed — the body that owns the socket closes
+    // the last one, because it is the thing that knows the stream is over.
+    expect(second.closed).toBe(false);
   });
 });

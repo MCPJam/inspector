@@ -107,6 +107,10 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
 }));
 
 import { createLocalBrowserFramesWsHandler } from "../local-browser-frames.js";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+} from "../../../services/browserd/frame-stream.js";
 import { issueLocalNonce } from "../../../utils/computers/local-terminal-auth.js";
 import { resetLocalTerminalNoncesForTests } from "../../../utils/computers/local-terminal-auth.js";
 
@@ -148,11 +152,18 @@ function mint(projectId: string) {
 
 function connect(
   port: number,
-  args: { bootId: string; nonce: string; origin?: string | null },
+  args: {
+    bootId: string;
+    nonce: string;
+    origin?: string | null;
+    wire?: "binary";
+  },
 ): WebSocket {
   const origin = args.origin === undefined ? ALLOWED_ORIGIN : args.origin;
   return new WebSocket(
-    `ws://127.0.0.1:${port}${PATH}?bootId=${encodeURIComponent(args.bootId)}&holder=rail-1`,
+    `ws://127.0.0.1:${port}${PATH}?bootId=${encodeURIComponent(args.bootId)}&holder=rail-1${
+      args.wire === "binary" ? "&wire=binary" : ""
+    }`,
     [args.nonce],
     origin === null ? {} : { origin },
   );
@@ -419,10 +430,12 @@ describe("input on the frame socket", () => {
         if (parsed.type === "hello") resolve(parsed);
       });
     });
-    expect(await hello).toEqual({
+    expect(await hello).toMatchObject({
       type: "hello",
       features: ["input"],
       codecs: ["jpeg"],
+      // A pane that asked for nothing gets the envelope it always had.
+      wire: "json",
     });
     ws.close();
   });
@@ -497,6 +510,89 @@ describe("input on the frame socket", () => {
       refused: "invalid_input",
     });
     expect(sessionState.inputs).toHaveLength(0);
+    ws.close();
+  });
+});
+
+
+/**
+ * V-4b. The local pane reads the same wire the hosted one does — not because
+ * loopback needs the bytes, but because one decoder exercised on every local
+ * session is one decoder that cannot rot until staging finds it.
+ */
+describe("the binary wire", () => {
+  it("encodes the frame with the daemon's own header", async () => {
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+      wire: "binary",
+    });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    const record = new Promise<Buffer>((resolve) => {
+      ws.on("message", (data, isBinary) => {
+        if (isBinary) resolve(data as Buffer);
+      });
+    });
+    const before = Date.now();
+    sessionState.subscriptions[0]?.listener({
+      data: Buffer.from("hello").toString("base64"),
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      ts: 1,
+      seq: 4,
+    });
+
+    const bytes = await record;
+    const decoded = createFrameStreamDecoder().push(new Uint8Array(bytes));
+    expect(decoded.ok).toBe(true);
+    const frame = decoded.ok ? decoded.records[0] : undefined;
+    expect(frame).toMatchObject({
+      kind: FRAME_STREAM_KIND.frame,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      seq: 4,
+    });
+    expect((frame as { ts: number }).ts).toBeGreaterThanOrEqual(before);
+    expect(
+      Buffer.from((frame as { jpeg: Uint8Array }).jpeg).toString(),
+    ).toBe("hello");
+    ws.close();
+  });
+
+  it("keeps JSON for a pane that did not ask", async () => {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    const message = new Promise<Record<string, never>>((resolve) => {
+      ws.on("message", (data, isBinary) => {
+        if (isBinary) throw new Error("a pane that did not ask got bytes");
+        const parsed = JSON.parse(String(data));
+        if (parsed.type === "frame") resolve(parsed);
+      });
+    });
+    sessionState.subscriptions[0]?.listener({ seq: 1, data: "Zm9v", ts: 1 });
+    expect(await message).toMatchObject({ type: "frame" });
+    ws.close();
+  });
+
+  it("says which wire it agreed to", async () => {
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+      wire: "binary",
+    });
+    const hello = new Promise<Record<string, unknown>>((resolve) => {
+      ws.on("message", (data, isBinary) => {
+        if (isBinary) return;
+        const parsed = JSON.parse(String(data)) as Record<string, unknown>;
+        if (parsed.type === "hello") resolve(parsed);
+      });
+    });
+    expect(await hello).toMatchObject({ wire: "binary" });
     ws.close();
   });
 });

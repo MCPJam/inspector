@@ -189,3 +189,49 @@ console.error = (...args: unknown[]) => {
 
 // Export for use in tests that need to reset localStorage
 export { localStorageMock };
+
+
+/**
+ * jsdom draws nothing.
+ *
+ * `HTMLCanvasElement.getContext` is unimplemented (it warns and returns null)
+ * and `createImageBitmap` does not exist at all, so the browser pane — which
+ * paints frames onto a canvas from bitmaps decoded off the main thread — has
+ * no way to exercise its own paint path under test. These are ENVIRONMENT
+ * shims, not behaviour: nothing here decides anything, and the component code
+ * runs exactly as it does in a browser.
+ *
+ * Deliberately not the `canvas` npm package: it is a native build, and this
+ * suite needs a surface to call `drawImage` on rather than real rasterisation.
+ */
+if (typeof HTMLCanvasElement !== "undefined") {
+  const canvasPrototype = HTMLCanvasElement.prototype as unknown as {
+    getContext(id: string): unknown;
+  };
+  canvasPrototype.getContext = function getContext(id: string) {
+    if (id !== "2d") return null;
+    return {
+      drawImage: () => {},
+      clearRect: () => {},
+      fillRect: () => {},
+    };
+  };
+}
+
+if (typeof globalThis.createImageBitmap !== "function") {
+  (
+    globalThis as unknown as {
+      createImageBitmap: (source: Blob) => Promise<ImageBitmap>;
+    }
+  ).createImageBitmap = async (source: Blob) =>
+    ({
+      // Enough of the shape for a pane to draw and close it. The real one
+      // reports the picture's dimensions; a test that cares asserts on the
+      // frame record's geometry instead, which is what the pane actually maps
+      // clicks through.
+      width: 1,
+      height: 1,
+      close: () => {},
+      _size: source.size,
+    }) as unknown as ImageBitmap;
+}

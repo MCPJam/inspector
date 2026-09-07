@@ -15,6 +15,13 @@ import {
   type BrowserFramesDeps,
 } from "../computer-browser-frames";
 import { resetActivityThrottleForTests } from "../../../utils/computers/activity-touch.js";
+import {
+  createFrameStreamDecoder,
+  FRAME_STREAM_KIND,
+} from "../../../services/browserd/frame-stream.js";
+
+/** Four bytes standing in for a JPEG; `"AAAA"` once base64'd. */
+const JPEG_BYTES = new Uint8Array(Buffer.from("AAAA", "base64"));
 
 const CLAIMS = {
   userId: "users_1",
@@ -38,9 +45,10 @@ const SESSION = {
 /** A `WSContext` double that records what the route did to the socket. */
 function fakeSocket() {
   return {
-    sent: [] as string[],
+    // Text AND bytes: one socket carries both since V-4b.
+    sent: [] as Array<string | Uint8Array>,
     closed: undefined as { code: number; reason: string } | undefined,
-    send(data: string) {
+    send(data: string | Uint8Array) {
       this.sent.push(data);
     },
     close(code: number, reason: string) {
@@ -227,7 +235,7 @@ describe("browser frames socket — carrying frames", () => {
     const f = build();
     const { ws } = await f.connect();
     f.upstreamCalls[0].onFrame({
-      data: "AAAA",
+      jpeg: JPEG_BYTES,
       deviceWidth: 1024,
       deviceHeight: 768,
       scale: 1,
@@ -241,6 +249,8 @@ describe("browser frames socket — carrying frames", () => {
     expect(message).toMatchObject({
       type: "frame",
       frame: {
+        // Base64 on the JSON wire, which is what a pane that asked for nothing
+        // still gets.
         data: "AAAA",
         deviceWidth: 1024,
         deviceHeight: 768,
@@ -274,7 +284,7 @@ describe("browser frames socket — carrying frames", () => {
       const f = build();
       const { ws } = await f.connect();
       f.upstreamCalls[0].onFrame({
-        data: "AAAA",
+        jpeg: JPEG_BYTES,
         deviceWidth: 1024,
         deviceHeight: 768,
         scale: 1,
@@ -483,6 +493,8 @@ describe("browser frames socket — input on the socket", () => {
       type: "hello",
       features: ["input"],
       codecs: ["jpeg"],
+      // A pane that asked for nothing gets the envelope it has always got.
+      wire: "json",
     });
   });
 
@@ -669,5 +681,95 @@ describe("browser frames socket — input on the socket", () => {
     // Whatever was queued belonged to the hold that queued it; delivering it
     // afterwards types into whoever holds the browser next.
     expect(f.inputCalls).toHaveLength(1);
+  });
+});
+
+
+/**
+ * V-4b. The pixel path stopped being base64 in a JSON envelope. What these pin
+ * is that the change is NEGOTIATED — a pane that predates it keeps the wire it
+ * has always had — and that the record forwarded is the daemon's own, byte for
+ * byte except the one field that has to be rewritten.
+ */
+describe("browser frames socket — the binary wire", () => {
+  const FRAME = {
+    jpeg: JPEG_BYTES,
+    deviceWidth: 1024,
+    deviceHeight: 768,
+    scale: 1,
+    ts: 5,
+    seq: 3,
+  };
+
+  it("answers the wire the pane asked for", async () => {
+    const f = build();
+    const { ws } = await f.connect("tok", "wire=binary");
+    expect(JSON.parse(ws.sent[0])).toMatchObject({ wire: "binary" });
+  });
+
+  it("forwards the daemon's record, rewriting only the timestamp", async () => {
+    const f = build();
+    const { ws } = await f.connect("tok", "wire=binary");
+    const before = Date.now();
+    f.upstreamCalls[0].onFrame(FRAME);
+
+    const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
+      | Uint8Array
+      | undefined;
+    expect(binary).toBeDefined();
+    const decoded = createFrameStreamDecoder().push(binary!);
+    expect(decoded.ok).toBe(true);
+    const record = decoded.ok ? decoded.records[0] : undefined;
+    expect(record).toMatchObject({
+      kind: FRAME_STREAM_KIND.frame,
+      deviceWidth: 1024,
+      deviceHeight: 768,
+      scale: 1,
+      seq: 3,
+      jpeg: JPEG_BYTES,
+    });
+    // The SANDBOX's `ts` is not comparable to the viewer's clock — different
+    // machines — so this hop stamps its own, and that is the one the pane
+    // measured its round trip against.
+    expect(
+      (record as { ts: number }).ts,
+    ).toBeGreaterThanOrEqual(before);
+    expect((record as { ts: number }).ts).not.toBe(5);
+    // And NOT a JSON frame beside it: one wire, not two.
+    expect(
+      ws.sent
+        .filter((entry) => typeof entry === "string")
+        .some((raw) => String(raw).includes('"frame"')),
+    ).toBe(false);
+  });
+
+  it("keeps the JSON envelope for a pane that asked for nothing", async () => {
+    // A client build cached in somebody's tab predates the parameter. It must
+    // keep working, unchanged, for a release.
+    const f = build();
+    const { ws } = await f.connect();
+    f.upstreamCalls[0].onFrame(FRAME);
+    expect(ws.sent.some((entry) => entry instanceof Uint8Array)).toBe(false);
+    const message = ws.sent
+      .filter((entry) => typeof entry === "string")
+      .map((raw) => JSON.parse(String(raw)))
+      .find((entry) => entry.type === "frame");
+    expect(message.frame.data).toBe("AAAA");
+  });
+
+  it("still speaks JSON for control on the binary wire", async () => {
+    // Pixels are bytes and control is text, on ONE socket: an ack that arrived
+    // as bytes would have to be told apart from a frame by inspection.
+    const f = build();
+    const { ws, events } = await f.connect("tok", "wire=binary");
+    (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+      { data: JSON.stringify({ type: "ping", t: 9 }) },
+      ws,
+    );
+    expect(
+      ws.sent
+        .filter((entry) => typeof entry === "string")
+        .map((raw) => JSON.parse(String(raw))),
+    ).toContainEqual({ type: "pong", t: 9 });
   });
 });

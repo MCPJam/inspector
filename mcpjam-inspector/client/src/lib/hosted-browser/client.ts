@@ -278,6 +278,8 @@ export async function touchHostedBrowser(
 export function openHostedBrowserFrameStream(args: {
   token: string;
   tabId?: string;
+  /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
+  wire?: "binary" | "json";
 }): { socket: WebSocket; close(): void } {
   const url = new URL(HOSTED_BROWSER_FRAMES_PATH, window.location.origin);
   // The token rides the subprotocol and the body is a live picture of a
@@ -291,7 +293,15 @@ export function openHostedBrowserFrameStream(args: {
   }
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   if (args.tabId) url.searchParams.set("tabId", args.tabId);
+  // The daemon's own bytes rather than base64 in a JSON envelope. A server too
+  // old to negotiate this ignores the param and keeps sending JSON, which is
+  // why the pane branches on the message type rather than assuming.
+  if (args.wire === "binary") url.searchParams.set("wire", "binary");
   const socket = new WebSocket(url.toString(), [args.token]);
+  // Set BEFORE any message can arrive: the default is `blob`, and a `Blob`
+  // would have to be read asynchronously, which reorders frames against the
+  // control messages on the same socket.
+  socket.binaryType = "arraybuffer";
   return {
     socket,
     close: () => {

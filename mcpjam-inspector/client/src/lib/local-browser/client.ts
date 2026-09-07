@@ -194,6 +194,8 @@ export function openLocalBrowserFrameStream(args: {
   bootId: string;
   holder: string;
   nonce: string;
+  /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
+  wire?: "binary" | "json";
 }): { socket: WebSocket; close(): void } {
   // The nonce is a bearer capability and the frames are pictures of a
   // signed-in browser; neither goes over an unencrypted non-loopback hop.
@@ -201,8 +203,13 @@ export function openLocalBrowserFrameStream(args: {
   const base = window.location.origin.replace(/^http/, "ws");
   const url = `${base}${LOCAL_BROWSER_FRAMES_PATH}?bootId=${encodeURIComponent(
     args.bootId,
-  )}&holder=${encodeURIComponent(args.holder)}`;
+  )}&holder=${encodeURIComponent(args.holder)}${
+    args.wire === "binary" ? "&wire=binary" : ""
+  }`;
   const socket = new WebSocket(url, [args.nonce]);
+  // See the hosted opener: `blob` would make binary messages arrive
+  // asynchronously and out of order against the control messages beside them.
+  socket.binaryType = "arraybuffer";
   return {
     socket,
     close: () => {

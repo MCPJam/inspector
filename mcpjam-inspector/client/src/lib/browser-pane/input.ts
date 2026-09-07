@@ -57,7 +57,22 @@ export type BrowserInputEvent =
  * The same shape on every engine, because every pane maps a click through it.
  */
 export interface PaneFrame {
-  data: string;
+  /**
+   * Base64 JPEG, on the JSON wire.
+   *
+   * Exactly one of `data` and `bitmap` is set. The JSON envelope is the
+   * fallback a client keeps for one release, and the wire a server too old to
+   * negotiate `binary` still speaks.
+   */
+  data?: string;
+  /**
+   * A picture already decoded off the main thread, on the binary wire.
+   *
+   * The pane OWNS this: an `ImageBitmap` holds a decoded surface the garbage
+   * collector cannot see the cost of, so whoever replaces a frame closes the
+   * one it replaced.
+   */
+  bitmap?: ImageBitmap;
   deviceWidth: number;
   deviceHeight: number;
   scale: number;

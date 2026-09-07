@@ -8,6 +8,7 @@ import {
 } from "@/components/browser/BrowserPaneSurface";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnLocalBrowserLease,
@@ -253,6 +254,10 @@ export function LocalBrowserBody({
      * was open.
      */
     let openedSocket: WebSocket | null = null;
+    /** Decodes the binary pixel path; null until the socket is open. */
+    let wire: ReturnType<typeof createFrameWireReader> | null = null;
+    /** The last bitmap this socket produced, so teardown can release it. */
+    let lastBitmap: ImageBitmap | undefined;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -267,13 +272,49 @@ export function LocalBrowserBody({
           bootId: session.bootId,
           holder,
           nonce,
+          // Worth it even on loopback, where base64 costs a memcpy rather than
+          // a network hop: it means the hosted path's decoder runs on every
+          // local session instead of only on staging.
+          wire: "binary",
         });
         stream = opened;
+        wire = createFrameWireReader({
+          onFrame: (decoded) => {
+            if (closed) return;
+            paneFrameStats.noteTransport("jpeg-binary");
+            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+            frameSeqRef.current = decoded.seq;
+            lastBitmap = decoded.bitmap;
+            setFrame({
+              bitmap: decoded.bitmap,
+              deviceWidth: decoded.deviceWidth,
+              deviceHeight: decoded.deviceHeight,
+              scale: decoded.scale,
+              ts: decoded.relayTs,
+              relayTs: decoded.relayTs,
+              seq: decoded.seq,
+            });
+          },
+          onHeartbeat: (daemon) => {
+            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+          },
+          onFatal: () => {
+            // A reader that has lost its place in a byte stream can never find
+            // it again, so the connection goes rather than the record.
+            opened.close();
+          },
+        });
         openedSocket = opened.socket;
       socketRef.current = opened.socket;
         socketInputRef.current = false;
         paneFrameStats.noteTransport("jpeg-json");
         opened.socket.onmessage = (event) => {
+          // Bytes for pixels, text for control, on one socket — see the hosted
+          // pane's twin.
+          if (typeof event.data !== "string") {
+            wire?.push(event.data as ArrayBuffer);
+            return;
+          }
           try {
             const raw = String(event.data);
             const parsed = JSON.parse(raw) as {
@@ -381,6 +422,10 @@ export function LocalBrowserBody({
 
     return () => {
       closed = true;
+      wire?.close();
+      // The pane releases each bitmap as the next replaces it; the LAST one
+      // has no successor.
+      lastBitmap?.close();
       if (heartbeat) clearInterval(heartbeat);
       if (retry) clearTimeout(retry);
       if (socketRef.current === openedSocket) {

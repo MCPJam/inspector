@@ -173,6 +173,15 @@ export interface FrameStats {
   /** The relay acknowledged that gesture. */
   noteInputAck(seq: number): void;
   noteRelayStats(stats: FrameStatsLive["relay"]): void;
+  /**
+   * Just the DAEMON's half, when it arrived on the frame wire rather than in
+   * the relay's `stats` message.
+   *
+   * Merged rather than assigned: the relay's own counters and the daemon's
+   * arrive on different paths at different cadences, and writing the whole
+   * object from either one would blank the other's numbers between ticks.
+   */
+  noteDaemonStats(daemon: NonNullable<FrameStatsLive["relay"]>["daemon"]): void;
   report(): FrameStatsReport;
   live(): FrameStatsLive;
   reset(): void;
@@ -340,6 +349,17 @@ export function createFrameStats(options: FrameStatsOptions): FrameStats {
     noteRelayStats(stats) {
       if (!isRecording()) return;
       relay = stats;
+    },
+    noteDaemonStats(daemon) {
+      if (!isRecording()) return;
+      relay = {
+        framesIn: 0,
+        bytes: 0,
+        dropped: 0,
+        subscribers: 0,
+        ...relay,
+        ...(daemon ? { daemon } : {}),
+      };
     },
     report() {
       const byTransport: Partial<Record<FrameTransportRung, FrameStatsBucket>> =

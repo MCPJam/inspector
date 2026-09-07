@@ -32,6 +32,10 @@ import {
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportFrame } from "../../services/browserd/daemon/viewport.js";
 import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "../../services/browserd/frame-stream.js";
+import {
   createFrameRelayStats,
   pongFor,
 } from "./browser-frame-relay-stats.js";
@@ -110,6 +114,15 @@ export function createLocalBrowserFramesWsHandler(
     const nonce = protocolHeader.split(",")[0]?.trim() ?? "";
     const bootId = c.req.query("bootId") ?? "";
     const holder = c.req.query("holder") ?? undefined;
+    /**
+     * The daemon's own bytes instead of a JSON envelope.
+     *
+     * Worth doing even on loopback, where base64 costs a memcpy rather than a
+     * network hop: the point is that ONE pane component reads one wire on both
+     * engines, so the hosted path's decoder is exercised on every local run
+     * rather than only on staging.
+     */
+    const binaryWire = c.req.query("wire") === "binary";
     const origin = c.req.header("Origin");
 
     // Everything resolvable before the socket opens is resolved here; a
@@ -233,6 +246,24 @@ export function createLocalBrowserFramesWsHandler(
               stats?.countDrop();
               return;
             }
+            if (binaryWire) {
+              // The same 24-byte header the hosted daemon writes, so the pane
+              // has one decoder. The comment this replaces anticipated exactly
+              // this change.
+              const bytes = new Uint8Array(
+                encodeFrameStreamRecord({
+                  kind: FRAME_STREAM_KIND.frame,
+                  deviceWidth: frame.deviceWidth,
+                  deviceHeight: frame.deviceHeight,
+                  scale: frame.scale,
+                  ts: Date.now(),
+                  seq: frame.seq,
+                  jpeg: new Uint8Array(Buffer.from(frame.data, "base64")),
+                }),
+              );
+              stats?.offer(bytes.byteLength, () => ws.send(bytes));
+              return;
+            }
             // `relayTs` even on loopback, where it equals `ts` to within a
             // millisecond. The pane must not have to know which engine drew a
             // frame to know which field it may subtract from its own clock.
@@ -321,6 +352,7 @@ export function createLocalBrowserFramesWsHandler(
               type: "hello",
               features: ["input"],
               codecs: ["jpeg"],
+              wire: binaryWire ? "binary" : "json",
             }),
           );
         } catch {

@@ -21,6 +21,7 @@ const api = vi.hoisted(() => ({
   leaseCalls: [] as string[],
   mints: 0,
   invalidations: 0,
+  streamArgs: [] as unknown[],
   sockets: [] as Array<{
     readyState: number;
     sent: string[];
@@ -64,7 +65,8 @@ vi.mock("@/lib/hosted-browser/client", async () => {
       api.inputs.push(args);
       return { ok: true as const };
     },
-    openHostedBrowserFrameStream: () => {
+    openHostedBrowserFrameStream: (streamArgs: unknown) => {
+      api.streamArgs.push(streamArgs);
       const socket = {
         readyState: 1,
         sent: [] as string[],
@@ -80,6 +82,10 @@ vi.mock("@/lib/hosted-browser/client", async () => {
 });
 
 import { HostedBrowserBody } from "../HostedBrowserBody";
+import {
+  encodeFrameStreamRecord,
+  FRAME_STREAM_KIND,
+} from "@/shared/browserd-frame-stream";
 
 const RUNNING = {
   bootId: "boot-1",
@@ -97,6 +103,7 @@ beforeEach(() => {
   api.mints = 0;
   api.invalidations = 0;
   api.sockets = [];
+  api.streamArgs = [];
 });
 
 // Restored HERE rather than at the end of each test body: an assertion that
@@ -625,5 +632,65 @@ describe("the hosted pane — driving it", () => {
     (image.parentElement as HTMLElement).focus();
     await userEvent.keyboard("k");
     await waitFor(() => expect(api.inputs).toHaveLength(1));
+  });
+});
+
+
+/**
+ * V-4b. One socket carries bytes for pixels and text for control. The pane has
+ * to read both without being told which is coming.
+ */
+describe("the hosted pane — the binary wire", () => {
+  it("paints a frame that arrived as bytes", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.frame,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: Date.now(),
+          seq: 11,
+          jpeg: new Uint8Array([1, 2, 3, 4]),
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+    expect(await screen.findByTestId("rail-browser-frame")).toBeTruthy();
+  });
+
+  it("still reads control messages as text on the same socket", async () => {
+    renderBody();
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(0));
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    // Proved by the input path taking the socket, which only `hello` unlocks.
+    api.lease = { took: true, lease: { state: "held" }, yours: true };
+    act(() => {
+      socket().onmessage?.({
+        data: encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.frame,
+          deviceWidth: 1024,
+          deviceHeight: 768,
+          scale: 1,
+          ts: Date.now(),
+          seq: 1,
+          jpeg: new Uint8Array([1, 2, 3, 4]),
+        }).buffer as ArrayBuffer,
+      } as never);
+    });
+    const image = await screen.findByTestId("rail-browser-frame");
+    expect(image).toBeTruthy();
+  });
+
+  it("asks for the binary wire", async () => {
+    renderBody();
+    // The socket opens after a token mint, so this is not synchronous.
+    await waitFor(() => expect(api.streamArgs.length).toBeGreaterThan(0));
+    expect(api.streamArgs.at(-1)).toMatchObject({ wire: "binary" });
   });
 });

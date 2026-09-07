@@ -13,6 +13,7 @@ import {
 } from "@/components/browser/PaneControlBar";
 import { StatsOverlay } from "@/components/browser/StatsOverlay";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { paintFrame } from "@/lib/browser-pane/frame-wire";
 import {
   modifiersOf,
   toPageCoordinates,
@@ -112,7 +113,7 @@ export function BrowserPaneSurface({
    * writes the same key back, so the choice survives a reload either way.
    */
   const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   /**
    * Which button this pane is holding down, if any.
@@ -156,14 +157,90 @@ export function BrowserPaneSurface({
     [holding, onInput],
   );
 
+  /**
+   * The frame currently on the canvas.
+   *
+   * Kept so a NEW frame can release the one it replaces. An `ImageBitmap`
+   * holds a decoded surface — several megabytes at 1024×768 — and the garbage
+   * collector has no idea how expensive it is, so a pane at 30 fps that never
+   * closed them would hold a second of decoded video at all times.
+   *
+   * Released here rather than in an effect CLEANUP on purpose. React's
+   * StrictMode runs mount effects twice with a cleanup in between; a cleanup
+   * that closed the bitmap would leave the second run drawing a closed one,
+   * and the pane would go blank for a frame every time it mounted in
+   * development. The last frame's bitmap is closed by the body that owns the
+   * socket, which is also the thing that knows when the stream is over.
+   */
+  const paintedRef = useRef<PaneFrame | null>(null);
+
+  /**
+   * Paint the latest frame, and record that it was painted.
+   *
+   * An EFFECT rather than a render, because drawing is a side effect on a
+   * backing store the React tree does not own — and because the honest moment
+   * to record a paint is after `drawImage` returns. `setFrame` means a frame
+   * exists; it says nothing about anybody having seen it.
+   *
+   * Two wires meet here. On the binary wire the picture arrived decoded and
+   * the draw is synchronous. On the JSON wire it is base64 that still has to
+   * become an image, which the browser does asynchronously — so that path
+   * checks it is still the current frame before drawing, or a slow decode from
+   * two frames ago would paint over a newer picture.
+   */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !frame) return;
+    const previous = paintedRef.current;
+    if (previous && previous !== frame) previous.bitmap?.close();
+    paintedRef.current = frame;
+
+    const record = (decodeMs?: number) => {
+      paneFrameStats.notePainted({
+        ...(frame.relayTs !== undefined ? { relayTs: frame.relayTs } : {}),
+        ts: frame.ts,
+        seq: frame.seq,
+        width: frame.deviceWidth,
+        height: frame.deviceHeight,
+        ...(decodeMs !== undefined ? { decodeMs } : {}),
+      });
+    };
+
+    const bitmap = frame.bitmap;
+    if (bitmap) {
+      if (paintFrame(canvas, { ...frame, bitmap })) record();
+      return;
+    }
+    if (!frame.data) return;
+    let stale = false;
+    const startedAt = performance.now();
+    const image = new Image();
+    image.onload = () => {
+      if (stale) return;
+      canvas.width = frame.deviceWidth;
+      canvas.height = frame.deviceHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(image, 0, 0);
+      record(performance.now() - startedAt);
+    };
+    image.src = `data:image/jpeg;base64,${frame.data}`;
+    return () => {
+      stale = true;
+    };
+  }, [frame]);
+
   const pointAt = useCallback(
     (
       event: { clientX: number; clientY: number },
       options: { clampToPage?: boolean } = {},
     ) => {
-      const image = imageRef.current;
-      if (!image || !frame) return null;
-      return toPageCoordinates(event, image, frame, options);
+      const canvas = canvasRef.current;
+      if (!canvas || !frame) return null;
+      // The ELEMENT's rectangle and the frame's own geometry, never the backing
+      // store: the canvas is sized to the picture and CSS scales it to fit, so
+      // the letterbox arithmetic is exactly what it was for the `<img>`.
+      return toPageCoordinates(event, canvas, frame, options);
     },
     [frame],
   );
@@ -182,25 +259,12 @@ export function BrowserPaneSurface({
       );
     }
     return (
-      <img
-        ref={imageRef}
+      <canvas
+        ref={canvasRef}
         data-testid="rail-browser-frame"
-        alt="The agent's browser"
-        src={`data:image/jpeg;base64,${frame.data}`}
+        aria-label="The agent's browser"
+        role="img"
         className="h-full w-full select-none object-contain"
-        draggable={false}
-        // The one place a paint is observable, and the only honest moment to
-        // record one: `setFrame` means the bytes arrived, not that anybody saw
-        // them. Dark unless the stats flag is set.
-        onLoad={() => {
-          paneFrameStats.notePainted({
-            ...(frame.relayTs !== undefined ? { relayTs: frame.relayTs } : {}),
-            ts: frame.ts,
-            seq: frame.seq,
-            width: frame.deviceWidth,
-            height: frame.deviceHeight,
-          });
-        }}
         onMouseMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
