@@ -79,6 +79,48 @@ describe("useUnifiedConvexAuth", () => {
       __guest: true,
       id: "__guest__",
     });
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
+  });
+
+  it("reports once after guest session bootstrap exhausts every attempt", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+
+    const { result } = renderHook(() => useUnifiedConvexAuth());
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(4);
+    expect(mockState.reportCaught).toHaveBeenCalledTimes(1);
+    const [error, options] = mockState.reportCaught.mock.calls[0]!;
+    expect(error).toEqual(
+      new Error("Guest session bootstrap exhausted without a token"),
+    );
+    expect(options).toEqual({
+      source: "guest_session_bootstrap",
+      level: "error",
+      extra: { attempts: 4 },
+    });
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.user).toBeNull();
+  });
+
+  it("does not report guest session bootstrap after unmount", async () => {
+    mockState.getOrCreateGuestSession.mockResolvedValue(null);
+
+    const { unmount } = renderHook(() => useUnifiedConvexAuth());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    unmount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
+    });
+
+    expect(mockState.getOrCreateGuestSession).toHaveBeenCalledTimes(1);
+    expect(mockState.reportCaught).not.toHaveBeenCalled();
   });
 
   it("marks the guest activated only when Convex pulls the guest token, not on resolve", async () => {
@@ -125,6 +167,9 @@ describe("useUnifiedConvexAuth", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(500 + 1500 + 3000);
       });
+      // Bootstrap exhaustion is covered above. Refresh tests count only reports
+      // emitted by the token fetch they invoke after mounting.
+      mockState.reportCaught.mockClear();
       return result;
     }
 

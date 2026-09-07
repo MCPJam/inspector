@@ -165,11 +165,24 @@ export function useUnifiedConvexAuth() {
         }
 
         if (cancelled) return;
-        if (
-          session ||
-          attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length
-        ) {
+        if (session) {
           setGuestToken(session?.token ?? null);
+          setGuestLoading(false);
+          return;
+        }
+
+        if (attempt === GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length) {
+          reportCaught(
+            new Error("Guest session bootstrap exhausted without a token"),
+            {
+              source: "guest_session_bootstrap",
+              level: "error",
+              extra: {
+                attempts: GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length + 1,
+              },
+            },
+          );
+          setGuestToken(null);
           setGuestLoading(false);
           return;
         }
