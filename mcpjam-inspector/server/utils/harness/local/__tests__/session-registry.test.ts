@@ -37,6 +37,7 @@ function record(
     gateway: null,
     stop: async () => undefined,
     revokeLease: null,
+    releaseRuntime: null,
     startedAt: Date.now(),
     ...overrides,
   };
@@ -131,6 +132,49 @@ describe("ending one session", () => {
     expect(result.stopped).toBe(false);
     expect(result.errors).toEqual(["stop: kill refused"]);
     expect(order).toEqual(["gw:revoke", "gw:close"]);
+  });
+
+  it("gives up the runtime reservation, after the stop", async () => {
+    // Two paths end a session and only one of them used to release the
+    // reservation. Ending one here freed the tree and still left the version
+    // directory claimed for the life of the process, so every later reinstall
+    // and repair refused with "in use by N running session(s)" — counting
+    // sessions that had already stopped.
+    //
+    // Order matters as much as the call: the reservation is what stops another
+    // process replacing the directory these children execute from, and they
+    // are provably gone only once `stop` has returned.
+    const order: string[] = [];
+    registerLocalHarnessSession(
+      record({
+        stop: async () => {
+          order.push("stop");
+        },
+        releaseRuntime: async () => {
+          order.push("release");
+        },
+      }),
+    );
+    await endLocalHarnessSession("s1");
+    expect(order).toEqual(["stop", "release"]);
+  });
+
+  it("still ends the session when the reservation will not release", async () => {
+    const stop = vi.fn(async () => undefined);
+    registerLocalHarnessSession(
+      record({
+        stop,
+        releaseRuntime: async () => {
+          throw new Error("lock timeout");
+        },
+      }),
+    );
+    const result = await endLocalHarnessSession("s1");
+    // The tree is down, which is the part that matters; the failure is
+    // reported rather than thrown, exactly as the other steps are.
+    expect(stop).toHaveBeenCalledTimes(1);
+    expect(result.stopped).toBe(true);
+    expect(result.errors.join(" ")).toMatch(/runtime release/);
   });
 
   it("tears a session down exactly once, however many callers ask", async () => {

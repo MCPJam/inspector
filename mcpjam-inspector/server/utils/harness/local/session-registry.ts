@@ -32,6 +32,17 @@ export interface LocalHarnessSessionRecord {
   stop: () => Promise<void>;
   /** Revokes the lease server-side. Supplied by the turn; best-effort. */
   revokeLease: (() => Promise<void>) | null;
+  /**
+   * Gives up this session's claim on the runtime version directory.
+   *
+   * Supplied by the turn, and idempotent, because two paths end a session and
+   * both have to release it: the turn's own teardown and this module's
+   * `endLocalHarnessSession` (the stop-all button). Only ever called AFTER
+   * `stop`, since the reservation is what stops another process replacing the
+   * tree these children are executing from — and they are provably gone only
+   * once `stop` has run.
+   */
+  releaseRuntime: (() => Promise<void>) | null;
   startedAt: number;
 }
 
@@ -98,6 +109,14 @@ export async function endLocalHarnessSession(
   } catch (error) {
     stopped = false;
     errors.push(`stop: ${messageOf(error)}`);
+  }
+  // AFTER the stop, and on this path too: ending a session here used to leave
+  // the runtime reservation held for the life of the process, so the stop-all
+  // button freed every session and still blocked the next reinstall or repair.
+  try {
+    await record.releaseRuntime?.();
+  } catch (error) {
+    errors.push(`runtime release: ${messageOf(error)}`);
   }
   if (errors.length > 0) {
     logger.warn("[local-harness] session teardown had failures", {

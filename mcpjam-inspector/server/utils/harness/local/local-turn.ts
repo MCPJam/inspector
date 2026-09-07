@@ -204,8 +204,9 @@ export async function prepareLocalHarnessTurn(
   // CLI, consults these reservations and refuses to replace a runtime that has
   // one — so taking it late is the same as not taking it.
   //
-  // Released on every exit from here: each early return below, and the
-  // teardown that runs when the session ends.
+  // Released on every exit that is not a started session: a refusal returned
+  // below, a throw, and — for a session that did start — the teardown that
+  // runs when it ends.
   const target = localPackTarget();
   const lifecycleKey: RuntimeOperationKey | null =
     target === null
@@ -252,12 +253,23 @@ export async function prepareLocalHarnessTurn(
   };
 
   try {
-    return await prepareWithReservedRuntime({
+    const prepared = await prepareWithReservedRuntime({
       args,
       runtimeStatus,
       verifyStartedAt,
       releaseRuntimeUse,
     });
+    // Ownership passes to the session's teardown ONLY on success.
+    //
+    // A refusal is a RESOLVED value here, not a throw, so it never reaches the
+    // `catch` below. Without this the reservation outlived every declined turn
+    // — and it does not decay, because the owner it names is this live server
+    // process. `activateVerifiedPack` then refuses to replace a version
+    // directory that is "in use by N running session(s)", counting sessions
+    // that never started, so one refused turn disabled reinstall and repair
+    // for the rest of the process's life.
+    if (!prepared.ok) await releaseRuntimeUse();
+    return prepared;
   } catch (error) {
     await releaseRuntimeUse();
     throw error;
@@ -268,9 +280,10 @@ export async function prepareLocalHarnessTurn(
  * The body of `prepareLocalHarnessTurn`, with the runtime reservation held.
  *
  * Split out so every refusal path below is one `return` rather than a
- * `release(); return` pair that a later edit can forget one half of — the
- * caller's `try` releases on the way out, and only the success path hands
- * ownership of the reservation to the session's teardown.
+ * `release(); return` pair that a later edit can forget one half of. The
+ * caller releases the reservation for anything that is not a started session
+ * — a resolved refusal as well as a throw — and only the success path hands
+ * ownership of it to the session's teardown.
  */
 async function prepareWithReservedRuntime(outer: {
   args: PrepareLocalHarnessTurnArgs;
@@ -435,11 +448,18 @@ async function prepareWithReservedRuntime(outer: {
         // turn would add one more dead session to both.
         forgetLocalHarnessSession(args.sessionId);
         await revokeLease(broker.runId, args.bearer);
-        // LAST. The runtime reservation is what stops another process
-        // replacing the tree this session's children are executing from, and
-        // those children are only provably gone once `stop` has run — which
-        // `endLocalHarnessSession` does before it reaches this teardown.
-        await outer.releaseRuntimeUse();
+        // Stop the supervised tree, THEN give up the reservation. This is the
+        // teardown a normal turn takes — `run-harness-turn.ts` calls it when
+        // the model stream ends — and `endLocalHarnessSession` never reaches
+        // it, so nothing else was going to stop the tree on this path. The
+        // reservation is what stops another process replacing the directory
+        // these children execute from, so releasing it while they are still
+        // alive is the one ordering that must not happen.
+        try {
+          await supervisor.stopSession(args.sessionId);
+        } finally {
+          await outer.releaseRuntimeUse();
+        }
       }
     });
 
@@ -455,6 +475,7 @@ async function prepareWithReservedRuntime(outer: {
         await supervisor.stopSession(args.sessionId);
       },
       revokeLease: () => revokeLease(broker.runId, args.bearer),
+      releaseRuntime: outer.releaseRuntimeUse,
       startedAt: Date.now(),
     });
 
