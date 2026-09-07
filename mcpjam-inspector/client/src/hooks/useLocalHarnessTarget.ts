@@ -555,7 +555,56 @@ export function useLocalHarnessController(
       return { phase: "interrupted", reason: status.message ?? null };
     }
     if (authorizing) return { phase: "authorizing", reason: null };
-    if (consent !== null) return { phase: "ready", reason: null };
+
+    // ── `ready` means a turn could actually RUN ──────────────────────────
+    //
+    // A grant alone is not that. It is one of three things a local turn
+    // needs, and the other two can be false while it sits in storage
+    // perfectly unexpired:
+    //
+    //   - the runtime can be `absent` (never installed here, or a version
+    //     directory removed) or `corrupt` (installed and no longer
+    //     verifying). A grant does not install anything;
+    //   - the grant can name a pack or a policy this build no longer
+    //     expects, after a server update. The server re-derives both and
+    //     refuses to run against a difference.
+    //
+    // Answering `ready` in either case skips the dialog in
+    // `ensureLocalHarnessReadyForSend` and sends a turn the server then
+    // refuses — the user gets a failed turn instead of the one screen that
+    // would have fixed it.
+    if (status.state === "corrupt") {
+      return {
+        phase: "failed",
+        reason:
+          status.message ??
+          "The installed Claude Code runtime no longer matches what MCPJam " +
+            "expects. Reinstall it.",
+      };
+    }
+    if (consent !== null && status.state === "ready") {
+      const expected = availability.expectedPack;
+      const staleRuntime =
+        expected !== null &&
+        consent.runtime.packVersion !== expected.packVersion;
+      const stalePolicy =
+        consent.target.policyVersion !== availability.policyVersion ||
+        consent.target.permissionProfile !== availability.permissionProfile;
+      const staleMachine =
+        availability.machineId !== null &&
+        consent.target.machineId !== availability.machineId;
+      // Not `failed`: nothing went wrong. The terms simply moved, and the
+      // way back is the same dialog a first-time user sees.
+      if (!staleRuntime && !stalePolicy && !staleMachine) {
+        return { phase: "ready", reason: null };
+      }
+      return {
+        phase: "needs-consent",
+        reason:
+          "What you authorized is not what this machine would run now. " +
+          "Review and allow it again.",
+      };
+    }
     if (workspace === null && availability.suggestedWorkspace === null) {
       return { phase: "needs-workspace", reason: null };
     }
@@ -617,8 +666,22 @@ export function useLocalHarnessController(
       expectations: LocalHarnessConsentExpectations;
       scopeKey: string;
     }): LocalHarnessPendingApproval | null => {
-      // The REF, not the render's copy: see `workspaceRef`.
-      const chosen = workspaceRef.current ?? workspace;
+      // The REF first (see `workspaceRef`), then this render's state, then the
+      // one a stored grant already names.
+      //
+      // That last fallback is what a RELOAD needs: the dialog shows the
+      // folder from the stored consent, but neither the ref nor the state
+      // survives a page load — so Allow answered "choose a folder" for the
+      // folder it was displaying.
+      const chosen =
+        workspaceRef.current ??
+        workspace ??
+        (consent !== null
+          ? {
+              workspaceGrantId: consent.target.workspaceGrantId,
+              displayRoot: consent.workspaceDisplayRoot,
+            }
+          : null);
       if (!projectId || chosen === null) return null;
       const approval: LocalHarnessPendingApproval = {
         attemptId: `approval_${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`,
@@ -634,7 +697,7 @@ export function useLocalHarnessController(
       setPendingApproval(approval);
       return approval;
     },
-    [projectId, workspace, userKey],
+    [projectId, workspace, consent, userKey],
   );
 
   const cancelApproval = useCallback(() => {
@@ -766,8 +829,26 @@ export function useLocalHarnessController(
       readLocalHarnessConsentSnapshot(projectId),
     );
     if (fresh === null) return null;
+    // The same staleness rule the phase applies, so the gate and this backstop
+    // cannot disagree. A grant naming a pack, a policy or a machine this build
+    // no longer expects is one the server will refuse — and a clear refusal
+    // here beats a round trip that fails, because this one leads back to the
+    // dialog rather than to a failed turn.
+    if (availability !== null) {
+      const expected = availability.expectedPack;
+      if (
+        (expected !== null &&
+          fresh.runtime.packVersion !== expected.packVersion) ||
+        fresh.target.policyVersion !== availability.policyVersion ||
+        fresh.target.permissionProfile !== availability.permissionProfile ||
+        (availability.machineId !== null &&
+          fresh.target.machineId !== availability.machineId)
+      ) {
+        return null;
+      }
+    }
     return { target: fresh.target, token: fresh.token };
-  }, [offerable, inScope, projectId, userKey]);
+  }, [offerable, inScope, projectId, userKey, availability]);
 
   return {
     requestedTarget,
@@ -842,6 +923,15 @@ export function useLocalHarnessRunsHere(args: {
   );
   if (HOSTED_MODE || !flagEnabled) return false;
   if (args.harnessId !== "claude-code") return false;
-  if (storedTarget !== "local-native") return false;
+  // NOT `storedTarget === "local-native"`. The controller defaults to local on
+  // an Inspector with no cloud target and does not write a preference for it —
+  // nobody clicked anything — so requiring a stored value left the ordinary
+  // case labelled "runs in sandbox" while the agent ran as the OS user. That
+  // is the one label this product must never get wrong.
+  //
+  // A live grant is the honest signal: consent is only ever minted for local
+  // execution. An explicit `hosted` choice still wins over it, because a user
+  // who switched to cloud is not running here whatever they authorized earlier.
+  if (storedTarget === "hosted") return false;
   return parseStoredLocalHarnessConsent(consentSnapshot) !== null;
 }
