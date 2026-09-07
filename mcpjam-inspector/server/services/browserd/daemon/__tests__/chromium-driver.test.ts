@@ -1697,6 +1697,28 @@ describe("ChromiumDriver — the human pane's tab strip", () => {
     expect(snapshot.active).toBe(`${quotes}7`);
   });
 
+  it("never serialises an id the estimate has already rejected", async () => {
+    // The estimate only ever UNDERCOUNTS, so "over budget by raw length" is
+    // proof on its own. Without that shortcut the exact pass stringified a
+    // megabyte of caller-chosen id on every heartbeat of every open stream,
+    // only to throw the result away — attacker-priced CPU, several times a
+    // second, for a strip that was always going to be empty.
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://t.test/" }, "x".repeat(1_000_000)),
+    );
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const snapshot = driver.tabsSnapshot();
+      expect(snapshot.list).toHaveLength(0);
+      expect(snapshot.active).toBeUndefined();
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
   it("counts the bytes that go on the wire, not the characters", async () => {
     // One of these is 1 UTF-16 unit and 3 UTF-8 bytes. `.length` says the
     // strip fits; the reader, which applies its 8 KiB limit to bytes and drops

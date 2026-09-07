@@ -992,6 +992,12 @@ export class ChromiumDriver implements BrowserDriver {
           : undefined;
       return { ...(active ? { active } : {}), list };
     };
+    // A SOLE ENTRY THAT THE ESTIMATE ALREADY REJECTS never reaches the
+    // serialiser. The estimate only ever undercounts, so "over budget by raw
+    // length" is proof; and the alternative was stringifying a megabyte of
+    // caller-chosen id on every heartbeat of every open stream, only to throw
+    // it away — attacker-priced CPU, several times a second.
+    if (list.length === 1 && estimate > TABS_SNAPSHOT_BYTES) list.length = 0;
     // MEASURED, not estimated, and in BYTES rather than characters. The
     // estimate above misses three things, all of them under the caller's
     // control: the payload repeats the active id in its own field,

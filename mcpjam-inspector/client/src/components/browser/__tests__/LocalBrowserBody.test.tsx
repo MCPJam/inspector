@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   ensures: [] as string[],
   /** Every "somebody is looking at this" the pane sent, by boot id. */
   watches: [] as string[],
+  /** Make `watch` answer 404, as it does for a browser that has gone. */
+  watchMissing: false,
   /** Holds the next lease answer open, so a test can move the pane under it. */
   leaseGate: null as Promise<void> | null,
   /** The last socket handed to the pane, so a test can deliver a frame. */
@@ -65,6 +67,11 @@ vi.mock("@/lib/local-browser/client", async () => {
     },
     noteLocalBrowserWatch: async (args: any) => {
       api.watches.push(args.bootId);
+      // The route is keyed by `bootId` and answers 404 when that browser has
+      // gone — crashed, closed, or reaped.
+      if (api.watchMissing) {
+        throw new actual.LocalBrowserRequestError("No such local browser", 404);
+      }
       // The route reports who holds the browser as well as that somebody is
       // watching it — which is how a refused pane hears about a hand-back.
       return { watching: true as const, lease: api.lease };
@@ -96,6 +103,7 @@ beforeEach(() => {
   api.ensures = [];
   api.watches = [];
   api.leaseGate = null;
+  api.watchMissing = false;
   api.socket = null;
   window.sessionStorage.clear();
 });
@@ -504,6 +512,7 @@ describe("the agent browser pane — when somebody else is driving", () => {
 
       api.lease = { state: "free", holder: undefined };
       const ensuresBefore = api.ensures.length;
+      const watchesBefore = api.watches.length;
       await vi.advanceTimersByTimeAsync(6_000);
       expect(
         await screen.findByRole("button", { name: /take control/i }),
@@ -516,7 +525,42 @@ describe("the agent browser pane — when somebody else is driving", () => {
       // launch a Chromium nobody asked for and answer with a different boot's
       // lease.
       expect(api.ensures.length).toBe(ensuresBefore);
-      expect(api.watches).toContain("boot-proj-1");
+      // COUNTED, not merely present: this pane is not the native surface, so
+      // nothing else beats on `watch` — but an assertion that a name appears
+      // somewhere in a list would have passed on an earlier call rather than
+      // on the one this test is about.
+      expect(api.watches.length).toBeGreaterThan(watchesBefore);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers to open a new one when the browser it was waiting for has gone", async () => {
+    // `watch` is keyed by `bootId`, so its 404 is an ANSWER: that browser is
+    // not coming back. Retrying past it left the pane saying somebody else was
+    // driving a browser that no longer existed, with no way out but a reload.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+
+      api.watchMissing = true;
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      ).toBeTruthy();
+      expect(screen.queryByText(/somebody else has taken control/i)).toBeNull();
     } finally {
       vi.useRealTimers();
     }

@@ -115,13 +115,33 @@ async function post<T>(
   const json = (await response.json().catch(() => null)) as
     (T & { error?: string }) | null;
   if (!response.ok) {
-    throw new Error(
+    throw new LocalBrowserRequestError(
       typeof json?.error === "string"
         ? json.error
         : "The local browser could not be reached.",
+      response.status,
     );
   }
   return json as T;
+}
+
+/**
+ * A refusal from the local browser routes, with the status still on it.
+ *
+ * WHICH refusal matters to a caller. A 404 from a route keyed by `bootId` says
+ * that browser is GONE — a fact the pane has to act on by offering to open a
+ * new one — while a 500 or a dropped connection says try again in a moment.
+ * Answering both with a bare `Error` made every caller treat the first as the
+ * second, and wait forever on a browser that had already been reaped.
+ */
+export class LocalBrowserRequestError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "LocalBrowserRequestError";
+  }
 }
 
 export async function fetchLocalBrowserStatus(): Promise<LocalBrowserStatus> {

@@ -23,6 +23,7 @@ import {
   startLocalBrowserInstall,
   type LocalBrowserLease,
   type LocalBrowserStatus,
+  LocalBrowserRequestError,
 } from "@/lib/local-browser/client";
 
 /**
@@ -639,24 +640,30 @@ export function LocalBrowserBody({
             setError((prev) => (prev === SOMEBODY_ELSE_HAS_IT ? null : prev));
           }
         })
-        .catch(() => {
-          // A browser that has gone answers 404, and so does a machine that is
-          // busy. Either way the next tick asks again, and the pane's own
-          // measure is what discovers a browser that is not coming back.
+        .catch((error: unknown) => {
+          if (stopped || railGeneration.current !== generation) return;
+          // A 404 FROM THIS ROUTE IS AN ANSWER, not a failure: it is keyed by
+          // `bootId`, so it says that browser is gone — crashed, closed, or
+          // reaped while somebody waited for it back. Retrying forever left
+          // the pane saying somebody else was driving a browser that no longer
+          // existed, and never offering to open a new one. Anything else is a
+          // busy machine, and the next tick asks again.
+          if (
+            error instanceof LocalBrowserRequestError &&
+            error.status === 404
+          ) {
+            stopped = true;
+            setSession(null);
+            setLease({ state: "free" });
+            setError((prev) => (prev === SOMEBODY_ELSE_HAS_IT ? null : prev));
+          }
         });
     }, LEASE_RECHECK_MS);
     return () => {
       stopped = true;
       clearInterval(timer);
     };
-  }, [
-    session,
-    projectId,
-    consentToken,
-    consentGranted,
-    holding,
-    lease.state,
-  ]);
+  }, [session, projectId, consentToken, consentGranted, holding, lease.state]);
 
   // Hand the browser back when this tab goes away.
   //
