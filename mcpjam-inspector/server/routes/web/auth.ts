@@ -28,12 +28,20 @@ import { negotiationTelemetryLogger } from "../../utils/negotiation-telemetry.js
 import { setRequestLogContext } from "../../utils/request-logger.js";
 import { logger } from "../../utils/logger.js";
 import {
+  applyHostConformanceKnobs,
+  applyHostParamMirroring,
+  conformanceKnobsFromMcpProfile,
+  mirrorToolParamHeadersFromMcpProfile,
   parseXaaPolicyValue,
   resolveEffectiveAuthMethod,
   withXaaExtensionCapability,
   xaaPolicyFromMcpProfile,
   xaaPolicyRequiresConfiguration,
 } from "../../utils/effective-auth.js";
+import {
+  buildHostConnectionPins,
+  hostClientCapabilities,
+} from "../../services/host-connection-pins.js";
 import type { EffectiveAuthMethod } from "../../utils/effective-auth.js";
 import { fetchScenarioRuntimeConfig } from "../../utils/scenario-runtime-config.js";
 import { resolveLocalStdioServerConfig } from "../../utils/local-server-resolver.js";
@@ -2193,6 +2201,10 @@ export async function runEphemeralConnection<S extends z.ZodTypeAny, T>(
     guestUnsupportedMessage?: string;
     rpcLogger?: ReturnType<typeof createHostedRpcLogCollector>["rpcLogger"];
     httpLogger?: ReturnType<typeof createHostedRpcLogCollector>["httpLogger"];
+    /** See `createManualHostedConnection`'s option of the same name. */
+    hostConfigForBody?: (
+      rawBody: Record<string, unknown>
+    ) => Promise<Record<string, unknown> | undefined>;
   }
 ): Promise<T> {
   const { manager, body } = await createManualHostedConnection(
@@ -2239,6 +2251,28 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     ) => MrtrInputCollector | undefined;
     /** See `createAuthorizedManager`'s option of the same name. */
     advertiseSkillsExtension?: boolean;
+    /**
+     * The host config this connection executes under, when the caller knows it.
+     *
+     * AUTHORITATIVE over the body's pins, field by field — the same rule the
+     * chat path applies to a scenario turn. An eval body carries pins derived
+     * from whichever host is ACTIVE in the browser, which is not necessarily
+     * the host the run executes under (an environment pins its own), so
+     * without this a run could negotiate one protocol version while its tool
+     * visibility came from another host entirely.
+     *
+     * Absent leaves today's behavior exactly as it was: the body's pins stand.
+     */
+    hostConfig?: Record<string, unknown>;
+    /**
+     * Same thing, for callers that only learn WHICH host from the body — and
+     * cannot read it themselves, because the body is a stream this helper
+     * consumes. Ignored when `hostConfig` is supplied. Returning `undefined`
+     * means "this request names no host", which keeps the body's pins.
+     */
+    hostConfigForBody?: (
+      rawBody: Record<string, unknown>
+    ) => Promise<Record<string, unknown> | undefined>;
   }
 ): Promise<{
   manager: InstanceType<typeof MCPClientManager>;
@@ -2316,15 +2350,59 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
     xaaPolicy = parseXaaPolicyValue(rawBody.xaaPolicy);
   }
 
+  // The run's own host, when the caller resolved one, is authoritative over
+  // whatever pins the body carried — see `options.hostConfig`. Nothing changes
+  // for a caller that passes none.
+  const runHostConfig =
+    options?.hostConfig ??
+    (options?.hostConfigForBody
+      ? await options.hostConfigForBody(rawBody)
+      : undefined);
+  const hostPins = runHostConfig
+    ? buildHostConnectionPins(runHostConfig, timeoutMs)
+    : undefined;
+  // REPLACE, not merge — see the note in `host-connection-pins.ts`. A body pin
+  // the run's host is silent about is still active-host drift.
+  const merged = hostPins
+    ? {
+        initializePins: hostPins.initializePins,
+        mcpProtocolVersionsByServerId: hostPins.mcpProtocolVersionsByServerId,
+      }
+    : { initializePins, mcpProtocolVersionsByServerId };
+  // The conformance knobs are suppression switches, so a host wanting the full
+  // behavior has to REMOVE a body pin rather than merely not set one — which
+  // is what these two overlays do, and why they are not part of the merge
+  // above. Same pair the chat path applies to a scenario turn.
+  // Typed as the MANAGER's own pin shape: the conformance overlays below add
+  // suppression switches a host-derived pin object has no field for, and
+  // inferring their generic from the narrow type drops every knob they were
+  // called to apply.
+  const basePins: NonNullable<
+    Parameters<typeof createAuthorizedManager>[7]
+  >["initializePins"] = merged.initializePins;
+  const effectiveInitializePins = runHostConfig
+    ? applyHostConformanceKnobs(
+        applyHostParamMirroring(
+          basePins,
+          mirrorToolParamHeadersFromMcpProfile(runHostConfig.mcpProfile),
+        ),
+        conformanceKnobsFromMcpProfile(runHostConfig.mcpProfile),
+      )
+    : merged.initializePins;
+
   const { manager } = await createAuthorizedManager(
     callerContextFromHono(c),
     bearerToken,
     raw.projectId as string,
     serverIds,
-    timeoutMs,
+    hostPins?.timeoutMs ?? timeoutMs,
     oauthTokens,
-    (raw.clientCapabilities as Record<string, unknown> | undefined) ??
-      undefined,
+    // The run's host wins, for the same reason its protocol pins do: the body's
+    // capabilities come from whichever host the browser had active. Falls back
+    // to the body when the host declares none, so a caller that legitimately
+    // sends its own set (an ad-hoc connection with no host) is unaffected.
+    (runHostConfig ? hostClientCapabilities(runHostConfig) : undefined) ??
+      (raw.clientCapabilities as Record<string, unknown> | undefined),
     {
       accessScope,
       scenarioId,
@@ -2335,8 +2413,11 @@ export async function createManualHostedConnection<S extends z.ZodTypeAny>(
       rpcLogger: options?.rpcLogger,
       httpLogger: options?.httpLogger,
       serverNames,
-      initializePins,
-      mcpProtocolVersionsByServerId,
+      initializePins: effectiveInitializePins,
+      mcpProtocolVersionsByServerId: merged.mcpProtocolVersionsByServerId,
+      ...(hostPins?.requestTimeoutByServerId
+        ? { requestTimeoutByServerId: hostPins.requestTimeoutByServerId }
+        : {}),
       xaaPolicy,
       // Resolve the XAA issuer here (we hold the request `Context`) so the
       // manager builder can mint Cross-App Access tokens for `useXaa` servers.
@@ -2414,6 +2495,10 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
     timeoutMs?: number;
     rpcLogs?: boolean;
     guestUnsupportedMessage?: string;
+    /** See `createManualHostedConnection`'s option of the same name. */
+    hostConfigForBody?: (
+      rawBody: Record<string, unknown>
+    ) => Promise<Record<string, unknown> | undefined>;
   }
 ) {
   let rpcCollector: ReturnType<typeof createHostedRpcLogCollector> | undefined;
@@ -2436,6 +2521,7 @@ export async function withEphemeralConnection<S extends z.ZodTypeAny, T>(
         guestUnsupportedMessage: options?.guestUnsupportedMessage,
         rpcLogger: rpcCollector?.rpcLogger,
         httpLogger: rpcCollector?.httpLogger,
+        hostConfigForBody: options?.hostConfigForBody,
       }
     );
 

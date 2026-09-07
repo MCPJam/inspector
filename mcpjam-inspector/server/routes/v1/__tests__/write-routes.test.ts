@@ -740,6 +740,11 @@ describe("v1 write routes", () => {
           "projectEnvironments:listEnvironments": () => PROJECT_ENVIRONMENTS,
           "projectEnvironments:resolveEnvironmentForLaunch": () =>
             RESOLVED_ENVIRONMENT,
+          // The environment's host. The launch now connects AS it (protocol
+          // pins, capabilities, timeouts), so an unreadable one fails the run
+          // rather than silently running as the default host — the same rule
+          // the run-group route already applies for its harness gate.
+          "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
         });
       }
 
@@ -906,6 +911,9 @@ describe("v1 write routes", () => {
           }),
           "projectEnvironments:resolveEnvironmentForLaunch": () =>
             RESOLVED_ENVIRONMENT,
+          // See the sibling fixture above: the launch connects as the
+          // environment's host.
+          "hosts:getHost": () => ({ config: { hostStyle: "mcpjam" } }),
         });
 
         const res = await request(

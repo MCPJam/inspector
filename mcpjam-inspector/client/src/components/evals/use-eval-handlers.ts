@@ -24,7 +24,6 @@ import {
   getSelectedSuiteHostRunPlan,
 } from "./helpers";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useEnvironmentLabelContext } from "@/components/project-environments/use-environment-label-context";
 import {
   disambiguateLabels,
@@ -296,11 +295,11 @@ export function useEvalHandlers({
   const getAccessToken = useConvexAccessToken();
   // Environment names for env-suite fan-out toasts/labels only — env plans
   // never derive servers from this list (the server resolves them at launch).
-  // Queried only when the feature flag is on; a flag-off env suite still
-  // fans out correctly with ids as display fallbacks.
-  const projectEnvironmentsEnabled = useProjectEnvironmentsEnabled();
+  // Not flag-gated: a suite composed from the strip attaches nameless ad-hoc
+  // cells on any deployment that accepts them, and a run labeled by a bare id
+  // is not a label. Fan-out width never depended on this list.
   const projectEnvironments = useProjectEnvironments(
-    projectEnvironmentsEnabled ? projectId : null,
+    projectId,
     // Ad-hoc rows included: a suite composed from the header bar attaches
     // nameless ones, and a run labeled by a bare id is not a label.
     { includeAdhoc: true }
@@ -310,7 +309,7 @@ export function useEvalHandlers({
   // would otherwise render as the same string, which is exactly the case the
   // composer makes common.
   const environmentLabelContext = useEnvironmentLabelContext(
-    projectEnvironmentsEnabled ? projectId : null,
+    projectId,
     projectEnvironments
   );
   const labeledProjectEnvironments = useMemo(() => {

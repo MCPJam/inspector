@@ -227,6 +227,9 @@ export function groupGradersByStage(input: {
     byStage[PREDICATE_STAGE[kind] ?? "userValue"].push(row);
   });
 
+  // Always inserted, even when the judge is off. This row is the control
+  // the Pass or fail body lists — it is not a claim that the suite judges.
+  // Read `judgeMode(judgeConfig)` for whether a judge actually runs.
   byStage[GRADER_STAGE["judge:goalCompletion"]].push({
     id: "judge:goalCompletion",
     kind: "judge",
@@ -255,8 +258,13 @@ export function groupGradersByStage(input: {
  * a page that has observed nothing.
  */
 export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
-  connection: "Measured by the runner — nothing to configure",
-  discovery: "Measured by the runner — nothing to configure",
+  // "Nothing to configure" was false in the way that mattered: nothing to
+  // GRADE, but the client and server rows decide whether these stages succeed,
+  // and a reader debugging a failed connection was told to look nowhere. The
+  // card now lists that configuration; this line says where it comes from.
+  connection:
+    "Measured by the runner — decided by the client and server connection settings",
+  discovery: "Measured by the runner — decided by the client's discovery settings",
   selection: "No grader",
   call: "Measured by the runner — nothing to configure",
   response: "No grader",
@@ -266,4 +274,109 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
 /** True when this stage's empty state is a gap rather than a runner concern. */
 export function stageEmptyIsGap(stage: UserValueStage): boolean {
   return STAGE_EMPTY_COPY[stage] === "No grader";
+}
+
+/**
+ * How the judge is configured, not what a run did.
+ *
+ * Absent config is `manual`: `enabled` defaults on and `autoRun` defaults off,
+ * matching `judges-section.tsx`. `role` is only `gating` when the literal
+ * `"gating"` is stored.
+ */
+export type JudgeMode = "off" | "manual" | "automatic" | "gating";
+
+export function judgeMode(judgeConfig: EvalJudgeConfig | undefined): JudgeMode {
+  const goal = judgeConfig?.goalCompletion;
+  if (goal?.enabled === false) return "off";
+  if (goal?.role === "gating") return "gating";
+  if (goal?.autoRun === true) return "automatic";
+  return "manual";
+}
+
+export type StageConfigState = {
+  stage: UserValueStage;
+  state:
+    | "runner"
+    | "gated"
+    | "gap"
+    | "judgeOnRequest"
+    | "judgeAutomatic"
+    | "judgeOff";
+  /** Deterministic gating rows (match + predicate). The judge is excluded. */
+  gates: number;
+  /** Only on `userValue`. */
+  judge?: JudgeMode;
+};
+
+export function stageConfigStates(
+  model: SuiteGradingModel,
+  judge: JudgeMode,
+): StageConfigState[] {
+  return USER_VALUE_STAGES.map((stage) => {
+    const gates = model.byStage[stage].filter(
+      (row) => row.kind !== "judge" && row.role === "gating",
+    ).length;
+    if (stage !== "userValue") {
+      if (gates >= 1) return { stage, state: "gated", gates };
+      if (!stageEmptyIsGap(stage)) return { stage, state: "runner", gates };
+      return { stage, state: "gap", gates };
+    }
+    if (gates >= 1 || judge === "gating") {
+      return { stage, state: "gated", gates, judge };
+    }
+    if (judge === "automatic") {
+      return { stage, state: "judgeAutomatic", gates, judge };
+    }
+    if (judge === "manual") {
+      return { stage, state: "judgeOnRequest", gates, judge };
+    }
+    return { stage, state: "judgeOff", gates, judge };
+  });
+}
+
+/**
+ * The predicate kinds the settings page presents as ceilings.
+ *
+ * Derived from `GRADER_PRESENTATION_GROUP` rather than listed here: the
+ * contract already decides which kinds read as budgets, and a second list in
+ * the client is a second opinion that drifts the first time a kind is added.
+ */
+export const BUDGET_PREDICATE_KINDS = Object.entries(GRADER_PRESENTATION_GROUP)
+  .filter(([, group]) => group === "budget")
+  .map(([kind]) => kind) as readonly Predicate["type"][];
+
+export function isBudgetPredicate(predicate: Predicate): boolean {
+  return (
+    GRADER_PRESENTATION_GROUP[
+      predicate.type as keyof typeof GRADER_PRESENTATION_GROUP
+    ] === "budget"
+  );
+}
+
+/**
+ * Fold an edited budget sub-list back into the suite's whole check list.
+ *
+ * The Limits tab edits a FILTERED view — the two ceiling kinds — of the one
+ * `defaultPredicates` array, so what comes back has to be re-seated rather
+ * than appended: budgets keep the slots they already occupied, so a save
+ * diffs as "this ceiling changed" instead of "every check moved". Slots run
+ * out when a ceiling was removed (the extra slots are dropped) and run over
+ * when one was added (the new ones land at the end, where a new check goes).
+ * Every non-budget check keeps its exact position, untouched.
+ */
+export function mergeBudgetPredicates(
+  all: Predicate[],
+  nextBudgets: Predicate[],
+): Predicate[] {
+  const merged: Predicate[] = [];
+  let next = 0;
+  for (const predicate of all) {
+    if (isBudgetPredicate(predicate)) {
+      if (next < nextBudgets.length) merged.push(nextBudgets[next++]);
+      continue;
+    }
+    merged.push(predicate);
+  }
+  for (; next < nextBudgets.length; next++) merged.push(nextBudgets[next]);
+  return merged;
 }

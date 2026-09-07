@@ -33,6 +33,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
+  useGithubChecksSettings: () => ({
+    availability: { state: "enabled" },
+    repos: [],
+  }),
 }));
 
 vi.mock("../suite-github-checks-section", () => ({
@@ -132,6 +136,12 @@ function renderSettingsSheet() {
 
 describe("SuiteIterationsView GitHub Checks gate", () => {
   beforeEach(() => {
+    class FakeIntersectionObserver {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    }
+    vi.stubGlobal("IntersectionObserver", FakeIntersectionObserver);
     vi.clearAllMocks();
     mocks.useMutation.mockReturnValue(vi.fn());
     mocks.useQuery.mockImplementation(() => undefined);

@@ -106,9 +106,9 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     key: "budgets",
     label: "Budgets",
     // The token and turn ceilings, lifted out of the user-value group so they
-    // read as a set. They are ordinary checks, authored and edited through the
-    // one Checks editor, so there is nothing here an agent cannot already
-    // write.
+    // read as a set. The Limits tab edits them, but it edits a FILTERED VIEW
+    // of settings.checks — the same array, the same wire field — so there is
+    // nothing here an agent cannot already write.
     excluded:
       "A presentation subset of settings.checks (token and turn ceilings); reachable through settings.checks.",
   },
@@ -139,7 +139,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "schedule",
-    label: "Automations",
+    label: "Schedule",
     // Its own route (`PATCH …/eval-suites/{id}/schedule`) because enabling a
     // schedule has to reject a multi-environment suite that names no
     // environment — a validation the suite PATCH would have to grow a

@@ -67,6 +67,17 @@ import type {
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
 import {
+  applyHostConformanceKnobs,
+  applyHostParamMirroring,
+  conformanceKnobsFromMcpProfile,
+  mirrorToolParamHeadersFromMcpProfile,
+  xaaPolicyFromMcpProfile,
+} from "../../utils/effective-auth.js";
+import {
+  buildHostConnectionPins,
+  hostClientCapabilities,
+} from "../../services/host-connection-pins.js";
+import {
   TERMINAL_ITERATION_STATUSES,
   TERMINAL_RUN_STATUSES,
 } from "../../services/evals/run-status.js";
@@ -2939,6 +2950,13 @@ async function launchEvalRun(params: {
   environmentLaunch: ResolvedEnvironmentForLaunch | undefined;
   serverIds: string[];
   serverNames: string[] | undefined;
+  /**
+   * The host config THIS run executes under, already resolved by the caller
+   * (the dry run below loads one per target for the harness gate). Connecting
+   * without it made the v1 path the only launcher that ignored its host's
+   * protocol pins, timeouts and advertised capabilities entirely.
+   */
+  hostConfig?: Record<string, unknown>;
   onSettled: () => void;
 }): Promise<LaunchedEvalRun> {
   const {
@@ -2956,20 +2974,55 @@ async function launchEvalRun(params: {
   // Manual connection lifecycle (mirrors the web stream-test-case route):
   // the manager must outlive this request — it is the background task's MCP
   // transport — so `withManager`'s request-scoped teardown can't be used.
+  // Connect AS the run's host. The v1 body carries no pins of its own (there
+  // is no browser to send them), so everything here comes from the host the
+  // dry run already resolved for this target.
+  const hostPins = params.hostConfig
+    ? buildHostConnectionPins(params.hostConfig, WEB_CALL_TIMEOUT_MS)
+    : undefined;
+  // Typed as the MANAGER's own pin shape, not the host reader's narrower one:
+  // the conformance overlays below add suppression switches (`firstPageOnly`,
+  // …) that a host-derived pin object has no field for, and inferring their
+  // generic from the narrow type drops every knob they were called to apply.
+  const basePins: NonNullable<
+    Parameters<typeof createAuthorizedManager>[7]
+  >["initializePins"] = hostPins?.initializePins;
+  const hostInitializePins = params.hostConfig
+    ? applyHostConformanceKnobs(
+        applyHostParamMirroring(
+          basePins,
+          mirrorToolParamHeadersFromMcpProfile(params.hostConfig.mcpProfile),
+        ),
+        conformanceKnobsFromMcpProfile(params.hostConfig.mcpProfile),
+      )
+    : undefined;
   const { manager } = await createAuthorizedManager(
     params.callerContext,
     convexAuthToken,
     projectId,
     serverIds,
-    WEB_CALL_TIMEOUT_MS,
+    hostPins?.timeoutMs ?? WEB_CALL_TIMEOUT_MS,
     undefined,
-    undefined,
+    params.hostConfig ? hostClientCapabilities(params.hostConfig) : undefined,
     {
       serverNames,
-      // v1 eval API has no host-persona input — no enterprise policy to
-      // enforce; the issuer makes per-server XAA servers mint instead of
-      // failing with 'Missing XAA issuer'.
+      // The issuer makes per-server XAA servers mint instead of failing with
+      // 'Missing XAA issuer'. The enterprise policy now comes from the run's
+      // own host, like every other launcher's.
       xaaIssuer: params.xaaIssuer,
+      ...(params.hostConfig
+        ? { xaaPolicy: xaaPolicyFromMcpProfile(params.hostConfig.mcpProfile) }
+        : {}),
+      ...(hostInitializePins ? { initializePins: hostInitializePins } : {}),
+      ...(hostPins?.mcpProtocolVersionsByServerId
+        ? {
+            mcpProtocolVersionsByServerId:
+              hostPins.mcpProtocolVersionsByServerId,
+          }
+        : {}),
+      ...(hostPins?.requestTimeoutByServerId
+        ? { requestTimeoutByServerId: hostPins.requestTimeoutByServerId }
+        : {}),
     },
   );
 
@@ -3292,6 +3345,16 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
         : {}),
     });
 
+  // The host this run executes under. The group route gets one per target from
+  // its dry run; this single-run path has no dry run, so it loads its own.
+  // `loadSuiteHostConfig` is never hostless — a suite with no attachment and no
+  // config resolves to the default MCPJam host.
+  const runHostConfig = await loadSuiteHostConfig(
+    createConvexReadClient(convexAuthToken),
+    body.suiteId,
+    body.namedHostId ?? environmentLaunch?.hostId,
+  );
+
   const slotKey = orgConcurrencyKey(c);
   if (!tryAcquireRunSlot(slotKey)) {
     return v1Error(
@@ -3322,6 +3385,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       xaaIssuer: resolveXaaIssuer(c, HOSTED_MODE),
       projectId,
       convexAuthToken,
+      hostConfig: runHostConfig,
       body,
       suiteRerun,
       environmentId,
@@ -3579,6 +3643,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const resolved: Array<{
     target: (typeof targets)[number];
     servers: Awaited<ReturnType<typeof resolveLaunchServers>>;
+    hostConfig: Record<string, unknown>;
   }> = [];
   for (const target of targets) {
     const servers = await resolveLaunchServers({
@@ -3620,7 +3685,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         { reason: "HARNESS_UNAVAILABLE", harness: admission.harness },
       );
     }
-    resolved.push({ target, servers });
+    resolved.push({ target, servers, hostConfig });
   }
 
   const slotKey = orgConcurrencyKey(c);
@@ -3648,7 +3713,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   let startedCount = 0;
   let failedCount = 0;
 
-  for (const { target, servers } of resolved) {
+  for (const { target, servers, hostConfig } of resolved) {
     const targetDto = {
       ...(target.environmentId ? { environmentId: target.environmentId } : {}),
       ...(target.namedHostId ? { namedHostId: target.namedHostId } : {}),
@@ -3660,6 +3725,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         xaaIssuer,
         projectId,
         convexAuthToken,
+        hostConfig,
         body: {
           suiteId: body.suiteId,
           tests: [],
