@@ -3,6 +3,10 @@ import { useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
 import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
+// The conversion lives in `shared/` because the v1 route performs the same
+// one: a budget saved here and a budget set through the API must land on the
+// same credit. Re-exported so existing importers of this module keep working.
+export { creditsToUsdString, usdStringToCredits } from "@/shared/usd-credits";
 
 /**
  * The organization's spend budget — an admin-set ceiling on MCPJam-billed
@@ -124,47 +128,4 @@ export function useOrgSpendBudget(organizationId: string | null | undefined) {
     setBudget,
     clearBudget,
   };
-}
-
-/** Credits (1¢ each) → a dollar string. */
-export function creditsToUsdString(credits: number): string {
-  return (credits / 100).toFixed(2);
-}
-
-/**
- * A dollar amount as typed → whole credits, or `null` when it is not a usable
- * number.
- *
- * `Number("")` is 0, which would read a cleared field as "cap this org at
- * zero" — so blank is rejected explicitly rather than coerced. Rounding is
- * to the nearest cent because the ledger debits whole credits; a cap of
- * $10.005 could never be exactly reached.
- *
- * WORKS ON THE DIGITS, not on a float. `Math.round(1.005 * 100)` is 100, not
- * 101, because binary float64 has no exact 1.005 — it holds
- * 1.00499999999999989, so the product lands just under the half-cent and
- * rounds down. The typed STRING is the only place the decimal the person
- * meant still exists, so the cents are read off it directly and the
- * half-cent is decided on the digit rather than on the float.
- */
-export function usdStringToCredits(value: string): number | null {
-  const trimmed = value.trim();
-  if (trimmed === "") return null;
-  // Reject anything that is not a plain decimal before touching the digits:
-  // exponent forms have no fixed cent position to read.
-  const match = /^(\d*)(?:\.(\d*))?$/.exec(trimmed);
-  if (!match || (match[1] === "" && (match[2] ?? "") === "")) {
-    // Not plain-decimal (a sign, an exponent, or junk). `Number` still
-    // decides validity, and a negative or non-finite value is refused.
-    const parsed = Number(trimmed);
-    if (!Number.isFinite(parsed) || parsed < 0) return null;
-    return Math.round(parsed * 100);
-  }
-  const whole = match[1] === "" ? "0" : match[1];
-  const fraction = match[2] ?? "";
-  const cents = Number(whole) * 100 + Number((fraction + "00").slice(0, 2));
-  if (!Number.isFinite(cents)) return null;
-  // The third decimal decides the half-cent, exactly as written.
-  const roundUp = (fraction[2] ?? "0") >= "5";
-  return cents + (roundUp ? 1 : 0);
 }

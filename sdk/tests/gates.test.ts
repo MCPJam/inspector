@@ -745,6 +745,48 @@ describe("adapters", () => {
     ).toBe("passed");
   });
 
+  it("never counts a no_pricing cost, even when one is present", () => {
+    // A stale or mis-stamped row can carry BOTH `reason: "no_pricing"` and a
+    // number. Counting it in the numerator while excluding it from the
+    // population gives `costed > total` — not a coverage reading, and one
+    // that slips past `costed < total`, so the gate would judge a ceiling on
+    // money MCPJam never billed.
+    const run = {
+      id: "run_1",
+      suiteId: "s",
+      runNumber: 1,
+      status: "completed",
+      result: "passed",
+      summary: { total: 2, passed: 2 },
+      source: "sdk",
+      notes: null,
+      createdAt: 0,
+      completedAt: 1,
+      scoreIntegrity: "valid",
+    } as const;
+    const built = gateInputFromPlatformRun(run as never, {
+      complete: true,
+      items: [
+        {
+          id: "i1",
+          usage: {
+            estimatedCostUsd: 0.02,
+            costBasis: { status: "estimated", source: "gateway_pricing" },
+          },
+        },
+        {
+          id: "i2",
+          usage: {
+            estimatedCostUsd: 99,
+            costBasis: { status: "not_reported", reason: "no_pricing" },
+          },
+        },
+      ] as never,
+    });
+    expect(built.totals?.costCoverage).toEqual({ costed: 1, total: 1 });
+    expect(built.totals?.costUsd).toBeCloseTo(0.02);
+  });
+
   it("still refuses when a BILLABLE trial went unpriced", () => {
     // `harness_mixed_models` is platform work we could not price, not work we
     // were never going to bill. It stays in the denominator, so the total is

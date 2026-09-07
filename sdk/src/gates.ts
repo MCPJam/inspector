@@ -538,12 +538,18 @@ export function gateInputFromPlatformRun(
   for (const iteration of usable) {
     const usage = iteration.usage;
     const basis = usage?.costBasis;
+    // ONE predicate, BOTH sides. A never-billable iteration is out of the
+    // numerator and the denominator alike: counting a cost it happens to
+    // carry while excluding it from the population yields `costed > total`,
+    // which is not a coverage reading at all — and `costed < total` is false
+    // for it, so the gate would read that impossible pair as full coverage
+    // and judge a ceiling on money MCPJam never billed.
     const neverBillable =
       basis?.source === "sdk_runner" || basis?.reason === "no_pricing";
-    if (!neverBillable) billableIterations += 1;
+    if (neverBillable) continue;
+    billableIterations += 1;
     const cost = usage?.estimatedCostUsd;
     if (typeof cost !== "number") continue;
-    if (basis?.source === "sdk_runner") continue;
     costUsd = (costUsd ?? 0) + cost;
     costedIterations += 1;
   }

@@ -29,6 +29,10 @@ import { createConvexClient } from "./convex-client.js";
 import { translateConvexReadError } from "./convex-read-errors.js";
 import { translateConvexWriteError } from "./convex-errors.js";
 import { v1Resource } from "./envelope.js";
+// ONE conversion for both write paths — the console's and this one. A cap
+// saved from the UI and the same cap set through the API must land on the
+// same credit, which they cannot do while each rounds for itself.
+import { usdNumberToCredits } from "../../../shared/usd-credits.js";
 
 const spendBudget = new Hono();
 
@@ -63,23 +67,6 @@ const putSchema = z
       .optional(),
   })
   .strict();
-
-/**
- * Dollars → whole credits, rounding the half-cent the way the sender wrote it.
- *
- * JSON carries money as a float64, so `1.005` arrives as
- * 1.00499999999999989 and a plain `Math.round(x * 100)` answers 100 — a cap
- * one cent below what the caller asked for. The nudge by one epsilon lands
- * such a value back on the half-cent it was written as, without moving a
- * value genuinely below it (`1.0049` still rounds to 100).
- *
- * The console does not rely on this: it converts from the typed STRING, where
- * the intended decimal still exists (`usdStringToCredits`). This is the best
- * available answer for a caller who can only send a number.
- */
-function usdToCredits(capUsd: number): number {
-  return Math.round((capUsd + Number.EPSILON) * 100);
-}
 
 type BudgetView = {
   capCredits: number | null;
@@ -162,7 +149,9 @@ spendBudget.put("/organizations/:organizationId/spend-budget", async (c) => {
       "billing/spendBudgetSettings:setOrganizationSpendBudget" as any,
       {
         organizationId,
-        capCredits: usdToCredits(body.capUsd),
+        // Zod has already refused a negative or non-finite value, so the
+        // conversion cannot answer null here.
+        capCredits: usdNumberToCredits(body.capUsd) ?? 0,
         ...(body.alertPercents ? { alertPercents: body.alertPercents } : {}),
       } as any,
     );
