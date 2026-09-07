@@ -406,6 +406,72 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
+  it("gives a single session a link rather than something to expand", () => {
+    const onOpenSession = vi.fn();
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: {
+        sessions: [
+          {
+            _id: "sess-only",
+            firstMessagePreview: "Pull the proposal-stage prospects",
+            lastActivityAt: NOW,
+          },
+        ],
+        nextBefore: null,
+        total: 1,
+        totalTruncated: false,
+      },
+      isLoading: false,
+    });
+    const oneSession = run({
+      summary: { total: 1, succeeded: 0, failed: 1, rateLimited: 0 },
+      goalScoreSummary: { gradedCount: 1, passedCount: 0, avgScore: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([oneSession])[0]!}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={onOpenSession}
+        projectId="proj-1"
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    // The link is there; the expander is not.
+    expect(screen.getByTestId("findings-goal-sessions")).toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByTestId("findings-goal-session"));
+    expect(onOpenSession).toHaveBeenCalledWith("sess-only");
+  });
+
+  it("offers no session control at all when the goal has no sessions", () => {
+    mockUseGoalOutcomeDrilldown.mockReturnValue({
+      drilldown: { sessions: [], nextBefore: null, total: 0 },
+      isLoading: false,
+    });
+    const noSessions = run({
+      summary: { total: 0, succeeded: 0, failed: 0, rateLimited: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([noSessions])[0]!}
+        waveSignals={waveSignals}
+        personas={personas}
+        onOpenSession={vi.fn()}
+        projectId="proj-1"
+      />
+    );
+    fireEvent.click(screen.getByTestId("findings-goal-row"));
+    expect(
+      screen.queryByTestId("findings-evidence-sessions-toggle")
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByTestId("findings-goal-sessions")
+    ).not.toBeInTheDocument();
+  });
+
   it("survives a legacy wave with no signals (no crash)", () => {
     const legacyRuns = overview.runs.map((r) => {
       const { swarmRunGroupId: _drop, ...rest } = r;
