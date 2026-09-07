@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useAuth as useWorkOSAuth } from "@workos-inc/authkit-react";
+import { isLoginRequiredError } from "@/lib/auth/login-required-error";
 import { reportCaught } from "@/lib/error-reporting";
 import { useSessionRefreshStore } from "@/stores/session-refresh-store";
 import {
@@ -35,7 +36,8 @@ const GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS = [500, 1500, 3000] as const;
 // Same ladder for token refresh. ~5s worst case, which fits inside the 60s
 // `authRefreshTokenLeewaySeconds` configured in main.tsx — so a retried
 // success still lands while the old token is valid.
-const AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS = GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS;
+const AUTH_TOKEN_REFRESH_RETRY_DELAYS_MS =
+  GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS;
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -155,8 +157,7 @@ export function useUnifiedConvexAuth() {
         attempt <= GUEST_SESSION_BOOTSTRAP_RETRY_DELAYS_MS.length;
         attempt += 1
       ) {
-        let session: Awaited<ReturnType<typeof getOrCreateGuestSession>> =
-          null;
+        let session: Awaited<ReturnType<typeof getOrCreateGuestSession>> = null;
         try {
           session = await getOrCreateGuestSession();
         } catch {
@@ -194,13 +195,13 @@ export function useUnifiedConvexAuth() {
         // rethrown with its state restored to AUTHENTICATED (retryable), while
         // a rejected refresh grant wipes the session, latches state to ERROR,
         // and throws `LoginRequiredError` forever after (retrying can only
-        // re-throw). Matching on `name` rather than `instanceof` because
-        // authkit-react bundles its own copy of the error class.
+        // re-throw). See `isLoginRequiredError` for why that error can only be
+        // recognized by its message — matching on `name` silently classified
+        // every dead session as transient.
         getAccessToken: () =>
           fetchTokenWithRetry(() => workos.getAccessToken(), {
             source: "workos_token_refresh",
-            isTerminalError: (error) =>
-              error instanceof Error && error.name === "LoginRequiredError",
+            isTerminalError: isLoginRequiredError,
           }),
       };
     }
@@ -208,9 +209,9 @@ export function useUnifiedConvexAuth() {
     return {
       isLoading: workos.isLoading || guestLoading,
       user: guestToken ? GUEST_USER_PLACEHOLDER : null,
-      getAccessToken: async (
-        opts?: { forceRefreshToken?: boolean },
-      ): Promise<string | null> => {
+      getAccessToken: async (opts?: {
+        forceRefreshToken?: boolean;
+      }): Promise<string | null> => {
         // Convex asks for a token, gets one, and authenticates the guest —
         // the true "activated as a guest" signal. Marking HERE (rather than
         // in the resolve effect) is immune to the effect-cancel race when a
