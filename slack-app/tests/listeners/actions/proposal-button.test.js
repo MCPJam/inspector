@@ -468,6 +468,66 @@ describe('handleProposalButton', () => {
     assert.ok(posted[0].text.includes('https://app/swarms/jr_1'));
   });
 
+  it('announces a CANCELLATION rather than routing it into the run watcher', async () => {
+    // The watcher branch posts its own "running…" copy and returns, so a
+    // cancellation that carries a typed run resource would be announced as a
+    // started run even with the wording fixed. Latent while nothing builds a
+    // resource for cancel, which is why it is pinned here rather than later.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        kind: 'cancel',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
+    assert.ok(!/watch it here/.test(posted[0].text));
+  });
+
+  it('announces a CANCELLATION rather than routing it into the journey watcher', async () => {
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_journey_run',
+        kind: 'cancel',
+        resource: { type: 'journey_run', id: 'jr_1', url: 'https://app/swarms/jr_1?project=p1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/swarm running…/.test(posted[0].text));
+  });
+
+  it('announces a CANCELLATION from a server that predates `kind`', async () => {
+    // The routing has to recognise the same two spellings the copy does, or
+    // the wrong announcement stays reachable through the older one.
+    stub({
+      executeBody: {
+        status: 'succeeded',
+        operation: 'cancel_eval_run',
+        resource: { type: 'eval_run', id: 'run_1', url: 'https://app/evals/x/runs/run_1' },
+        result: {},
+      },
+    });
+    const { args, posted } = clickArgs();
+    await handleProposalButton(/** @type {any} */ (args));
+
+    assert.strictEqual(posted.length, 1);
+    assert.match(posted[0].text, /Cancelled by <@U_CLICKER>/);
+    assert.ok(!/running…/.test(posted[0].text));
+  });
+
   it('posts a plain announcement when the approval produced no run', async () => {
     stub({
       executeBody: { status: 'succeeded', operation: 'cancel_eval_run', kind: 'cancel', result: {} },

@@ -27,6 +27,24 @@ import { postRunEvidence } from './run-evidence.js';
 import { announceAndWatchRun, isFailedOutcome } from './run-watcher.js';
 
 /**
+ * Whether an approved action was a CANCELLATION.
+ *
+ * One definition, because the copy and the routing both need the answer and
+ * two of them would drift. It recognises the two spellings the copy below
+ * uses: `kind` when the server sends one, and the operation name as the
+ * fallback for a server that predates `kind`. A build that matched only the
+ * first would leave every cancellation from an older server announced, and
+ * routed, as an approval.
+ *
+ * @param {{ operation: string, kind?: string | null }} outcome
+ * @returns {boolean}
+ */
+export function isCancellation(outcome) {
+  if (outcome.kind === 'cancel') return true;
+  return outcome.kind == null && outcome.operation === 'cancel_eval_run';
+}
+
+/**
  * What to say once the action has actually run.
  *
  * KIND FIRST. The server tells us what the approved action does — start,
@@ -49,13 +67,8 @@ export function announcementFor(outcome, userId) {
     null;
 
   // A cancellation is not an approval, so the URL shortcut must not speak for
-  // one. Both spellings of "this was a cancel" are checked, because the copy
-  // below has two: `kind` when the server sends one, the operation name as the
-  // older-server fallback. Recognising only the first would leave the same
-  // wrong announcement reachable through the second.
-  const cancelled = outcome.kind === 'cancel' || (outcome.kind == null && outcome.operation === 'cancel_eval_run');
-
-  if (url && !cancelled) {
+  // one.
+  if (url && !isCancellation(outcome)) {
     return `:white_check_mark: Approved by <@${userId}> — <${url}|follow it here>.`;
   }
 
@@ -197,12 +210,19 @@ export async function handleProposalButton({ ack, body, client, context, logger,
   // operation-name ternary stays as the mixed-version fallback for a server
   // that predates `kind`.
   const text = announcementFor(outcome, userId);
+
+  // A cancellation started nothing, so it must not be routed into a run
+  // watcher. Both branches below post their OWN "running…" copy and return,
+  // which would throw away the truthful text above and announce a cancel as a
+  // started run — the same lie the wording was just fixed to stop telling.
+  const watchable = !isCancellation(outcome);
+
   try {
     // A run gets a LIVE message: the same "running… → here's how it went"
     // surface the retired Run-it button gave, now reached through the approval
     // path. Recognised by the server-sent resource type rather than by an
     // operation name, so a future op that also produces a run gets it free.
-    if (outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
+    if (watchable && outcome.resource?.type === 'eval_run' && outcome.resource.id && outcome.resource.url) {
       const runId = outcome.resource.id;
       await announceAndWatchRun(client, {
         runId,
@@ -238,7 +258,7 @@ export async function handleProposalButton({ ack, body, client, context, logger,
     // eval runs (see surface-core's journey-run-watcher header), so routing it
     // into the eval watcher would report a rate-limited fan-out as a pass.
     // Same recognition rule as above: the server-sent resource TYPE.
-    if (outcome.resource?.type === 'journey_run' && outcome.resource.id && outcome.resource.url) {
+    if (watchable && outcome.resource?.type === 'journey_run' && outcome.resource.id && outcome.resource.url) {
       await announceAndWatchJourneyRun(client, {
         runId: outcome.resource.id,
         url: outcome.resource.url,
