@@ -213,6 +213,27 @@ What each state does:
 | Runtime verified | **Allow** | Records the approval, awaits the grant, and continues the ORIGINAL send once — after re-checking that the context still matches. |
 | Cancel | — | Starts nothing, mints nothing, keeps the draft. Send is still the way back in. |
 
+### Which sends this applies to
+
+`isLocalHarnessScope` (`client/src/lib/local-harness-scope.ts`) is the single
+answer, because three places have to agree and must not drift: the chip decides
+whether to render, the pre-send gate decides whether to open the dialog, and the
+transport decides whether a turn may carry a local target. Three facts: the host
+for THIS send runs `claude-code`, the Inspector is local, and the surface is
+direct chat — not a scenario, an environment run, or a shared/replayed session.
+
+The failure it exists to prevent is INHERITANCE — a surface acquiring a local
+authorization requirement it can never satisfy, which blocks Send behind a
+dialog that cannot clear it. The sharp edge is a **compare grid**: it has one
+column per host, and each column answers this for its OWN host. Handing every
+column the previewed host's answer is how a Codex lane inherits a requirement
+that only a Claude Code turn can meet.
+
+The feature flag is deliberately NOT one of the three facts. It gates whether
+setup is offered; folding it in would make an explicit local request evaporate
+the moment a flag evaluation changed, which is the silent relocation this whole
+design removes.
+
 **Approve a named runtime, then fetch it.** The order is the whole design.
 Downloading first and asking afterwards makes the download unaskable-for;
 asking first and fetching something else makes the approval meaningless.
@@ -243,6 +264,8 @@ would make first-send setup unreachable.
 | `corrupt` | An installed pack that stops verifying | Reinstall the same version — a repair, not a re-download of something that never landed |
 | 409 `consent-context-changed` | "What you approved is not what this machine would run now" | The dialog re-asks with the current terms |
 | 503 `auth-unconfigured` | This deployment has no AuthKit, so there is no member identity to bind a filesystem grant to | Configure AuthKit, or run hosted |
+| `runtime-unavailable` (reservation) | "This Inspector could not reserve the local runtime, so it will not start a session another process could replace underneath", plus the underlying error | Fix space or permissions on the runtime root |
+| Stale grant | "What you authorized is not what this machine would run now" — the client's own copy of the 409 above | The dialog re-asks with the current terms |
 
 Retry is always **explicit**. Nothing re-downloads on a poll, a boot, or a
 component remount, and there is no unattended retry loop and no resumable
@@ -273,6 +296,9 @@ job framework.
   Activation and repair refuse to replace a directory that has one, and
   re-check ownership immediately before the rename — a download takes minutes,
   and a reservation taken at the start of one says nothing about the end.
+  A reservation that cannot be TAKEN — a read-only runtime root, a full disk —
+  refuses the turn rather than proceeding without one. Running unreserved is
+  running unprotected, and doing that quietly is the failure worth avoiding.
 - **Only ESRCH proves an owner gone.** A holder that cannot be proven gone is a
   busy state, never permission to reclaim its files. The old staging sweep
   matched on the `.mcpjam-tmp-` prefix, which cannot distinguish another
