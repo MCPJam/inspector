@@ -57,6 +57,36 @@ describe("the accepted actor", () => {
   });
 });
 
+describe("a credential class that can never authorize is refused first", () => {
+  // These are decided BEFORE verification, so the answer no longer depends on
+  // whether this deployment has an identity provider configured. Deciding them
+  // afterwards meant an API key on an Inspector with no AuthKit hit
+  // `AuthKitConfigError` and came back 503 "configure AuthKit" — an operator
+  // instruction, for a credential that would still be refused once followed.
+  it.each([
+    ["an API key", "api-key" as const],
+    ["a service credential", "service" as const],
+    ["a guest session", "guest" as const],
+  ])("403s %s even when AuthKit is unconfigured", async (_label, credential) => {
+    const verify = vi.fn(async () => {
+      throw new AuthKitConfigError("WORKOS_CLIENT_ID is not set");
+    });
+    const result = await resolveLocalHarnessActor({
+      authorizationHeader: "Bearer whatever",
+      contextCredential: credential,
+      deps: deps(verify),
+    });
+    expect(result).toMatchObject({
+      ok: false,
+      reason: "unsupported-credential",
+      status: 403,
+    });
+    // Refused without ever asking the verifier: there is nothing it could say
+    // that would make one of these authorize local execution.
+    expect(verify).not.toHaveBeenCalled();
+  });
+});
+
 describe("refusals carry the status the caller can act on", () => {
   it("401s a request with no bearer", async () => {
     const result = await resolveLocalHarnessActor({

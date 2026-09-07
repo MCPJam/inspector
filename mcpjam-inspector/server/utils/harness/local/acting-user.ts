@@ -140,6 +140,13 @@ export async function resolveLocalHarnessActor(args: {
 }): Promise<LocalHarnessActorResolution> {
   const deps = args.deps ?? defaultDeps;
 
+  // ── Unsupported credential classes are refused BEFORE any verification ───
+  //
+  // These can never authorize local execution, whatever this deployment's
+  // identity provider is doing. Deciding them after `deps.verify` meant an API
+  // key on an Inspector with no AuthKit hit `AuthKitConfigError` first and came
+  // back 503 "configure AuthKit" — an operator instruction, for a credential
+  // that would still be refused once they had followed it.
   if (args.contextCredential === "guest") {
     return {
       ok: false,
@@ -148,6 +155,26 @@ export async function resolveLocalHarnessActor(args: {
       message:
         "Running Claude Code on this machine requires a signed-in member. " +
         "Guest sessions run hosted.",
+    };
+  }
+  if (args.contextCredential === "api-key") {
+    return {
+      ok: false,
+      reason: "unsupported-credential",
+      status: 403,
+      message:
+        "An API key cannot authorize Claude Code to run on this machine. " +
+        "Sign in in the Inspector and authorize it there.",
+    };
+  }
+  if (args.contextCredential === "service") {
+    return {
+      ok: false,
+      reason: "unsupported-credential",
+      status: 403,
+      message:
+        "A service credential acts for a user rather than as one, so it " +
+        "cannot authorize Claude Code to run on this machine.",
     };
   }
 
@@ -203,26 +230,6 @@ export async function resolveLocalHarnessActor(args: {
           "cannot establish the member identity that authorizing Claude Code " +
           "on this machine is bound to. Configure AuthKit, or run this turn " +
           "hosted.",
-      };
-    }
-    if (args.contextCredential === "api-key") {
-      return {
-        ok: false,
-        reason: "unsupported-credential",
-        status: 403,
-        message:
-          "An API key cannot authorize Claude Code to run on this machine. " +
-          "Sign in in the Inspector and authorize it there.",
-      };
-    }
-    if (args.contextCredential === "service") {
-      return {
-        ok: false,
-        reason: "unsupported-credential",
-        status: 403,
-        message:
-          "A service credential acts for a user rather than as one, so it " +
-          "cannot authorize Claude Code to run on this machine.",
       };
     }
     if (!(error instanceof AuthKitVerificationError)) throw error;
