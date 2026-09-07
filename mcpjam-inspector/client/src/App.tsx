@@ -300,6 +300,7 @@ import type { HostFocusTabId } from "./components/hosts/redesigned/types";
 import {
   buildHostsPath,
   buildOrganizationPath,
+  buildOrganizationSwitchTarget,
   buildProjectSettingsTarget,
   buildProjectSwitchTarget,
   getInvalidOrganizationRouteNavigationTarget,
@@ -4405,20 +4406,28 @@ export default function App() {
     [setActiveOrganizationId],
   );
 
+  // The URL owns which project this tab is on. This reconciles the two
+  // continuously — on cold open, on Back/Forward, and on every in-app
+  // navigation — switching organization first when the link crosses one.
+  const { allProjects: allMembershipProjects } = useProjectQueries({
+    isAuthenticated,
+  });
+
   const handleSwitchActiveOrganization = useCallback(
     (organizationId: string) => {
       if (organizationId === activeOrganizationId) return;
-      // Mirror main's `handleSidebarSwitchOrganization`: only flip the active
-      // org. The auto-resolution effect in `use-project-state.ts` notices that
-      // the previous active project is no longer in the new org's filtered
-      // project list and picks a new one; we must NOT clear local/convex project
-      // selection here, otherwise the local-fallback default project (which can
-      // carry servers from earlier sessions) bleeds through during the
-      // transition.
-      setActiveOrganizationId(organizationId);
-      navigateToServers();
+      // The URL is the switch, exactly as it is for a project row. Navigating
+      // to a project that lives in the target organization is what makes the
+      // route coordinator switch the organization; setting the active org here
+      // and then asking for `/servers` could not work, because the logical
+      // path is already Servers (so the navigation no-ops) and the pathname
+      // keeps `/p/<project-in-the-old-org>` — which the coordinator then reads
+      // back as an instruction to return to the organization we just left.
+      navigateToTarget(
+        buildOrganizationSwitchTarget(organizationId, allMembershipProjects),
+      );
     },
-    [activeOrganizationId, setActiveOrganizationId, navigateToServers],
+    [activeOrganizationId, allMembershipProjects, navigateToTarget],
   );
 
   const handleContinueEvalInChat = useCallback(
@@ -4524,12 +4533,6 @@ export default function App() {
     ],
   );
 
-  // The URL owns which project this tab is on. This reconciles the two
-  // continuously — on cold open, on Back/Forward, and on every in-app
-  // navigation — switching organization first when the link crosses one.
-  const { allProjects: allMembershipProjects } = useProjectQueries({
-    isAuthenticated,
-  });
   const allMembershipProjectIds = useMemo(
     () =>
       allMembershipProjects
