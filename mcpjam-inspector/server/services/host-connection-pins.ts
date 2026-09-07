@@ -126,7 +126,10 @@ export function buildHostConnectionPins(
   }
   if (Array.isArray(initialize?.supportedProtocolVersions)) {
     const versions = initialize.supportedProtocolVersions.filter(
-      (v): v is string => typeof v === "string",
+      // Trimmed-empty entries are dropped, matching the client-side resolver:
+      // a blank string is not a version, and it would ride the accept-list
+      // onto the wire.
+      (v): v is string => typeof v === "string" && v.trim() !== "",
     );
     if (versions.length > 0) {
       initializePins.supportedProtocolVersions = versions;

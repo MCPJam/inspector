@@ -403,6 +403,42 @@ describe("web routes — evals", () => {
     },
   );
 
+  it("enforces the RUN host's enterprise-managed authorization, not the body's", async () => {
+    // The one connection fact where losing the host's word is a security
+    // question rather than a fidelity one: a browser pointed at a different
+    // client must not be able to downgrade this run onto the discover/OAuth
+    // ladder. Observable because a policy makes the manager advertise the XAA
+    // extension on every server it connects.
+    loadSuiteHostConfigMock.mockResolvedValueOnce({
+      mcpProfile: {
+        profileVersion: 1,
+        extensions: { "com.mcpjam/enterprise-managed-auth": { idp: "mcpjam" } },
+      },
+    });
+    prepareEvalRunMock.mockResolvedValueOnce({
+      suiteId: "suite-1",
+      runId: "run-1",
+      caseUpsert: { committed: [], failed: [] },
+      recorder: { finalize: vi.fn() },
+      execute: vi.fn().mockResolvedValue(undefined),
+    });
+
+    const { app, token } = createEvalsTestApp();
+    await postJson(app, "/api/web/evals/run", runSuiteBody, token);
+
+    const connected = (
+      managerConfigsMock.mock.calls[0]?.[0] as Record<
+        string,
+        { clientCapabilities?: { extensions?: Record<string, unknown> } }
+      >
+    )["server-1"];
+    expect(
+      connected.clientCapabilities?.extensions?.[
+        "io.modelcontextprotocol/enterprise-managed-authorization"
+      ],
+    ).toBeDefined();
+  });
+
   it("starts hosted suite runs asynchronously and keeps MCP connections until execution settles", async () => {
     // The host this suite runs under. Every connection fact below comes from
     // here rather than from the request body: the browser derives its pins from
@@ -571,9 +607,10 @@ describe("web routes — evals", () => {
       runSuiteBody,
       token,
     );
-    const { status, data } = await expectJson<{ code: string; message: string }>(
-      response,
-    );
+    const { status, data } = await expectJson<{
+      code: string;
+      message: string;
+    }>(response);
 
     expect(status).toBe(500);
     expect(data.message).toContain("quota exceeded");

@@ -274,7 +274,10 @@ evals.post("/run-test-case", async (c) =>
       hostConfigForBody: async (rawBody) =>
         typeof rawBody.namedHostId === "string" && rawBody.namedHostId
           ? await loadSuiteHostConfig(
-              createConvexClient(assertBearerToken(c)),
+              // The DELEGATED JWT, not the raw bearer: an `sk_` API key 401s
+              // Convex's query surface, which is why the suite-run route
+              // converts too.
+              createConvexClient(await getConvexBearerForRequest(c)),
               undefined,
               rawBody.namedHostId,
             )
@@ -338,7 +341,8 @@ evals.post("/stream-test-case", async (c) => {
   // run owns its own session and keeps sending the body's pins.
   const caseHostConfig = body.namedHostId
     ? await loadSuiteHostConfig(
-        createConvexClient(bearerToken),
+        // Delegated JWT — see the run-test-case route above.
+        createConvexClient(await getConvexBearerForRequest(c)),
         undefined,
         body.namedHostId,
       )
@@ -379,10 +383,7 @@ evals.post("/stream-test-case", async (c) => {
     (caseHostConfig ? hostClientCapabilities(caseHostConfig) : undefined) ??
       (body.clientCapabilities as Record<string, unknown> | undefined),
     {
-      accessScope: body.accessScope as
-        | "project_member"
-        | "chat_v2"
-        | undefined,
+      accessScope: body.accessScope as "project_member" | "chat_v2" | undefined,
       scenarioId: evalScenarioId,
       accessVersion: body.accessVersion as number | undefined,
       serverNames: body.serverNames,
@@ -513,7 +514,10 @@ evals.post("/replay-run", async (c) =>
   handleRoute(
     c,
     async () => {
-      const body = parseWithSchema(hostedReplayRunSchema, await readJsonBody(c));
+      const body = parseWithSchema(
+        hostedReplayRunSchema,
+        await readJsonBody(c),
+      );
       const convexAuthToken = assertBearerToken(c);
       const convexClient = createConvexClient(convexAuthToken);
       try {

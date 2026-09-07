@@ -180,11 +180,17 @@ function SuiteStageFactsTarget({
   const resolvedHost = target.hostConfig ?? host?.config;
   const hostState = target.hostConfig
     ? ("ready" as const)
-    : isLoading
+    : // No id and no config yet means the environment row has not landed —
+      // `useHost` never queries for an empty id, so treating that as "missing"
+      // flashed "this client no longer exists" at a target that is merely
+      // still resolving.
+      !target.hostId
       ? ("loading" as const)
-      : host
-        ? ("ready" as const)
-        : ("missing" as const);
+      : isLoading
+        ? ("loading" as const)
+        : host
+          ? ("ready" as const)
+          : ("missing" as const);
 
   const serverIds = useMemo(() => {
     if (target.servers.kind === "attachment") return target.servers.ids;

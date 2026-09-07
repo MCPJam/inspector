@@ -18,11 +18,13 @@
 export const WEB_CONNECT_TIMEOUT_MS = 10_000;
 
 /**
- * Per-request budget for a hosted MCP call, and the uniform timeout every
- * hosted EVAL run connects with. Server-row `timeout`, host
- * `connectionDefaults.requestTimeout` and per-server `requestTimeoutOverride`
- * are not applied on the eval path (only the swarm runner threads per-server
- * timeouts), which is why the settings card names this value and says so.
+ * Per-request budget for a hosted MCP call, and the default an eval SUITE run
+ * connects with when its client pins nothing of its own.
+ *
+ * NOT universal across eval paths, and the settings card is scoped to suite
+ * runs for that reason: `/api/web/evals/stream-test-case` declares its own
+ * 60s budget for a single streamed case, because one case can hold a
+ * connection across several model turns.
  */
 export const WEB_CALL_TIMEOUT_MS = 30_000;
 
