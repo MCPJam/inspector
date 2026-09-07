@@ -22,17 +22,15 @@ const LABELS: Record<ScorecardProvenance, string> = {
 
 export function ProvenanceChip({
   provenance,
-  turnOrdinal,
   className,
 }: {
   provenance: ScorecardProvenance;
-  turnOrdinal?: number;
   className?: string;
 }) {
-  const label =
-    provenance === "step" && turnOrdinal !== undefined
-      ? `Step ${turnOrdinal}`
-      : LABELS[provenance];
+  // No "Step N" here any more: the number moved to the row's left marker,
+  // where it lines up with the Steps pane. Repeating it would say the same
+  // thing twice on one line.
+  const label = LABELS[provenance];
   return (
     <span
       data-provenance={provenance}

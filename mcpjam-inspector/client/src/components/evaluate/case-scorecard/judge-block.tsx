@@ -23,6 +23,7 @@ import { Switch } from "@mcpjam/design-system/switch";
 import { Button } from "@mcpjam/design-system/button";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import { ProvenanceChip } from "./provenance-chip";
+import { RowMarker } from "./row-marker";
 import {
   JUDGE_MODE_WORD,
   RUBRIC_SOURCE_HINT,
@@ -55,10 +56,11 @@ export function JudgeBlock({
       className="space-y-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-2"
     >
       <div className="flex items-center gap-2">
+        <RowMarker row={row} />
+        <ProvenanceChip provenance="judge" />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground">
           {row.label}
         </span>
-        <ProvenanceChip provenance="judge" />
         <RoleChip role={row.role} />
       </div>
 

@@ -17,6 +17,7 @@
 import React from "react";
 import { cn } from "@/lib/utils";
 import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
+import { EVAL_WARN_BADGE_STRONG_CLASS } from "./constants";
 import { ROLE_LEGEND, type ScorerUiRole } from "./suite-scorer-table-model";
 
 /** Read-only role, for a row whose role this surface cannot author. */
@@ -26,7 +27,15 @@ export function RoleChip({ role }: { role: ScorerUiRole }) {
       title={ROLE_LEGEND[role].meaning}
       className={cn(
         "inline-flex rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em]",
-        role === "gate" ? "text-foreground" : STAGE_CHIP_TONE_CLASS.unmeasured,
+        // Warn is the one role whose whole job is to catch the eye without
+        // failing anything, so it is the one that earns colour. Gate reads as
+        // ordinary foreground because it is the default, and Report is muted
+        // because "recorded, changes nothing" is exactly what muted means.
+        role === "warn"
+          ? EVAL_WARN_BADGE_STRONG_CLASS
+          : role === "gate"
+            ? "text-foreground"
+            : STAGE_CHIP_TONE_CLASS.unmeasured,
       )}
     >
       {ROLE_LEGEND[role].label}

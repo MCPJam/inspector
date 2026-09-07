@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { EVAL_WARN_BADGE_STRONG_CLASS } from "@/components/evals/constants";
 import { RoleChip } from "@/components/evals/scorer-role-control";
 import { ProvenanceChip } from "./provenance-chip";
+import { RowMarker } from "./row-marker";
 import type { JoinedScorecardRow, TrialRowResult } from "./trial-results";
 
 type Glyph = {
@@ -133,6 +134,8 @@ export function TrialScorecardRow({
       )}
     >
       <div className="flex items-center gap-2 px-2.5 py-1.5">
+        <RowMarker row={row} />
+        <ProvenanceChip provenance={row.provenance} />
         <glyph.Icon
           className={cn("h-3.5 w-3.5 shrink-0", glyph.cls)}
           aria-label={glyph.label}
@@ -145,10 +148,6 @@ export function TrialScorecardRow({
             {value}
           </span>
         ) : null}
-        <ProvenanceChip
-          provenance={row.provenance}
-          turnOrdinal={row.turnOrdinal}
-        />
         <RoleChip role={row.role} />
         {expandable ? (
           <button

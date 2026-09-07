@@ -406,8 +406,11 @@ describe("buildCaseScorecard — join keys", () => {
         scope: { kind: "turn", promptIndex: 1 },
       },
     ]);
-    expect(stepRows[0]?.turnOrdinal).toBe(1);
-    expect(stepRows[1]?.turnOrdinal).toBe(2);
+    // The step's own position in the flat list, matching the Steps pane —
+    // NOT the turn it sits in. Three checks inside turn 1 used to read
+    // "Step 1" here while the Steps pane called them 2, 3 and 4.
+    expect(stepRows[0]?.stepNumber).toBe(2);
+    expect(stepRows[1]?.stepNumber).toBe(4);
     expect(stepScope(steps, "a2")).toEqual({ kind: "turn", promptIndex: 1 });
   });
 

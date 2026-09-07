@@ -350,3 +350,25 @@ describe("SuiteScorerTable", () => {
     expect(within(row).queryByText("Gate")).toBeNull();
   });
 });
+
+describe("SuiteScorerTable — role colour", () => {
+  it("gives Warn the one colour, because it is the role that must catch the eye", () => {
+    // Gate is the default and reads as ordinary; Report is muted because
+    // "recorded, changes nothing" is what muted means. Warn is the role whose
+    // whole job is to be noticed without failing anything.
+    const { container } = renderTable({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" } as never,
+        { type: "noToolErrors", role: "advisory" } as never,
+      ],
+    });
+    const warn = within(
+      container.querySelector('[data-scorer-id="predicate:0"]') as HTMLElement,
+    ).getByText("Warn");
+    const report = within(
+      container.querySelector('[data-scorer-id="predicate:1"]') as HTMLElement,
+    ).getByText("Report");
+    expect(warn.className).not.toBe(report.className);
+    expect(warn.className).toMatch(/amber|warn/i);
+  });
+});

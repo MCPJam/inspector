@@ -109,6 +109,52 @@ describe("CaseScorecard", () => {
   });
 });
 
+describe("CaseScorecard — the left rail", () => {
+  it("numbers a step by its own position, the way the Steps pane does", () => {
+    renderCard();
+    const markers = screen
+      .getAllByTestId("scorecard-row-marker")
+      .map((m) => m.getAttribute("data-step-number"));
+    // steps: [prompt, firstToolWas, noToolErrors] → the checks are 2 and 3.
+    expect(markers.filter(Boolean)).toEqual(["2", "3"]);
+  });
+
+  it("refuses to number a check that runs at no particular moment", () => {
+    // Case and suite checks are graded once, together, over the finished
+    // transcript. A number would claim a sequence that was never run.
+    renderCard();
+    for (const provenance of ["case", "suite", "route", "judge"]) {
+      const row =
+        provenance === "judge"
+          ? screen.getByTestId("case-judge-block")
+          : provenance === "route"
+            ? screen.getByTestId("case-route-row")
+            : rows().find(
+                (r) => r.getAttribute("data-provenance") === provenance,
+              )!;
+      const marker = within(row).getAllByTestId("scorecard-row-marker")[0];
+      expect(marker).not.toHaveAttribute("data-step-number");
+    }
+  });
+
+  it("says when each kind of scorer runs", () => {
+    renderCard();
+    const step = rowFor("No tool errors so far");
+    expect(
+      within(step).getAllByTestId("scorecard-row-marker")[0],
+    ).toHaveAttribute("title", "Step 3 — graded when the run reaches it");
+    const suite = rowFor("Token budget under 4000");
+    expect(
+      within(suite).getAllByTestId("scorecard-row-marker")[0],
+    ).toHaveAttribute("title", "Graded once, over the finished transcript");
+    expect(
+      within(screen.getByTestId("case-judge-block")).getAllByTestId(
+        "scorecard-row-marker",
+      )[0],
+    ).toHaveAttribute("title", "Runs last, after every check");
+  });
+});
+
 describe("CaseScorecard — roles", () => {
   const withPolicy = {
     scorers: { checkPolicy: true },

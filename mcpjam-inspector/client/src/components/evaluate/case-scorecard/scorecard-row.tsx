@@ -21,6 +21,7 @@ import {
 import { withPredicateRole } from "@/components/evals/suite-scorer-table-model";
 import { StatusDot, type SimpleCaseOverlay, overlayStatus } from "../simple-case/status-dot";
 import { ProvenanceChip } from "./provenance-chip";
+import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
 
 export function ScorecardRowView({
@@ -69,6 +70,8 @@ export function ScorecardRowView({
       )}
     >
       <div className="flex items-center gap-2 px-2.5 py-1.5">
+        <RowMarker row={row} />
+        <ProvenanceChip provenance={row.provenance} />
         {canEditFields ? (
           <button
             type="button"
@@ -98,10 +101,6 @@ export function ScorecardRowView({
           </span>
         )}
 
-        <ProvenanceChip
-          provenance={row.provenance}
-          turnOrdinal={row.turnOrdinal}
-        />
         {row.stepId ? <StatusDot status={overlayStatus(overlay, row.stepId)} /> : null}
 
         {canRole && onChangePredicate ? (

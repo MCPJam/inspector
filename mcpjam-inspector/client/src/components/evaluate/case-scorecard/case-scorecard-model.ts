@@ -92,7 +92,6 @@ import {
   isWidgetAssertStep,
   readSimpleCase,
   resolveToolsQuestion,
-  turnOrdinalByStepId,
   UNSET_TOOLS_BLOCK_REASON,
   type CaseKind,
   type SimpleCaseTool,
@@ -236,8 +235,20 @@ export type ScorecardRow = {
   roleLock: "none" | "route" | "inherited" | "widget" | "judge";
   /** Whether the case page may edit or delete this row's own fields. */
   editable: boolean;
-  /** 1-based turn a step row belongs to, for the "Step N" chip. */
-  turnOrdinal?: number;
+  /**
+   * The step's own 1-based position in the flat step list — the SAME number
+   * the Steps pane prints for it.
+   *
+   * It used to be the turn ordinal, labelled "Step N", so three checks
+   * authored inside turn 1 all read "Step 1" while the Steps pane called them
+   * 2, 3 and 4. Two panes numbering one step differently is worse than either
+   * numbering alone.
+   *
+   * Present only on rows that HAVE a position. A case- or suite-level check
+   * is graded once over the finished transcript, at the same moment as every
+   * other one, so numbering it would assert a sequence that does not exist.
+   */
+  stepNumber?: number;
   stepId?: string;
   predicateIndex?: number;
   predicate?: Predicate;
@@ -506,12 +517,13 @@ function predicateRow(args: {
 }
 
 function stepRows(steps: TestStep[]): ScorecardRow[] {
-  const ordinals = turnOrdinalByStepId(steps);
+  // Position in the flat list, so this pane and the Steps pane agree.
+  const stepNumbers = new Map(steps.map((step, index) => [step.id, index + 1]));
   const rows: ScorecardRow[] = [];
   for (const step of steps) {
     if (!isAssertStep(step)) continue;
     if (isToolCalledWithAssert(step)) continue; // the route owns these
-    const turnOrdinal = ordinals.get(step.id);
+    const stepNumber = stepNumbers.get(step.id);
     if (isWidgetAssertStep(step)) {
       const assertion = step.assertion as WidgetAssertion;
       const kindLabel =
@@ -527,7 +539,7 @@ function stepRows(steps: TestStep[]): ScorecardRow[] {
         role: "gate",
         roleLock: "widget",
         editable: true,
-        turnOrdinal,
+        stepNumber,
         stepId: step.id,
         widgetAssertion: assertion,
         tooltip: rowTooltip(kindLabel, "gate", true),
@@ -549,7 +561,7 @@ function stepRows(steps: TestStep[]): ScorecardRow[] {
       role,
       roleLock: "none",
       editable: true,
-      turnOrdinal,
+      stepNumber,
       stepId: step.id,
       predicate,
       tooltip: rowTooltip(kindLabel, role, true),

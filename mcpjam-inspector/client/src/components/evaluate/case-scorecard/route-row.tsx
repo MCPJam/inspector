@@ -30,6 +30,7 @@ import type {
 } from "../simple-case/simple-case-model";
 import { StatusDot, overlayStatus, type SimpleCaseOverlay } from "../simple-case/status-dot";
 import { ProvenanceChip } from "./provenance-chip";
+import { RowMarker } from "./row-marker";
 import type { ScorecardRow } from "./case-scorecard-model";
 
 export function RouteRow({
@@ -73,6 +74,8 @@ export function RouteRow({
       className="space-y-2 rounded-md border border-border/60 bg-background/40 px-2.5 py-2"
     >
       <div className="flex items-center gap-2">
+        <RowMarker row={row} />
+        <ProvenanceChip provenance="route" />
         <span className="min-w-0 flex-1 truncate text-xs text-foreground" title={row.tooltip}>
           {row.label}
         </span>
@@ -97,7 +100,6 @@ export function RouteRow({
             </ToggleGroupItem>
           </ToggleGroup>
         ) : null}
-        <ProvenanceChip provenance="route" />
         <RoleChip role={row.role} />
       </div>
 

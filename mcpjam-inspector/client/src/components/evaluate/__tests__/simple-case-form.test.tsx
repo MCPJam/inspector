@@ -361,8 +361,16 @@ describe("SimpleCaseForm step-authored checks", () => {
     expect(
       screen.getByText('Response contains "marcelo@mcpjam.com"'),
     ).toBeInTheDocument();
-    // Each row says who wrote it and which turn it runs in.
-    expect(rows.every((row) => row.textContent?.includes("Step 1"))).toBe(true);
+    // Each row says who wrote it, and carries its own step number — the same
+    // number the Steps pane shows for that step.
+    expect(rows.every((row) => row.textContent?.includes("Step"))).toBe(true);
+    expect(
+      rows.map((row) =>
+        row
+          .querySelector("[data-step-number]")
+          ?.getAttribute("data-step-number"),
+      ),
+    ).toEqual(["2", "3", "4"]);
   });
 
   it("treats a case graded only by its checks as positive, not unset", () => {
