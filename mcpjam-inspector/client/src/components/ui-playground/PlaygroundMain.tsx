@@ -3607,6 +3607,13 @@ export function PlaygroundMain({
         // skipping it here traded the one dialog that can grant authorization
         // for an error the user cannot act on.
         if (!(await ensureLocalHarnessReadyForSend())) {
+          // This text arrived as an argument — a widget follow-up, an eval
+          // auto-run, a Quick Run — so unlike the composer paths there is no
+          // draft sitting behind it. Dropping it left the cold-install notice
+          // saying "press Send to continue" over an empty composer, with the
+          // prompt it was talking about gone. Putting it there is what makes
+          // that instruction true.
+          composer.setInput(text);
           return;
         }
         sendMessage({
@@ -3618,6 +3625,7 @@ export function PlaygroundMain({
       })();
     },
     [
+      composer,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
       ensureLocalHarnessReadyForSend,
