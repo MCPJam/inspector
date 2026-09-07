@@ -17,6 +17,7 @@ import {
 import {
   getLocalMachineId,
   GrantStateUnreadableError,
+  isFilesystemRoot,
   grantLocalHarnessConsent,
   hashGrantBinding,
   pruneExpiredHarnessGrants,
@@ -98,6 +99,26 @@ describe("workspace grants", () => {
     await expect(resolveWorkspaceGrant("ws_nope")).resolves.toMatchObject({
       ok: false,
     });
+  });
+
+  // Driven through the predicate rather than `registerWorkspaceGrant`: on a
+  // Linux runner `realpath("C:\\")` fails long before the root check runs, so
+  // the one platform-specific rule this covers would never be exercised.
+  it("treats a Windows drive root as a filesystem root", () => {
+    for (const root of ["C:\\", "C:/", "D:\\", "z:", "C:"]) {
+      expect(isFilesystemRoot(root)).toBe(true);
+    }
+    expect(isFilesystemRoot("/")).toBe(true);
+    // A directory ON a volume is not the volume.
+    for (const notRoot of [
+      "C:\\code",
+      "C:/code",
+      "C:\\code\\project",
+      "/home/user/code",
+      "//server/share",
+    ]) {
+      expect(isFilesystemRoot(notRoot)).toBe(false);
+    }
   });
 
   it("refuses a file, a missing path, the home directory, and the root", async () => {

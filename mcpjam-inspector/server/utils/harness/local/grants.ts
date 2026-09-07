@@ -375,6 +375,27 @@ export type WorkspaceCandidate =
   | { ok: false; message: string };
 
 /**
+ * Is this canonical path a filesystem root?
+ *
+ * The same rule the launcher applies (`bin/launch-workspace.mjs`), because a
+ * suggestion and a registration must not disagree about what is acceptable.
+ *
+ * Exported for its own test. Comparing against `sep` alone missed Windows —
+ * there it is a backslash, which never equals a drive root like `C:\` or
+ * `C:/` — so a whole volume was accepted as a workspace on a platform the
+ * harness treats as native. That form is unreachable through
+ * `registerWorkspaceGrant` on a Linux runner, where `realpath` refuses it
+ * first, which is why the predicate is separable at all.
+ */
+export function isFilesystemRoot(canonicalPath: string): boolean {
+  return (
+    canonicalPath === sep ||
+    canonicalPath === "/" ||
+    /^[A-Za-z]:[\\/]?$/.test(canonicalPath)
+  );
+}
+
+/**
  * Is this path a usable workspace? Reads the filesystem; writes nothing.
  *
  * Split out of `registerWorkspaceGrant` because two callers now need the
@@ -414,16 +435,7 @@ export async function validateWorkspaceCandidate(
   // directory is itself a symlink, the raw value never equals the
   // canonicalized selection and the refusal below would not fire.
   const home = await realpath(homedir()).catch(() => homedir());
-  // The same rule the launcher applies (`bin/launch-workspace.mjs`), because a
-  // suggestion and a registration must not disagree about what is acceptable.
-  // `sep` alone missed Windows: there it is a backslash, which never equals a
-  // drive root like `C:\` or `C:/`, so this validator accepted a whole volume as a
-  // workspace on a platform the harness treats as native.
-  const isFilesystemRoot =
-    canonicalPath === sep ||
-    canonicalPath === "/" ||
-    /^[A-Za-z]:[\\/]?$/.test(canonicalPath);
-  if (canonicalPath === home || isFilesystemRoot) {
+  if (canonicalPath === home || isFilesystemRoot(canonicalPath)) {
     return {
       ok: false,
       message:
