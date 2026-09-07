@@ -362,6 +362,74 @@ describe("ElicitationDialog", () => {
     });
   });
 
+  describe("dismissal", () => {
+    // Every one of these routes through `onOpenChange`, which used to be an
+    // empty handler: the dialog could only be left through a footer button, so
+    // an elicitation that stopped being answerable stranded it open.
+    it("cancels when the close button is used", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("cancels on Escape", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+    });
+
+    it("sends cancel without parameters even when a required field is empty", async () => {
+      render(
+        <ElicitationDialog
+          elicitationRequest={request({
+            schema: {
+              required: ["name"],
+              properties: { name: { type: "string" } },
+            },
+          })}
+          onResponse={onResponse}
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
+      expect(screen.queryByText("name is required")).toBeNull();
+    });
+
+    it("ignores a dismissal while a response is in flight", async () => {
+      // The footer buttons are already disabled by `loading`. A dismissal that
+      // still fired would put a second response on the same request.
+      render(
+        <ElicitationDialog
+          elicitationRequest={request()}
+          onResponse={onResponse}
+          loading
+        />
+      );
+
+      fireEvent.click(screen.getByRole("button", { name: /close/i }));
+      fireEvent.keyDown(document, { key: "Escape" });
+
+      await Promise.resolve();
+      expect(onResponse).not.toHaveBeenCalled();
+    });
+  });
+
   describe("requesting-server identity (spec MUST)", () => {
     it("shows the server name with the immutable serverId alongside it", () => {
       // NOTE: the dialog content is portalled, so it lives on `baseElement`,

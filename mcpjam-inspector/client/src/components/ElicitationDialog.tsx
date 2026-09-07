@@ -281,7 +281,21 @@ export function ElicitationDialog({
   };
 
   return (
-    <Dialog open={!!elicitationRequest} onOpenChange={() => {}}>
+    <Dialog
+      open={!!elicitationRequest}
+      onOpenChange={(next) => {
+        // The X, Escape and a click outside all arrive here, and an empty
+        // handler made all three inert: the only way out was a footer button,
+        // so any failure that left the request unanswered stranded the dialog
+        // open. Dismissing without choosing is `cancel`, not `decline`, the
+        // same distinction UrlElicitationConsent draws. Ignored while a
+        // response is in flight, which is what `disabled={loading}` already
+        // does for the footer buttons, so a dismissal cannot race a second
+        // response onto the same request.
+        if (next || loading) return;
+        void handleResponse("cancel");
+      }}
+    >
       <DialogContent className="max-w-2xl max-h-[80vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-sm font-medium">
