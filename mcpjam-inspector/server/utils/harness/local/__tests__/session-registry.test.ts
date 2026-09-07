@@ -235,6 +235,73 @@ describe("ending one session", () => {
     expect(getLocalHarnessSession("s1")).toBeUndefined();
   });
 
+  it("still reaches an escaped tree whose id a newer turn has claimed", async () => {
+    // One map slot cannot hold two live trees. Re-registering the escaped one
+    // over the newer record would put a running session beyond `stop-all`;
+    // declining to re-register lost the escaped tree's only stop handle, and
+    // with it the runtime reservation that tree still holds. Both are the same
+    // harm in opposite directions, so the escaped record is kept BY RECORD as
+    // well, and `stop-all` reads both.
+    let escapedStops = 0;
+    let escapes = 1;
+    const escapedRelease = vi.fn(async () => undefined);
+    let resolveStop: (v: {
+      stopped: boolean;
+      escaped?: number;
+    }) => void = () => {};
+    const hangingStop = new Promise<{ stopped: boolean; escaped?: number }>(
+      (resolve) => {
+        resolveStop = resolve;
+      },
+    );
+    const stopCalled = vi.fn();
+    registerLocalHarnessSession(
+      record({
+        runtimeId: "rt_escaped",
+        stop: () => {
+          escapedStops += 1;
+          stopCalled();
+          if (escapedStops === 1) return hangingStop;
+          return Promise.resolve(
+            escapes > 0
+              ? { stopped: false, escaped: escapes }
+              : { stopped: true },
+          );
+        },
+        releaseRuntime: escapedRelease,
+      }),
+    );
+    const ending = endLocalHarnessSession("s1");
+    await vi.waitFor(() => expect(stopCalled).toHaveBeenCalled());
+
+    // A newer turn claims the id while the old stop is still hanging.
+    const newerStop = vi.fn(async () => ({ stopped: true }));
+    const newerRelease = vi.fn(async () => undefined);
+    registerLocalHarnessSession(
+      record({
+        runtimeId: "rt_newer",
+        stop: newerStop,
+        releaseRuntime: newerRelease,
+      }),
+    );
+
+    resolveStop({ stopped: false, escaped: 2 });
+    await ending;
+    // The newer record keeps the slot, so nothing puts it out of reach.
+    expect(getLocalHarnessSession("s1")?.runtimeId).toBe("rt_newer");
+    expect(escapedRelease).not.toHaveBeenCalled();
+
+    // …and the brake still reaches BOTH: the newer session through the map,
+    // the escaped tree through the record kept beside it.
+    escapes = 0;
+    const all = await stopAllLocalHarnessSessions();
+    expect(newerStop).toHaveBeenCalledTimes(1);
+    expect(newerRelease).toHaveBeenCalledTimes(1);
+    expect(escapedStops).toBe(2);
+    expect(escapedRelease).toHaveBeenCalledTimes(1);
+    expect(all).toMatchObject({ ok: true, stopped: 2, failed: 0 });
+  });
+
   it("does not put a stale record back over a newer one for the same id", async () => {
     // A session id reused by a later turn must win: the retry path exists to
     // keep an escaped tree reachable, not to resurrect a record the caller has
