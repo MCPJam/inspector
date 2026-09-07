@@ -105,6 +105,26 @@ export function webmcpInspectorHostedEnabled(
 }
 
 /**
+ * Can a WebMCP Inspector SESSION exist on this deployment at all?
+ *
+ * The kill switch and the hosted-reachability switch, composed — the same
+ * question the inspector router answers with a 404, asked by anything that
+ * must not offer a capability the session behind it cannot provide. The chat
+ * routes ask it before advertising a page's tools to a model: a turn that
+ * offered them where no session can exist would strand on a call nothing can
+ * fulfil.
+ *
+ * Lives HERE rather than in the router so a caller can ask without importing
+ * a Hono app.
+ */
+export function webmcpInspectorReachable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!WEBMCP_INSPECTOR_ENABLED) return false;
+  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
+}
+
+/**
  * Is the hosted browser (E2B Desktop + browserd) reachable at all?
  *
  * The dark switch the hosted runtime ships behind until the durable backend
