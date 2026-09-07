@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
+  describeGatePolicy,
   describeJudge,
   describePredicates,
   describeValidity,
@@ -34,6 +35,20 @@ describe("suite-settings-summary", () => {
         goalCompletion: { role: "gating", threshold: 0.8 },
       }),
     ).toContain("Gating");
+  });
+
+  it("enumerates quality-gate conditions and treats zero as configured", () => {
+    expect(describeGatePolicy(undefined)).toBe("None");
+    expect(
+      describeGatePolicy({
+        baseline: { kind: "run", runId: "run_abc" },
+        maximumPassRateDrop: 0,
+        maximumP95LatencyIncreaseMs: 0,
+      }),
+    ).toBe("Run run_abc, 0% allowed drop, 0ms p95 increase");
+    expect(
+      describeGatePolicy({ noGatingScoreErrors: true }),
+    ).toBe("any gating scorer errored");
   });
 
   it("describes validity ceilings as percents", () => {

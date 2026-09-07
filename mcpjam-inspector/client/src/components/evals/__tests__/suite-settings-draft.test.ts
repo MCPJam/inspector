@@ -37,9 +37,12 @@ const BASE: SuiteSettingsValues = {
   minIterations: 3,
   computerEnvironmentId: undefined,
   defaultMatchOptions: undefined,
-  defaultPredicates: [],
-  judgeConfig: undefined,
-  judgeRubric: undefined,
+    defaultPredicates: [],
+    judgeConfig: undefined,
+    judgeRubric: undefined,
+    verdictPolicyVersion: undefined,
+    verdictPolicyDefaults: undefined,
+    gatePolicy: undefined,
 };
 
 const SUITE_ID = "suite-a";
@@ -318,6 +321,20 @@ describe("a concurrent edit is marked, never merged", () => {
     expect(draft.base.judgeRubric).toBeUndefined();
   });
 
+  test("a quality-gate policy the legacy save could not carry stays dirty", () => {
+    let draft = draftOf();
+    draft = edit(draft, "gatePolicy", { noGatingScoreErrors: true });
+    draft = suiteSettingsReducer(draft, {
+      type: "commitSucceeded",
+      suiteId: SUITE_ID,
+      live: { ...BASE },
+      retained: ["gatePolicy"],
+    });
+    expect(dirtyKeys(draft)).toEqual(["gatePolicy"]);
+    expect(draft.current.gatePolicy).toEqual({ noGatingScoreErrors: true });
+    expect(draft.base.gatePolicy).toBeUndefined();
+  });
+
   test("a retained key on the wrong suite is still ignored", () => {
     // The `retained` branch is a second return path, and it needs the same
     // guard as the first one.
@@ -542,5 +559,60 @@ describe("describeChange — verdict policy defaults", () => {
     expect(row.before).toContain("3 repetitions");
     expect(row.after).toContain("5 repetitions");
     expect(row.before).not.toBe(row.after);
+  });
+
+  test("a quality-gate edit names the baseline and conditions that moved", () => {
+    const before: SuiteSettingsValues = { ...BASE };
+    const after: SuiteSettingsValues = {
+      ...BASE,
+      gatePolicy: {
+        baseline: { kind: "run", runId: "run_abc" },
+        maximumPassRateDrop: 0.05,
+        noGatingScoreErrors: true,
+      },
+    };
+    const row = describeChange("gatePolicy", before, after);
+    expect(row.label).toBe("Quality gate");
+    expect(row.before).toBe("None");
+    expect(row.after).toContain("Run run_abc");
+    expect(row.after).toContain("5% allowed drop");
+    expect(row.after).toContain("any gating scorer errored");
+    expect(row.after).not.toContain("Previous run");
+  });
+
+  test("clearing the baseline reviews the comparative removals", () => {
+    const before: SuiteSettingsValues = {
+      ...BASE,
+      gatePolicy: {
+        baseline: { kind: "run", runId: "run_abc" },
+        maximumPassRateDrop: 0,
+        noDeterministicRegressions: true,
+        noGatingScoreErrors: true,
+      },
+    };
+    const after: SuiteSettingsValues = {
+      ...BASE,
+      gatePolicy: { noGatingScoreErrors: true },
+    };
+    const row = describeChange("gatePolicy", before, after);
+    expect(row.before).toContain("0% allowed drop");
+    expect(row.before).toContain("no deterministic regressions");
+    expect(row.after).toBe("any gating scorer errored");
+    expect(row.after).not.toContain("allowed drop");
+  });
+
+  test("a null clear of the stored policy reviews as None", () => {
+    const draft = edit(
+      draftOf({
+        gatePolicy: { noGatingScoreErrors: true },
+      }),
+      "gatePolicy",
+      undefined,
+    );
+    expect(toUpdateArgs(draft, "s").gatePolicy).toBeNull();
+    expect(describeDraft(draft)[0]).toMatchObject({
+      key: "gatePolicy",
+      after: "None",
+    });
   });
 });

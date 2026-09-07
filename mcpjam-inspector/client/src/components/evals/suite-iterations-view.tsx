@@ -64,6 +64,7 @@ import {
   VerdictPolicyV2Controls,
   VerdictValidityControls,
 } from "./suite-policy-controls";
+import { SuiteQualityGateSection } from "./suite-quality-gate-section";
 import { areAllChecksValid } from "./checks-section";
 import { splitPredicatesForMigration } from "@/shared/predicate-migration";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
@@ -185,6 +186,7 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
       "minIterations",
       "verdictPolicyVersion",
       "verdictPolicyDefaults",
+      "gatePolicy",
     ],
     validity: ["verdictPolicyDefaults"],
     passOrFail: [
@@ -2217,32 +2219,41 @@ export function SuiteIterationsView({
                             />
                           </>
                         )}
-                      </SuiteSettingsRow>
-
-                      {isVerdictPolicyV2 ? (
-                        <SuiteSettingsRow
-                          settingKey="validity"
-                          data-subsection-id="validity"
-                          accessory={
-                            <LedgerRowChips
-                              dirty={rowIsDirty("validity")}
-                              conflict={rowIsConflict("validity")}
+                        {isVerdictPolicyV2 ? (
+                          <div data-setting-key="validity" className="space-y-2">
+                            <p className="text-xs font-medium text-foreground">
+                              Validity
+                            </p>
+                            <p className="text-[11px] text-muted-foreground/60">
+                              Mark the run inconclusive instead of failed when…
+                            </p>
+                            <VerdictValidityControls
+                              defaults={draft.current.verdictPolicyDefaults}
+                              onChange={(next) =>
+                                dispatchDraft({
+                                  type: "edit",
+                                  key: "verdictPolicyDefaults",
+                                  value: next,
+                                })
+                              }
                             />
+                          </div>
+                        ) : null}
+                        <SuiteQualityGateSection
+                          policy={draft.current.gatePolicy}
+                          onChange={(next) =>
+                            dispatchDraft({
+                              type: "edit",
+                              key: "gatePolicy",
+                              value: next,
+                            })
                           }
-                          hint="Mark the run inconclusive instead of failed when…"
-                        >
-                          <VerdictValidityControls
-                            defaults={draft.current.verdictPolicyDefaults}
-                            onChange={(next) =>
-                              dispatchDraft({
-                                type: "edit",
-                                key: "verdictPolicyDefaults",
-                                value: next,
-                              })
-                            }
-                          />
-                        </SuiteSettingsRow>
-                      ) : null}
+                          capabilities={
+                            capabilitiesReady ? capabilities : null
+                          }
+                          capabilitiesState={capabilitiesState}
+                        />
+                      </SuiteSettingsRow>
 
                       <div data-setting-key="passOrFail" className="contents">
                         <SuitePassOrFailSection
@@ -2589,6 +2600,7 @@ export function SuiteIterationsView({
       <ReviewAndSaveDialog
         open={reviewOpen}
         onOpenChange={setReviewOpen}
+        requireNote={dirtySettingKeys.has("gatePolicy")}
         changes={draftChanges}
         conflicts={draft.conflicts.map(
           (key) =>

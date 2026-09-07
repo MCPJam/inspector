@@ -25,9 +25,14 @@
 
 import type { EvalMatchOptions } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import {
+  normalizeSuiteGatePolicy,
+  type SuiteGatePolicyV1,
+} from "@mcpjam/sdk/contract";
 import { ORDER_OPTIONS, ARGS_OPTIONS } from "./validators-section";
 import type { EvalJudgeConfig, EvalJudgeRubric } from "./types";
 import {
+  describeGatePolicy,
   describeJudge,
   describePredicates,
   describeValidity,
@@ -36,6 +41,7 @@ import {
 } from "./suite-settings-summary";
 
 export {
+  describeGatePolicy,
   describeJudge,
   describeValidity,
   formatFraction,
@@ -78,6 +84,11 @@ export type SuiteSettingsValues = {
    * answer but an unanswerable one.
    */
   verdictPolicyDefaults: SuiteVerdictPolicyDefaults | undefined;
+  /**
+   * Stored quality-gate policy. `undefined` is "none"; a dirty clear
+   * travels as `null` so the backend can distinguish omit from wipe.
+   */
+  gatePolicy: SuiteGatePolicyV1 | undefined;
 };
 
 /** The v2 defaults a case inherits. Fractions in [0,1], never percents. */
@@ -104,6 +115,7 @@ export const SUITE_SETTINGS_KEYS: readonly SuiteSettingsKey[] = [
   "judgeRubric",
   "verdictPolicyVersion",
   "verdictPolicyDefaults",
+  "gatePolicy",
 ];
 
 export type SuiteSettingsDraft = {
@@ -179,6 +191,7 @@ export function readSuiteSettingsValues(suite: {
   judgeRubric?: EvalJudgeRubric;
   verdictPolicyVersion?: 2;
   verdictPolicyDefaults?: SuiteVerdictPolicyDefaults;
+  gatePolicy?: SuiteGatePolicyV1;
 }): SuiteSettingsValues {
   return {
     name: suite.name ?? "",
@@ -197,7 +210,17 @@ export function readSuiteSettingsValues(suite: {
     judgeRubric: suite.judgeRubric,
     verdictPolicyVersion: suite.verdictPolicyVersion,
     verdictPolicyDefaults: suite.verdictPolicyDefaults,
+    gatePolicy: normalizeDraftGatePolicy(suite.gatePolicy),
   };
+}
+
+/** Drop inactive `false` booleans; keep numeric `0`; empty becomes unset. */
+export function normalizeDraftGatePolicy(
+  policy: SuiteGatePolicyV1 | undefined,
+): SuiteGatePolicyV1 | undefined {
+  if (!policy) return undefined;
+  const normalized = normalizeSuiteGatePolicy(policy);
+  return Object.keys(normalized).length === 0 ? undefined : normalized;
 }
 
 export function initSuiteSettingsDraft(args: {
@@ -453,6 +476,10 @@ export function toUpdateArgs(
         // it. There is no downgrade: v2 is one-way.
         if (value !== undefined) args[key] = value;
         break;
+      case "gatePolicy":
+        // NULL clears the stored policy. Omission would keep the old one.
+        args.gatePolicy = value ?? null;
+        break;
     }
   }
   return args;
@@ -577,6 +604,13 @@ export function describeChange(
         label: "Quality gate defaults",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
+      };
+    case "gatePolicy":
+      return {
+        key,
+        label: "Quality gate",
+        before: describeGatePolicy(before.gatePolicy),
+        after: describeGatePolicy(after.gatePolicy),
       };
   }
 }

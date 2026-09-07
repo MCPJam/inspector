@@ -481,6 +481,7 @@ export {
   evalVerdictDecisionSchema,
   evalVerdictDecisionStructuralSchema,
   evalVerdictPolicyVersionSchema,
+  casePassesNeeded,
   isEvalRunVerdict,
   isEvalTrialExclusionReason,
   isEvalValidityDecisionReason,

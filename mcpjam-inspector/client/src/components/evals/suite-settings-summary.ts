@@ -7,6 +7,7 @@
  */
 
 import type { Predicate } from "@mcpjam/sdk/predicates";
+import type { SuiteGatePolicyV1 } from "@mcpjam/sdk/contract";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
 import { OUTAGE_POLICY_LABELS } from "@/components/settings/github-checks-outage-policy";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
@@ -82,6 +83,49 @@ export function describeValidity(
     );
   }
   return parts.length > 0 ? parts.join(", ") : "Contract defaults";
+}
+
+function describeGateBaseline(
+  baseline: SuiteGatePolicyV1["baseline"],
+): string | undefined {
+  if (!baseline) return undefined;
+  if (baseline.kind === "run") {
+    return baseline.runId ? `Run ${baseline.runId}` : "A specific run";
+  }
+  if (baseline.kind === "commit_sha") {
+    return baseline.commitSha
+      ? `Commit ${baseline.commitSha}`
+      : "A specific commit";
+  }
+  return "Previous run";
+}
+
+/**
+ * Review-dialog sentence for a stored quality-gate policy.
+ *
+ * Enumerates the actual baseline and active conditions. Numeric `0` is a
+ * configured threshold, not "none".
+ */
+export function describeGatePolicy(
+  policy: SuiteGatePolicyV1 | undefined,
+): string {
+  if (!policy) return "None";
+  const parts: string[] = [];
+  const baseline = describeGateBaseline(policy.baseline);
+  if (baseline) parts.push(baseline);
+  if (policy.maximumPassRateDrop !== undefined) {
+    parts.push(`${formatFraction(policy.maximumPassRateDrop)} allowed drop`);
+  }
+  if (policy.noDeterministicRegressions === true) {
+    parts.push("no deterministic regressions");
+  }
+  if (policy.maximumP95LatencyIncreaseMs !== undefined) {
+    parts.push(`${policy.maximumP95LatencyIncreaseMs}ms p95 increase`);
+  }
+  if (policy.noGatingScoreErrors === true) {
+    parts.push("any gating scorer errored");
+  }
+  return parts.length > 0 ? parts.join(", ") : "None";
 }
 
 export function summarizeRubric(rubric: EvalJudgeRubric | undefined): string {

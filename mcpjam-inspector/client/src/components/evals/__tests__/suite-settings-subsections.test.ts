@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   getSubsectionsForGroup,
+  subsectionForSettingKey,
   subsectionScrollTarget,
   pickActiveSubsectionFromScroll,
 } from "../suite-settings-subsections";
@@ -33,6 +34,22 @@ describe("getSubsectionsForGroup", () => {
       "Scorers",
       "Judges",
     ]);
+  });
+
+  it("routes quality-gate and nested validity keys to the policy subsection", () => {
+    for (const key of [
+      "validity",
+      "qualityGateBaseline",
+      "qualityGateAllowedDrop",
+      "qualityGateNoDeterministicRegressions",
+      "qualityGateMaximumP95LatencyIncreaseMs",
+      "qualityGateNoGatingScoreErrors",
+    ] as const) {
+      expect(
+        subsectionForSettingKey(key, "grading", base)?.id,
+        key,
+      ).toBe("policy");
+    }
   });
 
   it("maps subsections to scroll anchors and keeps the stage selector", () => {

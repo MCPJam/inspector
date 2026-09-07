@@ -83,7 +83,13 @@ export type SuiteJudgeAgreement = {
 export type SuiteCapabilities = {
   suiteId: string;
   organizationId: string | null;
-  permissions: Record<SuiteCapabilityAction, boolean>;
+  /**
+   * `baseline.set` is the manage-tier write for stored gate policy. Absent
+   * on an older permissions object — treat as not granted.
+   */
+  permissions: Record<SuiteCapabilityAction, boolean> & {
+    "baseline.set"?: boolean;
+  };
   features: {
     computers: SuiteFeatureGate;
     environments: SuiteFeatureGate;
@@ -117,6 +123,17 @@ export type SuiteCapabilities = {
    * the Role control then degrades to today's read-only Gate chip.
    */
   scorers?: { checkPolicy?: boolean };
+  /**
+   * Stored quality-gate capabilities. Absent on a backend that predates B2 —
+   * the Quality gate rows then disable rather than inventing a write path.
+   */
+  qualityGate?: {
+    storage?: boolean;
+    evaluator?: boolean;
+    githubEnforcement?: boolean;
+    /** Reserved previous-run baseline. A client constant cannot authorize it. */
+    previousRunBaseline?: boolean;
+  };
   revisionNumber: number | null;
 };
 

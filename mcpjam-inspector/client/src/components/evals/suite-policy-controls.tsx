@@ -16,6 +16,7 @@
  */
 
 import { useEffect, useId, useRef, useState } from "react";
+import { casePassesNeeded } from "@mcpjam/sdk/contract";
 import { Button } from "@mcpjam/design-system/button";
 import type { SuiteVerdictPolicyDefaults } from "./suite-settings-draft";
 
@@ -50,13 +51,14 @@ const VALIDITY_PLACEHOLDERS = {
  * required one it reverts to the stored value: there is no default to fall
  * back to, and committing 0 would turn an empty box into "accept anything".
  */
-function PercentInput({
+export function PercentInput({
   label,
   value,
   placeholder,
   onCommit,
   ariaLabel,
   required = false,
+  disabled = false,
 }: {
   label?: string;
   value: number | undefined;
@@ -66,6 +68,7 @@ function PercentInput({
   ariaLabel: string;
   /** A blank reverts to the stored value instead of committing `undefined`. */
   required?: boolean;
+  disabled?: boolean;
 }) {
   const asPercent = value === undefined ? "" : String(Math.round(value * 100));
   const [text, setText] = useState(asPercent);
@@ -120,6 +123,7 @@ function PercentInput({
           value={text}
           inputMode="decimal"
           placeholder={placeholder}
+          disabled={disabled}
           aria-label={ariaLabel}
           onFocus={() => setEditing(true)}
           onChange={(event) => setText(event.target.value)}
@@ -165,6 +169,10 @@ export function VerdictPolicyV2Controls({
     repetitions: 1,
     passThreshold: 1,
   };
+  const passesNeeded = casePassesNeeded(
+    current.repetitions,
+    current.passThreshold,
+  );
   return (
     <div className="space-y-2">
       <div data-setting-key="repetitions">
@@ -206,7 +214,9 @@ export function VerdictPolicyV2Controls({
         />
       </div>
       <p className="text-[11px] text-muted-foreground/60">
-        {QUALITY_GATE_THRESHOLD_HINT}
+        {QUALITY_GATE_THRESHOLD_HINT} A case with {current.repetitions} trial
+        {current.repetitions === 1 ? "" : "s"} needs {passesNeeded} pass
+        {passesNeeded === 1 ? "" : "es"}.
       </p>
     </div>
   );

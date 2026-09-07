@@ -41,6 +41,34 @@ function bodyForPath(path: string, value: unknown): Record<string, unknown> {
 
 const OPERATION_NAMES = new Set(ALL_OPERATIONS.map((op) => op.name));
 
+/** Full refined bodies for quality-gate leaves — a standalone leaf fails the reason/revision refine. */
+const QUALITY_GATE_BODY_BY_PATH: Record<string, Record<string, unknown>> = {
+  "settings.qualityGate.baseline":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "baseline only")
+      ?.body ?? {},
+  "settings.qualityGate.maximumPassRateDrop":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "maximum drop")
+      ?.body ?? {},
+  "settings.qualityGate.noDeterministicRegressions":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "deterministic regressions",
+    )?.body ?? {},
+  "settings.qualityGate.maximumP95LatencyIncreaseMs":
+    QUALITY_GATE_REQUEST_SAMPLES.find((sample) => sample.name === "p95 latency")
+      ?.body ?? {},
+  "settings.qualityGate.noGatingScoreErrors":
+    QUALITY_GATE_REQUEST_SAMPLES.find(
+      (sample) => sample.name === "gating-score errors",
+    )?.body ?? {},
+};
+
+function requestBodyForApiPath(
+  path: string,
+  sample: unknown,
+): Record<string, unknown> {
+  return QUALITY_GATE_BODY_BY_PATH[path] ?? bodyForPath(path, sample);
+}
+
 describe("eval suite settings manifest — API parity", () => {
   it("declares exactly one reachability answer per row", () => {
     for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
@@ -68,7 +96,7 @@ describe("eval suite settings manifest — API parity", () => {
         `${row.key} names api path "${row.api}" with no sample value in this test — add one`
       ).toBeDefined();
       const parsed = updateSuiteSchema.safeParse(
-        bodyForPath(row.api, sample)
+        requestBodyForApiPath(row.api, sample)
       );
       if (!parsed.success) {
         unreachable.push(`${row.key} → ${row.api}: ${parsed.error.message}`);
@@ -100,7 +128,7 @@ describe("eval suite settings manifest — API parity", () => {
       if (!row.api || !row.api.includes(".")) continue;
       const [head, leaf] = row.api.split(".");
       const parsed = updateSuiteSchema.parse(
-        bodyForPath(row.api, SAMPLE_BY_PATH[row.api])
+        requestBodyForApiPath(row.api, SAMPLE_BY_PATH[row.api])
       ) as Record<string, Record<string, unknown>>;
       expect(
         parsed[head],

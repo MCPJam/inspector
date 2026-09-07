@@ -121,7 +121,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     // settings.minimumIterations for a legacy suite, settings.repetitions and
     // settings.passThreshold for a v2 one.
     excluded:
-      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions and settings.passThreshold; the row itself only picks which policy's fields are shown.",
+      "A presentation grouping of settings.minimumAccuracy, settings.minimumIterations, settings.repetitions, settings.passThreshold and settings.qualityGate; the row itself only picks which policy's fields are shown.",
   },
   {
     key: "repetitions",
@@ -137,6 +137,31 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     key: "validity",
     label: "Validity",
     api: "settings.validity",
+  },
+  {
+    key: "qualityGateBaseline",
+    label: "Baseline",
+    api: "settings.qualityGate.baseline",
+  },
+  {
+    key: "qualityGateAllowedDrop",
+    label: "Allowed drop",
+    api: "settings.qualityGate.maximumPassRateDrop",
+  },
+  {
+    key: "qualityGateNoDeterministicRegressions",
+    label: "Deterministic regressions",
+    api: "settings.qualityGate.noDeterministicRegressions",
+  },
+  {
+    key: "qualityGateMaximumP95LatencyIncreaseMs",
+    label: "p95 latency increase",
+    api: "settings.qualityGate.maximumP95LatencyIncreaseMs",
+  },
+  {
+    key: "qualityGateNoGatingScoreErrors",
+    label: "Any gating scorer errored",
+    api: "settings.qualityGate.noGatingScoreErrors",
   },
   {
     key: "schedule",
@@ -194,6 +219,11 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
   "settings.repetitions": 3,
   "settings.passThreshold": 0.8,
   "settings.validity": { minCompletionRate: 0.9 },
+  "settings.qualityGate.baseline": { kind: "run", runId: "run_baseline" },
+  "settings.qualityGate.maximumPassRateDrop": 0.03,
+  "settings.qualityGate.noDeterministicRegressions": true,
+  "settings.qualityGate.maximumP95LatencyIncreaseMs": 0,
+  "settings.qualityGate.noGatingScoreErrors": true,
   "environment.computerEnvironment": "Playwright",
   environmentIds: ["env_1"],
 };

@@ -182,6 +182,18 @@ describe("VerdictPolicyV2Controls", () => {
     });
   });
 
+  it("shows how many passes the case decision rule needs", () => {
+    render(
+      <VerdictPolicyV2Controls
+        defaults={{ repetitions: 3, passThreshold: 0.8 }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/A case with 3 trials needs 3 passes/),
+    ).toBeTruthy();
+  });
+
   it("clamps a typed percent into the unit interval", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();
