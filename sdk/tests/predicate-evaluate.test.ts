@@ -781,6 +781,19 @@ describe("evaluatePredicates — aggregate verdict", () => {
     expect(evaluatePredicates(baseTranscript, undefined)).toEqual([]);
     expect(allPredicatesPassed([])).toBe(true);
   });
+
+  it("a failing advisory predicate does not fail the aggregate", () => {
+    const results = evaluatePredicates(baseTranscript, [
+      {
+        type: "responseContains",
+        needle: "this text is absent",
+        role: "advisory",
+        severity: "warn",
+      },
+    ]);
+    expect(results[0]!.passed).toBe(false);
+    expect(allPredicatesPassed(results)).toBe(true);
+  });
 });
 
 describe("reason redaction + bounding (persisted to Convex metadata)", () => {

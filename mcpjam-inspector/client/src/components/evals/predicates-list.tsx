@@ -10,6 +10,7 @@ import { RenderObservationCard } from "./browser-artifacts-view";
 import {
   EVAL_FAILED_BADGE_STRONG_CLASS,
   EVAL_PASSED_BADGE_STRONG_CLASS,
+  EVAL_WARN_BADGE_STRONG_CLASS,
 } from "./constants";
 import type { EvalIteration } from "./types";
 
@@ -221,6 +222,13 @@ function PredicateRow({
               <span className="text-xs font-medium">
                 {predicateRowTitle(row)}
               </span>
+              {row.predicate.severity === "warn" ? (
+                <span
+                  className={`rounded px-1.5 py-0.5 text-[10px] font-semibold ${EVAL_WARN_BADGE_STRONG_CLASS}`}
+                >
+                  Warn
+                </span>
+              ) : null}
               <span className="truncate text-[11px] text-muted-foreground">
                 {summarizePredicate(row.predicate)}
               </span>
