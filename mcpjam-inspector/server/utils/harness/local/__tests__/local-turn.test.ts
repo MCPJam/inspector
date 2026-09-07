@@ -127,8 +127,10 @@ const { runtimeUseState } = await import("../runtime-lifecycle.js");
 const { localPackTarget } = await import("../targets.js");
 const {
   endLocalHarnessSession,
+  forgetLocalHarnessSession,
   getLocalHarnessSession,
   listLocalHarnessSessions,
+  registerLocalHarnessSession,
 } = await import("../session-registry.js");
 
 function turnArgs() {
@@ -297,6 +299,35 @@ describe("a local setup that succeeds", () => {
         runtimeRoot: "/nonexistent/runtime-root",
       }),
     ).resolves.toMatchObject({ busy: false });
+  });
+});
+
+describe("a teardown that finishes late", () => {
+  it("drops only its OWN record, never a session registered since", async () => {
+    // Dropping the record moved AFTER the stop, so it now runs on the far side
+    // of a SIGTERM grace. By session id alone it would remove whatever is
+    // registered under that id by then — including a live session from a later
+    // turn, putting a running tree beyond the reach of `stop-all`. The id is
+    // a fresh uuid per turn today, so this is unreachable through
+    // `run-harness-turn.ts`; the comparison is what stops that invariant, which
+    // lives in another file, from being load-bearing here.
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+
+    // A later turn claims the same id while this one is still tearing down.
+    const later = {
+      ...(getLocalHarnessSession("s_local_1") as NonNullable<
+        ReturnType<typeof getLocalHarnessSession>
+      >),
+      runtimeId: "rt_later",
+    };
+    registerLocalHarnessSession(later);
+
+    await result.prepared.teardown();
+    // Still reachable, and still the LATER record.
+    expect(getLocalHarnessSession("s_local_1")?.runtimeId).toBe("rt_later");
+    forgetLocalHarnessSession("s_local_1");
   });
 });
 

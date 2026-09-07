@@ -70,6 +70,27 @@ export function forgetLocalHarnessSession(sessionId: string): void {
   sessions.delete(sessionId);
 }
 
+/**
+ * Drop a session, but only if THIS record is still the one registered.
+ *
+ * By id alone, a teardown that finishes late removes whatever is under that id
+ * now — including a live session a later turn registered while the old tree was
+ * still inside its SIGTERM grace, which would put a running session beyond the
+ * reach of `stop-all`. The turn's teardown gives up the runtime reservation on
+ * a proven stop either way; it is the map entry that has to belong to it.
+ *
+ * Unreachable through `run-harness-turn.ts` today, which mints
+ * `local-<uuid>` per turn — but that invariant lives in another file, and the
+ * cost of not depending on it is this comparison.
+ */
+export function forgetLocalHarnessSessionRecord(
+  record: LocalHarnessSessionRecord,
+): boolean {
+  if (sessions.get(record.sessionId) !== record) return false;
+  sessions.delete(record.sessionId);
+  return true;
+}
+
 export function listLocalHarnessSessions(): LocalHarnessSessionRecord[] {
   return [...sessions.values()];
 }

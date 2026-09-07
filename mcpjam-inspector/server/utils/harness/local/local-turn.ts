@@ -59,6 +59,7 @@ import {
 } from "./instance-key.js";
 import {
   forgetLocalHarnessSession,
+  forgetLocalHarnessSessionRecord,
   registerLocalHarnessSession,
 } from "./session-registry.js";
 import { join } from "node:path";
@@ -437,6 +438,20 @@ async function prepareWithReservedRuntime(outer: {
       },
     });
 
+    // Built before the teardown that has to drop it, so the drop can prove the
+    // entry under this id is still the one this turn registered.
+    const sessionRecord = {
+      sessionId: args.sessionId,
+      runtimeId: plan.runtime.runtimeId,
+      workspaceGrantId: plan.target.workspaceGrantId,
+      brokerRunId: broker.runId,
+      gateway: started,
+      stop: async () => await supervisor.stopSession(args.sessionId),
+      revokeLease: () => revokeLease(broker.runId, args.bearer),
+      releaseRuntime: outer.releaseRuntimeUse,
+      startedAt: Date.now(),
+    };
+
     const teardownOnce = onceAsync(async () => {
       try {
         started.revoke();
@@ -471,8 +486,12 @@ async function prepareWithReservedRuntime(outer: {
         // On the normal path this still drops the record, which is the reason
         // it is here at all — a completed turn that left one behind would add a
         // dead session to `stop-all` and to the telemetry count every time.
+        //
+        // And by RECORD, not by id: this runs after a SIGTERM grace now, and by
+        // id alone a late teardown would remove whatever is registered under
+        // that id at the time — a live session from a later turn included.
         if (stop.stopped) {
-          forgetLocalHarnessSession(args.sessionId);
+          forgetLocalHarnessSessionRecord(sessionRecord);
           await outer.releaseRuntimeUse();
         }
       }
@@ -480,17 +499,7 @@ async function prepareWithReservedRuntime(outer: {
 
     // Registered so `stop-all` and the abort path can end this session without
     // holding a reference to the turn that created it.
-    registerLocalHarnessSession({
-      sessionId: args.sessionId,
-      runtimeId: plan.runtime.runtimeId,
-      workspaceGrantId: plan.target.workspaceGrantId,
-      brokerRunId: broker.runId,
-      gateway: started,
-      stop: async () => await supervisor.stopSession(args.sessionId),
-      revokeLease: () => revokeLease(broker.runId, args.bearer),
-      releaseRuntime: outer.releaseRuntimeUse,
-      startedAt: Date.now(),
-    });
+    registerLocalHarnessSession(sessionRecord);
 
     logger.info("[local-harness] turn prepared", {
       sessionId: args.sessionId,
