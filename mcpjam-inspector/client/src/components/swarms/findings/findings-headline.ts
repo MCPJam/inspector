@@ -47,6 +47,20 @@ function diagnosisIsGoalSpecific(goal: GoalFindingsModel): boolean {
   );
 }
 
+/**
+ * The friction equivalent of {@link diagnosisIsGoalSpecific}. A persona-scoped
+ * warn detector fans to every goal that persona tried, so it can never say
+ * WHICH goal rubbed.
+ */
+function frictionIsGoalSpecific(
+  goal: GoalFindingsModel,
+  stage: JourneyStageId
+): boolean {
+  return goal.stages[stage].evidence.some(
+    (item) => item.tone === "warn" && !item.personaScoped
+  );
+}
+
 export function countWords(text: string): number {
   return text
     .trim()
@@ -128,6 +142,15 @@ export function composeFindingsSummary(
    * "finished" nor "still running" can be claimed. */
   opts: { terminal: boolean | null }
 ): string[] {
+  // The cap is applied in one place so no branch can smuggle a long line past
+  // it — an interpolated persona name does that as easily as a goal title.
+  return composeLines(model, opts).map((line) => limitWords(line));
+}
+
+function composeLines(
+  model: SwarmFindingsModel,
+  opts: { terminal: boolean | null }
+): string[] {
   const lines: string[] = [];
   const failingPersonas = model.personas.filter(
     (persona) => firstFailingGoal(persona) !== undefined
@@ -147,11 +170,15 @@ export function composeFindingsSummary(
     const cause = diagnosisCause(goal);
     if (cause) lines.push(cause);
 
+    // A failing persona usually still has goals that landed, so "did not land
+    // either" would overclaim. Only the broken goal is established.
     const others = failingPersonas.slice(1);
     if (others.length === 1) {
-      lines.push(`${others[0]!.name} did not land either.`);
+      lines.push(`${others[0]!.name} also had a goal that broke.`);
     } else if (others.length > 1) {
-      lines.push(`${others.length} other personas did not land either.`);
+      lines.push(
+        `${others.length} other personas also had a goal that broke.`
+      );
     }
 
     const feeling = feelingLine(lead);
@@ -176,15 +203,21 @@ export function composeFindingsSummary(
       `${frictionGoals.length} of ${measuredGoals.length} goals showed friction. No stage broke outright.`
     );
 
+    // Same rule the broken-goal branch follows: persona-scoped evidence fanned
+    // to every one of that persona's goals cannot single one out, so a line
+    // built on it stays at persona level.
     const stageId = firstFrictionStage(goal);
     const title = shortenGoalTitle(goal.title);
-    lines.push(
-      stageId
-        ? `"${title}" showed friction at ${journeyStageTitle(
-            stageId
-          ).toLowerCase()} for ${frictionPersona.name}.`
-        : `"${title}" showed friction for ${frictionPersona.name}.`
-    );
+    if (stageId === null) {
+      lines.push(`"${title}" showed friction for ${frictionPersona.name}.`);
+    } else {
+      const stageWord = journeyStageTitle(stageId).toLowerCase();
+      lines.push(
+        frictionIsGoalSpecific(goal, stageId)
+          ? `"${title}" showed friction at ${stageWord} for ${frictionPersona.name}.`
+          : `The ${stageWord} stage showed friction for ${frictionPersona.name}.`
+      );
+    }
 
     const feeling = feelingLine(frictionPersona);
     if (feeling) lines.push(feeling);

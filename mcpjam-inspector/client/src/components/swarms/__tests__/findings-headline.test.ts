@@ -106,7 +106,7 @@ describe("composeFindingsSummary", () => {
     // The cause prefers the rubric label over restating the stage, and every
     // line carries a full stop even when the detector sentence did not.
     expect(lines[1]).toBe("Goal completion missed in 3 graded sessions.");
-    expect(lines).toContain("2 other personas did not land either.");
+    expect(lines).toContain("2 other personas also had a goal that broke.");
     expect(lines).toContain("Ada Third left stalled.");
     // The persona is never the subject of the failure verb — the goal is.
     expect(lines[0]).not.toMatch(/Ada Third (broke|failed|stalled)/);
@@ -117,8 +117,10 @@ describe("composeFindingsSummary", () => {
       failingRun("Maya Chen", "run-1", "journey-1"),
       failingRun("Ada Third", "run-2", "journey-2"),
     ]);
-    expect(lines).toContain("Maya Chen did not land either.");
+    expect(lines).toContain("Maya Chen also had a goal that broke.");
     expect(lines.join(" ")).not.toContain("1 other personas");
+    // She may still have goals that landed; only the break is established.
+    expect(lines.join(" ")).not.toContain("did not land");
   });
 
   it("keeps a persona-scoped failure at persona level, naming no goal", () => {
@@ -181,6 +183,39 @@ describe("composeFindingsSummary", () => {
     expect(lines[0]).toBe(
       "1 of 1 goals showed friction. No stage broke outright."
     );
+  });
+
+  it("keeps persona-scoped friction at persona level, naming no goal", () => {
+    // A persona-scoped warn fans to every goal she tried, so it cannot say
+    // WHICH goal rubbed — the same rule the broken-goal branch follows.
+    const model = deriveSwarmFindingsModel({
+      runs: [
+        run(),
+        run({ runId: "run-2", journeyRefId: "journey-2", journeyName: "Ship" }),
+      ],
+      signals: signals({
+        candidates: [
+          {
+            detector: "latency_outlier",
+            subjectKind: "persona",
+            subjectId: "persona-1",
+            subjectLabel: "Maya Chen",
+            affectedSessions: 2,
+            sliceTotal: 4,
+            exemplarSessionIds: [],
+            contrastSessionIds: [],
+            severityScore: 1,
+          },
+        ],
+      }),
+      personas: [],
+    });
+    const lines = composeFindingsSummary(model, { terminal: true });
+
+    expect(lines[1]).toBe(
+      "The tool response stage showed friction for Maya Chen."
+    );
+    expect(lines.join(" ")).not.toContain("Export the board");
   });
 
   it("celebrates only when every graded goal landed", () => {

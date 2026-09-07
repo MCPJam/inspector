@@ -472,6 +472,25 @@ describe("SwarmFindingsTab", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("tells a finished legacy wave that it finished", () => {
+    // No signals means no `terminal` flag, so the runs themselves have to say
+    // it. Passing "unknown" here hid that the run was over.
+    const { swarmRunGroupId: _drop, ...legacy } = run({
+      status: "completed",
+      summary: { total: 2, succeeded: 2, failed: 0, rateLimited: 0 },
+    });
+    render(
+      <SwarmFindingsTab
+        wave={groupRunsIntoSwarmWaves([legacy as SwarmOverviewRun])[0]!}
+        waveSignals={null}
+        personas={personas}
+      />
+    );
+    expect(screen.getByTestId("findings-summary").textContent).toContain(
+      "This run finished with nothing graded."
+    );
+  });
+
   it("survives a legacy wave with no signals (no crash)", () => {
     const legacyRuns = overview.runs.map((r) => {
       const { swarmRunGroupId: _drop, ...rest } = r;

@@ -15,6 +15,7 @@ import type { SwarmWaveSignals } from "@/lib/swarm-api";
 import type { SwarmWave } from "@/components/swarms/swarm-overview-panel";
 import {
   deriveSwarmFindingsModel,
+  runIsTerminal,
   type FindingsPersonaDoc,
 } from "./findings-derivation";
 import {
@@ -48,14 +49,16 @@ export function SwarmFindingsTab({
       }),
     [wave.runs, waveSignals, personas]
   );
-  // A wave with no signals cannot say whether it finished, so the summary is
-  // told "unknown" rather than being allowed to guess an ending.
+  // Signals carry the authoritative answer. A legacy wave has none, so fall
+  // back to the runs themselves rather than hiding that the run finished.
   const summary = useMemo(
     () =>
       composeFindingsSummary(model, {
-        terminal: waveSignals ? waveSignals.terminal : null,
+        terminal: waveSignals
+          ? waveSignals.terminal
+          : wave.runs.every(runIsTerminal),
       }),
-    [model, waveSignals]
+    [model, waveSignals, wave.runs]
   );
   const footnotes = useMemo(
     () =>
