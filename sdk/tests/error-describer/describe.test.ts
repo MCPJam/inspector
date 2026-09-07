@@ -244,6 +244,13 @@ const CASES: Case[] = [
       new Error("Failed after 3 attempts. Last error: Too Many Requests"),
     expectSlug: "provider/quota",
   },
+  {
+    // A port is not a status: with no `code` field to classify on, the bare-429
+    // matcher used to win here and the transport reason never reached the user.
+    name: "port 429 stays a transport error",
+    build: () => new Error("connect ECONNREFUSED 127.0.0.1:429"),
+    expectSlug: "transport/econnrefused",
+  },
   // OAuth body
   {
     name: "oauth invalid_grant body",

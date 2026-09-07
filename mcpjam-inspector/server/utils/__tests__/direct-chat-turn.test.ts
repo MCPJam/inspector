@@ -903,5 +903,8 @@ describe("runDirectChatTurn — eval headless contract (PR 4a)", () => {
 
     const result = await consumeDirectChatTurnHeadless(handle);
     expect(result.aborted).toBe(true);
+    // The accessors resolve here, so `aborted` alone would still pass if
+    // `onError` started recording the abort — assert the store stayed empty.
+    expect(handle.lastStreamError()).toBeUndefined();
   });
 });

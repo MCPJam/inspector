@@ -1495,7 +1495,7 @@ function safelyEmitLiveTextDelta(
  * here costs one investigated alert, while a permissive rule costs the
  * blindness this work exists to remove. Add codes as the backend adds them.
  */
-const USER_OWNED_DENIAL_CODES = new Set<string>([
+export const USER_OWNED_DENIAL_CODES: ReadonlySet<string> = new Set<string>([
   // convex `stream/routes.ts` + `lib/llmCallShell.ts` spend precheck
   "user_rate_limit",
   "wallet_locked",

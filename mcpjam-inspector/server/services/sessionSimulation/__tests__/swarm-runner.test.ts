@@ -53,8 +53,10 @@ import {
   startJourneyRun,
   shutdownRunningJourneyRuns,
   getRunningJourneyStreamHub,
+  ACCOUNT_LIMIT_CODE,
   MAX_CONCURRENT_HOSTS,
 } from "../swarm-runner.js";
+import { USER_OWNED_DENIAL_CODES } from "../../../utils/mcpjam-stream-handler.js";
 import { __clearPinnedSkillCacheForTest } from "../pinned-skill-cache.js";
 import { SwarmAgentError } from "../../swarm-agent.js";
 
@@ -608,15 +610,34 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
     // The wire form `runner.ts` builds: "<message> (<code>, HTTP <status>)".
     // None of MCPJam's limit sentences contain spend/cap/quota/budget, so the
     // account-wide stop has to key on the denial code instead.
-    for (const envelope of [
-      "Daily credit limit reached. (user_rate_limit, HTTP 429)",
-      "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. (org_rate_limit, HTTP 429)",
-      "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)",
+    // Each envelope under the outcome it really arrives with: only the
+    // `*_rate_limit` codes carry wording `classifyTurnFailure` reads as a
+    // rate-limit, so the billing codes land in `failed`.
+    for (const { envelope, outcome } of [
+      {
+        envelope: "Daily credit limit reached. (user_rate_limit, HTTP 429)",
+        outcome: "rate_limited",
+      },
+      {
+        envelope:
+          "Daily MCPJam model limit reached. Use BYOK or try again tomorrow. (org_rate_limit, HTTP 429)",
+        outcome: "rate_limited",
+      },
+      {
+        envelope:
+          "Your organization's credit limit was reached. (billing_limit_reached, HTTP 402)",
+        outcome: "failed",
+      },
+      {
+        envelope:
+          "Your plan does not include this model. (billing_feature_not_included, HTTP 403)",
+        outcome: "failed",
+      },
     ]) {
       finalizePendingAttemptsMock.mockClear();
       runSyntheticHostSessionMock.mockImplementation(async (adapter: any) => {
         if (adapter.chatSessionId === "synth_run-1_host-1_0") {
-          return { outcome: "rate_limited", errorMessage: envelope };
+          return { outcome, errorMessage: envelope };
         }
         return { outcome: "succeeded" };
       });
@@ -632,6 +653,19 @@ describe("swarm fan-out runner — worker pool + host isolation", () => {
       expect(finalizePendingAttemptsMock.mock.calls[0]![2]).toMatchObject({
         errorCode: "spend_cap_exceeded",
       });
+    }
+  });
+
+  it("recognizes every user-owned backend denial code as an account limit", () => {
+    // The two lists answer different questions (who is at fault vs. whether
+    // another host could escape the limit), so they stay separate — but a code
+    // the backend adds to the capture policy must not silently keep burning
+    // the run's remaining targets here.
+    for (const code of USER_OWNED_DENIAL_CODES) {
+      expect(
+        ACCOUNT_LIMIT_CODE.test(`Limit reached. (${code}, HTTP 403)`),
+        `${code} should stop the whole run`
+      ).toBe(true);
     }
   });
 

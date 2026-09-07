@@ -122,13 +122,14 @@ export interface ResolvedTurnRuntime {
  * on it (it re-inspects the message via `classifyRateLimit`).
  * `cap`/`quota`/`budget` are word-anchored so genuine spend-cap wording
  * matches but "capacity", "recap", "escape" do NOT (a provider capacity error
- * is a hard `failed`, not a spend cap). A bare `429` is likewise anchored, so
- * a port or id containing those digits is not read as a rate-limit.
+ * is a hard `failed`, not a spend cap). A bare `429` is anchored harder still —
+ * never preceded by `:` or `.` — so a port (`127.0.0.1:429`) or a decimal stays
+ * the hard failure it is.
  */
 export function classifyTurnFailure(
   message: string,
 ): "rate_limited" | "failed" {
-  return /rate.?limit|too many requests|\b429\b|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(
+  return /rate.?limit|too many requests|(?:^|[^\w.:])429\b|spend|\bquota\b|\bbudget\b|\bcap\b/i.test(
     message,
   )
     ? "rate_limited"
