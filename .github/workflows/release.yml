@@ -301,7 +301,12 @@ jobs:
       # execution nowhere (no conformance evidence recorded) is reported as
       # unshipped rather than failed: that is a consistent dark release, and
       # blocking every release until an unrelated feature lands is noise.
+      # Only for a release that actually ships the Inspector: a packages-only
+      # release leaves `inspector_version` empty, and the checker rejects an
+      # empty `--version` — failing the whole release over a gate that has
+      # nothing to check.
       - name: Local harness release consistency
+        if: fromJSON(steps.plan.outputs.publish_inspector)
         working-directory: mcpjam-inspector
         env:
           INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
@@ -876,13 +881,18 @@ jobs:
           path: .release-assets/runtime
           merge-multiple: true
 
-      - name: Create GitHub release
+      # Created as a DRAFT, and promoted below only once the published assets
+      # have been proven installable. Failing a gate that runs after a public
+      # release cannot unpublish it: the tag, the assets and the release notes
+      # are already there for anyone watching the repo, and a broken pack is
+      # exactly what this release must never leave reachable.
+      - name: Create GitHub release (draft)
         if: needs.preflight.outputs.release_tag != ''
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.preflight.outputs.release_tag }}
           name: Release ${{ needs.preflight.outputs.release_tag }}
-          draft: false
+          draft: true
           prerelease: false
           generate_release_notes: true
           files: |
@@ -917,3 +927,13 @@ jobs:
           node scripts/check-local-harness-release.mjs \
             --version "$INSPECTOR_VERSION" \
             --base-url "file://$ASSET_DIR/"
+
+      # Everything above has passed, so the draft becomes the release. Same
+      # action and same tag: `action-gh-release` updates the existing release
+      # rather than creating a second one.
+      - name: Publish the GitHub release
+        if: needs.preflight.outputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.preflight.outputs.release_tag }}
+          draft: false
