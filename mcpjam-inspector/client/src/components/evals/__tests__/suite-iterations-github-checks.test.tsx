@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { withDataRouter } from "./settings-sheet-harness";
+import {
+  showSettingsGroup,
+  withDataRouter,
+} from "./settings-sheet-harness";
 import { render, screen } from "@testing-library/react";
 import { SuiteIterationsView } from "../suite-iterations-view";
 import type { EvalSuite } from "../types";
@@ -163,9 +166,13 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     });
 
     const { container } = renderSettingsSheet();
+    // GitHub Checks lives on the Triggers tab, and only the active tab mounts.
+    showSettingsGroup(container, "Triggers");
 
-    // The sheet survived: a sibling section still rendered.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
+    // The sheet survived: this tab's body rendered rather than blanking. (Its
+    // sibling Schedule row is permission-gated, so it is not a reliable
+    // survivor signal.)
+    expect(container.querySelector('[data-step-id="triggers"]')).toBeTruthy();
     // The section whose gate refused is now a DISABLED ROW that says so,
     // rather than nothing at all. A row that vanishes makes a refused gate,
     // a missing permission and a backend that could not answer look identical
@@ -183,7 +190,9 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
       throw new Error("Not a member of this organization");
     });
 
-    renderSettingsSheet();
+    const { container } = renderSettingsSheet();
+    // The boundary can only trip once the section MOUNTS, which is on Triggers.
+    showSettingsGroup(container, "Triggers");
 
     // The fallback ROW is a UI choice, never a telemetry one: a boundary that
     // renders something helpful still has to report what it caught.
@@ -197,10 +206,13 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
     mocks.availability.mockReturnValue({ state: "disabled" });
 
     const { container } = renderSettingsSheet();
+    // On the tab the row WOULD live on — otherwise this passes for the wrong
+    // reason, since no tab but Triggers renders it whatever the gate answers.
+    showSettingsGroup(container, "Triggers");
 
     // `disabled` is the backend ANSWERING, not failing — the boundary never
     // trips, so the row stays hidden exactly as before.
-    expect(screen.getByText("Minimum iterations")).toBeTruthy();
+    expect(container.querySelector('[data-step-id="triggers"]')).toBeTruthy();
     expect(screen.queryByTestId("github-checks-section")).toBeNull();
     expect(
       container.querySelector('[data-setting-key="githubChecks"]')
@@ -211,9 +223,9 @@ describe("SuiteIterationsView GitHub Checks gate", () => {
   it("renders the section when the backend answers `enabled`", () => {
     mocks.availability.mockReturnValue({ state: "enabled" });
 
-    renderSettingsSheet();
+    const { container } = renderSettingsSheet();
+    showSettingsGroup(container, "Triggers");
 
-    expect(screen.getByText("GitHub Checks")).toBeTruthy();
     expect(screen.getByTestId("github-checks-section")).toBeTruthy();
   });
 });

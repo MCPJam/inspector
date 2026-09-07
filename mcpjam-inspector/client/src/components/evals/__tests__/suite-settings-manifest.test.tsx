@@ -260,7 +260,15 @@ describe("eval suite settings manifest — render parity", () => {
     ).toEqual([]);
   });
 
-  it("exposes aria-expanded on every ledger row trigger", () => {
+  it("leaves no ledger row collapsed shut once it has been navigated to", () => {
+    // WAS "exposes aria-expanded on every ledger row trigger". The tabbed page
+    // renders each section EXPANDED, so most rows no longer have a disclosure
+    // control at all and asserting one exists pinned the old shape rather than
+    // the property that mattered: that navigating to a row shows you its
+    // editor. Both designs satisfy the form below — a row with no toggle is
+    // reachable by construction, and one that still has a toggle must be open
+    // rather than announcing `aria-expanded="false"` at a reader who just
+    // asked for it.
     const { container } = renderSettingsSheet();
     for (const key of [
       "policy",
@@ -273,7 +281,13 @@ describe("eval suite settings manifest — render parity", () => {
       showSettingsKey(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
       expect(row, key).toBeTruthy();
-      expect(row?.querySelector("[aria-expanded]"), key).toBeTruthy();
+      // Scoped to the DISCLOSURE control, not to `[aria-expanded]` at large:
+      // that attribute is also on every Radix select and menu inside a row's
+      // editor, and a closed dropdown is not a collapsed section.
+      const trigger = row?.querySelector('[data-slot="collapsible-trigger"]');
+      if (trigger) {
+        expect(trigger.getAttribute("aria-expanded"), key).toBe("true");
+      }
     }
   });
 

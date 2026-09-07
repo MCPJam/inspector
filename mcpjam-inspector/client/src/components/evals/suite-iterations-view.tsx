@@ -627,9 +627,6 @@ export function SuiteIterationsView({
     : !areAllChecksValid(draftDefaultPredicates)
       ? { message: "A check is incomplete" }
       : undefined;
-  const scheduleOwnerName = suite.schedule?.createdByUserId
-    ? (userMap?.get(suite.schedule.createdByUserId)?.name ?? "a former member")
-    : null;
   // Which POLICY the sheet is editing. Read from the DRAFT, not the suite, so
   // the v2 rows appear the moment someone drafts the upgrade rather than only
   // after they save it — the review dialog is where they confirm, and a page
@@ -2622,6 +2619,7 @@ export function SuiteIterationsView({
       />
       {tracesExportOpen ? (
         <ExportTracesModal
+          open={tracesExportOpen}
           onOpenChange={setTracesExportOpen}
           projectId={projectId}
           runChatSessionIds={runChatSessionIds}
