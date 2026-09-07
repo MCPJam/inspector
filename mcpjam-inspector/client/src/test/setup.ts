@@ -190,7 +190,6 @@ console.error = (...args: unknown[]) => {
 // Export for use in tests that need to reset localStorage
 export { localStorageMock };
 
-
 /**
  * jsdom draws nothing.
  *
@@ -218,7 +217,86 @@ if (typeof HTMLCanvasElement !== "undefined") {
   const contexts = new WeakMap<object, unknown>();
 
   /**
-   * Methods whose RETURN VALUE a caller reads. Everything else is a no-op.
+   * The 2D state a caller can READ BACK, with the value the spec gives it.
+   *
+   * Not a nicety. A proxy that answered every unknown member with a function
+   * turned `ctx.globalAlpha * 0.5` into `NaN` and `ctx.font` into something no
+   * `String.prototype` method would take — silently, on a component that had
+   * simply never assigned that property first. A shim that makes reads
+   * nonsense is worse than one that throws, because the test still passes.
+   */
+  const STATE_DEFAULTS: Readonly<Record<string, unknown>> = {
+    direction: "inherit",
+    fillStyle: "#000000",
+    filter: "none",
+    font: "10px sans-serif",
+    fontKerning: "auto",
+    fontStretch: "normal",
+    fontVariantCaps: "normal",
+    globalAlpha: 1,
+    globalCompositeOperation: "source-over",
+    imageSmoothingEnabled: true,
+    imageSmoothingQuality: "low",
+    letterSpacing: "0px",
+    lineCap: "butt",
+    lineDashOffset: 0,
+    lineJoin: "miter",
+    lineWidth: 1,
+    miterLimit: 10,
+    shadowBlur: 0,
+    shadowColor: "rgba(0, 0, 0, 0)",
+    shadowOffsetX: 0,
+    shadowOffsetY: 0,
+    strokeStyle: "#000000",
+    textAlign: "start",
+    textBaseline: "alphabetic",
+    textRendering: "auto",
+    wordSpacing: "0px",
+  };
+
+  /**
+   * The calls that DRAW, which under jsdom is the calls that do nothing.
+   *
+   * Listed rather than "anything not otherwise known": a proxy that invents a
+   * member on demand answers `'roundRect' in ctx` with `true` on an engine
+   * that has never had it, which turns a feature check into a lie.
+   */
+  const NO_OP_METHODS: ReadonlySet<string> = new Set([
+    "arc",
+    "arcTo",
+    "beginPath",
+    "bezierCurveTo",
+    "clearRect",
+    "clip",
+    "closePath",
+    "createConicGradient",
+    "drawFocusIfNeeded",
+    "drawImage",
+    "ellipse",
+    "fill",
+    "fillRect",
+    "fillText",
+    "lineTo",
+    "moveTo",
+    "putImageData",
+    "quadraticCurveTo",
+    "rect",
+    "reset",
+    "resetTransform",
+    "rotate",
+    "roundRect",
+    "scale",
+    "setLineDash",
+    "setTransform",
+    "stroke",
+    "strokeRect",
+    "strokeText",
+    "transform",
+    "translate",
+  ]);
+
+  /**
+   * Members whose RETURN VALUE a caller reads, plus the state stack.
    *
    * A shim that only implemented what one component needed is a shim that
    * breaks the next one — which is exactly what happened: this suite's canvas
@@ -226,27 +304,46 @@ if (typeof HTMLCanvasElement !== "undefined") {
    * an object with three methods on it turned each of those into a
    * `TypeError` inside a mount effect.
    */
-  const withValues = (canvas: object): Record<string, unknown> => ({
-    canvas,
-    measureText: () => ({ width: 0 }),
-    getImageData: (_x: number, _y: number, w: number, h: number) => ({
-      data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
-      width: w,
-      height: h,
-    }),
-    createImageData: (w: number, h: number) => ({
-      data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
-      width: w,
-      height: h,
-    }),
-    createLinearGradient: () => ({ addColorStop: () => {} }),
-    createRadialGradient: () => ({ addColorStop: () => {} }),
-    createPattern: () => null,
-    isPointInPath: () => false,
-    isPointInStroke: () => false,
-    getLineDash: () => [] as number[],
-    getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
-  });
+  const withValues = (
+    canvas: object,
+    assigned: Map<string, unknown>,
+  ): Record<string, unknown> => {
+    /** `save`/`restore` are state, not drawing: a no-op `restore` leaves the
+     * caller's own `globalAlpha` applied to everything painted after it. */
+    const stack: Array<Map<string, unknown>> = [];
+    return {
+      canvas,
+      save: () => {
+        stack.push(new Map(assigned));
+      },
+      restore: () => {
+        const previous = stack.pop();
+        assigned.clear();
+        if (previous)
+          for (const [key, value] of previous) assigned.set(key, value);
+      },
+      isContextLost: () => false,
+      getContextAttributes: () => ({ alpha: true, desynchronized: false }),
+      measureText: () => ({ width: 0 }),
+      getImageData: (_x: number, _y: number, w: number, h: number) => ({
+        data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
+        width: w,
+        height: h,
+      }),
+      createImageData: (w: number, h: number) => ({
+        data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
+        width: w,
+        height: h,
+      }),
+      createLinearGradient: () => ({ addColorStop: () => {} }),
+      createRadialGradient: () => ({ addColorStop: () => {} }),
+      createPattern: () => null,
+      isPointInPath: () => false,
+      isPointInStroke: () => false,
+      getLineDash: () => [] as number[],
+      getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+    };
+  };
 
   canvasPrototype.getContext = function getContext(id: string) {
     // Only 2D. jsdom has no WebGL either, and a component that asks for one
@@ -254,25 +351,40 @@ if (typeof HTMLCanvasElement !== "undefined") {
     if (id !== "2d") return null;
     const existing = contexts.get(this as unknown as object);
     if (existing) return existing;
-    const values = withValues(this as unknown as object);
     /** Whatever the component assigned — `fillStyle`, `font`, `lineWidth`. */
-    const assigned = new Map<string | symbol, unknown>();
+    const assigned = new Map<string, unknown>();
+    const values = withValues(this as unknown as object, assigned);
+    const known = (property: string): boolean =>
+      assigned.has(property) ||
+      property in values ||
+      property in STATE_DEFAULTS ||
+      NO_OP_METHODS.has(property);
     const context = new Proxy(
       {},
       {
         get(_target, property) {
+          // NO SYMBOLS, and `then` above all: a proxy that answers `then`
+          // with a function is a THENABLE, so `await ctx` hands the no-op the
+          // resolve callback and the promise never settles. A hang, in a
+          // suite, from a shim that was only meant to draw nothing.
+          if (typeof property === "symbol") return undefined;
           if (assigned.has(property)) return assigned.get(property);
-          if (property in values) return values[property as string];
-          // ANY other member is a drawing call, and jsdom draws nothing.
-          // Answering with a no-op rather than `undefined` is what keeps this
-          // an environment shim: no component's paint path can fail on it.
-          return () => {};
+          if (property in values) return values[property];
+          if (property in STATE_DEFAULTS) return STATE_DEFAULTS[property];
+          // Everything else that a 2D context really has is a drawing call,
+          // and jsdom draws nothing.
+          if (NO_OP_METHODS.has(property)) return () => {};
+          return undefined;
         },
         set(_target, property, value) {
+          if (typeof property === "symbol") return true;
           assigned.set(property, value);
           return true;
         },
-        has: () => true,
+        // TRUE ONLY FOR WHAT IS REALLY THERE. `'x' in ctx` is how a component
+        // asks whether this engine supports something.
+        has: (_target, property) =>
+          typeof property === "string" && known(property),
       },
     );
     contexts.set(this as unknown as object, context);
