@@ -486,6 +486,36 @@ describe("evaluateCompareGates — cost increase", () => {
     expect(verdict.observed).toBeCloseTo(50);
   });
 
+  it("refuses a side whose coverage is absent, rather than assuming it full", () => {
+    // A base run answered by a deployment predating cost coverage carries a
+    // cost and no coverage block. Treating that absence as full coverage
+    // judges a regression against a partial sum from an older platform —
+    // which is precisely what the field being optional is meant to prevent.
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: { costUsd: 1.0 } }),
+        compare: side(4, 4, { totals: full(1.5) }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/base run does not report how much/i);
+  });
+
+  it("refuses the compare side too, not only the base", () => {
+    const report = evaluateCompareGates(
+      input({
+        base: side(4, 4, { totals: full(1.0) }),
+        compare: side(4, 4, { totals: { costUsd: 1.5 } }),
+      }),
+      policy
+    );
+    const verdict = verdictFor(report, "maximumCostIncreasePercent");
+    expect(verdict.status).toBe("non_gateable");
+    expect(verdict.message).toMatch(/compare run does not report how much/i);
+  });
+
   it("passes a run that got cheaper", () => {
     const report = evaluateCompareGates(
       input({

@@ -927,6 +927,7 @@ test("buildBaselineProvenance: records every evaluated compatibility signal", ()
     },
     noDeterministicRegressions: false,
     maximumP95LatencyIncreaseMs: null,
+    maximumCostIncreasePercent: null,
   });
 });
 
@@ -947,6 +948,7 @@ test("buildBaselineProvenance: an unrequested gate's policy is null, not an impl
     passRateRegression: null,
     noDeterministicRegressions: false,
     maximumP95LatencyIncreaseMs: null,
+    maximumCostIncreasePercent: null,
   });
 });
 
@@ -966,11 +968,15 @@ test("buildBaselineProvenance: an explicit policy is echoed back verbatim, not r
     passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
     noDeterministicRegressions: true,
     maximumP95LatencyIncreaseMs: 500,
+    // A cost-gated verdict archived WITHOUT its threshold cannot be read
+    // later: the block's whole job is to be self-describing.
+    maximumCostIncreasePercent: 10,
   });
   assert.deepEqual(provenance.policy, {
     passRateRegression: { minSampleSize: 20, minEffectSize: 0.05 },
     noDeterministicRegressions: true,
     maximumP95LatencyIncreaseMs: 500,
+    maximumCostIncreasePercent: 10,
   });
 });
 

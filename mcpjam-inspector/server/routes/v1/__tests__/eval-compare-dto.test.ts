@@ -117,6 +117,45 @@ describe("toRunCompareDto — leak gate", () => {
     expect(dtoWithout.skills).toBeNull();
   });
 
+  it("omits costCoverage entirely when the backend reports none", () => {
+    // A deployment predating cost coverage sends no block. Answering
+    // `{ costed: 0, total: 0 }` on its behalf would turn "this platform has
+    // no opinion" into the measured-sounding claim that none of the run was
+    // priced — and a gate reading `costed < total` would see `0 < 0`, call it
+    // full coverage, and judge a cost regression on a partial sum.
+    const { costCoverage: _dropped, ...metricsWithout } = fixture.expectedDiff
+      .metrics as Record<string, unknown>;
+    const projected = toRunCompareDto(
+      { ...fixture.expectedDiff, metrics: metricsWithout },
+      BASELINE,
+    ) as Record<string, any>;
+    expect("costCoverage" in projected.metrics).toBe(false);
+  });
+
+  it("zeroes a coverage count that is not a count", () => {
+    // These bound a claim about iterations. A fraction, a negative or a NaN
+    // is not a number of iterations, and forwarding one lets `costed < total`
+    // be evaluated against nonsense.
+    const metrics = fixture.expectedDiff.metrics as Record<string, unknown>;
+    const projected = toRunCompareDto(
+      {
+        ...fixture.expectedDiff,
+        metrics: {
+          ...metrics,
+          costCoverage: {
+            base: { costed: -3, total: 2.5 },
+            compare: { costed: "4", total: Number.POSITIVE_INFINITY },
+          },
+        },
+      },
+      BASELINE,
+    ) as Record<string, any>;
+    expect(projected.metrics.costCoverage).toEqual({
+      base: { costed: 0, total: 0 },
+      compare: { costed: 0, total: 0 },
+    });
+  });
+
   it("keeps iterationIds, which are already public", () => {
     const cases = dto().cases as Array<Record<string, any>>;
     const regressed = cases.find((row) => row.caseKey === "ck_regressed");
@@ -347,7 +386,11 @@ describe("toRunCompareDto — the narrowing nobody else asserts", () => {
     // `costCoverage` is the fourth deliberately: a cost diff without the
     // count behind it lets a partially-priced run read as a cheap one, and a
     // CLI gate would pass or fail on that partial sum. It travels WITH the
-    // cost, never as an optional extra.
+    // cost whenever the backend reports it — the fixture does, which is why
+    // it is asserted here. When the backend reports NO coverage the key is
+    // omitted entirely rather than sent as `{ costed: 0, total: 0 }`: absence
+    // is the contract's "no opinion" value, and a fabricated zero block would
+    // read as a measured claim that none of the run was priced.
     const projected = dto() as Record<string, any>;
     expect(Object.keys(projected.metrics).sort()).toEqual([
       "costCoverage",

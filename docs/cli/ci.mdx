@@ -442,16 +442,19 @@ ceiling goes stale on every prompt and model change, while a percentage
 against the previous run keeps meaning the same thing.
 
 ```bash
-npx -y @mcpjam/cli@latest cloud eval compare "$RUN_ID" \
+npx -y @mcpjam/cli@latest cloud eval compare --run "$RUN_ID" \
   --project "My project" \
-  --baseline previous \
   --max-cost-increase-percent 10
 ```
+
+With no `--base-run` or `--base-sha`, the baseline is the nearest earlier
+completed run in the same suite — which is what "did my change make this more
+expensive?" usually means.
 
 An absolute ceiling is also available, for a suite whose budget is fixed:
 
 ```bash
-npx -y @mcpjam/cli@latest cloud eval gate "$RUN_ID" \
+npx -y @mcpjam/cli@latest cloud eval gate --run "$RUN_ID" \
   --project "My project" \
   --max-cost-usd 0.50
 ```

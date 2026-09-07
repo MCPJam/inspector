@@ -219,11 +219,24 @@ export function MetricStrip({
   const tokenSeries = seriesOf((p) => p.tokens);
   const tokenHeadline = latest.tokens;
   const tokenSub = "per run";
-  // Cost is plotted at 0 where it is unknown (the sparkline takes numbers),
-  // but the HEADLINE never lies: `formatCostOrDash` shows an em dash rather
-  // than `$0.00`. The sub-label says how much of the run was priced whenever
-  // that is less than all of it.
-  const costSeries = seriesOf((p) => p.costUsd ?? 0);
+  /**
+   * The cost trend is drawn ONLY when every run in the window was fully
+   * priced.
+   *
+   * A sparkline's whole content is its SHAPE, and there is no number that
+   * honestly stands for "we did not price this run". Plotting an unpriced or
+   * partly-priced run at 0 draws a dip that never happened, and reads as the
+   * run getting cheaper exactly when we measured less of it — the same lie
+   * `formatCostOrDash` exists to prevent in the headline.
+   *
+   * So an incomplete window gets no line. The headline still shows the latest
+   * run's cost (or an em dash), and the sub-label says how much of it was
+   * priced.
+   */
+  const costFullyPriced = series.every(
+    (p) => p.costUsd !== null && p.costedIterations >= p.total,
+  );
+  const costSeries = costFullyPriced ? seriesOf((p) => p.costUsd ?? 0) : [];
   const costHeadline = formatCostOrDash(latest.costUsd);
   const costSub =
     latest.costUsd === null
@@ -379,7 +392,9 @@ export function MetricStrip({
         layout={layout}
         matrixCell={matrixCell}
         chart={
-          showTrend ? (
+          // Empty when the window is not fully priced; `EvalSparkline` renders
+          // nothing below two points, which is the intended suppression.
+          showTrend && costSeries.length > 0 ? (
             <EvalSparkline
               points={costSeries}
               pointLabels={runLabels}
@@ -441,13 +456,13 @@ export function MetricStrip({
         vertical
           ? "flex flex-col divide-y divide-border/60"
           : compact
-            ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr]"
-            : "grid grid-cols-[1.4fr_1fr_1fr_1fr]",
+            ? "grid grid-cols-2 sm:grid-cols-[1.2fr_1fr_1fr_1fr_1fr]"
+            : "grid grid-cols-[1.4fr_1fr_1fr_1fr_1fr]",
       )}
     >
       {passSection}
       {vertical ? (
-        <div className="grid min-w-0 grid-cols-3 divide-x divide-border/60 [&>*]:min-w-0">
+        <div className="grid min-w-0 grid-cols-4 divide-x divide-border/60 [&>*]:min-w-0">
           {metricSections}
         </div>
       ) : (

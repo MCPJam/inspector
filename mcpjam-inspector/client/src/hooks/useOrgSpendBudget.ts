@@ -1,7 +1,8 @@
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { useDbUserReady } from "@/contexts/db-user-ready-context";
 import { useIsMemberActor } from "@/hooks/use-is-member-actor";
+import { useOrgScopedWrite } from "@/hooks/useOrgScopedWrite";
 
 /**
  * The organization's spend budget — an admin-set ceiling on MCPJam-billed
@@ -60,51 +61,54 @@ export function useOrgSpendBudget(organizationId: string | null | undefined) {
     "billing/spendBudgetSettings:clearOrganizationSpendBudget" as any,
   );
 
-  const [error, setError] = useState<string | null>(null);
-  const [isSaving, setIsSaving] = useState(false);
+  /**
+   * The shared org-write wrapper, not a fourth hand-rolled copy.
+   *
+   * It does two things this hook needs and got wrong on its own: it retires a
+   * write whose organization changed mid-flight, so a refusal cannot land on
+   * a page about a different org; and it extracts the message from a
+   * `ConvexError`'s structured payload. Convex redacts a plain thrown Error's
+   * message to "Server Error" in production, so reading `.message` showed
+   * every deliberate refusal — "that cap is out of range", "admins only" —
+   * as a generic failure, which is the opposite of what an admin needs.
+   *
+   * It records the failure and then RE-THROWS, so a call site that fires and
+   * forgets must still attach a rejection handler — the inline error is the
+   * user-visible answer, and the throw is for a caller that needs to branch.
+   */
+  const { error, isSaving, run } = useOrgScopedWrite(organizationId ?? null);
 
   const setBudget = useCallback(
     async (input: { capCredits: number; alertPercents?: number[] }) => {
       if (!organizationId) return;
-      setError(null);
-      setIsSaving(true);
-      try {
-        await setBudgetMutation({ organizationId, ...input } as any);
-      } catch (caught) {
-        // Surfaced inline rather than thrown: a rejected write is an answer
-        // ("that cap is out of range"), not a broken screen.
-        setError(
-          caught instanceof Error
-            ? caught.message
-            : "Failed to save the budget",
-        );
-        throw caught;
-      } finally {
-        setIsSaving(false);
-      }
+      await run(() => setBudgetMutation({ organizationId, ...input } as any));
     },
-    [organizationId, setBudgetMutation],
+    [organizationId, run, setBudgetMutation],
   );
 
   const clearBudget = useCallback(async () => {
     if (!organizationId) return;
-    setError(null);
-    setIsSaving(true);
-    try {
-      await clearBudgetMutation({ organizationId } as any);
-    } catch (caught) {
-      setError(
-        caught instanceof Error ? caught.message : "Failed to clear the budget",
-      );
-      throw caught;
-    } finally {
-      setIsSaving(false);
-    }
-  }, [organizationId, clearBudgetMutation]);
+    await run(() => clearBudgetMutation({ organizationId } as any));
+  }, [organizationId, run, clearBudgetMutation]);
 
   return {
     budget,
+    /**
+     * In flight — NOT "we are never going to answer".
+     *
+     * The query is skipped for a guest, and for a guest it will stay skipped.
+     * Reporting that as loading left the section on "Loading budget…" forever
+     * instead of reaching the unsupported message it has for exactly this
+     * case, so a skipped query reports `false` here and `querySkipped` below
+     * says why.
+     */
     isLoading: canQuery && budget === undefined,
+    /**
+     * True when nobody asked, so `budget === undefined` is not pending.
+     * A caller that renders a spinner on `budget === undefined` alone must
+     * check this first.
+     */
+    querySkipped: !canQuery,
     error,
     isSaving,
     setBudget,
@@ -125,11 +129,32 @@ export function creditsToUsdString(credits: number): string {
  * zero" — so blank is rejected explicitly rather than coerced. Rounding is
  * to the nearest cent because the ledger debits whole credits; a cap of
  * $10.005 could never be exactly reached.
+ *
+ * WORKS ON THE DIGITS, not on a float. `Math.round(1.005 * 100)` is 100, not
+ * 101, because binary float64 has no exact 1.005 — it holds
+ * 1.00499999999999989, so the product lands just under the half-cent and
+ * rounds down. The typed STRING is the only place the decimal the person
+ * meant still exists, so the cents are read off it directly and the
+ * half-cent is decided on the digit rather than on the float.
  */
 export function usdStringToCredits(value: string): number | null {
   const trimmed = value.trim();
   if (trimmed === "") return null;
-  const parsed = Number(trimmed);
-  if (!Number.isFinite(parsed) || parsed < 0) return null;
-  return Math.round(parsed * 100);
+  // Reject anything that is not a plain decimal before touching the digits:
+  // exponent forms have no fixed cent position to read.
+  const match = /^(\d*)(?:\.(\d*))?$/.exec(trimmed);
+  if (!match || (match[1] === "" && (match[2] ?? "") === "")) {
+    // Not plain-decimal (a sign, an exponent, or junk). `Number` still
+    // decides validity, and a negative or non-finite value is refused.
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed) || parsed < 0) return null;
+    return Math.round(parsed * 100);
+  }
+  const whole = match[1] === "" ? "0" : match[1];
+  const fraction = match[2] ?? "";
+  const cents = Number(whole) * 100 + Number((fraction + "00").slice(0, 2));
+  if (!Number.isFinite(cents)) return null;
+  // The third decimal decides the half-cent, exactly as written.
+  const roundUp = (fraction[2] ?? "0") >= "5";
+  return cents + (roundUp ? 1 : 0);
 }

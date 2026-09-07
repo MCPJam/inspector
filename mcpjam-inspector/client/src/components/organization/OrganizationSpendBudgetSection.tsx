@@ -49,8 +49,15 @@ export function OrganizationSpendBudgetSection({
   organizationId,
   isAdmin,
 }: OrganizationSpendBudgetSectionProps) {
-  const { budget, isLoading, error, isSaving, setBudget, clearBudget } =
-    useOrgSpendBudget(organizationId);
+  const {
+    budget,
+    isLoading,
+    querySkipped,
+    error,
+    isSaving,
+    setBudget,
+    clearBudget,
+  } = useOrgSpendBudget(organizationId);
   const { summary: usageSummary, isLoading: isUsageLoading } =
     useOrgModelUsageSummary(organizationId);
 
@@ -82,6 +89,21 @@ export function OrganizationSpendBudgetSection({
       atCap: spent >= cap,
     };
   }, [budget]);
+
+  // NOBODY ASKED, so nothing is coming. The query is skipped for a guest and
+  // stays skipped, so treating `budget === undefined` as pending spun forever
+  // on the one audience that has a real answer waiting: a personal org cannot
+  // carry a budget, and saying so is the answer.
+  if (querySkipped) {
+    return (
+      <Card className="space-y-2 p-6">
+        <h2 className="text-base font-semibold">Spend budget</h2>
+        <p className="text-sm text-muted-foreground">
+          Personal organizations cannot set a spend budget.
+        </p>
+      </Card>
+    );
+  }
 
   // `undefined` is "not asked yet", never "no". Rendering nothing while the
   // answer is in flight is right; treating it as unsupported would blank the
@@ -188,13 +210,16 @@ export function OrganizationSpendBudgetSection({
                   }
                   style={{ width: `${meter.percent}%` }}
                 />
-                {/* Where the first alert fires, so the meter shows the mark
-                    rather than only the total. */}
+                {/* Where the FIRST alert fires, so the meter shows the mark
+                    rather than only the total. The backend stores these
+                    deduped and ascending, so `[0]` is already the lowest —
+                    taking the minimum outright says so without the reader
+                    having to go confirm it. */}
                 {budget.alertPercents.length > 0 ? (
                   <div
                     className="absolute top-0 h-full w-px bg-foreground/40"
                     style={{
-                      left: `${Math.min(100, budget.alertPercents[0]!)}%`,
+                      left: `${Math.min(100, ...budget.alertPercents)}%`,
                     }}
                   />
                 ) : null}
@@ -272,7 +297,11 @@ export function OrganizationSpendBudgetSection({
                     type="button"
                     variant="outline"
                     onClick={() => {
-                      void clearBudget();
+                      // `clearBudget` records the failure and re-throws, so a
+                      // bare `void` would leave an unhandled rejection behind
+                      // an error the admin can already see. The inline message
+                      // IS the handling.
+                      void clearBudget().catch(() => undefined);
                     }}
                     disabled={isSaving}
                   >

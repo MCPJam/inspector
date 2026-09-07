@@ -692,6 +692,27 @@ function threshold(gate: string, value: number): GateVerdict | null {
   };
 }
 
+/**
+ * Is this cost total unfit to gate on?
+ *
+ * `undefined` coverage counts as UNFIT, and that is the whole point. The
+ * field is optional because a deployment predating cost coverage answers
+ * without it, so absence means "this platform has no opinion" — never "fully
+ * covered". Reading absence as complete is how a gate ends up judging a cost
+ * regression against a partial sum from an older platform and reporting green
+ * for the wrong reason.
+ *
+ * A zero `total` is unfit for the same reason: there is no population the
+ * total could be complete over, so nothing about it is verifiable.
+ */
+export function costCoverageIsUngateable(
+  coverage: { costed: number; total: number } | undefined
+): boolean {
+  if (coverage === undefined) return true;
+  if (coverage.total === 0) return true;
+  return coverage.costed < coverage.total;
+}
+
 export function evaluateGates(
   input: GateInput,
   policy: GatePolicy
@@ -794,20 +815,27 @@ export function evaluateGates(
   if (policy.maximumCostUsd !== undefined) {
     const observed = input.totals?.costUsd;
     const coverage = input.totals?.costCoverage;
-    // Partial coverage is refused BEFORE the comparison, not folded into it:
-    // a total built from some of the run is a smaller number than the truth,
-    // so judging a ceiling against it passes exactly the runs we understand
-    // least.
-    const partial = coverage !== undefined && coverage.costed < coverage.total;
+    // Unverifiable coverage is refused BEFORE the comparison, not folded into
+    // it: a total built from some of the run is a smaller number than the
+    // truth, so judging a ceiling against it passes exactly the runs we
+    // understand least.
+    const partial = costCoverageIsUngateable(coverage);
     verdicts.push(
       observed === undefined || partial
         ? {
             gate: "maximumCostUsd",
             status: "non_gateable",
-            message: partial
-              ? `only ${coverage!.costed} of ${coverage!.total} iterations have a cost, ` +
-                "so the run total is incomplete"
-              : "no cost is available for this run",
+            // "No cost at all" outranks "no coverage": when the run has no
+            // cost, that IS the reason, and reporting the missing coverage
+            // instead answers a question nobody reached.
+            message:
+              observed === undefined
+                ? "no cost is available for this run"
+                : coverage === undefined
+                  ? "this platform does not report how much of the run was " +
+                    "priced, so the total cannot be shown to be complete"
+                  : `only ${coverage.costed} of ${coverage.total} iterations have a cost, ` +
+                    "so the run total is incomplete",
             threshold: policy.maximumCostUsd,
           }
         : {

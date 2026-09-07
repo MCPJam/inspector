@@ -727,6 +727,7 @@ export function buildBaselineProvenance(
         : null,
       noDeterministicRegressions: policy.noDeterministicRegressions === true,
       maximumP95LatencyIncreaseMs: policy.maximumP95LatencyIncreaseMs ?? null,
+      maximumCostIncreasePercent: policy.maximumCostIncreasePercent ?? null,
     },
     compatibility: {
       caseSetChanged: input.caseSetChanged,

@@ -22,6 +22,7 @@ import {
   type UserValueStage,
 } from "@mcpjam/sdk/contract";
 import { formatRunCaseLatencyMs } from "../evals/run-case-groups";
+import { formatCostOrDash } from "../evals/helpers";
 import {
   caseRowReasonLabel,
   type CaseRowIterationCell,
@@ -377,6 +378,18 @@ export function RunCaseRows({
               )}
               <span className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block">
                 {formatRunCaseLatencyMs(row.p50Ms)}
+              </span>
+              <span
+                className="hidden w-16 shrink-0 text-right text-[12.5px] tabular-nums text-muted-foreground sm:block"
+                title={
+                  row.costUsd === null
+                    ? "No trial in this case has a cost"
+                    : row.costedIterations < row.coverage.total
+                      ? `${row.costedIterations} of ${row.coverage.total} trials priced`
+                      : undefined
+                }
+              >
+                {formatCostOrDash(row.costUsd)}
               </span>
             </button>
             {open ? (

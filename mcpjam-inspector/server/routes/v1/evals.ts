@@ -1398,28 +1398,25 @@ function toRunJudgesDto(run: RunDoc) {
  * exactly how a half-priced run reads as a cheap run. `totalUsd` is null,
  * never 0, when nothing was priced.
  */
-function toRunCostDto(iterations: IterationDoc[]) {
-  let totalUsd: number | null = null;
-  let costedIterations = 0;
-  for (const iteration of iterations) {
-    const cost = (iteration as { usage?: { estimatedCostUsd?: number } }).usage
-      ?.estimatedCostUsd;
-    if (typeof cost !== "number") continue;
-    totalUsd = (totalUsd ?? 0) + cost;
-    costedIterations += 1;
-  }
-  return { totalUsd, costedIterations, totalIterations: iterations.length };
-}
-
 /**
- * `iterations` is optional because only some callers have already read them.
- * When they are absent the `cost` block is OMITTED rather than reported as
- * zero coverage: "we did not look" and "we looked and nothing was priced" are
- * different answers, and only the second is a fact about the run.
+ * NO RUN-LEVEL `cost` BLOCK HERE, deliberately.
+ *
+ * An earlier revision took an optional `iterations` argument and summed a
+ * `cost` block from it. Exactly one caller passed them — the decision-summary
+ * route — and `assembleEvalRunDecisionSummary` builds its response from a
+ * fixed set of fields rather than spreading the run DTO, so the block was
+ * computed and then dropped on the floor. It reached no response and no
+ * OpenAPI schema.
+ *
+ * Run-level cost IS on the public API, through the surface built for it: the
+ * compare endpoint's `metrics.estimatedCostUsd` with its `costCoverage`,
+ * which is what the SDK and CLI cost gates read. Per-iteration cost rides on
+ * `toIterationDto`. Adding a total here would mean loading every iteration on
+ * a detail read, or a run-level rollup stamped by the backend — either is a
+ * real decision, not a spare argument.
  */
-function toRunDto(run: RunDoc, iterations?: IterationDoc[]) {
+function toRunDto(run: RunDoc) {
   return {
-    ...(iterations ? { cost: toRunCostDto(iterations) } : {}),
     id: String(run._id),
     suiteId: String(run.suiteId),
     runNumber: run.runNumber ?? null,
@@ -4878,10 +4875,7 @@ evals.get(
         // refused a verdict decision that does not validate and `toIterationDto`
         // has already quarantined an unverifiable stage chain. Assembling from
         // the raw rows would route around both.
-        // The cost block is built from THIS PAGE's iterations, which is why
-        // its coverage counts matter: a paginated request has not seen the
-        // whole run, and the counts are what say so.
-        run: toRunDto(run!, page.page ?? []),
+        run: toRunDto(run!),
         iterations: (page.page ?? []).map(toIterationDto),
         page: {
           complete,
@@ -5104,12 +5098,7 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
     }
     throw error;
   }
-  // Explicit arrow, never a bare `.map(toRunDto)`: `map` passes the index as
-  // the second argument, which this function now reads as `iterations`.
-  return v1PageJson(
-    c,
-    (runs ?? []).map((run) => toRunDto(run)),
-  );
+  return v1PageJson(c, (runs ?? []).map(toRunDto));
 });
 
 /**

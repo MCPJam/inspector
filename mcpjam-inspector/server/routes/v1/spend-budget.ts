@@ -56,8 +56,20 @@ const putSchema = z
     /**
      * Whole percents of the cap to alert on. Reaching the cap always alerts,
      * so 100 is not accepted here — it would show the same threshold twice.
+     *
+     * The count bound and the uniqueness rule mirror the backend's
+     * `normalizeSpendBudgetAlertPercents`, which is still the authority. They
+     * are restated here so a caller gets a field-level validation error
+     * naming what was wrong, instead of a generic platform refusal after a
+     * round trip.
      */
-    alertPercents: z.array(z.number().int().min(1).max(99)).optional(),
+    alertPercents: z
+      .array(z.number().int().min(1).max(99))
+      .max(5)
+      .refine((values) => new Set(values).size === values.length, {
+        message: "alertPercents must not repeat a threshold",
+      })
+      .optional(),
   })
   .strict();
 
@@ -142,6 +154,11 @@ spendBudget.put("/organizations/:organizationId/spend-budget", async (c) => {
       "billing/spendBudgetSettings:setOrganizationSpendBudget" as any,
       {
         organizationId,
+        // The typed decimal is already gone by the time JSON parsing hands
+        // this over — float64 has no exact 1.005 — so this rounds the value
+        // that actually arrived and cannot recover one that never did. The
+        // console converts from the typed STRING instead, where the intended
+        // decimal still exists (`usdStringToCredits`).
         capCredits: Math.round(body.capUsd * 100),
         ...(body.alertPercents ? { alertPercents: body.alertPercents } : {}),
       } as any,

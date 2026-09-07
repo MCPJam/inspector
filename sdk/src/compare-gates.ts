@@ -43,6 +43,7 @@ import {
   DEFAULT_MIN_SAMPLE_SIZE,
   type RegressionAssessment,
 } from "./compare-stats.js";
+import { costCoverageIsUngateable } from "./gates.js";
 import type {
   GateInput,
   GatePolicy,
@@ -278,9 +279,9 @@ export function evaluateCompareGates(
     const compareCost = input.compare.totals?.costUsd;
     const baseCoverage = input.base.totals?.costCoverage;
     const compareCoverage = input.compare.totals?.costCoverage;
-    const partialSide = (
-      coverage: { costed: number; total: number } | undefined
-    ) => coverage !== undefined && coverage.costed < coverage.total;
+    // Shared with the single-run gate so both refuse the same inputs: absent
+    // coverage is "no opinion", never "fully covered".
+    const partialSide = costCoverageIsUngateable;
     if (!comparablePopulation) {
       verdicts.push({
         gate,
@@ -301,13 +302,17 @@ export function evaluateCompareGates(
       // Comparing a complete total against a partial one is worse than not
       // comparing at all: the partial side reads as the cheaper run whichever
       // way the real costs went.
+      const side = partialSide(baseCoverage) ? "base" : "compare";
+      const sideCoverage = side === "base" ? baseCoverage : compareCoverage;
       verdicts.push({
         gate,
         status: "non_gateable",
         message:
-          "cost is only partially measured on " +
-          (partialSide(baseCoverage) ? "the base" : "the compare") +
-          " run, so an increase cannot be measured",
+          sideCoverage === undefined
+            ? `the ${side} run does not report how much of it was priced, ` +
+              "so an increase cannot be measured"
+            : `cost is only partially measured on the ${side} run, ` +
+              "so an increase cannot be measured",
         threshold,
       });
     } else if (baseCost === 0) {

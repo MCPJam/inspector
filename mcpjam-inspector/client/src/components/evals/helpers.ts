@@ -1296,16 +1296,32 @@ export function evalSuitePinsSandboxImage(
 /** The em dash every surface shows when no cost was observed. */
 export const COST_UNAVAILABLE = "—";
 
+/** The smallest amount four decimals can state without rounding to zero. */
+const SMALLEST_SHOWN_COST = 0.0001;
+
 /**
  * A cost, in dollars.
  *
  * Sub-cent amounts get four decimals rather than rounding to `$0.00`: a
  * single eval iteration frequently costs a fraction of a cent, and showing it
  * as zero is the same lie as showing an unpriced one as zero.
+ *
+ * Below what four decimals can state, the answer is a BOUND (`<$0.0001`), not
+ * a rounded zero. Four decimals alone would print `$0.0000` for a real
+ * fraction of a cent — the same lie one decimal place further down, and the
+ * one place this surface must never tell. A bound stays true at any
+ * magnitude and stays short enough for a table cell, which chasing the first
+ * significant digit of, say, 1e-9 would not.
  */
 export function formatCost(value: number): string {
   const sign = value < 0 ? "-" : "";
   const abs = Math.abs(value);
+  if (abs > 0 && abs < SMALLEST_SHOWN_COST) {
+    // The bound points the way the number lies: a tiny negative is GREATER
+    // than -$0.0001, and `-<$0.0001` would read as neither.
+    const bound = `$${SMALLEST_SHOWN_COST.toFixed(4)}`;
+    return sign === "-" ? `>-${bound}` : `<${bound}`;
+  }
   if (abs > 0 && abs < 0.01) {
     return `${sign}$${abs.toFixed(4)}`;
   }
@@ -1332,10 +1348,20 @@ export function formatCostOrDash(value: number | null | undefined): string {
  */
 export function costUnavailableReason(
   basis: EvalIterationCostBasis | undefined,
+  /**
+   * The cost that IS on screen, when there is one.
+   *
+   * Without it a trial priced by an older writer — a number, but no basis
+   * recorded — got "No cost was recorded for this trial." hovering over its
+   * own price. The runner note still applies to a present cost, because that
+   * one explains whose measurement it is rather than why it is missing.
+   */
+  cost?: number | null,
 ): string | null {
   if (basis?.source === "sdk_runner") {
     return "Reported by your runner — MCPJam did not price this run.";
   }
+  if (typeof cost === "number") return null;
   if (basis?.status === "estimated") return null;
   switch (basis?.reason) {
     case "no_pricing":
@@ -1365,6 +1391,12 @@ export function isRunnerReportedCost(
  * partially-priced run reads as a cheap run.
  *
  * `totalUsd` is null when nothing was priced — not 0.
+ *
+ * A RUNNER-REPORTED iteration is INCLUDED in the total and flagged, rather
+ * than dropped. The money was spent, so excluding it would understate what
+ * the run cost — and would make the total disagree with the very rows a
+ * reader can see summing to it. What it must not do is pass silently as
+ * MCPJam's own measurement, which is what `hasRunnerReported` is for.
  */
 export function sumIterationCost(
   iterations: Array<Pick<EvalIteration, "usage">>,
@@ -1372,16 +1404,27 @@ export function sumIterationCost(
   totalUsd: number | null;
   costedIterations: number;
   totalIterations: number;
+  /** True when any contributing figure came from a customer's own runner. */
+  hasRunnerReported: boolean;
 } {
   let totalUsd: number | null = null;
   let costedIterations = 0;
+  let hasRunnerReported = false;
   for (const iteration of iterations) {
     const cost = iteration.usage?.estimatedCostUsd;
     if (typeof cost !== "number") continue;
     totalUsd = (totalUsd ?? 0) + cost;
     costedIterations += 1;
+    if (isRunnerReportedCost(iteration.usage?.costBasis)) {
+      hasRunnerReported = true;
+    }
   }
-  return { totalUsd, costedIterations, totalIterations: iterations.length };
+  return {
+    totalUsd,
+    costedIterations,
+    totalIterations: iterations.length,
+    hasRunnerReported,
+  };
 }
 
 /** Per-iteration costs, for percentiles. Uncosted iterations are omitted. */

@@ -64,14 +64,32 @@ export function buildIterationUsagePayload(usage: UsageTotals):
     totalTokens?: number;
   } = {};
 
-  if (typeof reconciled.inputTokens === "number") {
-    payload.inputTokens = reconciled.inputTokens;
-  }
-  if (typeof reconciled.outputTokens === "number") {
-    payload.outputTokens = reconciled.outputTokens;
-  }
-  if (typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
-    payload.totalTokens = usage.totalTokens;
+  // ALL-ZERO IS NOT A MEASUREMENT. A runner that reported nothing arrives
+  // here as `{ inputTokens: 0, outputTokens: 0, totalTokens: 0 }`, and
+  // forwarding that split is not harmless: the backend's `hasTokenSignal`
+  // accepts any numeric field, prices 0 input and 0 output at the model's
+  // real rates, and stamps `estimatedCostUsd: 0` with
+  // `costBasis.status: "estimated"` — a confident claim that the trial cost
+  // nothing, about a trial nobody measured. That is the exact failure this
+  // whole surface exists to prevent, so an all-zero split is withheld and
+  // the backend answers `not_reported` / `no_tokens` instead.
+  //
+  // A zero half stays when the OTHER half is positive: "0 output tokens" is
+  // a real reading when 500 input tokens went with it.
+  const anyPositive =
+    (reconciled.inputTokens ?? 0) > 0 ||
+    (reconciled.outputTokens ?? 0) > 0 ||
+    (usage.totalTokens ?? 0) > 0;
+  if (anyPositive) {
+    if (typeof reconciled.inputTokens === "number") {
+      payload.inputTokens = reconciled.inputTokens;
+    }
+    if (typeof reconciled.outputTokens === "number") {
+      payload.outputTokens = reconciled.outputTokens;
+    }
+    if (typeof usage.totalTokens === "number" && usage.totalTokens > 0) {
+      payload.totalTokens = usage.totalTokens;
+    }
   }
 
   return Object.keys(payload).length > 0 ? payload : undefined;

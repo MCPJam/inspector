@@ -322,3 +322,44 @@ describe("notifyMCPJamLimitError", () => {
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });
+
+describe("spend budget never reaches the top-up dialog", () => {
+  // The whole point of the carve-out: an organization that set its own
+  // ceiling cannot buy its way past it, so offering to sell it credits
+  // answers the wrong question. The code arrives at any nesting level.
+  it("refuses at the top level", () => {
+    expect(
+      isMCPJamModelLimitError({ code: SPEND_BUDGET_REACHED_CODE }),
+    ).toBe(false);
+  });
+
+  it("refuses when the code is nested in details", () => {
+    expect(
+      isMCPJamModelLimitError({
+        message: "Request failed",
+        details: { error: { code: SPEND_BUDGET_REACHED_CODE } },
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses when the code arrives inside a JSON-encoded message", () => {
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({ code: SPEND_BUDGET_REACHED_CODE }),
+      }),
+    ).toBe(false);
+  });
+
+  it("refuses even when the payload also carries a rate-limit string", () => {
+    // Without the budget check running FIRST at every level, the deep scan
+    // below it classifies this as a wallet limit and opens the dialog.
+    expect(
+      isMCPJamModelLimitError({
+        message: JSON.stringify({
+          code: SPEND_BUDGET_REACHED_CODE,
+          detail: "mcpjam_rate_limit_exceeded",
+        }),
+      }),
+    ).toBe(false);
+  });
+});

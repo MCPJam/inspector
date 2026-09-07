@@ -164,16 +164,26 @@ function caseSide(value: unknown): Rec {
  * artifact. A CLI gate reads these counts to decide `non_gateable` rather
  * than passing or failing on a partial sum.
  */
-function costCoverage(value: unknown): Rec {
-  const source = isRecord(value) ? value : {};
+function costCoverage(value: unknown): Rec | undefined {
+  // ABSENT STAYS ABSENT. A backend predating cost coverage sends no block at
+  // all, and answering `{ costed: 0, total: 0 }` on its behalf turns "this
+  // platform has no opinion" into the false statement "none of the run was
+  // priced". The SDK type documents absence as the no-opinion value and both
+  // cost gates refuse to judge on it; manufacturing a block here would strip
+  // that distinction before it ever reached them.
+  if (!isRecord(value)) return undefined;
+  const source = value;
   const side = (raw: unknown): Rec => {
     const inner = isRecord(raw) ? raw : {};
-    return {
-      // A missing count is 0 COSTED, not "unknown": the field's job is to
-      // bound a claim, and an absent bound must be the conservative one.
-      costed: numOrNull(inner.costed) ?? 0,
-      total: numOrNull(inner.total) ?? 0,
+    // These are COUNTS. A non-finite, negative or fractional value is not a
+    // count of iterations, and forwarding one would let a gate compare
+    // `costed < total` against nonsense. Zero is the conservative answer:
+    // it reads as "nothing priced", which refuses rather than passes.
+    const count = (raw2: unknown): number => {
+      const n = numOrNull(raw2);
+      return typeof n === "number" && Number.isSafeInteger(n) && n >= 0 ? n : 0;
     };
+    return { costed: count(inner.costed), total: count(inner.total) };
   };
   return { base: side(source.base), compare: side(source.compare) };
 }
@@ -181,9 +191,10 @@ function costCoverage(value: unknown): Rec {
 /** Per-case metrics. An explicit whitelist, like every projection here. */
 function caseMetrics(value: unknown): Rec {
   const metrics = isRecord(value) ? value : {};
+  const coverage = costCoverage(metrics.costCoverage);
   return {
     estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
-    costCoverage: costCoverage(metrics.costCoverage),
+    ...(coverage !== undefined ? { costCoverage: coverage } : {}),
   };
 }
 
@@ -342,6 +353,7 @@ export function toRunCompareDto(
   const source = isRecord(diff) ? diff : {};
   const suite = isRecord(source.suite) ? source.suite : {};
   const metrics = isRecord(source.metrics) ? source.metrics : {};
+  const runCostCoverage = costCoverage(metrics.costCoverage);
   // The internal name is `scores`; see the module comment for why it is not
   // that here.
   const passSummary = isRecord(source.scores) ? source.scores : {};
@@ -362,7 +374,9 @@ export function toRunCompareDto(
       wallDurationMs: numericDiff(metrics.wallDurationMs),
       totalTokens: numericDiff(metrics.totalTokens),
       estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
-      costCoverage: costCoverage(metrics.costCoverage),
+      ...(runCostCoverage !== undefined
+        ? { costCoverage: runCostCoverage }
+        : {}),
     },
     scoreContract: scoreContract(source.scoreContract),
     skills: skills(source.skills),

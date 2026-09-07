@@ -18,6 +18,19 @@ export type RunCaseGroup = {
   total: number;
   p50Ms: number | null;
   p95Ms: number | null;
+  /**
+   * MCPJam-billed cost across this case's PRICED iterations, with the count
+   * that produced it.
+   *
+   * `costedIterations` is not decoration: a p95 over two of ten trials is a
+   * different claim from a p95 over all ten, and the two render identically
+   * without it. `null` means nothing in the group was priced — never that the
+   * case was free.
+   */
+  totalCostUsd: number | null;
+  p50CostUsd: number | null;
+  p95CostUsd: number | null;
+  costedIterations: number;
   iterationResults: RunCaseIterationOutcome[];
 };
 
@@ -72,6 +85,12 @@ export function groupRunIterationsByTestCase(
         total: 0,
         p50Ms: null,
         p95Ms: null,
+        // Seeded null/0; the real values are computed once the group's
+        // iterations are all in, in the map pass below.
+        totalCostUsd: null,
+        p50CostUsd: null,
+        p95CostUsd: null,
+        costedIterations: 0,
         iterationResults: [],
       });
     }

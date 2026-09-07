@@ -249,14 +249,3 @@ describe("VerdictPolicyUpgradeButton", () => {
     });
   });
 });
-
-/**
- * The Limits tab.
- *
- * It used to render a read-only list that told the reader to add a ceiling
- * "from Checks" — a tab that names a setting and refuses to set it, and whose
- * own instruction was half false, since the Checks menu has never offered a
- * turn budget. These tests hold the two properties that fix depends on: both
- * ceiling kinds are addable HERE, and an edit re-seats itself in the one
- * `defaultPredicates` array without disturbing the checks around it.
- */

@@ -137,6 +137,34 @@ const findMCPJamRateLimitCode = (
   return undefined;
 };
 
+/**
+ * The spend-budget code, wherever it is nested.
+ *
+ * The top-level `code` is not the only place it arrives: a refusal can reach
+ * the client with the code inside `details`, or inside a JSON-encoded
+ * `message`. Missing it there is not a cosmetic slip — the deep scan below
+ * would then classify the same refusal as a wallet limit and open the top-up
+ * dialog, selling credits to an organization that set its own ceiling and
+ * cannot spend its way past it.
+ */
+const hasNestedSpendBudgetCode = (
+  value: unknown,
+  seen = new WeakSet<object>(),
+): boolean => {
+  if (!value || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+
+  if (isSpendBudgetReachedCode(getStringProperty(value, "code"))) return true;
+
+  const values = Array.isArray(value) ? value : Object.values(value);
+  for (const item of values) {
+    if (hasNestedSpendBudgetCode(item, seen)) return true;
+  }
+
+  return false;
+};
+
 const findMCPJamLimitKind = (
   value: unknown,
   seen = new WeakSet<object>(),
@@ -214,8 +242,20 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // Same shape of carve-out for the org spend budget: it is a refusal the
   // user cannot buy their way out of, so it must never reach the top-up
   // modal. Checked before the deep scans below so a budget payload that
-  // happens to embed a rate-limit string still classifies as a budget.
+  // happens to embed a rate-limit string still classifies as a budget —
+  // and checked at EVERY nesting level, because the code arrives inside
+  // `details` or a JSON-encoded `message` as readily as at the top.
   if (isSpendBudgetReachedCode(args.code)) return false;
+  for (const value of [args.message, args.details]) {
+    if (typeof value === "string") {
+      if (isSpendBudgetReachedCode(value)) return false;
+      for (const parsed of collectJsonCandidates(value)) {
+        if (hasNestedSpendBudgetCode(parsed)) return false;
+      }
+      continue;
+    }
+    if (hasNestedSpendBudgetCode(value)) return false;
+  }
 
   if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
   if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;

@@ -336,17 +336,27 @@ function StandaloneRunRow({
         ? formatDuration(Date.now() - run.createdAt)
         : "—";
 
-  // The run's MCPJam-billed cost, with the coverage that produced it. A
-  // partial sum is labelled partial rather than passed off as the total:
-  // that difference is the whole reason the counts exist.
+  // The run's cost, with the coverage that produced it. A partial sum is
+  // labelled partial rather than passed off as the total: that difference is
+  // the whole reason the counts exist. A total that includes a figure the
+  // customer's own runner reported says so too — the money was spent, so it
+  // belongs in the total, but it is not MCPJam's measurement and must not
+  // read as one.
   const runCost = sumIterationCost(runIterations ?? []);
   const costLabel = formatCostOrDash(runCost.totalUsd);
   const costTitle =
     runCost.totalUsd === null
       ? "No cost was recorded for this run."
-      : runCost.costedIterations < runCost.totalIterations
-        ? `Priced ${runCost.costedIterations} of ${runCost.totalIterations} trials.`
-        : undefined;
+      : [
+          runCost.costedIterations < runCost.totalIterations
+            ? `Priced ${runCost.costedIterations} of ${runCost.totalIterations} trials.`
+            : null,
+          runCost.hasRunnerReported
+            ? "Includes cost reported by your runner, not measured by MCPJam."
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" ") || undefined;
 
   const timestamp = run.completedAt ?? run.createdAt;
   const timestampLabel = formatTime(timestamp);
@@ -423,10 +433,10 @@ function StandaloneRunRow({
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {passRate !== null ? `${passRate}%` : "—"}
         </div>
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>{duration}</div>
         <div className={RUNS_LIST_METRIC_CELL_CLASS} title={costTitle}>
           {costLabel}
         </div>
-        <div className={RUNS_LIST_METRIC_CELL_CLASS}>{duration}</div>
         <div
           className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}
           title={formatTime(timestamp)}
@@ -688,14 +698,14 @@ function GroupRunRows({
         <div className={RUNS_LIST_METRIC_CELL_CLASS}>
           {meanPassRate !== null ? `${meanPassRate}%` : "—"}
         </div>
+        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
+          {maxDuration !== null ? formatDuration(maxDuration) : "—"}
+        </div>
         <div
           className={RUNS_LIST_METRIC_CELL_CLASS}
           title="Cost is shown per run; expand the group to see it."
         >
           —
-        </div>
-        <div className={RUNS_LIST_METRIC_CELL_CLASS}>
-          {maxDuration !== null ? formatDuration(maxDuration) : "—"}
         </div>
         <div
           className={cn(RUNS_LIST_METRIC_CELL_CLASS, "truncate")}

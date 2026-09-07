@@ -228,6 +228,7 @@ export function TestCaseIterationsTable({
                           ? undefined
                           : (costUnavailableReason(
                               iteration.usage?.costBasis,
+                              iteration.usage?.estimatedCostUsd,
                             ) ?? undefined)
                       }
                     >

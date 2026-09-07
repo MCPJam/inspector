@@ -995,6 +995,34 @@ describe("maximumCostUsd — the absolute cost gate", () => {
     expect(verdict?.message).toMatch(/only 1 of 4 iterations/i);
   });
 
+  it("is NON-GATEABLE when coverage is absent, not treated as complete", () => {
+    // A deployment predating cost coverage sends a cost with no coverage
+    // block. `costCoverage` is optional for exactly that reason, and absence
+    // means "this platform has no opinion" — never "fully covered". Reading
+    // it as complete is how a ceiling gets judged against a partial sum from
+    // an older platform and reports green for the wrong reason.
+    const verdict = evaluateGates(
+      { ...base, totals: { costUsd: 0.25 } },
+      { maximumCostUsd: 0.5 }
+    ).verdicts.find((v) => v.gate === "maximumCostUsd");
+    expect(verdict?.status).toBe("non_gateable");
+    expect(verdict?.message).toMatch(/does not report how much/i);
+  });
+
+  it("is NON-GATEABLE when coverage covers nothing", () => {
+    // `{ costed: 0, total: 0 }` has no population the total could be
+    // complete over, so `costed < total` is false for a reason that proves
+    // nothing. Passing a ceiling on it would be a verdict about no evidence.
+    const verdict = evaluateGates(
+      {
+        ...base,
+        totals: { costUsd: 0, costCoverage: { costed: 0, total: 0 } },
+      },
+      { maximumCostUsd: 0.5 }
+    ).verdicts.find((v) => v.gate === "maximumCostUsd");
+    expect(verdict?.status).toBe("non_gateable");
+  });
+
   it("gates on a genuinely observed zero", () => {
     // $0 that was MEASURED is a real fact, unlike $0 that was assumed.
     expect(

@@ -15044,8 +15044,8 @@
           },
           "metrics": {
             "type": "object",
-            "description": "Per-case cost, with the coverage that produced it.",
-            "required": ["estimatedCostUsd", "costCoverage"],
+            "description": "Per-case cost, with the coverage that produced it. `costCoverage` is absent when the platform does not report coverage; absence means no opinion, never full coverage, and a cost gate refuses to judge on it.",
+            "required": ["estimatedCostUsd"],
             "properties": {
               "estimatedCostUsd": {
                 "$ref": "#/components/schemas/NumericDiff"
@@ -15305,12 +15305,7 @@
                 "$ref": "#/components/schemas/CostCoverage"
               }
             },
-            "required": [
-              "wallDurationMs",
-              "totalTokens",
-              "estimatedCostUsd",
-              "costCoverage"
-            ]
+            "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
           },
           "skills": {
             "type": "object",

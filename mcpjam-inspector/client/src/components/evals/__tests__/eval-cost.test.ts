@@ -30,9 +30,17 @@ describe("formatCost", () => {
     // A single eval trial routinely costs a fraction of a cent; `$0.00` for it
     // is the same lie as `$0.00` for an unpriced one.
     expect(formatCost(0.0004)).toBe("$0.0004");
-    expect(formatCost(0.00001)).toBe("$0.0000");
     expect(formatCost(1.5)).toBe("$1.50");
     expect(formatCost(-0.25)).toBe("-$0.25");
+  });
+
+  it("bounds an amount too small for four decimals instead of zeroing it", () => {
+    // `$0.0000` for a real cost is the same lie as `$0.00` for an unpriced
+    // one, one decimal place further down. A bound is true at any magnitude.
+    expect(formatCost(0.00001)).toBe("<$0.0001");
+    expect(formatCost(1e-9)).toBe("<$0.0001");
+    // The bound points the way the number lies.
+    expect(formatCost(-0.00001)).toBe(">-$0.0001");
   });
 
   it("renders an observed zero as zero", () => {
@@ -81,6 +89,25 @@ describe("costUnavailableReason", () => {
     ).toMatch(/your runner/i);
   });
 
+  it("says nothing when a price is on screen, whatever the basis says", () => {
+    // A trial priced by an older writer has a number but no basis. Explaining
+    // its absence while the price sits next to the tooltip is a contradiction.
+    expect(costUnavailableReason(undefined, 0.02)).toBeNull();
+    expect(
+      costUnavailableReason({ status: "not_reported", reason: "no_pricing" }, 0),
+    ).toBeNull();
+  });
+
+  it("still names the runner when the runner's own price is shown", () => {
+    // Present, but not our measurement — a different statement from absence.
+    expect(
+      costUnavailableReason(
+        { status: "provider_reported", source: "sdk_runner" },
+        0.02,
+      ),
+    ).toMatch(/your runner/i);
+  });
+
   it("has an answer for a trial with no basis at all", () => {
     expect(costUnavailableReason(undefined)).toMatch(/no cost was recorded/i);
   });
@@ -108,7 +135,11 @@ describe("sumIterationCost", () => {
       iteration({ estimatedCostUsd: 0.02 }),
     ]);
     expect(result.totalUsd).toBeCloseTo(0.03);
-    expect(result).toMatchObject({ costedIterations: 2, totalIterations: 2 });
+    expect(result).toMatchObject({
+      costedIterations: 2,
+      totalIterations: 2,
+      hasRunnerReported: false,
+    });
   });
 
   it("exposes a PARTIAL sum rather than passing it off as the total", () => {
@@ -136,6 +167,7 @@ describe("sumIterationCost", () => {
       totalUsd: null,
       costedIterations: 0,
       totalIterations: 0,
+      hasRunnerReported: false,
     });
   });
 });
@@ -152,5 +184,24 @@ describe("iterationCosts", () => {
         iteration({ estimatedCostUsd: 0.01 }),
       ]),
     ).toEqual([0.05, 0.01]);
+  });
+});
+
+describe("sumIterationCost — runner-reported contributions", () => {
+  it("counts a runner's figure in the total, and flags that it did", () => {
+    // The money was spent, so dropping it would understate the run — and
+    // would make the total disagree with the rows a reader sees summing to
+    // it. What it must not do is pass as MCPJam's own measurement.
+    const result = sumIterationCost([
+      { usage: { estimatedCostUsd: 0.01 } } as any,
+      {
+        usage: {
+          estimatedCostUsd: 0.02,
+          costBasis: { status: "provider_reported", source: "sdk_runner" },
+        },
+      } as any,
+    ]);
+    expect(result.totalUsd).toBeCloseTo(0.03);
+    expect(result.hasRunnerReported).toBe(true);
   });
 });
