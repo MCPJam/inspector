@@ -290,7 +290,13 @@ export function GithubInstallCallbackRoute() {
                 MCPJam app installed. Connecting one lets this organization run
                 checks on its repositories.
               </p>
-              {phase.installations.map((installation) => (
+              {phase.installations.map((installation) => {
+                // Ties the disabled button to the reason it is disabled. The
+                // note sits AFTER the button in the DOM, so without this a
+                // screen reader reaches "Connect, unavailable" with no cause
+                // — the one thing a blocked row exists to communicate.
+                const conflictNoteId = `github-claim-conflict-${installation.installationId}`;
+                return (
                 <div
                   key={installation.installationId}
                   data-testid={`claimable-${installation.accountLogin}`}
@@ -324,6 +330,9 @@ export function GithubInstallCallbackRoute() {
                       disabled={
                         claiming !== null || Boolean(installation.conflict)
                       }
+                      aria-describedby={
+                        installation.conflict ? conflictNoteId : undefined
+                      }
                       onClick={() =>
                         void handleClaim(phase.linkSessionId, installation)
                       }
@@ -332,7 +341,10 @@ export function GithubInstallCallbackRoute() {
                     </Button>
                   </div>
                   {installation.conflict ? (
-                    <p className="flex items-start gap-2 px-4 pb-3 text-xs leading-relaxed text-muted-foreground">
+                    <p
+                      id={conflictNoteId}
+                      className="flex items-start gap-2 px-4 pb-3 text-xs leading-relaxed text-muted-foreground"
+                    >
                       <Lock
                         className="size-3.5 shrink-0 mt-0.5 text-destructive"
                         aria-hidden
@@ -362,7 +374,8 @@ export function GithubInstallCallbackRoute() {
                     </p>
                   ) : null}
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
         </SettingsSection>

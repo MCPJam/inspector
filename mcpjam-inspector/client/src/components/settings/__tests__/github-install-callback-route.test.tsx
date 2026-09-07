@@ -455,6 +455,36 @@ describe("the OAuth leg", () => {
     expect(buttons[1]).toBeEnabled();
   });
 
+  it("points the disabled button at the reason it is disabled", async () => {
+    // The note renders AFTER the button, so without the association a screen
+    // reader reaches "Connect, unavailable" and never learns why — which is
+    // the only thing a blocked row exists to say.
+    mockCompleteUserAuthorization.mockResolvedValue({
+      status: "pick_required",
+      linkSessionId: "sess-1",
+      installations: [
+        {
+          installationId: 11,
+          accountLogin: "acme",
+          accountType: "Organization",
+          conflict: { organizationName: "Dana's Org" },
+        },
+        { installationId: 12, accountLogin: "dana", accountType: "User" },
+      ],
+    });
+    renderCallback("?code=c&state=s");
+    await screen.findByText("acme");
+
+    const [taken, free] = screen.getAllByRole("button", { name: "Connect" });
+    const noteId = taken.getAttribute("aria-describedby");
+    expect(noteId).toBeTruthy();
+    expect(document.getElementById(noteId as string)?.textContent).toMatch(
+      /Dana's Org/
+    );
+    // A connectable row describes nothing — there is no reason to give.
+    expect(free).not.toHaveAttribute("aria-describedby");
+  });
+
   it("never fires a claim the backend would refuse", async () => {
     mockCompleteUserAuthorization.mockResolvedValue({
       status: "pick_required",

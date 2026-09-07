@@ -25,9 +25,16 @@ app is already installed on the GitHub account:
   GitHub skips the return trip for an account it has already installed on, so
   the first button quietly leaves you on GitHub's settings page.
 
-A GitHub account connects to **one MCPJam organization at a time**. If it is
-already connected somewhere else, the account picker marks it and says so —
-disconnect it there first, or install the app on a different account.
+A GitHub account connects to **one MCPJam organization at a time**, for the
+whole account rather than per repository. If it is already connected somewhere
+else, the account picker marks it and says so. What you can do about it depends
+on where you stand:
+
+- **You are a member of the organization holding it** — the picker names that
+  organization. Disconnect the account there, then connect it here.
+- **You are not** — the picker cannot name it, because that would be a fact
+  about an organization you cannot see. An owner of the GitHub account can
+  disconnect it, or you can install the app on a different account.
 
 The **pull-request comment** described below is rolling out: it is enabled per
 deployment by an operator, and until it is on for yours a connected repository
