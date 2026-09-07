@@ -232,13 +232,18 @@ describe("a second process", () => {
     `);
     await holder.ready;
 
-    // While it lives, the attempt is live and nobody may take it.
-    await expect(readRuntimeOperation(key)).resolves.toMatchObject({
-      state: "downloading",
-    });
-
-    holder.child.kill("SIGKILL");
-    await waitForExit(holder.child);
+    // try/finally like the other spawnHolder tests: the holder script ends in
+    // `setInterval`, so an assertion that throws before the kill leaves a real
+    // process running forever — one that `afterEach`'s `rm(base)` cannot reap.
+    try {
+      // While it lives, the attempt is live and nobody may take it.
+      await expect(readRuntimeOperation(key)).resolves.toMatchObject({
+        state: "downloading",
+      });
+    } finally {
+      holder.child.kill("SIGKILL");
+      await waitForExit(holder.child);
+    }
 
     // Dead: the record becomes a terminal state the UI can offer Retry from,
     // rather than a `downloading` that never moves again.

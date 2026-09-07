@@ -873,12 +873,20 @@ async function runInstallAttempt(args: {
       setStatus,
     });
     record.status = result;
+    // Best-effort, exactly as the failure path below already is. `record.status`
+    // above has already recorded the true outcome; this write only publishes it
+    // to the shared operation file, and `writeJsonAtomic` can reject on ENOSPC
+    // or EROFS — the very conditions a 515 MB extraction just ran into. Left
+    // unguarded, a successfully installed runtime was reclassified as `failed`
+    // by the `catch` below, and `record.promise` (consumed by `void` in
+    // `startRuntimeInstall`) rejected with nobody attached, which under Node's
+    // default unhandled-rejection policy takes the server down.
     await updateInstallAttempt(key, attemptId, {
       state: result.state === "ready" ? "ready" : "failed",
       ...(result.state === "failed"
         ? { reason: result.reason, message: result.message }
         : {}),
-    });
+    }).catch(() => {});
     return result;
   } catch (error) {
     const failure = classifyInstallFailure(error, expected.packVersion);

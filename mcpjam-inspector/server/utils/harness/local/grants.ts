@@ -414,7 +414,16 @@ export async function validateWorkspaceCandidate(
   // directory is itself a symlink, the raw value never equals the
   // canonicalized selection and the refusal below would not fire.
   const home = await realpath(homedir()).catch(() => homedir());
-  if (canonicalPath === home || canonicalPath === sep) {
+  // The same rule the launcher applies (`bin/launch-workspace.mjs`), because a
+  // suggestion and a registration must not disagree about what is acceptable.
+  // `sep` alone missed Windows: there it is a backslash, which never equals a
+  // drive root like `C:\` or `C:/`, so this validator accepted a whole volume as a
+  // workspace on a platform the harness treats as native.
+  const isFilesystemRoot =
+    canonicalPath === sep ||
+    canonicalPath === "/" ||
+    /^[A-Za-z]:[\\/]?$/.test(canonicalPath);
+  if (canonicalPath === home || isFilesystemRoot) {
     return {
       ok: false,
       message:
