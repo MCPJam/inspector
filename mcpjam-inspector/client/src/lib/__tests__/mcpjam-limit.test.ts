@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import {
   isMCPJamModelLimitError,
+  isSpendBudgetReachedCode,
   notifyMCPJamLimitError,
   notifyMCPJamLimitErrorFromResponse,
+  SPEND_BUDGET_REACHED_CODE,
 } from "../mcpjam-limit";
 import { useMCPJamLimitDialogStore } from "@/stores/mcpjam-limit-dialog-store";
 
@@ -26,6 +28,25 @@ describe("isMCPJamModelLimitError", () => {
 
   it("detects the signed-in user_rate_limit code", () => {
     expect(isMCPJamModelLimitError({ code: "user_rate_limit" })).toBe(true);
+  });
+
+  it("does not match the org spend-budget refusal", () => {
+    // Buying credits does not raise an admin-set cap, so this code must
+    // never reach the top-up modal that this predicate gates.
+    expect(isMCPJamModelLimitError({ code: SPEND_BUDGET_REACHED_CODE })).toBe(
+      false
+    );
+  });
+
+  it("keeps the budget carve-out when the payload also embeds a limit string", () => {
+    // The deep scans below would otherwise classify this as a model limit
+    // because the nested details mention a rate-limit code.
+    expect(
+      isMCPJamModelLimitError({
+        code: SPEND_BUDGET_REACHED_CODE,
+        details: { nested: { code: "user_rate_limit" } },
+      })
+    ).toBe(false);
   });
 
   it("does not match concurrency-throttled user_rate_limit", () => {
@@ -281,6 +302,23 @@ describe("isMCPJamModelLimitError", () => {
     await expect(notifyMCPJamLimitErrorFromResponse(response)).resolves.toBe(
       false
     );
+    expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
+  });
+});
+
+describe("isSpendBudgetReachedCode", () => {
+  it("recognizes only the canonical budget code", () => {
+    expect(isSpendBudgetReachedCode(SPEND_BUDGET_REACHED_CODE)).toBe(true);
+    expect(isSpendBudgetReachedCode("user_rate_limit")).toBe(false);
+    expect(isSpendBudgetReachedCode(undefined)).toBe(false);
+  });
+});
+
+describe("notifyMCPJamLimitError", () => {
+  it("never opens the top-up dialog for a spend-budget refusal", () => {
+    expect(
+      notifyMCPJamLimitError({ code: SPEND_BUDGET_REACHED_CODE })
+    ).toBe(false);
     expect(useMCPJamLimitDialogStore.getState().isOpen).toBe(false);
   });
 });

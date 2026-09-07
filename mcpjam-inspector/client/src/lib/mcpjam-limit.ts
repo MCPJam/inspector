@@ -7,6 +7,31 @@ const MCPJAM_LIMIT_CODES = new Set([
   MCPJAM_RATE_LIMIT_CODE,
   MCPJAM_USER_RATE_LIMIT_CODE,
 ]);
+
+/**
+ * The organization's admin-set spend budget is exhausted for the current
+ * billing window — emitted by the backend's `/stream` precheck and mirrored
+ * by `ORGANIZATION_SPEND_BUDGET_REACHED` on the eval-launch mutations.
+ *
+ * Deliberately NOT a member of {@link MCPJAM_LIMIT_CODES}: that set is what
+ * opens the top-up dialog, and buying credits does not clear a budget. The
+ * only fix is an owner or admin raising the cap, so this code carves itself
+ * OUT of the model-limit classification and gets its own banner copy.
+ */
+export const SPEND_BUDGET_REACHED_CODE = "spend_budget_reached";
+
+/** True when this error is the org spend budget refusing, not the wallet. */
+export function isSpendBudgetReachedCode(code: string | undefined): boolean {
+  return code === SPEND_BUDGET_REACHED_CODE;
+}
+
+/**
+ * The one sentence every surface shows for a budget refusal. Names the fix
+ * (raise the cap) rather than the wallet, because the wallet is not what
+ * refused.
+ */
+export const SPEND_BUDGET_REACHED_MESSAGE =
+  "This organization's spend budget is reached. An owner or admin can raise it in Organization \u2192 Budget.";
 const MCPJAM_RATE_LIMIT_CODE_PATTERN =
   /\b(?:mcpjam_rate_limit|user_rate_limit)\b/;
 
@@ -185,6 +210,12 @@ export function isMCPJamModelLimitError(args: MCPJamLimitErrorInput): boolean {
   // throttle resolves in seconds and is owned by the inline retry banner,
   // never the modal. Downstream consumers don't need to re-check.
   if (args.limitKind === "concurrency") return false;
+
+  // Same shape of carve-out for the org spend budget: it is a refusal the
+  // user cannot buy their way out of, so it must never reach the top-up
+  // modal. Checked before the deep scans below so a budget payload that
+  // happens to embed a rate-limit string still classifies as a budget.
+  if (isSpendBudgetReachedCode(args.code)) return false;
 
   if (args.code === MCPJAM_RATE_LIMIT_CODE) return true;
   if (args.code === MCPJAM_USER_RATE_LIMIT_CODE) return true;
