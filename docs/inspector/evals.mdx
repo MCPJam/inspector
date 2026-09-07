@@ -90,6 +90,14 @@ A case can hold steps this form has no section for — a second prompt, or a pin
 
 **Right column — the selected trial**
 
+The trial opens on its **Scorecard**: the same scorers the left column lists, in the same order, each with what happened to it on this trial. A row shows its result, its provenance, its role, and — where there is one — the reason, which for a step is the message the runner recorded.
+
+The summary line counts **gates only**: "2 of 2 gates passed · 1 warn". A Warn miss is shown on its row and never counted as a failure, because it did not fail the trial. A scorer with no result reads **Not measured** rather than passing by default. The verdict word itself stays in the header above.
+
+The judge's row hosts the judge panel, so labelling a trial works where the judge sits. Under the rows, **Score rows** expands the raw score contract, including any row the backend could not join.
+
+The other tabs are unchanged: **Chat**, **Tool Calls** and **Trace** show the transcript, and **Steps** shows execution order — now with the same check names the rest of the page uses and the reason under a failed step.
+
 The right column resolves to one of these views, in precedence order:
 
 1. **Explicit history pick** — a trial you selected from History.

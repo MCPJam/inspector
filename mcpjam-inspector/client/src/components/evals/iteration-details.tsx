@@ -68,8 +68,10 @@ import {
   type TestStep,
 } from "@/shared/steps";
 import {
+  assembleStepResults,
   parseStepStatusById,
   type StepReplayMetadata,
+  type StepReplayEnvelope,
 } from "@/shared/eval-step-replay";
 
 const TOOL_ARGUMENT_BLOCK_THRESHOLD = 120;
@@ -216,6 +218,18 @@ function TraceBlobLoadErrorPanel({
   );
 }
 
+/** What the Scorecard slot needs from this component's own state. */
+export type ScorecardTabContext = {
+  /** The resolved trace envelope, for per-step evidence. Null until loaded. */
+  envelope: StepReplayEnvelope | null;
+  envelopeLoading: boolean;
+  reviewActive: boolean;
+  judgeHidden: boolean;
+  onJudgeVisibilityChange: (hidden: boolean) => void;
+  /** The existing ScoresList block, integrity banner and all. */
+  scoresSection: ReactNode | null;
+};
+
 export function IterationDetails({
   iteration,
   testCase,
@@ -225,6 +239,8 @@ export function IterationDetails({
   judgeCase = null,
   enableJudgeReview = false,
   trialChainSlot,
+  scorecard,
+  trialVerdictWord,
   syncedStepId,
   onSyncStep,
 }: {
@@ -259,6 +275,22 @@ export function IterationDetails({
    * fetch four of its callers never asked for.
    */
   trialChainSlot?: ReactNode;
+  /**
+   * Evaluate-only. Present ⇒ the Scorecard layout: the authored scorers with
+   * this trial's results, as the default tab. Absent ⇒ the legacy layout,
+   * byte-identical — which is what every `/evals` mount and every compact
+   * mount still gets.
+   *
+   * A SLOT, not a component: `evals/` does not import `evaluate/`, for the
+   * same reason `trialChainSlot` is one.
+   */
+  scorecard?: { render: (ctx: ScorecardTabContext) => ReactNode };
+  /**
+   * The verdict word the page already computed. Supplying it stops the Steps
+   * tab deriving a SECOND one from a different field — they can disagree on
+   * the same screen.
+   */
+  trialVerdictWord?: string;
   /**
    * Step cursor shared with a host that lists the authored steps beside this
    * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
@@ -328,9 +360,10 @@ export function IterationDetails({
   const [toolCallsSectionOpen, setToolCallsSectionOpen] = useState(() =>
     layoutMode === "full" ? iteration.result !== "passed" : true,
   );
-  type PreviewTraceMode = TraceViewMode | "browser" | "steps";
-  const [previewTraceMode, setPreviewTraceMode] =
-    useState<PreviewTraceMode>("chat");
+  type PreviewTraceMode = TraceViewMode | "browser" | "steps" | "scorecard";
+  const [previewTraceMode, setPreviewTraceMode] = useState<PreviewTraceMode>(
+    scorecard ? "scorecard" : "chat",
+  );
 
   // The authored steps this run executed (from its snapshot), so the replay can
   // offer the same step-aligned "Steps" tab the live preview does. Falls back to
@@ -396,7 +429,9 @@ export function IterationDetails({
     // the 1:1 mirror of the authored steps — matching the live preview default;
     // pure prompt+grade cases keep Chat.
     setPreviewTraceMode(
-      snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
+      scorecard
+        ? "scorecard"
+        : snapshotSteps.some((s) => s.kind === "interact" || s.kind === "assert")
         ? "steps"
         : "chat",
     );
@@ -641,12 +676,18 @@ export function IterationDetails({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
   const traceFirst = layoutMode === "full" && hasTrace;
+  // With a scorecard the toolbar is not gated on a trace: a traceless failed
+  // trial still has scorers, and hiding the tabs would hide the only view of
+  // them. The trace-backed tabs hide individually instead.
   const previewTraceToolbar =
-    layoutMode === "full" && hasTrace && !loading && !error ? (
+    layoutMode === "full" &&
+    (scorecard ? !loading && !error : hasTrace && !loading && !error) ? (
       <PreviewHeaderSlot>
         <TraceViewModeTabs
           mode={
-            previewTraceMode === "browser" || previewTraceMode === "steps"
+            previewTraceMode === "browser" ||
+            previewTraceMode === "steps" ||
+            previewTraceMode === "scorecard"
               ? "timeline"
               : previewTraceMode
           }
@@ -655,9 +696,12 @@ export function IterationDetails({
           showBrowserTab={hasBrowserArtifacts}
           browserActive={previewTraceMode === "browser"}
           onSelectBrowser={() => setPreviewTraceMode("browser")}
-          showStepsTab={hasSteps}
+          showStepsTab={hasSteps && hasTrace}
           stepsActive={previewTraceMode === "steps"}
           onSelectSteps={() => setPreviewTraceMode("steps")}
+          showScorecardTab={Boolean(scorecard)}
+          scorecardActive={previewTraceMode === "scorecard"}
+          onSelectScorecard={() => setPreviewTraceMode("scorecard")}
           appearance="segment"
           className="w-full"
         />
@@ -899,6 +943,27 @@ export function IterationDetails({
       .widgetRenderObservations;
     return Array.isArray(raw) ? raw : [];
   }, [blob]);
+  /** The structural subset `assembleStepResults` reads off the trace blob. */
+  const blobEnvelope = useMemo<StepReplayEnvelope | null>(() => {
+    if (!blob || Array.isArray(blob) || typeof blob !== "object") return null;
+    return blob as StepReplayEnvelope;
+  }, [blob]);
+
+  /**
+   * Per-step verdicts WITH their reasons, for the Steps tab and the scorecard.
+   * `parseStepStatusById` keeps only the status, which is why a failed step
+   * has never said why.
+   */
+  const stepReplayRows = useMemo(
+    () =>
+      assembleStepResults(
+        snapshotSteps,
+        iteration.metadata as StepReplayMetadata | undefined,
+        blobEnvelope ?? undefined,
+      ),
+    [snapshotSteps, iteration.metadata, blobEnvelope],
+  );
+
   const predicatesSection =
     gateRows && gateRows.length > 0 ? (
       <div className="space-y-2" data-testid="iteration-predicates-section">
@@ -1036,9 +1101,14 @@ export function IterationDetails({
               fillContent={layoutMode === "full"}
               hideToolbar={layoutMode === "full"}
               forcedViewMode={
-                layoutMode === "full" ? previewTraceMode : undefined
+                layoutMode === "full" && previewTraceMode !== "scorecard"
+                  ? previewTraceMode
+                  : undefined
               }
               steps={snapshotSteps}
+              stepPresentation={scorecard ? "scorecard" : "legacy"}
+              stepResults={scorecard ? stepReplayRows : undefined}
+              verdictWord={scorecard ? trialVerdictWord : undefined}
               stepStatusById={
                 stepStatusById.size > 0 ? stepStatusById : undefined
               }
@@ -1067,7 +1137,6 @@ export function IterationDetails({
         layoutMode === "full" ? "gap-3" : "gap-4 py-2",
       )}
     >
-      {previewTraceToolbar}
       {/* WHERE VALUE STOPPED, above the transcript.
           A reader who opened this trial is asking why it did not deliver, and
           the answer is six cards wide — putting it under the trace would make
@@ -1078,9 +1147,13 @@ export function IterationDetails({
           {trialChainSlot}
         </div>
       ) : null}
+      {previewTraceToolbar}
       {/* Advisory judge verdict — pinned under the tab row so it's visible on
           every tab (Steps/Chat/Results/Trace/App/Raw), not buried in one. */}
-      {layoutMode === "full" && judgeCase ? (
+      {/* With a scorecard the judge is a ROW there, hosting this same panel as
+          its body — so the protocol survives without a second mount, and the
+          judge sits with the other scorers instead of above all of them. */}
+      {layoutMode === "full" && judgeCase && !scorecard ? (
         <div className="shrink-0 px-3">
           {enableJudgeReview && iteration.suiteRunId ? (
             // Keyed by trial: a switch remounts the panel, so no read or label
@@ -1147,6 +1220,22 @@ export function IterationDetails({
           {scoresSection}
           {probeArtifactsSection}
         </>
+      ) : scorecard ? (
+        previewTraceMode === "scorecard" ? (
+          scorecard.render({
+            envelope: blobEnvelope,
+            envelopeLoading: loading,
+            reviewActive: Boolean(enableJudgeReview && iteration.suiteRunId),
+            judgeHidden,
+            onJudgeVisibilityChange: setJudgeHidden,
+            scoresSection,
+          })
+        ) : (
+          <>
+            {traceSection}
+            {toolCallsSection}
+          </>
+        )
       ) : traceFirst ? (
         <>
           {traceSection}

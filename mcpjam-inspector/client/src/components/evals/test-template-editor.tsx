@@ -59,7 +59,10 @@ import { ReplayedScenarioPane } from "./runs/replayed-scenario-pane";
 import { IterationDetails } from "./iteration-details";
 import { TrialChainPanel } from "@/components/evaluate/trial-chain-panel";
 import { useEvalRunIterationChains } from "@/hooks/use-eval-run-iteration-chains";
-import { resolveIterationJudge } from "./goal-completion-presentation";
+import {
+  JudgeVerdictPanel,
+  resolveIterationJudge,
+} from "./goal-completion-presentation";
 import { CompareRunChatSurface } from "./compare-run-chat-surface";
 import { EvalTraceSurface } from "./eval-trace-surface";
 import {
@@ -242,11 +245,15 @@ import {
   leftViewFor,
   paneViewFor,
   selectedTrialIteration,
+  trialVerdict,
   type SelectedTrial,
 } from "../evaluate/case-workspace/selected-trial";
 import { signaturesMatch } from "../evaluate/case-workspace/case-snapshot-signature";
 import { parseStepStatusById } from "@/shared/eval-step-replay";
 import { chainForQuickRunIteration } from "../evaluate/simple-case/quick-run-chain";
+import { TrialJudgeReviewPanel } from "./trial-judge-review";
+import { TrialScorecard } from "../evaluate/case-scorecard/trial-scorecard";
+import { authoredForTrial } from "../evaluate/case-scorecard/trial-authored";
 import { RouteRollupCard } from "../evaluate/simple-case/route-rollup-card";
 import {
   adoptRouteFromIteration,
@@ -3387,6 +3394,43 @@ export function TestTemplateEditor({
     workspaceLeftView.kind === "inspecting"
       ? workspaceLeftView.iteration.testCaseSnapshot?.steps
       : undefined;
+  /**
+   * The chain for the selected trial, as an object rather than a slot.
+   *
+   * `trialChainSlotFor` renders it; the scorecard's route row needs to READ
+   * it, because on a run with no score rows the analyzer's selection verdict
+   * is the only fact about whether the route held.
+   *
+   * A plain const, not a `useMemo`: everything in this region runs after the
+   * component's early return for a missing case, so a hook here would change
+   * the hook count between renders. `TrialScorecard` memoizes its own build.
+   */
+  const workspaceTrialChain = (() => {
+    const iteration = workspacePersistedIteration;
+    if (!iteration || !chainSlotEnabled) return null;
+    if (iteration.suiteRunId) {
+      return trialChains.chains.get(iteration._id) ?? null;
+    }
+    const live =
+      recentIterations.find((it) => it._id === iteration._id) ?? iteration;
+    return chainForQuickRunIteration(live);
+  })();
+
+  /** What the LEFT pane is showing, as the scorecard model's input. */
+  const workspaceDraftScorecardInput = {
+    steps: editForm?.steps ?? [],
+    toolsChoice: simpleToolsChoice,
+    kind: editForm?.kind,
+    matchOptions: editForm?.matchOptions,
+    suiteDefaultMatchOptions: suite?.defaultMatchOptions,
+    predicates: editForm?.predicates,
+    suiteDefaultPredicates: (suite?.defaultPredicates ?? []) as Predicate[],
+    expectedOutput: editForm?.expectedOutput,
+    judgeConfigOverride: editForm?.judgeConfigOverride,
+    suiteJudgeConfig: suite?.judgeConfig,
+    suiteJudgeRubric: suite?.judgeRubric,
+  };
+
   const workspaceTrialRun = selectedTrialIteration(workspaceSelectedTrial)
     ?.suiteRunId
     ? (suiteRuns.find(
@@ -4167,6 +4211,76 @@ export function TestTemplateEditor({
                         )}
                         syncedStepId={syncedStepId}
                         onSyncStep={setSyncedStepId}
+                        trialVerdictWord={
+                          workspaceSelectedTrial
+                            ? trialVerdict(workspaceSelectedTrial).word
+                            : undefined
+                        }
+                        scorecard={{
+                          render: (ctx) => (
+                            <TrialScorecard
+                              authored={
+                                authoredForTrial({
+                                  trial: workspaceSelectedTrial,
+                                  draft: workspaceDraftScorecardInput,
+                                  run: workspaceTrialRun ?? null,
+                                  forceSnapshot:
+                                    workspaceLeftView.kind === "inspecting",
+                                }).authored
+                              }
+                              iteration={workspacePersistedIteration}
+                              steps={
+                                workspacePersistedIteration.testCaseSnapshot
+                                  ?.steps ??
+                                editForm?.steps ??
+                                []
+                              }
+                              chain={workspaceTrialChain}
+                              judgeCase={resolveIterationJudge(
+                                workspacePersistedIteration,
+                                suiteRuns,
+                              )}
+                              envelope={ctx.envelope}
+                              judgeSlot={
+                                ctx.reviewActive ? (
+                                  // Keyed by trial: a switch remounts the
+                                  // panel, so no read or label state from the
+                                  // previous trial survives into this one.
+                                  <TrialJudgeReviewPanel
+                                    key={workspacePersistedIteration._id}
+                                    iterationId={
+                                      workspacePersistedIteration._id
+                                    }
+                                    judgeCase={
+                                      resolveIterationJudge(
+                                        workspacePersistedIteration,
+                                        suiteRuns,
+                                      )!
+                                    }
+                                    onVisibilityChange={
+                                      ctx.onJudgeVisibilityChange
+                                    }
+                                  />
+                                ) : resolveIterationJudge(
+                                    workspacePersistedIteration,
+                                    suiteRuns,
+                                  ) ? (
+                                  <JudgeVerdictPanel
+                                    judgeCase={
+                                      resolveIterationJudge(
+                                        workspacePersistedIteration,
+                                        suiteRuns,
+                                      )!
+                                    }
+                                  />
+                                ) : null
+                              }
+                              scoresSection={ctx.scoresSection}
+                              syncedStepId={syncedStepId}
+                              onSyncStep={setSyncedStepId}
+                            />
+                          ),
+                        }}
                       />
                     ) : workspacePaneView.kind === "spec" &&
                       specPreviewTrace ? (

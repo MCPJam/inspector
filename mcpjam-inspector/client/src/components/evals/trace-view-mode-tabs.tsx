@@ -2,6 +2,7 @@ import {
   AlignLeft,
   Code2,
   Hammer,
+  ClipboardCheck,
   ListChecks,
   MessageSquare,
   Monitor,
@@ -28,6 +29,9 @@ export function TraceViewModeTabs({
   showStepsTab = false,
   stepsActive = false,
   onSelectSteps,
+  showScorecardTab = false,
+  scorecardActive = false,
+  onSelectScorecard,
   showBrowserTab = false,
   browserActive = false,
   onSelectBrowser,
@@ -41,6 +45,11 @@ export function TraceViewModeTabs({
   /** Show the step-aligned "Steps" tab when the case is authored as steps
    *  (interact/assert) — the replay mirror of the left-pane step list. */
   showStepsTab?: boolean;
+  /** Show the "Scorecard" tab — the authored scorers with this trial's result
+   *  beside each. Rides its own props for the same reason Steps does. */
+  showScorecardTab?: boolean;
+  scorecardActive?: boolean;
+  onSelectScorecard?: () => void;
   /** Highlight the Steps tab (its active mode lives outside the shared
    *  `TraceViewMode` union, in the trace viewer's local state). */
   stepsActive?: boolean;
@@ -104,6 +113,25 @@ export function TraceViewModeTabs({
     >
       <ListChecks className="h-3 w-3 shrink-0" />
       <span className="truncate">Steps</span>
+    </button>
+  ) : null;
+  const scorecardTab = showScorecardTab ? (
+    <button
+      key="scorecard"
+      type="button"
+      onClick={() => {
+        track("trace_view_mode_changed", {
+          location: "trace_view_mode_tabs",
+          mode: "scorecard",
+        });
+        onSelectScorecard?.();
+      }}
+      className={tabClass(scorecardActive)}
+      title="Every scorer this case carries, and what happened to it"
+      data-testid="trace-viewer-scorecard-tab"
+    >
+      <ClipboardCheck className="h-3 w-3 shrink-0" />
+      <span className="truncate">Scorecard</span>
     </button>
   ) : null;
   const chatTab = (
@@ -182,9 +210,22 @@ export function TraceViewModeTabs({
   // onto the same backend object. `chatTab` sits first in the array so Chat
   // leads even if a fullWidth consumer ever enables the Tool Calls tab; the
   // remaining tabs mirror the default layout's order minus Steps.
+  // With a Scorecard, it leads and Steps moves after Trace: the scorecard
+  // answers "did this case's scorers hold", which is the question, and Steps
+  // answers "in what order did it run", which is the follow-up.
   const tabs = fullWidth
     ? [chatTab, toolsTab, timelineTab, browserTab, rawTab]
-    : [stepsTab, chatTab, toolsTab, timelineTab, browserTab, rawTab];
+    : showScorecardTab
+      ? [
+          scorecardTab,
+          chatTab,
+          toolsTab,
+          timelineTab,
+          stepsTab,
+          browserTab,
+          rawTab,
+        ]
+      : [stepsTab, chatTab, toolsTab, timelineTab, browserTab, rawTab];
 
   return (
     <div
