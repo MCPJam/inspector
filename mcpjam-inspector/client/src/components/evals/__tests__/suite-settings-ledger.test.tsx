@@ -27,9 +27,18 @@ vi.mock("convex/react", () => ({
   useConvexAuth: () => ({ isAuthenticated: true, isLoading: false }),
 }));
 
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },

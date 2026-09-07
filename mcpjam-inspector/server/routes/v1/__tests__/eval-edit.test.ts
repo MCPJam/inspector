@@ -434,6 +434,82 @@ describe("v1 eval-edit routes", () => {
     });
   });
 
+  it("PATCH goal-completion preserves a stored groundedness slot", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+              },
+              groundedness: { role: "advisory", judgeModel: "stored-g" },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { threshold: 0.9, severity: "warn" } } }
+    );
+    expect(res.status).toBe(200);
+    const args = convexMutationMock.mock.calls.find(
+      (c) => c[0] === "testSuites:updateTestSuite"
+    )![1];
+    expect(args.judgeConfig).toEqual({
+      goalCompletion: {
+        enabled: true,
+        judgeModel: "openai/gpt-5-mini",
+        threshold: 0.9,
+        severity: "warn",
+      },
+      groundedness: { role: "advisory", judgeModel: "stored-g" },
+    });
+  });
+
+  it("PATCH refuses a groundedness write while unwired", async () => {
+    const res = await request(
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { settings: { judge: { groundedness: { enabled: true } } } }
+    );
+    expect(res.status).toBe(400);
+    expect(convexMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("GET reports stored groundedness and severity without inventing defaults", async () => {
+    convexQueryMock.mockImplementation((name: string) =>
+      name === "testSuites:getTestSuite"
+        ? Promise.resolve({
+            ...SUITE_DOC,
+            judgeConfig: {
+              goalCompletion: {
+                enabled: true,
+                judgeModel: "openai/gpt-5-mini",
+                severity: "warn",
+              },
+              groundedness: {
+                role: "advisory",
+                judgeModel: "stored-g",
+                threshold: 0.6,
+              },
+            },
+          })
+        : defaultQueryImpl(name)
+    );
+    const res = await request("GET", "/api/v1/projects/p1/eval-suites/suite_1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as any;
+    expect(body.settings.judge.severity).toBe("warn");
+    expect(body.settings.judge.groundedness).toEqual({
+      role: "advisory",
+      model: "stored-g",
+      threshold: 0.6,
+    });
+  });
+
   it("PATCH judge.model alone preserves an already-set autoRun", async () => {
     // The merge reads the suite's CURRENT goalCompletion, so a caller editing
     // one judge field cannot silently switch grading back off.

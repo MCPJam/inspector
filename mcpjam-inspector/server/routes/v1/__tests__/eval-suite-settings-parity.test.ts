@@ -191,6 +191,22 @@ describe("eval suite settings manifest — API parity", () => {
     expect(drop.success).toBe(false);
   });
 
+  it("has no writable groundedness path", () => {
+    for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if (row.api) {
+        expect(row.api).not.toMatch(/groundedness/i);
+      }
+    }
+    expect(SAMPLE_BY_PATH["settings.judge.groundedness"]).toBeUndefined();
+    expect(
+      JSON.stringify(SAMPLE_BY_PATH["settings.judge"] ?? {}),
+    ).not.toMatch(/groundedness/);
+    const refused = updateSuiteSchema.safeParse({
+      settings: { judge: { groundedness: { enabled: true } } },
+    });
+    expect(refused.success).toBe(false);
+  });
+
   it("gives every `excluded:` row a substantive reason", () => {
     // Short reasons are how an exclusion becomes permanent: nobody can argue
     // with "not supported".

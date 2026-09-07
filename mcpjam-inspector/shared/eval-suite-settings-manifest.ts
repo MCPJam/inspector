@@ -78,10 +78,9 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
-    // those is reachable on its own below. settings.judge.groundedness is
-    // displayed with that group when present and is not a writable setting.
+    // those is reachable on its own below.
     excluded:
-      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own; settings.judge.groundedness is displayed with the group and is not a writable setting.",
+      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own.",
   },
   {
     key: "matchOptions",
@@ -102,6 +101,14 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     key: "judgeRubric",
     label: "Judge criteria",
     api: "settings.judge.rubric",
+  },
+  {
+    key: "judgeGroundedness",
+    label: "Groundedness",
+    // Read-only run evidence until R2-C1 wires execution. A writable sample
+    // would claim a PATCH path the schema explicitly refuses.
+    excluded:
+      "Displays on-demand groundedness run evidence and cannot yet author settings while execution is unwired.",
   },
   {
     key: "budgets",
@@ -212,7 +219,12 @@ export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
     { type: "responseContains", needle: "hi" },
     { type: "noToolErrors", role: "advisory", severity: "warn" },
   ],
-  "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
+  "settings.judge": {
+    enabled: true,
+    autoRun: true,
+    threshold: 0.8,
+    severity: "warn",
+  },
   "settings.judge.rubric": {
     criteria: [{ id: "cites", label: "Cites a source" }],
   },

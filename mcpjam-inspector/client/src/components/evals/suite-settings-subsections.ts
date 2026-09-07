@@ -130,7 +130,10 @@ export function subsectionForSettingKey(
   ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
   }
-  if (groupId === "grading" && (key === "judge" || key === "judgeRubric")) {
+  if (
+    groupId === "grading" &&
+    (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
+  ) {
     return subsections.find((sub) => sub.id === "judge");
   }
   if (groupId === "grading" && key === "validity") {

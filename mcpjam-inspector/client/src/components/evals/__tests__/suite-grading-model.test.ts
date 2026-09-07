@@ -120,7 +120,7 @@ describe("groupGradersByStage", () => {
   it("reads the judge's role from the config, advisory by default", () => {
     const withoutRole = groupGradersByStage({ predicates: [] });
     const judge = withoutRole.byStage.userValue.find(
-      (row) => row.kind === "judge",
+      (row) => row.judgeSlot === "goalCompletion",
     );
     expect(judge?.role).toBe("advisory");
 
@@ -129,7 +129,8 @@ describe("groupGradersByStage", () => {
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
     expect(
-      gating.byStage.userValue.find((row) => row.kind === "judge")?.role,
+      gating.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
     ).toBe("gating");
 
     // Anything that is not the literal "gating" is advisory. The default has
@@ -141,8 +142,15 @@ describe("groupGradersByStage", () => {
       judgeConfig: { goalCompletion: { role: "GATING" as never } },
     });
     expect(
-      odd.byStage.userValue.find((row) => row.kind === "judge")?.role,
+      odd.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
     ).toBe("advisory");
+
+    const groundedness = withoutRole.byStage.userValue.find(
+      (row) => row.judgeSlot === "groundedness",
+    );
+    expect(groundedness?.role).toBe("advisory");
+    expect(groundedness?.label).toBe("Groundedness judge");
   });
 
   it("reads a predicate's role from checkRole", () => {

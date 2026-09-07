@@ -1957,6 +1957,24 @@ function toSuiteDetailDto(
           typeof goal?.threshold === "number"
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
+        ...(goal?.severity === "warn" ? { severity: "warn" as const } : {}),
+        // Stored groundedness, when present. Not resolved over defaults —
+        // C1 registers no configurable groundedness defaults.
+        ...(suite.judgeConfig?.groundedness
+          ? {
+              groundedness: {
+                role: "advisory" as const,
+                model: suite.judgeConfig.groundedness.judgeModel ?? null,
+                threshold:
+                  typeof suite.judgeConfig.groundedness.threshold === "number"
+                    ? suite.judgeConfig.groundedness.threshold
+                    : null,
+                ...(suite.judgeConfig.groundedness.severity === "warn"
+                  ? { severity: "warn" as const }
+                  : {}),
+              },
+            }
+          : {}),
         // The suite's own criteria, so a caller can read back what it wrote.
         // `null` for a suite with none — distinct from an empty list, which the
         // write side refuses precisely because "asks nothing" is not "absent".
@@ -2366,6 +2384,17 @@ export const updateSuiteSchema = z.strictObject({
           // `enabled` forever and never grade a run.
           autoRun: z.boolean().optional(),
           threshold: z.number().min(0).max(1).optional(),
+          /**
+           * Presentation severity on the goal-completion slot. Legal only
+           * with an advisory role; the platform refuses it beside gating.
+           */
+          severity: z.literal("warn").optional(),
+          /**
+           * Reserved C1 slot. Accepted here only so a write is an explicit
+           * 400 rather than a silent strip — groundedness is not authorable
+           * while execution is unwired.
+           */
+          groundedness: z.unknown().optional(),
           // The suite's own grading criteria, handed to the judge alongside
           // each case's expected output. `null` CLEARS them; an empty array is
           // refused because a rubric that asks nothing is not the absence of
@@ -2395,6 +2424,16 @@ export const updateSuiteSchema = z.strictObject({
               z.null(),
             ])
             .optional(),
+        })
+        .superRefine((judge, ctx) => {
+          if (judge.groundedness !== undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["groundedness"],
+              message:
+                "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+            });
+          }
         })
         .optional(),
       // ── The v2 verdict policy ────────────────────────────────────────────
@@ -6785,12 +6824,22 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
         goalCompletion.threshold = s.judge.threshold;
+      if (s.judge.severity !== undefined)
+        goalCompletion.severity = s.judge.severity;
       // The RUBRIC is a suite field, not a judge-config one — it is stored
       // beside `judgeConfig` because it is hashed into every verdict and
       // editing it retires the suite's calibration. Nested under `judge` on
       // the wire because that is where a caller looks for it.
       if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
-      updateArgs.judgeConfig = { goalCompletion };
+      // Preserve a stored groundedness slot. A goal-completion-only write
+      // must not drop the reserved slot; a groundedness write is refused
+      // by the schema before this merge runs.
+      updateArgs.judgeConfig = {
+        goalCompletion,
+        ...(suite!.judgeConfig?.groundedness
+          ? { groundedness: suite!.judgeConfig.groundedness }
+          : {}),
+      };
     }
     applyVerdictPolicySettings(suite!, s, updateArgs);
   }

@@ -135,6 +135,72 @@ describe("SuiteScorerTable", () => {
     ]);
   });
 
+  it("offers a judge Warn control only after C1 judges capabilities", async () => {
+    const user = userEvent.setup();
+    const { onJudgeConfigChange } = renderTable({
+      capabilities: {
+        suiteId: "s",
+        organizationId: "o",
+        permissions: {} as SuiteCapabilities["permissions"],
+        features: {
+          computers: { enabled: true },
+          environments: { enabled: true },
+          skills: { enabled: true },
+          "claude-code-harness": { enabled: true },
+          "codex-harness": { enabled: true },
+          "cursor-harness": { enabled: true },
+          "grading-engine-mode": { enabled: true },
+          scheduledEvals: { enabled: true },
+        },
+        verdictPolicyV2: {
+          deploymentMode: "enforce",
+          suiteMode: null,
+          canUpgrade: true,
+        },
+        judge: judgeCapabilities({
+          gating: { enabled: true },
+          agreement: {
+            reviews: 20,
+            agreements: 18,
+            rate: 0.9,
+            lowerBound: 0.8,
+            threshold: 0.8,
+            minReviews: 20,
+            eligible: true,
+            reasons: [],
+          },
+        }),
+        judges: {
+          goalCompletion: {
+            role: "advisory",
+            template: { version: 1, hash: "t" },
+            execution: "wired",
+            calibration: judgeCapabilities().agreement,
+          },
+          groundedness: {
+            role: "advisory",
+            template: null,
+            execution: "not_wired",
+            calibration: "unavailable",
+          },
+        },
+        scorers: { checkPolicy: true },
+        revisionNumber: 1,
+      },
+    });
+    const judgeRole = document.querySelector('[aria-label="Judge role"]');
+    expect(within(judgeRole as HTMLElement).getByText("Warn")).toBeTruthy();
+    await user.click(within(judgeRole as HTMLElement).getByText("Warn"));
+    expect(onJudgeConfigChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        goalCompletion: expect.objectContaining({
+          role: "advisory",
+          severity: "warn",
+        }),
+      }),
+    );
+  });
+
   it("does not offer a judge Warn control", () => {
     const { container } = renderTable({
       capabilities: {
@@ -178,6 +244,18 @@ describe("SuiteScorerTable", () => {
     expect(within(judgeRole as HTMLElement).queryByText("Warn")).toBeNull();
     expect(within(judgeRole as HTMLElement).getByText("Gate")).toBeTruthy();
     expect(within(judgeRole as HTMLElement).getByText("Report")).toBeTruthy();
+  });
+
+  it("renders groundedness as a report chip with no gate toggle", () => {
+    const { container } = renderTable();
+    const row = container.querySelector(
+      '[data-scorer-id="judge:groundedness"]',
+    ) as HTMLElement;
+    expect(row).toBeTruthy();
+    expect(within(row).getByText("Report")).toBeTruthy();
+    expect(within(row).queryByRole("group", { name: "Judge role" })).toBeNull();
+    expect(screen.getByText(/Groundedness runs on demand/)).toBeTruthy();
+    expect(screen.getByTestId("groundedness-not-yet-run")).toBeTruthy();
   });
 
   it("disables judge Gate with the panel's copy", () => {

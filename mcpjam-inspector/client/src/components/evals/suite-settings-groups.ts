@@ -28,7 +28,7 @@ export const NESTED_SETTING_KEYS: Record<string, readonly EvalSuiteSettingKey[]>
     "qualityGateMaximumP95LatencyIncreaseMs",
     "qualityGateNoGatingScoreErrors",
   ],
-  passOrFail: ["matchOptions", "judge", "judgeRubric", "checks"],
+  passOrFail: ["matchOptions", "judge", "judgeRubric", "judgeGroundedness", "checks"],
 };
 
 /**

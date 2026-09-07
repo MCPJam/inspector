@@ -91,6 +91,11 @@ export const PREDICATE_STAGE: Record<PredicateKind, UserValueStage> = {
 export const GRADER_STAGE = {
   "toolCalls:match": "selection",
   "judge:goalCompletion": "userValue",
+  /**
+   * Presentation routing only. Groundedness has no score definition until
+   * R2-P2b and cannot author a second chain.
+   */
+  "judge:groundedness": "userValue",
 } as const satisfies Record<string, UserValueStage>;
 
 /**

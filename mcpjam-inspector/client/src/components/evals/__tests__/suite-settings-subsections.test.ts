@@ -36,6 +36,14 @@ describe("getSubsectionsForGroup", () => {
     ]);
   });
 
+  it("routes judge, rubric, and groundedness to the Judges subsection", () => {
+    for (const key of ["judge", "judgeRubric", "judgeGroundedness"] as const) {
+      expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
+        "judge",
+      );
+    }
+  });
+
   it("routes quality-gate and nested validity keys to the policy subsection", () => {
     for (const key of [
       "validity",

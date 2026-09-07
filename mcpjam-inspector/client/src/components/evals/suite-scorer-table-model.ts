@@ -92,8 +92,23 @@ export function roleOfJudgeSlot(
   slot: JudgeSlot,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerUiRole {
-  if (slot === "groundedness") return "report";
-  return judgeConfig?.goalCompletion?.role === "gating" ? "gate" : "report";
+  if (slot === "groundedness") {
+    return judgeConfig?.groundedness?.severity === "warn" ? "warn" : "report";
+  }
+  const goal = judgeConfig?.goalCompletion;
+  if (goal?.role === "gating") return "gate";
+  return goal?.severity === "warn" ? "warn" : "report";
+}
+
+/** Authored goal-completion role a settings row can write. */
+export function withGoalCompletionRole(
+  current: NonNullable<EvalJudgeConfig["goalCompletion"]>,
+  role: ScorerUiRole,
+): NonNullable<EvalJudgeConfig["goalCompletion"]> {
+  const { role: _role, severity: _severity, ...rest } = current;
+  if (role === "gate") return { ...rest, role: "gating" };
+  if (role === "warn") return { ...rest, role: "advisory", severity: "warn" };
+  return { ...rest, role: "advisory" };
 }
 
 export type ScorerLibraryCategoryId =
@@ -322,6 +337,20 @@ function judgeTableRow(
   row: GraderRow,
   judgeConfig: EvalJudgeConfig | undefined,
 ): ScorerTableRow {
+  const slot: JudgeSlot = row.judgeSlot ?? "goalCompletion";
+  if (slot === "groundedness") {
+    return {
+      id: row.id,
+      kind: "judge",
+      name: row.label,
+      kindLabel: "Judge",
+      threshold: "",
+      thresholdKind: "none",
+      role: roleOfJudgeSlot("groundedness", judgeConfig),
+      muted: false,
+      judgeSlot: "groundedness",
+    };
+  }
   const threshold = judgeConfig?.goalCompletion?.threshold;
   return {
     id: row.id,

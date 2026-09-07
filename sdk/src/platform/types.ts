@@ -1354,6 +1354,61 @@ export interface PlatformExpectedToolCall {
   arguments?: Record<string, unknown>;
 }
 
+/**
+ * Goal-completion fields on `settings.judge`. Resolved over platform
+ * defaults so this is what a run would actually grade with.
+ */
+export type PlatformEvalSuiteGoalCompletionJudge = {
+  /** Judge is available on the suite. Does NOT by itself grade anything. */
+  enabled: boolean;
+  model: string | null;
+  /**
+   * The flag that makes grading HAPPEN — fires the judge as each run
+   * completes. Absent on older API deployments.
+   */
+  autoRun?: boolean;
+  /**
+   * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
+   * Absent on older API deployments.
+   */
+  threshold?: number;
+  /**
+   * Presentation severity. Legal only with an advisory role. Absent when
+   * the suite has none, and on older API deployments.
+   */
+  severity?: "warn";
+  /**
+   * The suite's own grading criteria, handed to the judge alongside each
+   * case's expected output.
+   *
+   * The judge cites `id` in its reasons, which is what makes a verdict
+   * auditable rather than a number — so ids are stable, unique, and
+   * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
+   * agreement measured against criteria the suite no longer uses is
+   * agreement with a question nobody is asking. Absent on older API
+   * deployments and on suites with no criteria.
+   */
+  rubric?: {
+    criteria: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      required?: boolean;
+    }>;
+  } | null;
+};
+
+/**
+ * Stored groundedness on the suite read DTO. Always advisory. Fields are
+ * the stored values, not resolved defaults — C1 registers none.
+ */
+export type PlatformEvalSuiteGroundednessJudge = {
+  role: "advisory";
+  model: string | null;
+  threshold: number | null;
+  severity?: "warn";
+};
+
 export interface PlatformEvalSuiteSettings {
   /** Minimum pass rate as a percentage, 0–100. */
   minimumAccuracy: number | null;
@@ -1374,39 +1429,12 @@ export interface PlatformEvalSuiteSettings {
    * `model` stays nullable: older API deployments report the suite's raw
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
-  judge: {
-    /** Judge is available on the suite. Does NOT by itself grade anything. */
-    enabled: boolean;
-    model: string | null;
+  judge: PlatformEvalSuiteGoalCompletionJudge & {
     /**
-     * The flag that makes grading HAPPEN — fires the judge as each run
-     * completes. Absent on older API deployments.
+     * Stored groundedness, when the suite has a reserved slot. Read-only
+     * while execution is unwired — PATCH refuses this key.
      */
-    autoRun?: boolean;
-    /**
-     * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
-     * Absent on older API deployments.
-     */
-    threshold?: number;
-    /**
-     * The suite's own grading criteria, handed to the judge alongside each
-     * case's expected output.
-     *
-     * The judge cites `id` in its reasons, which is what makes a verdict
-     * auditable rather than a number — so ids are stable, unique, and
-     * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
-     * agreement measured against criteria the suite no longer uses is
-     * agreement with a question nobody is asking. Absent on older API
-     * deployments and on suites with no criteria.
-     */
-    rubric?: {
-      criteria: Array<{
-        id: string;
-        label: string;
-        description?: string;
-        required?: boolean;
-      }>;
-    } | null;
+    groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
    * The verdict policy this suite's runs are decided under.

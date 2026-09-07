@@ -78,6 +78,8 @@ export type GraderRow = {
   predicateIndex?: number;
   /** Which match-options field a `match` row came from. */
   matchField?: "toolCallOrder" | "maxExtraToolCalls" | "argumentMatching";
+  /** Which judge slot a `judge` row came from. */
+  judgeSlot?: "goalCompletion" | "groundedness";
 };
 
 export type SuiteGradingModel = {
@@ -238,6 +240,16 @@ export function groupGradersByStage(input: {
       input.judgeConfig?.goalCompletion?.role === "gating"
         ? "gating"
         : "advisory",
+    severity: input.judgeConfig?.goalCompletion?.severity,
+    judgeSlot: "goalCompletion",
+  });
+  byStage[GRADER_STAGE["judge:groundedness"]].push({
+    id: "judge:groundedness",
+    kind: "judge",
+    label: "Groundedness judge",
+    role: "advisory",
+    severity: input.judgeConfig?.groundedness?.severity,
+    judgeSlot: "groundedness",
   });
 
   return { byStage, budgets };

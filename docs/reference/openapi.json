@@ -13575,6 +13575,31 @@
                     "type": "number",
                     "description": "Advisory pass threshold, 0–1 (`passed = score >= threshold`)."
                   },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
+                  },
+                  "groundedness": {
+                    "type": "object",
+                    "description": "Stored groundedness slot, when present. Read-only while execution is unwired; PATCH refuses this key.",
+                    "properties": {
+                      "role": {
+                        "type": "string",
+                        "enum": ["advisory"]
+                      },
+                      "model": {
+                        "type": ["string", "null"]
+                      },
+                      "threshold": {
+                        "type": ["number", "null"]
+                      },
+                      "severity": {
+                        "type": "string",
+                        "enum": ["warn"]
+                      }
+                    }
+                  },
                   "rubric": {
                     "type": ["object", "null"],
                     "description": "The suite's own grading criteria, handed to the judge alongside each case's expected output. `null` when the suite has none. The judge cites `id` in its reasons, so ids are load-bearing; editing them retires the suite's judge calibration.",
@@ -16927,6 +16952,11 @@
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1
+                  },
+                  "severity": {
+                    "type": "string",
+                    "enum": ["warn"],
+                    "description": "Presentation severity on the goal-completion slot. Legal only with an advisory role."
                   },
                   "rubric": {
                     "type": ["object", "null"],

@@ -119,6 +119,26 @@ export type SuiteCapabilities = {
     } | null;
   };
   /**
+   * Per-judge identity from C1. Absent on an older backend — every caller
+   * then degrades: no Warn control, groundedness template stays null, and
+   * calibration is treated as unavailable rather than copied from goal
+   * completion.
+   */
+  judges?: {
+    goalCompletion: {
+      role: "advisory" | "gating";
+      template: { version: number; hash: string };
+      execution: "wired";
+      calibration: SuiteJudgeAgreement;
+    };
+    groundedness: {
+      role: "advisory";
+      template: null;
+      execution: "not_wired";
+      calibration: "unavailable";
+    };
+  };
+  /**
    * Scorer-authoring capabilities. Absent on a backend that predates A1 —
    * the Role control then degrades to today's read-only Gate chip.
    */
@@ -199,4 +219,15 @@ export function useSuiteCapabilities(
   }, [convex, suiteId, refreshKey]);
 
   return state;
+}
+
+/**
+ * True when this deployment advertised C1's per-judge identity, which is
+ * what authorizes a goal-completion Warn control. An older backend has no
+ * `judges` map — do not invent severity support from today's `judge` fields.
+ */
+export function hasJudgeSeverityCapability(
+  capabilities: SuiteCapabilities | null | undefined,
+): boolean {
+  return capabilities?.judges?.goalCompletion != null;
 }

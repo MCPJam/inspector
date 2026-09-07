@@ -82,9 +82,18 @@ vi.mock("@/state/app-state-context", () => ({
 // S3 — capabilities `unavailable` is the "behave exactly as before" case, and
 // it is what these tests want: the GitHub row's own gate is the availability
 // read, not the capabilities query.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 const noopNav = {
   toSuiteOverview: vi.fn(),

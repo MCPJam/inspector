@@ -20,6 +20,7 @@ import {
   roleOfJudgeSlot,
   roleOfPredicate,
   scorerLibraryCategories,
+  withGoalCompletionRole,
   withPredicateRole,
   type ScorerUiRole,
 } from "../suite-scorer-table-model";
@@ -87,6 +88,22 @@ describe("buildScorerTable groups", () => {
       }
     }
     expect(unplaced).toEqual([]);
+  });
+
+  it("files both judge slots under user value", () => {
+    const { groups } = buildScorerTable({
+      model: groupGradersByStage({ predicates: [] }),
+      predicates: [],
+    });
+    const userValue = groups.find((group) => group.stage === "userValue");
+    expect(userValue?.rows.map((row) => row.judgeSlot)).toEqual([
+      "goalCompletion",
+      "groundedness",
+    ]);
+    expect(
+      userValue?.rows.find((row) => row.judgeSlot === "groundedness")
+        ?.thresholdKind,
+    ).toBe("none");
   });
 
   it("emits a group for every user-value stage", () => {
@@ -168,6 +185,34 @@ describe("roleOfJudgeSlot", () => {
     expect(
       roleOfJudgeSlot("groundedness", { goalCompletion: { role: "gating" } }),
     ).toBe("report");
+  });
+
+  it("reads goal-completion warn severity as warn", () => {
+    expect(
+      roleOfJudgeSlot("goalCompletion", {
+        goalCompletion: { role: "advisory", severity: "warn" },
+      }),
+    ).toBe("warn");
+  });
+});
+
+describe("withGoalCompletionRole", () => {
+  it("writes advisory + warn and strips severity for report and gate", () => {
+    expect(
+      withGoalCompletionRole({ role: "gating", threshold: 0.8 }, "warn"),
+    ).toEqual({ threshold: 0.8, role: "advisory", severity: "warn" });
+    expect(
+      withGoalCompletionRole(
+        { role: "advisory", severity: "warn", threshold: 0.8 },
+        "report",
+      ),
+    ).toEqual({ threshold: 0.8, role: "advisory" });
+    expect(
+      withGoalCompletionRole(
+        { role: "advisory", severity: "warn", threshold: 0.8 },
+        "gate",
+      ),
+    ).toEqual({ threshold: 0.8, role: "gating" });
   });
 });
 

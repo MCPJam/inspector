@@ -30,6 +30,7 @@ import {
   mergeBudgetPredicates,
 } from "./suite-grading-model";
 import { SuiteScorerTable } from "./suite-scorer-table";
+import type { GroundednessRunEvidence } from "./suite-judge-card";
 import type { EvalJudgeConfig } from "./types";
 
 /**
@@ -56,6 +57,7 @@ export function SuitePassOrFailSection({
   stageFacts,
   capabilities,
   unavailableReason,
+  groundednessEvidence,
 }: {
   matchOptions: EvalMatchOptions | undefined;
   onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
@@ -81,6 +83,7 @@ export function SuitePassOrFailSection({
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
   capabilities?: SuiteCapabilities | null;
   unavailableReason?: string;
+  groundednessEvidence?: GroundednessRunEvidence;
 }) {
   return (
     <SuiteScorerTable
@@ -99,6 +102,7 @@ export function SuitePassOrFailSection({
       unavailableReason={unavailableReason}
       passOrFailHint={PASS_OR_FAIL_HINT}
       judgeHint={JUDGE_HINT}
+      groundednessEvidence={groundednessEvidence}
     />
   );
 }

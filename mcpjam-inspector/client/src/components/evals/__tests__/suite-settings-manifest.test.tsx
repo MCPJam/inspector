@@ -113,9 +113,15 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
 
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => mocks.capabilities(),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => mocks.capabilities(),
+  };
+});
 
 function renderedSettingKeys(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("[data-setting-key]")).map(

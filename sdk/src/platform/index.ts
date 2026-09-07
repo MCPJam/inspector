@@ -197,6 +197,8 @@ export type {
   PlatformEvalSuiteHost,
   PlatformEvalSuiteSchedule,
   PlatformEvalSuiteSettings,
+  PlatformEvalSuiteGoalCompletionJudge,
+  PlatformEvalSuiteGroundednessJudge,
   PlatformEvalSuiteComputerEnvironment,
   PlatformEnvironment,
   PlatformEnvironmentSecretSelection,

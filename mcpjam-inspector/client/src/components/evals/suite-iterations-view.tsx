@@ -58,6 +58,7 @@ import {
 } from "./suite-pass-or-fail-section";
 import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
+import { useGroundedness } from "./use-groundedness";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import {
   VerdictPolicyUpgradeButton,
@@ -890,6 +891,14 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  const latestCompletedRun = useMemo(
+    () =>
+      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
+      null,
+    [runs],
+  );
+  const groundedness = useGroundedness(latestCompletedRun);
 
   /**
    * Every trial's chain for the run currently open, keyed by iteration.
@@ -2350,6 +2359,10 @@ export function SuiteIterationsView({
                               }
                             />
                           }
+                          groundednessEvidence={{
+                            result: groundedness.result ?? null,
+                            pending: groundedness.pending,
+                          }}
                           scenarioMigrationNotice={
                             suiteScenarioMigrationCount > 0 ? (
                               <p className="text-[11px] text-amber-700 dark:text-amber-400">

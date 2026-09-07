@@ -17,15 +17,20 @@ import { Input } from "@mcpjam/design-system/input";
 import type { ModelDefinition } from "@/shared/types";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import { DEFAULT_JUDGE_THRESHOLD } from "@/components/shared/session-quality/judge-config";
+import { hasJudgeSeverityCapability } from "@/hooks/use-suite-capabilities";
 import { ValidatorsSection } from "./validators-section";
-import { JudgesSection } from "./judges-section";
 import { CheckRow, blankPredicate } from "./checks-section";
 import { GlobalGatesSectionInfoHint } from "./global-gates-info";
 import { gateSwitchDisabledReason } from "./judge-gate-panel";
 import { SuiteScorerLibraryMenu } from "./suite-scorer-library-menu";
 import {
+  SuiteJudgeCard,
+  type GroundednessRunEvidence,
+} from "./suite-judge-card";
+import {
   ROLE_LEGEND,
   buildScorerTable,
+  withGoalCompletionRole,
   withPredicateRole,
   type ScorerTableRow,
   type ScorerUiRole,
@@ -49,6 +54,7 @@ export function SuiteScorerTable({
   unavailableReason,
   passOrFailHint,
   judgeHint,
+  groundednessEvidence,
 }: {
   matchOptions: EvalMatchOptions | undefined;
   onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
@@ -67,6 +73,7 @@ export function SuiteScorerTable({
   unavailableReason?: string;
   passOrFailHint: string;
   judgeHint: string;
+  groundednessEvidence?: GroundednessRunEvidence;
 }) {
   const model = useMemo(
     () => groupGradersByStage({ matchOptions, predicates, judgeConfig }),
@@ -92,6 +99,7 @@ export function SuiteScorerTable({
     capabilities?.judge,
     unavailableReason,
   );
+  const judgeSeveritySupported = hasJudgeSeverityCapability(capabilities);
 
   const updatePredicate = (index: number, next: Predicate) => {
     onPredicatesChange((previous) => {
@@ -204,6 +212,7 @@ export function SuiteScorerTable({
                       predicates={predicates}
                       checkPolicy={checkPolicy}
                       judgeDisabledReason={judgeDisabledReason}
+                      judgeSeveritySupported={judgeSeveritySupported}
                       judgeConfig={judgeConfig}
                       expanded={
                         row.predicateIndex !== undefined &&
@@ -220,18 +229,21 @@ export function SuiteScorerTable({
                       onPredicateChange={updatePredicate}
                       onPredicateRemove={removePredicate}
                       onJudgeRoleChange={(role) => {
-                        const goal = judgeConfig?.goalCompletion ?? {};
                         onJudgeConfigChange({
-                          goalCompletion: {
-                            ...goal,
-                            role: role === "gate" ? "gating" : "advisory",
-                          },
+                          ...judgeConfig,
+                          goalCompletion: withGoalCompletionRole(
+                            judgeConfig?.goalCompletion ?? {},
+                            role,
+                          ),
                         });
                       }}
                       onJudgeThresholdChange={(threshold) => {
-                        const goal = judgeConfig?.goalCompletion ?? {};
                         onJudgeConfigChange({
-                          goalCompletion: { ...goal, threshold },
+                          ...judgeConfig,
+                          goalCompletion: {
+                            ...(judgeConfig?.goalCompletion ?? {}),
+                            threshold,
+                          },
                         });
                       }}
                       facts={
@@ -289,28 +301,23 @@ export function SuiteScorerTable({
                             {judgeHint}
                           </p>
                         </div>
-                        <JudgesSection
-                          chrome="bare"
-                          value={judgeConfig}
+                        <SuiteJudgeCard
+                          slot="goalCompletion"
+                          judgeConfig={judgeConfig}
+                          onJudgeConfigChange={onJudgeConfigChange}
                           availableModels={availableModels}
-                          onChange={onJudgeConfigChange}
+                          judgesCapabilities={capabilities?.judges}
+                          judgeAccessory={judgeAccessory}
+                          rubricEditor={rubricEditor}
                         />
-                        {judgeAccessory}
-                        {rubricEditor ? (
-                          <div className="space-y-2" data-setting-key="judgeRubric">
-                            <div>
-                              <h4 className="text-sm font-semibold text-foreground">
-                                Judge criteria
-                              </h4>
-                              <p className="mt-1 text-sm text-muted-foreground">
-                                Applied to every case, alongside each
-                                case&apos;s own expected output. The judge
-                                cites criterion ids in its reasons.
-                              </p>
-                            </div>
-                            {rubricEditor}
-                          </div>
-                        ) : null}
+                        <SuiteJudgeCard
+                          slot="groundedness"
+                          judgeConfig={judgeConfig}
+                          onJudgeConfigChange={onJudgeConfigChange}
+                          availableModels={availableModels}
+                          judgesCapabilities={capabilities?.judges}
+                          groundednessEvidence={groundednessEvidence}
+                        />
                       </div>
                     </td>
                   </tr>
@@ -329,6 +336,7 @@ function ScorerRow({
   predicates,
   checkPolicy,
   judgeDisabledReason,
+  judgeSeveritySupported,
   judgeConfig,
   expanded,
   onToggleExpand,
@@ -342,12 +350,13 @@ function ScorerRow({
   predicates: Predicate[];
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeSeveritySupported: boolean;
   judgeConfig: EvalJudgeConfig | undefined;
   expanded: boolean;
   onToggleExpand: () => void;
   onPredicateChange: (index: number, next: Predicate) => void;
   onPredicateRemove: (index: number) => void;
-  onJudgeRoleChange: (role: "gate" | "report") => void;
+  onJudgeRoleChange: (role: ScorerUiRole) => void;
   onJudgeThresholdChange: (threshold: number) => void;
   facts?: React.ReactNode;
 }) {
@@ -411,6 +420,7 @@ function ScorerRow({
             predicate={predicate}
             checkPolicy={checkPolicy}
             judgeDisabledReason={judgeDisabledReason}
+            judgeSeveritySupported={judgeSeveritySupported}
             onPredicateChange={onPredicateChange}
             onJudgeRoleChange={onJudgeRoleChange}
           />
@@ -523,6 +533,7 @@ function RoleCell({
   predicate,
   checkPolicy,
   judgeDisabledReason,
+  judgeSeveritySupported,
   onPredicateChange,
   onJudgeRoleChange,
 }: {
@@ -530,15 +541,22 @@ function RoleCell({
   predicate: Predicate | undefined;
   checkPolicy: boolean;
   judgeDisabledReason: string | undefined;
+  judgeSeveritySupported: boolean;
   onPredicateChange: (index: number, next: Predicate) => void;
-  onJudgeRoleChange: (role: "gate" | "report") => void;
+  onJudgeRoleChange: (role: ScorerUiRole) => void;
 }) {
   if (row.kind === "observed") return null;
   if (row.kind === "match") {
     return <RoleChip role="gate" />;
   }
   if (row.kind === "judge") {
+    if (row.judgeSlot === "groundedness") {
+      return <RoleChip role={row.role} />;
+    }
     const gateEnabled = judgeDisabledReason === undefined;
+    const roles: ScorerUiRole[] = judgeSeveritySupported
+      ? ["gate", "warn", "report"]
+      : ["gate", "report"];
     return (
       <div className="space-y-1">
         <div
@@ -546,19 +564,16 @@ function RoleCell({
           aria-label="Judge role"
           className="inline-flex rounded-md border border-border/60"
         >
-          <RoleSegment
-            pressed={row.role === "gate"}
-            disabled={!gateEnabled}
-            onClick={() => onJudgeRoleChange("gate")}
-          >
-            Gate
-          </RoleSegment>
-          <RoleSegment
-            pressed={row.role === "report"}
-            onClick={() => onJudgeRoleChange("report")}
-          >
-            Report
-          </RoleSegment>
+          {roles.map((role) => (
+            <RoleSegment
+              key={role}
+              pressed={row.role === role}
+              disabled={role === "gate" && !gateEnabled}
+              onClick={() => onJudgeRoleChange(role)}
+            >
+              {ROLE_LEGEND[role].label}
+            </RoleSegment>
+          ))}
         </div>
         {judgeDisabledReason ? (
           <p
