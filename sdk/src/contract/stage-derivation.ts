@@ -82,8 +82,12 @@ import { PREDICATE_STAGE, type PredicateKind } from "./grader-stage.js";
  * instead of leaving the trial uncategorised. This one DOES move
  * `STAGE_REASONS`; the backend mirror already carries the member (UVH-BE1
  * shipped it deliberately ahead of this bump), so nothing quarantines.
+ *
+ * 10 (advisory exclusion): advisory (Warn/Report) predicate results never
+ * fail a stage. Selection consumption of failed predicates, failed-predicate
+ * precedence, and `deriveUserValue` skip them. Absent role is gating.
  */
-export const STAGE_ANALYZER_VERSION = 8;
+export const STAGE_ANALYZER_VERSION = 10;
 
 /**
  * The 7 above, named — the first analyzer that can report an errored tool call
@@ -275,24 +279,27 @@ export type StagePredicateResultLike = {
    * that never carried it. A row without it is graded exactly as before —
    * user-value evidence — so widening this type changes nothing on its own.
    */
-  predicate?: { type?: string; toolName?: string };
+  predicate?: { type?: string; toolName?: string; role?: string };
 };
 
 /**
  * Predicate kinds that are evidence about TOOL SELECTION, not user value.
  *
- * `stepsToPromptTurns` promotes only `toolCalledWith` into `expectedToolCalls`,
- * where the selection matcher grades it. The three kinds below fall through to
- * per-turn checks and arrive here as predicate results, so before UVH-IN1 a
- * case asserting "tool X was never called" filed its failure at `userValue`
- * with `predicateFailed` — the chain reporting that the user did not get what
- * they wanted, when what actually happened is that the model picked the wrong
- * tool. In one prod audit that alone accounted for the gap between 2 selection
- * failures and 12 user-value ones.
+ * `stepsToPromptTurns` promotes only a **gating** `toolCalledWith` into
+ * `expectedToolCalls`, where the selection matcher grades it. An advisory
+ * `toolCalledWith` stays a predicate row and is skipped here (advisory
+ * exclusion). The three kinds below fall through to per-turn checks and
+ * arrive here as predicate results, so before UVH-IN1 a case asserting
+ * "tool X was never called" filed its failure at `userValue` with
+ * `predicateFailed` — the chain reporting that the user did not get what
+ * they wanted, when what actually happened is that the model picked the
+ * wrong tool. In one prod audit that alone accounted for the gap between
+ * 2 selection failures and 12 user-value ones.
  *
- * `toolCalledWith` is deliberately absent: it is already matcher-graded, and
- * re-reading its point-in-time predicate row here would let a raw residual
- * contradict the adjudicated verdict the matcher path produces.
+ * Gating `toolCalledWith` is deliberately absent: it is already
+ * matcher-graded, and re-reading its point-in-time predicate row here would
+ * let a raw residual contradict the adjudicated verdict the matcher path
+ * produces.
  */
 const SELECTION_PREDICATE_REASON_BY_KIND: Partial<
   Record<PredicateKind, StageReason>
@@ -314,10 +321,11 @@ const SELECTION_PREDICATE_REASON_BY_KIND: Partial<
  * a disagreement no test would catch because neither list is wrong on its own.
  * Now the stage comes from the map and only the REASON lives here.
  *
- * `toolCalledWith` is filtered out on purpose even though the map routes it to
- * `selection`: it is matcher-graded, and re-reading its point-in-time
- * predicate row here would let a raw residual contradict the adjudicated
- * verdict the matcher path produces.
+ * Gating `toolCalledWith` is filtered out on purpose even though the map
+ * routes it to `selection`: it is matcher-graded, and re-reading its
+ * point-in-time predicate row here would let a raw residual contradict the
+ * adjudicated verdict the matcher path produces. Advisory rows of every
+ * kind are skipped separately (analyzer v10).
  */
 const SELECTION_PREDICATE_REASONS: Record<string, StageReason> =
   Object.fromEntries(
@@ -825,9 +833,21 @@ function selectionNeedsExplicitEvidence(
   return !prompts.some((p) => nonEmpty(p.expectedToolCalls));
 }
 
-/** Tool-selection predicate rows, in author order. */
+/** True when this row is advisory (Warn/Report) and must not decide a stage. */
+function isAdvisoryPredicateResult(r: StagePredicateResultLike): boolean {
+  return r.predicate?.role === "advisory";
+}
+
+/** Gating predicate rows only — advisory exclusion (analyzer v10). */
+function gatingPredicateResults(
+  results: readonly StagePredicateResultLike[] | undefined
+): StagePredicateResultLike[] {
+  return (results ?? []).filter((r) => !isAdvisoryPredicateResult(r));
+}
+
+/** Tool-selection predicate rows, in author order. Advisory rows are skipped. */
 function selectionPredicates(e: StageEvidence): StagePredicateResultLike[] {
-  return (e.predicateResults ?? []).filter((r) =>
+  return gatingPredicateResults(e.predicateResults).filter((r) =>
     isSelectionPredicateKind(r.predicate?.type)
   );
 }
@@ -892,9 +912,10 @@ function deriveSelection(
   }
 
   // Authored tool-call predicates, after the matcher's most specific verdict
-  // and before its tolerated-extras logic. A failed predicate is a definite,
-  // author-stated fact about which tool the model picked; the `unexpected`
-  // branch below is the one that has to decide whether extras were tolerated.
+  // and before its tolerated-extras logic. A failed GATING predicate is a
+  // definite, author-stated fact about which tool the model picked; advisory
+  // failures are skipped (analyzer v10). The `unexpected` branch below is
+  // the one that has to decide whether extras were tolerated.
   const failedPredicates = predicates.filter((r) => r.passed === false);
   if (failedPredicates.length > 0) {
     return row(
@@ -1058,8 +1079,9 @@ function deriveUserValue(e: StageEvidence): StageResultRow {
   // Tool-call predicates are ROUTED to `selection`, not copied into it: a
   // failure filed in both places would double-count one defect and, worse,
   // make `firstFailedStage` depend on which stage the reader looked at first.
-  // What is left here is what actually speaks to the user's ask.
-  const results = (e.predicateResults ?? []).filter(
+  // What is left here is what actually speaks to the user's ask. Advisory
+  // rows are skipped — they must not fail `userValue` (analyzer v10).
+  const results = gatingPredicateResults(e.predicateResults).filter(
     (r) => !isSelectionPredicateKind(r.predicate?.type)
   );
   if (results.length > 0) {
@@ -1255,7 +1277,7 @@ export function deriveStageResults(
   const noEvidenceAtAll =
     (evidence.spans?.length ?? 0) === 0 &&
     (evidence.prompts?.length ?? 0) === 0 &&
-    (evidence.predicateResults?.length ?? 0) === 0;
+    gatingPredicateResults(evidence.predicateResults).length === 0;
   const hasSetupSignals =
     evidence.setupSignals?.connection !== undefined ||
     evidence.setupSignals?.discovery !== undefined;

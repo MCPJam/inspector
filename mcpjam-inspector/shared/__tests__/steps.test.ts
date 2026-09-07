@@ -637,10 +637,10 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
   });
 
   it("represents a tool-call assert as an expected tool call (matcher path, both run paths)", () => {
-    // A `toolCalledWith` always maps to `expectedToolCalls` — regardless of
+    // A gating `toolCalledWith` maps to `expectedToolCalls` — regardless of
     // whether it's authored before or after an interact — so the matcher
-    // (which runs on both local + hosted paths) evaluates it. Per-turn `checks`
-    // are NOT evaluated on the hosted/free path, so we must not route it there.
+    // (which runs on both local + hosted paths) evaluates it. An advisory
+    // `toolCalledWith` stays a predicate row.
     const steps: TestStep[] = [
       { id: "p", kind: "prompt", prompt: "show cart" },
       {
@@ -669,6 +669,24 @@ describe("stepsToPromptTurns (inverse / round-trip)", () => {
       { toolName: "clear-cart", arguments: {} },
     ]);
     expect(turn!.checks ?? []).toEqual([]);
+  });
+
+  it("does not promote an advisory toolCalledWith into expectedToolCalls", () => {
+    const assertion = {
+      type: "toolCalledWith" as const,
+      toolName: "clear-cart",
+      args: { args: {} },
+      role: "advisory" as const,
+      severity: "warn" as const,
+    };
+    const steps: TestStep[] = [
+      { id: "p", kind: "prompt", prompt: "show cart" },
+      { id: "a", kind: "assert", assertion },
+    ];
+    expect(deriveExpectedToolCalls(steps)).toEqual([]);
+    const [turn] = stepsToPromptTurns(steps);
+    expect(turn!.expectedToolCalls).toEqual([]);
+    expect(turn!.checks).toEqual([assertion]);
   });
 
   it("preserves a check authored BEFORE interacts across the editor round-trip", () => {

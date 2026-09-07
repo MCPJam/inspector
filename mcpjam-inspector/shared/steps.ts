@@ -40,7 +40,7 @@
  */
 
 import type { z } from "zod";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { checkRole, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   isAssertStep,
   isPromptStep,
@@ -279,7 +279,9 @@ export function deriveExpectedToolCalls(
     .map((s) => s.assertion)
     .filter(
       (a): a is Extract<Predicate, { type: "toolCalledWith" }> =>
-        !isWidgetAssertion(a) && a.type === "toolCalledWith"
+        !isWidgetAssertion(a) &&
+        a.type === "toolCalledWith" &&
+        checkRole(a) !== "advisory"
     )
     .map((a) => ({ toolName: a.toolName, arguments: a.args.args ?? {} }));
 }
@@ -927,15 +929,18 @@ export function stepsToPromptTurns(steps: TestStep[]): PromptTurn[] {
           assertion: widgetAssertionToStepAssertion(a),
         });
         widgetGroups.set(a.toolName, g);
-      } else if (a.type === "toolCalledWith") {
-        // A tool-call assert is represented as an expected tool call so it's
-        // evaluated by the matcher (`evaluateMultiTurnResults`), which runs on
-        // BOTH the local and hosted/free run paths. (Routing it to `turn.checks`
-        // would defeat the hosted path, which does not yet evaluate per-turn
-        // checks — see the runner — so the assertion would silently stop gating.
-        // Matching is order-agnostic, so this bucket choice doesn't change the
-        // result; the authored display position is preserved separately below
-        // via `childOrder`.)
+      } else if (
+        a.type === "toolCalledWith" &&
+        checkRole(a) !== "advisory"
+      ) {
+        // A gating tool-call assert is represented as an expected tool call so
+        // it's evaluated by the matcher (`evaluateMultiTurnResults`), which
+        // runs on BOTH the local and hosted/free run paths. An advisory
+        // `toolCalledWith` stays a predicate row — promoting it would mint a
+        // matcher expectation that can fail the trial. Matching is
+        // order-agnostic, so this bucket choice doesn't change the result; the
+        // authored display position is preserved separately below via
+        // `childOrder`.
         turn.expectedToolCalls.push({
           toolName: a.toolName,
           arguments: a.args.args ?? {},

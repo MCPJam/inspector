@@ -120,7 +120,7 @@ describe("groupGradersByStage", () => {
   it("reads the judge's role from the config, advisory by default", () => {
     const withoutRole = groupGradersByStage({ predicates: [] });
     const judge = withoutRole.byStage.userValue.find(
-      (row) => row.kind === "judge",
+      (row) => row.judgeSlot === "goalCompletion",
     );
     expect(judge?.role).toBe("advisory");
 
@@ -129,7 +129,8 @@ describe("groupGradersByStage", () => {
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
     expect(
-      gating.byStage.userValue.find((row) => row.kind === "judge")?.role,
+      gating.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
     ).toBe("gating");
 
     // Anything that is not the literal "gating" is advisory. The default has
@@ -141,21 +142,38 @@ describe("groupGradersByStage", () => {
       judgeConfig: { goalCompletion: { role: "GATING" as never } },
     });
     expect(
-      odd.byStage.userValue.find((row) => row.kind === "judge")?.role,
+      odd.byStage.userValue.find((row) => row.judgeSlot === "goalCompletion")
+        ?.role,
     ).toBe("advisory");
+
+    const groundedness = withoutRole.byStage.userValue.find(
+      (row) => row.judgeSlot === "groundedness",
+    );
+    expect(groundedness?.role).toBe("advisory");
+    expect(groundedness?.label).toBe("Groundedness judge");
   });
 
-  it("every predicate and match row is a gate", () => {
+  it("reads a predicate's role from checkRole", () => {
     const model = groupGradersByStage({
-      predicates: [samplePredicate("responseContains")],
+      predicates: [
+        samplePredicate("responseContains"),
+        {
+          ...samplePredicate("noToolErrors"),
+          role: "advisory",
+          severity: "warn",
+        },
+      ],
     });
-    const nonJudge = USER_VALUE_STAGES.flatMap(
+    const predicates = USER_VALUE_STAGES.flatMap(
       (stage) => model.byStage[stage],
-    ).filter((row) => row.kind !== "judge");
-    expect(nonJudge.length).toBeGreaterThan(0);
-    // There is no per-predicate role on the backend, so a row rendered as
-    // advisory here would be a control with nowhere to go.
-    expect(nonJudge.every((row) => row.role === "gating")).toBe(true);
+    ).filter((row) => row.kind === "predicate");
+    expect(predicates.map((row) => row.role)).toEqual(["gating", "advisory"]);
+    expect(predicates.map((row) => row.severity)).toEqual([undefined, "warn"]);
+    expect(
+      USER_VALUE_STAGES.flatMap((stage) => model.byStage[stage])
+        .filter((row) => row.kind === "match")
+        .every((row) => row.role === "gating"),
+    ).toBe(true);
   });
 
   it("places an unknown predicate kind without throwing", () => {
@@ -204,7 +222,7 @@ describe("STAGE_EMPTY_COPY", () => {
     ];
     for (const stage of runnerMeasured) {
       expect(stageEmptyIsGap(stage), stage).toBe(false);
-      expect(STAGE_EMPTY_COPY[stage]).toContain("Measured by the runner");
+      expect(STAGE_EMPTY_COPY[stage]).toContain("Observed by the runner");
     }
     for (const stage of ["selection", "response", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
@@ -233,27 +251,53 @@ describe("stageConfigStates", () => {
     expect(stateOf(states, "connection")).toMatchObject({
       state: "runner",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "discovery")).toMatchObject({
       state: "runner",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "selection")).toMatchObject({
       state: "gated",
       gates: 2,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "call")).toMatchObject({
       state: "gated",
       gates: 1,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "response")).toMatchObject({
       state: "gap",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "userValue")).toMatchObject({
       state: "judgeOnRequest",
       gates: 0,
+      warn: 0,
+      report: 0,
       judge: "manual",
+    });
+  });
+
+  it("counts warn and report separately from gates", () => {
+    const states = statesFor({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" },
+        { type: "responseContains", needle: "hi", role: "advisory" },
+      ],
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      gates: 0,
+      warn: 1,
+      report: 1,
     });
   });
 

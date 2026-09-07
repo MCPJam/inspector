@@ -59,10 +59,15 @@ import {
   IMPORT_MAPPING_STATUSES,
   isEvalVerdictPolicyV2,
   opaqueIdSchema,
+  parseSuiteGatePolicyForAuthoring,
+  suiteGatePolicySchema,
+  suiteGateReportSchema,
 } from "@mcpjam/sdk/contract";
 import type {
   EvalRunRouteFacts,
   EvalStageAnalyticsV1,
+  SuiteGatePolicyV1,
+  SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
 import { checkEvalHarnessStaticAdmission } from "../../services/evals/harness-admission.js";
 import { loadSuiteHostConfig } from "../../services/evals/compat-runtime.js";
@@ -853,6 +858,23 @@ function createConvexReadClient(convexAuthToken: string): ConvexHttpClient {
 function isConvexNotVisibleError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   return /not found|unauthorized|not a member/i.test(message);
+}
+
+/**
+ * A deployment that predates the named Convex function.
+ *
+ * Checked BEFORE {@link isConvexNotVisibleError}: Convex's missing-function
+ * prose contains "not found", and treating that as a hidden run would turn
+ * an undeployed evaluator into "this run has no policy".
+ */
+function isConvexFunctionMissing(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Could not find (public )?function/i.test(message);
+}
+
+function convexFunctionUnavailableError(message: string): WebRouteError {
+  // Status is remapped by the v1 envelope: FEATURE_NOT_SUPPORTED is 422.
+  return new WebRouteError(422, ErrorCode.FEATURE_NOT_SUPPORTED, message);
 }
 
 /**
@@ -1935,6 +1957,24 @@ function toSuiteDetailDto(
           typeof goal?.threshold === "number"
             ? goal.threshold
             : GOAL_COMPLETION_DEFAULTS.threshold,
+        ...(goal?.severity === "warn" ? { severity: "warn" as const } : {}),
+        // Stored groundedness, when present. Not resolved over defaults —
+        // C1 registers no configurable groundedness defaults.
+        ...(suite.judgeConfig?.groundedness
+          ? {
+              groundedness: {
+                role: "advisory" as const,
+                model: suite.judgeConfig.groundedness.judgeModel ?? null,
+                threshold:
+                  typeof suite.judgeConfig.groundedness.threshold === "number"
+                    ? suite.judgeConfig.groundedness.threshold
+                    : null,
+                ...(suite.judgeConfig.groundedness.severity === "warn"
+                  ? { severity: "warn" as const }
+                  : {}),
+              },
+            }
+          : {}),
         // The suite's own criteria, so a caller can read back what it wrote.
         // `null` for a suite with none — distinct from an empty list, which the
         // write side refuses precisely because "asks nothing" is not "absent".
@@ -1968,6 +2008,9 @@ function toSuiteDetailDto(
       policy: isEvalVerdictPolicyV2(suite.verdictPolicyVersion)
         ? ("v2" as const)
         : ("legacy" as const),
+      // Live quality-gate policy. `null` when the suite has none — that is
+      // `not_configured` at evaluate time, not an absent feature.
+      qualityGate: toQualityGateDto(suite.gatePolicy),
     },
     schedule: {
       enabled: suite.schedule?.enabled === true,
@@ -2005,6 +2048,14 @@ function toSuiteDetailDto(
     createdAt: suite.createdAt ?? null,
     updatedAt: suite.updatedAt ?? null,
   };
+}
+
+function toQualityGateDto(value: unknown): SuiteGatePolicyV1 | null {
+  if (value == null || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const parsed = suiteGatePolicySchema.safeParse(value);
+  return parsed.success ? parsed.data : (value as SuiteGatePolicyV1);
 }
 
 /** Map a HostConfigDtoV2 (from getSuiteConfig) back to a HostConfigInputV2. */
@@ -2333,6 +2384,17 @@ export const updateSuiteSchema = z.strictObject({
           // `enabled` forever and never grade a run.
           autoRun: z.boolean().optional(),
           threshold: z.number().min(0).max(1).optional(),
+          /**
+           * Presentation severity on the goal-completion slot. Legal only
+           * with an advisory role; the platform refuses it beside gating.
+           */
+          severity: z.literal("warn").optional(),
+          /**
+           * Reserved C1 slot. Accepted here only so a write is an explicit
+           * 400 rather than a silent strip — groundedness is not authorable
+           * while execution is unwired.
+           */
+          groundedness: z.unknown().optional(),
           // The suite's own grading criteria, handed to the judge alongside
           // each case's expected output. `null` CLEARS them; an empty array is
           // refused because a rubric that asks nothing is not the absence of
@@ -2363,6 +2425,16 @@ export const updateSuiteSchema = z.strictObject({
             ])
             .optional(),
         })
+        .superRefine((judge, ctx) => {
+          if (judge.groundedness !== undefined) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["groundedness"],
+              message:
+                "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+            });
+          }
+        })
         .optional(),
       // ── The v2 verdict policy ────────────────────────────────────────────
       //
@@ -2385,6 +2457,11 @@ export const updateSuiteSchema = z.strictObject({
         })
         .strict()
         .optional(),
+      // Live quality-gate policy. `null` CLEARS it. Comparative conditions
+      // require a baseline; `previous_completed` is reserved until a later
+      // capability advertises it. See the top-level refine for the required
+      // revision precondition and reason.
+      qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
     })
     .superRefine((settings, ctx) => {
       // The two policies are alternatives, not layers. A body carrying both a
@@ -2419,6 +2496,40 @@ export const updateSuiteSchema = z.strictObject({
    * from `revisionNumber` on the suite detail.
    */
   expectedRevisionNumber: z.number().int().min(0).optional(),
+  /**
+   * Why this edit is being made. Required (nonblank, ≤500) whenever
+   * `settings.qualityGate` is present — the same rule the platform enforces
+   * on `applySuiteSettings`. Omitted for every other field.
+   */
+  revisionNote: z.string().max(500).optional(),
+}).superRefine((body, ctx) => {
+  if (body.settings?.qualityGate === undefined) return;
+  if (body.expectedRevisionNumber === undefined) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedRevisionNumber"],
+      message:
+        "expectedRevisionNumber is required when settings.qualityGate is present.",
+    });
+  }
+  const note = body.revisionNote?.trim() ?? "";
+  if (note.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["revisionNote"],
+      message: "revisionNote is required when settings.qualityGate is present.",
+    });
+  }
+  if (body.settings.qualityGate !== null) {
+    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
+    if (!parsed.ok) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["settings", "qualityGate"],
+        message: parsed.message,
+      });
+    }
+  }
 });
 
 /**
@@ -2711,7 +2822,17 @@ function caseBatchFailureToWebError(
  * test cases must include at least one assertion") are caller mistakes (404 /
  * 400), not 500s.
  */
-function translateConvexWriteError(error: unknown): WebRouteError {
+function translateConvexWriteError(
+  error: unknown,
+  /**
+   * What the CALLER was writing, for the one refusal that names a feature.
+   * The translator is shared by seventeen call sites — suite create/update,
+   * environments, hosts, schedules, comparisons, case writes — so a missing
+   * Convex function must not report every one of them as a quality-gate
+   * limitation.
+   */
+  feature = "these eval settings writes",
+): WebRouteError {
   // The revision precondition, before the generic mapping.
   //
   // The shared translator maps `code === "CONFLICT"` to a 409, and the suite
@@ -2722,7 +2843,36 @@ function translateConvexWriteError(error: unknown): WebRouteError {
   // that their draft was stale. Reported here with the CURRENT number, because
   // "reload and retry" is only actionable if the caller learns what to retry
   // against.
+  if (isConvexFunctionMissing(error)) {
+    return convexFunctionUnavailableError(
+      `This MCPJam deployment does not serve ${feature}.`,
+    );
+  }
   const data = (error as { data?: unknown } | null | undefined)?.data;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const code = (data as { code?: unknown }).code;
+    const message = (data as { message?: unknown }).message;
+    const prose = typeof message === "string" ? message : undefined;
+    if (code === "EVAL_GATE_POLICY_FORBIDDEN") {
+      return new WebRouteError(
+        403,
+        ErrorCode.FORBIDDEN,
+        prose ?? "You do not have permission to change the quality-gate policy.",
+      );
+    }
+    if (
+      code === "EVAL_GATE_POLICY_REASON_REQUIRED" ||
+      code === "EVAL_GATE_POLICY_INVALID" ||
+      code === "EVAL_GATE_POLICY_UNSUPPORTED" ||
+      code === "EVAL_GATE_POLICY_BASELINE_INVALID"
+    ) {
+      return new WebRouteError(
+        400,
+        ErrorCode.VALIDATION_ERROR,
+        prose ?? "Quality-gate policy was refused.",
+      );
+    }
+  }
   if (
     data &&
     typeof data === "object" &&
@@ -5334,6 +5484,83 @@ evals.get(
   },
 );
 
+// GET /v1/projects/:projectId/eval-runs/:runId/gate
+//
+// ONE run's suite quality-gate report (`SuiteGateReportV1`), evaluated by
+// the backend against the suite's stored policy. The project is bound in
+// the path; the run is authorized FIRST so a valid id from another of the
+// caller's projects reads as NOT_FOUND rather than leaking through the
+// evaluator.
+//
+// A 404 is ONLY "this run is not visible". `not_configured` is a 200
+// report, never a missing route. A deployment that predates the evaluator
+// is FEATURE_NOT_SUPPORTED (422) — never a 404 that could be read as "no
+// policy".
+const RUN_GATE_NOT_FOUND = "Eval run not found";
+
+evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
+  const projectId = c.req.param("projectId");
+  const runId = c.req.param("runId");
+  const convex = createConvexReadClient(await getConvexBearerForRequest(c));
+
+  let document: unknown;
+  try {
+    const run = await convex.query("testSuites:getTestSuiteRun" as any, {
+      runId,
+    });
+    requireProjectMatch(run, projectId, "Eval run");
+    document = await convex.query("testSuites:evaluateSuiteGate" as any, {
+      runId,
+    });
+  } catch (error) {
+    if (isConvexFunctionMissing(error)) {
+      throw convexFunctionUnavailableError(
+        "This MCPJam deployment does not serve eval run quality-gate evaluation. That is a fact about the deployment, not about the run — do not report the run as having no policy.",
+      );
+    }
+    if (isConvexNotVisibleError(error)) {
+      throw new WebRouteError(404, ErrorCode.NOT_FOUND, RUN_GATE_NOT_FOUND);
+    }
+    throw error;
+  }
+
+  if (document === null || document === undefined) {
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Quality-gate evaluation returned no report",
+    );
+  }
+
+  // B1b's query returns `{ report, receipt, evidence }`. The public route
+  // projects `SuiteGateReportV1` unchanged — the receipt is the backend's
+  // audit half and is not this contract.
+  const payload =
+    typeof document === "object" &&
+    document !== null &&
+    "report" in document &&
+    (document as { report?: unknown }).report !== undefined
+      ? (document as { report: unknown }).report
+      : document;
+
+  const parsed = suiteGateReportSchema.safeParse(payload);
+  if (!parsed.success) {
+    logger.warn("[v1 evals] run quality-gate report failed contract validation", {
+      projectId,
+      runId,
+      issue: parsed.error.issues[0]?.message ?? "unknown",
+      path: parsed.error.issues[0]?.path?.join(".") ?? "",
+    });
+    throw new WebRouteError(
+      502,
+      ErrorCode.SERVER_UNREACHABLE,
+      "Quality-gate report failed validation",
+    );
+  }
+
+  return v1Resource(c, parsed.data as SuiteGateReportV1);
+});
+
 // GET /v1/projects/:projectId/eval-runs/:runId/route-facts
 //
 // ONE run's materialized `EvalRunRouteFacts` document, addressed by run.
@@ -6607,12 +6834,22 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         goalCompletion.autoRun = s.judge.autoRun;
       if (s.judge.threshold !== undefined)
         goalCompletion.threshold = s.judge.threshold;
+      if (s.judge.severity !== undefined)
+        goalCompletion.severity = s.judge.severity;
       // The RUBRIC is a suite field, not a judge-config one — it is stored
       // beside `judgeConfig` because it is hashed into every verdict and
       // editing it retires the suite's calibration. Nested under `judge` on
       // the wire because that is where a caller looks for it.
       if (s.judge.rubric !== undefined) updateArgs.judgeRubric = s.judge.rubric;
-      updateArgs.judgeConfig = { goalCompletion };
+      // Preserve a stored groundedness slot. A goal-completion-only write
+      // must not drop the reserved slot; a groundedness write is refused
+      // by the schema before this merge runs.
+      updateArgs.judgeConfig = {
+        goalCompletion,
+        ...(suite!.judgeConfig?.groundedness
+          ? { groundedness: suite!.judgeConfig.groundedness }
+          : {}),
+      };
     }
     applyVerdictPolicySettings(suite!, s, updateArgs);
   }
@@ -6637,6 +6874,29 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
     preconditionCarried = true;
     return { expectedRevisionNumber: body.expectedRevisionNumber };
   };
+
+  // Quality-gate writes go through applySuiteSettings FIRST, before any
+  // other PATCH field, so a predictable authorization/reason refusal
+  // cannot leave the rest of the body already applied. The protected core
+  // is the only writer for this field.
+  if (body.settings?.qualityGate !== undefined) {
+    try {
+      await convexClient.mutation("testSuites:applySuiteSettings" as any, {
+        suiteId,
+        gatePolicy: body.settings.qualityGate,
+        revision: {
+          ...revision,
+          note: body.revisionNote,
+        },
+        ...takePrecondition(),
+      });
+    } catch (error) {
+      throw translateConvexWriteError(
+        error,
+        "quality-gate settings writes",
+      );
+    }
+  }
 
   // Only call updateTestSuite when there's something beyond the suiteId.
   if (Object.keys(updateArgs).length > 1) {

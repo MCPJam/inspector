@@ -870,9 +870,10 @@ describe("TestTemplateEditor run view from route", () => {
     expect(screen.queryByText("User prompt")).not.toBeInTheDocument();
   });
 
-  it("falls back to the flat step-list editor for a multi-turn case on the Evaluate surface", async () => {
+  it("keeps a multi-turn case in the workspace and lists what the form cannot author", async () => {
     activeCaseDoc = {
       ...caseDoc,
+      isNegativeTest: false,
       steps: [
         { id: "p1", kind: "prompt", prompt: "first" },
         { id: "p2", kind: "prompt", prompt: "second" },
@@ -898,10 +899,166 @@ describe("TestTemplateEditor run view from route", () => {
     );
 
     await waitFor(() => {
-      expect(screen.getAllByText("User prompt").length).toBeGreaterThan(0);
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
     });
-    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
-    expect(screen.getByText("Steps")).toBeInTheDocument();
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+    // The second prompt has no section in the form, so it is listed rather
+    // than hidden — this surface has no other editor to fall back to.
+    const leftovers = screen.getAllByTestId("simple-case-leftover-row");
+    expect(leftovers).toHaveLength(1);
+    expect(leftovers[0]).toHaveTextContent('Prompt: "second"');
+  });
+
+  /**
+   * The shape every CLI- and SDK-authored case has: checks stored as assert
+   * steps, no `toolCalledWith`. The editor used to READ that as "expects no
+   * tools" and save it as a negative test, which then failed on the route.
+   */
+  const goldenCaseDoc = {
+    ...caseDoc,
+    isNegativeTest: false,
+    steps: [
+      { id: "s1", kind: "prompt", prompt: "Who am I signed in as?" },
+      {
+        id: "a1",
+        kind: "assert",
+        assertion: { type: "firstToolWas", toolName: "get_me" },
+      },
+      {
+        id: "a2",
+        kind: "assert",
+        assertion: {
+          type: "responseContains",
+          needle: "marcelo@mcpjam.com",
+        },
+      },
+      { id: "a3", kind: "assert", assertion: { type: "noToolErrors" } },
+    ],
+  };
+
+  const renderGoldenCase = (props: Record<string, unknown> = {}) =>
+    renderWithProviders(
+      <TestTemplateEditor
+        simpleCaseEditor
+        suiteIterations={[]}
+        suiteId="suite-1"
+        selectedTestCaseId="case-1"
+        connectedServerNames={new Set(["srv"])}
+        projectId={null}
+        availableModels={[
+          {
+            provider: "openai",
+            model: "gpt-4",
+            label: "GPT-4",
+          } as any,
+        ]}
+        {...props}
+      />,
+    );
+
+  it("shows a step-authored case in the workspace and leaves its flag alone", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(screen.getAllByTestId("simple-case-step-check")).toHaveLength(3);
+    expect(
+      screen.getByTestId("simple-case-tools-checks-hint"),
+    ).toBeInTheDocument();
+    // Opening a case must not make it dirty: Save appears only on a change.
+    expect(screen.queryAllByRole("button", { name: /^save/i })).toHaveLength(0);
+    expect(updateTestCaseMutationMock).not.toHaveBeenCalled();
+  });
+
+  it("saves a step-authored case as POSITIVE, not as a negative test", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.type(screen.getByLabelText("Needle"), "!");
+    await user.click(screen.getAllByRole("button", { name: /save/i })[0]!);
+
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    const payload = updateTestCaseMutationMock.mock.calls.at(-1)?.[0];
+    expect(payload).toMatchObject({ isNegativeTest: false });
+    // The checks stay steps, in order, with their ids — never rewritten into
+    // case predicates, which grade at a different point in the run.
+    expect(payload.steps.map((step: any) => step.id)).toEqual([
+      "s1",
+      "a1",
+      "a2",
+      "a3",
+    ]);
+    expect(payload.steps[2].assertion).toMatchObject({
+      type: "responseContains",
+      needle: "marcelo@mcpjam.com!",
+    });
+  });
+
+  it("quick-runs a step-authored case with the negative flag off", async () => {
+    const user = userEvent.setup();
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    await user.click(screen.getAllByRole("button", { name: /run$/i })[0]!);
+
+    await waitFor(() => {
+      expect(streamEvalTestCaseMock).toHaveBeenCalled();
+    });
+    const request = streamEvalTestCaseMock.mock.calls.at(-1)?.[0];
+    expect(request.testCaseOverrides.isNegativeTest).toBe(false);
+  });
+
+  it("does not block a model-free render check behind the tool question", async () => {
+    // A pinned `toolCall` case has no model turn, so the tool question does not
+    // apply — and asking it anyway blocked Save on a shape the old page saved
+    // fine. It also must not be relabelled negative: `isNegativeTest` stays
+    // whatever the case already carried.
+    activeCaseDoc = {
+      ...caseDoc,
+      isNegativeTest: false,
+      steps: [
+        {
+          id: "call-1",
+          kind: "toolCall",
+          serverName: "srv",
+          toolName: "render_widget",
+          arguments: {},
+        },
+      ],
+    } as typeof activeCaseDoc;
+    const user = userEvent.setup();
+    renderGoldenCase();
+
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("simple-case-tools-unset"),
+    ).not.toBeInTheDocument();
+    expect(screen.getByTestId("simple-case-route-locked")).toBeInTheDocument();
+
+    await user.type(
+      screen.getByLabelText("What does a good answer accomplish?"),
+      "renders",
+    );
+    await user.click(screen.getAllByRole("button", { name: /^save/i })[0]!);
+    await waitFor(() => {
+      expect(updateTestCaseMutationMock).toHaveBeenCalled();
+    });
+    expect(updateTestCaseMutationMock.mock.calls.at(-1)?.[0]).toMatchObject({
+      isNegativeTest: false,
+    });
   });
 
   it("saves a no-tool simple case as a negative test", async () => {
@@ -1024,6 +1181,14 @@ describe("TestTemplateEditor run view from route", () => {
       expect(screen.getByText("User prompt")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
+    // Same workspace, same trial on the right — the step list is a column,
+    // not a different page.
+    expect(screen.getByTestId("case-workspace")).toBeInTheDocument();
+
+    await user.click(screen.getByTestId("case-workspace-back-to-form"));
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
   });
 
   it("shows the quick-run chain in the latest-traced pane", async () => {
