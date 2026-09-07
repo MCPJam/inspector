@@ -217,7 +217,22 @@ export function LocalHarnessTrustDialog({
     setPathDraft("");
   };
 
-  const blockingCopy = blockingReason(controller.phase, controller.reason);
+  // A disabled button with nothing on screen explaining it is the failure this
+  // dialog is otherwise arranged to avoid, so every reason `canApprove` can be
+  // false for has copy — including the two that are facts about the machine
+  // rather than states of the flow.
+  const blockingCopy =
+    blockingReason(controller.phase, controller.reason) ??
+    (expectedPack === null
+      ? "MCPJam hasn't published a Claude Code runtime for this machine's " +
+        "operating system and processor, so there is nothing to install."
+      : availability !== null && availability.machineId == null
+        ? "This Inspector couldn't establish an identity for this machine, so " +
+          "it can't bind an authorization to it. Restart the Inspector, or " +
+          "check that it can write to its own state directory."
+        : displayRoot === null
+          ? "Choose a folder for Claude Code to work in."
+          : null);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

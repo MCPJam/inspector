@@ -903,6 +903,30 @@ describe("PlaygroundMain — local Claude Code", () => {
       expect(chipData()).toBeUndefined();
     });
 
+    it("explains a disabled Approve rather than leaving it dead", async () => {
+      // A machine with no runtime pack built for it. The button cannot be
+      // enabled, so the dialog has to say why — a disabled control with
+      // nothing on screen is the failure this flow is arranged to avoid.
+      (mockLocalHarness.state.availability as { expectedPack: unknown }).expectedPack =
+        null;
+      try {
+        render(<PlaygroundMain {...defaultProps} />);
+        type("pwd");
+        await submit();
+        expect(
+          screen.getByTestId("local-harness-trust-blocked"),
+        ).toHaveTextContent(/hasn't published a Claude Code runtime/);
+        expect(screen.getByTestId("local-harness-trust-approve")).toBeDisabled();
+      } finally {
+        (
+          mockLocalHarness.state.availability as { expectedPack: unknown }
+        ).expectedPack = {
+          packVersion: "3.4.0",
+          treeDigest: "sha256:" + "a".repeat(64),
+        };
+      }
+    });
+
     it("passes unknown cloud availability through rather than inventing one", () => {
       mockLocalHarness.state.hostedAvailable = null;
       mockLocalHarness.state.phase = "loading";
