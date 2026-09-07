@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
-import type { HostedOAuthServerDescriptor } from "@/hooks/hosted/use-hosted-oauth-gate";
+import { useEffect, useState } from "react";
 
 export function scenarioIntroDismissedStorageKey(scenarioId: string): string {
   return `scenario-intro-dismissed-${scenarioId}`;
@@ -12,55 +11,46 @@ export interface PendingOAuthEntry {
 
 export interface UseScenarioHostIntroGateArgs {
   scenarioId: string;
-  servers: Pick<
-    HostedOAuthServerDescriptor,
-    "useOAuth" | "authorizationRequiredUpfront"
-  >[];
   oauthPending: boolean;
-  /** True while OAuth is launching, resuming, or verifying — welcome waits behind this. */
+  /** True while OAuth is launching, resuming, or verifying — consent waits behind this. */
   hasBusyOAuth: boolean;
-  /** Pending rows from useHostedOAuthGate (for needs_auth-only welcome). */
+  /** Pending rows from useHostedOAuthGate, to reset the auth panel's dismissal. */
   pendingOAuthServers: PendingOAuthEntry[];
-  /**
-   * Whether the creator has host-authored welcome content to show. When false,
-   * the welcome overlay is skipped and the gate falls through to either the
-   * auth panel (OAuth pending) or the chat composer.
-   */
-  welcomeAvailable: boolean;
 }
 
 /**
- * Welcome overlay: first-time non-OAuth scenarios, or OAuth scenarios that still
- * need consent. When OAuth is already satisfied on load, we persist dismissal
- * so runtime OAuth errors from chat show the auth overlay instead of welcome.
- * Also silent-skipped entirely when the creator has no host-authored content
- * (`welcomeAvailable = false`).
+ * What a tester has to get past before they can send a message: the recording
+ * notice, then any authorization the session needs.
+ *
+ * **Consent is UNCONDITIONAL and comes FIRST (BB-176).** It used to be a
+ * creator-authored "welcome" overlay, shown only when the creator had written
+ * a body — so whether a tester was told their session would be read came down
+ * to whether someone remembered to type it, and the notice competed with
+ * whatever else that copy said. Recording is a product statement, so the
+ * dialog is product-owned, always shown once per session, and asked before
+ * authorization: consenting to being read is a precondition for the session,
+ * not one step among several.
+ *
+ * A consequence worth naming: an OAuth scenario whose authorization is already
+ * satisfied on load still shows consent. The version this replaces persisted a
+ * dismissal in exactly that case, so runtime OAuth errors from chat would show
+ * the auth overlay rather than a stale welcome — and that shortcut is not
+ * available to a notice that must not be skippable. Consent is separately
+ * latched from the auth panel, so a runtime 401 after consent still surfaces
+ * the auth overlay.
+ *
+ * Dismissal is per scenario, in `sessionStorage`: it survives a reload and the
+ * OAuth redirect round trip (same tab, same origin), and a new tab asks again.
  */
 export function useScenarioHostIntroGate({
   scenarioId,
-  servers,
   oauthPending,
   hasBusyOAuth,
   pendingOAuthServers,
-  welcomeAvailable,
 }: UseScenarioHostIntroGateArgs) {
   const storageKey = scenarioIntroDismissedStorageKey(scenarioId);
 
-  // Servers that actually gate this session, not servers that merely COULD use
-  // OAuth: `useOAuth` is a compat mirror that is true for discover rows too, so
-  // counting it treated a no-auth scenario as an OAuth one and skipped the
-  // welcome overlay it should have shown.
-  const oauthServerCount = useMemo(
-    () =>
-      servers.filter(
-        (s) => s.useOAuth && s.authorizationRequiredUpfront !== false,
-      ).length,
-    [servers],
-  );
-
-  const nonOAuthFirstVisit = oauthServerCount === 0;
-
-  const [introDismissed, setIntroDismissed] = useState(() => {
+  const [consentAccepted, setConsentAccepted] = useState(() => {
     try {
       return sessionStorage.getItem(storageKey) === "1";
     } catch {
@@ -68,35 +58,31 @@ export function useScenarioHostIntroGate({
     }
   });
 
+  /**
+   * The tester chose Leave.
+   *
+   * NOT persisted, and reset when the scenario changes: leaving is a decision
+   * about this page view, and someone who reloads is asking again rather than
+   * being permanently locked out of a link they hold.
+   */
+  const [consentDeclined, setConsentDeclined] = useState(false);
+
   useEffect(() => {
     try {
-      setIntroDismissed(sessionStorage.getItem(storageKey) === "1");
+      setConsentAccepted(sessionStorage.getItem(storageKey) === "1");
     } catch {
-      setIntroDismissed(false);
+      setConsentAccepted(false);
     }
+    setConsentDeclined(false);
   }, [storageKey]);
 
-  useEffect(() => {
-    if (oauthPending) return;
-    if (nonOAuthFirstVisit) return;
-    try {
-      if (sessionStorage.getItem(storageKey) === "1") return;
-      sessionStorage.setItem(storageKey, "1");
-    } catch {
-      return;
-    }
-    setIntroDismissed(true);
-  }, [oauthPending, nonOAuthFirstVisit, servers.length, storageKey]);
-
-  const onlyNeedsAuthIdle =
-    oauthPending &&
-    pendingOAuthServers.every(({ state }) => state.status === "needs_auth");
-
-  const showWelcome =
-    welcomeAvailable &&
-    !introDismissed &&
-    !hasBusyOAuth &&
-    (nonOAuthFirstVisit || (oauthServerCount > 0 && onlyNeedsAuthIdle));
+  /**
+   * Held back only while OAuth is mid-flight. A tester returning from an
+   * authorization redirect consented before they left (same tab, so the latch
+   * is still there); stacking a dialog over a resuming authorization would ask
+   * a question they cannot answer yet.
+   */
+  const showConsent = !consentAccepted && !consentDeclined && !hasBusyOAuth;
 
   /**
    * The recipient's way out of an authorization that cannot succeed.
@@ -123,17 +109,35 @@ export function useScenarioHostIntroGate({
     setAuthPanelDismissed(false);
   }, [pendingSignature]);
 
-  const showAuthPanel = oauthPending && !showWelcome && !authPanelDismissed;
+  // Consent outranks authorization: one dialog at a time, and the recording
+  // notice is the one that has to come first.
+  const showAuthPanel = oauthPending && !showConsent && !authPanelDismissed;
 
-  const composerBlocked = (oauthPending && !authPanelDismissed) || showWelcome;
+  const composerBlocked =
+    (oauthPending && !authPanelDismissed) || showConsent || consentDeclined;
 
-  const dismissIntro = () => {
+  const acceptConsent = () => {
     try {
       sessionStorage.setItem(storageKey, "1");
     } catch {
-      // ignore
+      // A tester who cannot persist re-consents on the next reload, which is
+      // the safe direction to fail in.
     }
-    setIntroDismissed(true);
+    setConsentAccepted(true);
+    setConsentDeclined(false);
+  };
+
+  const declineConsent = () => {
+    setConsentDeclined(true);
+  };
+
+  /**
+   * Back from the declined panel. Clears the refusal WITHOUT accepting, so the
+   * dialog is asked again — rejoining is a change of mind about answering, not
+   * an answer.
+   */
+  const rejoinAfterDecline = () => {
+    setConsentDeclined(false);
   };
 
   const dismissAuthPanel = () => {
@@ -141,10 +145,13 @@ export function useScenarioHostIntroGate({
   };
 
   return {
-    showWelcome,
+    showConsent,
+    consentDeclined,
     showAuthPanel,
     composerBlocked,
-    dismissIntro,
+    acceptConsent,
+    declineConsent,
+    rejoinAfterDecline,
     dismissAuthPanel,
   };
 }

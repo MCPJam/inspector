@@ -20,140 +20,100 @@ function server(
   };
 }
 
+function renderOverlays(
+  props: Partial<
+    React.ComponentProps<typeof ScenarioHostOnboardingOverlays>
+  > = {},
+) {
+  return render(
+    <ScenarioHostOnboardingOverlays
+      showConsent={false}
+      hasTasks={false}
+      onAcceptConsent={vi.fn()}
+      onDeclineConsent={vi.fn()}
+      showAuthPanel={false}
+      pendingOAuthServers={[]}
+      authorizeServer={vi.fn()}
+      isFinishingOAuth={false}
+      {...props}
+    />,
+  );
+}
+
 describe("ScenarioHostOnboardingOverlays", () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  describe("welcome dialog", () => {
-    it("renders welcome body text when showWelcome=true and body is present", () => {
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={vi.fn()}
-          welcomeBody="Welcome — thanks for trying this out."
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
+  describe("recording consent dialog", () => {
+    it("states that the session is recorded, with both answers offered", () => {
+      renderOverlays({ showConsent: true });
 
       expect(
-        screen.getByText("Welcome — thanks for trying this out."),
+        screen.getByText("This session will be recorded"),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Get Started" }),
+        screen.getByText(/team conducting the study will be able to read it/i),
       ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Continue" }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Leave" })).toBeInTheDocument();
     });
 
-    it("does not render welcome when showWelcome=true but body is empty", () => {
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={vi.fn()}
-          welcomeBody=""
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
+    it("renders nothing when consent is not being asked", () => {
+      renderOverlays({ showConsent: false });
 
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByText("This session will be recorded"),
       ).not.toBeInTheDocument();
     });
 
-    it("does not render welcome when showWelcome=true but body is whitespace only", () => {
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={vi.fn()}
-          welcomeBody="   "
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
+    it("points at the task control only when the study has tasks", () => {
+      // Naming a header button that is not rendered sends the tester looking
+      // for a control that does not exist.
+      const withoutTasks = renderOverlays({ showConsent: true });
+      expect(screen.queryByText(/top right/i)).not.toBeInTheDocument();
+      withoutTasks.unmount();
 
+      renderOverlays({ showConsent: true, hasTasks: true });
+      expect(screen.getByText(/top right/i)).toBeInTheDocument();
+    });
+
+    it("Continue accepts and Leave declines", () => {
+      const onAcceptConsent = vi.fn();
+      const onDeclineConsent = vi.fn();
+      renderOverlays({ showConsent: true, onAcceptConsent, onDeclineConsent });
+
+      fireEvent.click(screen.getByRole("button", { name: "Continue" }));
+      expect(onAcceptConsent).toHaveBeenCalledTimes(1);
+      expect(onDeclineConsent).not.toHaveBeenCalled();
+
+      fireEvent.click(screen.getByRole("button", { name: "Leave" }));
+      expect(onDeclineConsent).toHaveBeenCalledTimes(1);
+    });
+
+    it("has no close affordance, and neither Escape nor the backdrop answers for the tester", () => {
+      // The overlay this replaces dismissed itself on a backdrop click, so "I
+      // read the notice" and "I clicked past something" were one gesture.
+      const onAcceptConsent = vi.fn();
+      const onDeclineConsent = vi.fn();
+      renderOverlays({ showConsent: true, onAcceptConsent, onDeclineConsent });
+
+      const dialog = screen.getByRole("alertdialog");
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
+        screen.queryByRole("button", { name: /close/i }),
       ).not.toBeInTheDocument();
-    });
 
-    it("does not render welcome when showWelcome=false even with body present", () => {
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome={false}
-          onGetStarted={vi.fn()}
-          welcomeBody="Hello"
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
+      fireEvent.keyDown(dialog, { key: "Escape", code: "Escape" });
+      fireEvent.click(dialog);
+      fireEvent.pointerDown(document.body);
 
+      expect(onAcceptConsent).not.toHaveBeenCalled();
+      expect(onDeclineConsent).not.toHaveBeenCalled();
       expect(
-        screen.queryByRole("button", { name: "Get Started" }),
-      ).not.toBeInTheDocument();
-    });
-
-    it("calls onGetStarted when Get Started button is clicked", () => {
-      const onGetStarted = vi.fn();
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={onGetStarted}
-          welcomeBody="Hello"
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
-
-      fireEvent.click(screen.getByRole("button", { name: "Get Started" }));
-      expect(onGetStarted).toHaveBeenCalledTimes(1);
-    });
-
-    it("calls onGetStarted when backdrop is clicked", () => {
-      const onGetStarted = vi.fn();
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={onGetStarted}
-          welcomeBody="Hello"
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
-
-      fireEvent.click(screen.getByRole("dialog"));
-      expect(onGetStarted).toHaveBeenCalledTimes(1);
-    });
-
-    it("does not call onGetStarted when the card itself is clicked (stopPropagation)", () => {
-      const onGetStarted = vi.fn();
-      render(
-        <ScenarioHostOnboardingOverlays
-          showWelcome
-          onGetStarted={onGetStarted}
-          welcomeBody="Hello"
-          showAuthPanel={false}
-          pendingOAuthServers={[]}
-          authorizeServer={vi.fn()}
-          isFinishingOAuth={false}
-        />,
-      );
-
-      // Click the text node inside the card (not the backdrop, not the button)
-      fireEvent.click(screen.getByText("Hello"));
-      expect(onGetStarted).not.toHaveBeenCalled();
+        screen.getByText("This session will be recorded"),
+      ).toBeInTheDocument();
     });
   });
 
@@ -165,8 +125,10 @@ describe("ScenarioHostOnboardingOverlays", () => {
 
       const { rerender } = render(
         <ScenarioHostOnboardingOverlays
-          showWelcome={false}
-          onGetStarted={vi.fn()}
+          showConsent={false}
+          hasTasks={false}
+          onAcceptConsent={vi.fn()}
+          onDeclineConsent={vi.fn()}
           showAuthPanel
           pendingOAuthServers={[
             {
@@ -197,8 +159,10 @@ describe("ScenarioHostOnboardingOverlays", () => {
       await act(async () => {
         rerender(
           <ScenarioHostOnboardingOverlays
-            showWelcome={false}
-            onGetStarted={vi.fn()}
+            showConsent={false}
+            hasTasks={false}
+            onAcceptConsent={vi.fn()}
+            onDeclineConsent={vi.fn()}
             showAuthPanel
             pendingOAuthServers={[
               {

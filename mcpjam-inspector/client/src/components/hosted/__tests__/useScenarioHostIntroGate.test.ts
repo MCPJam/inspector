@@ -2,43 +2,55 @@ import { act, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useScenarioHostIntroGate } from "../useScenarioHostIntroGate";
 
+const needsAuthRow = {
+  server: { serverId: "srv_1" },
+  state: { status: "needs_auth", errorMessage: null, serverUrl: null },
+};
+
 describe("useScenarioHostIntroGate", () => {
   afterEach(() => {
     sessionStorage.clear();
     vi.restoreAllMocks();
   });
 
-  it("shows welcome when OAuth servers only need_auth and intro not dismissed", () => {
+  it("shows the recording notice on a plain scenario and blocks the composer", () => {
     const { result } = renderHook(() =>
       useScenarioHostIntroGate({
-        scenarioId: "sbx_1",
-        servers: [{ useOAuth: true }],
-        oauthPending: true,
+        scenarioId: "sbx_plain",
+        oauthPending: false,
         hasBusyOAuth: false,
-        pendingOAuthServers: [
-          {
-            server: { serverId: "srv_1" },
-            state: {
-              status: "needs_auth",
-              errorMessage: null,
-              serverUrl: null,
-            },
-          },
-        ],
-        welcomeAvailable: true,
+        pendingOAuthServers: [],
       }),
     );
 
-    expect(result.current.showWelcome).toBe(true);
+    expect(result.current.showConsent).toBe(true);
+    expect(result.current.composerBlocked).toBe(true);
+  });
+
+  it("asks for consent BEFORE authorization", () => {
+    // Consenting to being read is a precondition for the session; the auth
+    // panel waits behind it so only one dialog is ever up.
+    const { result } = renderHook(() =>
+      useScenarioHostIntroGate({
+        scenarioId: "sbx_oauth",
+        oauthPending: true,
+        hasBusyOAuth: false,
+        pendingOAuthServers: [needsAuthRow],
+      }),
+    );
+
+    expect(result.current.showConsent).toBe(true);
     expect(result.current.showAuthPanel).toBe(false);
     expect(result.current.composerBlocked).toBe(true);
   });
 
-  it("shows auth panel instead of welcome while OAuth is busy", () => {
+  it("holds the notice back while OAuth is mid-flight", () => {
+    // A tester returning from an authorization redirect consented before they
+    // left; stacking a dialog over a resuming authorization asks a question
+    // they cannot answer yet.
     const { result } = renderHook(() =>
       useScenarioHostIntroGate({
-        scenarioId: "sbx_1",
-        servers: [{ useOAuth: true }],
+        scenarioId: "sbx_busy",
         oauthPending: true,
         hasBusyOAuth: true,
         pendingOAuthServers: [
@@ -47,143 +59,158 @@ describe("useScenarioHostIntroGate", () => {
             state: { status: "verifying", errorMessage: null, serverUrl: null },
           },
         ],
-        welcomeAvailable: true,
       }),
     );
 
-    expect(result.current.showWelcome).toBe(false);
+    expect(result.current.showConsent).toBe(false);
     expect(result.current.showAuthPanel).toBe(true);
   });
 
-  it("dismisses intro and hides welcome after dismissIntro", () => {
+  it("latches acceptance per scenario and then reveals the auth panel", () => {
     const { result } = renderHook(() =>
       useScenarioHostIntroGate({
-        scenarioId: "sbx_2",
-        servers: [{ useOAuth: true }],
+        scenarioId: "sbx_accept",
         oauthPending: true,
         hasBusyOAuth: false,
-        pendingOAuthServers: [
-          {
-            server: { serverId: "srv_1" },
-            state: {
-              status: "needs_auth",
-              errorMessage: null,
-              serverUrl: null,
-            },
-          },
-        ],
-        welcomeAvailable: true,
+        pendingOAuthServers: [needsAuthRow],
       }),
     );
 
-    expect(result.current.showWelcome).toBe(true);
+    expect(result.current.showConsent).toBe(true);
 
     act(() => {
-      result.current.dismissIntro();
+      result.current.acceptConsent();
     });
 
-    expect(result.current.showWelcome).toBe(false);
+    expect(result.current.showConsent).toBe(false);
     expect(result.current.showAuthPanel).toBe(true);
-    expect(sessionStorage.getItem("scenario-intro-dismissed-sbx_2")).toBe("1");
+    expect(sessionStorage.getItem("scenario-intro-dismissed-sbx_accept")).toBe(
+      "1",
+    );
   });
 
-  it("auto-persists intro dismissal when OAuth completes (not a non-OAuth first visit)", () => {
-    const { rerender } = renderHook(
+  it("does not ask again in a session that already consented", () => {
+    sessionStorage.setItem("scenario-intro-dismissed-sbx_seen", "1");
+    const { result } = renderHook(() =>
+      useScenarioHostIntroGate({
+        scenarioId: "sbx_seen",
+        oauthPending: false,
+        hasBusyOAuth: false,
+        pendingOAuthServers: [],
+      }),
+    );
+
+    expect(result.current.showConsent).toBe(false);
+    expect(result.current.composerBlocked).toBe(false);
+  });
+
+  it("never auto-latches consent — an OAuth scenario that loads authorized still asks", () => {
+    // The version this replaces persisted a dismissal exactly here, so that
+    // runtime OAuth errors would show the auth overlay rather than a stale
+    // welcome. A notice that must not be skippable cannot take that shortcut:
+    // whether the tester was told their session is read must not depend on
+    // whether their servers happened to need authorization.
+    const { result, rerender } = renderHook(
       ({ oauthPending }: { oauthPending: boolean }) =>
         useScenarioHostIntroGate({
-          scenarioId: "sbx_3",
-          servers: [{ useOAuth: true }],
+          scenarioId: "sbx_autolatch",
           oauthPending,
           hasBusyOAuth: false,
-          pendingOAuthServers: oauthPending
-            ? [
-                {
-                  server: { serverId: "srv_1" },
-                  state: {
-                    status: "needs_auth",
-                    errorMessage: null,
-                    serverUrl: null,
-                  },
-                },
-              ]
-            : [],
-          welcomeAvailable: true,
+          pendingOAuthServers: oauthPending ? [needsAuthRow] : [],
         }),
       { initialProps: { oauthPending: true } },
     );
 
     rerender({ oauthPending: false });
 
-    expect(sessionStorage.getItem("scenario-intro-dismissed-sbx_3")).toBe("1");
-  });
-
-  it("shows welcome for a no-server scenario when welcome is available", () => {
-    const { result } = renderHook(() =>
-      useScenarioHostIntroGate({
-        scenarioId: "sbx_noservers",
-        servers: [],
-        oauthPending: false,
-        hasBusyOAuth: false,
-        pendingOAuthServers: [],
-        welcomeAvailable: true,
-      }),
-    );
-
-    expect(result.current.showWelcome).toBe(true);
-    expect(result.current.composerBlocked).toBe(true);
-  });
-
-  it("does not auto-dismiss for a no-server scenario so welcome stays visible each session", () => {
-    const { result } = renderHook(() =>
-      useScenarioHostIntroGate({
-        scenarioId: "sbx_noservers2",
-        servers: [],
-        oauthPending: false,
-        hasBusyOAuth: false,
-        pendingOAuthServers: [],
-        welcomeAvailable: true,
-      }),
-    );
-
-    // Verify sessionStorage was NOT written (no auto-dismiss)
     expect(
-      sessionStorage.getItem("scenario-intro-dismissed-sbx_noservers2"),
+      sessionStorage.getItem("scenario-intro-dismissed-sbx_autolatch"),
     ).toBeNull();
-    expect(result.current.showWelcome).toBe(true);
+    expect(result.current.showConsent).toBe(true);
   });
 
-  it("skips welcome entirely and unblocks composer when welcome is not available", () => {
+  it("keeps the composer blocked after Leave, and re-asks on rejoin", () => {
     const { result } = renderHook(() =>
       useScenarioHostIntroGate({
-        scenarioId: "sbx_skip",
-        servers: [{ useOAuth: false }],
+        scenarioId: "sbx_leave",
         oauthPending: false,
         hasBusyOAuth: false,
         pendingOAuthServers: [],
-        welcomeAvailable: false,
       }),
     );
 
-    expect(result.current.showWelcome).toBe(false);
-    expect(result.current.showAuthPanel).toBe(false);
+    act(() => {
+      result.current.declineConsent();
+    });
+
+    // The dialog is gone but nothing was accepted: declining is an answer, so
+    // the session stays closed rather than falling open behind the dialog.
+    expect(result.current.showConsent).toBe(false);
+    expect(result.current.consentDeclined).toBe(true);
+    expect(result.current.composerBlocked).toBe(true);
+    expect(
+      sessionStorage.getItem("scenario-intro-dismissed-sbx_leave"),
+    ).toBeNull();
+
+    act(() => {
+      result.current.rejoinAfterDecline();
+    });
+
+    // Rejoining re-arms the question rather than answering it.
+    expect(result.current.showConsent).toBe(true);
+    expect(result.current.consentDeclined).toBe(false);
+  });
+
+  it("asks again for a different scenario in the same tab", () => {
+    const { result, rerender } = renderHook(
+      ({ scenarioId }: { scenarioId: string }) =>
+        useScenarioHostIntroGate({
+          scenarioId,
+          oauthPending: false,
+          hasBusyOAuth: false,
+          pendingOAuthServers: [],
+        }),
+      { initialProps: { scenarioId: "sbx_a" } },
+    );
+
+    act(() => {
+      result.current.acceptConsent();
+    });
+    expect(result.current.showConsent).toBe(false);
+
+    rerender({ scenarioId: "sbx_b" });
+
+    expect(result.current.showConsent).toBe(true);
+  });
+
+  it("survives a sessionStorage that throws", () => {
+    // A private window, or site data blocked. The safe direction to fail in is
+    // "ask again", never "assume they consented".
+    vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+
+    const { result } = renderHook(() =>
+      useScenarioHostIntroGate({
+        scenarioId: "sbx_nostorage",
+        oauthPending: false,
+        hasBusyOAuth: false,
+        pendingOAuthServers: [],
+      }),
+    );
+
+    expect(result.current.showConsent).toBe(true);
+
+    act(() => {
+      result.current.acceptConsent();
+    });
+
+    // Accepting still works for this page view even though it cannot persist.
+    expect(result.current.showConsent).toBe(false);
     expect(result.current.composerBlocked).toBe(false);
-  });
-
-  it("treats a discover server as non-OAuth even though useOAuth mirrors true", () => {
-    const { result } = renderHook(() =>
-      useScenarioHostIntroGate({
-        scenarioId: "sbx_discover",
-        servers: [{ useOAuth: true, authorizationRequiredUpfront: false }],
-        oauthPending: false,
-        hasBusyOAuth: false,
-        pendingOAuthServers: [],
-        welcomeAvailable: true,
-      }),
-    );
-
-    // Counted as an OAuth scenario, this one skipped its welcome overlay.
-    expect(result.current.showWelcome).toBe(true);
-    expect(result.current.showAuthPanel).toBe(false);
   });
 
   it("releases the composer on dismissAuthPanel and re-arms on a new requirement", () => {
@@ -191,15 +218,14 @@ describe("useScenarioHostIntroGate", () => {
       server: { serverId: "srv_1" },
       state: { status: "error", errorMessage: "nope", serverUrl: null },
     };
+    sessionStorage.setItem("scenario-intro-dismissed-sbx_deadend", "1");
     const { result, rerender } = renderHook(
       ({ pending }: { pending: (typeof errorRow)[] }) =>
         useScenarioHostIntroGate({
           scenarioId: "sbx_deadend",
-          servers: [{ useOAuth: true }],
           oauthPending: true,
           hasBusyOAuth: false,
           pendingOAuthServers: pending,
-          welcomeAvailable: false,
         }),
       { initialProps: { pending: [errorRow] } },
     );
@@ -223,31 +249,6 @@ describe("useScenarioHostIntroGate", () => {
       ],
     });
 
-    expect(result.current.showAuthPanel).toBe(true);
-  });
-
-  it("skips welcome but still shows auth panel when OAuth is pending and no welcome content", () => {
-    const { result } = renderHook(() =>
-      useScenarioHostIntroGate({
-        scenarioId: "sbx_auth_only",
-        servers: [{ useOAuth: true }],
-        oauthPending: true,
-        hasBusyOAuth: false,
-        pendingOAuthServers: [
-          {
-            server: { serverId: "srv_1" },
-            state: {
-              status: "needs_auth",
-              errorMessage: null,
-              serverUrl: null,
-            },
-          },
-        ],
-        welcomeAvailable: false,
-      }),
-    );
-
-    expect(result.current.showWelcome).toBe(false);
     expect(result.current.showAuthPanel).toBe(true);
   });
 });

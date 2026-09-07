@@ -917,79 +917,66 @@ describe("UserTestingScenarioDetail", () => {
 });
 
 /**
- * Preview docks beside Edit and embeds the live share link, which bootstraps
- * a real guest session. When it mounts is therefore a behaviour, not an
- * implementation detail: too eager and every visit to a scenario pollutes its
- * own Sessions list. Edit is a dedicated route, so leaving it unmounts Preview.
+ * Settings is ONE COLUMN — the docked Preview is gone (BB-176).
+ *
+ * The pane embedded the live share link, so merely OPENING Edit bootstrapped a
+ * real guest session that landed in the study's own Sessions list: the
+ * creator's editing was indistinguishable from tester traffic. It also spent
+ * half the screen on something whose only job was to be looked at, squeezing
+ * the form it sat beside. "Open preview" in the action row does the same job
+ * on demand, in a tab, and now says what it opens.
  */
-describe("UserTestingScenarioDetail — preview", () => {
-  it("does not embed anything until Edit is opened", () => {
+describe("UserTestingScenarioDetail — settings layout", () => {
+  it("never embeds the share link, on either route", () => {
     renderDetail();
+    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
 
+    renderEdit();
     expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Preview" }),
+      screen.queryByTestId("user-testing-edit-preview"),
     ).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId("user-testing-edit-button"));
-
-    expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit");
+    // No guest session was started just by opening the editor.
+    expect(previewPaneMock).not.toHaveBeenCalled();
   });
 
-  it("embeds this scenario's share link on the Edit route", () => {
+  it("lays Settings out as a single fixed-measure column", () => {
+    const { container } = renderEdit();
+
+    expect(screen.getByTestId("user-testing-edit-tab")).toBeInTheDocument();
+    // The 560px measure the frame specifies, not a percentage of a split pane
+    // that keeps shrinking as the window narrows.
+    expect(
+      container.querySelector('[class*="w-[560px]"]'),
+    ).not.toBeNull();
+    // A resizable split is what the fixed measure replaced.
+    expect(container.querySelector("[data-panel-group]")).toBeNull();
+  });
+
+  it("says what Open preview opens, without lengthening the label", () => {
+    // Research read this button as a second step of setting the study up
+    // rather than as the tester's own session.
     renderEdit();
 
-    expect(screen.getByTestId("user-testing-edit-preview")).toBeInTheDocument();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ publishLink: "https://mcpjam.link/t/tok" }),
+    const link = screen.getByTestId("user-testing-open-preview");
+    expect(link).toHaveTextContent("Open preview");
+    expect(link).toHaveAttribute(
+      "title",
+      expect.stringMatching(/as a tester sees it/i),
     );
+    expect(link).toHaveAccessibleName(/tester sees it/i);
   });
 
-  it("redirects legacy ?tab=preview to the Edit route", () => {
+  it("still redirects legacy ?tab=preview to the Edit route", () => {
     locationState.search = "?tab=preview";
     renderDetail();
 
     expect(navigateMock).toHaveBeenCalledWith("/user-testing/cb-1/edit", {
       replace: true,
     });
-    // Still on the detail tree until the parent remounts with editMode —
-    // redirect must not mount Preview here.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
   });
 
-  it("unmounts Preview when leaving the Edit route", () => {
-    const { rerender } = renderEdit();
-    expect(screen.getByTestId("stub-preview")).toBeInTheDocument();
-
-    rerender(detail());
-
-    expect(screen.getByTestId("stub-usage-insights")).toBeInTheDocument();
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("user-testing-edit-tab")).not.toBeInTheDocument();
-  });
-
-  it("passes the host's mcp profile through for the iframe permissions", () => {
-    const mcpProfile = { apps: { sandbox: { permissions: { mode: "deny-all" } } } };
-    hostState.host = { config: { mcpProfile } };
-    renderEdit();
-
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({ mcpProfile }),
-    );
-  });
-
-  it("waits for the host config rather than embedding with default permissions", () => {
-    hostState.isLoading = true;
-    hostState.host = null;
-    renderEdit();
-
-    // `allow` only applies at mount, and its no-config default is permissive.
-    expect(screen.queryByTestId("stub-preview")).not.toBeInTheDocument();
-    expect(screen.getByText(/Loading preview/i)).toBeInTheDocument();
-  });
-
-  it("refuses to embed a scenario whose environment can't resolve", () => {
+  it("still warns when the environment can't resolve, and offers no preview link", () => {
     renderEdit({
       environmentId: "env-1",
       environmentName: "Checkout flow",
@@ -999,13 +986,23 @@ describe("UserTestingScenarioDetail — preview", () => {
       },
     });
 
-    // The link doesn't open for testers either — framing it would show them
-    // the same failure with less explanation.
-    expect(previewPaneMock).toHaveBeenCalledWith(
-      expect.objectContaining({
-        publishLink: null,
-        emptyTitle: "This scenario can't be previewed",
-      }),
-    );
+    expect(
+      screen.getByTestId("user-testing-detail-environment-error"),
+    ).toBeInTheDocument();
+    // The link doesn't open for testers either, so it is not offered.
+    expect(
+      screen.queryByTestId("user-testing-open-preview"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("offers the tester task list beside the study's other settings", () => {
+    renderEdit();
+
+    expect(
+      screen.getByTestId("user-testing-tasks-section"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("user-testing-settings-tasks"),
+    ).toBeInTheDocument();
   });
 });

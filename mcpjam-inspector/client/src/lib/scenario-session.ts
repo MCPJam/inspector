@@ -12,7 +12,10 @@ import {
   extractTesterLinkToken,
   TESTER_LINK_PATH_SEGMENT,
 } from "@/lib/tester-link-path";
-import type { ScenarioPerTurnFeedbackStyle } from "@/types/chatUi";
+import type {
+  ScenarioPerTurnFeedbackStyle,
+  ScenarioTaskItem,
+} from "@/types/chatUi";
 
 const MCPJAM_APP_ORIGIN = "https://app.mcpjam.com";
 
@@ -96,10 +99,26 @@ export interface ScenarioPerTurnFeedbackPayload {
   thanksMessage?: string;
 }
 
+/**
+ * The study's "what to try" list, as the tester's session receives it.
+ *
+ * Absent on a backend predating BB-176, and `items: []` for a study whose
+ * creator authored none — both mean the header control is not rendered, so
+ * every reader must treat absent and empty the same way.
+ *
+ * `ScenarioTaskItem` is aliased from the settings type rather than restated,
+ * so the bootstrap payload and the editor cannot drift apart on what a task
+ * is.
+ */
+export interface ScenarioTasksPayload {
+  items?: ScenarioTaskItem[];
+}
+
 export interface ChatUiPayload {
   surfaces?: {
     welcome?: ScenarioWelcomeDialogPayload | null;
     perTurnFeedback?: ScenarioPerTurnFeedbackPayload | null;
+    tasks?: ScenarioTasksPayload | null;
   } | null;
 }
 
@@ -188,9 +207,16 @@ export function scenarioEnabledOptionalStorageKey(scenarioId: string): string {
 
 // Defensive normalizer for the chatUi envelope in /web/scenario/redeem
 // responses. Returns `undefined` when no recognized surface is present. The
-// hosted runtime consumes `welcome` and `perTurnFeedback`; the deprecated
+// hosted runtime consumes `perTurnFeedback` and `tasks`; the deprecated
 // session-level `feedback` dialog is dropped on purpose (its write path is
-// gone — see the backend's `sessionScores` design note).
+// gone — see the backend's `sessionScores` design note), and `welcome` is
+// parsed only so an older stored session still round-trips — the recording
+// notice replaced it, and nothing renders creator welcome copy any more
+// (BB-176).
+//
+// EVERY surface has to be listed here. This is an allowlist, so a surface the
+// backend sends and this function does not name reaches the runtime as
+// `undefined` — which is how a new one silently does nothing.
 /** A plain object whose every value is a string — the shape of custom headers. */
 function isStringRecord(input: unknown): input is Record<string, string> {
   return (
@@ -239,14 +265,46 @@ function normalizeChatUiPayload(input: unknown): ChatUiPayload | undefined {
           ...optionalString(perTurnRaw, "thanksMessage"),
         }
       : undefined;
-  // EITHER surface is enough. Returning undefined unless `welcome` parsed
-  // (the old behavior) would have silently dropped a per-turn-feedback config
-  // on every scenario with no welcome dialog — which is most of them.
-  if (!welcome && !perTurnFeedback) return undefined;
+  const tasksRaw = (surfaces as { tasks?: unknown }).tasks;
+  const tasksItems =
+    tasksRaw && typeof tasksRaw === "object"
+      ? (tasksRaw as { items?: unknown }).items
+      : undefined;
+  // A row is kept only if it has both an id to key the tester's local check
+  // state and a title to show. A titleless checkbox is not a task, and an
+  // id-less one would collide with its neighbours the moment a task is
+  // removed. The backend normalizer repairs both; this is the boundary that
+  // holds when the response did not come from it.
+  const tasks = Array.isArray(tasksItems)
+    ? {
+        items: tasksItems
+          .filter(
+            (item): item is ScenarioTaskItem =>
+              !!item &&
+              typeof item === "object" &&
+              typeof (item as { id?: unknown }).id === "string" &&
+              (item as { id: string }).id.length > 0 &&
+              typeof (item as { title?: unknown }).title === "string" &&
+              (item as { title: string }).title.trim().length > 0,
+          )
+          .map((item) => ({
+            id: item.id,
+            title: item.title,
+            ...optionalString(item, "hint"),
+          })),
+      }
+    : undefined;
+  // ANY surface is enough. Returning undefined unless `welcome` parsed (the
+  // old behavior) would have silently dropped a per-turn-feedback config on
+  // every scenario with no welcome dialog — which is most of them. An EMPTY
+  // task list is still a parsed surface: "this study has no tasks" is the
+  // ordinary answer, and it reads the same as absent downstream.
+  if (!welcome && !perTurnFeedback && !tasks) return undefined;
   return {
     surfaces: {
       ...(welcome ? { welcome } : {}),
       ...(perTurnFeedback ? { perTurnFeedback } : {}),
+      ...(tasks ? { tasks } : {}),
     },
   };
 }

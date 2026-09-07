@@ -2,6 +2,7 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ScenarioChatPage } from "../ScenarioChatPage";
+import { scenarioIntroDismissedStorageKey } from "../useScenarioHostIntroGate";
 import {
   SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY,
   clearScenarioSession,
@@ -171,7 +172,7 @@ describe("ScenarioChatPage", () => {
       ok: boolean;
       status: number;
       statusText: string;
-    }> = {}
+    }> = {},
   ) {
     return {
       ok: overrides.ok ?? true,
@@ -182,6 +183,19 @@ describe("ScenarioChatPage", () => {
         typeof body === "string" ? body : JSON.stringify(body),
       headers: new Headers(),
     } as Response;
+  }
+
+  /**
+   * Marks the recording notice as already answered for this study (BB-176).
+   *
+   * The notice is unconditional on first land and blocks the composer, so a
+   * test about anything ELSE — the OAuth gate, access recovery, the header —
+   * has to get past it first. Seeding the latch is how a test says "this is a
+   * tester who already consented", which keeps its assertions about the thing
+   * actually under test. The consent tests below deliberately do not call it.
+   */
+  function consentAlreadyGiven(scenarioId = "sbx_1") {
+    sessionStorage.setItem(scenarioIntroDismissedStorageKey(scenarioId), "1");
   }
 
   beforeEach(() => {
@@ -244,7 +258,7 @@ describe("ScenarioChatPage", () => {
           requireToolApproval: true,
           servers: [],
         },
-      })
+      }),
     );
   });
 
@@ -279,13 +293,13 @@ describe("ScenarioChatPage", () => {
 
     expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
     expect(
-      container.querySelector('[data-host-style="chatgpt"]')
+      container.querySelector('[data-host-style="chatgpt"]'),
     ).toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
     expect(mockChatTabV2).toHaveBeenCalledWith(
       expect.objectContaining({
         reasoningDisplayMode: "hidden",
-      })
+      }),
     );
   });
 
@@ -301,10 +315,10 @@ describe("ScenarioChatPage", () => {
     await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
 
     expect(
-      container.querySelector('[data-host-style="claude"]')
+      container.querySelector('[data-host-style="claude"]'),
     ).not.toBeInTheDocument();
     expect(
-      container.querySelector('[data-host-style="mcpjam"]')
+      container.querySelector('[data-host-style="mcpjam"]'),
     ).toBeInTheDocument();
     // No host identity is claimed until the redeem says which host this is —
     // painting one brand and swapping to another reads as a glitch.
@@ -313,7 +327,7 @@ describe("ScenarioChatPage", () => {
     // The visible placeholder is decorative, so the heading has to carry the
     // shell's name for a screen reader in the meantime.
     expect(
-      screen.getByRole("heading", { name: "Loading scenario" })
+      screen.getByRole("heading", { name: "Loading scenario" }),
     ).toBeInTheDocument();
   });
 
@@ -349,10 +363,10 @@ describe("ScenarioChatPage", () => {
     await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
 
     expect(
-      container.querySelector('[data-host-style="claude"]')
+      container.querySelector('[data-host-style="claude"]'),
     ).not.toBeInTheDocument();
     expect(
-      container.querySelector('[data-host-style="mcpjam"]')
+      container.querySelector('[data-host-style="mcpjam"]'),
     ).toBeInTheDocument();
     expect(screen.queryByText("Claude")).not.toBeInTheDocument();
     expect(screen.getByAltText("MCPJam")).toBeInTheDocument();
@@ -372,23 +386,23 @@ describe("ScenarioChatPage", () => {
           message:
             "Uncaught Error: This scenario link is invalid or has expired. at resolveScenarioBootstrapForUser (../../convex/scenarios.ts:309:14) at async handler (../../convex/scenarios.ts:1088:6)",
         },
-        { ok: false, status: 404, statusText: "Not Found" }
-      )
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="stale-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Link Unavailable" })
+      await screen.findByRole("heading", { name: "Link Unavailable" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This link is invalid or expired. Ask whoever shared it for a new one if you still need access."
-      )
+        "This link is invalid or expired. Ask whoever shared it for a new one if you still need access.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Uncaught Error:/)).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/resolveScenarioBootstrapForUser/)
+      screen.queryByText(/resolveScenarioBootstrapForUser/),
     ).not.toBeInTheDocument();
   });
 
@@ -405,23 +419,25 @@ describe("ScenarioChatPage", () => {
             "This link has been archived by its owner and can no longer be opened.",
           details: { code: "ENV_ARCHIVED" },
         },
-        { ok: false, status: 410, statusText: "Gone" }
-      )
+        { ok: false, status: 410, statusText: "Gone" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="archived-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "This link has been archived" })
+      await screen.findByRole("heading", {
+        name: "This link has been archived",
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "This link has been archived by its owner and can no longer be opened."
-      )
+        "This link has been archived by its owner and can no longer be opened.",
+      ),
     ).toBeInTheDocument();
     // Signing in cannot un-archive an environment, so no sign-in CTA.
     expect(
-      screen.queryByRole("button", { name: "Sign in" })
+      screen.queryByRole("button", { name: "Sign in" }),
     ).not.toBeInTheDocument();
   });
 
@@ -434,8 +450,8 @@ describe("ScenarioChatPage", () => {
             "This link isn't available right now — the setup behind it can't be loaded.",
           details: { code: "ENV_PLUGIN_UNAVAILABLE" },
         },
-        { ok: false, status: 409, statusText: "Conflict" }
-      )
+        { ok: false, status: 409, statusText: "Conflict" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="unresolvable-token" />);
@@ -443,7 +459,7 @@ describe("ScenarioChatPage", () => {
     expect(
       await screen.findByRole("heading", {
         name: "This link isn't available right now",
-      })
+      }),
     ).toBeInTheDocument();
   });
 
@@ -495,7 +511,7 @@ describe("ScenarioChatPage", () => {
       "/api/web/scenarios/redeem",
       expect.objectContaining({
         body: JSON.stringify({ scenarioToken: "scenario-token" }),
-      })
+      }),
     );
     // The outer app's session survives the embed untouched.
     expect(readScenarioSession()).toMatchObject({
@@ -541,8 +557,8 @@ describe("ScenarioChatPage", () => {
     mockAuthFetch.mockResolvedValue(
       createFetchResponse(
         { error: "Scenario link is no longer valid" },
-        { ok: false, status: 404, statusText: "Not Found" }
-      )
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
     );
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
@@ -552,7 +568,7 @@ describe("ScenarioChatPage", () => {
     expect(readScenarioChatTranscript("sbx_stale")).toBeNull();
     // A different scenario the same tab happens to hold is left alone.
     expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
-      "chat-other"
+      "chat-other",
     );
   });
 
@@ -569,8 +585,8 @@ describe("ScenarioChatPage", () => {
     mockAuthFetch.mockResolvedValue(
       createFetchResponse(
         { error: "Scenario link is no longer valid" },
-        { ok: false, status: 404, statusText: "Not Found" }
-      )
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
     );
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
@@ -578,7 +594,7 @@ describe("ScenarioChatPage", () => {
 
     await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
     expect(readScenarioChatTranscript("sbx_outer")?.chatSessionId).toBe(
-      "chat-outer"
+      "chat-outer",
     );
   });
 
@@ -595,8 +611,8 @@ describe("ScenarioChatPage", () => {
     mockAuthFetch.mockResolvedValue(
       createFetchResponse(
         { error: "Scenario link is no longer valid" },
-        { ok: false, status: 404, statusText: "Not Found" }
-      )
+        { ok: false, status: 404, statusText: "Not Found" },
+      ),
     );
     window.history.replaceState({}, "", "/user-testing/demo/scenario-token");
 
@@ -605,7 +621,7 @@ describe("ScenarioChatPage", () => {
     await waitFor(() => expect(mockAuthFetch).toHaveBeenCalled());
     expect(readScenarioSession()).toBeNull();
     expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
-      "chat-other"
+      "chat-other",
     );
   });
 
@@ -621,7 +637,7 @@ describe("ScenarioChatPage", () => {
     expect(
       screen.queryByRole("button", {
         name: "Sign in",
-      })
+      }),
     ).not.toBeInTheDocument();
     expect(mockUseApiContext).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -631,7 +647,7 @@ describe("ScenarioChatPage", () => {
         accessVersion: undefined,
         isAuthenticated: true,
         hasSession: true,
-      })
+      }),
     );
 
     mockWorkOsAuthState.isLoading = false;
@@ -645,7 +661,7 @@ describe("ScenarioChatPage", () => {
       "/api/web/scenarios/redeem",
       expect.objectContaining({
         body: JSON.stringify({ scenarioToken: "token-workos" }),
-      })
+      }),
     );
     expect(mockPosthogCapture).toHaveBeenCalledWith(
       "scenario_bootstrap_started",
@@ -653,7 +669,7 @@ describe("ScenarioChatPage", () => {
         surface: "scenario",
         auth_mode: "workos",
         status: "started",
-      })
+      }),
     );
   });
 
@@ -669,20 +685,20 @@ describe("ScenarioChatPage", () => {
           message:
             "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
         },
-        { ok: false, status: 403, statusText: "Forbidden" }
-      )
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="token-stalled-convex" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" })
+      await screen.findByRole("heading", { name: "Access Denied" }),
     ).toBeInTheDocument();
     expect(mockAuthFetch).toHaveBeenCalledWith(
       "/api/web/scenarios/redeem",
       expect.objectContaining({
         body: JSON.stringify({ scenarioToken: "token-stalled-convex" }),
-      })
+      }),
     );
   });
 
@@ -697,25 +713,25 @@ describe("ScenarioChatPage", () => {
           message:
             "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
         },
-        { ok: false, status: 403, statusText: "Forbidden" }
-      )
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="token-denied" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" })
+      await screen.findByRole("heading", { name: "Access Denied" }),
     ).toBeInTheDocument();
 
     await userEvent.click(
       screen.getByRole("button", {
         name: "Sign in",
-      })
+      }),
     );
 
     expect(mockSignIn).toHaveBeenCalledTimes(1);
     expect(localStorage.getItem(SCENARIO_SIGN_IN_RETURN_PATH_STORAGE_KEY)).toBe(
-      "/user-testing/test/token-denied"
+      "/user-testing/test/token-denied",
     );
   });
 
@@ -733,7 +749,7 @@ describe("ScenarioChatPage", () => {
     window.history.replaceState(
       {},
       "",
-      "/user-testing/test/token-denied?surface=preview"
+      "/user-testing/test/token-denied?surface=preview",
     );
     mockAuthFetch.mockResolvedValueOnce(
       createFetchResponse(
@@ -742,20 +758,20 @@ describe("ScenarioChatPage", () => {
           message:
             "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
         },
-        { ok: false, status: 403, statusText: "Forbidden" }
-      )
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="token-denied" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" })
+      await screen.findByRole("heading", { name: "Access Denied" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Sign in" })
+      screen.queryByRole("button", { name: "Sign in" }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Open in App" })
+      screen.getByRole("button", { name: "Open in App" }),
     ).toBeInTheDocument();
   });
 
@@ -769,8 +785,8 @@ describe("ScenarioChatPage", () => {
           message:
             "Guests cannot access Test Scenario. This scenario does not allow guest access.",
         },
-        { ok: false, status: 403, statusText: "Forbidden" }
-      )
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="token-guest-blocked" />);
@@ -778,16 +794,16 @@ describe("ScenarioChatPage", () => {
     expect(
       screen.queryByRole("button", {
         name: "Sign in",
-      })
+      }),
     ).not.toBeInTheDocument();
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" })
+      await screen.findByRole("heading", { name: "Access Denied" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", {
         name: "Sign in",
-      })
+      }),
     ).toBeInTheDocument();
     await waitFor(() =>
       expect(mockPosthogCapture).toHaveBeenCalledWith(
@@ -797,8 +813,8 @@ describe("ScenarioChatPage", () => {
           auth_mode: "guest",
           status: "required",
           error_kind: "guest_blocked",
-        })
-      )
+        }),
+      ),
     );
   });
 
@@ -812,19 +828,19 @@ describe("ScenarioChatPage", () => {
           message:
             "You don't have access to Test Scenario. This scenario is invite-only - ask the owner to invite you.",
         },
-        { ok: false, status: 403, statusText: "Forbidden" }
-      )
+        { ok: false, status: 403, statusText: "Forbidden" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="token-auth-denied" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Access Denied" })
+      await screen.findByRole("heading", { name: "Access Denied" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", {
         name: "Sign in",
-      })
+      }),
     ).not.toBeInTheDocument();
   });
 
@@ -839,22 +855,22 @@ describe("ScenarioChatPage", () => {
           message:
             "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
         },
-        { ok: false, status: 500, statusText: "Internal Server Error" }
-      )
+        { ok: false, status: 500, statusText: "Internal Server Error" },
+      ),
     );
 
     render(<ScenarioChatPage pathToken="broken-token" />);
 
     expect(
-      await screen.findByRole("heading", { name: "Link Unavailable" })
+      await screen.findByRole("heading", { name: "Link Unavailable" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "We couldn't open this link right now. Please try again or open MCPJam."
-      )
+        "We couldn't open this link right now. Please try again or open MCPJam.",
+      ),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/Internal database exploded/)
+      screen.queryByText(/Internal database exploded/),
     ).not.toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[ScenarioChatPage] Failed to bootstrap scenario",
@@ -864,7 +880,7 @@ describe("ScenarioChatPage", () => {
         message: "Internal database exploded",
         rawMessage:
           "Uncaught Error: Internal database exploded at handler (../../convex/scenarios.ts:1088:6)",
-      })
+      }),
     );
   });
 
@@ -872,7 +888,7 @@ describe("ScenarioChatPage", () => {
     vi.useFakeTimers();
     let hasToken = false;
     mockGetStoredTokens.mockImplementation(() =>
-      hasToken ? { access_token: "scenario-token" } : null
+      hasToken ? { access_token: "scenario-token" } : null,
     );
     // Held open so the in-flight verification frame is observable: the
     // requirement probe now resolves before the gate reacts, so an immediately
@@ -883,7 +899,7 @@ describe("ScenarioChatPage", () => {
       () =>
         new Promise((resolve) => {
           resolveValidation = resolve;
-        })
+        }),
     );
 
     writeScenarioSession({
@@ -929,10 +945,10 @@ describe("ScenarioChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" })
+      screen.getByRole("heading", { name: "Finishing authorization" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize" })
+      screen.queryByRole("button", { name: "Authorize" }),
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -961,7 +977,10 @@ describe("ScenarioChatPage", () => {
     expect(mockValidateHostedServer).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps guest scenario OAuth in first-consent welcome before callback completion", async () => {
+  it("holds guest scenario OAuth behind the recording notice", async () => {
+    // Consent comes BEFORE authorization: the tester is agreeing to the
+    // session being read at all, which is a precondition for it, not one step
+    // among several. Nothing may be validated against a server first.
     mockConvexAuthState.isAuthenticated = false;
     writeScenarioSession({
       scenarioId: "sbx_1",
@@ -989,27 +1008,19 @@ describe("ScenarioChatPage", () => {
             oauthScopes: null,
           },
         ],
-        chatUi: {
-          surfaces: {
-            welcome: {
-              enabled: true,
-              body: "Connect Asana before chatting.",
-            },
-          },
-        },
       },
     });
 
     render(<ScenarioChatPage />);
 
     expect(
-      await screen.findByText("Connect Asana before chatting.")
+      await screen.findByText("This session will be recorded"),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Get Started" })
+      screen.getByRole("button", { name: "Continue" }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: "Finishing authorization" })
+      screen.queryByRole("heading", { name: "Finishing authorization" }),
     ).not.toBeInTheDocument();
 
     await act(async () => {
@@ -1020,6 +1031,7 @@ describe("ScenarioChatPage", () => {
   });
 
   it("shows curated copy instead of transport details when scenario OAuth validation fails", async () => {
+    consentAlreadyGiven();
     vi.useFakeTimers();
     const consoleError = vi
       .spyOn(console, "error")
@@ -1027,8 +1039,8 @@ describe("ScenarioChatPage", () => {
     mockGetStoredTokens.mockReturnValue({ access_token: "stale-token" });
     mockValidateHostedServer.mockRejectedValue(
       new Error(
-        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)'
-      )
+        'Authentication failed for MCP server "mn70g96re2qn05cxjw7y4y26ah82jzgh": SSE error: SSE error: Non-200 status code (401)',
+      ),
     );
 
     writeScenarioSession({
@@ -1068,7 +1080,7 @@ describe("ScenarioChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Finishing authorization" })
+      screen.getByRole("heading", { name: "Finishing authorization" }),
     ).toBeInTheDocument();
 
     await act(async () => {
@@ -1076,17 +1088,17 @@ describe("ScenarioChatPage", () => {
     });
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" })
+      screen.getByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Your authorization expired or was rejected. Authorize again to continue."
-      )
+        "Your authorization expired or was rejected. Authorize again to continue.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/SSE error/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/Non-200 status code/i)).not.toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize again" })
+      screen.getByRole("button", { name: "Authorize again" }),
     ).toBeInTheDocument();
     expect(consoleError).toHaveBeenCalledWith(
       "[useHostedOAuthGate] OAuth validation failed",
@@ -1094,11 +1106,12 @@ describe("ScenarioChatPage", () => {
         surface: "scenario",
         serverId: "srv_asana",
         serverName: "asana",
-      })
+      }),
     );
   });
 
   it("re-enters the scenario OAuth gate when chat reports OAuth is required", async () => {
+    consentAlreadyGiven();
     mockGetStoredTokens.mockReturnValue({ access_token: "scenario-token" });
 
     writeScenarioSession({
@@ -1141,26 +1154,27 @@ describe("ScenarioChatPage", () => {
     // is the observable "everything has settled" signal.
     await waitFor(() =>
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scenarioComposerBlocked: false })
-      )
+        expect.objectContaining({ scenarioComposerBlocked: false }),
+      ),
     );
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger OAuth" })
+      screen.getByRole("button", { name: "Trigger OAuth" }),
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" })
+      screen.getByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText("You'll return here automatically after consent.")
+      screen.getByText("You'll return here automatically after consent."),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: "Authorize" })
+      screen.getByRole("button", { name: "Authorize" }),
     ).toBeInTheDocument();
   });
 
   it("re-opens auth only for the matching scenario server when chat includes server details", async () => {
+    consentAlreadyGiven();
     mockGetStoredTokens.mockImplementation((serverName: string) => {
       if (serverName === "asana") {
         return { access_token: "asana-token" };
@@ -1215,25 +1229,31 @@ describe("ScenarioChatPage", () => {
     // See above: let the probe answer and the credentials verify before the 401.
     await waitFor(() =>
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scenarioComposerBlocked: false })
-      )
+        expect.objectContaining({ scenarioComposerBlocked: false }),
+      ),
     );
 
     await userEvent.click(
-      screen.getByRole("button", { name: "Trigger targeted OAuth" })
+      screen.getByRole("button", { name: "Trigger targeted OAuth" }),
     );
 
     expect(
-      screen.getByRole("heading", { name: "Authorization Required" })
+      screen.getByRole("heading", { name: "Authorization Required" }),
     ).toBeInTheDocument();
     expect(screen.getByText("asana")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Authorize again" })
+      screen.queryByRole("button", { name: "Authorize again" }),
     ).not.toBeInTheDocument();
     expect(screen.queryByText("linear")).not.toBeInTheDocument();
   });
 
-  describe("welcome dialog", () => {
+  /**
+   * BB-176: the recording notice replaced the creator-authored welcome
+   * overlay. It is product-owned, unconditional on first land, and asked
+   * before authorization — see `useScenarioHostIntroGate`. Nothing here reads
+   * `chatUi.surfaces.welcome` any more.
+   */
+  describe("recording consent", () => {
     function nonOAuthServer() {
       return {
         serverId: "srv_tool",
@@ -1245,14 +1265,14 @@ describe("ScenarioChatPage", () => {
       };
     }
 
-    it("shows welcome dialog when chatUi welcome surface is enabled and has content", async () => {
+    function writeStudy(scenarioId: string, chatUi?: Record<string, unknown>) {
       writeScenarioSession({
         scenarioId: "sbx_1",
         accessVersion: 1,
         payload: {
           projectId: "ws_1",
-          scenarioId: "sbx_welcome",
-          name: "Welcome Scenario",
+          scenarioId,
+          name: "Consent Scenario",
           description: "",
           hostStyle: "claude",
           mode: "anyone_with_link",
@@ -1263,80 +1283,113 @@ describe("ScenarioChatPage", () => {
           temperature: 0.7,
           requireToolApproval: false,
           servers: [nonOAuthServer()],
-          chatUi: {
-            surfaces: {
-              welcome: {
-                enabled: true,
-                body: "Welcome — thanks for trying this out.",
-              },
-            },
-          },
+          ...(chatUi ? { chatUi } : {}),
+        },
+      });
+    }
+
+    it("asks every tester, even a study whose creator wrote no welcome copy", async () => {
+      // The overlay this replaces appeared only when someone had typed a body,
+      // so whether a tester learned their session is read came down to whether
+      // the creator remembered to say it.
+      writeStudy("sbx_plain");
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByText("This session will be recorded"),
+      ).toBeInTheDocument();
+      // The composer is held until they answer.
+      expect(mockChatTabV2).toHaveBeenCalledWith(
+        expect.objectContaining({ scenarioComposerBlocked: true }),
+      );
+    });
+
+    it("ignores creator welcome copy rather than showing it alongside", async () => {
+      // Recording must not be buried in copy that says something else.
+      writeStudy("sbx_ignores_welcome", {
+        surfaces: {
+          welcome: { enabled: true, body: "Connect Asana before chatting." },
         },
       });
 
       render(<ScenarioChatPage />);
 
       expect(
-        await screen.findByText("Welcome — thanks for trying this out.")
+        await screen.findByText("This session will be recorded"),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Get Started" })
-      ).toBeInTheDocument();
-      // Composer is blocked while the welcome is open
-      expect(mockChatTabV2).toHaveBeenCalledWith(
-        expect.objectContaining({ scenarioComposerBlocked: true })
-      );
+        screen.queryByText("Connect Asana before chatting."),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Get Started" }),
+      ).not.toBeInTheDocument();
     });
 
-    it("dismisses welcome and shows chat when Get Started is clicked", async () => {
-      writeScenarioSession({
-        scenarioId: "sbx_1",
-        accessVersion: 1,
-        payload: {
-          projectId: "ws_1",
-          scenarioId: "sbx_dismiss",
-          name: "Welcome Scenario",
-          description: "",
-          hostStyle: "claude",
-          mode: "anyone_with_link",
-          allowGuestAccess: false,
-          viewerIsProjectMember: true,
-          systemPrompt: "You are helpful.",
-          modelId: "openai/gpt-5-mini",
-          temperature: 0.7,
-          requireToolApproval: false,
-          servers: [nonOAuthServer()],
-          chatUi: {
-            surfaces: {
-              welcome: {
-                enabled: true,
-                body: "Welcome — thanks for trying this out.",
-              },
-            },
-          },
-        },
-      });
+    it("releases the chat on Continue and does not ask again this session", async () => {
+      writeStudy("sbx_continue");
 
       render(<ScenarioChatPage />);
 
       await userEvent.click(
-        await screen.findByRole("button", { name: "Get Started" })
+        await screen.findByRole("button", { name: "Continue" }),
       );
 
       expect(
-        screen.queryByText("Welcome — thanks for trying this out.")
+        screen.queryByText("This session will be recorded"),
       ).not.toBeInTheDocument();
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
     });
 
-    it("skips welcome and goes straight to chat when chatUi welcome.enabled is false", async () => {
+    it("unmounts the chat on Leave, and re-asks on rejoin", async () => {
+      // Someone who declined being recorded should not be sitting in the thing
+      // they declined — a disabled composer over a live transcript is not that.
+      writeStudy("sbx_leave");
+
+      render(<ScenarioChatPage />);
+
+      await userEvent.click(
+        await screen.findByRole("button", { name: "Leave" }),
+      );
+
+      expect(
+        await screen.findByTestId("scenario-recording-declined"),
+      ).toBeInTheDocument();
+      expect(screen.queryByTestId("scenario-chat-tab")).not.toBeInTheDocument();
+
+      await userEvent.click(
+        screen.getByTestId("scenario-recording-declined-rejoin"),
+      );
+
+      expect(
+        await screen.findByText("This session will be recorded"),
+      ).toBeInTheDocument();
+    });
+  });
+
+  /**
+   * BB-176: "what to try" — an always-available header control beside Copy
+   * link, holding a checklist the tester works in any order.
+   */
+  describe("what to try", () => {
+    function writeStudyWithTasks(
+      scenarioId: string,
+      items: Array<{ id: string; title: string; hint?: string }> | undefined,
+    ) {
       writeScenarioSession({
         scenarioId: "sbx_1",
         accessVersion: 1,
         payload: {
           projectId: "ws_1",
-          scenarioId: "sbx_disabled",
-          name: "No Welcome Scenario",
+          scenarioId,
+          name: "Tasks Scenario",
           description: "",
           hostStyle: "claude",
           mode: "anyone_with_link",
@@ -1346,64 +1399,107 @@ describe("ScenarioChatPage", () => {
           modelId: "openai/gpt-5-mini",
           temperature: 0.7,
           requireToolApproval: false,
-          servers: [nonOAuthServer()],
-          chatUi: {
-            surfaces: {
-              welcome: {
-                enabled: false,
-                body: "This should not appear.",
-              },
+          servers: [
+            {
+              serverId: "srv_tool",
+              serverName: "tool",
+              useOAuth: false,
+              serverUrl: "https://mcp.example.com/sse",
+              clientId: null,
+              oauthScopes: null,
             },
-          },
+          ],
+          ...(items ? { chatUi: { surfaces: { tasks: { items } } } } : {}),
         },
       });
+      sessionStorage.setItem(scenarioIntroDismissedStorageKey(scenarioId), "1");
+    }
+
+    it("counts what is LEFT, and ticks items off locally", async () => {
+      writeStudyWithTasks("sbx_tasks", [
+        { id: "t1", title: "Find unpaid invoices" },
+        { id: "t2", title: "Draft a reminder", hint: "Any customer" },
+        { id: "t3", title: "Check the refund" },
+      ]);
 
       render(<ScenarioChatPage />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      const trigger = await screen.findByTestId("scenario-tasks-trigger");
+      expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
+        "3 left",
+      );
+
+      await userEvent.click(trigger);
+      await userEvent.click(
+        await screen.findByTestId("scenario-tasks-item-t1"),
+      );
+
+      expect(screen.getByTestId("scenario-tasks-remaining")).toHaveTextContent(
+        "2 left",
+      );
+      // Check state is the tester's own bookkeeping — kept in their tab and
+      // sent nowhere.
       expect(
-        screen.queryByText("This should not appear.")
-      ).not.toBeInTheDocument();
+        JSON.parse(
+          sessionStorage.getItem("scenario-tasks-checked-sbx_tasks") ?? "[]",
+        ),
+      ).toEqual(["t1"]);
+    });
+
+    it("reads Done rather than 0 left once everything is ticked", async () => {
+      writeStudyWithTasks("sbx_done", [{ id: "t1", title: "Only task" }]);
+      sessionStorage.setItem(
+        "scenario-tasks-checked-sbx_done",
+        JSON.stringify(["t1"]),
+      );
+
+      render(<ScenarioChatPage />);
+
       expect(
-        screen.queryByRole("button", { name: "Get Started" })
+        await screen.findByTestId("scenario-tasks-remaining"),
+      ).toHaveTextContent("Done");
+    });
+
+    it("hides the control for a study with no tasks", async () => {
+      writeStudyWithTasks("sbx_no_tasks", []);
+
+      render(<ScenarioChatPage />);
+
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("scenario-tasks-trigger"),
       ).not.toBeInTheDocument();
     });
 
-    it("skips welcome and goes straight to chat when chatUi welcome body is empty", async () => {
-      writeScenarioSession({
-        scenarioId: "sbx_1",
-        accessVersion: 1,
-        payload: {
-          projectId: "ws_1",
-          scenarioId: "sbx_emptybody",
-          name: "Empty Body Scenario",
-          description: "",
-          hostStyle: "claude",
-          mode: "anyone_with_link",
-          allowGuestAccess: false,
-          viewerIsProjectMember: true,
-          systemPrompt: "You are helpful.",
-          modelId: "openai/gpt-5-mini",
-          temperature: 0.7,
-          requireToolApproval: false,
-          servers: [nonOAuthServer()],
-          chatUi: {
-            surfaces: {
-              welcome: {
-                enabled: true,
-                body: "",
-              },
-            },
-          },
-        },
-      });
+    it("hides the control on a backend that never sends the surface", async () => {
+      // Additive field: absent and empty must behave the same way.
+      writeStudyWithTasks("sbx_legacy", undefined);
 
       render(<ScenarioChatPage />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
       expect(
-        screen.queryByRole("button", { name: "Get Started" })
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByTestId("scenario-tasks-trigger"),
       ).not.toBeInTheDocument();
+    });
+
+    it("never blocks the composer — it is a list, not a gate", async () => {
+      writeStudyWithTasks("sbx_not_a_gate", [
+        { id: "t1", title: "Something to try" },
+      ]);
+
+      render(<ScenarioChatPage />);
+
+      expect(await screen.findByTestId("scenario-tasks-trigger")).toBeVisible();
+      await waitFor(() =>
+        expect(mockChatTabV2).toHaveBeenLastCalledWith(
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
+      );
     });
   });
 
@@ -1430,8 +1526,7 @@ describe("ScenarioChatPage", () => {
     function latestHostedContext() {
       const calls = mockChatTabV2.mock.calls;
       const last = calls[calls.length - 1]?.[0] as
-        | { hostedContext?: Record<string, unknown> }
-        | undefined;
+        { hostedContext?: Record<string, unknown> } | undefined;
       return last?.hostedContext;
     }
 
@@ -1448,16 +1543,16 @@ describe("ScenarioChatPage", () => {
           scenarioId: "sbx_recover",
           accessVersion: 1,
           bootstrap: bootstrapPayload(),
-        })
+        }),
       );
 
       const view = render(<ScenarioChatPage pathToken="tok_recover" />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       view.rerender(<ScenarioChatPage />);
-      await waitFor(() =>
-        expect(latestHostedContext()?.accessVersion).toBe(1)
-      );
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(1));
       mockAuthFetch.mockClear();
       return view;
     }
@@ -1473,10 +1568,11 @@ describe("ScenarioChatPage", () => {
           scenarioId: "sbx_recover",
           accessVersion: 9,
           bootstrap: bootstrapPayload(),
-        })
+        }),
       );
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         accessVersion?: number;
       }>;
@@ -1487,12 +1583,10 @@ describe("ScenarioChatPage", () => {
         "/api/web/scenarios/redeem",
         expect.objectContaining({
           body: JSON.stringify({ scenarioToken: "tok_recover" }),
-        })
+        }),
       );
       expect(readScenarioSession()?.accessVersion).toBe(9);
-      await waitFor(() =>
-        expect(latestHostedContext()?.accessVersion).toBe(9)
-      );
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(9));
     });
 
     it("coalesces concurrent refreshes onto one redeem round trip", async () => {
@@ -1512,7 +1606,8 @@ describe("ScenarioChatPage", () => {
         });
       });
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         accessVersion?: number;
       }>;
@@ -1541,11 +1636,12 @@ describe("ScenarioChatPage", () => {
             code: "SCENARIO_MEMBERS_ONLY",
             message: "You don't have access to Recoverable Scenario.",
           },
-          { ok: false, status: 403, statusText: "Forbidden" }
-        )
+          { ok: false, status: 403, statusText: "Forbidden" },
+        ),
       );
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         reason?: string;
         error?: { status: number };
@@ -1569,11 +1665,12 @@ describe("ScenarioChatPage", () => {
       mockAuthFetch.mockResolvedValue(
         createFetchResponse(
           { code: "RATE_LIMITED", message: "Slow down." },
-          { ok: false, status: 429, statusText: "Too Many Requests" }
-        )
+          { ok: false, status: 429, statusText: "Too Many Requests" },
+        ),
       );
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         reason?: string;
       }>;
@@ -1612,7 +1709,8 @@ describe("ScenarioChatPage", () => {
         });
       });
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         reason?: string;
       }>;
@@ -1634,15 +1732,14 @@ describe("ScenarioChatPage", () => {
       expect(result).toMatchObject({ ok: false, reason: "transient" });
       // The committed session is the navigation's (version 3), never the
       // resolved-but-stale refresh's (version 8).
-      await waitFor(() =>
-        expect(readScenarioSession()?.accessVersion).toBe(3)
-      );
+      await waitFor(() => expect(readScenarioSession()?.accessVersion).toBe(3));
     });
 
     it("tears down to the denied landing when onAccessRevoked fires", async () => {
       await renderPostStrip();
 
-      const onAccessRevoked = latestHostedContext()?.onAccessRevoked as (error: {
+      const onAccessRevoked = latestHostedContext()
+        ?.onAccessRevoked as (error: {
         status: number;
         code?: string;
         message: string;
@@ -1657,7 +1754,7 @@ describe("ScenarioChatPage", () => {
       });
 
       expect(
-        await screen.findByRole("heading", { name: "Access Denied" })
+        await screen.findByRole("heading", { name: "Access Denied" }),
       ).toBeInTheDocument();
       expect(readScenarioSession()).toBeNull();
     });
@@ -1681,7 +1778,8 @@ describe("ScenarioChatPage", () => {
         ] as any[],
       });
 
-      const onAccessRevoked = latestHostedContext()?.onAccessRevoked as (error: {
+      const onAccessRevoked = latestHostedContext()
+        ?.onAccessRevoked as (error: {
         status: number;
         code?: string;
         message: string;
@@ -1698,7 +1796,7 @@ describe("ScenarioChatPage", () => {
       await waitFor(() => expect(readScenarioSession()).toBeNull());
       expect(readScenarioChatTranscript("sbx_recover")).toBeNull();
       expect(readScenarioChatTranscript("sbx_other")?.chatSessionId).toBe(
-        "chat-other"
+        "chat-other",
       );
     });
 
@@ -1711,11 +1809,13 @@ describe("ScenarioChatPage", () => {
           scenarioId: "sbx_recover",
           accessVersion: 1,
           bootstrap: bootstrapPayload(),
-        })
+        }),
       );
 
       render(<ScenarioChatPage pathToken="tok_embed" />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
       mockAuthFetch.mockClear();
 
       mockAuthFetch.mockResolvedValue(
@@ -1723,19 +1823,18 @@ describe("ScenarioChatPage", () => {
           scenarioId: "sbx_recover",
           accessVersion: 5,
           bootstrap: bootstrapPayload(),
-        })
+        }),
       );
 
-      const refresh = latestHostedContext()?.refreshAccessSession as () => Promise<{
+      const refresh = latestHostedContext()
+        ?.refreshAccessSession as () => Promise<{
         ok: boolean;
         accessVersion?: number;
       }>;
       const result = await act(async () => refresh());
 
       expect(result).toEqual({ ok: true, accessVersion: 5 });
-      await waitFor(() =>
-        expect(latestHostedContext()?.accessVersion).toBe(5)
-      );
+      await waitFor(() => expect(latestHostedContext()?.accessVersion).toBe(5));
       expect(readScenarioSession()).toBeNull();
     });
 
@@ -1748,19 +1847,22 @@ describe("ScenarioChatPage", () => {
             code: "SCENARIO_ACCESS_DENIED",
             message: "This scenario could not be opened.",
           },
-          { ok: false, status: 403, statusText: "Forbidden" }
-        )
+          { ok: false, status: 403, statusText: "Forbidden" },
+        ),
       );
 
       render(<ScenarioChatPage pathToken="tok_code_denied" />);
 
       expect(
-        await screen.findByRole("heading", { name: "Access Denied" })
+        await screen.findByRole("heading", { name: "Access Denied" }),
       ).toBeInTheDocument();
     });
   });
 
   describe("authorization is demanded only when the server needs it", () => {
+    // Every case here is about the OAuth gate, so the tester has consented.
+    beforeEach(() => consentAlreadyGiven());
+
     // SUTB-9: a shared scenario asked its recipient to authorize a server with
     // no OAuth at all. The bootstrap payload carries `useOAuth`, a derived
     // mirror that is true for a discover-mode (`authMethod: "auto"`) row too, so
@@ -1811,27 +1913,29 @@ describe("ScenarioChatPage", () => {
       // "Authorization could not be completed. Try again." card.
       mockValidateHostedServer.mockRejectedValue(
         new Error(
-          'Authentication failed for MCP server "rabona": invalid_token (401)'
-        )
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
       );
       writeSharedScenario();
 
       render(<ScenarioChatPage />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(mockCheckHostedServerOAuthRequirement).toHaveBeenCalledWith(
-          "srv_rabona"
-        )
+          "srv_rabona",
+        ),
       );
       expect(mockValidateHostedServer).not.toHaveBeenCalled();
       expect(
-        screen.queryByRole("heading", { name: "Authorization Required" })
+        screen.queryByRole("heading", { name: "Authorization Required" }),
       ).not.toBeInTheDocument();
       await waitFor(() =>
         expect(mockChatTabV2).toHaveBeenLastCalledWith(
-          expect.objectContaining({ scenarioComposerBlocked: false })
-        )
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
       );
     });
 
@@ -1845,17 +1949,19 @@ describe("ScenarioChatPage", () => {
       writeSharedScenario();
 
       render(<ScenarioChatPage />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole("button", { name: "Trigger OAuth" })
+        screen.getByRole("button", { name: "Trigger OAuth" }),
       );
 
       expect(
-        screen.getByRole("heading", { name: "Authorization Required" })
+        screen.getByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Authorize" })
+        screen.getByRole("button", { name: "Authorize" }),
       ).toBeInTheDocument();
     });
 
@@ -1870,18 +1976,20 @@ describe("ScenarioChatPage", () => {
         () =>
           new Promise((resolve) => {
             resolveProbe = resolve;
-          })
+          }),
       );
       writeSharedScenario();
 
       render(<ScenarioChatPage />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole("button", { name: "Trigger OAuth" })
+        screen.getByRole("button", { name: "Trigger OAuth" }),
       );
       expect(
-        screen.queryByRole("heading", { name: "Authorization Required" })
+        screen.queryByRole("heading", { name: "Authorization Required" }),
       ).not.toBeInTheDocument();
 
       await act(async () => {
@@ -1894,10 +2002,10 @@ describe("ScenarioChatPage", () => {
       });
 
       expect(
-        await screen.findByRole("heading", { name: "Authorization Required" })
+        await screen.findByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Authorize" })
+        screen.getByRole("button", { name: "Authorize" }),
       ).toBeInTheDocument();
     });
 
@@ -1912,15 +2020,17 @@ describe("ScenarioChatPage", () => {
         () =>
           new Promise((resolve) => {
             resolveProbe = resolve;
-          })
+          }),
       );
       writeSharedScenario();
 
       render(<ScenarioChatPage />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       await userEvent.click(
-        screen.getByRole("button", { name: "Trigger OAuth" })
+        screen.getByRole("button", { name: "Trigger OAuth" }),
       );
 
       // "No authorization needed" is the weakest possible answer, and still not
@@ -1938,7 +2048,7 @@ describe("ScenarioChatPage", () => {
       });
 
       expect(
-        await screen.findByRole("heading", { name: "Authorization Required" })
+        await screen.findByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
     });
 
@@ -1955,30 +2065,36 @@ describe("ScenarioChatPage", () => {
         () =>
           new Promise((resolve) => {
             resolveValidation = resolve;
-          })
+          }),
       );
       writeSharedScenario();
 
       render(<ScenarioChatPage />);
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
 
       await waitFor(() => expect(mockValidateHostedServer).toHaveBeenCalled());
 
       await userEvent.click(
-        screen.getByRole("button", { name: "Trigger OAuth" })
+        screen.getByRole("button", { name: "Trigger OAuth" }),
       );
       expect(
-        await screen.findByRole("heading", { name: "Authorization Required" })
+        await screen.findByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
 
       // The verification now succeeds — but it was asking about a credential the
       // 401 has since disproved, so its answer is stale and must not stand.
       await act(async () => {
-        resolveValidation({ success: true, status: "connected", initInfo: null });
+        resolveValidation({
+          success: true,
+          status: "connected",
+          initInfo: null,
+        });
       });
 
       expect(
-        screen.getByRole("heading", { name: "Authorization Required" })
+        screen.getByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
     });
 
@@ -1992,8 +2108,8 @@ describe("ScenarioChatPage", () => {
       // No usable credential for the recipient yet.
       mockValidateHostedServer.mockRejectedValue(
         new Error(
-          'Authentication failed for MCP server "rabona": invalid_token (401)'
-        )
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
       );
       vi.spyOn(console, "error").mockImplementation(() => {});
       writeSharedScenario();
@@ -2004,17 +2120,17 @@ describe("ScenarioChatPage", () => {
       // verifying on the way here, and only "error" stays put.
       await waitFor(() =>
         expect(
-          screen.getByRole("button", { name: "Authorize again" })
-        ).toBeInTheDocument()
+          screen.getByRole("button", { name: "Authorize again" }),
+        ).toBeInTheDocument(),
       );
       expect(
-        screen.getByRole("heading", { name: "Authorization Required" })
+        screen.getByRole("heading", { name: "Authorization Required" }),
       ).toBeInTheDocument();
       expect(
-        screen.getByText("Authorize the required servers to continue.")
+        screen.getByText("Authorize the required servers to continue."),
       ).toBeInTheDocument();
       expect(mockChatTabV2).toHaveBeenLastCalledWith(
-        expect.objectContaining({ scenarioComposerBlocked: true })
+        expect.objectContaining({ scenarioComposerBlocked: true }),
       );
     });
 
@@ -2029,14 +2145,16 @@ describe("ScenarioChatPage", () => {
 
       render(<ScenarioChatPage />);
 
-      expect(await screen.findByTestId("scenario-chat-tab")).toBeInTheDocument();
+      expect(
+        await screen.findByTestId("scenario-chat-tab"),
+      ).toBeInTheDocument();
       await waitFor(() =>
         expect(mockChatTabV2).toHaveBeenLastCalledWith(
-          expect.objectContaining({ scenarioComposerBlocked: false })
-        )
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
       );
       expect(
-        screen.queryByRole("heading", { name: "Authorization Required" })
+        screen.queryByRole("heading", { name: "Authorization Required" }),
       ).not.toBeInTheDocument();
     });
 
@@ -2050,8 +2168,8 @@ describe("ScenarioChatPage", () => {
       // The reported dead end: the card's only action cannot complete.
       mockValidateHostedServer.mockRejectedValue(
         new Error(
-          'Authentication failed for MCP server "rabona": invalid_token (401)'
-        )
+          'Authentication failed for MCP server "rabona": invalid_token (401)',
+        ),
       );
       vi.spyOn(console, "error").mockImplementation(() => {});
       writeSharedScenario();
@@ -2060,20 +2178,20 @@ describe("ScenarioChatPage", () => {
 
       await waitFor(() =>
         expect(
-          screen.getByRole("button", { name: "Authorize again" })
-        ).toBeInTheDocument()
+          screen.getByRole("button", { name: "Authorize again" }),
+        ).toBeInTheDocument(),
       );
       await userEvent.click(
-        screen.getByRole("button", { name: "Continue without authorizing" })
+        screen.getByRole("button", { name: "Continue without authorizing" }),
       );
 
       expect(
-        screen.queryByRole("heading", { name: "Authorization Required" })
+        screen.queryByRole("heading", { name: "Authorization Required" }),
       ).not.toBeInTheDocument();
       await waitFor(() =>
         expect(mockChatTabV2).toHaveBeenLastCalledWith(
-          expect.objectContaining({ scenarioComposerBlocked: false })
-        )
+          expect.objectContaining({ scenarioComposerBlocked: false }),
+        ),
       );
     });
   });
