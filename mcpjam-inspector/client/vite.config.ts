@@ -281,6 +281,39 @@ export default defineConfig(({ mode }) => {
       outDir: clientOutDir,
       sourcemap: true,
       emptyOutDir: true,
+      // Terser rather than esbuild, for one reason: it is the only one of the
+      // two that can be told never to mint a given identifier name.
+      //
+      // Vite bundles a copy of es-module-lexer 1.7.0 into its own dist. It is
+      // not resolved from node_modules, so `overrides` cannot reach it, and
+      // every vite from 7.3.x through 8.x ships the same wasm. That version
+      // has a scanner bug: inside a `for (...)`, the token `of` followed by
+      // `/` is read as the start of a regex literal rather than as a division,
+      // so the scan runs to end-of-file and the chunk is rejected. A minimal
+      // case — valid JS that it refuses:
+      //
+      //     var of = 2, h = 4; for (of / h; ; ) break;
+      //
+      // `vite:build-import-analysis` lexes every emitted chunk, so one such
+      // sequence anywhere fails the production build with a bare
+      // "Parse error @:1:1" pointing at column 1 of a multi-megabyte file.
+      //
+      // Nothing in this repo writes that code — a minifier does. Both esbuild
+      // and terser hand out `of` as an ordinary two-character name, and in a
+      // bundle this size one of them eventually lands on a variable that is
+      // divided inside a `for`. Which one is luck of the name allocation, so
+      // any commit that shifts the bundle can trigger it or clear it again:
+      // a build that fails on content it has no opinion about.
+      //
+      // esbuild has no reserved-name option for locals (`reserveProps` and
+      // `mangleCache` cover properties only), so the name cannot be withheld
+      // from it. Terser can, and that is the whole of the change: reserving
+      // `of` takes the one name the lexer mishandles out of circulation, and
+      // makes the build deterministic instead of a coin flip.
+      minify: "terser",
+      terserOptions: {
+        mangle: { reserved: ["of"] },
+      },
     },
     define: {
       __APP_VERSION__: JSON.stringify(appVersion),

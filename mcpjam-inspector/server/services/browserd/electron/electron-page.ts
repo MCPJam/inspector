@@ -25,7 +25,7 @@
  * has no Electron and must never try to resolve one.
  */
 
-import type { A11yNode, ConsoleEntry } from "../daemon/observation-budget";
+import type { ConsoleEntry } from "../daemon/observation-budget";
 import type { ActPoint, DriverPage } from "../daemon/browser-page";
 import type { CdpLike, WebMcpBridge } from "../daemon/webmcp-bridge";
 import { WebMcpBridge as Bridge } from "../daemon/webmcp-bridge";

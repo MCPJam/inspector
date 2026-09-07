@@ -25,6 +25,7 @@
  * `live-session-deps.ts` (VALIDATE-ON-STAGING).
  */
 import { randomUUID } from "node:crypto";
+import { logger } from "../../utils/logger.js";
 import type {
   BootBrowserdOptions,
   BrowserdHandle,
@@ -35,7 +36,12 @@ import type {
   BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
-import { formatBrowserdError, type BrowserCommand } from "./protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  formatBrowserdError,
+  HOSTED_DISPLAY,
+  type BrowserCommand,
+} from "./protocol";
 import type {
   BrowserContextMode,
   BrowserRelaunchClaim,
@@ -52,6 +58,18 @@ import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
 export const BROWSERD_PORT = 8791;
 export const BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+/**
+ * Where a PRELAUNCHED daemon leaves the bearer it minted for itself.
+ *
+ * A daemon baked into the desktop image starts before any inspector exists, so
+ * nobody can hand it a secret. It mints 32 random bytes into this file at 0600
+ * and the inspector reads them back over the E2B files API — the same
+ * API-key-authenticated channel that already writes the daemon's own bytes, so
+ * adopting one creates no trust relationship that did not already exist. The
+ * agent's shell runs on a different box (`runtimeKind`), so nothing the model
+ * drives can read it.
+ */
+export const BROWSERD_TOKEN_FILE = "/home/user/.mcpjam-browserd.token";
 
 /**
  * A `BrowserdClient`, narrowed to what sessions need (fakeable in tests).
@@ -81,6 +99,14 @@ export interface SessionClient {
 export interface SessionSandbox {
   /** Write the daemon bundle into the sandbox filesystem. */
   writeBundle(path: string, content: Uint8Array): Promise<void>;
+  /**
+   * Read a small text file, for the prelaunched daemon's token.
+   *
+   * OPTIONAL: an older adapter, or a test fake with no filesystem in mind,
+   * simply has none — and every way of failing to read means the same thing,
+   * which is "boot a daemon yourself".
+   */
+  readTextFile?(path: string): Promise<string | undefined>;
   /** The daemon runner `bootBrowserd` drives. */
   browserd: BrowserdSandbox;
   /** Reap any daemon from a previous boot (idempotent; never throws for
@@ -107,6 +133,8 @@ export interface SessionStore {
     /** Required: see `lookupBrowserSession`. `"any"` is the explicit
      *  opt-out; omission is rejected by the control plane. */
     expectedContextMode: BrowserContextMode | "any";
+    /** The wire this build speaks; see `BROWSERD_PROTOCOL_VERSION`. */
+    expectedProtocolVersion?: number;
     signal?: AbortSignal;
   }): Promise<BrowserSessionLookup>;
   record(args: {
@@ -119,6 +147,7 @@ export interface SessionStore {
     streamPassword: string;
     bundleHash: string;
     contextMode: BrowserContextMode;
+    protocolVersion?: number;
     replacesSessionId?: string;
     signal?: AbortSignal;
   }): Promise<BrowserSessionRecordResult>;
@@ -230,6 +259,16 @@ export interface HostedBrowserSessionHandle {
   contextMode: BrowserContextMode;
   /** True when an existing daemon was verified and reused (no sandbox I/O). */
   reused: boolean;
+  /**
+   * This daemon speaks our wire but is running OLD BYTES.
+   *
+   * Not a problem to solve now. Relaunching mid-session rotates `bootId` and
+   * the stream password, so every open pane and in-flight command breaks — and
+   * during a wave of daemon work that would happen on almost every deploy, to
+   * a person who is quite possibly mid-login. The replacement is scheduled for
+   * the first moment nothing is using the browser.
+   */
+  upgradeAvailable?: boolean;
 }
 
 /**
@@ -354,11 +393,70 @@ async function tryReuse(
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
   }
+  // THE WIRE, NOT THE BYTES. A daemon whose protocol number differs (or which
+  // is too old to announce one) cannot be proven compatible, and continuing
+  // would produce wrong answers rather than merely old ones.
+  if (lazyUpgradeEnabled()) {
+    const running = status.protocolVersion ?? session.protocolVersion;
+    if (running !== BROWSERD_PROTOCOL_VERSION) return null;
+  }
   // Best-effort: losing the touch costs an earlier sweep, never this turn.
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
     .catch(() => {});
-  return handleFromRecord(deps, session, client, true);
+  // A hash difference is an UPGRADE, not a refusal.
+  const runningHash = status.bundleHash ?? session.bundleHash;
+  const upgradeAvailable =
+    lazyUpgradeEnabled() && !!runningHash && runningHash !== deps.bundleHash();
+  // Taken NOW only if nothing is using the browser. A relaunch rotates the
+  // bootId and the stream password, so every open pane and in-flight command
+  // breaks; doing that to somebody mid-login to ship a comment change is the
+  // failure this whole mechanism exists to end. Returning null here drops into
+  // the ordinary relaunch path below, fence, claim and all.
+  if (upgradeAvailable && daemonIsIdle(status)) return null;
+  return handleFromRecord(deps, session, client, true, upgradeAvailable);
+}
+
+/**
+ * How long a browser must have gone untouched before an upgrade may take it.
+ *
+ * Generous on purpose: the cost of waiting is running old bytes for another
+ * minute, and the cost of being wrong is a person's session ending mid-form.
+ */
+const UPGRADE_QUIET_MS = 60_000;
+
+/**
+ * Is nobody using this browser?
+ *
+ * EVERY fact must be present and must say idle. A daemon too old to report one
+ * of them answers `undefined`, which is "unknown" — and an upgrade that read
+ * unknown as idle would relaunch a browser somebody is watching, which is
+ * precisely the behaviour V-4a removes.
+ */
+function daemonIsIdle(status: {
+  lease?: "free" | "held" | "parked";
+  watchers?: number;
+  msSinceActivity?: number;
+}): boolean {
+  if (status.lease !== "free") return false;
+  if (status.watchers === undefined || status.watchers > 0) return false;
+  // Never touched at all is idle; touched recently is not.
+  return (
+    status.msSinceActivity === undefined ||
+    status.msSinceActivity >= UPGRADE_QUIET_MS
+  );
+}
+
+/**
+ * Kill switch, read at CALL TIME.
+ *
+ * `false` restores the pre-V-4a behaviour exactly: a bundle hash that differs
+ * relaunches the daemon there and then. Read per call rather than captured at
+ * import so a deployment can flip it without a restart, and so a test can
+ * exercise both paths in one process.
+ */
+function lazyUpgradeEnabled(): boolean {
+  return process.env.MCPJAM_BROWSER_LAZY_UPGRADE !== "false";
 }
 
 /**
@@ -568,6 +666,7 @@ function handleFromRecord(
   session: BrowserSessionRecord,
   client: SessionClient,
   reused: boolean,
+  upgradeAvailable = false,
 ): HostedBrowserSessionHandle {
   return {
     engine: "hosted",
@@ -579,7 +678,115 @@ function handleFromRecord(
     streamPassword: session.streamPassword,
     contextMode: session.contextMode,
     reused,
+    ...(upgradeAvailable ? { upgradeAvailable: true } : {}),
   };
+}
+
+/**
+ * Adopt a daemon the BOX started, if it can prove it is ours to use.
+ *
+ * Every step here is a refusal that costs one round trip and saves a relaunch;
+ * failing any of them falls through to the ordinary path, which is what a box
+ * whose image predates prelaunch does on every ensure.
+ */
+async function tryAdoptPrelaunched(
+  deps: BrowserSessionDeps,
+  sandbox: SessionSandbox,
+  target: {
+    computerId: string;
+    contextMode: BrowserContextMode;
+    observedSessionId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<HostedBrowserSessionHandle | null> {
+  if (process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT === "false") return null;
+  const token = await sandbox
+    .readTextFile?.(BROWSERD_TOKEN_FILE)
+    .catch(() => undefined);
+  // No file: an image that predates prelaunch, or a daemon this inspector
+  // booted itself (which is handed its token rather than minting one).
+  if (!token) return null;
+
+  const publicOrigin = `https://${sandbox.browserd.getHost(BROWSERD_PORT)}`;
+  const client = deps.createClient(publicOrigin, token);
+  const status = await client.status().catch(() => null);
+  if (!status || status.kind !== "ok") return null;
+  // THE BOX STARTED IT, not an inspector. A daemon an inspector booted has a
+  // row of its own, and adopting it here would write a second row for the same
+  // process under a token the first row does not know.
+  if (status.startedBy !== "prelaunch") return null;
+  if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) return null;
+  // A daemon in the wrong profile mode is never adoptable: its browser state
+  // is the wrong kind (a persistent profile's cookies for an eval, or an
+  // ephemeral one's blank slate for a signed-in user).
+  if (status.contextMode !== target.contextMode) return null;
+
+  const { streamUrl, streamPassword } = await sandbox.ensureStream();
+  const recorded = await deps.store.record({
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    streamUrl,
+    streamPassword,
+    // The hash of the bundle WE would have uploaded, so a later lookup can see
+    // the drift: a baked daemon is old bytes by design, and the lazy upgrade is
+    // what replaces it once nobody is looking.
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+    ...(target.observedSessionId
+      ? { replacesSessionId: target.observedSessionId }
+      : {}),
+    ...(signal ? { signal } : {}),
+  });
+  // A lost compare-and-swap means another replica recorded first. Their row
+  // describes this same daemon or a newer one; either way the ordinary path
+  // below re-reads and verifies, which is a better answer than guessing here.
+  if (recorded.status !== "recorded") return null;
+
+  const session: BrowserSessionRecord = {
+    sessionId: recorded.sessionId,
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    streamUrl,
+    streamPassword,
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+  };
+  // Baked bytes are old bytes by design: `upgradeAvailable` when the image's
+  // daemon is not the one this build ships, replaced the first moment nobody
+  // is holding the lease, watching, or driving it.
+  const stale = !!status.bundleHash && status.bundleHash !== deps.bundleHash();
+  return handleFromRecord(deps, session, client, true, stale);
+}
+
+/**
+ * The display settings a hosted daemon boots with.
+ *
+ * `MCPJAM_HOSTED_BROWSER_DPR` is how a deployment tries a sharper display
+ * without shipping one — the gate is x264 under 60% of one core at 20fps on a
+ * 2 vCPU box, and until a measurement passes it the answer is 1.
+ *
+ * NEVER for an ephemeral context. That is an eval or a swarm iteration, where a
+ * screenshot on one host has to match a screenshot on another (L5); the daemon
+ * pins its scale factor at 1 there too, and this is the belt to that braces.
+ */
+function hostedDisplayEnv(contextMode: BrowserContextMode): {
+  deviceScaleFactor?: number;
+  kiosk?: boolean;
+} {
+  const kiosk = process.env.MCPJAM_BROWSER_VIDEO !== "false";
+  if (contextMode !== "persistent") return { kiosk };
+  const raw = Number(process.env.MCPJAM_HOSTED_BROWSER_DPR);
+  const dpr =
+    Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : HOSTED_DISPLAY.dpr;
+  return { kiosk, ...(dpr !== 1 ? { deviceScaleFactor: dpr } : {}) };
 }
 
 /** Refuse to continue once the caller has gone away. */
@@ -602,6 +809,12 @@ async function ensureOnComputer(
     computerId,
     expectedBundleHash: bundleHash,
     expectedContextMode: contextMode,
+    // Sent only while lazy upgrade is on. With the switch off the backend goes
+    // back to answering `bundle_changed`, which is the pre-V-4a behaviour this
+    // rollback is for.
+    ...(lazyUpgradeEnabled()
+      ? { expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION }
+      : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   };
 
@@ -693,6 +906,42 @@ async function ensureOnComputer(
       args.signal,
     );
 
+    // IS ONE ALREADY RUNNING THAT WE CAN SIMPLY USE?
+    //
+    // The desktop image starts browserd itself, so on a fresh box there is a
+    // healthy daemon listening before any inspector has done anything — and
+    // the whole relaunch below (kill, upload, boot Chromium) would replace it
+    // with an identical one, several seconds later. Adoption is what turns a
+    // cold start into a warm one.
+    //
+    // Refused unless it can PROVE it is ours to use: it must have minted a
+    // token into the file only `user` can read, answer `/v1/status` with that
+    // bearer, speak this build's wire, and be running the profile mode this
+    // caller asked for. Anything short of that and it is killed and replaced,
+    // exactly as before.
+    //
+    // AND NEVER FATAL. Adoption is an optimisation over a path that already
+    // works; a transient failure inside it — a stream that would not start, a
+    // record that lost its race — must fall through to the kill-and-boot
+    // below rather than fail the whole ensure, which would leave the caller
+    // with no browser at all because a shortcut did not pay off.
+    const adopted = await tryAdoptPrelaunched(
+      deps,
+      sandbox,
+      { computerId, contextMode, observedSessionId: lookup.observedSessionId },
+      args.signal,
+    ).catch((error: unknown) => {
+      logger.warn("[browser-session] prelaunch adoption failed; relaunching", {
+        computerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
+    if (adopted) {
+      await fence?.release();
+      return adopted;
+    }
+
     // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
     //
     // Resuming a paused sandbox takes seconds, and another replica that lost
@@ -732,6 +981,7 @@ async function ensureOnComputer(
         port: BROWSERD_PORT,
         userDataDir: BROWSERD_USER_DATA_DIR,
         contextMode,
+        ...hostedDisplayEnv(contextMode),
       });
     } catch (bootError) {
       // Another replica may have won the boot race for this computer (the
@@ -759,6 +1009,9 @@ async function ensureOnComputer(
       streamPassword,
       bundleHash,
       contextMode,
+      ...(handle.protocolVersion !== undefined
+        ? { protocolVersion: handle.protocolVersion }
+        : {}),
       ...(lookup.observedSessionId
         ? { replacesSessionId: lookup.observedSessionId }
         : {}),

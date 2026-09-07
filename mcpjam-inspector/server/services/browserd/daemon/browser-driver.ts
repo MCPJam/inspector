@@ -55,6 +55,16 @@ export interface BrowserDriver {
    * cannot be watched.
    */
   viewport?(tabId?: string): Promise<TabViewport | null>;
+  /**
+   * What is open and which one is on screen — for the HUMAN pane.
+   *
+   * Optional, like `viewport`: a driver with no concept of tabs is still a
+   * perfectly good driver, and the model's path never reads this. It exists
+   * because the hosted video stream grabs the X display, so a model
+   * `activate_tab` changes what a watching person sees; without this the pane
+   * could not say so, and the picture would simply become a different page.
+   */
+  tabsSnapshot?(): { active?: string; list: Array<{ id: string; url: string }> };
 }
 
 /** Structural equality of two state tokens (L3). */

@@ -35,6 +35,8 @@ import {
   createFrameStreamDecoder,
   FRAME_STREAM_KIND,
   type FrameStreamFrame,
+  type FrameStreamStats,
+  type FrameStreamVideo,
 } from "./frame-stream.js";
 import type { ViewportInputEvent } from "./daemon/viewport.js";
 
@@ -230,6 +232,34 @@ export class BrowserdClient {
   }
 
   /**
+   * Ask the daemon to re-encode at a different tier.
+   *
+   * A RESULT rather than a throw, like `sendInput`: a box with no encoder is a
+   * normal answer, and a pane that surfaced it as a failure would be reporting
+   * a browser working exactly as designed.
+   */
+  async setQuality(args: {
+    tier: "auto" | "sharp" | "saver";
+  }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await this.request(
+      "/v1/policy",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: args.tier }),
+      },
+      true,
+    );
+    if (res.ok) return { ok: true };
+    const body = await this.json(res);
+    return {
+      ok: false,
+      status: res.status,
+      error: typeof body.error === "string" ? body.error : `http_${res.status}`,
+    };
+  }
+
+  /**
    * Read `GET /v1/frames` until it ends.
    *
    * Resolves when the CONNECTION is established (or refused); frames then
@@ -252,9 +282,30 @@ export class BrowserdClient {
   async streamFrames(args: {
     tabId?: string;
     holder?: string;
+    /**
+     * `"h264"` asks for the display encoder instead of the tab's screencast.
+     *
+     * REQUESTED ONLY when the daemon advertised `"h264"` in its
+     * `/v1/status.features`. A daemon too old to encode would answer an error
+     * stream, and a reader cannot tell that apart from a dead browser.
+     *
+     * `tabId` is ignored alongside it: the encoder grabs the X display, which
+     * has no concept of a tab. Per-tab watching stays JPEG.
+     */
+    codec?: "jpeg" | "h264";
+    /** One H.264 access unit. Only called on a `codec: "h264"` stream. */
+    onVideo?: (record: FrameStreamVideo) => void;
     /** Caller's lifetime. Aborting is how a reader hangs up. */
     signal: AbortSignal;
     onFrame: (frame: FrameStreamFrame) => void;
+    /**
+     * The daemon's own counters, as they ride the heartbeat.
+     *
+     * OPTIONAL on both sides: a daemon predating V-4a sends a bare heartbeat,
+     * and a caller that does not care simply omits this. Never inferred — an
+     * absent number is unknown, not zero.
+     */
+    onStats?: (stats: FrameStreamStats) => void;
     /**
      * How the stream ended. `undefined` means it stopped without saying —
      * a drop, which a caller should retry, as opposed to a refusal it should
@@ -266,8 +317,13 @@ export class BrowserdClient {
     connectMs?: number;
   }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
     const query = new URLSearchParams();
-    if (args.tabId) query.set("tabId", args.tabId);
+    // DROPPED on a video stream, here rather than at the call site: the
+    // encoder grabs the X display, which has no concept of a tab, so sending
+    // one would be a request the daemon cannot honour and a promise the caller
+    // would read as kept. Per-tab watching is JPEG.
+    if (args.tabId && args.codec !== "h264") query.set("tabId", args.tabId);
     if (args.holder) query.set("holder", args.holder);
+    if (args.codec === "h264") query.set("codec", "h264");
     const suffix = query.toString() ? `?${query}` : "";
 
     // Checked BEFORE anything is opened. `addEventListener("abort")` does not
@@ -331,12 +387,20 @@ export class BrowserdClient {
     body: ReadableStream<Uint8Array>,
     args: {
       signal: AbortSignal;
+      codec?: "jpeg" | "h264";
       onFrame: (frame: FrameStreamFrame) => void;
+      onVideo?: (record: FrameStreamVideo) => void;
+      onStats?: (stats: FrameStreamStats) => void;
       onEnd: (reason: string | undefined) => void;
       idleMs?: number;
     },
   ): Promise<void> {
-    const decoder = createFrameStreamDecoder();
+    // Video records are accepted only on a stream that ASKED for them, exactly
+    // as the daemon's own reader does it: an unknown kind stays fatal, which is
+    // what protects a reader that negotiated nothing.
+    const decoder = createFrameStreamDecoder(
+      args.codec === "h264" ? { video: true } : {},
+    );
     const reader = body.getReader();
     let reason: string | undefined;
     let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -365,7 +429,14 @@ export class BrowserdClient {
         }
         for (const record of decoded.records) {
           if (record.kind === FRAME_STREAM_KIND.frame) args.onFrame(record);
-          else if (record.kind === FRAME_STREAM_KIND.end)
+          else if (
+            record.kind === FRAME_STREAM_KIND.video_key ||
+            record.kind === FRAME_STREAM_KIND.video_delta
+          ) {
+            args.onVideo?.(record);
+          } else if (record.kind === FRAME_STREAM_KIND.heartbeat) {
+            if (record.stats) args.onStats?.(record.stats);
+          } else if (record.kind === FRAME_STREAM_KIND.end)
             reason = record.reason;
         }
         if (reason !== undefined) break;

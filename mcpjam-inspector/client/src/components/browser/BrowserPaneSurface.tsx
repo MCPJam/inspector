@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { Hand, Loader2, MousePointer2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Loader2 } from "lucide-react";
 import { PaneMessage } from "@/components/computer/PaneMessage";
+import {
+  PaneControlBar,
+  type PaneControl,
+} from "@/components/browser/PaneControlBar";
+import { StatsOverlay } from "@/components/browser/StatsOverlay";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { paintFrame } from "@/lib/browser-pane/frame-wire";
+import type { QualityTier } from "@/lib/browser-pane/tier";
 import {
   modifiersOf,
   toPageCoordinates,
@@ -28,8 +41,7 @@ import {
  * than decoration over it.
  */
 
-/** Who is driving, in the words the header says. */
-export type PaneControl = "agent" | "you" | "script" | "other";
+export type { PaneControl };
 
 export interface BrowserPaneSurfaceProps {
   /** The latest frame, or null while none has arrived. */
@@ -71,6 +83,27 @@ export interface BrowserPaneSurfaceProps {
    * here; what a hidden pane must stop CLAIMING is each engine's own business.
    */
   active?: boolean;
+  /** Which engine drew this, for the stats overlay and the session summary. */
+  engine?: string;
+  /**
+   * Engine-specific controls for the bar — the hosted pane's tab strip.
+   *
+   * The pane draws one because kiosk mode takes Chromium's away, and kiosk is
+   * what makes the video encoder's premise ("the display IS the page") true.
+   */
+  controls?: ReactNode;
+  /**
+   * A transient note about something that happened TO the picture.
+   *
+   * Kept apart from `error`, which describes the pane's own state: "the agent
+   * switched tabs" is not a fault, and showing it in the destructive colour
+   * would read as one.
+   */
+  notice?: string | null;
+  /** The quality menu, when this engine has tiers to offer. */
+  tier?: QualityTier;
+  onTier?: (next: QualityTier) => void;
+  tiers?: readonly QualityTier[];
 }
 
 /** The DOM's button numbering, in the daemon's names. */
@@ -78,20 +111,6 @@ function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
   if (event.button === 1) return "middle";
   if (event.button === 2) return "right";
   return "left";
-}
-
-/** The header's sentence, for each way a browser can be driven. */
-function controlLabel(control: PaneControl): string {
-  switch (control) {
-    case "you":
-      return "You have control";
-    case "script":
-      return "A script has control";
-    case "other":
-      return "Someone else has control";
-    default:
-      return "The agent is driving";
-  }
 }
 
 export function BrowserPaneSurface({
@@ -104,8 +123,22 @@ export function BrowserPaneSurface({
   placeholder,
   error,
   active = true,
+  engine = "unknown",
+  controls,
+  notice,
+  tier,
+  onTier,
+  tiers,
 }: BrowserPaneSurfaceProps) {
-  const imageRef = useRef<HTMLImageElement | null>(null);
+  /**
+   * Is the overlay up?
+   *
+   * Seeded from the stats flag, so somebody who set `browser:frame-stats` in
+   * the console gets the overlay without hunting for the menu — and the menu
+   * writes the same key back, so the choice survives a reload either way.
+   */
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   /**
    * Which button this pane is holding down, if any.
@@ -149,14 +182,101 @@ export function BrowserPaneSurface({
     [holding, onInput],
   );
 
+  /**
+   * The frame currently on the canvas.
+   *
+   * Kept so a NEW frame can release the one it replaces. An `ImageBitmap`
+   * holds a decoded surface — several megabytes at 1024×768 — and the garbage
+   * collector has no idea how expensive it is, so a pane at 30 fps that never
+   * closed them would hold a second of decoded video at all times.
+   *
+   * Released here rather than in an effect CLEANUP on purpose. React's
+   * StrictMode runs mount effects twice with a cleanup in between; a cleanup
+   * that closed the bitmap would leave the second run drawing a closed one,
+   * and the pane would go blank for a frame every time it mounted in
+   * development. The last frame's bitmap is closed by the body that owns the
+   * socket, which is also the thing that knows when the stream is over.
+   */
+  const paintedRef = useRef<PaneFrame | null>(null);
+
+  /**
+   * Paint the latest frame, and record that it was painted.
+   *
+   * An EFFECT rather than a render, because drawing is a side effect on a
+   * backing store the React tree does not own — and because the honest moment
+   * to record a paint is after `drawImage` returns. `setFrame` means a frame
+   * exists; it says nothing about anybody having seen it.
+   *
+   * Two wires meet here. On the binary wire the picture arrived decoded and
+   * the draw is synchronous. On the JSON wire it is base64 that still has to
+   * become an image, which the browser does asynchronously — so that path
+   * checks it is still the current frame before drawing, or a slow decode from
+   * two frames ago would paint over a newer picture.
+   */
+  // A stream that ENDED — a revoked grant, a lease taken, a socket closed —
+  // sets the frame to null, and the last picture's surface has no successor to
+  // release it. Several megabytes held for as long as the pane stays mounted.
+  useEffect(() => {
+    if (frame) return;
+    paintedRef.current?.bitmap?.close();
+    paintedRef.current = null;
+  }, [frame]);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !frame) return;
+    const previous = paintedRef.current;
+    if (previous && previous !== frame) previous.bitmap?.close();
+    paintedRef.current = frame;
+
+    const record = (decodeMs?: number) => {
+      paneFrameStats.notePainted({
+        ...(frame.relayTs !== undefined ? { relayTs: frame.relayTs } : {}),
+        ts: frame.ts,
+        seq: frame.seq,
+        width: frame.deviceWidth,
+        height: frame.deviceHeight,
+        ...(decodeMs !== undefined ? { decodeMs } : {}),
+      });
+    };
+
+    const bitmap = frame.bitmap;
+    if (bitmap) {
+      // The producer's own measurement: the decode happened off the main
+      // thread before this frame existed, so there is nothing to time here.
+      if (paintFrame(canvas, { ...frame, bitmap })) record(frame.decodeMs);
+      return;
+    }
+    if (!frame.data) return;
+    let stale = false;
+    const startedAt = performance.now();
+    const image = new Image();
+    image.onload = () => {
+      if (stale) return;
+      canvas.width = frame.deviceWidth;
+      canvas.height = frame.deviceHeight;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.drawImage(image, 0, 0);
+      record(performance.now() - startedAt);
+    };
+    image.src = `data:image/jpeg;base64,${frame.data}`;
+    return () => {
+      stale = true;
+    };
+  }, [frame]);
+
   const pointAt = useCallback(
     (
       event: { clientX: number; clientY: number },
       options: { clampToPage?: boolean } = {},
     ) => {
-      const image = imageRef.current;
-      if (!image || !frame) return null;
-      return toPageCoordinates(event, image, frame, options);
+      const canvas = canvasRef.current;
+      if (!canvas || !frame) return null;
+      // The ELEMENT's rectangle and the frame's own geometry, never the backing
+      // store: the canvas is sized to the picture and CSS scales it to fit, so
+      // the letterbox arithmetic is exactly what it was for the `<img>`.
+      return toPageCoordinates(event, canvas, frame, options);
     },
     [frame],
   );
@@ -175,13 +295,12 @@ export function BrowserPaneSurface({
       );
     }
     return (
-      <img
-        ref={imageRef}
+      <canvas
+        ref={canvasRef}
         data-testid="rail-browser-frame"
-        alt="The agent's browser"
-        src={`data:image/jpeg;base64,${frame.data}`}
+        aria-label="The agent's browser"
+        role="img"
         className="h-full w-full select-none object-contain"
-        draggable={false}
         onMouseMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
@@ -276,25 +395,26 @@ export function BrowserPaneSurface({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-        <span className="text-xs text-muted-foreground">
-          {controlLabel(control)}
-        </span>
-        {onHandBack ? (
-          <Button size="sm" variant="outline" onClick={onHandBack}>
-            <Hand className="mr-1.5 h-3.5 w-3.5" />
-            Hand back
-          </Button>
-        ) : onTakeControl ? (
-          <Button size="sm" onClick={onTakeControl}>
-            <MousePointer2 className="mr-1.5 h-3.5 w-3.5" />
-            Take control
-          </Button>
-        ) : null}
-      </div>
+      <PaneControlBar
+        control={control}
+        onTakeControl={onTakeControl}
+        onHandBack={onHandBack}
+        {...(controls ? { extra: controls } : {})}
+        {...(tier ? { tier } : {})}
+        {...(onTier ? { onTier } : {})}
+        {...(tiers ? { tiers } : {})}
+        statsOpen={statsOpen}
+        onToggleStats={(next) => {
+          // The menu is the flag: turning the overlay on from here is what a
+          // person who has never heard of `localStorage` can do, and turning it
+          // on has to START the recording, not merely reveal a set of zeros.
+          paneFrameStats.setEnabled(next);
+          setStatsOpen(next);
+        }}
+      />
       <div
         ref={paneRef}
-        className="min-h-0 flex-1 px-3 pb-3 outline-none"
+        className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
         // Keys go to the page only while this pane holds the browser.
         tabIndex={holding ? 0 : -1}
         onPaste={(event) => {
@@ -354,6 +474,20 @@ export function BrowserPaneSurface({
           ]);
         }}
       >
+        {statsOpen ? <StatsOverlay engine={engine} /> : null}
+        {notice ? (
+          <div
+            data-testid="pane-notice"
+            // ANNOUNCED. The agent switching tabs changes everything on
+            // screen, and a person using a screen reader has no picture to
+            // notice it in.
+            role="status"
+            aria-live="polite"
+            className="pointer-events-none absolute inset-x-0 top-2 z-10 mx-auto w-fit rounded-md bg-foreground/85 px-2 py-1 text-[11px] text-background"
+          >
+            {notice}
+          </div>
+        ) : null}
         {paneBody()}
       </div>
       {error ? (
