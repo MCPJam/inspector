@@ -182,6 +182,7 @@ function PolicyColumn({
   emptyLabel,
   jumpHost,
   forceOpen,
+  unconfirmed,
 }: {
   title: string;
   subtitle: string;
@@ -189,6 +190,9 @@ function PolicyColumn({
   emptyLabel: string;
   jumpHost?: string | null;
   forceOpen?: boolean;
+  /** Render the column as a guess rather than a reading. See the Effective
+   *  column's two subtitles below. */
+  unconfirmed?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const summary = summarize(rows);
@@ -199,8 +203,10 @@ function PolicyColumn({
     rows.length === 0
       ? emptyLabel
       : tone === "warn" && title === "Observed"
-        ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
-        : `${summary.directives} ${summary.directives === 1 ? "directive" : "directives"} · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
+      ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
+      : `${summary.directives} ${
+          summary.directives === 1 ? "directive" : "directives"
+        } · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
 
   return (
     <div className="rounded-md border border-border/40 bg-card min-w-0">
@@ -211,21 +217,32 @@ function PolicyColumn({
         className="w-full text-left px-3 py-2.5 flex items-start justify-between gap-2 hover:bg-muted/30 transition-colors rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
         <div className="min-w-0">
-          <div className="flex items-baseline gap-2">
+          <div className="flex items-baseline gap-2 flex-wrap">
             <span className="text-[12px] font-medium">{title}</span>
-            <span className="font-mono text-[10.5px] text-muted-foreground">
+            <span
+              className={`font-mono text-[10.5px] ${
+                unconfirmed
+                  ? "text-amber-600 dark:text-amber-400"
+                  : "text-muted-foreground"
+              }`}
+            >
               {subtitle}
             </span>
+            {unconfirmed && (
+              <span className="rounded-sm border border-amber-500/40 bg-amber-500/10 px-1 py-px text-[9.5px] font-medium uppercase tracking-wide text-amber-600 dark:text-amber-400">
+                unconfirmed
+              </span>
+            )}
           </div>
           <div
             className={`mt-1 font-mono text-[11.5px] truncate ${
               rows.length === 0
                 ? "text-muted-foreground italic"
                 : tone === "warn"
-                  ? title === "Observed"
-                    ? "text-destructive"
-                    : "text-amber-600 dark:text-amber-400"
-                  : "text-foreground"
+                ? title === "Observed"
+                  ? "text-destructive"
+                  : "text-amber-600 dark:text-amber-400"
+                : "text-foreground"
             }`}
           >
             {summaryText}
@@ -233,7 +250,9 @@ function PolicyColumn({
         </div>
         <ChevronDown
           aria-hidden
-          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${
+            isOpen ? "rotate-180" : ""
+          }`}
         />
       </button>
 
@@ -250,7 +269,9 @@ function PolicyColumn({
                   r.state === "mismatch"
                     ? "bg-sky-500/5 border border-sky-500/25 border-l-2 border-l-sky-500/60"
                     : "border border-transparent"
-                } ${matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""} transition-colors motion-reduce:transition-none`}
+                } ${
+                  matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""
+                } transition-colors motion-reduce:transition-none`}
               >
                 <span className={`text-center ${m.cls}`}>{m.glyph}</span>
                 <span
@@ -258,11 +279,15 @@ function PolicyColumn({
                     r.state === "blocked" || r.state === "stripped"
                       ? "text-destructive"
                       : r.state === "cors"
-                        ? "text-amber-600 dark:text-amber-400"
-                        : r.state === "mismatch"
-                          ? "text-sky-600 dark:text-sky-400"
-                          : "text-foreground"
-                  } ${r.state === "stripped" ? "line-through decoration-destructive/60" : ""}`}
+                      ? "text-amber-600 dark:text-amber-400"
+                      : r.state === "mismatch"
+                      ? "text-sky-600 dark:text-sky-400"
+                      : "text-foreground"
+                  } ${
+                    r.state === "stripped"
+                      ? "line-through decoration-destructive/60"
+                      : ""
+                  }`}
                   title={r.host}
                 >
                   {r.host}
@@ -325,10 +350,17 @@ export function PolicyDiffTab({
   );
   const observedRows = useMemo(() => buildObservedRows(diagnoses), [diagnoses]);
 
+  // Whether the middle column is a reading of the applied policy or an echo of
+  // the request. Presenting the second as the first is what sent the original
+  // report chasing a host-stripping bug that never happened.
+  const applied = input.effective.source === "applied";
+
   useEffect(() => {
     if (!jumpToHost || !containerRef.current) return;
     const target = containerRef.current.querySelector(
-      `[data-policy-host="${CSS.escape(jumpToHost.replace(/^https?:\/\//, ""))}"]`,
+      `[data-policy-host="${CSS.escape(
+        jumpToHost.replace(/^https?:\/\//, ""),
+      )}"]`,
     );
     if (target instanceof HTMLElement) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -357,11 +389,12 @@ export function PolicyDiffTab({
         />
         <PolicyColumn
           title="Effective"
-          subtitle="host granted"
+          subtitle={applied ? "proxy applied" : "widget asked · unverified"}
           rows={effectiveRows}
           emptyLabel={recorded ? "Not recorded" : "No allowlist captured"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
+          unconfirmed={!applied}
         />
         <PolicyColumn
           title="Observed"
@@ -371,6 +404,26 @@ export function PolicyDiffTab({
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
         />
+      </div>
+
+      <div className="rounded-md border border-dashed border-border/60 bg-card/50 px-3 py-2 text-[11.5px] text-muted-foreground leading-relaxed">
+        {applied ? (
+          <>
+            <span className="font-medium text-foreground">Effective</span> is
+            parsed from the CSP the sandbox proxy reported injecting for this
+            mount — the policy the browser is enforcing, not a prediction of it.
+          </>
+        ) : (
+          <>
+            <span className="font-medium text-amber-600 dark:text-amber-400">
+              Effective is unconfirmed.
+            </span>{" "}
+            The proxy did not report an applied CSP for this view (an offline
+            replay, a saved eval trace, or the mount is still in flight), so
+            this column repeats what the widget requested. It is not evidence of
+            what the browser allowed.
+          </>
+        )}
       </div>
 
       {mismatchHosts.size > 0 && (

@@ -10,6 +10,7 @@
  */
 
 import type { CspViolation } from "@/stores/widget-debug-store";
+import { resolveDirective } from "./csp-header";
 import type {
   ClassifierInput,
   CspField,
@@ -82,10 +83,52 @@ function readDeclared(
   }
 }
 
+/** The CSP directive that actually governs each classifier field. */
+function fieldDirective(field: CspField): string | undefined {
+  switch (field) {
+    case "connectDomains":
+    case "fetch":
+    case "xhr":
+    case "websocket":
+      return "connect-src";
+    case "script":
+      return "script-src";
+    case "stylesheet":
+      return "style-src";
+    case "image":
+      return "img-src";
+    case "font":
+      return "font-src";
+    case "media":
+      return "media-src";
+    case "frameDomains":
+      return "frame-src";
+    case "baseUriDomains":
+      return "base-uri";
+    case "resourceDomains":
+      // No single directive — keep the flattened union below.
+      return undefined;
+  }
+}
+
 function readEffective(
   effective: ClassifierInput["effective"],
   field: CspField
 ): string[] | undefined {
+  // When the applied policy was captured, read the governing directive from it
+  // (with the `default-src` fallback) rather than the flattened arrays: a
+  // permissive mount's `default-src *` is only visible there, and without it a
+  // script blocked for some other reason gets misfiled as "not in the
+  // effective CSP".
+  const directives = effective.directives;
+  if (directives) {
+    const name = fieldDirective(field);
+    if (name) {
+      const sources = resolveDirective(directives, name);
+      if (sources) return sources;
+    }
+  }
+
   switch (field) {
     case "connectDomains":
     case "fetch":

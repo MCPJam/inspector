@@ -410,6 +410,14 @@ export interface WidgetDebugSink {
     toolCallId: string,
     csp: Omit<WidgetSandboxInfo, "violations">
   ) => void;
+  /**
+   * The CSP string the proxy actually injected for the current mount. Merges
+   * into the stored `csp` object; see the store's `setWidgetAppliedCsp`.
+   */
+  setWidgetAppliedCsp: (
+    toolCallId: string,
+    applied: { headerString: string; mode: "permissive" | "widget-declared" }
+  ) => void;
   addCspViolation: (toolCallId: string, violation: CspViolation) => void;
   clearCspViolations: (toolCallId: string) => void;
   setWidgetModelContext: (

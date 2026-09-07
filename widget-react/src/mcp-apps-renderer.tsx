@@ -81,6 +81,7 @@ const NOOP_WIDGET_DEBUG_SINK: WidgetDebugSink = {
   setWidgetState: () => {},
   setWidgetGlobals: () => {},
   setWidgetCsp: () => {},
+  setWidgetAppliedCsp: () => {},
   addCspViolation: () => {},
   clearCspViolations: () => {},
   setWidgetModelContext: () => {},
@@ -2182,6 +2183,7 @@ export function MCPAppsRendererSurface({
   const setWidgetGlobals = debug.setWidgetGlobals;
   const setWidgetStateStore = debug.setWidgetState;
   const setWidgetCspStore = debug.setWidgetCsp;
+  const setWidgetAppliedCspStore = debug.setWidgetAppliedCsp;
   const addCspViolation = debug.addCspViolation;
   const clearCspViolations = debug.clearCspViolations;
   const setWidgetModelContext = debug.setWidgetModelContext;
@@ -3871,6 +3873,24 @@ export function MCPAppsRendererSurface({
     // Handle CSP violation messages (custom type)
     if (data.type === "mcp-apps:csp-violation") {
       handleCspViolation(event);
+      return;
+    }
+
+    // The CSP string the proxy injected for this mount. Arrives just before
+    // that mount's `mcpjam:view-mode`. This is the only ground truth the host
+    // gets about the policy the browser is enforcing — everything else it
+    // knows is the widget's request, not the outcome.
+    if (data.type === "mcpjam:csp-applied") {
+      if (typeof data.csp === "string" && data.csp.length > 0) {
+        setWidgetAppliedCspStore(toolCallIdRef.current, {
+          headerString: data.csp,
+          mode: data.mode === "permissive" ? "permissive" : "widget-declared",
+        });
+        logWidgetDebug("ui-to-host", "debug/csp-applied", {
+          mode: data.mode,
+          headerLength: data.csp.length,
+        });
+      }
       return;
     }
 

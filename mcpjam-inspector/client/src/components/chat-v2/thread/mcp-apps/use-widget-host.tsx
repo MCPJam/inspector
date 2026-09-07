@@ -311,6 +311,9 @@ export function useWidgetHost(): WidgetHostImpl {
   const setWidgetState = useWidgetDebugStore((s) => s.setWidgetState);
   const setWidgetGlobals = useWidgetDebugStore((s) => s.setWidgetGlobals);
   const setWidgetCsp = useWidgetDebugStore((s) => s.setWidgetCsp);
+  const setWidgetAppliedCsp = useWidgetDebugStore(
+    (s) => s.setWidgetAppliedCsp,
+  );
   const addCspViolation = useWidgetDebugStore((s) => s.addCspViolation);
   const clearCspViolations = useWidgetDebugStore((s) => s.clearCspViolations);
   const setWidgetModelContext = useWidgetDebugStore(
@@ -328,6 +331,7 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
       clearCspViolations,
       setWidgetModelContext,
@@ -342,6 +346,7 @@ export function useWidgetHost(): WidgetHostImpl {
       setWidgetState,
       setWidgetGlobals,
       setWidgetCsp,
+      setWidgetAppliedCsp,
       addCspViolation,
       clearCspViolations,
       setWidgetModelContext,
