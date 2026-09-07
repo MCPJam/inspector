@@ -479,10 +479,33 @@ const ALLOWED_ENVIRONMENTS: Environment[] = [
   "test",
 ];
 
+/**
+ * Spellings of an environment that mean one of {@link ALLOWED_ENVIRONMENTS}.
+ *
+ * The Railway production environment sets `ENVIRONMENT=production`, which is
+ * not `prod` and so was rejected by the allowlist below — the value was
+ * discarded and the answer came from the `NODE_ENV` fallback instead, which
+ * happens to be `prod` and hid the mismatch. Two things made that worth fixing
+ * rather than leaving: the fallback's warning says "ENVIRONMENT not set", so
+ * everyone reading logs was told the variable was missing when it was merely
+ * misspelled; and it left `ENV NODE_ENV=production` in the Dockerfile
+ * load-bearing for which platform MCP worker we dial, where dropping that line
+ * would silently resolve `dev` and point production's first-party servers at
+ * `http://localhost:8787`.
+ */
+const ENVIRONMENT_ALIASES: Record<string, Environment> = {
+  production: "prod",
+  development: "dev",
+};
+
 export function resolveEnvironment(): Environment {
   const fromEnv = process.env.ENVIRONMENT;
   if (fromEnv && ALLOWED_ENVIRONMENTS.includes(fromEnv as Environment)) {
     return fromEnv as Environment;
+  }
+  const aliased = fromEnv ? ENVIRONMENT_ALIASES[fromEnv.trim()] : undefined;
+  if (aliased) {
+    return aliased;
   }
   if (process.env.NODE_ENV === "test") return "test";
   if (process.env.NODE_ENV === "production") {

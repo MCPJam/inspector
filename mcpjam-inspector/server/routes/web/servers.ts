@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { runServerDoctor } from "@mcpjam/sdk";
 import { ConvexHttpClient } from "convex/browser";
-import { WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
+import { HOSTED_MODE, WEB_CONNECT_TIMEOUT_MS } from "../../config.js";
 import {
   mapRuntimeError,
   webErrorFromRoute,
@@ -27,8 +27,8 @@ import {
   BlockedEgressTargetError,
   EgressResolutionError,
   assertAllowedHostedTargetUrl,
-  createGuardedFetch,
 } from "../../utils/hosted-egress-guard.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 import { ErrorCode, WebRouteError } from "./errors.js";
 import { getInspectorClientRuntimeConfig } from "../../env.js";
 import { resolveEffectiveAuthMethod } from "../../utils/effective-auth.js";
@@ -224,16 +224,30 @@ export async function runHostedDoctor(
     body.clientCapabilities
   );
 
-  // The guarded `fetchFn` below covers the probe's own requests and nothing
-  // else: `runServerDoctor` records a failed probe and connects anyway, over an
-  // MCP transport that takes no fetch. So a target the guard would refuse still
-  // gets dialed by the connection step. Judge the target once, here, before
-  // either step runs — the same check the conformance routes make, and a no-op
-  // outside hosted mode.
+  // Judge the target once, before either leg runs — the same check the
+  // conformance routes make, and a no-op outside hosted mode. This is the
+  // caller-facing refusal: a stored URL that is already a private address gets
+  // a 400 naming the host they typed, rather than a transport error.
   await assertHostedDoctorTarget(config.url);
 
-  return runServerDoctor({
-    config,
+  // THE DOCTOR'S TWO LEGS, NOW ON ONE TRANSPORT.
+  //
+  // `runServerDoctor` probes over `fetchFn`, records a failed probe, and
+  // connects anyway — and its connection goes through `withEphemeralClient`,
+  // which threads the config's own `baseFetch` into the MCP transport. Before
+  // MJ-001 the probe had `createGuardedFetch` (which re-checks each hop but
+  // resolves DNS twice, leaving the rebinding window its own docblock
+  // describes) and the connection had nothing at all: a public host that
+  // answered `302 Location: http://127.0.0.1:6379/` was dialled there, and the
+  // socket's own error came back in the response.
+  //
+  // Both legs now dial the pinned transport — resolve once, classify, pin the
+  // address into the socket, re-run on every hop. One transport rather than two
+  // so the probe and the connection cannot disagree about what is dialable.
+  const doctorFetch = hostedMcpBaseFetch();
+
+  const result = await runServerDoctor({
+    config: { ...config, baseFetch: doctorFetch },
     target: {
       kind: "http",
       scope: "hosted",
@@ -250,6 +264,104 @@ export async function runHostedDoctor(
     // catch a hostname that answers with a private address, and only per-hop
     // checking can catch a redirect. Both live here. Outside hosted mode this
     // is the identity function, so localhost and LAN probing is unaffected.
-    fetchFn: createGuardedFetch(),
+    fetchFn: doctorFetch,
   });
+
+  return redactHostedDoctorTransportDetail(result);
+}
+
+/**
+ * One uniform message for every failure that never got an HTTP response.
+ *
+ * Deliberately says nothing about WHY. `connect ECONNREFUSED 127.0.0.1:6379`
+ * and `tls_get_more_records:packet length too long` are the same fact to the
+ * person debugging their own server — the inspector could not talk to it — and
+ * two different facts to someone walking a port range, which is what made them
+ * the finding's Scenario B port scanner.
+ */
+const HOSTED_TRANSPORT_FAILURE_DETAIL =
+  "The inspector could not establish a connection to this server.";
+
+/**
+ * Strip the open-versus-closed differential out of a HOSTED doctor result.
+ *
+ * WHAT THIS IS FOR. The pinned transport above stops the private target being
+ * REACHED. It does not, on its own, stop the attempt describing what it found:
+ * `normalizeServerDoctorError` copies the raw transport message onto
+ * `connection.detail`, `checks.connection.detail` and `error.message`, and the
+ * probe copies it onto `attempts[].error`. Those four fields are the residue.
+ *
+ * THE TEST IS STRUCTURAL, NOT A PATTERN LIST. A denylist of socket-error
+ * spellings leaks the first time undici renames one. Instead: if NO probe
+ * attempt received a response, then nothing HTTP-level happened, so every one
+ * of those strings can only be describing a socket, DNS or TLS outcome — and it
+ * is replaced wholesale. Once some attempt has a response the target answered
+ * as a public host, and its detail is the diagnostic the product exists to
+ * show, so it passes through untouched.
+ *
+ * An egress refusal keeps its own message: `classifyPinnedTransportError`
+ * already phrases it without the address the hostname resolved to, so it is a
+ * verdict about the target rather than a resolution oracle, and telling someone
+ * their URL is not publicly routable is the one detail that helps them.
+ *
+ * A no-op outside hosted mode. Locally the socket error is the answer — a
+ * developer whose server is not running needs to be told `ECONNREFUSED`.
+ */
+export function redactHostedDoctorTransportDetail<T>(result: T): T {
+  if (!HOSTED_MODE) return result;
+  const envelope = result as {
+    probe?: {
+      transport?: {
+        attempts?: Array<{ response?: unknown; error?: string }>;
+      };
+    } | null;
+    connection?: { status?: string; detail?: string };
+    checks?: Record<string, { status?: string; detail?: string } | undefined>;
+    error?: { message?: string } | null;
+  };
+
+  const attempts = envelope.probe?.transport?.attempts ?? [];
+  if (attempts.some((attempt) => attempt?.response !== undefined)) {
+    return result;
+  }
+
+  const rewrite = (detail: string | undefined): string | undefined =>
+    detail === undefined || isEgressRefusalDetail(detail)
+      ? detail
+      : HOSTED_TRANSPORT_FAILURE_DETAIL;
+
+  for (const attempt of attempts) {
+    if (attempt?.error !== undefined) {
+      attempt.error = rewrite(attempt.error);
+    }
+  }
+  if (envelope.connection?.status === "error") {
+    envelope.connection.detail = rewrite(envelope.connection.detail);
+  }
+  for (const check of Object.values(envelope.checks ?? {})) {
+    if (check?.status === "error") {
+      check.detail = rewrite(check.detail);
+    }
+  }
+  if (envelope.error?.message !== undefined) {
+    envelope.error.message = rewrite(envelope.error.message);
+  }
+  return result;
+}
+
+/**
+ * Is this detail the guard's own verdict rather than a socket outcome?
+ *
+ * Matched against the message `classifyPinnedTransportError` and
+ * `hosted-egress-guard` produce — the only two places a refusal is worded — so
+ * a reworded refusal degrades to the uniform message above rather than to a
+ * leak. The regression test drives the real transport at a real reserved
+ * address, so a rewording fails a test here instead of silently changing what
+ * callers are told.
+ */
+function isEgressRefusalDetail(detail: string): boolean {
+  return (
+    /not a publicly routable address/i.test(detail) ||
+    /private or internal address/i.test(detail)
+  );
 }

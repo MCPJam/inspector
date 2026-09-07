@@ -165,11 +165,46 @@ describe("buildReplayManager", () => {
       {
         defaultTimeout: expect.any(Number),
         lazyConnect: true,
+        // Replay dials server URLs a caller stored, so the manager must carry
+        // the hosted egress guard (MJ-001). Asserted as a function here and
+        // for its actual REFUSAL below — a fetch that guards nothing would
+        // satisfy this line.
+        baseFetch: expect.any(Function),
         // The shared inspector policy — asserts the replay manager uses it
         // rather than pinning its literal values here.
         retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
       },
     );
+  });
+
+  it("gives that manager a fetch that refuses a private target", async () => {
+    // The half `expect.any(Function)` cannot check. Hosted mode is what the
+    // guard keys on, so it is set for this case only; the local-mode
+    // passthrough is covered in `routes/web/__tests__/hosted-manager-base-fetch`.
+    const previous = process.env.VITE_MCPJAM_HOSTED_MODE;
+    process.env.VITE_MCPJAM_HOSTED_MODE = "true";
+    vi.resetModules();
+    try {
+      const { buildReplayManager: build } = await import("../route-helpers.js");
+      const { BlockedEgressTargetError } = await import(
+        "../../../utils/hosted-egress-guard.js"
+      );
+      build({
+        runId: "run_123",
+        suiteId: "suite_123",
+        servers: [{ serverId: "s1", url: "https://mcp.example.test/mcp" }],
+      });
+      const options = mcpClientManagerConstructorMock.mock.calls.at(-1)?.[1] as {
+        baseFetch: typeof fetch;
+      };
+      await expect(
+        options.baseFetch("http://169.254.169.254/latest/meta-data/"),
+      ).rejects.toBeInstanceOf(BlockedEgressTargetError);
+    } finally {
+      if (previous === undefined) delete process.env.VITE_MCPJAM_HOSTED_MODE;
+      else process.env.VITE_MCPJAM_HOSTED_MODE = previous;
+      vi.resetModules();
+    }
   });
 });
 

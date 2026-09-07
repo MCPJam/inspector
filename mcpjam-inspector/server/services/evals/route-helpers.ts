@@ -10,6 +10,7 @@ import {
   exportConnectedServerToolSnapshotForEvalAuthoring,
 } from "../../utils/export-helpers.js";
 import { INSPECTOR_MCP_RETRY_POLICY } from "../../utils/mcp-retry-policy.js";
+import { hostedMcpBaseFetch } from "../../utils/hosted-mcp-base-fetch.js";
 
 export type ReplayConfig = {
   runId: string;
@@ -181,6 +182,10 @@ export function buildReplayManager(replayConfig: ReplayConfig) {
     {
       defaultTimeout: WEB_CALL_TIMEOUT_MS,
       lazyConnect: true,
+      // Replay dials the server configs a caller stored, so this one is the
+      // MJ-001 fix rather than uniformity: without it an eval replay was a
+      // second unguarded route to the same egress.
+      baseFetch: hostedMcpBaseFetch(),
       retryPolicy: INSPECTOR_MCP_RETRY_POLICY,
     },
   );

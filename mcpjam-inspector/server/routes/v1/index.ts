@@ -14,6 +14,7 @@ import { Hono } from "hono";
 import { bearerAuthMiddleware } from "../../middleware/bearer-auth.js";
 import { guestRateLimitMiddleware } from "../../middleware/guest-rate-limit.js";
 import { passthroughRateLimitMiddleware } from "../../middleware/passthrough-rate-limit.js";
+import { mcpEgressRateLimitMiddleware } from "../../middleware/mcp-egress-rate-limit.js";
 // The guest allowlist lives in its own module so `requireVerifiedAuth` can
 // ask the same question without importing this router (a cycle).
 import { isGuestAllowedV1Request } from "./guest-allowed-paths.js";
@@ -99,6 +100,21 @@ v1.use(
   passthroughRateLimitMiddleware,
   guestRateLimitMiddleware,
 );
+
+// The two v1 routes that dial a caller-named MCP server share the egress-shaped
+// per-credential ceiling with their `/api/web` twins — they reuse the same
+// `runHostedDoctor` / `validateServerCore` cores, so metering only one surface
+// would leave the other as the way around it. This is narrower than the
+// `passthroughRateLimitMiddleware` above in what it covers and tighter in what
+// it allows: that one meters the single unverified credential class at 120/min
+// for the whole API, this one meters every class on the routes that spend a
+// connection. See `middleware/mcp-egress-rate-limit.ts` (MJ-001).
+for (const spendsEgress of [
+  "/projects/:projectId/servers/:serverId/doctor",
+  "/projects/:projectId/servers/:serverId/validate",
+]) {
+  v1.use(spendsEgress, mcpEgressRateLimitMiddleware);
+}
 
 v1.use("*", async (c, next) => {
   // Authed (non-guest) callers are unaffected. Guests are admitted only on the
