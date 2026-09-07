@@ -420,7 +420,12 @@ function blockingReason(
     case "interrupted":
       return "Setup was interrupted. Retry to continue.";
     case "loading":
-      return reason;
+      // Never a bare `null`. `loading` disables Allow (see `canApprove`), and
+      // the fallbacks below only speak when the pack, the machine id or the
+      // folder is missing — so a load that carries no message left the button
+      // dead with nothing on screen explaining it. The member query resolving
+      // is exactly that case.
+      return reason ?? "Checking this machine — one moment.";
     default:
       return null;
   }
