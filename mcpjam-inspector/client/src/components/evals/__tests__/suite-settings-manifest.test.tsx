@@ -113,9 +113,15 @@ vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
 
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => mocks.capabilities(),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => mocks.capabilities(),
+  };
+});
 
 function renderedSettingKeys(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("[data-setting-key]")).map(
@@ -364,6 +370,19 @@ describe("eval suite settings manifest — render parity", () => {
     expect(v2.has("validity")).toBe(true);
     expect(v2.has("minimumAccuracy")).toBe(false);
     expect(v2.has("minimumIterations")).toBe(false);
+    expect(v2.has("qualityGateBaseline")).toBe(true);
+    expect(v2.has("qualityGateNoGatingScoreErrors")).toBe(true);
+  });
+
+  it("shows quality-gate rows on a legacy suite as well", () => {
+    const { container } = renderSettingsSheet();
+    const legacy = new Set(collectAllSettingKeys(container));
+    expect(legacy.has("qualityGateBaseline")).toBe(true);
+    expect(legacy.has("qualityGateAllowedDrop")).toBe(true);
+    expect(legacy.has("qualityGateNoDeterministicRegressions")).toBe(true);
+    expect(legacy.has("qualityGateMaximumP95LatencyIncreaseMs")).toBe(true);
+    expect(legacy.has("qualityGateNoGatingScoreErrors")).toBe(true);
+    expect(legacy.has("validity")).toBe(false);
   });
 
   /**

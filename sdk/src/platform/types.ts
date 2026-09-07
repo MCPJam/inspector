@@ -22,8 +22,13 @@ import type {
   EvalVerdictDecision,
   FailureCategory,
   StageResultRow,
+  SuiteGatePolicyV1,
+  SuiteGateReportV1,
   UserValueStage,
 } from "../contract/index.js";
+
+/** `GET /projects/{p}/eval-runs/{runId}/gate` — the stored suite policy's answer. */
+export type PlatformEvalRunGate = SuiteGateReportV1;
 
 /**
  * Response of
@@ -1349,6 +1354,61 @@ export interface PlatformExpectedToolCall {
   arguments?: Record<string, unknown>;
 }
 
+/**
+ * Goal-completion fields on `settings.judge`. Resolved over platform
+ * defaults so this is what a run would actually grade with.
+ */
+export type PlatformEvalSuiteGoalCompletionJudge = {
+  /** Judge is available on the suite. Does NOT by itself grade anything. */
+  enabled: boolean;
+  model: string | null;
+  /**
+   * The flag that makes grading HAPPEN — fires the judge as each run
+   * completes. Absent on older API deployments.
+   */
+  autoRun?: boolean;
+  /**
+   * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
+   * Absent on older API deployments.
+   */
+  threshold?: number;
+  /**
+   * Presentation severity. Legal only with an advisory role. Absent when
+   * the suite has none, and on older API deployments.
+   */
+  severity?: "warn";
+  /**
+   * The suite's own grading criteria, handed to the judge alongside each
+   * case's expected output.
+   *
+   * The judge cites `id` in its reasons, which is what makes a verdict
+   * auditable rather than a number — so ids are stable, unique, and
+   * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
+   * agreement measured against criteria the suite no longer uses is
+   * agreement with a question nobody is asking. Absent on older API
+   * deployments and on suites with no criteria.
+   */
+  rubric?: {
+    criteria: Array<{
+      id: string;
+      label: string;
+      description?: string;
+      required?: boolean;
+    }>;
+  } | null;
+};
+
+/**
+ * Stored groundedness on the suite read DTO. Always advisory. Fields are
+ * the stored values, not resolved defaults — C1 registers none.
+ */
+export type PlatformEvalSuiteGroundednessJudge = {
+  role: "advisory";
+  model: string | null;
+  threshold: number | null;
+  severity?: "warn";
+};
+
 export interface PlatformEvalSuiteSettings {
   /** Minimum pass rate as a percentage, 0–100. */
   minimumAccuracy: number | null;
@@ -1369,39 +1429,12 @@ export interface PlatformEvalSuiteSettings {
    * `model` stays nullable: older API deployments report the suite's raw
    * `judgeModel`, which is `null` for a suite that never picked one.
    */
-  judge: {
-    /** Judge is available on the suite. Does NOT by itself grade anything. */
-    enabled: boolean;
-    model: string | null;
+  judge: PlatformEvalSuiteGoalCompletionJudge & {
     /**
-     * The flag that makes grading HAPPEN — fires the judge as each run
-     * completes. Absent on older API deployments.
+     * Stored groundedness, when the suite has a reserved slot. Read-only
+     * while execution is unwired — PATCH refuses this key.
      */
-    autoRun?: boolean;
-    /**
-     * Advisory pass threshold (`passed = score >= threshold`), in [0, 1].
-     * Absent on older API deployments.
-     */
-    threshold?: number;
-    /**
-     * The suite's own grading criteria, handed to the judge alongside each
-     * case's expected output.
-     *
-     * The judge cites `id` in its reasons, which is what makes a verdict
-     * auditable rather than a number — so ids are stable, unique, and
-     * load-bearing. Editing this rubric RETIRES the suite's judge calibration:
-     * agreement measured against criteria the suite no longer uses is
-     * agreement with a question nobody is asking. Absent on older API
-     * deployments and on suites with no criteria.
-     */
-    rubric?: {
-      criteria: Array<{
-        id: string;
-        label: string;
-        description?: string;
-        required?: boolean;
-      }>;
-    } | null;
+    groundedness?: PlatformEvalSuiteGroundednessJudge;
   };
   /**
    * The verdict policy this suite's runs are decided under.
@@ -1435,6 +1468,11 @@ export interface PlatformEvalSuiteSettings {
    * checking `verdictPolicyVersion`.
    */
   policy?: "legacy" | "v2";
+  /**
+   * Live quality-gate policy. `null` when the suite has none. Absent on
+   * older API deployments that predate B2.
+   */
+  qualityGate?: SuiteGatePolicyV1 | null;
 }
 
 /** Suite-level defaults under verdict policy 2. Fractions, never percents. */
@@ -3271,6 +3309,50 @@ export interface PlatformSecretDeleted {
  * read back. That is the contract, not a default: the only code that decrypts
  * them builds an outbound OTLP request and returns nothing to a caller.
  */
+/**
+ * An organization's ceiling on MCPJam-billed spend for the current billing
+ * window.
+ *
+ * Dollars on the wire, credits in the store, and BOTH are reported so a
+ * caller never has to know the conversion (1 credit = 1¢) to check its own
+ * arithmetic against the ledger's.
+ *
+ * This governs MCPJam-billed spend only. Work run on your own provider keys
+ * is recorded but never counted against the cap, because MCPJam did not
+ * charge you for it.
+ */
+export interface PlatformSpendBudget {
+  /** The ceiling in USD. `null` means uncapped — the default. */
+  capUsd: number | null;
+  /** The same ceiling in credits, as stored. `null` when uncapped. */
+  capCredits: number | null;
+  /**
+   * Whole percents of the cap that raise an alert. Reaching the cap always
+   * alerts, so 100 never appears here.
+   */
+  alertPercents: number[];
+  /** Spend so far in this window. Present and meaningful even when uncapped. */
+  spentUsd: number;
+  spentCredits: number;
+  /**
+   * The window is the organization's BILLING ANCHOR period, not the calendar
+   * month: a budget that reset on the 1st while credits reset on the 14th
+   * would be a ceiling on the wrong thing.
+   */
+  windowStartAt: number;
+  windowEndsAt: number;
+  /** Thresholds already alerted in this window; each fires at most once. */
+  alertedPercents: number[];
+  /** When the cap was reached, if it has been. `null` otherwise. */
+  capReachedAt: number | null;
+  updatedAt: number | null;
+  /** The accepted range for `capUsd`, so a client can validate before sending. */
+  minCapUsd: number;
+  maxCapUsd: number;
+  /** False for a personal organization, which cannot carry a budget. */
+  supported: boolean;
+}
+
 export interface PlatformTraceDestination {
   id: string;
   organizationId: string;

@@ -378,4 +378,31 @@ describe("ScoresList", () => {
     );
     expect(second.container.innerHTML).toBe(before);
   });
+
+  it("hides judge rows and drops them from the header count", () => {
+    const judge: ScoreResult = finalizeScoreResult(advisory, {
+      kind: "scored",
+      value: 0.42,
+      rationale: "The answer never named the file.",
+    });
+    render(
+      <ScoresList
+        scores={[
+          finalizeScoreResult(gate, { kind: "scored", value: 1 }),
+          judge,
+        ]}
+        evaluationConfig={snapshot}
+        hideJudgeRows
+      />,
+    );
+    expect(screen.getByTestId("score-row-hidden").textContent).toBe(
+      "Judge score hidden until you label this trial",
+    );
+    expect(screen.queryByText("0.42 / 0.7")).toBeNull();
+    expect(screen.queryByText(/The answer never named the file/)).toBeNull();
+    expect(
+      screen.getByText("1 / 1 gating scores passed"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/judge hidden/i)).toBeInTheDocument();
+  });
 });

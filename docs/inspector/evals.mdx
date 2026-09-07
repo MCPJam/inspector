@@ -35,15 +35,40 @@ Click **New case** in the suite header (or in the empty-state screen when no cas
 
 The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
 
-**Left column — the simple form**
+**Left column — the case form**
 
-The simple form organizes authoring into three sections:
+Every case opens in this form, however it was authored — in the app, through the CLI, or from an SDK suite file. It organizes authoring into three sections:
 
 - **User asks** — the prompt the model receives.
 - **In the app** — interact steps (clicks, typing) and widget assertions recorded against a live widget, shown in the order they run.
 - **Check the result** — tool-call assertions and other checks that decide pass/fail.
 
-Steps are stored and executed in the order you author them. Adding a new tool check splices it after the last existing tool check, so the grading order matches what you see.
+Steps are stored and executed in the order you author them. Adding a new tool check splices it into the first turn, after the last tool check already there, so the grading order matches what you see.
+
+Under **More checks**, a case shows both kinds of check it can carry, without converting between them:
+
+- **Checks written as steps** (what the CLI and the SDK produce) are graded in place, at their position in the run. They are labelled by that position — a step-level "no tool errors" reads **No tool errors so far**, because it only sees the transcript up to that point. Editing one rewrites that step; it never becomes a case-level check.
+- **Case-level checks** you add here are graded once, over the finished transcript.
+
+Because a failing step halts the run, a check written as a step can leave later checks unrun. The trial column marks those **Skipped**.
+
+**Which tool should handle it?**
+
+The answer to this question is what marks a case negative — never an inference from its steps:
+
+- **A named tool** — the case must take that route.
+- **No tool should be called** — a negative case. It passes only if the model called nothing. A check that requires a tool call contradicts this, and the form says so.
+- **No specific tool is required** — the case names no route and is graded by its checks. This is a normal positive case, and it is what most CLI- and SDK-authored cases are.
+
+A brand-new case that asserts nothing at all must answer this question before it can be saved or run: without a check, a rubric, or a named tool, it would pass vacuously.
+
+**Also in this case**
+
+A case can hold steps this form has no section for — a second prompt, or a pinned tool call. Those are listed at the bottom of the column with the turn they belong to. Click **Edit in Steps** to open the full step list.
+
+**Steps**
+
+**Steps** (top right of the column) swaps the form for the flat, ordered step list, in the same workspace with the same trial on the right. **Back to form** returns.
 
 **Right column — the selected trial**
 
@@ -57,7 +82,7 @@ The right column resolves to one of these views, in precedence order:
 6. **Empty** — no trial yet; start typing a prompt.
 
 <Note>
-  A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
+  A **negative case** is one you marked **No tool should be called**. Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape. A case that simply names no tool is *not* negative — it is graded by its checks.
 </Note>
 
 ### History inspect

@@ -1,4 +1,7 @@
-import type { EvalSuiteFileCaseImport } from "@mcpjam/sdk/contract";
+import type {
+  EvalSuiteFileCaseImport,
+  SuiteGatePolicyV1,
+} from "@mcpjam/sdk/contract";
 import type { PromptTurn, PromptTurnToolCall } from "@/shared/steps";
 import type { TestStep } from "@/shared/steps";
 import type {
@@ -315,6 +318,12 @@ export type EvalSuite = {
       maxEvaluatorErrorRate?: number;
     };
   };
+  /**
+   * Live stored quality-gate policy. Excluded from execution config
+   * revision; a change or clear is a suite revision with a required reason.
+   * Absent on a backend that predates B2.
+   */
+  gatePolicy?: SuiteGatePolicyV1;
   _creationTime?: number; // Convex auto field
   tags?: string[];
   defaultConfig?: {

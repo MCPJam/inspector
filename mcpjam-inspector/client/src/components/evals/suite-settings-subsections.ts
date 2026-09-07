@@ -1,14 +1,13 @@
-import {
-  USER_VALUE_STAGE_LABELS,
-  USER_VALUE_STAGES,
-  type UserValueStage,
-} from "@mcpjam/sdk/contract";
+import { type UserValueStage } from "@mcpjam/sdk/contract";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
 import type { SuiteSettingsGroupId } from "./suite-settings-groups";
 import { NESTED_SETTING_KEYS } from "./suite-settings-groups";
+
+/** Rail label for the judge cards. The row itself stays "Judge". */
+const JUDGES_RAIL_LABEL = "Judges";
 
 export type SuiteSettingsSubsectionTarget =
   | { type: "row"; key: EvalSuiteSettingKey }
@@ -38,33 +37,23 @@ export function getSubsectionsForGroup(
 ): readonly SuiteSettingsSubsection[] {
   switch (groupId) {
     case "grading": {
-      const subs: SuiteSettingsSubsection[] = [
+      return [
         {
           id: "policy",
           label: manifestLabel("policy"),
           target: { type: "row", key: "policy" },
         },
+        {
+          id: "checks",
+          label: manifestLabel("checks"),
+          target: { type: "passOrFailChecks" },
+        },
+        {
+          id: "judge",
+          label: JUDGES_RAIL_LABEL,
+          target: { type: "row", key: "judge" },
+        },
       ];
-      if (options.isVerdictPolicyV2) {
-        subs.push({
-          id: "validity",
-          label: manifestLabel("validity"),
-          target: { type: "row", key: "validity" },
-        });
-      }
-      for (const stage of USER_VALUE_STAGES) {
-        subs.push({
-          id: `stage-${stage}`,
-          label: USER_VALUE_STAGE_LABELS[stage],
-          target: { type: "stage", stage },
-        });
-      }
-      subs.push({
-        id: "checks",
-        label: manifestLabel("checks"),
-        target: { type: "passOrFailChecks" },
-      });
-      return subs;
     }
     case "runs": {
       const subs: SuiteSettingsSubsection[] = [];
@@ -127,23 +116,20 @@ export function subsectionForSettingKey(
       if (parent) return parent;
     }
   }
-  if (groupId === "grading" && key === "passOrFail") {
-    return subsections.find((sub) => sub.target.type === "stage");
-  }
-  const nestedStageKeys: Partial<Record<EvalSuiteSettingKey, UserValueStage>> =
-    {
-      matchOptions: "selection",
-      judge: "userValue",
-      judgeRubric: "userValue",
-    };
-  const stage = nestedStageKeys[key];
-  if (groupId === "grading" && stage) {
-    return subsections.find(
-      (sub) => sub.target.type === "stage" && sub.target.stage === stage,
-    );
-  }
-  if (groupId === "grading" && key === "checks") {
+  if (
+    groupId === "grading" &&
+    (key === "passOrFail" || key === "checks" || key === "matchOptions")
+  ) {
     return subsections.find((sub) => sub.target.type === "passOrFailChecks");
+  }
+  if (
+    groupId === "grading" &&
+    (key === "judge" || key === "judgeRubric" || key === "judgeGroundedness")
+  ) {
+    return subsections.find((sub) => sub.id === "judge");
+  }
+  if (groupId === "grading" && key === "validity") {
+    return subsections.find((sub) => sub.id === "policy");
   }
   return subsections.find(
     (sub) => sub.target.type === "row" && sub.target.key === key,
@@ -182,7 +168,8 @@ export function pickActiveSubsectionFromScroll(
   const activationY = root.scrollTop + root.clientHeight * 0.12;
   let activeId = anchors[0].id;
   for (const { id, element } of anchors) {
-    const top = element.getBoundingClientRect().top - rootTop + root.scrollTop;
+    const top =
+      element.getBoundingClientRect().top - rootTop + root.scrollTop;
     if (top <= activationY + 1) activeId = id;
   }
   return activeId;

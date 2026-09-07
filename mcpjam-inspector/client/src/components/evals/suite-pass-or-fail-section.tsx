@@ -1,5 +1,5 @@
 /**
- * "Pass or fail", organized by the stage each grader measures.
+ * "Scorers and judges", organized by the stage each grader measures.
  *
  * THE PROBLEM THIS SOLVES. The settings sheet used to list Tool calls, Default
  * checks and LLM as Judge as three unrelated rows, in the order the fields
@@ -8,49 +8,22 @@
  * the storage, not the measurement.
  *
  * This section describes the measurement. The same fields, the same controls,
- * grouped under the six links of the user-value chain: connection, discovery,
- * selection, tool call, response, user value. Each group names the question it
- * answers, lists what will grade it, and says plainly when nothing will.
+ * now one table in user-value-chain order: connection, discovery, selection,
+ * tool call, response, user value. Each group names the question it answers
+ * and lists what will grade it.
  *
  * WHAT IT IS NOT. It shows no results. A chain is one trial's journey and a
  * funnel is a population statistic; this is neither. Every chip here says what
- * a grader IS (a gate, or advisory), never what a run DID, and the empty-state
- * copy deliberately avoids the run-state word "not measured" —
- * `STAGE_EMPTY_COPY` carries the two config-state answers instead.
- *
- * The controls are the SAME controls the old rows used, wired to the same
- * draft dispatches. Nothing about what a save writes changes here; only where
- * a reader finds it does.
+ * a grader IS (a gate, a warn, or a report), never what a run DID.
  */
 
-import { useMemo } from "react";
-import {
-  USER_VALUE_STAGES,
-  USER_VALUE_STAGE_LABELS,
-  USER_VALUE_STAGE_QUESTIONS,
-  type UserValueStage,
-} from "@mcpjam/sdk/contract";
-import { STAGE_CHIP_TONE_CLASS } from "@/components/evaluate/stage-chain-model";
-import { cn } from "@/lib/utils";
-import {
-  suiteSettingsChainSectionClass,
-  SuiteSettingsChainNode,
-} from "./suite-settings-section-chain";
+import type { UserValueStage } from "@mcpjam/sdk/contract";
 import type { EvalMatchOptions } from "@/shared/eval-matching";
-import { MATCH_OPTIONS_DEFAULTS } from "@/shared/eval-matching";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import type { ModelDefinition } from "@/shared/types";
-import { ValidatorsSection } from "./validators-section";
-import { JudgesSection } from "./judges-section";
-import { AddCheckMenu, blankPredicate, ChecksSection } from "./checks-section";
-import { GlobalGatesSectionInfoHint } from "./global-gates-info";
-import {
-  groupGradersByStage,
-  judgeMode,
-  stageEmptyIsGap,
-  STAGE_EMPTY_COPY,
-  type GraderRow,
-} from "./suite-grading-model";
+import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
+import { SuiteScorerTable } from "./suite-scorer-table";
+import type { GroundednessRunEvidence } from "./suite-judge-card";
 import type { EvalJudgeConfig } from "./types";
 
 /**
@@ -58,138 +31,10 @@ import type { EvalJudgeConfig } from "./types";
  * same sentence.
  */
 export const PASS_OR_FAIL_HINT =
-  "Gates decide the verdict. Advisory graders score alongside it and never change it. Cases and per-run overrides can relax a gate.";
+  "Scorers evaluate the evidence available for each trial. Gate results contribute to the trial verdict; Warn highlights an advisory result; Report records it.";
 
-/**
- * A grader's ROLE, as a chip.
- *
- * Two words and no colour drama: a gate is the ordinary case, and an advisory
- * grader is the exception worth marking. Neither is a warning — a suite whose
- * judge is advisory is not misconfigured, it is the default every suite starts
- * from — so the advisory chip takes the neutral tone rather than the amber one
- * that would send a reader off to fix something.
- */
-function RoleChip({ role }: { role: GraderRow["role"] }) {
-  return (
-    <span
-      className={`shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[10px] uppercase tracking-[0.06em] ${
-        role === "gating" ? "text-foreground" : STAGE_CHIP_TONE_CLASS.unmeasured
-      }`}
-    >
-      {role === "gating" ? "Gate" : "Advisory"}
-    </span>
-  );
-}
-
-function judgeLineLabel(mode: ReturnType<typeof judgeMode>): string {
-  switch (mode) {
-    case "off":
-      return "Judge off";
-    case "manual":
-      return "Judge on request";
-    case "automatic":
-      return "Judge, advisory";
-    case "gating":
-      return "Judge gates the verdict";
-  }
-}
-
-function GraderRowLine({
-  row,
-  judge,
-}: {
-  row: GraderRow;
-  judge?: ReturnType<typeof judgeMode>;
-}) {
-  return (
-    <li className="flex items-start justify-between gap-3 text-xs text-foreground/90">
-      <span className="min-w-0 break-words">{row.label}</span>
-      {row.kind === "judge" && judge ? (
-        <span className="shrink-0 text-[11px] text-muted-foreground">
-          {judgeLineLabel(judge)}
-        </span>
-      ) : (
-        <RoleChip role={row.role} />
-      )}
-    </li>
-  );
-}
-
-/**
- * One stage: its name, the question it answers, and what grades it.
- *
- * The question comes from the contract's own vocabulary
- * (`USER_VALUE_STAGE_QUESTIONS`) rather than being written here, so the words a
- * reader sees on the settings page are the words they see on a run.
- */
-function StageGroup({
-  stage,
-  rows,
-  judge,
-  facts,
-  children,
-}: {
-  stage: UserValueStage;
-  rows: GraderRow[];
-  judge?: ReturnType<typeof judgeMode>;
-  /** Read-only config facts, for a stage the runner measures. */
-  facts?: React.ReactNode;
-  children?: React.ReactNode;
-}) {
-  // A GAP is a stage somebody could grade and has not. Connection, discovery
-  // and call have no grader to author at all, so an empty row list there is
-  // the permanent, correct state rather than something wanting attention —
-  // tinting them grouped the three stages that need nothing with the three
-  // that are waiting on the reader. `stageEmptyIsGap` already draws that line.
-  const isGap = rows.length === 0 && stageEmptyIsGap(stage);
-  return (
-    <section
-      className={cn(suiteSettingsChainSectionClass())}
-      data-stage-group={stage}
-    >
-      <SuiteSettingsChainNode />
-      {/* The tint lives on an INNER wrapper: the section carries the chain's
-          `pb-10` spacing between sections, and a background on that box draws
-          the gap as 40px of empty tinted space below the content. */}
-      <div className={cn(isGap && "rounded-lg bg-muted/60 px-4 py-4")}>
-        <div className="mb-4 space-y-1">
-          <h3 className="text-lg font-semibold tracking-tight text-foreground">
-            {USER_VALUE_STAGE_LABELS[stage]}
-          </h3>
-          <p className="text-sm leading-relaxed text-muted-foreground">
-            {USER_VALUE_STAGE_QUESTIONS[stage]}
-          </p>
-        </div>
-        {rows.length > 0 ? (
-          <ul className="space-y-1">
-            {rows.map((row) => (
-              <GraderRowLine key={row.id} row={row} judge={judge} />
-            ))}
-          </ul>
-        ) : (
-          <div className="flex items-baseline gap-2">
-            <p
-              className={`text-sm ${STAGE_CHIP_TONE_CLASS.unmeasured}`}
-              data-stage-empty={stage}
-            >
-              {STAGE_EMPTY_COPY[stage]}
-            </p>
-            {stage === "response" ? (
-              <span className="text-sm text-foreground/80">Add a check</span>
-            ) : null}
-          </div>
-        )}
-        {facts}
-        {children ? <div className="mt-5 space-y-3">{children}</div> : null}
-      </div>
-    </section>
-  );
-}
-
-export type PassOrFailFocus =
-  | { kind: "all" }
-  | { kind: "stage"; stage: UserValueStage }
-  | { kind: "checks" };
+export const JUDGE_HINT =
+  "A judge scores trial evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
 
 export function SuitePassOrFailSection({
   matchOptions,
@@ -202,8 +47,10 @@ export function SuitePassOrFailSection({
   scenarioMigrationNotice,
   judgeAccessory,
   rubricEditor,
-  focus,
   stageFacts,
+  capabilities,
+  unavailableReason,
+  groundednessEvidence,
 }: {
   matchOptions: EvalMatchOptions | undefined;
   onMatchOptionsChange: (next: EvalMatchOptions | undefined) => void;
@@ -220,8 +67,6 @@ export function SuitePassOrFailSection({
   judgeAccessory?: React.ReactNode;
   /** S6 mounts the judge rubric editor under the user-value group. */
   rubricEditor?: React.ReactNode;
-  /** When set, only the matching slice of the pass-or-fail editor is shown. */
-  focus?: PassOrFailFocus;
   /**
    * Read-only config facts per stage, for the stages the runner measures.
    *
@@ -229,128 +74,28 @@ export function SuitePassOrFailSection({
    * this component is pure config-state rendering. The owner mounts them.
    */
   stageFacts?: Partial<Record<UserValueStage, React.ReactNode>>;
+  capabilities?: SuiteCapabilities | null;
+  unavailableReason?: string;
+  groundednessEvidence?: GroundednessRunEvidence;
 }) {
-  const model = useMemo(
-    () => groupGradersByStage({ matchOptions, predicates, judgeConfig }),
-    [matchOptions, predicates, judgeConfig],
-  );
-  const judge = judgeMode(judgeConfig);
-  const focusKind = focus?.kind ?? "all";
-  const stagesToShow =
-    focusKind === "stage" && focus?.kind === "stage"
-      ? [focus.stage]
-      : USER_VALUE_STAGES;
-  const showStages = focusKind !== "checks";
-  const showChecks = focusKind === "all" || focusKind === "checks";
-
   return (
-    <div>
-      {showStages
-        ? stagesToShow.map((stage) => (
-            <StageGroup
-              key={stage}
-              stage={stage}
-              rows={model.byStage[stage]}
-              judge={judge}
-              facts={stageFacts?.[stage]}
-            >
-              {stage === "selection" ? (
-                <div className="space-y-3" data-setting-key="matchOptions">
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground">
-                      Tool-call matching
-                    </h4>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Arguments is edited here and measured at Tool call.
-                    </p>
-                  </div>
-                  <ValidatorsSection
-                    title=""
-                    value={matchOptions}
-                    inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                    onChange={onMatchOptionsChange}
-                  />
-                </div>
-              ) : null}
-              {stage === "userValue" ? (
-                <div className="space-y-5" data-setting-key="judge">
-                  <div>
-                    <h4 className="text-sm font-semibold text-foreground">
-                      Judge
-                    </h4>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      Advisory by default. A calibrated judge may gate; see
-                      Judge criteria.
-                    </p>
-                  </div>
-                  <JudgesSection
-                    chrome="bare"
-                    value={judgeConfig}
-                    availableModels={availableModels}
-                    onChange={onJudgeConfigChange}
-                  />
-                  {judgeAccessory}
-                  {rubricEditor ? (
-                    <div className="space-y-2" data-setting-key="judgeRubric">
-                      <div>
-                        <h4 className="text-sm font-semibold text-foreground">
-                          Judge criteria
-                        </h4>
-                        <p className="mt-1 text-sm text-muted-foreground">
-                          Applied to every case, alongside each case&apos;s own
-                          expected output. The judge cites criterion ids in its
-                          reasons.
-                        </p>
-                      </div>
-                      {rubricEditor}
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
-            </StageGroup>
-          ))
-        : null}
-
-      {/* The ONE editor for every authored check.
-          Deliberately not per-stage: an Add menu under each group would ask a
-          person to know which stage their check files under before they can
-          write it, and that routing is the page's job rather than theirs. */}
-      {showChecks ? (
-        <section
-          className={suiteSettingsChainSectionClass()}
-          data-setting-key="checks"
-        >
-          <SuiteSettingsChainNode />
-          <div className="mb-5 flex items-start justify-between gap-4">
-            <div className="flex items-center gap-1.5">
-              <h3 className="text-lg font-semibold tracking-tight text-foreground">
-                Checks
-              </h3>
-              <GlobalGatesSectionInfoHint />
-            </div>
-            <AddCheckMenu
-              globalGatesMenu
-              onAdd={(kind) =>
-                onPredicatesChange((previous) => [
-                  ...previous,
-                  blankPredicate(kind),
-                ])
-              }
-            />
-          </div>
-          {scenarioMigrationNotice ? (
-            <div className="mb-4">{scenarioMigrationNotice}</div>
-          ) : null}
-          <ChecksSection
-            title=""
-            hideAddButton
-            hideEmptyState
-            globalGatesMenu
-            value={predicates}
-            onChange={(next) => onPredicatesChange(next)}
-          />
-        </section>
-      ) : null}
-    </div>
+    <SuiteScorerTable
+      matchOptions={matchOptions}
+      onMatchOptionsChange={onMatchOptionsChange}
+      predicates={predicates}
+      onPredicatesChange={onPredicatesChange}
+      judgeConfig={judgeConfig}
+      onJudgeConfigChange={onJudgeConfigChange}
+      availableModels={availableModels}
+      scenarioMigrationNotice={scenarioMigrationNotice}
+      judgeAccessory={judgeAccessory}
+      rubricEditor={rubricEditor}
+      stageFacts={stageFacts}
+      capabilities={capabilities}
+      unavailableReason={unavailableReason}
+      passOrFailHint={PASS_OR_FAIL_HINT}
+      judgeHint={JUDGE_HINT}
+      groundednessEvidence={groundednessEvidence}
+    />
   );
 }

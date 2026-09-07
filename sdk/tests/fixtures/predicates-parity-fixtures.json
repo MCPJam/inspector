@@ -157,6 +157,120 @@
     {
       "label": "widgetNoConsoleErrors — with toolName filter",
       "value": { "type": "widgetNoConsoleErrors", "toolName": "show_map" }
+    },
+    {
+      "label": "toolCalledWith — advisory warn",
+      "value": {
+        "type": "toolCalledWith",
+        "toolName": "search",
+        "args": { "args": {} },
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolCalledAtLeastOnce — advisory warn",
+      "value": {
+        "type": "toolCalledAtLeastOnce",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "toolNeverCalled — advisory warn",
+      "value": {
+        "type": "toolNeverCalled",
+        "toolName": "delete_account",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "firstToolWas — advisory warn",
+      "value": {
+        "type": "firstToolWas",
+        "toolName": "search",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseContains — advisory warn",
+      "value": {
+        "type": "responseContains",
+        "needle": "refund issued",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "responseMatches — advisory warn",
+      "value": {
+        "type": "responseMatches",
+        "pattern": "\\d+",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "noToolErrors — advisory warn",
+      "value": {
+        "type": "noToolErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "finalAssistantMessageNonEmpty — advisory warn",
+      "value": {
+        "type": "finalAssistantMessageNonEmpty",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "tokenBudgetUnder — advisory warn",
+      "value": {
+        "type": "tokenBudgetUnder",
+        "tokens": 1000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "turnCountUnder — advisory warn",
+      "value": {
+        "type": "turnCountUnder",
+        "turns": 3,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRendered — advisory warn",
+      "value": {
+        "type": "widgetRendered",
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetRenderLatencyUnder — advisory warn",
+      "value": {
+        "type": "widgetRenderLatencyUnder",
+        "ms": 3000,
+        "role": "advisory",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "widgetNoConsoleErrors — advisory warn",
+      "value": {
+        "type": "widgetNoConsoleErrors",
+        "role": "advisory",
+        "severity": "warn"
+      }
     }
   ],
   "reject": [
@@ -318,6 +432,31 @@
     {
       "label": "widgetNoConsoleErrors — empty toolName",
       "value": { "type": "widgetNoConsoleErrors", "toolName": "" }
+    },
+    {
+      "label": "severity error is not a valid severity",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "advisory",
+        "severity": "error"
+      }
+    },
+    {
+      "label": "severity warn requires role advisory (gating + warn)",
+      "value": {
+        "type": "responseContains",
+        "needle": "ok",
+        "role": "gating",
+        "severity": "warn"
+      }
+    },
+    {
+      "label": "severity warn without role is rejected",
+      "value": {
+        "type": "noToolErrors",
+        "severity": "warn"
+      }
     }
   ]
 }

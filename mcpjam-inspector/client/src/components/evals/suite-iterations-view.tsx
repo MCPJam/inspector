@@ -55,12 +55,14 @@ import { PassCriteriaSelector } from "./pass-criteria-selector";
 import { SuitePassOrFailSection } from "./suite-pass-or-fail-section";
 import { JudgeRubricEditor, isRubricValid } from "./judge-rubric-editor";
 import { JudgeGatePanel } from "./judge-gate-panel";
+import { useGroundedness } from "./use-groundedness";
 import { JudgeBacktestPanel } from "./judge-backtest-panel";
 import {
   VerdictPolicyUpgradeButton,
   VerdictPolicyV2Controls,
   VerdictValidityControls,
 } from "./suite-policy-controls";
+import { SuiteQualityGateSection } from "./suite-quality-gate-section";
 import { areAllChecksValid } from "./checks-section";
 import { splitPredicatesForMigration } from "@/shared/predicate-migration";
 import type { EvalMatchOptions, Predicate } from "@/shared/eval-matching";
@@ -182,6 +184,7 @@ const ROW_DRAFT_KEYS: Partial<Record<EvalSuiteSettingKey, SuiteSettingsKey[]>> =
       "minIterations",
       "verdictPolicyVersion",
       "verdictPolicyDefaults",
+      "gatePolicy",
     ],
     validity: ["verdictPolicyDefaults"],
     passOrFail: [
@@ -884,6 +887,14 @@ export function SuiteIterationsView({
     const run = runs.find((r) => r._id === selectedRunId);
     return run ?? null;
   }, [selectedRunId, runs]);
+
+  const latestCompletedRun = useMemo(
+    () =>
+      sortRunsNewestFirst(runs).find((run) => run.status === "completed") ??
+      null,
+    [runs],
+  );
+  const groundedness = useGroundedness(latestCompletedRun);
 
   /**
    * Every trial's chain for the run currently open, keyed by iteration.
@@ -2117,8 +2128,8 @@ export function SuiteIterationsView({
                         }
                         hint={
                           isVerdictPolicyV2
-                            ? "How each case is decided."
-                            : "Legacy policy — a suite-wide percent."
+                            ? "What a run must meet to pass."
+                            : "This suite uses a suite-wide minimum accuracy. Switch to per-case grading to set repetitions and a pass threshold."
                         }
                       >
                         {isVerdictPolicyV2 ? (
@@ -2213,36 +2224,52 @@ export function SuiteIterationsView({
                             />
                           </>
                         )}
-                      </SuiteSettingsRow>
-
-                      {isVerdictPolicyV2 ? (
-                        <SuiteSettingsRow
-                          settingKey="validity"
-                          data-subsection-id="validity"
-                          accessory={
-                            <LedgerRowChips
-                              dirty={rowIsDirty("validity")}
-                              conflict={rowIsConflict("validity")}
+                        {isVerdictPolicyV2 ? (
+                          <div data-setting-key="validity" className="space-y-2">
+                            <p className="text-xs font-medium text-foreground">
+                              Validity
+                            </p>
+                            <p className="text-[11px] text-muted-foreground/60">
+                              Mark the run inconclusive instead of failed when…
+                            </p>
+                            <VerdictValidityControls
+                              defaults={draft.current.verdictPolicyDefaults}
+                              onChange={(next) =>
+                                dispatchDraft({
+                                  type: "edit",
+                                  key: "verdictPolicyDefaults",
+                                  value: next,
+                                })
+                              }
                             />
+                          </div>
+                        ) : null}
+                        <SuiteQualityGateSection
+                          policy={draft.current.gatePolicy}
+                          onChange={(next) =>
+                            dispatchDraft({
+                              type: "edit",
+                              key: "gatePolicy",
+                              value: next,
+                            })
                           }
-                          hint="Mark the run inconclusive instead of failed when…"
-                        >
-                          <VerdictValidityControls
-                            defaults={draft.current.verdictPolicyDefaults}
-                            onChange={(next) =>
-                              dispatchDraft({
-                                type: "edit",
-                                key: "verdictPolicyDefaults",
-                                value: next,
-                              })
-                            }
-                          />
-                        </SuiteSettingsRow>
-                      ) : null}
+                          capabilities={
+                            capabilitiesReady ? capabilities : null
+                          }
+                          capabilitiesState={capabilitiesState}
+                        />
+                      </SuiteSettingsRow>
 
                       <div data-setting-key="passOrFail" className="contents">
                         <SuitePassOrFailSection
-                          focus={{ kind: "all" }}
+                          capabilities={
+                            capabilitiesReady ? capabilities : null
+                          }
+                          unavailableReason={
+                            capabilitiesState === "unavailable"
+                              ? CAPABILITY_REASON_COPY.flag_unavailable
+                              : undefined
+                          }
                           stageFacts={{
                             connection: (
                               <SuiteStageFactsList
@@ -2328,6 +2355,10 @@ export function SuiteIterationsView({
                               }
                             />
                           }
+                          groundednessEvidence={{
+                            result: groundedness.result ?? null,
+                            pending: groundedness.pending,
+                          }}
                           scenarioMigrationNotice={
                             suiteScenarioMigrationCount > 0 ? (
                               <p className="text-[11px] text-amber-700 dark:text-amber-400">
@@ -2555,6 +2586,7 @@ export function SuiteIterationsView({
       <ReviewAndSaveDialog
         open={reviewOpen}
         onOpenChange={setReviewOpen}
+        requireNote={dirtySettingKeys.has("gatePolicy")}
         changes={draftChanges}
         conflicts={draft.conflicts.map(
           (key) =>

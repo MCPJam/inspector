@@ -211,6 +211,9 @@ export const CLI_BINDINGS: Readonly<Record<string, CliBinding>> = {
   get_eval_run_stage_analytics: {
     command: "cloud eval stage-analytics --run",
   },
+  get_eval_run_gate: {
+    command: "cloud eval gate --run",
+  },
   get_eval_run_route_facts: { command: "cloud eval route-facts --run" },
   propose_eval_description_rewrite: {
     command: "cloud eval description-experiment propose --run --tool",
