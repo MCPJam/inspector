@@ -979,13 +979,17 @@ function evaluatePassRateDrop(
       (baseSummary.passed * subjectSummary.countable -
         subjectSummary.passed * baseSummary.countable) /
       (baseSummary.countable * subjectSummary.countable);
-    // Compare in integer space so 100/100 -> 97/100 against 0.03 is
-    // equality, not a float that lands a hair over the fraction.
-    // (bP/bC - sP/sC) > t  iff  (bP*sC - sP*bC) > t*bC*sC
+    // (bP/bC - sP/sC) > t  iff  (bP*sC - sP*bC) > t*bC*sC. The LEFT side is
+    // exact integer arithmetic; the right is not, because `threshold` is a
+    // fraction — `0.29 * 100 * 100` is 2899.9999999999995, so a drop of
+    // exactly the threshold would read as exceeding it. Allow the product a
+    // few ulps, which is far below the smallest real difference (1, an
+    // integer) and so cannot mask a genuine regression.
+    const scaled = threshold * baseSummary.countable * subjectSummary.countable;
     const exceeds =
       baseSummary.passed * subjectSummary.countable -
         subjectSummary.passed * baseSummary.countable >
-      threshold * baseSummary.countable * subjectSummary.countable;
+      scaled + Math.abs(scaled) * Number.EPSILON * 4;
     partials.push({
       condition,
       status: exceeds ? "failed" : "passed",

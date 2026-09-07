@@ -472,7 +472,11 @@ function ThresholdCell({
         aria-label="Judge threshold"
         className="h-7 w-20 text-xs"
         onChange={(event) => {
-          const next = Number(event.target.value);
+          // `Number("")` is 0. An emptied field is someone retyping, not a
+          // threshold of zero — which on a gating judge would pass any score.
+          const raw = event.target.value.trim();
+          if (raw === "") return;
+          const next = Number(raw);
           if (!Number.isFinite(next)) return;
           onJudgeThresholdChange(Math.min(1, Math.max(0, next)));
         }}
@@ -494,8 +498,13 @@ function ThresholdCell({
           aria-label="Token budget"
           className="h-7 w-24 text-xs"
           onChange={(event) => {
-            const next = Number(event.target.value);
-            if (!Number.isFinite(next)) return;
+            // An emptied or non-positive field is mid-edit, not a ceiling of
+            // zero — which the suite-file schema refuses, disabling Save with
+            // nothing on screen to explain it.
+            const raw = event.target.value.trim();
+            if (raw === "") return;
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 1) return;
             onPredicateChange(row.predicateIndex!, {
               ...predicate,
               tokens: Math.floor(next),
@@ -514,8 +523,10 @@ function ThresholdCell({
           aria-label="Turn budget"
           className="h-7 w-24 text-xs"
           onChange={(event) => {
-            const next = Number(event.target.value);
-            if (!Number.isFinite(next)) return;
+            const raw = event.target.value.trim();
+            if (raw === "") return;
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 1) return;
             onPredicateChange(row.predicateIndex!, {
               ...predicate,
               turns: Math.floor(next),

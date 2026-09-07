@@ -97,7 +97,10 @@ import {
   type SuiteFileFailureStage,
 } from "@mcpjam/sdk";
 import { composeSuiteGateWithBaseReport } from "@mcpjam/sdk/contract";
-import type { SuiteGateReportV1 } from "@mcpjam/sdk/contract";
+import type {
+  SuiteGateComposedOutcome,
+  SuiteGateReportV1,
+} from "@mcpjam/sdk/contract";
 import { isPlatformApiError } from "@mcpjam/sdk/platform";
 import type {
   PlatformApiClient,
@@ -1126,6 +1129,22 @@ function isSuiteGateRouteUnsupported(error: unknown): boolean {
 }
 
 /**
+ * An enveloped `NOT_FOUND` from the gate route, on a run this command ALREADY
+ * fetched.
+ *
+ * The route answers `not_configured` with a 200, so a 404 here is never "the
+ * suite has no policy". It is either a router that does not know the path (an
+ * older deployment whose catch-all still speaks the v1 envelope) or a run that
+ * vanished between two calls — and the base report was already measured from
+ * the run we did fetch. Neither is a verdict, so both skip the section rather
+ * than turning a measured pass into an infrastructure answer.
+ */
+function isSuiteGateReportAbsent(error: unknown): boolean {
+  if (!isPlatformApiError(error)) return false;
+  return error.status === 404;
+}
+
+/**
  * Poll a run to a terminal status.
  *
  * The extension is granted ONCE, on first observing `grading`. A run held for
@@ -1692,7 +1711,9 @@ async function runEvalGate(
   // proof the suite has no policy, and never a green.
   let suiteGate: SuiteGateReportV1 | undefined;
   let suiteGateSkip: string | undefined;
-  let composedOutcome = report.outcome;
+  // Widened on purpose: the composed vocabulary carries `unavailable`, which
+  // the flag/base report never produces but the type union does.
+  let composedOutcome: SuiteGateComposedOutcome = report.outcome;
   if (options.suitePolicy !== false && resolvedProjectId) {
     const fetched = await runPlatformCommand(
       platformOptionsOf(command),
@@ -1714,6 +1735,13 @@ async function runEvalGate(
                 "This MCPJam deployment does not serve stored suite quality-gate evaluation.",
             };
           }
+          if (isSuiteGateReportAbsent(error)) {
+            return {
+              kind: "skip" as const,
+              message:
+                "No stored suite quality-gate report for this run. The gate section was not evaluated.",
+            };
+          }
           return {
             kind: "error" as const,
             message: error instanceof Error ? error.message : String(error),
@@ -1731,12 +1759,44 @@ async function runEvalGate(
       suiteGateSkip = fetched.message;
     } else {
       suiteGateSkip = fetched.message;
-      composedOutcome = "incomplete";
+      // A failure to READ the suite gate is an infrastructure condition, and
+      // it must not overwrite what the base report already measured: a
+      // regression stays exit 1 and a usage error stays exit 2. Only an
+      // otherwise-green run becomes incomplete, because a configured gate
+      // that could not be evaluated is never a pass.
+      if (report.outcome === "passed" || report.outcome === "waived") {
+        composedOutcome = "incomplete";
+      }
     }
   }
   const composedReport: GateReport = {
     ...report,
     outcome: composedOutcome === "unavailable" ? "incomplete" : composedOutcome,
+    // The suite gate's own conditions ride into the report's verdict list, so
+    // every renderer — human, JUnit, HTML — names the condition that turned
+    // CI red. Without them a suite-gate failure prints "Gate: FAILED" over
+    // nothing but PASS rows, and the JUnit failure message is empty.
+    verdicts: suiteGate
+      ? [
+          ...report.verdicts,
+          ...suiteGate.conditions
+            .filter((condition) => condition.status !== "passed")
+            .map((condition) => ({
+              gate: `suiteGate:${condition.condition}`,
+              status:
+                condition.status === "failed"
+                  ? ("failed" as const)
+                  : ("non_gateable" as const),
+              message: condition.message,
+              ...(typeof condition.observed === "number"
+                ? { observed: condition.observed }
+                : {}),
+              ...(typeof condition.threshold === "number"
+                ? { threshold: condition.threshold }
+                : {}),
+            })),
+        ]
+      : report.verdicts,
   };
   const exitCode = evalGateExitCode(composedReport);
   const structured = needsReport

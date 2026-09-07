@@ -5321,6 +5321,18 @@ const updateEvalSuiteInput = z.strictObject({
             .describe(
               "Advisory pass threshold, 0–1 (passed = score >= threshold)."
             ),
+          role: z
+            .enum(["advisory", "gating"])
+            .optional()
+            .describe(
+              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+            ),
+          severity: z
+            .literal("warn")
+            .optional()
+            .describe(
+              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+            ),
           rubric: z
             .union([
               z.object({

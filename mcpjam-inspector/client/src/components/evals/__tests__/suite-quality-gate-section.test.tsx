@@ -122,6 +122,29 @@ describe("SuiteQualityGateSection", () => {
     expect(onChange).toHaveBeenCalledWith({ noGatingScoreErrors: true });
   });
 
+  it("keeps the comparative conditions while a baseline id is being retyped", async () => {
+    // Backspacing the run id to retype it is mid-edit, not a choice of None.
+    // Rebuilding the policy from one field there would silently discard the
+    // ceilings the person set beside it.
+    const user = userEvent.setup();
+    const { onChange } = renderGate({
+      policy: {
+        baseline: { kind: "run", runId: "run_abc" },
+        maximumPassRateDrop: 0.03,
+        noDeterministicRegressions: true,
+        maximumP95LatencyIncreaseMs: 250,
+        noGatingScoreErrors: true,
+      },
+    });
+    await user.clear(screen.getByLabelText("Baseline run id"));
+    expect(onChange).toHaveBeenCalledWith({
+      maximumPassRateDrop: 0.03,
+      noDeterministicRegressions: true,
+      maximumP95LatencyIncreaseMs: 250,
+      noGatingScoreErrors: true,
+    });
+  });
+
   it("treats zero as a configured threshold", async () => {
     const user = userEvent.setup();
     const { onChange } = renderGate({

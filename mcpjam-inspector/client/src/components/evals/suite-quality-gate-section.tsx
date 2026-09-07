@@ -7,7 +7,7 @@
  * also clears the comparative fields so the review diff can name them.
  */
 
-import { useEffect, useId, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { Switch } from "@mcpjam/design-system/switch";
 import type { SuiteGatePolicyV1 } from "@mcpjam/sdk/contract";
 import type { SuiteCapabilities } from "@/hooks/use-suite-capabilities";
@@ -110,12 +110,22 @@ function MillisecondsInput({
   const shown = value === undefined ? "" : String(value);
   const [text, setText] = useState(shown);
   const [editing, setEditing] = useState(false);
+  // Escape reverts, and it does so by blurring — `blur()` runs the blur
+  // handler synchronously against the text that was on screen, so the
+  // handler has to be told the blur is a revert before it reads anything.
+  // Same hazard, same shape as `PercentInput`.
+  const revertOnBlur = useRef(false);
   useEffect(() => {
     if (!editing) setText(shown);
   }, [shown, editing]);
 
   const commit = () => {
     setEditing(false);
+    if (revertOnBlur.current) {
+      revertOnBlur.current = false;
+      setText(shown);
+      return;
+    }
     const trimmed = text.trim();
     if (trimmed === "") {
       if (value !== undefined) onCommit(undefined);
@@ -147,6 +157,7 @@ function MillisecondsInput({
         onKeyDown={(event) => {
           if (event.key === "Enter") event.currentTarget.blur();
           if (event.key === "Escape") {
+            revertOnBlur.current = true;
             setText(shown);
             event.currentTarget.blur();
           }
@@ -209,11 +220,29 @@ export function SuiteQualityGateSection({
     onChange(normalizeDraftGatePolicy(next));
   };
 
+  /**
+   * The policy MINUS its baseline, for a baseline that is being TYPED.
+   *
+   * An empty run-id or commit field is someone mid-edit, not someone
+   * choosing None: the comparative conditions beside it are still what they
+   * asked for, so `maximumPassRateDrop`, `noDeterministicRegressions` and
+   * `maximumP95LatencyIncreaseMs` travel untouched. (Selecting None is the
+   * deliberate case, and clears them — see `setBaselineChoice`.)
+   */
+  const withoutBaseline = (): SuiteGatePolicyV1 => {
+    if (!policy) return {};
+    const { baseline: _dropped, ...rest } = policy;
+    return rest;
+  };
+
   const setBaselineChoice = (next: BaselineChoice) => {
     if (next === "none") {
       setPendingKind(null);
       setRunIdText("");
       setCommitText("");
+      // Choosing None is deliberate, and the three comparative conditions
+      // cannot be evaluated without a baseline — storing them would publish a
+      // permanently non-gateable check. Only the absolute condition survives.
       commitPolicy({
         noGatingScoreErrors: policy?.noGatingScoreErrors,
       });
@@ -236,9 +265,7 @@ export function SuiteQualityGateSection({
           baseline: { kind: "run", runId: runIdText.trim() },
         });
       } else {
-        commitPolicy({
-          noGatingScoreErrors: policy?.noGatingScoreErrors,
-        });
+        commitPolicy(withoutBaseline());
       }
       return;
     }
@@ -249,9 +276,7 @@ export function SuiteQualityGateSection({
         baseline: { kind: "commit_sha", commitSha: commitText.trim() },
       });
     } else {
-      commitPolicy({
-        noGatingScoreErrors: policy?.noGatingScoreErrors,
-      });
+      commitPolicy(withoutBaseline());
     }
   };
 
@@ -336,9 +361,7 @@ export function SuiteQualityGateSection({
                   baseline: { kind: "run", runId: next.trim() },
                 });
               } else {
-                commitPolicy({
-                  noGatingScoreErrors: policy?.noGatingScoreErrors,
-                });
+                commitPolicy(withoutBaseline());
               }
             }}
           />
@@ -367,9 +390,7 @@ export function SuiteQualityGateSection({
                   baseline: { kind: "commit_sha", commitSha: next.trim() },
                 });
               } else {
-                commitPolicy({
-                  noGatingScoreErrors: policy?.noGatingScoreErrors,
-                });
+                commitPolicy(withoutBaseline());
               }
             }}
           />

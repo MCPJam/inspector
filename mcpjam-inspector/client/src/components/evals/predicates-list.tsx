@@ -1,4 +1,5 @@
 import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
+import { checkRole } from "@mcpjam/sdk/predicates";
 import type { Predicate, PredicateResult } from "@/shared/eval-matching";
 import {
   PREDICATE_KIND_LABELS,
@@ -112,8 +113,14 @@ export function PredicatesList({
   observations?: EvalTraceWidgetRenderObservationView[];
 }) {
   if (predicates.length === 0) return null;
-  const failed = predicates.filter((r) => !r.passed).length;
-  const passed = predicates.length - failed;
+  // Advisory (Warn/Report) rows are reported, never decisive: the runner's
+  // own verdict skips them, so counting their failures here would paint a
+  // red "2 / 3 checks passed" badge on a trial the runner passed.
+  const gating = predicates.filter(
+    (r) => checkRole(r.predicate) !== "advisory"
+  );
+  const failed = gating.filter((r) => !r.passed).length;
+  const passed = gating.length - failed;
   const allPassed = failed === 0;
   const caseLevel = predicates.filter((r) => !r.scope);
   const stepScoped = predicates.filter((r) => r.scope?.kind === "turn");
@@ -163,8 +170,8 @@ export function PredicatesList({
             <XCircle className="h-3 w-3 shrink-0" aria-hidden />
           )}
           {allPassed
-            ? `${predicates.length} / ${predicates.length} checks passed`
-            : `${passed} / ${predicates.length} checks passed`}
+            ? `${gating.length} / ${gating.length} checks passed`
+            : `${passed} / ${gating.length} checks passed`}
         </div>
       </div>
 

@@ -317,6 +317,14 @@ interface EvalFixtureOptions {
   stageAnalyticsRouteMissing?: boolean;
   /** Like `runCaseIterationFetchError`, but the wire code is UNAUTHORIZED. */
   runCaseIterationFetchAuthError?: boolean;
+  /**
+   * The stored suite quality-gate report `GET /eval-runs/run-1/gate` answers.
+   * Absent leaves the route unimplemented, so the fixture's generic enveloped
+   * 404 stands — which the CLI reads as "no report", never as a failure.
+   */
+  runOneSuiteGate?: unknown;
+  /** Makes the gate route answer 500: a transport failure, not a verdict. */
+  runOneSuiteGateError?: boolean;
   runOneResult?: "passed" | "failed" | "inconclusive";
   /** A terminal execution state distinct from the result verdict. */
   runOneStatus?: "completed" | "cancelled" | "grading";
@@ -1170,6 +1178,23 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
       );
       return;
     }
+    if (
+      url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1/gate" &&
+      (req.method ?? "GET") === "GET"
+    ) {
+      if (options.runOneSuiteGateError) {
+        res.statusCode = 500;
+        res.end(
+          JSON.stringify({ code: "INTERNAL", message: "gate read exploded" })
+        );
+        return;
+      }
+      if (options.runOneSuiteGate !== undefined) {
+        res.end(JSON.stringify(options.runOneSuiteGate));
+        return;
+      }
+    }
+
     if (
       url.pathname === "/api/v1/projects/proj-alpha/eval-runs/run-1" &&
       (req.method ?? "GET") === "GET"
@@ -7624,3 +7649,118 @@ test("merge: a local --out write failure never masks a real verdict failure", as
     await fixture.close();
   }
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The stored suite quality gate, as `eval gate` composes it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SUITE_GATE_FAILED = {
+  schemaVersion: 1,
+  evaluatorVersion: 1,
+  policy: { maximumPassRateDrop: 0.03 },
+  policyHash: "hash-1",
+  outcome: "failed",
+  conditions: [
+    {
+      condition: "maximumPassRateDrop",
+      status: "failed",
+      message: '"refund" pass rate 1 -> 0.9 (drop 0.1)',
+      observed: 0.1,
+      threshold: 0.03,
+    },
+  ],
+};
+
+test("a stored suite-gate failure fails a passing run, and names the condition", async () => {
+  const fixture = await startEvalFixture({ runOneSuiteGate: SUITE_GATE_FAILED });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "0"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 1, run.stdout + run.stderr);
+    // The condition rides into the verdict list, so the human output — and
+    // every reporter built from the same report — says WHY CI went red.
+    const printed = run.stdout + run.stderr;
+    assert.ok(
+      printed.includes("suiteGate:maximumPassRateDrop"),
+      `expected the failing condition to be named:\n${printed}`
+    );
+  } finally {
+    // The command exited non-zero on purpose; leaving that on the process
+    // would fail the whole FILE after every test in it passed.
+    process.exitCode = 0;
+    await fixture.close();
+  }
+});
+
+test("a suite-gate read failure never rewrites a measured verdict", async () => {
+  // Reading the gate is infrastructure. A 500 there must not turn a MEASURED
+  // regression (exit 1) into an infrastructure answer (exit 3) — the exact
+  // inversion `evalGateExitCode`'s contract forbids.
+  const failing = await startEvalFixture({
+    runOneSuiteGateError: true,
+    runOneResult: "failed",
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture0(failing),
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "100"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 1, run.stdout + run.stderr);
+  } finally {
+    process.exitCode = 0;
+    await failing.close();
+  }
+
+  // An otherwise-green run is the one case that becomes incomplete: a
+  // configured gate that could not be read is never a pass.
+  const passing = await startEvalFixture({ runOneSuiteGateError: true });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture0(passing),
+          "gate",
+          "--project",
+          "proj-alpha",
+          "--run",
+          "run-1",
+          "--min-pass-rate-percent",
+          "0"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 3, run.stdout + run.stderr);
+  } finally {
+    process.exitCode = 0;
+    await passing.close();
+  }
+});
+
+function fixture0(f: { baseUrl: string }): string {
+  return f.baseUrl;
+}

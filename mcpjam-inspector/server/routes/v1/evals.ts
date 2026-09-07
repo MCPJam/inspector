@@ -2822,7 +2822,17 @@ function caseBatchFailureToWebError(
  * test cases must include at least one assertion") are caller mistakes (404 /
  * 400), not 500s.
  */
-function translateConvexWriteError(error: unknown): WebRouteError {
+function translateConvexWriteError(
+  error: unknown,
+  /**
+   * What the CALLER was writing, for the one refusal that names a feature.
+   * The translator is shared by seventeen call sites — suite create/update,
+   * environments, hosts, schedules, comparisons, case writes — so a missing
+   * Convex function must not report every one of them as a quality-gate
+   * limitation.
+   */
+  feature = "these eval settings writes",
+): WebRouteError {
   // The revision precondition, before the generic mapping.
   //
   // The shared translator maps `code === "CONFLICT"` to a 409, and the suite
@@ -2835,7 +2845,7 @@ function translateConvexWriteError(error: unknown): WebRouteError {
   // against.
   if (isConvexFunctionMissing(error)) {
     return convexFunctionUnavailableError(
-      "This MCPJam deployment does not serve quality-gate settings writes.",
+      `This MCPJam deployment does not serve ${feature}.`,
     );
   }
   const data = (error as { data?: unknown } | null | undefined)?.data;
@@ -6881,7 +6891,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ...takePrecondition(),
       });
     } catch (error) {
-      throw translateConvexWriteError(error);
+      throw translateConvexWriteError(
+        error,
+        "quality-gate settings writes",
+      );
     }
   }
 

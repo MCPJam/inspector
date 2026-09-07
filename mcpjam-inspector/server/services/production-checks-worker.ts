@@ -258,7 +258,10 @@ export async function executeClaimedCheck(
         criterionId: entry.id,
         passed: results[index]?.passed ?? false,
         reason: results[index]?.reason ?? "evaluator returned no verdict",
-        ...(role === "advisory" ? { role } : {}),
+        // NOT the check policy: `criterionResultValidator` on the backend is
+        // a closed object, so an extra key fails argument validation and the
+        // completion 500s in a lease/retry loop. The advisory reduction is
+        // already carried by `passed` below.
       };
     });
   } catch (error) {
