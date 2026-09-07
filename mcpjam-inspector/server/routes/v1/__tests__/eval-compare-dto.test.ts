@@ -31,7 +31,7 @@ import {
  * one change.
  */
 const EVAL_RUN_COMPARE_PARITY_SHA256 =
-  "5823c2420be670bcffaa3b0bdb4e98046393b2929dce903b7aa74fcc5bbf9e02";
+  "f5a2f1a0b5f1bb706ba44fb3cd1a0d9ebd2ad6a48c3885256c9683b9061bb970";
 
 const FIXTURE_PATH = join(
   dirname(fileURLToPath(import.meta.url)),
@@ -253,6 +253,21 @@ describe("toRunCompareDto — projection", () => {
         representativeIterationId: "iter_compare_regressed",
         error: 'expected tool "search" was never called',
       },
+      // Per-case cost, with the coverage that produced it. Both are always
+      // present in the shape even when nothing was priced — the counts are
+      // how a reader tells "cost nothing" from "we priced none of it".
+      metrics: {
+        estimatedCostUsd: {
+          base: null,
+          compare: null,
+          delta: null,
+          percentDelta: null,
+        },
+        costCoverage: {
+          base: { costed: 0, total: 1 },
+          compare: { costed: 0, total: 1 },
+        },
+      },
     });
   });
 
@@ -301,9 +316,8 @@ describe("guest access", () => {
    * side-effect of adding an endpoint.
    */
   it("is denied for guests while its siblings stay allowed", async () => {
-    const { isGuestAllowedV1Request } = await import(
-      "../guest-allowed-paths.js"
-    );
+    const { isGuestAllowedV1Request } =
+      await import("../guest-allowed-paths.js");
     expect(
       isGuestAllowedV1Request(
         "GET",
@@ -325,16 +339,26 @@ describe("guest access", () => {
 });
 
 describe("toRunCompareDto — the narrowing nobody else asserts", () => {
-  it("keeps exactly three metrics, dropping the wider internal set", () => {
+  it("keeps exactly four metrics, dropping the wider internal set", () => {
     // The internal diff carries startOffsetMs, inputTokens, outputTokens,
     // cachedInputTokens and reasoningTokens too. Nothing else fails if that
     // narrowing silently widens.
+    //
+    // `costCoverage` is the fourth deliberately: a cost diff without the
+    // count behind it lets a partially-priced run read as a cheap one, and a
+    // CLI gate would pass or fail on that partial sum. It travels WITH the
+    // cost, never as an optional extra.
     const projected = dto() as Record<string, any>;
     expect(Object.keys(projected.metrics).sort()).toEqual([
+      "costCoverage",
       "estimatedCostUsd",
       "totalTokens",
       "wallDurationMs",
     ]);
+    expect(projected.metrics.costCoverage).toEqual({
+      base: { costed: expect.any(Number), total: expect.any(Number) },
+      compare: { costed: expect.any(Number), total: expect.any(Number) },
+    });
     expect(projected.metrics.wallDurationMs).toEqual({
       base: 3000,
       compare: 6000,

@@ -7,6 +7,7 @@ import {
   type MetricStripData,
   type MetricStripPoint,
 } from "./metric-strip-data";
+import { formatCost, formatCostOrDash } from "./helpers";
 
 export function LatencyTrendMetric({
   p50,
@@ -104,7 +105,12 @@ export function LatencyTrendMetric({
         ) : null}
       </div>
       {showTrend ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           <EvalDualSparkline
             primary={p50Series}
             secondary={p95Series}
@@ -154,7 +160,11 @@ export function TrendMetric({
         <div
           className={cn(
             "mt-1 font-semibold leading-none tabular-nums tracking-tight text-foreground",
-            matrixCell ? "truncate text-[12px]" : compact ? "text-[15px]" : "text-[17px]",
+            matrixCell
+              ? "truncate text-[12px]"
+              : compact
+                ? "text-[15px]"
+                : "text-[17px]",
           )}
         >
           {value}
@@ -166,7 +176,12 @@ export function TrendMetric({
         ) : null}
       </div>
       {chart ? (
-        <div className={cn("relative overflow-visible", matrixCell ? "mt-1.5" : "mt-2.5")}>
+        <div
+          className={cn(
+            "relative overflow-visible",
+            matrixCell ? "mt-1.5" : "mt-2.5",
+          )}
+        >
           {chart}
         </div>
       ) : null}
@@ -204,6 +219,18 @@ export function MetricStrip({
   const tokenSeries = seriesOf((p) => p.tokens);
   const tokenHeadline = latest.tokens;
   const tokenSub = "per run";
+  // Cost is plotted at 0 where it is unknown (the sparkline takes numbers),
+  // but the HEADLINE never lies: `formatCostOrDash` shows an em dash rather
+  // than `$0.00`. The sub-label says how much of the run was priced whenever
+  // that is less than all of it.
+  const costSeries = seriesOf((p) => p.costUsd ?? 0);
+  const costHeadline = formatCostOrDash(latest.costUsd);
+  const costSub =
+    latest.costUsd === null
+      ? "not priced"
+      : latest.costedIterations < latest.total
+        ? `${latest.costedIterations} of ${latest.total} trials`
+        : "per run";
   const toolCallSeries = seriesOf((p) => p.toolCalls);
   const toolCallHeadline = latest.toolCalls;
   const toolCallSub = "per run";
@@ -275,7 +302,11 @@ export function MetricStrip({
     <div
       className={cn(
         "flex flex-col justify-between",
-        matrixCell ? "gap-1.5 px-3 py-2" : compact ? "gap-3 px-3.5 py-2.5" : "gap-3 px-5 py-3.5",
+        matrixCell
+          ? "gap-1.5 px-3 py-2"
+          : compact
+            ? "gap-3 px-3.5 py-2.5"
+            : "gap-3 px-5 py-3.5",
         vertical && !matrixCell && "gap-2",
       )}
       data-testid="metric-strip-pass-rate"
@@ -341,6 +372,24 @@ export function MetricStrip({
         matrixCell={matrixCell}
       />
       <TrendMetric
+        label="Cost"
+        value={costHeadline}
+        sub={costSub}
+        compact={compact}
+        layout={layout}
+        matrixCell={matrixCell}
+        chart={
+          showTrend ? (
+            <EvalSparkline
+              points={costSeries}
+              pointLabels={runLabels}
+              formatValue={formatCost}
+              testId="metric-sparkline-cost"
+            />
+          ) : null
+        }
+      />
+      <TrendMetric
         label="Tokens"
         value={formatCompactNumber(tokenHeadline)}
         sub={tokenSub}
@@ -384,7 +433,11 @@ export function MetricStrip({
       data-testid={testId}
       className={cn(
         surface === "card" && evalSurfaceCardClass,
-        showTrend ? "overflow-visible" : surface === "card" ? "overflow-hidden" : "overflow-visible",
+        showTrend
+          ? "overflow-visible"
+          : surface === "card"
+            ? "overflow-hidden"
+            : "overflow-visible",
         vertical
           ? "flex flex-col divide-y divide-border/60"
           : compact

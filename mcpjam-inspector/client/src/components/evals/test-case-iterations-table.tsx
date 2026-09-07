@@ -4,7 +4,12 @@ import { Button } from "@mcpjam/design-system/button";
 import { Label } from "@mcpjam/design-system/label";
 import { cn } from "@/lib/utils";
 import { computeIterationResult } from "./pass-criteria";
-import { evalStatusLeftBorderClasses } from "./helpers";
+import {
+  costUnavailableReason,
+  evalStatusLeftBorderClasses,
+  formatCostOrDash,
+  isRunnerReportedCost,
+} from "./helpers";
 import { IterationDetails } from "./iteration-details";
 import { summarizeTrialChain } from "@/components/evaluate/stage-trial-model";
 import type { EvalCase, EvalIteration } from "./types";
@@ -112,6 +117,7 @@ export function TestCaseIterationsTable({
               <div className="min-w-[120px] text-left">Model</div>
               <div className="min-w-[50px] text-center">Calls</div>
               <div className="min-w-[60px] text-center">Tokens</div>
+              <div className="min-w-[70px] text-right">Cost</div>
               <div className="min-w-[40px] text-right">Time</div>
               <div className="min-w-[80px] text-right">When</div>
               {onViewRun && <div className="min-w-[60px]">Run</div>}
@@ -212,10 +218,28 @@ export function TestCaseIterationsTable({
                       <span className="font-mono">
                         {isPending
                           ? "—"
-                          : Number(
-                              iteration.tokensUsed || 0,
-                            ).toLocaleString()}
+                          : Number(iteration.tokensUsed || 0).toLocaleString()}
                       </span>
+                    </div>
+                    <div
+                      className="font-mono min-w-[70px] text-right"
+                      title={
+                        isPending
+                          ? undefined
+                          : (costUnavailableReason(
+                              iteration.usage?.costBasis,
+                            ) ?? undefined)
+                      }
+                    >
+                      {isPending
+                        ? "—"
+                        : formatCostOrDash(iteration.usage?.estimatedCostUsd)}
+                      {!isPending &&
+                      isRunnerReportedCost(iteration.usage?.costBasis) ? (
+                        <span className="ml-1 text-[10px] text-muted-foreground">
+                          runner
+                        </span>
+                      ) : null}
                     </div>
                     <div className="font-mono min-w-[40px] text-right">
                       {isPending

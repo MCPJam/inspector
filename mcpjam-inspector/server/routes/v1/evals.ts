@@ -1366,8 +1366,38 @@ function toRunJudgesDto(run: RunDoc) {
   };
 }
 
-function toRunDto(run: RunDoc) {
+/**
+ * The run's MCPJam-billed cost, with the COVERAGE that produced it.
+ *
+ * Coverage is not decoration: `estimatedCostUsd` is stamped per iteration and
+ * absent whenever the model was not MCPJam-billed (BYOK), was a harness run
+ * (mixed models), or reported no tokens. Summing what is present and omitting
+ * the rest yields a number indistinguishable from a complete one — which is
+ * exactly how a half-priced run reads as a cheap run. `totalUsd` is null,
+ * never 0, when nothing was priced.
+ */
+function toRunCostDto(iterations: IterationDoc[]) {
+  let totalUsd: number | null = null;
+  let costedIterations = 0;
+  for (const iteration of iterations) {
+    const cost = (iteration as { usage?: { estimatedCostUsd?: number } }).usage
+      ?.estimatedCostUsd;
+    if (typeof cost !== "number") continue;
+    totalUsd = (totalUsd ?? 0) + cost;
+    costedIterations += 1;
+  }
+  return { totalUsd, costedIterations, totalIterations: iterations.length };
+}
+
+/**
+ * `iterations` is optional because only some callers have already read them.
+ * When they are absent the `cost` block is OMITTED rather than reported as
+ * zero coverage: "we did not look" and "we looked and nothing was priced" are
+ * different answers, and only the second is a fact about the run.
+ */
+function toRunDto(run: RunDoc, iterations?: IterationDoc[]) {
   return {
+    ...(iterations ? { cost: toRunCostDto(iterations) } : {}),
     id: String(run._id),
     suiteId: String(run.suiteId),
     runNumber: run.runNumber ?? null,
@@ -4698,7 +4728,10 @@ evals.get(
         // refused a verdict decision that does not validate and `toIterationDto`
         // has already quarantined an unverifiable stage chain. Assembling from
         // the raw rows would route around both.
-        run: toRunDto(run!),
+        // The cost block is built from THIS PAGE's iterations, which is why
+        // its coverage counts matter: a paginated request has not seen the
+        // whole run, and the counts are what say so.
+        run: toRunDto(run!, page.page ?? []),
         iterations: (page.page ?? []).map(toIterationDto),
         page: {
           complete,
@@ -4921,7 +4954,12 @@ evals.get("/projects/:projectId/eval-suites/:suiteId/runs", async (c) => {
     }
     throw error;
   }
-  return v1PageJson(c, (runs ?? []).map(toRunDto));
+  // Explicit arrow, never a bare `.map(toRunDto)`: `map` passes the index as
+  // the second argument, which this function now reads as `iterations`.
+  return v1PageJson(
+    c,
+    (runs ?? []).map((run) => toRunDto(run)),
+  );
 });
 
 /**
@@ -5571,8 +5609,7 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        | { original?: unknown; rewrite?: unknown }
-        | undefined;
+        { original?: unknown; rewrite?: unknown } | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -5661,9 +5698,7 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
-    | null
-    | undefined;
+    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -5682,9 +5717,7 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    | { status?: unknown; failedServerIds?: unknown }
-    | null
-    | undefined;
+    { status?: unknown; failedServerIds?: unknown } | null | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);

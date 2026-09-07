@@ -317,9 +317,33 @@ The **Runs / Cases** segmented control switches between the run history list and
 
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+|---|---|
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner** — it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+
 ### Run view
 
-- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)

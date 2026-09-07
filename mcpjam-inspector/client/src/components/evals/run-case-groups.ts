@@ -1,7 +1,5 @@
-import { percentile } from "./helpers";
-import {
-  computeIterationResult,
-} from "./pass-criteria";
+import { iterationCosts, percentile, sumIterationCost } from "./helpers";
+import { computeIterationResult } from "./pass-criteria";
 import type { EvalIteration } from "./types";
 
 export type RunCaseIterationOutcome = "pass" | "fail" | "pending" | "cancelled";
@@ -96,10 +94,20 @@ export function groupRunIterationsByTestCase(
     const durations = group.iterations
       .map(iterationDurationMs)
       .filter((value): value is number => value !== null);
+    // Cost percentiles come from the PRICED iterations only, and the coverage
+    // that produced them travels alongside: a p95 over two of ten trials is a
+    // different claim from a p95 over all ten, and without the count the two
+    // render identically.
+    const costs = iterationCosts(group.iterations);
+    const costTotals = sumIterationCost(group.iterations);
     return {
       ...group,
       p50Ms: percentile(durations, 0.5),
       p95Ms: percentile(durations, 0.95),
+      totalCostUsd: costTotals.totalUsd,
+      p50CostUsd: percentile(costs, 0.5),
+      p95CostUsd: percentile(costs, 0.95),
+      costedIterations: costTotals.costedIterations,
     };
   });
 

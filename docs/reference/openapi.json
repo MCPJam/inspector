@@ -14718,6 +14718,29 @@
           }
         }
       },
+      "CostCoverage": {
+        "type": "object",
+        "description": "How many iterations on each side of a comparison actually contributed a cost. Cost is stamped per iteration and is absent whenever the model was not MCPJam-billed (your own API key), the run used a harness (which mixes models within a turn), or the trial reported no tokens. Summing the priced iterations and skipping the rest yields a figure indistinguishable from a complete one — so a drop in `estimatedCostUsd` is only a cost signal when coverage is full on both sides. A CI gate should treat partial coverage as non-gateable rather than as a pass or a fail.",
+        "required": ["base", "compare"],
+        "properties": {
+          "base": { "$ref": "#/components/schemas/CostCoverageSide" },
+          "compare": { "$ref": "#/components/schemas/CostCoverageSide" }
+        }
+      },
+      "CostCoverageSide": {
+        "type": "object",
+        "required": ["costed", "total"],
+        "properties": {
+          "costed": {
+            "type": "integer",
+            "description": "Iterations that contributed a cost."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Iterations on this side."
+          }
+        }
+      },
       "NumericDiff": {
         "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
         "type": "object",
@@ -14940,6 +14963,19 @@
           },
           "compare": {
             "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Per-case cost, with the coverage that produced it.",
+            "required": ["estimatedCostUsd", "costCoverage"],
+            "properties": {
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            }
           }
         },
         "required": [
@@ -15186,9 +15222,17 @@
               },
               "estimatedCostUsd": {
                 "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
               }
             },
-            "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
+            "required": [
+              "wallDurationMs",
+              "totalTokens",
+              "estimatedCostUsd",
+              "costCoverage"
+            ]
           },
           "skills": {
             "type": "object",
@@ -15420,7 +15464,7 @@
           },
           "usage": {
             "type": ["object", "null"],
-            "description": "Structured token usage (input/output/cached/reasoning) when available.",
+            "description": "Structured token usage (input/output/cached/reasoning) when available, plus `estimatedCostUsd` and the `costBasis` it was priced from.\n\n`estimatedCostUsd` ABSENT means no cost was observed — never that the trial was free. `costBasis.reason` says which: `no_pricing` (not an MCPJam-billed model, e.g. your own API key), `harness_mixed_models` (a harness turn mixes models and carries no per-model split, so its cost arrives with billed attribution instead), or `no_tokens`.\n\n`costBasis.source` is `gateway_pricing` when MCPJam priced its own token counts, and `sdk_runner` when the figure came from your runner — real, but neither computed nor verified by MCPJam.",
             "additionalProperties": true
           },
           "actualToolCalls": {

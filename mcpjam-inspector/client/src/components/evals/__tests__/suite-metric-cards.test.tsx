@@ -173,8 +173,9 @@ describe("SuiteMetricStrip", () => {
     );
     render(<SuiteMetricStrip runs={runs} allIterations={iterations} />);
     const root = screen.getByTestId("suite-metric-strip");
-    // A sparkline on each trend card (verdict + latency + tokens + tool calls).
-    expect(root.querySelectorAll("svg")).toHaveLength(4);
+    // A sparkline on each trend card (verdict + latency + cost + tokens +
+    // tool calls).
+    expect(root.querySelectorAll("svg")).toHaveLength(5);
   });
 
   it("aggregate mode folds a multi-host group into one point with no trend", () => {

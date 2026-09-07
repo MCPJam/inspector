@@ -155,6 +155,38 @@ function caseSide(value: unknown): Rec {
   };
 }
 
+/**
+ * How much of each side's cost was actually observed.
+ *
+ * Travels WITH the cost diff rather than beside it, because the two are only
+ * meaningful together: a 40% drop across full coverage is a regression
+ * signal, and the same 40% with half the compare side unpriced is an
+ * artifact. A CLI gate reads these counts to decide `non_gateable` rather
+ * than passing or failing on a partial sum.
+ */
+function costCoverage(value: unknown): Rec {
+  const source = isRecord(value) ? value : {};
+  const side = (raw: unknown): Rec => {
+    const inner = isRecord(raw) ? raw : {};
+    return {
+      // A missing count is 0 COSTED, not "unknown": the field's job is to
+      // bound a claim, and an absent bound must be the conservative one.
+      costed: numOrNull(inner.costed) ?? 0,
+      total: numOrNull(inner.total) ?? 0,
+    };
+  };
+  return { base: side(source.base), compare: side(source.compare) };
+}
+
+/** Per-case metrics. An explicit whitelist, like every projection here. */
+function caseMetrics(value: unknown): Rec {
+  const metrics = isRecord(value) ? value : {};
+  return {
+    estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+    costCoverage: costCoverage(metrics.costCoverage),
+  };
+}
+
 const CASE_STATUSES = new Set([
   "unchanged_passed",
   "unchanged_failed",
@@ -330,6 +362,7 @@ export function toRunCompareDto(
       wallDurationMs: numericDiff(metrics.wallDurationMs),
       totalTokens: numericDiff(metrics.totalTokens),
       estimatedCostUsd: numericDiff(metrics.estimatedCostUsd),
+      costCoverage: costCoverage(metrics.costCoverage),
     },
     scoreContract: scoreContract(source.scoreContract),
     skills: skills(source.skills),
@@ -342,6 +375,7 @@ export function toRunCompareDto(
       scoreDeltas: scoreDeltas(row.scoreDeltas),
       base: caseSide(row.base),
       compare: caseSide(row.compare),
+      metrics: caseMetrics(row.metrics),
     })),
   };
 }
