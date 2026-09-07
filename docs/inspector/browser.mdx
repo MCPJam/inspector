@@ -1,0 +1,103 @@
+---
+title: "Agent browser"
+description: "Watch and control the browser your agent is driving — take over, adjust quality, and read live stream stats"
+icon: "globe"
+---
+
+<Note>
+The agent browser pane is available on accounts where the browser feature has been enabled.
+</Note>
+
+When an agent is driving a browser, the **Browser** pane in the rail shows a
+live view of what it sees. You can watch passively, take control to type or
+click yourself, and hand control back when you are done.
+
+## Control bar
+
+The strip at the top of the pane shows who is currently driving and two
+buttons that change depending on the state:
+
+| State | Button shown |
+|---|---|
+| The agent is driving | **Take control** |
+| You have control | **Hand back** |
+| Someone else has control | Neither — the pane shows a message |
+| A script has control | Neither |
+
+**Take control** acquires the browser lease. While you hold it the agent's
+commands are queued but not executed — the browser responds only to your
+keyboard and mouse. **Hand back** releases the lease and lets the agent
+resume.
+
+## Quality
+
+The settings menu (gear icon, top-right of the control bar) includes a
+**Quality** section for the hosted browser. Pick the tier that matches your
+connection:
+
+| Tier | What it does |
+|---|---|
+| **Auto** (default) | Follows your connection — the pane adjusts automatically based on measured frame loss and latency |
+| **Sharp** | Prioritises image quality over frame rate |
+| **Data saver** | Reduces bitrate for slow or metered connections |
+| **Still images** | Falls back to JPEG frames; useful when video looks wrong |
+| **Full desktop** | Opens the noVNC desktop view instead of the page view |
+
+Auto is the recommended setting for most connections. If the picture looks
+degraded, check the **Stats for nerds** overlay (below) to see what the stream
+is actually doing before changing the tier manually.
+
+## Tab strip
+
+When the hosted browser has more than one tab open, a read-only strip appears
+in the control bar showing each tab's host name and highlighting the active
+one. The strip is informational — switching tabs is the agent's to do via its
+browser tools.
+
+When the agent switches to a different tab, a brief notice appears over the
+picture: *"The agent switched to example.com"*. It disappears after a few
+seconds.
+
+## Stats for nerds
+
+Open the settings menu and toggle **Stats for nerds** to show a live overlay
+with stream diagnostics:
+
+| Row | What it shows |
+|---|---|
+| Resolution and frame rate | Width × height @ fps, and current bitrate in kbps |
+| Round trip and frame latency | RTT to the relay in ms; time from frame capture to paint in ms |
+| Input latency | Time from your input to the next painted frame, p50 and p95 |
+| Frame counts | Frames painted; relay frames in and dropped; daemon drops |
+| Transport / tier / engine | Which wire the stream is using right now |
+
+The overlay records data regardless of whether it is visible, so the numbers
+are accurate from the moment the pane opens — not only from when you turned
+the overlay on.
+
+## Desktop app: native view
+
+On the MCPJam desktop app, when the local browser is running, the pane shows
+the real browser page rather than a screencast of it. There is no picture to
+draw — the browser is a live view parented into the app's own window — so the
+pane renders the control bar and an empty slot the view is placed over.
+
+The same lease rules apply: if someone else holds the browser, the view is
+hidden and the pane shows a message. It comes back automatically when the
+lease is released.
+
+## Troubleshooting
+
+**The picture is blurry or choppy.** Open Stats for nerds and check the
+relay drop count. A high drop count means the relay is discarding frames
+because your connection cannot keep up — switch Quality to **Data saver** or
+**Still images**.
+
+**"Someone else has taken control."** Another session holds the browser
+lease. The pane polls automatically and the view resumes when the other
+holder hands back.
+
+**The view is blank on the desktop app.** The native view is placed over the
+pane's slot by the main process. If the slot is not visible (for example,
+the pane is behind another tab), the view is hidden on purpose. Switch back
+to the Browser tab to bring it back.
