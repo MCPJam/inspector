@@ -1,5 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Info } from "lucide-react";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@mcpjam/design-system/tooltip";
 import type { ClassifierInput, Diagnosis } from "./types";
 import { extractOrigin, originAllowedByAny } from "./match-source";
 
@@ -183,6 +188,7 @@ function PolicyColumn({
   jumpHost,
   forceOpen,
   unconfirmed,
+  info,
 }: {
   title: string;
   subtitle: string;
@@ -193,6 +199,7 @@ function PolicyColumn({
   /** Render the column as a guess rather than a reading. See the Effective
    *  column's two subtitles below. */
   unconfirmed?: boolean;
+  info?: string;
 }) {
   const [open, setOpen] = useState(false);
   const summary = summarize(rows);
@@ -218,7 +225,21 @@ function PolicyColumn({
       >
         <div className="min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <span className="text-[12px] font-medium">{title}</span>
+            <span className="inline-flex items-center gap-1 text-[12px] font-medium">
+              {title}
+              {info && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span aria-label={info} className="inline-flex cursor-help">
+                      <Info className="size-3 text-muted-foreground" />
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent variant="muted" sideOffset={4}>
+                    {info}
+                  </TooltipContent>
+                </Tooltip>
+              )}
+            </span>
             <span
               className={`font-mono text-[10.5px] ${
                 unconfirmed
@@ -389,12 +410,13 @@ export function PolicyDiffTab({
         />
         <PolicyColumn
           title="Effective"
-          subtitle={applied ? "proxy applied" : "widget asked · unverified"}
+          subtitle={applied ? "by client" : "widget asked · unverified"}
           rows={effectiveRows}
           emptyLabel={recorded ? "Not recorded" : "No allowlist captured"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
           unconfirmed={!applied}
+          info="The CSP the client applied to this widget."
         />
         <PolicyColumn
           title="Observed"
@@ -406,33 +428,13 @@ export function PolicyDiffTab({
         />
       </div>
 
-      <div className="rounded-md border border-dashed border-border/60 bg-card/50 px-3 py-2 text-[11.5px] text-muted-foreground leading-relaxed">
-        {applied ? (
-          <>
-            <span className="font-medium text-foreground">Effective</span> is
-            parsed from the CSP the sandbox proxy reported injecting for this
-            mount — the policy the browser is enforcing, not a prediction of it.
-          </>
-        ) : (
-          <>
-            <span className="font-medium text-amber-600 dark:text-amber-400">
-              Effective is unconfirmed.
-            </span>{" "}
-            The proxy did not report an applied CSP for this view (an offline
-            replay, a saved eval trace, or the mount is still in flight), so
-            this column repeats what the widget requested. It is not evidence of
-            what the browser allowed.
-          </>
-        )}
-      </div>
-
       {mismatchHosts.size > 0 && (
         <div className="rounded-md border border-dashed border-border/60 bg-card/50 px-3 py-2 text-[11.5px] text-muted-foreground leading-relaxed">
           Rows tagged{" "}
           <span className="font-mono text-sky-600 dark:text-sky-400">
             effective ≠ observed
           </span>{" "}
-          are where the host reported the origin as allowed but the browser
+          are where the Effective policy allowed the origin but the browser
           still blocked it. See Findings for the candidate causes.
         </div>
       )}
