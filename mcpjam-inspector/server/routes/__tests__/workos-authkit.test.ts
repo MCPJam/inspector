@@ -372,6 +372,37 @@ describe("workos authkit local session bridge", () => {
       },
     );
 
+    // The comment on `isTransientWorkosFailure` claims a `fetch` rejection is
+    // safe "by construction" — it throws before any cookie is touched. That is
+    // a property of where the throw lands in the handler, which a refactor can
+    // silently move, so it is asserted rather than reasoned about.
+    it("keeps the stored token when the request never reaches WorkOS", async () => {
+      const app = createTestApp();
+      const sessionCookie = await signIn(app);
+
+      vi.mocked(fetch)
+        .mockRejectedValueOnce(new TypeError("fetch failed"))
+        .mockResolvedValueOnce(
+          jsonResponse({
+            access_token: "access-token-2",
+            refresh_token: "refresh-token-2",
+            user: { id: "user_1" },
+          })
+        );
+
+      const failed = await refresh(app, sessionCookie);
+      expect(failed.status).toBe(500);
+      expect(failed.headers.get("set-cookie") ?? "").not.toContain(
+        "mcpjam_workos_sessions=; Max-Age=0"
+      );
+
+      const recovered = await refresh(app, sessionCookie);
+      expect(recovered.status).toBe(200);
+      expect(
+        JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body))
+      ).toMatchObject({ refresh_token: "refresh-token-1" });
+    });
+
     it("still clears the session when WorkOS rejects the token itself", async () => {
       const app = createTestApp();
       const sessionCookie = await signIn(app);

@@ -17,6 +17,17 @@ describe("isLoginRequiredError", () => {
     expect(isLoginRequiredError(error)).toBe(true);
   });
 
+  // Deliberately a substring match, not equality. Missing a real
+  // `LoginRequiredError` is the expensive direction: it relabels a dead session
+  // as transient, which is the exact bug this module exists to fix. A wrapper
+  // that prefixes the message would defeat `===` and silently reintroduce it,
+  // so the looser test is the safer one.
+  it("still recognizes the error through a wrapper that prefixes the message", () => {
+    expect(
+      isLoginRequiredError(new Error("Refresh failed: No access token available"))
+    ).toBe(true);
+  });
+
   it("leaves transient failures retryable", () => {
     expect(isLoginRequiredError(new TypeError("Failed to fetch"))).toBe(false);
     expect(isLoginRequiredError("No access token available")).toBe(false);
