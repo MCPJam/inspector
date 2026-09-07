@@ -51,8 +51,15 @@ vi.mock("../supervised-provider.js", () => ({
 vi.mock("../runtime-install.js", () => ({
   readRuntimeInstallStatus: async () => ({
     state: "ready",
+    // A pack version and digest as well, because the turn now takes a runtime
+    // USE reservation keyed on the pack identity before it verifies anything —
+    // that reservation is what stops another Inspector replacing the tree these
+    // children execute from.
+    packVersion: "test-pack-1",
+    digest: `sha256:${"a".repeat(64)}`,
     runtimeRoot: "/nonexistent/runtime-root",
   }),
+  runtimeInstallRoot: () => "/nonexistent/runtime-root-base",
 }));
 vi.mock("../instance-key.js", () => ({
   readLocalInstanceIdentity: async () => ({

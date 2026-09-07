@@ -6,7 +6,9 @@ import {
   mkdtemp,
   readFile,
   realpath,
+  rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -21,8 +23,16 @@ import {
   packSourceFor,
   packVersionRoot,
   readRuntimeInstallStatus,
+  readVerifiedRuntimeStatus,
+  resetRuntimeInstallStateForTests,
   runtimeInstallRoot,
+  startRuntimeInstall,
 } from "../runtime-install.js";
+import {
+  PREVIOUS_SUFFIX,
+  reserveRuntimeUse,
+  type RuntimeOperationKey,
+} from "../runtime-lifecycle.js";
 import { computeTreeDigest } from "../runtime-identity.js";
 import { localPackTarget } from "../targets.js";
 import * as packDigests from "../pack-digests.generated.js";
@@ -262,6 +272,7 @@ beforeAll(async () => {
 });
 
 afterEach(async () => {
+  resetRuntimeInstallStateForTests();
   await rm(installRoot, { recursive: true, force: true });
 });
 
@@ -395,15 +406,23 @@ describe("installing a pack", () => {
     process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = other.archive;
     try {
       const result = await installRuntimePack({ harnessId: "claude-code" });
-      expect(result.state).toBe("corrupt");
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
       expect((result as { message: string }).message).toMatch(
         /does not match the digest this Inspector was built with/,
       );
-      // Nothing was activated: a failed install leaves no version directory
-      // for `resolveManagedBundle` to find.
+      // Nothing was activated — there is no version directory for
+      // `resolveManagedBundle` to find — and the failure is RETAINED. A poll
+      // after a failed download that decayed back to `absent` is the reading
+      // that loses the only thing the user needed to see.
       await expect(
         readRuntimeInstallStatus({ harnessId: "claude-code" }),
-      ).resolves.toMatchObject({ state: "absent" });
+      ).resolves.toMatchObject({ state: "failed", reason: "verification" });
+      await expect(
+        stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+      ).rejects.toThrow();
     } finally {
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }
@@ -470,7 +489,10 @@ describe("installing a pack", () => {
     packRecords.mockReturnValue(tableFor(linked.digest));
     try {
       const result = await installRuntimePack({ harnessId: "claude-code" });
-      expect(result.state).toBe("corrupt");
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
       expect((result as { message: string }).message).toMatch(
         /does not match the digest this Inspector was built with/,
       );
@@ -506,7 +528,10 @@ describe("installing a pack", () => {
     packRecords.mockReturnValue(tableFor(fixture.digest));
     try {
       const result = await installRuntimePack({ harnessId: "claude-code" });
-      expect(result.state).toBe("corrupt");
+      // `failed` + `verification`, not `corrupt`. The two are different things
+      // a user does different things about: nothing was installed here, so
+      // there is nothing to repair — the pack that arrived was not ours.
+      expect(result).toMatchObject({ state: "failed", reason: "verification" });
       expect((result as { message: string }).message).toMatch(
         /does not match the digest this Inspector was built with/,
       );
@@ -551,5 +576,212 @@ describe.skipIf(GNU_TAR === null)("GNU tar as the release producer", () => {
       packRecords.mockReturnValue(tableFor(realDigest));
       process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
     }
+  });
+});
+
+
+describe("the acknowledgement contract", () => {
+  // The install route turns each of these into an HTTP status. The shape lives
+  // here so the route is a thin adapter rather than a second implementation.
+
+  it("answers before the download finishes", async () => {
+    const started = await startRuntimeInstall({ harnessId: "claude-code" });
+    expect(started.kind).toBe("started");
+    expect(started.status.state).toBe("downloading");
+    // And the work is genuinely still running: a call that had already
+    // finished would defeat the whole point of acknowledging.
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("joins rather than starting a second extraction", async () => {
+    const first = await startRuntimeInstall({ harnessId: "claude-code" });
+    const second = await startRuntimeInstall({ harnessId: "claude-code" });
+    expect(first.kind).toBe("started");
+    expect(second.kind).toBe("joined");
+    await installRuntimePack({ harnessId: "claude-code" });
+  });
+
+  it("answers ready without downloading when a verified pack is installed", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const saved = process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE;
+    // Point the source at nothing: if this path fetched, it would fail.
+    process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = join(base, "not-a-pack.tar.gz");
+    try {
+      await expect(
+        startRuntimeInstall({ harnessId: "claude-code" }),
+      ).resolves.toMatchObject({ kind: "ready", status: { state: "ready" } });
+    } finally {
+      process.env.MCPJAM_LOCAL_HARNESS_PACK_SOURCE = saved!;
+    }
+  });
+
+  it("refuses to download a different runtime than the one approved", async () => {
+    // A server that updated between the dialog opening and the click. Consent
+    // binds to a runtime identity, so fetching another one under the same
+    // approval would bind the user's click to something they never saw.
+    const started = await startRuntimeInstall({
+      harnessId: "claude-code",
+      expectedPack: {
+        packVersion: PACK_VERSION,
+        treeDigest: `sha256:${"9".repeat(64)}`,
+      },
+    });
+    expect(started).toMatchObject({
+      kind: "refused",
+      status: { state: "failed", reason: "verification" },
+    });
+    // Nothing was fetched and nothing was staged.
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "absent" });
+  });
+
+  it("proceeds when the approved pack still matches", async () => {
+    const started = await startRuntimeInstall({
+      harnessId: "claude-code",
+      expectedPack: { packVersion: PACK_VERSION, treeDigest: realDigest },
+    });
+    expect(started.kind).toBe("started");
+    await installRuntimePack({ harnessId: "claude-code" });
+  });
+});
+
+describe("runtime health, separately from operation state", () => {
+  it("catches a pack whose bytes changed under an intact marker", async () => {
+    // The marker records what the install verified AT THE TIME, so a truncated
+    // or edited tree keeps reporting `ready` from it forever. The caller that
+    // needs this answer is deciding whether to skip a download and mint
+    // consent against the runtime's identity, so it re-verifies.
+    await installRuntimePack({ harnessId: "claude-code" });
+    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
+
+    // The cheap read still believes the marker…
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    // …and the verified read does not.
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "corrupt" });
+  });
+
+  it("repairs by reinstalling the same version", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const packRoot = join(packVersionRoot(PACK_VERSION), "claude-code");
+    await writeFile(join(packRoot, "bridge.mjs"), "export const bridge = 2;\n");
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "corrupt" });
+
+    // An explicit retry of the same version replaces the tree — and the
+    // verification cache does not remember the old answer for the new bytes.
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    await expect(
+      readVerifiedRuntimeStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+});
+
+describe("a runtime somebody is using is not replaced", () => {
+  it("refuses to activate over a reserved version directory", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const key: RuntimeOperationKey = {
+      runtimeRoot: runtimeInstallRoot(),
+      harnessId: "claude-code",
+      target: localPackTarget()!,
+      packVersion: PACK_VERSION,
+      treeDigest: realDigest,
+    };
+    const held = await reserveRuntimeUse({
+      key,
+      runtimeRoot: packVersionRoot(PACK_VERSION),
+      label: "session-1",
+    });
+    try {
+      // Corrupt it so a repair is actually attempted rather than short-circuited
+      // by the verified-ready fast path.
+      await writeFile(
+        join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+        "export const bridge = 3;\n",
+      );
+      const result = await installRuntimePack({ harnessId: "claude-code" });
+      expect(result).toMatchObject({ state: "failed" });
+      expect((result as { message: string }).message).toMatch(/in use/);
+      // The tree the running session verified is still there, unchanged.
+      await expect(
+        readFile(
+          join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+          "utf8",
+        ),
+      ).resolves.toContain("bridge = 3");
+    } finally {
+      await held.release();
+    }
+  });
+
+  it("proceeds once the session releases it", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    const key: RuntimeOperationKey = {
+      runtimeRoot: runtimeInstallRoot(),
+      harnessId: "claude-code",
+      target: localPackTarget()!,
+      packVersion: PACK_VERSION,
+      treeDigest: realDigest,
+    };
+    const held = await reserveRuntimeUse({
+      key,
+      runtimeRoot: packVersionRoot(PACK_VERSION),
+    });
+    await held.release();
+    await writeFile(
+      join(packVersionRoot(PACK_VERSION), "claude-code", "bridge.mjs"),
+      "export const bridge = 3;\n",
+    );
+    await expect(
+      installRuntimePack({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+  });
+
+  it("keeps another version rather than sweeping it", async () => {
+    // The old install swept every other version after activating, which is how
+    // a running session lost the tree it had verified and was executing from.
+    await installRuntimePack({ harnessId: "claude-code" });
+    const neighbour = packVersionRoot("some-other-version");
+    await mkdir(join(neighbour, "claude-code"), { recursive: true });
+    await writeFile(
+      join(neighbour, ".mcpjam-pack-installed.json"),
+      JSON.stringify({ packVersion: "some-other-version" }),
+    );
+
+    await rm(packVersionRoot(PACK_VERSION), { recursive: true, force: true });
+    await installRuntimePack({ harnessId: "claude-code" });
+
+    await expect(stat(join(neighbour, "claude-code"))).resolves.toBeTruthy();
+  });
+});
+
+describe("an interrupted activation is recovered, not re-downloaded", () => {
+  it("puts the runtime back on the next status read", async () => {
+    await installRuntimePack({ harnessId: "claude-code" });
+    // The crash window: moved aside, never renamed in.
+    await rename(
+      packVersionRoot(PACK_VERSION),
+      `${packVersionRoot(PACK_VERSION)}${PREVIOUS_SUFFIX}`,
+    );
+    await expect(
+      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+    ).rejects.toThrow();
+
+    await expect(
+      readRuntimeInstallStatus({ harnessId: "claude-code" }),
+    ).resolves.toMatchObject({ state: "ready" });
+    await expect(
+      stat(join(packVersionRoot(PACK_VERSION), "claude-code")),
+    ).resolves.toBeTruthy();
   });
 });

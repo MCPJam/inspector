@@ -370,42 +370,73 @@ export type WorkspaceGrantResult =
  * picker — the Electron main-process dialog, or a loopback-only,
  * session-authenticated route — never from a renderer-submitted string.
  */
+export type WorkspaceCandidate =
+  | { ok: true; canonicalPath: string }
+  | { ok: false; message: string };
+
+/**
+ * Is this path a usable workspace? Reads the filesystem; writes nothing.
+ *
+ * Split out of `registerWorkspaceGrant` because two callers now need the
+ * ANSWER without the side effect. `/availability` suggests the folder the
+ * caller launched from, and suggesting one it would then refuse is a worse
+ * first impression than suggesting nothing; and `POST /workspace-grant
+ * {useSuggested:true}` re-validates before registering rather than trusting
+ * the value it handed out a moment earlier. Neither should mint a grant as a
+ * side effect of asking.
+ *
+ * The rules are the ones a grant is registered under, in one place, so a
+ * suggestion and a registration cannot disagree about what is acceptable:
+ * canonicalize (`realpath`), require a directory, and refuse the two roots
+ * that make the workspace label meaningless.
+ */
+export async function validateWorkspaceCandidate(
+  rawPath: string,
+): Promise<WorkspaceCandidate> {
+  let canonicalPath: string;
+  try {
+    canonicalPath = await realpath(rawPath);
+    const info = await stat(canonicalPath);
+    if (!info.isDirectory()) {
+      return { ok: false, message: "the selection is not a directory" };
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      message: `the selected workspace could not be resolved: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    };
+  }
+  // Refuse the obviously wrong roots. A home directory or a filesystem root
+  // as "the workspace" makes the workspace label meaningless.
+  // Compare against the RESOLVED home: on a machine where the home
+  // directory is itself a symlink, the raw value never equals the
+  // canonicalized selection and the refusal below would not fire.
+  const home = await realpath(homedir()).catch(() => homedir());
+  if (canonicalPath === home || canonicalPath === sep) {
+    return {
+      ok: false,
+      message:
+        "pick a project directory rather than your home directory or the " +
+        "filesystem root — the workspace is what the session is scoped to.",
+    };
+  }
+  return { ok: true, canonicalPath };
+}
+
 export function registerWorkspaceGrant(
   rawPath: string,
 ): Promise<WorkspaceGrantResult> {
   return withGrantLock(async () => {
-    let canonicalPath: string;
-    try {
-      canonicalPath = await realpath(rawPath);
-      const info = await stat(canonicalPath);
-      if (!info.isDirectory()) {
-        return {
-          ok: false as const,
-          message: "the selection is not a directory",
-        };
-      }
-    } catch (error) {
-      return {
-        ok: false as const,
-        message: `the selected workspace could not be resolved: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      };
+    // Validated INSIDE the lock, not before it: the directory can be replaced
+    // between a caller's check and this registration, and what gets recorded
+    // must be what was just canonicalized.
+    const candidate = await validateWorkspaceCandidate(rawPath);
+    if (!candidate.ok) {
+      return { ok: false as const, message: candidate.message };
     }
-    // Refuse the obviously wrong roots. A home directory or a filesystem root
-    // as "the workspace" makes the workspace label meaningless.
-    // Compare against the RESOLVED home: on a machine where the home
-    // directory is itself a symlink, the raw value never equals the
-    // canonicalized selection and the refusal below would not fire.
-    const home = await realpath(homedir()).catch(() => homedir());
-    if (canonicalPath === home || canonicalPath === sep) {
-      return {
-        ok: false as const,
-        message:
-          "pick a project directory rather than your home directory or the " +
-          "filesystem root — the workspace is what the session is scoped to.",
-      };
-    }
+    const canonicalPath = candidate.canonicalPath;
 
     const state = await readState();
     const existing = state.workspaces.find(

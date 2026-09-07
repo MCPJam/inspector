@@ -43,6 +43,13 @@ import {
   type LocalModelGateway,
 } from "./model-gateway.js";
 import { readRuntimeInstallStatus } from "./runtime-install.js";
+import {
+  reserveRuntimeUse,
+  type RuntimeOperationKey,
+  type RuntimeUseReservation,
+} from "./runtime-lifecycle.js";
+import { runtimeInstallRoot } from "./runtime-install.js";
+import { localPackTarget } from "./targets.js";
 import { createSupervisedLocalHarnessProvider } from "./supervised-provider.js";
 import { LocalHarnessSupervisor } from "./supervisor.js";
 import { localHarnessStateRoot } from "./grants.js";
@@ -187,6 +194,76 @@ export async function prepareLocalHarnessTurn(
           : `The local Claude Code runtime is not usable (${runtimeStatus.state}).`,
     };
   }
+
+  // ── Reserve the runtime BEFORE verifying it ──────────────────────────────
+  //
+  // Not after, and not at spawn. The window that has to be covered runs from
+  // before the digest is read until after the last supervised child is dead: a
+  // pack replaced anywhere inside it means this session verified one tree and
+  // executed another. An install in another Inspector window, or the install
+  // CLI, consults these reservations and refuses to replace a runtime that has
+  // one — so taking it late is the same as not taking it.
+  //
+  // Released on every exit from here: each early return below, and the
+  // teardown that runs when the session ends.
+  const target = localPackTarget();
+  const lifecycleKey: RuntimeOperationKey | null =
+    target === null
+      ? null
+      : {
+          runtimeRoot: runtimeInstallRoot(),
+          harnessId: "claude-code",
+          target,
+          packVersion: runtimeStatus.packVersion,
+          treeDigest: runtimeStatus.digest,
+        };
+  let runtimeUse: RuntimeUseReservation | null = null;
+  if (lifecycleKey !== null) {
+    runtimeUse = await reserveRuntimeUse({
+      key: lifecycleKey,
+      runtimeRoot: runtimeStatus.runtimeRoot,
+      label: args.sessionId,
+    });
+  }
+  const releaseRuntimeUse = async () => {
+    const held = runtimeUse;
+    runtimeUse = null;
+    await held?.release();
+  };
+
+  try {
+    return await prepareWithReservedRuntime({
+      args,
+      runtimeStatus,
+      verifyStartedAt,
+      releaseRuntimeUse,
+    });
+  } catch (error) {
+    await releaseRuntimeUse();
+    throw error;
+  }
+}
+
+/**
+ * The body of `prepareLocalHarnessTurn`, with the runtime reservation held.
+ *
+ * Split out so every refusal path below is one `return` rather than a
+ * `release(); return` pair that a later edit can forget one half of — the
+ * caller's `try` releases on the way out, and only the success path hands
+ * ownership of the reservation to the session's teardown.
+ */
+async function prepareWithReservedRuntime(outer: {
+  args: PrepareLocalHarnessTurnArgs;
+  runtimeStatus: Extract<
+    Awaited<ReturnType<typeof readRuntimeInstallStatus>>,
+    { state: "ready" }
+  >;
+  verifyStartedAt: number;
+  releaseRuntimeUse: () => Promise<void>;
+}): Promise<LocalHarnessTurnPreparation> {
+  const args = outer.args;
+  const runtimeStatus = outer.runtimeStatus;
+  const verifyStartedAt = outer.verifyStartedAt;
 
   const availability = await resolveLocalHarnessAvailability({
     target: {
@@ -338,6 +415,11 @@ export async function prepareLocalHarnessTurn(
         // turn would add one more dead session to both.
         forgetLocalHarnessSession(args.sessionId);
         await revokeLease(broker.runId, args.bearer);
+        // LAST. The runtime reservation is what stops another process
+        // replacing the tree this session's children are executing from, and
+        // those children are only provably gone once `stop` has run — which
+        // `endLocalHarnessSession` does before it reaches this teardown.
+        await outer.releaseRuntimeUse();
       }
     });
 
