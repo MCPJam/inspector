@@ -232,7 +232,9 @@ export function buildSdkEnvSnippet(
       lines.push(
         connection.placeholder
           ? `export ${connection.envVarName}=<replace-with-server-url>`
-          : `export ${connection.envVarName}=${connection.url}`
+          : `export ${connection.envVarName}=${collapseToSingleLine(
+              connection.url
+            )}`
       );
     }
   }
@@ -244,16 +246,19 @@ export function buildSdkEnvSnippet(
     );
     for (const connection of stdioConnections) {
       lines.push(
-        `# ${connection.serverId}: ${formatCommandDisplay(
-          connection.command,
-          connection.args
+        `# ${collapseToSingleLine(
+          connection.serverId
+        )}: ${collapseToSingleLine(
+          formatCommandDisplay(connection.command, connection.args)
         )}`
       );
       if (connection.envKeys.length > 0) {
         lines.push(
-          `# ${
+          `# ${collapseToSingleLine(
             connection.serverId
-          } also expects local env vars: ${connection.envKeys.join(", ")}`
+          )} also expects local env vars: ${collapseToSingleLine(
+            connection.envKeys.join(", ")
+          )}`
         );
       }
     }
@@ -277,7 +282,11 @@ export function buildSdkTestFile({
   usedPlaceholderFallback = false,
 }: SdkTestFileInput): string {
   const needsPartialArgMatching = anyTestCaseUsesPartialArgMatching(cases);
-  const needsTurnType = cases.some((c) => c.promptTurns.length > 1);
+  // Must match the multi-turn branch in `buildCaseTestBlock` EXACTLY: that
+  // branch is the `else` of `promptTurns.length === 1`, so it also renders
+  // `ExportedTurn[]` for a case with NO turns. Guarding on `> 1` emitted the
+  // reference without its declaration (TS2304) for the empty case.
+  const needsTurnType = cases.some((c) => c.promptTurns.length !== 1);
   const sdkImports = ["  MCPClientManager,", "  HostRunner,", "  EvalTest,"];
   if (needsPartialArgMatching) {
     sdkImports.push("  matchToolCallWithPartialArgs,");
@@ -317,7 +326,10 @@ export function buildSdkTestFile({
   ];
 
   if (suite.description?.trim()) {
-    lines.push("", `// ${suite.description.trim()}`);
+    lines.push(
+      "",
+      ...toCommentLines(suite.description.trim()).map((line) => `// ${line}`)
+    );
   }
 
   if (usedPlaceholderFallback) {
@@ -627,16 +639,35 @@ function buildSingleTurnReturnExpression(
   return `(\n            ${checks.join(" &&\n            ")}\n          )`;
 }
 
+/**
+ * Whether any case's generated body REFERENCES `matchToolCallWithPartialArgs`.
+ *
+ * This has to mirror the emission sites exactly, not approximate them — an
+ * import guard that is narrower than the code it guards emits a call with no
+ * import (TS2304), which is how a multi-turn case whose turns declare no
+ * arguments used to produce a file that could not compile.
+ *
+ * A negative case never references the matcher (it asserts no tool ran), and
+ * the MULTI-TURN branch always does — its loop keeps the partial-args ternary
+ * whether or not this particular case supplies arguments. Only the single-turn
+ * branch actually varies with the arguments present.
+ */
 function anyTestCaseUsesPartialArgMatching(
   cases: EvalExportCaseInput[]
 ): boolean {
-  return cases.some((c) =>
-    c.promptTurns.some((turn) =>
+  return cases.some((testCase) => {
+    if (testCase.isNegativeTest) {
+      return false;
+    }
+    if (testCase.promptTurns.length !== 1) {
+      return true;
+    }
+    return testCase.promptTurns.some((turn) =>
       (turn.expectedToolCalls ?? []).some(
         (tc) => Object.keys(tc.arguments ?? {}).length > 0
       )
-    )
-  );
+    );
+  });
 }
 
 /**
@@ -714,8 +745,13 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
     return;
   }
 
-  for (const line of commentLines) {
-    lines.push(`      // ${line}`);
+  // Split here rather than at each call site: this is the ONE place a case's
+  // free-text fields reach the file, so a value that carries a line terminator
+  // cannot escape its comment no matter which field it came from.
+  for (const entry of commentLines) {
+    for (const line of toCommentLines(entry)) {
+      lines.push(`      // ${line}`);
+    }
   }
   lines.push("");
 }
@@ -749,15 +785,14 @@ function renderServerConnectionEntries(
     lines.push(
       `// ${JSON.stringify(
         connection.serverId
-      )} runs over stdio: ${formatCommandDisplay(
-        connection.command,
-        connection.args
+      )} runs over stdio: ${collapseToSingleLine(
+        formatCommandDisplay(connection.command, connection.args)
       )}`
     );
     if (connection.envKeys.length > 0) {
       lines.push(
-        `// Add any required local env vars before running: ${connection.envKeys.join(
-          ", "
+        `// Add any required local env vars before running: ${collapseToSingleLine(
+          connection.envKeys.join(", ")
         )}`
       );
     }
@@ -772,6 +807,40 @@ function renderServerConnectionEntries(
   }
 
   return lines.join("\n");
+}
+
+/**
+ * Every line terminator JavaScript recognizes.
+ *
+ * U+2028 / U+2029 belong here beside CR and LF: both end a line in JS source,
+ * and `JSON.stringify` does NOT escape them, so a value that survived
+ * serialization can still terminate a comment.
+ */
+const LINE_TERMINATORS = /[\r\n\u2028\u2029]/;
+
+/**
+ * Split a value into physical lines so the caller can prefix each one as its
+ * own comment.
+ *
+ * A `//` (or shell `#`) comment ends at the first line terminator, so an
+ * interpolated value carrying one does not merely garble the comment — the
+ * remainder becomes executable code in a file the author is about to run. Case
+ * titles, scenarios, and tool names all originate outside this codebase (an
+ * MCP server names its own tools), so none of them may be pasted into a
+ * comment whole. Splitting rather than escaping keeps genuinely multi-line
+ * prose readable, which is the common case.
+ */
+function toCommentLines(value: unknown): string[] {
+  return String(value).split(LINE_TERMINATORS);
+}
+
+/**
+ * Flatten a value onto ONE line, for places that cannot span lines — a shell
+ * `export VAR=value`, where a newline would not comment out but would run as
+ * the next command.
+ */
+function collapseToSingleLine(value: string): string {
+  return value.split(LINE_TERMINATORS).join(" ");
 }
 
 function normalizeOptionalString(

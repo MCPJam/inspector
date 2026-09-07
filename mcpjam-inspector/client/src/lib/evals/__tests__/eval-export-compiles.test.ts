@@ -91,6 +91,52 @@ const MULTI_TURN = exportFor({
   ],
 });
 
+/**
+ * A case with NO turns. `buildSdkTestFile` is exported, and its multi-turn
+ * branch is the `else` of `promptTurns.length === 1` — so it renders
+ * `ExportedTurn[]` here too, and the declaration guard has to agree.
+ */
+const EMPTY_TURNS = buildSdkTestFile({
+  suite: { name: "empty", description: "" },
+  cases: [
+    {
+      id: "c_empty",
+      title: "no turns",
+      query: "",
+      runs: 1,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [],
+    },
+  ],
+  serverConnections: buildServerConnections(["mcpjam"], { mcpjam: httpServer }),
+});
+
+/**
+ * Free text and tool names come from outside this codebase — an MCP server
+ * names its own tools — so a line terminator in either must not be able to
+ * close a generated comment and turn the rest into code.
+ */
+const INJECTION_MARKER = "INJECTED_BY_FIXTURE";
+const INJECTION = exportFor({
+  _id: "c_inject",
+  title: "injection",
+  query: "hi",
+  runs: 1,
+  isNegativeTest: false,
+  scenario: `line one\n      throw new Error("${INJECTION_MARKER}");`,
+  steps: [
+    { id: "s1", kind: "prompt", prompt: "hi" },
+    {
+      id: "s2",
+      kind: "toolCall",
+      serverName: "mcpjam",
+      toolName: `evil\u2028      throw new Error("${INJECTION_MARKER}");`,
+      arguments: {},
+    },
+  ],
+});
+
 const NEGATIVE = exportFor({
   _id: "c_negative",
   title: "negative",
@@ -172,6 +218,7 @@ describe("exported SDK test files compile against the real SDK", () => {
           "single.test.ts": SINGLE_TURN,
           "multi.test.ts": MULTI_TURN,
           "negative.test.ts": NEGATIVE,
+          "empty.test.ts": EMPTY_TURNS,
         })
       ).toEqual([]);
     },
@@ -187,6 +234,17 @@ describe("exported SDK test files compile against the real SDK", () => {
     },
     120_000
   );
+
+  it("cannot be made to emit code through a comment", () => {
+    // Compiling is necessary but not sufficient: injected source could compile
+    // fine and still run. Every line mentioning the payload must be a comment.
+    expect(typecheck({ "injection.test.ts": INJECTION })).toEqual([]);
+
+    const offending = INJECTION.split("\n").filter(
+      (line) => line.includes(INJECTION_MARKER) && !line.trim().startsWith("//")
+    );
+    expect(offending).toEqual([]);
+  });
 
   it("pins the executor surface the generator depends on", () => {
     // A rename on either of these is what broke the export before; name them
