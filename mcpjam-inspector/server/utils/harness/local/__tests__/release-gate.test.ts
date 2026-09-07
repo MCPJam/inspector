@@ -157,6 +157,39 @@ describe("the derived offer", () => {
     ).toBe(false);
   });
 
+  it("refuses an architecture with no pack, on an OS that has one", () => {
+    // `advertisedLocalPlatforms` answers about the OS: it lists `darwin` when
+    // ANY darwin architecture has a pack. Asking only that — against the
+    // static per-platform build list — called an Intel Mac released on the
+    // strength of an Apple Silicon pack.
+    const armOnly = records({
+      "darwin-arm64": {
+        packVersion: "3.4.0",
+        treeDigest: DIGEST,
+      } as PackDigestRecord,
+    });
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "claude-code",
+        platform: "darwin",
+        arch: "arm64",
+        manifests: manifestWith({}),
+        records: armOnly,
+        expectedVersion: "3.4.0",
+      }),
+    ).toBe(true);
+    expect(
+      localExecutionReleasedForThisMachine({
+        harnessId: "claude-code",
+        platform: "darwin",
+        arch: "x64",
+        manifests: manifestWith({}),
+        records: armOnly,
+        expectedVersion: "3.4.0",
+      }),
+    ).toBe(false);
+  });
+
   it("refuses a digest-backed target the manifest does not call native", () => {
     expect(
       localExecutionReleasedForThisMachine({

@@ -162,12 +162,26 @@ export function localExecutionReleasedForThisMachine(args: {
 }): boolean {
   const target = localPackTarget(args.platform, args.arch);
   if (target === null) return false;
-  // Derived from `advertisedLocalPlatforms`, not from the digest table alone.
-  // A digest record is one of three facts a release needs; on its own it said
-  // "released" for a platform the manifest still refuses, or for a build with
-  // no conformance evidence at all — which `resolveLocalCompatibility` then
-  // refuses at runtime. Asking the same function the offer is derived from is
-  // what keeps this answer and that one from disagreeing.
+  // BOTH facts, about two different things.
+  //
+  // THIS target must have a digest — a pack that exists for `darwin-arm64`
+  // says nothing about an Intel Mac — and its PLATFORM must be one the
+  // manifest calls native with conformance evidence behind it.
+  //
+  // Neither half alone is the answer. The digest check on its own called a
+  // machine released when the manifest still refused that platform, or when
+  // the build had no conformance at all, and `resolveLocalCompatibility`
+  // refuses both at runtime. And `advertisedLocalPlatforms` on its own is an
+  // answer about the OS: it lists a platform when ANY of its architectures has
+  // a pack, and `TARGETS_BY_PLATFORM` is the static build list rather than the
+  // shipped one, so asking only that made every architecture of an advertised
+  // OS look released.
+  const hasPackForThisTarget = packTargetsWithDigests(
+    args.harnessId,
+    args.records,
+    args.expectedVersion,
+  ).includes(target);
+  if (!hasPackForThisTarget) return false;
   return advertisedLocalPlatforms(
     args.harnessId,
     args.manifests,
