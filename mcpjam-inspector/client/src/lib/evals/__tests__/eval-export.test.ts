@@ -153,7 +153,7 @@ describe("eval-export", () => {
   it("pins exported env snippets to the project the export came from", () => {
     const envSnippet = buildSdkEnvSnippet([], {}, "jd7fromexport");
     expect(envSnippet.snippet).toContain(
-      "export MCPJAM_PROJECT_ID=jd7fromexport",
+      "export MCPJAM_PROJECT_ID='jd7fromexport'",
     );
   });
 

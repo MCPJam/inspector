@@ -118,6 +118,36 @@ const EMPTY_TURNS = buildSdkTestFile({
  * close a generated comment and turn the rest into code.
  */
 const INJECTION_MARKER = "INJECTED_BY_FIXTURE";
+const INJECTION_SUITE = buildSdkTestFile({
+  suite: {
+    name: `suite\u2028      throw new Error("${INJECTION_MARKER}");`,
+    description: `desc\u2029      throw new Error("${INJECTION_MARKER}");`,
+  },
+  cases: [
+    {
+      id: "c_srv",
+      title: `title\u2028      throw new Error("${INJECTION_MARKER}");`,
+      query: "hi",
+      runs: 1,
+      isNegativeTest: false,
+      expectedToolCalls: [],
+      promptTurns: [{ id: "t1", prompt: "hi", expectedToolCalls: [] }],
+    },
+  ],
+  // A server NAME is user-chosen free text and reaches both a `//` comment and
+  // a generated string literal.
+  serverConnections: [
+    {
+      serverId: `srv\u2028      throw new Error("${INJECTION_MARKER}");`,
+      kind: "stdio",
+      command: "npx",
+      args: ["x"],
+      envKeys: [],
+      placeholder: false,
+    },
+  ],
+});
+
 const INJECTION = exportFor({
   _id: "c_inject",
   title: "injection",
@@ -236,17 +266,33 @@ describe("exported SDK test files compile against the real SDK", () => {
   );
 
   it("cannot be made to emit code through a comment", () => {
-    // Compiling is necessary but not sufficient: injected source could compile
-    // fine and still run. Every line mentioning the payload must be a comment.
+    // Compiling is necessary but nowhere near sufficient — injected source can
+    // be perfectly valid TypeScript — so it is the first of three checks, not
+    // the proof.
     expect(typecheck({ "injection.test.ts": INJECTION })).toEqual([]);
+    expect(typecheck({ "injection-suite.test.ts": INJECTION_SUITE })).toEqual(
+      []
+    );
 
-    // Split on the SAME terminator set the generator splits on. Splitting on
-    // "\n" alone would miss this fixture's own vector: a U+2028 inside a tool
-    // name is a line terminator to TypeScript but not to String.split("\n"),
-    // so a regression that stopped splitting on it would leave
-    // `// ...evil\u2028throw ...` looking like one comment line here AND
-    // compiling cleanly — both checks green with the injection live.
-    const offending = INJECTION.split(/[\r\n\u2028\u2029]/).filter(
+    // This is the load-bearing one, and the only check that does not depend on
+    // what the payload happens to say: the generator's ONLY line separator is
+    // "\n", so a raw CR, U+2028 or U+2029 anywhere in the output came from
+    // injected data. With none present, nothing can leave a comment or a string
+    // literal no matter what the payload contains.
+    //
+    // Note U+2028 is exactly the case a "\n"-only check misses: it ends a line
+    // for TypeScript but not for String.split("\n"), so a regression would
+    // leave `// ...evil\u2028throw ...` looking like a single comment line AND
+    // compiling cleanly.
+    for (const emitted of [INJECTION, INJECTION_SUITE]) {
+      expect(emitted).not.toMatch(/[\r\u2028\u2029]/);
+    }
+
+    // Scoped to the fixture whose payload reaches comments ONLY. A suite name,
+    // case title or server id is DATA and belongs in a generated string literal,
+    // so the marker on a non-comment line there is correct output — the check
+    // above is what proves it cannot break out of that literal.
+    const offending = INJECTION.split("\n").filter(
       (line) => line.includes(INJECTION_MARKER) && !line.trim().startsWith("//")
     );
     expect(offending).toEqual([]);

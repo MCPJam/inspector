@@ -223,7 +223,9 @@ export function buildSdkEnvSnippet(
     "export MCPJAM_API_KEY=<your sk_… key>",
     // Pin uploads to the project this export came from; without it they
     // land in the org's Default project.
-    ...(projectId ? [`export MCPJAM_PROJECT_ID=${projectId}`] : []),
+    ...(projectId
+      ? [`export MCPJAM_PROJECT_ID=${shellSingleQuote(projectId)}`]
+      : []),
   ];
 
   if (httpConnections.length > 0) {
@@ -322,7 +324,7 @@ export function buildSdkTestFile({
     "const SERVER_IDS = SERVER_CONFIGS.map((server) => server.id);",
     "const LLM_API_KEY = process.env.LLM_API_KEY!;",
     "const MODEL = process.env.EVAL_MODEL!;",
-    `const SUITE_NAME = ${JSON.stringify(suite.name || "MCPJam export")};`,
+    `const SUITE_NAME = ${jsonLiteral(suite.name || "MCPJam export")};`,
   ];
 
   if (suite.description?.trim()) {
@@ -495,7 +497,7 @@ function buildCaseTestBlock(
 
   const lines: string[] = [
     "  it(",
-    `    ${JSON.stringify(caseTitle)},`,
+    `    ${jsonLiteral(caseTitle)},`,
     "    async () => {",
   ];
 
@@ -510,14 +512,14 @@ function buildCaseTestBlock(
   // rename of `name` cannot fork the case.
   lines.push(
     "      const evalTest = new EvalTest({",
-    `        id: ${JSON.stringify(exportedCaseId(testCase))},`,
-    `        name: ${JSON.stringify(caseTitle)},`
+    `        id: ${jsonLiteral(exportedCaseId(testCase))},`,
+    `        name: ${jsonLiteral(caseTitle)},`
   );
 
   if (allExpectedToolCalls.length > 0) {
     lines.push(
       `        expectedToolCalls: ${indentBlock(
-        JSON.stringify(allExpectedToolCalls, null, 2),
+        jsonLiteral(allExpectedToolCalls, 2),
         8
       ).trimStart()},`
     );
@@ -527,7 +529,7 @@ function buildCaseTestBlock(
   if (promptTurns.length === 1 && firstTurn) {
     lines.push(
       "        test: async (agent) => {",
-      `          const result = await agent.run(${JSON.stringify(
+      `          const result = await agent.run(${jsonLiteral(
         firstTurn.prompt
       )});`
     );
@@ -543,12 +545,11 @@ function buildCaseTestBlock(
       "        test: async (agent) => {",
       "          const turns: ExportedTurn[] =",
       `${indentBlock(
-        JSON.stringify(
+        jsonLiteral(
           promptTurns.map((turn) => ({
             prompt: turn.prompt,
             expectedToolCalls: turn.expectedToolCalls ?? [],
           })),
-          null,
           2
         ),
         12
@@ -623,12 +624,12 @@ function buildSingleTurnReturnExpression(
     const hasArgs = Object.keys(tc.arguments ?? {}).length > 0;
     if (hasArgs) {
       checks.push(
-        `matchToolCallWithPartialArgs(${JSON.stringify(
+        `matchToolCallWithPartialArgs(${jsonLiteral(
           tc.toolName
-        )}, ${JSON.stringify(tc.arguments)}, result.getToolCalls())`
+        )}, ${jsonLiteral(tc.arguments)}, result.getToolCalls())`
       );
     } else {
-      checks.push(`result.hasToolCall(${JSON.stringify(tc.toolName)})`);
+      checks.push(`result.hasToolCall(${jsonLiteral(tc.toolName)})`);
     }
   }
 
@@ -742,7 +743,7 @@ function pushCaseComments(lines: string[], testCase: EvalExportCaseInput) {
     commentLines.push(
       "Advanced config captured in MCPJam (apply manually if you need stricter runtime parity):"
     );
-    commentLines.push(...JSON.stringify(advancedConfig, null, 2).split("\n"));
+    commentLines.push(...jsonLiteral(advancedConfig, 2).split("\n"));
   }
 
   if (commentLines.length === 0) {
@@ -769,16 +770,16 @@ function renderServerConnectionEntries(
     if (connection.kind === "http") {
       if (connection.placeholder) {
         lines.push(
-          `// Replace the placeholder URL for ${JSON.stringify(
+          `// Replace the placeholder URL for ${collapseToSingleLine(
             connection.serverId
           )} with the real server URL if needed.`
         );
       }
       lines.push(
         "{",
-        `  id: ${JSON.stringify(connection.serverId)},`,
+        `  id: ${jsonLiteral(connection.serverId)},`,
         '  kind: "http",',
-        `  url: process.env.${connection.envVarName} ?? ${JSON.stringify(
+        `  url: process.env.${connection.envVarName} ?? ${jsonLiteral(
           connection.url
         )},`,
         "},"
@@ -787,7 +788,7 @@ function renderServerConnectionEntries(
     }
 
     lines.push(
-      `// ${JSON.stringify(
+      `// ${collapseToSingleLine(
         connection.serverId
       )} runs over stdio: ${collapseToSingleLine(
         formatCommandDisplay(connection.command, connection.args)
@@ -802,15 +803,31 @@ function renderServerConnectionEntries(
     }
     lines.push(
       "{",
-      `  id: ${JSON.stringify(connection.serverId)},`,
+      `  id: ${jsonLiteral(connection.serverId)},`,
       '  kind: "stdio",',
-      `  command: ${JSON.stringify(connection.command)},`,
-      `  args: ${JSON.stringify(connection.args)},`,
+      `  command: ${jsonLiteral(connection.command)},`,
+      `  args: ${jsonLiteral(connection.args)},`,
       "},"
     );
   }
 
   return lines.join("\n");
+}
+
+/**
+ * `JSON.stringify` for a value that becomes part of the GENERATED SOURCE.
+ *
+ * `JSON.stringify` escapes CR and LF but leaves U+2028 / U+2029 as raw
+ * characters, because the JSON spec permits them in a string. JavaScript does
+ * not: they terminate a line. Inside a `//` comment that ends the comment, and
+ * in a string literal it is only legal from ES2019 on — the exported file is
+ * compiled under the AUTHOR's tsconfig, not ours, so an older target breaks on
+ * it. Escaping them here keeps both cases sound whatever the value contains.
+ */
+function jsonLiteral(value: unknown, indent?: number): string {
+  return JSON.stringify(value, null, indent)
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 /**
