@@ -208,13 +208,75 @@ if (typeof HTMLCanvasElement !== "undefined") {
   const canvasPrototype = HTMLCanvasElement.prototype as unknown as {
     getContext(id: string): unknown;
   };
+  /**
+   * One context per canvas, as a real browser gives.
+   *
+   * Components hold on to the object `getContext` returned and set properties
+   * on it (`fillStyle`, `lineWidth`); a fresh one per call would silently
+   * discard every one of those.
+   */
+  const contexts = new WeakMap<object, unknown>();
+
+  /**
+   * Methods whose RETURN VALUE a caller reads. Everything else is a no-op.
+   *
+   * A shim that only implemented what one component needed is a shim that
+   * breaks the next one — which is exactly what happened: this suite's canvas
+   * components call `setTransform`, `beginPath`, `arc` and a dozen others, and
+   * an object with three methods on it turned each of those into a
+   * `TypeError` inside a mount effect.
+   */
+  const withValues = (canvas: object): Record<string, unknown> => ({
+    canvas,
+    measureText: () => ({ width: 0 }),
+    getImageData: (_x: number, _y: number, w: number, h: number) => ({
+      data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
+      width: w,
+      height: h,
+    }),
+    createImageData: (w: number, h: number) => ({
+      data: new Uint8ClampedArray(Math.max(0, w) * Math.max(0, h) * 4),
+      width: w,
+      height: h,
+    }),
+    createLinearGradient: () => ({ addColorStop: () => {} }),
+    createRadialGradient: () => ({ addColorStop: () => {} }),
+    createPattern: () => null,
+    isPointInPath: () => false,
+    isPointInStroke: () => false,
+    getLineDash: () => [] as number[],
+    getTransform: () => ({ a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 }),
+  });
+
   canvasPrototype.getContext = function getContext(id: string) {
+    // Only 2D. jsdom has no WebGL either, and a component that asks for one
+    // should take its own no-context path rather than be handed a fake.
     if (id !== "2d") return null;
-    return {
-      drawImage: () => {},
-      clearRect: () => {},
-      fillRect: () => {},
-    };
+    const existing = contexts.get(this as unknown as object);
+    if (existing) return existing;
+    const values = withValues(this as unknown as object);
+    /** Whatever the component assigned — `fillStyle`, `font`, `lineWidth`. */
+    const assigned = new Map<string | symbol, unknown>();
+    const context = new Proxy(
+      {},
+      {
+        get(_target, property) {
+          if (assigned.has(property)) return assigned.get(property);
+          if (property in values) return values[property as string];
+          // ANY other member is a drawing call, and jsdom draws nothing.
+          // Answering with a no-op rather than `undefined` is what keeps this
+          // an environment shim: no component's paint path can fail on it.
+          return () => {};
+        },
+        set(_target, property, value) {
+          assigned.set(property, value);
+          return true;
+        },
+        has: () => true,
+      },
+    );
+    contexts.set(this as unknown as object, context);
+    return context;
   };
 }
 

@@ -769,9 +769,12 @@ describe("the hosted pane — which tab is on screen", () => {
     beat({ active: "a", list: tabs });
     expect(screen.queryByTestId("pane-notice")).toBeNull();
     beat({ active: "b", list: tabs });
-    expect((await screen.findByTestId("pane-notice")).textContent).toContain(
-      "https://other.test/",
-    );
+    const notice = (await screen.findByTestId("pane-notice")).textContent ?? "";
+    // The HOST, not the URL. A path carries reset tokens, share links and
+    // account ids, and this notice is the one thing on screen large enough to
+    // read from the next desk.
+    expect(notice).toContain("other.test");
+    expect(notice).not.toContain("https://other.test/");
   });
 });
 
