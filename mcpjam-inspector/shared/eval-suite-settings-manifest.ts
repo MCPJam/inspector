@@ -74,13 +74,14 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "passOrFail",
-    label: "Pass or fail",
+    label: "Scorers and judges",
     // A PRESENTATION grouping, not a setting. It has no stored field of its
     // own: it arranges settings.matchOptions, settings.checks and
     // settings.judge under the chain stage each one measures, and every one of
-    // those is reachable on its own below.
+    // those is reachable on its own below. settings.judge.groundedness is
+    // displayed with that group when present and is not a writable setting.
     excluded:
-      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own; the group itself carries no setting.",
+      "A presentation grouping of settings.matchOptions, settings.checks and settings.judge, each of which is reachable on its own; settings.judge.groundedness is displayed with the group and is not a writable setting.",
   },
   {
     key: "matchOptions",
@@ -89,7 +90,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "checks",
-    label: "Checks",
+    label: "Scorers",
     api: "settings.checks",
   },
   {
@@ -114,7 +115,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "policy",
-    label: "Policy",
+    label: "Quality gate",
     // The row itself only chooses WHICH policy is on screen. Both policies'
     // fields are reachable: settings.minimumAccuracy and
     // settings.minimumIterations for a legacy suite, settings.repetitions and

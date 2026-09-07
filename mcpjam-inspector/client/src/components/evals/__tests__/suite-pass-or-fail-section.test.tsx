@@ -1,5 +1,5 @@
 /**
- * The "Pass or fail" section, and the policy controls beside it.
+ * The "Scorers and judges" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
@@ -112,7 +112,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Measured by the runner");
+      expect(copy, stage).toContain("Observed by the runner");
       expect(copy.toLowerCase(), stage).not.toContain("no grader");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.

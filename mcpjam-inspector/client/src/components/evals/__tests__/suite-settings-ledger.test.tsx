@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, within } from "@testing-library/react";
 import { SettingsRow } from "@/components/setting/SettingsRow";
 import { render } from "@testing-library/react";
+import { QUALITY_GATE_THRESHOLD_HINT } from "../suite-policy-controls";
 import {
   openSettingsRow,
   renderSettingsSheet,
@@ -148,9 +149,7 @@ describe("suite settings ledger", () => {
   it("keeps v2 rows from claiming every case uses the default", () => {
     const { container } = renderSettingsSheet({ suite: v2Suite });
     const policy = container.querySelector('[data-setting-key="policy"]');
-    expect(policy?.textContent).toContain(
-      "Each case is graded on its own trials",
-    );
+    expect(policy?.textContent).toContain(QUALITY_GATE_THRESHOLD_HINT);
     expect(policy?.textContent?.toLowerCase()).not.toContain("every case uses");
   });
 
@@ -178,14 +177,17 @@ describe("suite settings ledger", () => {
       name: "Settings subsections",
     });
     expect(
-      within(subsections).getByRole("button", { name: "Policy" }),
+      within(subsections).getByRole("button", { name: "Quality gate" }),
     ).toBeTruthy();
     expect(
-      within(subsections).getByRole("button", { name: /User value/ }),
+      within(subsections).getByRole("button", { name: "Scorers" }),
     ).toBeTruthy();
     expect(
-      within(subsections).getByRole("button", { name: "Checks" }),
+      within(subsections).getByRole("button", { name: "Judges" }),
     ).toBeTruthy();
+    expect(
+      within(subsections).queryByRole("button", { name: /User value/ }),
+    ).toBeNull();
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),
     ).toBeNull();
@@ -206,7 +208,9 @@ describe("suite settings ledger", () => {
     const checksAnchor = container.querySelector('[data-setting-key="checks"]');
     expect(checksAnchor).toBeTruthy();
     checksAnchor!.scrollIntoView = scrollIntoView;
-    fireEvent.click(within(subsections).getByRole("button", { name: "Checks" }));
+    fireEvent.click(
+      within(subsections).getByRole("button", { name: "Scorers" }),
+    );
     expect(scrollIntoView).toHaveBeenCalled();
     for (const button of within(subsections).getAllByRole("button")) {
       expect(button).not.toHaveAttribute("aria-current");

@@ -2121,8 +2121,8 @@ export function SuiteIterationsView({
                         }
                         hint={
                           isVerdictPolicyV2
-                            ? "How each case is decided."
-                            : "Legacy policy — a suite-wide percent."
+                            ? "What a run must meet to pass."
+                            : "This suite uses a suite-wide minimum accuracy. Switch to per-case grading to set repetitions and a pass threshold."
                         }
                       >
                         {isVerdictPolicyV2 ? (

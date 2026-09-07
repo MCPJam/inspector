@@ -204,7 +204,7 @@ describe("STAGE_EMPTY_COPY", () => {
     ];
     for (const stage of runnerMeasured) {
       expect(stageEmptyIsGap(stage), stage).toBe(false);
-      expect(STAGE_EMPTY_COPY[stage]).toContain("Measured by the runner");
+      expect(STAGE_EMPTY_COPY[stage]).toContain("Observed by the runner");
     }
     for (const stage of ["selection", "response", "userValue"] as const) {
       expect(stageEmptyIsGap(stage), stage).toBe(true);

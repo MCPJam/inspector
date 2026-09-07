@@ -263,10 +263,11 @@ export const STAGE_EMPTY_COPY: Record<UserValueStage, string> = {
   // and a reader debugging a failed connection was told to look nowhere. The
   // card now lists that configuration; this line says where it comes from.
   connection:
-    "Measured by the runner — decided by the client and server connection settings",
-  discovery: "Measured by the runner — decided by the client's discovery settings",
+    "Observed by the runner — decided by the client and server connection settings",
+  discovery:
+    "Observed by the runner — decided by the client's discovery settings",
   selection: "No grader",
-  call: "Measured by the runner — nothing to configure",
+  call: "Observed by the runner — nothing to configure",
   response: "No grader",
   userValue: "No grader",
 };

@@ -139,6 +139,15 @@ function PercentInput({
 }
 
 /**
+ * The case-threshold hint under the v2 quality-gate controls.
+ *
+ * Exported so the ledger test and later quality-gate rows pin the same
+ * sentence. Store a fraction; the field next to this hint renders `%`.
+ */
+export const QUALITY_GATE_THRESHOLD_HINT =
+  "Each case is graded on its own trials. A case passes when at least this share of them passes.";
+
+/**
  * The v2 policy controls: how many trials, and how many of them must pass.
  */
 export function VerdictPolicyV2Controls({
@@ -197,8 +206,7 @@ export function VerdictPolicyV2Controls({
         />
       </div>
       <p className="text-[11px] text-muted-foreground/60">
-        Each case is graded on its own trials. A case passes when at least this
-        share of them passes.
+        {QUALITY_GATE_THRESHOLD_HINT}
       </p>
     </div>
   );

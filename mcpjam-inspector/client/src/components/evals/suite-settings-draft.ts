@@ -542,7 +542,7 @@ export function describeChange(
     case "defaultPredicates":
       return {
         key,
-        label: "Checks",
+        label: "Scorers",
         before: describePredicates(before.defaultPredicates),
         after: describePredicates(after.defaultPredicates),
       };
@@ -563,7 +563,7 @@ export function describeChange(
     case "verdictPolicyVersion":
       return {
         key,
-        label: "Policy",
+        label: "Quality gate",
         before: describePolicyVersion(before),
         after: describePolicyVersion(after),
       };
@@ -574,7 +574,7 @@ export function describeChange(
       // no change.
       return {
         key,
-        label: "Policy defaults",
+        label: "Quality gate defaults",
         before: describePolicyDefaults(before.verdictPolicyDefaults),
         after: describePolicyDefaults(after.verdictPolicyDefaults),
       };

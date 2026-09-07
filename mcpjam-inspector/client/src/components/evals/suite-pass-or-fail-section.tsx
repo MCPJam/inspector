@@ -1,5 +1,5 @@
 /**
- * "Pass or fail", organized by the stage each grader measures.
+ * "Scorers and judges", organized by the stage each grader measures.
  *
  * THE PROBLEM THIS SOLVES. The settings sheet used to list Tool calls, Default
  * checks and LLM as Judge as three unrelated rows, in the order the fields
@@ -61,7 +61,10 @@ import type { EvalJudgeConfig } from "./types";
  * same sentence.
  */
 export const PASS_OR_FAIL_HINT =
-  "Gates decide the verdict. Advisory graders score alongside it and never change it. Cases and per-run overrides can relax a gate.";
+  "Scorers evaluate the evidence available for each trial. Gate results contribute to the trial verdict; Warn highlights an advisory result; Report records it.";
+
+export const JUDGE_HINT =
+  "A judge scores trial evidence from 0–1. Goal completion can gate after review-protocol and calibration requirements are met, or through an explicit owner acknowledgement once protocol readiness is met.";
 
 /**
  * A grader's ROLE, as a chip.
@@ -278,12 +281,15 @@ export function SuitePassOrFailSection({
             </div>
           ) : null}
           {stage === "userValue" ? (
-            <div className="space-y-5" data-setting-key="judge">
+            <div
+              className="space-y-5"
+              data-setting-key="judge"
+              data-subsection-id="judge"
+            >
               <div>
                 <h4 className="text-sm font-semibold text-foreground">Judge</h4>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Advisory by default. A calibrated judge may gate; see Judge
-                  criteria.
+                  {JUDGE_HINT}
                 </p>
               </div>
               <JudgesSection
@@ -325,11 +331,14 @@ export function SuitePassOrFailSection({
       >
         <SuiteSettingsChainNode />
         <div className="mb-5 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-lg font-semibold tracking-tight text-foreground">
-              Checks
-            </h3>
-            <GlobalGatesSectionInfoHint />
+          <div className="space-y-1">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                Scorers
+              </h3>
+              <GlobalGatesSectionInfoHint />
+            </div>
+            <p className="text-sm text-muted-foreground">{PASS_OR_FAIL_HINT}</p>
           </div>
           <AddCheckMenu
             globalGatesMenu
