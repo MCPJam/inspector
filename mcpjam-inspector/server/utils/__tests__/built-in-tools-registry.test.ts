@@ -888,12 +888,20 @@ describe("resolveHostTools — an unattended run names itself", () => {
     policy: { mode: "allow_all" as const },
   };
 
+  // THE OWNER KEY IS ENGINE-BLIND, but the hosted engine refuses an unattended
+  // run that brings no box of its own (its one computer per project+member is
+  // shared by every run), so these cases run on the LOCAL engine — the
+  // unattended browser that keys per run today. The hosted+sandbox cases live
+  // in their own describe.
+  const localEngine = { computerEngine: "local" as const };
+
   it("builds them for a run that carries an iteration id", () => {
     withHostedBrowserFlag("1", () => {
       const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
         {
           ...ctx,
+          ...localEngine,
           browserApprovalDelivery: unattended,
           // What `evals-runner` threads: this iteration, not this suite.
           runKey: "iteration-7",
@@ -909,6 +917,7 @@ describe("resolveHostTools — an unattended run names itself", () => {
         { builtInToolIds: ["browser"], computer },
         {
           ...ctx,
+          ...localEngine,
           chatSessionId: "sim-session-1",
           browserApprovalDelivery: unattended,
         },
@@ -926,6 +935,7 @@ describe("resolveHostTools — an unattended run names itself", () => {
         { builtInToolIds: ["browser"], computer },
         {
           ...ctx,
+          ...localEngine,
           chatSessionId: undefined,
           browserApprovalDelivery: unattended,
           onToolSuppressed: (i: { id: string; reason: string }) =>

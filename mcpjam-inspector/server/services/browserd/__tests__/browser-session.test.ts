@@ -19,8 +19,9 @@ import type { BrowserdLeaseState, BrowserdStatus } from "../browserd-client";
 import { HandoffLease } from "../daemon/lease";
 import type {
   BrowserSessionLookup,
-  BrowserSessionRecord,
   BrowserSessionRecordResult,
+  ComputerBrowserSessionRecord,
+  SandboxBrowserSessionRecord,
 } from "../browser-sessions-client";
 import {
   attachBrowserSession,
@@ -38,7 +39,10 @@ import { resetActivityThrottleForTests } from "../../../utils/computers/activity
 
 const COMPUTER = "computer-1";
 const HASH = "bundle-hash-1";
+const SANDBOX_ROW = "sbxrow-1";
+const SANDBOX_ID = "sbx-1";
 const ROW = {
+  target: "computer" as const,
   sessionId: "session-1",
   computerId: COMPUTER,
   bootId: "boot-old",
@@ -51,10 +55,34 @@ const ROW = {
   contextMode: "persistent" as const,
 };
 
+/** The same row on a per-run box: no computer, and no stream at all. */
+const SANDBOX_SESSION = {
+  target: "sandbox" as const,
+  sessionId: "session-sbx",
+  sandboxRowId: SANDBOX_ROW,
+  bootId: "boot-old",
+  browserdToken: "token-old",
+  browserdPort: 8791,
+  publicOrigin: "https://old.example",
+  bundleHash: HASH,
+  contextMode: "ephemeral" as const,
+};
+
 function liveLookup(
-  over?: Partial<BrowserSessionRecord>,
+  over?: Partial<ComputerBrowserSessionRecord>,
 ): BrowserSessionLookup {
   const session = { ...ROW, ...over };
+  return {
+    reachable: true,
+    session,
+    observedSessionId: session.sessionId,
+  };
+}
+
+function liveSandboxLookup(
+  over?: Partial<SandboxBrowserSessionRecord>,
+): BrowserSessionLookup {
+  const session = { ...SANDBOX_SESSION, ...over };
   return {
     reachable: true,
     session,
@@ -213,13 +241,16 @@ function makeFakes(over?: {
       sendCommand,
       ...(over?.leaseAction ? { leaseAction: over.leaseAction } : {}),
     })),
+    // Cast: the real store's `lookup`/`record` are OVERLOADED per target, and a
+    // single-signature spy cannot satisfy both arms. The cases below drive the
+    // production entry points, which are where the target types are checked.
     store: {
       lookup,
       record,
       touch,
       claimRelaunch,
       releaseRelaunch,
-    },
+    } as unknown as BrowserSessionDeps["store"],
     touchActivity,
     bundle: () => new Uint8Array([1, 2, 3]),
     bundleHash: () => HASH,
@@ -759,8 +790,10 @@ describe("ensureBrowserSession — the record is load-bearing", () => {
         browserdToken: "token-new",
         browserdPort: BROWSERD_PORT,
         publicOrigin: "https://new.example",
-        streamUrl: "https://stream-new.example/vnc.html",
-        streamPassword: "pw-stream",
+        stream: {
+          url: "https://stream-new.example/vnc.html",
+          password: "pw-stream",
+        },
         bundleHash: HASH,
         contextMode: "persistent",
       }),
@@ -1144,6 +1177,196 @@ describe("ensureBrowserSession — cross-replica boot race", () => {
       "port already in use",
     );
     expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+});
+
+describe("ensureBrowserSession — sandbox target", () => {
+  const SANDBOX_ARGS = {
+    ...ARGS,
+    contextMode: "ephemeral" as const,
+    target: {
+      kind: "sandbox" as const,
+      sandboxRowId: SANDBOX_ROW,
+      sandboxId: SANDBOX_ID,
+    },
+  };
+
+  it("boots on the run's OWN box: no reserve, no lease, no stream", async () => {
+    // Everything this path skips is a decision, not an omission. The box is
+    // already provisioned (so nothing reserves or bills), one run owns it (so
+    // there is no relaunch claim and no lease to fence), and nobody is
+    // watching (so no stream is started and none is recorded).
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+
+    expect(handle.target).toBe("sandbox");
+    expect(handle.sandboxRowId).toBe(SANDBOX_ROW);
+    expect(handle.sandboxId).toBe(SANDBOX_ID);
+    expect(handle.contextMode).toBe("ephemeral");
+    expect(handle.reused).toBe(false);
+
+    expect(f.deps.reserveDesktop).not.toHaveBeenCalled();
+    expect(f.deps.resolveSandboxId).not.toHaveBeenCalled();
+    expect(f.sandbox.ensureStream).not.toHaveBeenCalled();
+    expect(f.claimRelaunch).not.toHaveBeenCalled();
+    // The vendor id came straight from the caller.
+    expect(f.connect).toHaveBeenCalledWith(SANDBOX_ID);
+    expect(f.boot).toHaveBeenCalledWith(
+      f.sandbox.browserd,
+      expect.objectContaining({ contextMode: "ephemeral" }),
+    );
+    // Recorded against the ROW, with no stream fields at all.
+    const recorded = f.record.mock.calls[0]![0];
+    expect(recorded).toMatchObject({
+      sandboxRowId: SANDBOX_ROW,
+      contextMode: "ephemeral",
+    });
+    expect(recorded).not.toHaveProperty("computerId");
+    expect(recorded).not.toHaveProperty("stream");
+  });
+
+  it("reuses a verified daemon with zero sandbox I/O", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: SANDBOX_SESSION.bootId }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe(SANDBOX_SESSION.bootId);
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.lookup).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sandboxRowId: SANDBOX_ROW,
+        expectedContextMode: "ephemeral",
+      }),
+    );
+  });
+
+  it("does NOT reuse a daemon whose bootId has moved", async () => {
+    const f = makeFakes({
+      lookups: [liveSandboxLookup()],
+      status: async () => ({ kind: "ok", bootId: "boot-somebody-else" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(false);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("REFUSES a persistent profile on a box that dies with the run", async () => {
+    const f = makeFakes();
+    await expect(
+      ensureBrowserSession(f.deps, {
+        ...SANDBOX_ARGS,
+        contextMode: "persistent",
+      } as never),
+    ).rejects.toMatchObject({ code: "persistent_requires_computer" });
+    expect(f.connect).not.toHaveBeenCalled();
+  });
+
+  it("refuses an unsupported target BEFORE connecting or booting", async () => {
+    // A backend that predates sandbox-target sessions will refuse the record
+    // too, so booting first would pay a cold DESKTOP boot — the most expensive
+    // thing on this path — on every attempt, to reach the same failure.
+    const f = makeFakes({
+      lookups: [{ reachable: true, unsupportedTarget: true, session: null }],
+    });
+    await expect(
+      ensureBrowserSession(f.deps, SANDBOX_ARGS),
+    ).rejects.toMatchObject({ code: "unsupported_target" });
+
+    expect(f.connect).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    expect(f.record).not.toHaveBeenCalled();
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+  });
+
+  it("stops its own daemon when the control plane refuses the record shape", async () => {
+    // The same refusal arriving at RECORD time (a backend that answers the
+    // lookup but not the write). A daemon nothing can address must not be left
+    // running on a box that will be billed until the run ends.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      recordResult: { status: "unsupported_target" },
+    });
+    await expect(
+      ensureBrowserSession(f.deps, SANDBOX_ARGS),
+    ).rejects.toMatchObject({ code: "unsupported_target" });
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+    expect(f.sandbox.disconnect).toHaveBeenCalled();
+  });
+
+  it("adopts the winner when its record loses the compare-and-swap", async () => {
+    // The record CAS is the ONLY cross-replica backstop on this path — there
+    // is no claim and no fence — so it has to still work.
+    const f = makeFakes({
+      lookups: [
+        { reachable: true, session: null },
+        liveSandboxLookup({ bootId: "boot-winner" }),
+      ],
+      recordResult: { status: "conflict" },
+      status: async () => ({ kind: "ok", bootId: "boot-winner" }),
+    });
+    const handle = await ensureBrowserSession(f.deps, SANDBOX_ARGS);
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-winner");
+    expect(f.bootHandle.stop).toHaveBeenCalled();
+  });
+
+  it("serializes two ensures of ONE row, and runs two rows concurrently", async () => {
+    const order: string[] = [];
+    const slowStatus = (label: string) =>
+      vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          order.push(`${label}-start`);
+          await new Promise((resolve) => setTimeout(resolve, 30));
+          order.push(`${label}-end`);
+          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+        })
+        .mockImplementation(async () => {
+          order.push(`${label}-second`);
+          return { kind: "ok", bootId: SANDBOX_SESSION.bootId };
+        });
+
+    const statusA = slowStatus("row-a");
+    const one = makeFakes({ lookups: [liveSandboxLookup()] });
+    (one.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusA, sendCommand: vi.fn() }),
+    );
+    await Promise.all([
+      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+    ]);
+    // Same row ⇒ strictly in sequence (one fixed port, one daemon per box).
+    expect(order).toEqual(["row-a-start", "row-a-end", "row-a-second"]);
+
+    // A DIFFERENT row must not wait behind it: two iterations of one eval run
+    // concurrently, which is the whole point of a box per run.
+    order.length = 0;
+    const statusB = slowStatus("row-b");
+    const two = makeFakes({
+      lookups: [liveSandboxLookup({ sandboxRowId: "sbxrow-2" })],
+    });
+    (two.deps.createClient as ReturnType<typeof vi.fn>).mockImplementation(
+      () => ({ status: statusB, sendCommand: vi.fn() }),
+    );
+    await Promise.all([
+      ensureBrowserSession(one.deps, SANDBOX_ARGS),
+      ensureBrowserSession(two.deps, {
+        ...SANDBOX_ARGS,
+        target: {
+          kind: "sandbox" as const,
+          sandboxRowId: "sbxrow-2",
+          sandboxId: "sbx-2",
+        },
+      }),
+    ]);
+    // Interleaved rather than serialized: the second row started before the
+    // first finished.
+    expect(order[0]).toBe("row-a-second");
+    expect(order).toContain("row-b-start");
   });
 });
 

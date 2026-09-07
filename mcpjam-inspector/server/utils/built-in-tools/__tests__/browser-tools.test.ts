@@ -35,6 +35,7 @@ function fakeSession(send: (command: any) => Promise<SendResult>) {
     async (): Promise<BrowserSessionHandle> =>
       ({
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "session-1",
         computerId: "computer-1",
         bootId: "boot-1",
@@ -913,6 +914,7 @@ describe("buildBrowserTools — engines and profile mode", () => {
       seen.push(args);
       return {
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "s",
         computerId: "c",
         bootId: "b",
@@ -1038,6 +1040,7 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
       keys.push(args.ownerKey);
       return {
         engine: "hosted" as const,
+        target: "computer" as const,
         sessionId: "s",
         computerId: "c",
         bootId: "b",

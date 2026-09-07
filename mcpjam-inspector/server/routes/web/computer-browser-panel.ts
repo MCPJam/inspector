@@ -40,7 +40,7 @@ import {
 import {
   lookupBrowserSession,
   touchBrowserSession,
-  type BrowserSessionRecord,
+  type ComputerBrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
 import {
   BrowserdClient,
@@ -228,7 +228,7 @@ export function createComputerBrowserPanelRoutes(
   /** The live session row for this computer, or null. */
   async function currentSession(
     computerId: string,
-  ): Promise<BrowserSessionRecord | null> {
+  ): Promise<ComputerBrowserSessionRecord | null> {
     const lookup = await lookupSession({
       computerId,
       expectedBundleHash: bundleHash(),
@@ -245,7 +245,10 @@ export function createComputerBrowserPanelRoutes(
    *  whole request: a panel that cannot say who holds the browser is still
    *  useful for watching it. */
   async function readLease(
-    session: BrowserSessionRecord,
+    // COMPUTER-typed: this route only ever looks a session up by computer, and
+    // narrowing here is what keeps the log line below honest about which box
+    // could not answer.
+    session: ComputerBrowserSessionRecord,
   ): Promise<BrowserdLeaseState | { state: "unknown" }> {
     try {
       return await createClient(session).lease();

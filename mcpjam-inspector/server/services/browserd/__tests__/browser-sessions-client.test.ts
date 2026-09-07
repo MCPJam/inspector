@@ -221,8 +221,10 @@ describe("browser-sessions-client", () => {
       browserdToken: "token-1",
       browserdPort: 8791,
       publicOrigin: "https://origin.example",
-      streamUrl: "https://stream.example/vnc.html",
-      streamPassword: "pw-1",
+      stream: {
+        url: "https://stream.example/vnc.html",
+        password: "pw-1",
+      },
       bundleHash: "hash-1",
       contextMode: "persistent" as const,
     };
@@ -239,8 +241,13 @@ describe("browser-sessions-client", () => {
     stubFetch(409, { error: "session_record_conflict" });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "conflict" });
 
+    // A REJECTED SHAPE is its own answer: for a per-run target it means a
+    // control plane that predates them, and the caller must refuse rather
+    // than retry a shape that will never be accepted.
     stubFetch(400, { error: "Malformed browser session record" });
-    expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
+    expect(await recordBrowserSession(RECORD)).toEqual({
+      status: "unsupported_target",
+    });
 
     stubFetch(200, { notASessionId: true });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
@@ -250,6 +257,102 @@ describe("browser-sessions-client", () => {
     // session would look alive to us and idle to the sweeper.
     stubFetch(200, { sessionId: "" });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
+  });
+
+  it("parses a SANDBOX row — no computer, and no stream at all", async () => {
+    const SANDBOX_SESSION = {
+      sessionId: "session-sbx",
+      sandboxRowId: "sbxrow-1",
+      bootId: "boot-1",
+      browserdToken: "token-1",
+      browserdPort: 8791,
+      publicOrigin: "https://origin.example",
+      bundleHash: "hash-1",
+      contextMode: "ephemeral",
+    };
+    stubFetch(200, { session: SANDBOX_SESSION });
+    const result = await lookupBrowserSession({
+      sandboxRowId: "sbxrow-1",
+      expectedBundleHash: "hash-1",
+      expectedContextMode: "ephemeral",
+    });
+    expect(result.session).toMatchObject({
+      target: "sandbox",
+      sandboxRowId: "sbxrow-1",
+    });
+    expect(result.session).not.toHaveProperty("streamUrl");
+  });
+
+  it("REFUSES a computer row with no stream, and a sandbox row that has one", async () => {
+    // The stream password exists nowhere else durable, so a computer row
+    // without it is one no replica could ever use. A sandbox row WITH one
+    // means somebody minted desktop-control credentials for a box nobody is
+    // watching — equally a row not to act on.
+    const { streamUrl: _u, streamPassword: _p, ...noStream } = SESSION;
+    stubFetch(200, { session: noStream });
+    expect(
+      (
+        await lookupBrowserSession({
+          computerId: "computer-1",
+          expectedBundleHash: "hash-1",
+          expectedContextMode: "any",
+        })
+      ).session,
+    ).toBeNull();
+
+    stubFetch(200, {
+      session: {
+        sessionId: "s",
+        sandboxRowId: "sbxrow-1",
+        bootId: "b",
+        browserdToken: "t",
+        browserdPort: 8791,
+        publicOrigin: "https://origin.example",
+        streamUrl: "https://stream.example/vnc.html",
+        streamPassword: "pw",
+        bundleHash: "hash-1",
+        contextMode: "ephemeral",
+      },
+    });
+    expect(
+      (
+        await lookupBrowserSession({
+          sandboxRowId: "sbxrow-1",
+          expectedBundleHash: "hash-1",
+          expectedContextMode: "ephemeral",
+        })
+      ).session,
+    ).toBeNull();
+  });
+
+  it("reports a 400 as unsupportedTarget, not as unreachable", async () => {
+    // The two need OPPOSITE behaviour: unreachable means "relaunch", and
+    // relaunching here would boot a daemon on a box the control plane could
+    // never record — a cold desktop boot per attempt, to the same dead end.
+    stubFetch(400, { error: "exactly one of computerId or sandboxRowId" });
+    const result = await lookupBrowserSession({
+      sandboxRowId: "sbxrow-1",
+      expectedBundleHash: "hash-1",
+      expectedContextMode: "ephemeral",
+    });
+    expect(result).toEqual({
+      reachable: true,
+      unsupportedTarget: true,
+      session: null,
+    });
+  });
+
+  it("puts the sandbox id on the wire, and never a computer id", async () => {
+    const impl = stubFetch(200, { session: null });
+    await lookupBrowserSession({
+      sandboxRowId: "sbxrow-1",
+      expectedBundleHash: "hash-1",
+      expectedContextMode: "ephemeral",
+    });
+    const [, init] = impl.mock.calls[0] as unknown as [string, { body: string }];
+    const body = JSON.parse(init.body);
+    expect(body.sandboxRowId).toBe("sbxrow-1");
+    expect(body).not.toHaveProperty("computerId");
   });
 
   it("touch surfaces `counted`, and an unreachable touch counts as not counted", async () => {
