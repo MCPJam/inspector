@@ -1436,13 +1436,13 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/1 session/i);
+    ).toHaveTextContent(/1 conversation/i);
   });
 
   it("keeps a reused journey's own sessions when the intensity changes", async () => {
     // SUTB-26: a preset may seed a field, never overwrite one the user set.
-    // This journey was saved at 3 sessions and launch does not rewrite a
-    // shared journey's config, so pushing harder must not re-price it.
+    // Saved at 5 sessions — a value no preset carries, so a re-price would
+    // show — and launch does not rewrite a shared journey's config.
     existingPersonas = [
       { _id: "p-1", personaId: "p1", name: "Ana", role: "Ops", notes: "" },
     ];
@@ -1451,7 +1451,7 @@ describe("SwarmsTab — New swarm create flow", () => {
         _id: "j-existing",
         name: "Reconcile payouts",
         goal: "Reconcile",
-        config: { sessionsPerTarget: 3, maxTurns: 9 },
+        config: { sessionsPerTarget: 5, maxTurns: 9 },
       },
     ];
     openDescribe();
@@ -1460,12 +1460,12 @@ describe("SwarmsTab — New swarm create flow", () => {
     await screen.findByTestId("new-swarm-reused-personas");
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/5 conversations/i);
 
     fireEvent.click(screen.getByRole("radio", { name: /launch ready/i }));
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/5 conversations/i);
 
     fireEvent.click(
       screen.getByRole("button", { name: /^back to describe$/i }),
@@ -1475,7 +1475,7 @@ describe("SwarmsTab — New swarm create flow", () => {
 
     expect(
       screen.getByTestId("new-swarm-launch-session-estimate"),
-    ).toHaveTextContent(/3 sessions/i);
+    ).toHaveTextContent(/5 conversations/i);
   });
 
   it("surfaces a rejected environment override as a failed launch", async () => {
@@ -1958,20 +1958,56 @@ describe("SwarmsTab — Describe step (Production Redesign)", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("asks for session scope on Confirm after generation", async () => {
+  it("asks how many conversations to run on Confirm after generation", async () => {
     openDescribe();
     fillDescribe();
     fireEvent.click(screen.getByTestId("new-swarm-continue"));
     await screen.findByTestId("new-swarm-proposed-personas");
 
     expect(screen.getByTestId("new-swarm-push-intensity")).toBeInTheDocument();
+    expect(screen.getByText(/how many conversations to run/i)).toBeVisible();
     expect(
-      screen.getByText(/select the total number of sessions for the swarm/i),
+      screen.getByText(
+        /each conversation is one synthetic user trying a goal/i,
+      ),
     ).toBeVisible();
     expect(screen.getByRole("radio", { name: /quick look/i })).toHaveAttribute(
       "aria-checked",
       "true",
     );
+  });
+
+  it("quotes a different conversation count on each intensity option", async () => {
+    // BB-194: Standard and Launch ready both read 36, so nothing on screen
+    // told the user what choosing between them would change.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+
+    const quotes = [/quick look/i, /standard/i, /launch ready/i].map((name) => {
+      const quoted = screen
+        .getByRole("radio", { name })
+        .textContent?.match(/(\d+) conversations?/);
+      expect(quoted).not.toBeNull();
+      return Number(quoted?.[1]);
+    });
+    expect(new Set(quotes).size).toBe(3);
+  });
+
+  it("blocks launch while a persona has no goal to run", async () => {
+    // Launch drops a goal-less persona, so leaving Continue enabled runs a
+    // smaller swarm than the screen shows.
+    openDescribe();
+    fillDescribe();
+    fireEvent.click(screen.getByTestId("new-swarm-continue"));
+    await screen.findByTestId("new-swarm-proposed-personas");
+    expect(screen.getByTestId("new-swarm-launch")).toBeEnabled();
+
+    fireEvent.click(screen.getByTestId("new-swarm-add-persona"));
+
+    expect(screen.getByTestId("new-swarm-persona-without-goal")).toBeVisible();
+    expect(screen.getByTestId("new-swarm-launch")).toBeDisabled();
   });
 
   it("lists attached personas as removable rows, not as a checklist", () => {

@@ -829,7 +829,22 @@ export function NewSwarmConfirmStep({
     ),
     environmentCount,
   });
-  const canLaunch = journeyCount > 0 && !launching && !reusedPending;
+  // Launch skips a persona whose goals are all blank, and "Add new persona"
+  // seeds exactly that. Without this the swarm quietly runs fewer personas
+  // than the screen shows.
+  const personasWithoutGoal =
+    proposed.filter(
+      (persona) => !persona.journeys.some((journey) => journey.goal.trim()),
+    ).length +
+    reusedPersonas.filter((persona) => {
+      const targets = reusedResolved[persona._id]?.targets ?? null;
+      return targets !== null && targets.length === 0;
+    }).length;
+  const canLaunch =
+    journeyCount > 0 &&
+    !launching &&
+    !reusedPending &&
+    personasWithoutGoal === 0;
 
   const selectedProposed =
     selected?.kind === "proposed"
@@ -994,8 +1009,8 @@ export function NewSwarmConfirmStep({
           </p>
           <p className="sr-only" data-testid="new-swarm-launch-session-estimate">
             This launch will run {launchSessionEstimate}{" "}
-            {launchSessionEstimate === 1 ? "session" : "sessions"} total across{" "}
-            {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
+            {launchSessionEstimate === 1 ? "conversation" : "conversations"}{" "}
+            total across {journeyCount} {journeyCount === 1 ? "goal" : "goals"}.
           </p>
           {environmentLabels.length > 0 && proposed.length > 0 ? (
             <p
@@ -1210,12 +1225,12 @@ export function NewSwarmConfirmStep({
               id="new-swarm-session-scope-label"
               className="text-sm font-medium text-foreground"
             >
-              Select the total number of sessions for the swarm.
+              How many conversations to run
               <RequiredMark />
             </div>
             <p className="text-sm leading-relaxed text-muted-foreground">
-              We will distribute your user personas equally across the total
-              number of sessions.
+              Each conversation is one synthetic user trying a goal. You
+              can&rsquo;t have more personas than conversations.
             </p>
           </div>
           <div
@@ -1259,13 +1274,25 @@ export function NewSwarmConfirmStep({
                     {option.label}
                   </span>
                   <span className="mt-0.5 block text-sm leading-relaxed text-muted-foreground">
-                    {sessions} sessions
+                    {sessions}{" "}
+                    {sessions === 1 ? "conversation" : "conversations"}
                   </span>
                 </button>
               );
             })}
           </div>
         </div>
+
+        {personasWithoutGoal > 0 ? (
+          <p
+            role="alert"
+            data-testid="new-swarm-persona-without-goal"
+            className="text-sm leading-relaxed text-destructive"
+          >
+            Add conversations or remove a persona. Every persona needs at least
+            one conversation.
+          </p>
+        ) : null}
 
         {errorMessage ? (
           <p role="alert" className="text-sm leading-relaxed text-destructive">
