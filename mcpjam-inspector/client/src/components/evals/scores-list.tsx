@@ -243,14 +243,36 @@ const SUMMARY_TONE = {
  * annotated: the single most misleading thing this view could do is let a red
  * advisory judge read as the reason a run failed.
  */
+/**
+ * A judge row is the Scores-list channel the blind protocol must close.
+ *
+ * Either mark is enough: a non-deterministic definition is a judge (or a
+ * judge-shaped scorer), and platform-minted judge ids start with `judge:`.
+ * The two overlap on today's goal-completion row; either alone still hides
+ * a row that would print the answer a reviewer must not see first.
+ */
+function isJudgeRow(row: JoinedScore): boolean {
+  return (
+    row.definition?.deterministic === false ||
+    row.score.scorerId.startsWith("judge:")
+  );
+}
+
 export function ScoresList({
   scores,
   evaluationConfig,
   integrity,
+  hideJudgeRows = false,
 }: {
   scores: ScoreResult[];
   evaluationConfig: EvaluationConfigSnapshot | null;
   integrity?: "score_integrity_invalid" | null;
+  /**
+   * Hide judge values until the reviewer has labelled (or revealed) this
+   * trial. Presentation only: the stored rows, `isGatingScore`, and
+   * `scoreFailsGate` stay untouched.
+   */
+  hideJudgeRows?: boolean;
 }) {
   // An integrity-invalid iteration whose rows were ALL quarantined still
   // renders: the warning below is the only explanation an operator will get
@@ -270,7 +292,10 @@ export function ScoresList({
   // instead would put an out-of-scope `not_applicable` row in the denominator
   // here while the compact chip left it out — the same iteration summarized two
   // ways, in two places on the same screen.
-  const counted = joined.filter(countsTowardGate);
+  const hidingJudges = hideJudgeRows && joined.some(isJudgeRow);
+  const counted = joined
+    .filter((row) => !(hidingJudges && isJudgeRow(row)))
+    .filter(countsTowardGate);
   const countedFailures = counted.filter(failsGate).length;
   // An integrity downgrade means the backend could not verify this iteration's
   // gating evidence and flipped its verdict. The surviving rows may all read
@@ -301,7 +326,7 @@ export function ScoresList({
     >
       <div className="flex items-center justify-between">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Scores
+          Scores{hidingJudges ? " · judge hidden" : ""}
         </div>
         <div
           className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold ${tone.className}`}
@@ -330,12 +355,23 @@ export function ScoresList({
         </div>
       ) : null}
 
-      <ScoreGroup title="Gating" rows={gating} keyPrefix="gating" />
-      <ScoreGroup title="Advisory" rows={advisory} keyPrefix="advisory" />
+      <ScoreGroup
+        title="Gating"
+        rows={gating}
+        keyPrefix="gating"
+        hideJudgeRows={hidingJudges}
+      />
+      <ScoreGroup
+        title="Advisory"
+        rows={advisory}
+        keyPrefix="advisory"
+        hideJudgeRows={hidingJudges}
+      />
       <ScoreGroup
         title="Unresolved (no matching definition)"
         rows={unjoinable}
         keyPrefix="unjoinable"
+        hideJudgeRows={hidingJudges}
       />
     </div>
   );
@@ -345,10 +381,12 @@ function ScoreGroup({
   title,
   rows,
   keyPrefix,
+  hideJudgeRows,
 }: {
   title: string;
   rows: JoinedScore[];
   keyPrefix: string;
+  hideJudgeRows: boolean;
 }) {
   if (rows.length === 0) return null;
   return (
@@ -357,9 +395,19 @@ function ScoreGroup({
         {title}
       </div>
       <ul className="space-y-1.5">
-        {rows.map((row, index) => (
-          <ScoreRow key={`${keyPrefix}-${index}`} row={row} />
-        ))}
+        {rows.map((row, index) =>
+          hideJudgeRows && isJudgeRow(row) ? (
+            <li
+              key={`${keyPrefix}-${index}`}
+              data-testid="score-row-hidden"
+              className="rounded border border-border/40 bg-background/40 p-2 text-[11px] text-muted-foreground"
+            >
+              Judge score hidden until you label this trial
+            </li>
+          ) : (
+            <ScoreRow key={`${keyPrefix}-${index}`} row={row} />
+          ),
+        )}
       </ul>
     </div>
   );

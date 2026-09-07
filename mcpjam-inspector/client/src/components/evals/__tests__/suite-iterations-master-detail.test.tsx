@@ -36,9 +36,18 @@ vi.mock("convex/react", () => ({
 // pre-capabilities behaviour, which is what every assertion in this file was
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),

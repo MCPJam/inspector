@@ -71,6 +71,7 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
@@ -1585,6 +1586,13 @@ export const AGENT_OP_REGISTRY: readonly AgentOpEntry[] = [
     promptNotes: [
       "- `get_eval_run_stage_analytics` (one run) and `list_eval_suite_stage_analytics` (a suite's runs, newest first) return the MEASURED DESCRIPTION of a run — how many trials reached each stage, how many were measured there, and how many were excluded and why. Counts only: derive a rate with its denominator in hand, and read a zero denominator as NOT MEASURED, never as 0% or 100%. Never sum tallies across the six stages (one trial is counted in every stage's tally) and never merge documents across runs (each describes one run's population).",
       "- An ABSENT analytics document means the run predates stage measurement — there is no backfill, so it will never appear. Report it as unmeasured and NEVER render it as zeros. A deployment-does-not-serve error is a different fact entirely: it says nothing about the run, and reporting it as unmeasured would claim every run on that deployment was never measured.",
+    ],
+  },
+  {
+    operation: getEvalRunGateOperation,
+    tier: "direct",
+    promptNotes: [
+      "- `get_eval_run_gate` returns the stored suite quality-gate report for ONE run: passed, failed, non_gateable, or not_configured. `not_configured` means the suite has no active conditions — it is a real report, never an absent route. A deployment that does not serve the route is a different fact: do not report that as 'no policy'. A run waiver never covers this report.",
     ],
   },
   {

@@ -91,7 +91,7 @@ const SNAPSHOT_KEY_TO_MANIFEST_KEY: Record<string, EvalSuiteSettingKey> = {
  */
 const UNLISTED_FIELD_LABELS: Record<string, string> = {
   description: "Description",
-  verdictPolicyDefaults: "Policy defaults",
+  verdictPolicyDefaults: "Quality gate defaults",
   verdictPolicyRolloutMode: "Policy rollout",
   gradingEngine: "Grading engine",
   environmentFingerprints: "Environment fingerprints",

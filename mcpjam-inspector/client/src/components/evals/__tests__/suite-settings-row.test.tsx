@@ -142,7 +142,9 @@ describe("SuiteSettingsRow", () => {
         <div>body</div>
       </SuiteSettingsRow>,
     );
-    expect(screen.getByRole("heading", { name: "Pass or fail" })).toBeTruthy();
+    expect(
+      screen.getByRole("heading", { name: "Scorers and judges" }),
+    ).toBeTruthy();
   });
 
   it("renders hint copy under the section title", () => {

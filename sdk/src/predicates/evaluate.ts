@@ -10,6 +10,7 @@
  */
 
 import { argMatch } from "./argMatcher.js";
+import { checkRole } from "./policy.js";
 import { isTurnScopablePredicateKind } from "./types.js";
 import type {
   IterationTranscript,
@@ -592,11 +593,14 @@ export function evaluatePredicates(
 }
 
 /**
- * Case verdict from predicate results: passes iff **all** pass. An empty set
- * passes vacuously (a case with no predicates is not gated by predicates).
+ * Case verdict from predicate results: passes iff **all gating** predicates
+ * pass. Advisory results are recorded and never fail the trial. An empty
+ * gating set passes vacuously.
  */
 export function allPredicatesPassed(results: PredicateResult[]): boolean {
-  return results.every((r) => r.passed);
+  return results.every(
+    (r) => r.passed || checkRole(r.predicate) === "advisory"
+  );
 }
 
 /** One prompt turn's checks plus the turn-scoped transcript to run them on. */

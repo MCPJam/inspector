@@ -47,6 +47,7 @@ import {
   revokeEvalGateWaiverOperation,
   getEvalRunOperation,
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,
@@ -182,6 +183,7 @@ const WORKSPACE_OPERATIONS: ReadonlyArray<PlatformOperation<any, unknown>> = [
   // The measured description beside the decision: how much of the run was
   // measured at all, per stage. Reads, so they ride with the run read.
   getEvalRunStageAnalyticsOperation,
+  getEvalRunGateOperation,
   getEvalRunRouteFactsOperation,
   getEvalDescriptionExperimentOperation,
   proposeEvalDescriptionRewriteOperation,

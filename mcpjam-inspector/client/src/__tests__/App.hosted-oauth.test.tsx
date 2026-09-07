@@ -435,7 +435,8 @@ vi.mock("../components/ui/sidebar", () => ({
   SidebarProvider: ({ children }: { children?: ReactNode }) => (
     <div>{children}</div>
   ),
-  useSidebar: () => ({ isMobile: false }),
+  // `setOpen` is what `SidebarAutoCollapse` drives the open state through.
+  useSidebar: () => ({ isMobile: false, setOpen: () => {} }),
 }));
 vi.mock("../stores/preferences/preferences-provider", () => ({
   PreferencesStoreProvider: ({ children }: { children?: ReactNode }) => (

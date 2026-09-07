@@ -15,6 +15,7 @@ import type {
   PlatformEvalRouteFacts,
   PlatformEvalDescriptionExperiment,
   PlatformEvalStageAnalytics,
+  PlatformEvalRunGate,
   PlatformGateWaiverRead,
   PlatformGateWaiverWriteResult,
   PlatformEvalRunInsightsRequested,
@@ -1990,6 +1991,29 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-runs/${encodeURIComponent(params.runId)}/stage-analytics`,
+      {},
+      options
+    );
+  }
+
+  /**
+   * ONE run's suite quality-gate report, evaluated by the platform against
+   * the suite's stored policy.
+   *
+   * A 404 after the run itself was retrieved is NEVER "no policy" —
+   * `not_configured` is a 200 report. A deployment that predates the route
+   * is FEATURE_NOT_SUPPORTED (bare 404 or 501), not proof the suite has
+   * none.
+   */
+  getEvalRunGate(
+    params: { projectId: string; runId: string },
+    options?: RequestOptions
+  ): Promise<PlatformEvalRunGate> {
+    return this.request(
+      "GET",
+      `/projects/${encodeURIComponent(
+        params.projectId
+      )}/eval-runs/${encodeURIComponent(params.runId)}/gate`,
       {},
       options
     );

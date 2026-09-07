@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { USER_VALUE_STAGE_LABELS } from "@mcpjam/sdk/contract";
 import {
   getSubsectionsForGroup,
+  subsectionForSettingKey,
   subsectionScrollTarget,
   pickActiveSubsectionFromScroll,
 } from "../suite-settings-subsections";
@@ -14,36 +14,73 @@ describe("getSubsectionsForGroup", () => {
     showDelete: true,
   };
 
-  it("lists chain stages under grading after policy and validity", () => {
+  it("lists Quality gate, Scorers, and Judges — not chain stages", () => {
     const subs = getSubsectionsForGroup("grading", base);
-    const labels = subs.map((sub) => sub.label);
-    expect(labels.slice(0, 2)).toEqual(["Policy", "Validity"]);
-    expect(labels).toContain(USER_VALUE_STAGE_LABELS.userValue);
-    expect(labels.at(-1)).toBe("Checks");
+    expect(subs.map((sub) => sub.label)).toEqual([
+      "Quality gate",
+      "Scorers",
+      "Judges",
+    ]);
+    expect(subs.some((sub) => sub.target.type === "stage")).toBe(false);
   });
 
-  it("omits validity on legacy policy suites", () => {
+  it("keeps the same rail on a legacy suite", () => {
     const subs = getSubsectionsForGroup("grading", {
       ...base,
       isVerdictPolicyV2: false,
     });
-    expect(subs.map((sub) => sub.label)).not.toContain("Validity");
+    expect(subs.map((sub) => sub.label)).toEqual([
+      "Quality gate",
+      "Scorers",
+      "Judges",
+    ]);
   });
 
-  it("maps subsections to scroll anchors", () => {
+  it("routes judge, rubric, and groundedness to the Judges subsection", () => {
+    for (const key of ["judge", "judgeRubric", "judgeGroundedness"] as const) {
+      expect(subsectionForSettingKey(key, "grading", base)?.id, key).toBe(
+        "judge",
+      );
+    }
+  });
+
+  it("routes quality-gate and nested validity keys to the policy subsection", () => {
+    for (const key of [
+      "validity",
+      "qualityGateBaseline",
+      "qualityGateAllowedDrop",
+      "qualityGateNoDeterministicRegressions",
+      "qualityGateMaximumP95LatencyIncreaseMs",
+      "qualityGateNoGatingScoreErrors",
+    ] as const) {
+      expect(
+        subsectionForSettingKey(key, "grading", base)?.id,
+        key,
+      ).toBe("policy");
+    }
+  });
+
+  it("maps subsections to scroll anchors and keeps the stage selector", () => {
     const subs = getSubsectionsForGroup("grading", base);
     const policy = subs.find((sub) => sub.id === "policy");
-    const selection = subs.find((sub) => sub.id === "stage-selection");
     const checks = subs.find((sub) => sub.id === "checks");
+    const judge = subs.find((sub) => sub.id === "judge");
     expect(policy && subsectionScrollTarget(policy)).toBe(
       '[data-subsection-id="policy"]',
-    );
-    expect(selection && subsectionScrollTarget(selection)).toBe(
-      '[data-stage-group="selection"]',
     );
     expect(checks && subsectionScrollTarget(checks)).toBe(
       '[data-setting-key="checks"]',
     );
+    expect(judge && subsectionScrollTarget(judge)).toBe(
+      '[data-subsection-id="judge"]',
+    );
+    expect(
+      subsectionScrollTarget({
+        id: "stage-selection",
+        label: "Selection",
+        target: { type: "stage", stage: "selection" },
+      }),
+    ).toBe('[data-stage-group="selection"]');
   });
 
   it("picks the last subsection anchor at or above the scroll line", () => {
