@@ -27,7 +27,9 @@ const packageRoot = fileURLToPath(new URL(".", import.meta.url));
 
 export default defineConfig({
   testDir: "./e2e",
-  testIgnore: /oauth-debugger\.spec\.ts/,
+  // Both run only against a DEV server (their `/__e2e/*` harness routes are
+  // registered behind `import.meta.env.DEV`), so they have their own configs.
+  testIgnore: /(oauth-debugger|mcp-app-view-origin)\.spec\.ts/,
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
