@@ -407,6 +407,11 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
     expect(ctxs).toHaveLength(1);
     expect(ctxs[0]!.sandboxBinding).toEqual({
       sandboxId: "sbx_1",
+      // The control-plane row and the image class ride along: a browser
+      // session is recorded against the row, and a browser on a terminal
+      // image would fail with nothing saying why.
+      sandboxRowId: "row_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(ctxs[0]!.isJourneySession).toBe(true);
@@ -452,8 +457,127 @@ describe("swarm runner — per-attempt ephemeral sandbox", () => {
 
     expect(calls).toBe(2);
     const ctxs = resolverContexts();
-    expect(ctxs[0]!.sandboxBinding).toEqual({ sandboxId: "sbx_9" });
+    expect(ctxs[0]!.sandboxBinding).toEqual({
+      sandboxId: "sbx_9",
+      sandboxRowId: "row_9",
+      runtimeKind: "terminal",
+    });
     expect(terminalReports()[0]).toMatchObject({ status: "succeeded" });
+  });
+
+  it("provisions a DESKTOP box for a browser-only target, and binds it", async () => {
+    // A browser target boots the STOCK desktop image, so it needs no
+    // environment pin at all — `pinImage: false` is the normal shape here,
+    // not a degraded one.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(1);
+    expect(provisionJourneySandboxMock.mock.calls[0]![0]).toMatchObject({
+      runtimeKind: "desktop-browser",
+    });
+    expect(resolverContexts()[0]!.sandboxBinding).toMatchObject({
+      sandboxId: "sbx_1",
+      sandboxRowId: "row_1",
+    });
+  });
+
+  it("gives two SESSIONS of one browser target two DISTINCT desktop boxes", async () => {
+    await startJourneyRun(
+      baseOpts(
+        {
+          builtInToolIds: ["browser"],
+          browserToolPolicy: { mode: "allow_all" },
+          computerEnvironment: undefined,
+          computer: undefined,
+        },
+        2
+      )
+    );
+
+    expect(provisionJourneySandboxMock).toHaveBeenCalledTimes(2);
+    const bindings = resolverContexts().map(
+      (c) => c.sandboxBinding as { sandboxId: string }
+    );
+    // The entire point of per-attempt scoping: two cookie jars, two tabs.
+    expect(bindings[0]!.sandboxId).not.toBe(bindings[1]!.sandboxId);
+  });
+
+  it("provisions NOTHING for a browser target with no policy", async () => {
+    // Nothing in a swarm session can approve a click, so a policy-less
+    // `browser` advertises no tools at all — a box booted for it would be paid
+    // and unused, and refused a moment later as `desktop_not_advertised`.
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    expect(provisionJourneySandboxMock).not.toHaveBeenCalled();
+  });
+
+  it("fails the attempt with the backend's SENTENCE on a pin conflict", async () => {
+    // The refusal is written for a human and names the fix; a bare 409 tells
+    // the author nothing they can act on.
+    const conflict =
+      "This target uses a custom computer environment AND advertises the " +
+      "browser tool. Browsers run on the stock desktop image today, so a " +
+      "target cannot have both — remove the environment pin, or drop the " +
+      "browser tool from this host config.";
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 409,
+      code: "desktop_pin_conflict",
+      error: conflict,
+    }));
+
+    await startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+      })
+    );
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toContain("stock desktop image");
+  });
+
+  it("names the DESKTOP budget when capacity is what it waited on", async () => {
+    // A desktop wait is a different sentence — and a different remedy — from
+    // "this deployment is full": one browser swarm holds 3 of the org's 4
+    // desktop slots, so a second one waits.
+    provisionJourneySandboxMock.mockImplementation(async () => ({
+      ok: false,
+      status: 503,
+      code: "at_capacity",
+      resource: "desktop",
+      error: "This organization already has 4 desktop (browser) sandboxes in flight.",
+    }));
+
+    vi.useFakeTimers();
+    const run = startJourneyRun(
+      baseOpts({
+        builtInToolIds: ["browser"],
+        browserToolPolicy: { mode: "allow_all" },
+        computerEnvironment: undefined,
+        computer: undefined,
+      })
+    );
+    await vi.runAllTimersAsync();
+    await run;
+    vi.useRealTimers();
+
+    const terminal = terminalReports()[0]!;
+    expect(terminal.status).toBe("failed");
+    expect(JSON.stringify(terminal)).toMatch(/desktop \(browser\) capacity/);
   });
 
   it("threads the target's declared browser policy to the tool resolver", async () => {
@@ -710,6 +834,7 @@ describe("swarm runner — harness targets run on an ephemeral box (phase 6)", (
     expect(turnOpts.harnessSandboxBinding).toEqual({
       sandboxRowId: "row_1",
       sandboxId: "sbx_1",
+      runtimeKind: "terminal",
       workdir: "/home/user",
     });
     expect(turnOpts.harness).toBe("claude-code");

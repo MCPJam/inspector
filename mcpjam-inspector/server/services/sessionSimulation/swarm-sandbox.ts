@@ -19,6 +19,44 @@ import {
 import type { PinnedHostExecutionSpec } from "../swarm-agent.js";
 import type { TrustedSandboxBinding } from "../../utils/built-in-tools/registry.js";
 import { BASH_TOOL_NAME } from "../../utils/built-in-tools/bash.js";
+import { parseBrowserToolPolicy } from "../evals/browser-tool-policy.js";
+
+/** The catalog id for the browser tool set (mirrors the backend catalog). */
+const BROWSER_TOOL_ID = "browser";
+
+/**
+ * Refusals about the runtime KIND arrive as a sentence written for a human —
+ * "this target uses a custom computer environment AND advertises the browser
+ * tool…" — and are terminal for the attempt. Pass them through so the failure
+ * names the fix, rather than a status nobody can act on. A desktop CAPACITY
+ * refusal says which budget, so the wait does not read as a stall.
+ */
+const DESKTOP_REFUSAL_CODES = new Set([
+  "desktop_pin_conflict",
+  "desktop_not_advertised",
+  "desktop_unavailable",
+  "runtime_kind_mismatch",
+]);
+
+export function describeAttemptSandboxRefusal(refusal: {
+  status: number;
+  error: string;
+  code?: string;
+  resource?: string;
+}): string {
+  if (refusal.code && DESKTOP_REFUSAL_CODES.has(refusal.code)) {
+    return refusal.error;
+  }
+  if (refusal.status === 503 && refusal.resource === "desktop") {
+    return (
+      `Waiting on desktop (browser) capacity for this organization: ` +
+      `${refusal.error} A swarm runs up to 3 targets at once and an ` +
+      `organization holds at most 4 desktop boxes, so a second browser swarm ` +
+      `waits for one to finish.`
+    );
+  }
+  return refusal.error;
+}
 
 /**
  * Does this target want a shell at all? Mirrors the backend's `wantsBash` gate
@@ -48,9 +86,37 @@ export function targetWantsHarnessBox(
   return target.computer !== undefined && target.harness !== undefined;
 }
 
-/** Either consumer of the per-attempt box. */
+/**
+ * Does this target drive a BROWSER, which needs a desktop box of its own?
+ *
+ * BOTH HALVES are required, mirroring the backend's reserve gate: the tool has
+ * to be advertised AND a policy declared. Nothing in a swarm session can
+ * approve a click, so a policy-less `browser` advertises no tools at all —
+ * booting a desktop box for it would be paid and unused, and refused a moment
+ * later as `desktop_not_advertised`.
+ *
+ * Unlike bash and the harness, this does NOT require `target.computer`: the
+ * per-run desktop IS the computer, resolved server-side from the stock desktop
+ * template rather than from anything this snapshot pins. (In practice a host
+ * carrying `browser` always has a computer — the catalog's `requiresComputer`
+ * — so this only states which fact is load-bearing.)
+ */
+export function targetWantsBrowser(target: PinnedHostExecutionSpec): boolean {
+  return (
+    (target.builtInToolIds ?? []).includes(BROWSER_TOOL_ID) &&
+    parseBrowserToolPolicy(target.browserToolPolicy, {
+      source: "swarm-sandbox",
+    }) !== undefined
+  );
+}
+
+/** Any consumer of the per-attempt box. */
 export function targetWantsSandbox(target: PinnedHostExecutionSpec): boolean {
-  return targetWantsBash(target) || targetWantsHarnessBox(target);
+  return (
+    targetWantsBash(target) ||
+    targetWantsHarnessBox(target) ||
+    targetWantsBrowser(target)
+  );
 }
 
 /**
@@ -65,14 +131,28 @@ export function targetWantsSandbox(target: PinnedHostExecutionSpec): boolean {
  * second must say what's wrong.
  */
 export type SandboxIntent =
-  | { kind: "provision" }
+  | { kind: "provision"; runtimeKind: "terminal" | "desktop-browser" }
   | { kind: "skip"; reason?: string };
 
 export function sandboxIntentFor(
   target: PinnedHostExecutionSpec
 ): SandboxIntent {
   if (!targetWantsSandbox(target)) return { kind: "skip" };
-  if (target.computerEnvironment) return { kind: "provision" };
+  // A BROWSER target boots the stock DESKTOP image, so it needs no environment
+  // pin and the two pin branches below do not apply to it. Deliberately BEFORE
+  // them, and deliberately not conditioned on a pin either way: a target that
+  // pins an environment AND wants a browser still asks for the desktop, and
+  // the backend refuses it with a sentence the attempt surfaces
+  // (`desktop_pin_conflict`). One place decides that conflict, so the message
+  // an author reads is the same on the eval and journey surfaces — and
+  // quietly downgrading here would hand the session a browser that cannot
+  // start, with nothing saying why.
+  if (targetWantsBrowser(target)) {
+    return { kind: "provision", runtimeKind: "desktop-browser" };
+  }
+  if (target.computerEnvironment) {
+    return { kind: "provision", runtimeKind: "terminal" };
+  }
   // PRESENCE, not truthiness: an empty-string reason is still the backend
   // saying "known-unavailable", and treating it as absent would silently
   // downgrade it to the legacy "pre-B-isolation snapshot" branch and drop the
@@ -170,6 +250,8 @@ export async function provisionAttemptSandbox(args: {
   runId: string;
   targetId: string;
   sessionIdx: number;
+  /** Absent ⇒ terminal, byte-identical to every request that predates it. */
+  runtimeKind?: "terminal" | "desktop-browser";
   signal?: AbortSignal;
 }): Promise<ProvisionAttemptResult> {
   let last: { code: string; message: string } = {
@@ -190,6 +272,9 @@ export async function provisionAttemptSandbox(args: {
       runId: args.runId,
       targetId: args.targetId,
       sessionIdx: args.sessionIdx,
+      ...(args.runtimeKind === "desktop-browser"
+        ? { runtimeKind: "desktop-browser" as const }
+        : {}),
       signal: requestSignal(args.signal),
     });
     // `ok: true` is NOT enough to dereference. `postJson` swallows a body-parse
@@ -205,6 +290,13 @@ export async function provisionAttemptSandbox(args: {
           sandboxRowId: result.value.sandboxRowId,
           binding: {
             sandboxId: result.value.sandboxId,
+            // The CONTROL-PLANE row, which a browser session is recorded
+            // against and every teardown keys on. `bash` never needed it.
+            sandboxRowId: result.value.sandboxRowId,
+            // What ACTUALLY booted, read off the response rather than the
+            // request: a reuse answers with the row's own kind, and a browser
+            // on a terminal image would fail with nothing saying why.
+            runtimeKind: result.value.runtimeKind ?? "terminal",
             ...(result.value.workdir ? { workdir: result.value.workdir } : {}),
           },
         },
@@ -227,7 +319,7 @@ export async function provisionAttemptSandbox(args: {
       code: status === 503 ? "sandbox_at_capacity" : "sandbox_error",
       message: result.ok
         ? "The control plane returned an incomplete provisioning response."
-        : result.error,
+        : describeAttemptSandboxRefusal(result),
     };
     if (!retryable) {
       return { ok: false, retryable: false, ...last };

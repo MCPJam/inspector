@@ -856,6 +856,12 @@ async function runJourneyFanOut(
               runId,
               targetId: targetId ?? hostId,
               sessionIdx,
+              // WHICH IMAGE this attempt needs — a browser target boots the
+              // stock desktop one. Absent for everything else, so a terminal
+              // request stays byte-identical on the wire.
+              ...(intent.runtimeKind === "desktop-browser"
+                ? { runtimeKind: "desktop-browser" as const }
+                : {}),
               signal: sessionSignal,
             });
             if (provisioned.ok) {
