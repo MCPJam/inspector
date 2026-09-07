@@ -242,15 +242,44 @@ In suite settings, the **Computer environment** select lets you pin a built Dock
 
 Once a run completes, the **Run detail** page shows an **Environment** row with the name of the environment used. If the environment has since been deleted, the row shows its raw identifier instead so the record remains durable. Hovering the label shows the image template, digest, and provider from the frozen snapshot taken at run time.
 
-## Suite execution config
+## Suite settings
 
-Each eval suite has a **Default Execution Config** section that controls the model, system prompt, temperature, tool approval, connection settings, capabilities, and host context used when running the suite.
+The suite settings sheet is organized into tabs. Each tab is a vertical chain of always-expanded sections — no collapsing required.
+
+| Tab | What lives here |
+|-----|-----------------|
+| **Grading** | Pass/fail policy, the user-value stage chain (Connection → Discovery → Selection → Call → Response → User value), checks, and judge config. |
+| **Where it runs** | Environments (or Clients on deployments without project environments) and computer environment. |
+| **Limits** | Token and turn budgets. |
+| **Triggers** | Schedule and GitHub Checks. |
+| **Delete suite** | Permanent deletion. |
+| **History** | Committed settings revisions. |
+
+Edits across all tabs accumulate in a draft. The **commit bar** at the bottom names the revision a save will create (for example, `Saving creates r13`) and links to the first blocking error. Click **Review and save** to commit, or navigate away to discard.
+
+### Grading tab
+
+The Grading tab shows the **user-value chain** — six stage cards from Connection through User value. Each card describes what decides that stage:
+
+- **Connection** and **Discovery** are measured by the runner. Their cards list the effective configuration for every run target the suite fans out to: client, server, transport, auth, header names, protocol version, request timeout (Connection); tool visibility, progressive discovery, pagination traversal, and which servers get their `tools/list` taken (Discovery). These values are read-only here — they are shared with every other suite pointing at the same client or server — and each line links to the Hosts, Servers, or Environments page that owns it.
+- **Selection**, **Call**, **Response**, and **User value** are graded by checks and the judge. Stages with no grader yet are highlighted so you can see the gap.
+
+### Where it runs tab
+
+The **Environments** row (labelled **Clients** on deployments without project environments) controls which client × model cells the suite runs against. The **Computer environment** row pins a Docker image for every iteration's sandbox.
+
+### Triggers tab
+
+The **Schedule** row sets a recurring run interval and which environment a scheduled run uses. The **GitHub Checks** row connects the suite to a repository so a run fires on every pull request.
+
+### Suite execution config
+
+The model, system prompt, temperature, tool approval, connection settings, capabilities, and host context are configured on the **Grading** tab under the stage chain.
 
 - **Model and prompt** — Set the default model ID, system prompt, and temperature for all runs in the suite. When running evals against MCP Apps that render widgets, the eval harness automatically enables browser interaction (screenshot, click, type) for any model that supports both vision and tool calling — not just Claude. Models that lack vision or tool calling run without browser interaction.
 - **Tool approval** — Toggle `requireToolApproval` to pause before each tool call during a run.
 - **Minimum iterations** — Set a floor on how many times each case runs. Every case runs at least this many times, regardless of its own iteration count. Use `mcpjam cloud eval update --suite <name> --min-iterations <1-10>` to set this from the CLI; `off` removes the floor.
-- **Server selection** — Servers are not configured here. They come from the suite's environment. The server picker is intentionally hidden in this editor.
-- **Save / Reset** — Click **Save config** to persist changes. Click **Reset** to revert to the last saved state. Unsaved edits are preserved if the page refreshes the config from the server, but are discarded when you switch to a different suite.
+- **Server selection** — Servers are not configured here. They come from the suite's environment.
 
 Changes to the suite execution config apply to future runs only. Existing run snapshots are not affected.
 
