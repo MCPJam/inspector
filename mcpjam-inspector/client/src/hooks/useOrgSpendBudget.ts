@@ -48,6 +48,18 @@ export function useOrgSpendBudget(organizationId: string | null | undefined) {
   const isMember = useIsMemberActor();
   const isUserReady = useDbUserReady();
   const canQuery = Boolean(isMember && isUserReady && organizationId);
+  /**
+   * The actor is RESOLVED and is not a member — a guest, whose organization is
+   * personal and cannot carry a budget. The query will never run for them.
+   *
+   * `isMember === false` specifically, NOT `!isMember`. The hook returns
+   * `undefined` while auth is still settling and while the current-user query
+   * is in flight, which is an ordinary hosted cold load. Folding that into
+   * "guest" would tell a real admin their organization is personal for the
+   * moment it takes to find out otherwise — a confident wrong answer, which is
+   * worse than the spinner it replaced.
+   */
+  const actorIsGuest = isMember === false;
 
   const budget = useQuery(
     "billing/spendBudgetSettings:getOrganizationSpendBudget" as any,
@@ -94,21 +106,19 @@ export function useOrgSpendBudget(organizationId: string | null | undefined) {
   return {
     budget,
     /**
-     * In flight — NOT "we are never going to answer".
+     * An answer is still coming.
      *
-     * The query is skipped for a guest, and for a guest it will stay skipped.
-     * Reporting that as loading left the section on "Loading budget…" forever
-     * instead of reaching the unsupported message it has for exactly this
-     * case, so a skipped query reports `false` here and `querySkipped` below
-     * says why.
+     * Covers BOTH "the actor is still settling" and "the query is in flight",
+     * because from the caller's side those are the same state: wait. Only a
+     * resolved guest is excluded, and `querySkipped` names that case.
      */
-    isLoading: canQuery && budget === undefined,
+    isLoading: !actorIsGuest && budget === undefined,
     /**
-     * True when nobody asked, so `budget === undefined` is not pending.
-     * A caller that renders a spinner on `budget === undefined` alone must
-     * check this first.
+     * Nobody asked, and nobody will: the actor is a guest. A caller that
+     * renders a spinner on `budget === undefined` alone must check this first,
+     * or it spins forever on the one audience with a real answer waiting.
      */
-    querySkipped: !canQuery,
+    querySkipped: actorIsGuest,
     error,
     isSaving,
     setBudget,

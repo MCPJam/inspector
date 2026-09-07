@@ -211,3 +211,44 @@ describe("OrganizationSpendBudgetSection", () => {
     expect(screen.getByText(/Loading budget/)).toBeInTheDocument();
   });
 });
+
+describe("OrganizationSpendBudgetSection — waiting vs refusing", () => {
+  it("waits while the actor is still settling, rather than claiming a personal org", () => {
+    // A hosted cold load resolves the actor asynchronously. Telling a real
+    // admin their organization is personal for the moment it takes to find
+    // out otherwise is a confident wrong answer — worse than a spinner.
+    mockUseOrgSpendBudget.mockReturnValue({
+      budget: undefined,
+      isLoading: true,
+      querySkipped: false,
+      error: null,
+      isSaving: false,
+      setBudget: setBudgetMock,
+      clearBudget: clearBudgetMock,
+    });
+    render(<OrganizationSpendBudgetSection organizationId="org_1" isAdmin />);
+    expect(screen.getByText(/loading budget/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText(/personal organizations cannot/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("answers a resolved guest instead of spinning at them forever", () => {
+    // The query is skipped for a guest and stays skipped, so treating
+    // `budget === undefined` as pending never resolves.
+    mockUseOrgSpendBudget.mockReturnValue({
+      budget: undefined,
+      isLoading: false,
+      querySkipped: true,
+      error: null,
+      isSaving: false,
+      setBudget: setBudgetMock,
+      clearBudget: clearBudgetMock,
+    });
+    render(<OrganizationSpendBudgetSection organizationId="org_1" isAdmin />);
+    expect(
+      screen.getByText(/personal organizations cannot/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/loading budget/i)).not.toBeInTheDocument();
+  });
+});
