@@ -425,7 +425,7 @@ describe("SwarmFindingsTab", () => {
     );
   });
 
-  it("renders the finding summary headline above the persona picker", () => {
+  it("renders the finding summary above the persona picker", () => {
     render(
       <SwarmFindingsTab
         wave={wave()}
@@ -433,9 +433,14 @@ describe("SwarmFindingsTab", () => {
         personas={personas}
       />
     );
+    // The lead names the goal, the stage and the persona; the supporting
+    // lines carry the cause and the feeling.
     expect(screen.getByTestId("findings-headline").textContent).toBe(
-      '"Export the board" broke at discovery.'
+      '"Export the board" broke at discovery for Maya Chen.'
     );
+    const summary = screen.getByTestId("findings-summary").textContent ?? "";
+    expect(summary).toContain("Maya Chen left lost.");
+    expect(summary).not.toContain("No findings yet");
     expect(screen.getByText(/Choose a persona/i)).toBeInTheDocument();
   });
 });

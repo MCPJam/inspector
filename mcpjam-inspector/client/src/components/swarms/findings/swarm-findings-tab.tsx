@@ -18,7 +18,7 @@ import {
   type FindingsPersonaDoc,
 } from "./findings-derivation";
 import {
-  composeFindingsHeadline,
+  composeFindingsSummary,
   deriveHonestyFootnotes,
 } from "./findings-headline";
 import type { JourneyStageId } from "./journey-stages";
@@ -48,7 +48,15 @@ export function SwarmFindingsTab({
       }),
     [wave.runs, waveSignals, personas]
   );
-  const headline = useMemo(() => composeFindingsHeadline(model), [model]);
+  // A wave with no signals cannot say whether it finished, so the summary is
+  // told "unknown" rather than being allowed to guess an ending.
+  const summary = useMemo(
+    () =>
+      composeFindingsSummary(model, {
+        terminal: waveSignals ? waveSignals.terminal : null,
+      }),
+    [model, waveSignals]
+  );
   const footnotes = useMemo(
     () =>
       deriveHonestyFootnotes({
@@ -100,7 +108,7 @@ export function SwarmFindingsTab({
         className="flex h-full items-center justify-center text-sm text-muted-foreground"
         data-testid="findings-empty"
       >
-        No findings yet — no sessions in this swarm run.
+        No sessions in this swarm run.
       </div>
     );
   }
@@ -109,7 +117,7 @@ export function SwarmFindingsTab({
     <div className="w-full" data-testid="swarm-findings-tab">
       <FindingsSummaryCard
         sessionCount={model.sessionCount}
-        headline={headline}
+        summary={summary}
         footnotes={footnotes}
       />
       <p className="mb-2.5 mt-7 text-[11px] font-semibold uppercase tracking-[0.14em] text-foreground">

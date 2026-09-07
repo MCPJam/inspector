@@ -31,10 +31,10 @@ const STAGE_DOT_CLASSES: Record<StageState, string> = {
 };
 
 function stageStateLabel(state: StageState): string {
-  if (state === "fail") return "failed";
-  if (state === "warn") return "warning";
-  if (state === "ok") return "held";
-  return "no finding";
+  if (state === "fail") return "Failed";
+  if (state === "warn") return "Warning";
+  if (state === "ok") return "Pass";
+  return "No finding";
 }
 
 export function FindingsGoalInspect({

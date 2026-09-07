@@ -3,17 +3,19 @@ import { describe, expect, it } from "vitest";
 import type { SwarmOverviewRun, SwarmWaveSignals } from "@/lib/swarm-api";
 import { deriveSwarmFindingsModel } from "../findings/findings-derivation";
 import {
-  composeFindingsHeadline,
+  composeFindingsSummary,
   countWords,
   deriveHonestyFootnotes,
   shortenGoalTitle,
 } from "../findings/findings-headline";
 
 /**
- * The headline is deterministic templates in a fixed branch order — broken
- * goals outrank friction outrank landed outrank silence — and the footnotes
- * are the card's honesty rail: every way the counts could understate reality
- * gets a chip, never a rubric row.
+ * The summary is deterministic templates in a fixed branch order — broken
+ * goals outrank friction outrank landed outrank an ungraded run — and every
+ * branch names the goal, the persona, the stage and the feeling. A finished
+ * run never opens on "No findings yet" (Emmanuel research, Sep 4). The
+ * footnotes stay the card's honesty rail: every way the counts could
+ * understate reality gets a chip, never a rubric row.
  */
 
 function run(overrides: Partial<SwarmOverviewRun> = {}): SwarmOverviewRun {
@@ -56,6 +58,15 @@ function modelFor(
   });
 }
 
+/** Terminal by default — the interesting guarantees are about finished runs. */
+function summaryFor(
+  runs: SwarmOverviewRun[],
+  waveSignals: SwarmWaveSignals | null = signals(),
+  terminal: boolean | null = waveSignals ? waveSignals.terminal : null
+) {
+  return composeFindingsSummary(modelFor(runs, waveSignals), { terminal });
+}
+
 const failingRun = (name: string, runId: string, journeyRefId: string) =>
   run({
     runId,
@@ -80,53 +91,37 @@ describe("shortenGoalTitle", () => {
   });
 });
 
-describe("composeFindingsHeadline", () => {
-  it("names the broken goal and counts stalled personas, in 10 words", () => {
-    const headline = composeFindingsHeadline(
-      modelFor([
-        failingRun("Maya Chen", "run-1", "journey-1"),
-        failingRun("Jonah Okoye", "run-2", "journey-2"),
-        failingRun("Ada Third", "run-3", "journey-3"),
-      ])
+describe("composeFindingsSummary", () => {
+  it("names the goal, the stage, the persona, the spread and the feeling", () => {
+    // Personas sort alphabetically, so Ada Third leads.
+    const lines = summaryFor([
+      failingRun("Maya Chen", "run-1", "journey-1"),
+      failingRun("Jonah Okoye", "run-2", "journey-2"),
+      failingRun("Ada Third", "run-3", "journey-3"),
+    ]);
+
+    expect(lines[0]).toBe(
+      '"Export the board" broke at user value for Ada Third.'
     );
-    expect(headline).toBe('"Export the board" broke at user value. 3 stalled.');
-    expect(countWords(headline)).toBeLessThanOrEqual(10);
-    expect(headline).not.toContain("Goal completion missed");
-    expect(headline).not.toContain("Maya Chen");
+    // The cause prefers the rubric label over restating the stage, and every
+    // line carries a full stop even when the detector sentence did not.
+    expect(lines[1]).toBe("Goal completion missed in 3 graded sessions.");
+    expect(lines).toContain("2 other personas did not land either.");
+    expect(lines).toContain("Ada Third left stalled.");
+    // The persona is never the subject of the failure verb — the goal is.
+    expect(lines[0]).not.toMatch(/Ada Third (broke|failed|stalled)/);
   });
 
-  it("reports friction when no goal broke outright", () => {
-    const headline = composeFindingsHeadline(
-      modelFor([
-        run({
-          goalScoreSummary: { gradedCount: 4, passedCount: 3, avgScore: 0.8 },
-        }),
-        run({
-          runId: "run-2",
-          journeyRefId: "journey-2",
-          goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 },
-        }),
-      ])
-    );
-    expect(headline).toBe("1 of 2 goals showed friction.");
-    expect(countWords(headline)).toBeLessThanOrEqual(10);
+  it("names the one other persona rather than counting to one", () => {
+    const lines = summaryFor([
+      failingRun("Maya Chen", "run-1", "journey-1"),
+      failingRun("Ada Third", "run-2", "journey-2"),
+    ]);
+    expect(lines).toContain("Maya Chen did not land either.");
+    expect(lines.join(" ")).not.toContain("1 other personas");
   });
 
-  it("counts only measured goals in the friction denominator", () => {
-    // The second goal has nothing graded at all — counting it would present
-    // an ungraded goal as one that held.
-    const headline = composeFindingsHeadline(
-      modelFor([
-        run({
-          goalScoreSummary: { gradedCount: 4, passedCount: 3, avgScore: 0.8 },
-        }),
-        run({ runId: "run-2", journeyRefId: "journey-2" }),
-      ])
-    );
-    expect(headline).toBe("1 of 1 goals showed friction.");
-  });
-
-  it("keeps a persona-scoped failure at persona level", () => {
+  it("keeps a persona-scoped failure at persona level, naming no goal", () => {
     // The detector's subject is the persona, so derivation fanned the same
     // evidence to every one of her goals — it cannot name which goal broke.
     const model = deriveSwarmFindingsModel({
@@ -151,25 +146,73 @@ describe("composeFindingsHeadline", () => {
       }),
       personas: [],
     });
-    const headline = composeFindingsHeadline(model);
-    expect(headline).toBe("A persona stalled at tool response.");
-    expect(headline).not.toContain("Export the board");
+    const lines = composeFindingsSummary(model, { terminal: true });
+
+    expect(lines[0]).toBe("The tool response stage broke for Maya Chen.");
+    expect(lines.join(" ")).not.toContain("Export the board");
+  });
+
+  it("reports friction with a measured denominator, and says nothing broke", () => {
+    const lines = summaryFor([
+      run({
+        goalScoreSummary: { gradedCount: 4, passedCount: 3, avgScore: 0.8 },
+      }),
+      run({
+        runId: "run-2",
+        journeyRefId: "journey-2",
+        goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 },
+      }),
+    ]);
+    expect(lines[0]).toBe(
+      "1 of 2 goals showed friction. No stage broke outright."
+    );
+    expect(lines).toContain("Maya Chen left uneasy.");
+  });
+
+  it("counts only measured goals in the friction denominator", () => {
+    // The second goal has nothing graded at all — counting it would present
+    // an ungraded goal as one that held.
+    const lines = summaryFor([
+      run({
+        goalScoreSummary: { gradedCount: 4, passedCount: 3, avgScore: 0.8 },
+      }),
+      run({ runId: "run-2", journeyRefId: "journey-2" }),
+    ]);
+    expect(lines[0]).toBe(
+      "1 of 1 goals showed friction. No stage broke outright."
+    );
   });
 
   it("celebrates only when every graded goal landed", () => {
-    const headline = composeFindingsHeadline(
-      modelFor([
-        run({
-          goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 },
-        }),
-      ])
-    );
-    expect(headline).toBe("Every graded goal landed.");
-    expect(countWords(headline)).toBeLessThanOrEqual(10);
+    const lines = summaryFor([
+      run({ goalScoreSummary: { gradedCount: 4, passedCount: 4, avgScore: 1 } }),
+    ]);
+    expect(lines[0]).toBe("Every graded goal landed.");
+    expect(lines).toContain("1 goal across 1 persona, and no stage broke.");
+    expect(lines).toContain("Maya Chen left relieved.");
   });
 
-  it("says nothing has been graded when nothing has", () => {
-    const headline = composeFindingsHeadline(
+  it("never opens a FINISHED run on 'No findings yet'", () => {
+    const ungraded = [
+      run({
+        status: "running",
+        summary: { total: 4, succeeded: 0, failed: 0, rateLimited: 0 },
+      }),
+    ];
+    const lines = composeFindingsSummary(modelFor(ungraded, null), {
+      terminal: true,
+    });
+
+    expect(lines[0]).toBe("This run finished with nothing graded.");
+    expect(lines.join(" ")).not.toContain("No findings yet");
+    // Absent is unknown: an ungraded run is never evidence that anything held.
+    expect(lines).toContain(
+      "No goal was scored, so nothing here is evidence that the experience held."
+    );
+  });
+
+  it("says a still-running run is still running", () => {
+    const lines = composeFindingsSummary(
       modelFor(
         [
           run({
@@ -178,10 +221,37 @@ describe("composeFindingsHeadline", () => {
           }),
         ],
         null
-      )
+      ),
+      { terminal: false }
     );
-    expect(headline).toBe("No findings yet.");
-    expect(countWords(headline)).toBeLessThanOrEqual(10);
+    expect(lines[0]).toBe("Nothing graded yet.");
+    expect(lines.join(" ")).toContain("still going");
+  });
+
+  it("claims neither ending when a legacy wave carries no signals", () => {
+    const lines = summaryFor(
+      [
+        run({
+          status: "running",
+          summary: { total: 4, succeeded: 0, failed: 0, rateLimited: 0 },
+        }),
+      ],
+      null
+    );
+    expect(lines[0]).toBe("Nothing has been graded for this run.");
+    expect(lines.join(" ")).not.toContain("still going");
+    expect(lines.join(" ")).not.toContain("finished");
+  });
+
+  it("stays a few short lines, never a paragraph", () => {
+    const lines = summaryFor([
+      failingRun("Maya Chen", "run-1", "journey-1"),
+      failingRun("Ada Third", "run-2", "journey-2"),
+    ]);
+    expect(lines.length).toBeLessThanOrEqual(4);
+    for (const line of lines) {
+      expect(countWords(line)).toBeLessThanOrEqual(17);
+    }
   });
 });
 
