@@ -3814,7 +3814,13 @@ const runLocalIteration = async ({
         attachmentsNote = await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
-          testCaseId: test.testCaseId,
+          // The EFFECTIVE id, as every other consumer resolves it. Today the
+          // fallback is unreachable here — the outer `testCaseId` is the
+          // quick/single-case surface, which passes `runId: null`, and no box
+          // is booted without a run — but the two must not disagree if that
+          // ever changes: a seeder handed `undefined` returns no note and
+          // silently seeds nothing.
+          testCaseId: test.testCaseId ?? testCaseId,
           sandboxId: evalSandbox.value.sandboxId,
           promptTurns,
           ...(abortSignal ? { signal: abortSignal } : {}),
@@ -5001,7 +5007,8 @@ const runHostedIterationWithBrowser = async (
       attachmentsNote = await seedAndAnnotateEvalAttachments({
         bearer: convexAuthToken,
         runId: String(runId),
-        testCaseId: test.testCaseId,
+        // The EFFECTIVE id — see the identical note on the local path.
+        testCaseId: test.testCaseId ?? testCaseId,
         sandboxId: sandboxBinding.sandboxId,
         promptTurns,
         // Name the tool this iteration's reader actually holds: the `bash`
