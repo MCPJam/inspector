@@ -369,6 +369,12 @@ describe("workos authkit local session bridge", () => {
         expect(res.headers.get("set-cookie") ?? "").not.toContain(
           "mcpjam_workos_sessions=; Max-Age=0",
         );
+        // The marker AuthKit reads to decide whether a refresh is worth
+        // attempting at all. Expiring it would strand the token this test
+        // just proved we kept.
+        expect(res.headers.get("set-cookie") ?? "").not.toContain(
+          "workos-has-session=; Max-Age=0",
+        );
       },
     );
 
@@ -387,19 +393,22 @@ describe("workos authkit local session bridge", () => {
             access_token: "access-token-2",
             refresh_token: "refresh-token-2",
             user: { id: "user_1" },
-          })
+          }),
         );
 
       const failed = await refresh(app, sessionCookie);
       expect(failed.status).toBe(500);
       expect(failed.headers.get("set-cookie") ?? "").not.toContain(
-        "mcpjam_workos_sessions=; Max-Age=0"
+        "mcpjam_workos_sessions=; Max-Age=0",
+      );
+      expect(failed.headers.get("set-cookie") ?? "").not.toContain(
+        "workos-has-session=; Max-Age=0",
       );
 
       const recovered = await refresh(app, sessionCookie);
       expect(recovered.status).toBe(200);
       expect(
-        JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body))
+        JSON.parse(String(vi.mocked(fetch).mock.calls[2]?.[1]?.body)),
       ).toMatchObject({ refresh_token: "refresh-token-1" });
     });
 
