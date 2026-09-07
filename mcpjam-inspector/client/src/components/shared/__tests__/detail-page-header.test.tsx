@@ -63,6 +63,9 @@ describe("DetailPageHeader", () => {
 
     const titleSlot = screen.getByRole("heading").parentElement;
     expect(titleSlot?.className.split(/\s+/)).toContain("min-w-0");
+    // The cap is the other half: without it a long name still pushes the strip
+    // right on a wide viewport, where nothing is shrinking yet.
+    expect(titleSlot?.className.split(/\s+/)).toContain("md:max-w-[52ch]");
 
     // Below lg the strip must stay shrinkable and scrollable, or a narrow
     // viewport loses the tabs the strip is meant to scroll to.

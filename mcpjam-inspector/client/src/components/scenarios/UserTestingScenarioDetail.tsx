@@ -306,8 +306,14 @@ export function UserTestingScenarioDetail({
     scenario.description ?? "",
   );
   const descriptionFocusedRef = useRef(false);
+  // What the draft was last seeded with. Holding focus is not evidence the
+  // user changed anything, so this is what "dirty" is measured against —
+  // otherwise a focused field with no edits saves its stale draft over a
+  // value that arrived while the reseed below was suppressed.
+  const descriptionSeedRef = useRef(scenario.description ?? "");
   useEffect(() => {
     if (descriptionFocusedRef.current) return;
+    descriptionSeedRef.current = scenario.description ?? "";
     setDescriptionDraft(scenario.description ?? "");
   }, [scenario.description]);
 
@@ -321,13 +327,22 @@ export function UserTestingScenarioDetail({
     }
   };
 
+  const adoptRemoteDescription = () => {
+    descriptionSeedRef.current = scenario.description ?? "";
+    setDescriptionDraft(scenario.description ?? "");
+  };
+
   const persistDescription = async () => {
     descriptionFocusedRef.current = false;
     const next = descriptionDraft.trim();
-    if (next === (scenario.description ?? "").trim()) {
-      // No-op blur: resync the draft with the envelope, which also adopts any
-      // remote value the focused-guard above deliberately skipped.
-      setDescriptionDraft(scenario.description ?? "");
+    // Nothing of the user's to save: the draft still holds what it was seeded
+    // with, or it already matches what is stored. Resync either way, which
+    // adopts a remote value the focused-guard above deliberately skipped.
+    if (
+      next === descriptionSeedRef.current.trim() ||
+      next === (scenario.description ?? "").trim()
+    ) {
+      adoptRemoteDescription();
       return;
     }
     try {
@@ -335,22 +350,29 @@ export function UserTestingScenarioDetail({
         scenarioId: scenario.scenarioId,
         description: next,
       } as any);
+      descriptionSeedRef.current = next;
     } catch (err) {
       toast.error(convexErrMessage(err, "Failed to save the description"));
-      setDescriptionDraft(scenario.description ?? "");
+      adoptRemoteDescription();
     }
   };
 
   // The field lives on Edit, and leaving Edit unmounts it without firing blur.
   // React drops the typed text, and `descriptionFocusedRef` stays true for the
-  // life of this instance — which survives the flip — freezing the reseed above
-  // and letting a later blur write the stale draft over a teammate's edit.
-  // Flush on the way out instead.
+  // life of this instance — which survives the flip — freezing the reseed
+  // above. Clear the guard on the way out, and save only what the user really
+  // changed: flushing a merely-focused draft would overwrite a value that
+  // landed while the reseed was suppressed.
   useEffect(() => {
-    if (editMode || !descriptionFocusedRef.current) return;
+    if (editMode) return;
+    descriptionFocusedRef.current = false;
+    if (descriptionDraft === descriptionSeedRef.current) {
+      adoptRemoteDescription();
+      return;
+    }
     void persistDescription();
-    // Deliberately keyed on the Edit→detail flip alone: `persistDescription`
-    // is rebuilt every render and would retrigger this.
+    // Deliberately keyed on the Edit→detail flip alone: the draft and
+    // `persistDescription` both change every render and would retrigger this.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editMode]);
 

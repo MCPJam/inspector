@@ -636,6 +636,19 @@ describe("UserTestingScenarioDetail", () => {
       });
     });
 
+    it("does not save a merely-focused draft over a collaborator's edit", () => {
+      // Holding focus is not evidence of an edit. The reseed is suppressed
+      // while focus is held, so the draft stays stale — flushing it on the way
+      // out of Edit would overwrite the value that landed meanwhile.
+      const { rerender } = renderEdit({ description: "Old copy" });
+
+      fireEvent.focus(screen.getByTestId("user-testing-description"));
+      rerender(detail({ description: "Collab copy" }, { editMode: true }));
+      rerender(detail({ description: "Collab copy" }));
+
+      expect(updateScenarioMock).not.toHaveBeenCalled();
+    });
+
     it("keeps the description out of the header, where it crowded the tabs", () => {
       renderDetail({ description: "Old copy" });
 
