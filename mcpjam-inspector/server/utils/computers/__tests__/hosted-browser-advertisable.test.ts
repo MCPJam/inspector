@@ -11,13 +11,13 @@ import {
 /**
  * The predicate the eval and swarm runners ask BEFORE booking a desktop box.
  *
- * It folds THREE gates, and the reason it must is that the two backend
- * verdicts answer different questions: `hostedBrowser.exposable` is "may we
- * advertise `browser_*`?" (it folds in the tool catalog), while
- * `desktopProvisionable` is "would a desktop boot, and is there a rate to
- * bill it at?". A caller that books a box for the life of a run needs both
- * answered yes — booking on the first alone reserves a desktop that the
- * resolver then refuses to hand a single tool to.
+ * The interesting part is which gates it does NOT fold in. The two backend
+ * verdicts fail in opposite ways: `exposable: false` does not stop a
+ * reservation (the control plane decides from the run's frozen
+ * `builtInToolIds`), so a box gets booted and then has nothing advertised on
+ * it — paid and idle. A missing desktop template or rate DOES stop it, before
+ * any box exists, and the refusal carries a sentence the run surfaces. So the
+ * first is gated here and the second deliberately is not.
  */
 describe("hostedBrowserAdvertisable", () => {
   function stubRuntimeConfig(hostedBrowser: unknown) {
@@ -49,20 +49,33 @@ describe("hostedBrowserAdvertisable", () => {
     vi.unstubAllGlobals();
   });
 
-  it("refuses when the backend can advertise a browser but NOT boot a desktop", async () => {
-    // The gap this test exists for: `exposable` alone said yes, so the runners
-    // booked a desktop the control plane would refuse — or worse, meter at the
-    // terminal rate, which is the exact failure `isHostedDesktopUnavailable`
-    // was added to prevent.
+  it("still ASKS when the backend cannot boot a desktop — the refusal has words", async () => {
+    // Deliberately not gated. `desktopTemplateRefFromConfig` is a pure config
+    // check that throws `desktop_unavailable` before any box is created, and
+    // `describeEvalSandboxRefusal` turns that into the sentence the run
+    // surfaces. Refusing here instead would cost nothing less and would run
+    // the eval browser-less, scoring it as an ordinary result — an eval has no
+    // notice channel, so the failed setup is the only message there is.
     stubRuntimeConfig({ exposable: true, desktopProvisionable: false });
     await initComputersRuntimeConfigBootstrap({ sleep: async () => {} });
 
-    expect(isHostedBrowserRefused()).toBe(false);
     expect(isHostedDesktopUnavailable()).toBe(true);
+    expect(hostedBrowserAdvertisable()).toBe(true);
+  });
+
+  it("refuses when the browser is not exposable — THAT one boots a box anyway", async () => {
+    // The asymmetry this gate exists for: the control plane reserves from the
+    // run's frozen `builtInToolIds`, which still say `browser`, so it boots a
+    // real desktop — and the resolver, reading this same verdict, advertises
+    // nothing on it. Paid and idle for the life of the run.
+    stubRuntimeConfig({ exposable: false });
+    await initComputersRuntimeConfigBootstrap({ sleep: async () => {} });
+
+    expect(isHostedBrowserRefused()).toBe(true);
     expect(hostedBrowserAdvertisable()).toBe(false);
   });
 
-  it("allows it when both verdicts say yes", async () => {
+  it("allows it when the backend says both are fine", async () => {
     stubRuntimeConfig({ exposable: true, desktopProvisionable: true });
     await initComputersRuntimeConfigBootstrap({ sleep: async () => {} });
 
