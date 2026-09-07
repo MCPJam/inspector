@@ -60,8 +60,17 @@ export interface LocalHarnessScopeInput {
    * already decided otherwise is out of scope by construction.
    */
   requiresWebChatApi?: boolean;
-  /** A shared or replayed run rather than the member's own turn. */
-  sharedRun?: boolean;
+  /**
+   * A shared or replayed run rather than the member's own turn.
+   *
+   * REQUIRED, unlike the other surface facts. Consent is bound to one attended
+   * member running their own turn on their own machine, so "is this that?" is
+   * the question this predicate exists to ask — and an optional boolean answers
+   * it `false` for any caller that forgets, which is the permissive direction.
+   * Making it required means a new surface has to state the answer rather than
+   * inherit a default that happens to suit the surface it was copied from.
+   */
+  sharedRun: boolean;
 }
 
 /**

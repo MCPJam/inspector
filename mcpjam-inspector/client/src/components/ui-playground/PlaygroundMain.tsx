@@ -945,6 +945,10 @@ export function PlaygroundMain({
       ? (playgroundEnvironment.environmentId ?? null)
       : null,
     requiresWebChatApi: isEnvironmentMode,
+    // A shared transcript and a replayed one are both somebody else's turn, or
+    // an old one being re-read. Neither is the attended member session a
+    // filesystem grant is bound to, so neither may offer local execution.
+    sharedRun: isSharedSession || viewingHistoryReplay,
   });
   // Identifies WHAT an approval was captured against, so switching host or
   // surface invalidates it rather than carrying a click across.
@@ -1951,6 +1955,7 @@ export function PlaygroundMain({
           ? (playgroundEnvironment.environmentId ?? null)
           : null,
         requiresWebChatApi: isEnvironmentMode,
+        sharedRun: isSharedSession || viewingHistoryReplay,
       });
       byColumn.set(column.compareId, {
         requested:
@@ -1963,6 +1968,8 @@ export function PlaygroundMain({
     multiHostColumns,
     isEnvironmentMode,
     playgroundEnvironment.environmentId,
+    isSharedSession,
+    viewingHistoryReplay,
     localHarness.requestedTarget,
     localHarnessResolveSendTarget,
   ]);
@@ -3519,6 +3526,57 @@ export function PlaygroundMain({
   }, [ensureServersReady, serverName, servers]);
 
   // Handle follow-up messages from widgets
+  /**
+   * Can this scoped local send actually run — and if not, what does the user
+   * do about it?
+   *
+   * Same shape as `ensureThreadReadyForSend`, and the same rule: return false
+   * and the send does not happen, with the composer state intact. The
+   * distinction that matters here is between CAN INITIATE SETUP and CAN
+   * EXECUTE A TURN. They are not the same gate:
+   *
+   *   - a send with no workspace or no consent is how setup STARTS. Blocking
+   *     it (in `submitDisabled`, say) would make first-send setup unreachable,
+   *     because both Enter and the button are refused before `onSubmit` ever
+   *     runs;
+   *   - a send during setup, or with a hard unavailable state, cannot execute
+   *     and is refused with something to read.
+   *
+   * WARM: the runtime is verified and only consent is missing, so Allow awaits
+   * the grant and this returns true — the original send continues, once, after
+   * the context is re-checked. COLD: setup starts, this returns false, the
+   * draft stays, and the user presses Send again.
+   */
+  const ensureLocalHarnessReadyForSend = useCallback(async (): Promise<boolean> => {
+    if (!localHarnessRequested) return true;
+    const phase = localHarnessRef.current.phase;
+    if (phase === "ready") return true;
+
+    if (phase === "installing" || phase === "authorizing") {
+      // Setup is running. Saying so beats a dialog that would only report the
+      // same thing.
+      toast.info("Claude Code is still setting up on this machine.");
+      return false;
+    }
+    if (phase === "unavailable") {
+      toast.error(
+        localHarnessRef.current.reason ??
+          "This Inspector can't run Claude Code on this machine.",
+      );
+      return false;
+    }
+
+    // Deduplicated: repeated Send gestures while the dialog is open must not
+    // stack dialogs or capture a second approval.
+    if (localHarnessDialogOpenRef.current) return false;
+
+    return await new Promise<boolean>((resolve) => {
+      localHarnessPendingSendRef.current = () => resolve(true);
+      localHarnessCancelSendRef.current = () => resolve(false);
+      setLocalHarnessDialog({ trigger: "first_send" });
+    });
+  }, [localHarnessRequested]);
+
   const handleSendFollowUp = useCallback(
     (text: string) => {
       void (async () => {
@@ -3540,6 +3598,14 @@ export function PlaygroundMain({
         if (!(await ensureThreadReadyForSend())) {
           return;
         }
+        // The local-execution gate runs at EVERY send entry point, exactly as
+        // the thread preflight above does. Reaching the transport without it
+        // is not a silent downgrade — `prepareSendMessagesRequest` throws — so
+        // skipping it here traded the one dialog that can grant authorization
+        // for an error the user cannot act on.
+        if (!(await ensureLocalHarnessReadyForSend())) {
+          return;
+        }
         sendMessage({
           text,
           metadata: outgoingSenderMetadata,
@@ -3551,6 +3617,7 @@ export function PlaygroundMain({
     [
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       modelContextQueue,
       sendMessage,
       outgoingSenderMetadata,
@@ -4016,56 +4083,6 @@ export function PlaygroundMain({
     fileAttachments.length > 0;
 
   // Submit handler — shared by the composer form and eval Quick Run.
-  /**
-   * Can this scoped local send actually run — and if not, what does the user
-   * do about it?
-   *
-   * Same shape as `ensureThreadReadyForSend`, and the same rule: return false
-   * and the send does not happen, with the composer state intact. The
-   * distinction that matters here is between CAN INITIATE SETUP and CAN
-   * EXECUTE A TURN. They are not the same gate:
-   *
-   *   - a send with no workspace or no consent is how setup STARTS. Blocking
-   *     it (in `submitDisabled`, say) would make first-send setup unreachable,
-   *     because both Enter and the button are refused before `onSubmit` ever
-   *     runs;
-   *   - a send during setup, or with a hard unavailable state, cannot execute
-   *     and is refused with something to read.
-   *
-   * WARM: the runtime is verified and only consent is missing, so Allow awaits
-   * the grant and this returns true — the original send continues, once, after
-   * the context is re-checked. COLD: setup starts, this returns false, the
-   * draft stays, and the user presses Send again.
-   */
-  const ensureLocalHarnessReadyForSend = useCallback(async (): Promise<boolean> => {
-    if (!localHarnessRequested) return true;
-    const phase = localHarnessRef.current.phase;
-    if (phase === "ready") return true;
-
-    if (phase === "installing" || phase === "authorizing") {
-      // Setup is running. Saying so beats a dialog that would only report the
-      // same thing.
-      toast.info("Claude Code is still setting up on this machine.");
-      return false;
-    }
-    if (phase === "unavailable") {
-      toast.error(
-        localHarnessRef.current.reason ??
-          "This Inspector can't run Claude Code on this machine.",
-      );
-      return false;
-    }
-
-    // Deduplicated: repeated Send gestures while the dialog is open must not
-    // stack dialogs or capture a second approval.
-    if (localHarnessDialogOpenRef.current) return false;
-
-    return await new Promise<boolean>((resolve) => {
-      localHarnessPendingSendRef.current = () => resolve(true);
-      localHarnessCancelSendRef.current = () => resolve(false);
-      setLocalHarnessDialog({ trigger: "first_send" });
-    });
-  }, [localHarnessRequested]);
 
   const performComposerSubmit = useCallback(async (): Promise<boolean> => {
     if (!composerHasContent || sendBlocked) {
@@ -4414,6 +4431,12 @@ export function PlaygroundMain({
           composer.setInput(prompt);
           return;
         }
+        // Same gate as the composer's, and the same restore on refusal: a
+        // cancelled dialog must leave the prompt where the user can see it.
+        if (!(await ensureLocalHarnessReadyForSend())) {
+          composer.setInput(prompt);
+          return;
+        }
         if (isCompareMode) {
           queueBroadcastRequest({
             text: prompt,
@@ -4445,6 +4468,7 @@ export function PlaygroundMain({
       composerDisabled,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       fileAttachments,
       isCompareMode,
       modelContextQueue,
@@ -4483,6 +4507,10 @@ export function PlaygroundMain({
         composer.setInput(text);
         return;
       }
+      if (!(await ensureLocalHarnessReadyForSend())) {
+        composer.setInput(text);
+        return;
+      }
       if (isCompareMode) {
         queueBroadcastRequest({
           text,
@@ -4507,6 +4535,7 @@ export function PlaygroundMain({
       sendBlocked,
       ensureSelectedServerReadyForChat,
       ensureThreadReadyForSend,
+      ensureLocalHarnessReadyForSend,
       isCompareMode,
       queueBroadcastRequest,
       trackSendMessage,

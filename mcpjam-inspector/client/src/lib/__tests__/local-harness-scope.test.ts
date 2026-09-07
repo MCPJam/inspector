@@ -10,7 +10,7 @@ import { isLocalHarnessScope } from "../local-harness-scope";
  * with no way for the user to find out why.
  */
 
-const IN_SCOPE = { harnessId: "claude-code", hostedMode: false };
+const IN_SCOPE = { harnessId: "claude-code", hostedMode: false, sharedRun: false };
 
 describe("in scope", () => {
   it("is a claude-code host on a local Inspector's direct chat", () => {
