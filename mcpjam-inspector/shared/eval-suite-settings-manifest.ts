@@ -103,16 +103,6 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
     api: "settings.judge.rubric",
   },
   {
-    key: "budgets",
-    label: "Budgets",
-    // The token and turn ceilings, lifted out of the user-value group so they
-    // read as a set. The Limits tab edits them, but it edits a FILTERED VIEW
-    // of settings.checks — the same array, the same wire field — so there is
-    // nothing here an agent cannot already write.
-    excluded:
-      "A presentation subset of settings.checks (token and turn ceilings); reachable through settings.checks.",
-  },
-  {
     key: "policy",
     label: "Policy",
     // The row itself only chooses WHICH policy is on screen. Both policies'

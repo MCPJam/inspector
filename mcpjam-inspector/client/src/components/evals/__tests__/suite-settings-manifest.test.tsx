@@ -119,7 +119,7 @@ vi.mock("@/hooks/use-suite-capabilities", () => ({
 
 function renderedSettingKeys(container: HTMLElement): string[] {
   return Array.from(container.querySelectorAll("[data-setting-key]")).map(
-    (node) => node.getAttribute("data-setting-key") ?? ""
+    (node) => node.getAttribute("data-setting-key") ?? "",
   );
 }
 
@@ -205,13 +205,13 @@ describe("eval suite settings manifest — render parity", () => {
       );
       expect(rendered.length).toBeGreaterThan(0);
       const unlisted = rendered.filter(
-        (key) => !EVAL_SUITE_SETTING_KEYS.includes(key as never)
+        (key) => !EVAL_SUITE_SETTING_KEYS.includes(key as never),
       );
       expect(
         unlisted,
         `Settings rows rendered with no manifest entry — declare how an agent reaches them in shared/eval-suite-settings-manifest.ts:\n  ${unlisted.join(
-          "\n  "
-        )}`
+          "\n  ",
+        )}`,
       ).toEqual([]);
       unmount();
     }
@@ -255,8 +255,8 @@ describe("eval suite settings manifest — render parity", () => {
     expect(
       orphaned,
       `Manifest entries with no rendered row — the row moved or was removed, so the entry is stale:\n  ${orphaned.join(
-        "\n  "
-      )}`
+        "\n  ",
+      )}`,
     ).toEqual([]);
   });
 
@@ -273,7 +273,6 @@ describe("eval suite settings manifest — render parity", () => {
     for (const key of [
       "policy",
       "environments",
-      "budgets",
       "schedule",
       "githubChecks",
       "deleteSuite",
@@ -311,8 +310,7 @@ describe("eval suite settings manifest — render parity", () => {
           continue;
         }
         if (
-          (row.key === "minimumAccuracy" ||
-            row.key === "minimumIterations") &&
+          (row.key === "minimumAccuracy" || row.key === "minimumIterations") &&
           isV2
         ) {
           continue;
@@ -384,16 +382,16 @@ describe("eval suite settings manifest — render parity", () => {
           computers: { enabled: false, reason: "flag_false" },
           scheduledEvals: { enabled: true },
         },
-      })
+      }),
     );
     const { container } = renderSettingsSheet();
     showSettingsKey(container, "computerEnvironment");
     const row = container.querySelector(
-      '[data-setting-key="computerEnvironment"]'
+      '[data-setting-key="computerEnvironment"]',
     );
     expect(row).toBeTruthy();
     expect(row?.getAttribute("data-disabled-reason")).toBe(
-      "Not enabled for this organization"
+      "Not enabled for this organization",
     );
     // Native disabling through a `fieldset`, so Radix triggers (which are
     // buttons underneath) are reached too, not just the `select`. Asserted with
@@ -411,7 +409,7 @@ describe("eval suite settings manifest — render parity", () => {
           computers: { enabled: false, reason: "flag_unavailable" },
           scheduledEvals: { enabled: true },
         },
-      })
+      }),
     );
     const { container } = renderSettingsSheet();
     showSettingsKey(container, "computerEnvironment");
@@ -420,7 +418,7 @@ describe("eval suite settings manifest — render parity", () => {
     expect(
       container
         .querySelector('[data-setting-key="computerEnvironment"]')
-        ?.getAttribute("data-disabled-reason")
+        ?.getAttribute("data-disabled-reason"),
     ).toBe("Could not check availability right now");
   });
 
@@ -438,7 +436,7 @@ describe("eval suite settings manifest — render parity", () => {
           "gate.waive": true,
           "judge.review": true,
         },
-      })
+      }),
     );
     const { container } = renderSettingsSheet();
     for (const key of ["schedule", "deleteSuite"] as const) {
@@ -447,7 +445,7 @@ describe("eval suite settings manifest — render parity", () => {
         container
           .querySelector(`[data-setting-key="${key}"]`)
           ?.getAttribute("data-disabled-reason"),
-        key
+        key,
       ).toBe("You don't have permission to change this");
     }
   });
@@ -458,7 +456,7 @@ describe("eval suite settings manifest — render parity", () => {
     // them — we simply could not ask.
     const { container } = renderSettingsSheet();
     expect(container.querySelectorAll("[data-disabled-reason]")).toHaveLength(
-      0
+      0,
     );
     const keys = collectAllSettingKeys(container);
     expect(keys).toContain("computerEnvironment");
@@ -470,6 +468,8 @@ describe("eval suite settings manifest — render parity", () => {
     showSettingsKey(container, "environments");
     const row = container.querySelector('[data-setting-key="environments"]');
     expect(row).toBeTruthy();
-    expect(row?.querySelector('[data-testid="suite-environment-bar"]')).toBeTruthy();
+    expect(
+      row?.querySelector('[data-testid="suite-environment-bar"]'),
+    ).toBeTruthy();
   });
 });

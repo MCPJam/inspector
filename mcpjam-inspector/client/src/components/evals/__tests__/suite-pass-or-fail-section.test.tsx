@@ -16,10 +16,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import {
-  SuiteBudgetsSection,
-  SuitePassOrFailSection,
-} from "../suite-pass-or-fail-section";
+import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
 import {
   VerdictPolicyUpgradeButton,
   VerdictPolicyV2Controls,
@@ -265,64 +262,3 @@ describe("VerdictPolicyUpgradeButton", () => {
  * ceiling kinds are addable HERE, and an edit re-seats itself in the one
  * `defaultPredicates` array without disturbing the checks around it.
  */
-describe("SuiteBudgetsSection", () => {
-  function renderBudgets(predicates: Predicate[]) {
-    const onPredicatesChange = vi.fn();
-    const result = render(
-      <SuiteBudgetsSection
-        predicates={predicates}
-        onPredicatesChange={onPredicatesChange}
-      />,
-    );
-    // The caller passes an updater; resolve it against the same list the row
-    // was rendered from, which is what the draft reducer does.
-    const nextPredicates = () => {
-      const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
-      return typeof arg === "function" ? arg(predicates) : arg;
-    };
-    return { ...result, onPredicatesChange, nextPredicates };
-  }
-
-  it("offers both ceilings, and only ceilings, to add", async () => {
-    const user = userEvent.setup();
-    renderBudgets([]);
-    await user.click(screen.getByRole("combobox"));
-    const options = screen
-      .getAllByRole("option")
-      .map((option) => option.textContent?.trim());
-    expect(options).toEqual([
-      "Token budget under N",
-      "Fewer than N user turns",
-    ]);
-  });
-
-  it("adds a ceiling without disturbing the checks beside it", async () => {
-    const user = userEvent.setup();
-    const existing: Predicate[] = [
-      { type: "toolCalledAtLeastOnce", toolName: "search" },
-    ];
-    const { nextPredicates } = renderBudgets(existing);
-    await user.click(screen.getByRole("combobox"));
-    await user.click(screen.getByRole("option", { name: /Token budget/ }));
-    expect(nextPredicates()).toEqual([
-      { type: "toolCalledAtLeastOnce", toolName: "search" },
-      { type: "tokenBudgetUnder", tokens: 1000 },
-    ]);
-  });
-
-  it("removes a ceiling from its own slot, leaving the rest in place", async () => {
-    const user = userEvent.setup();
-    const existing: Predicate[] = [
-      { type: "tokenBudgetUnder", tokens: 1000 },
-      { type: "toolCalledAtLeastOnce", toolName: "search" },
-      { type: "turnCountUnder", turns: 10 },
-    ];
-    const { nextPredicates } = renderBudgets(existing);
-    const [removeFirst] = screen.getAllByRole("button", { name: /remove/i });
-    await user.click(removeFirst);
-    expect(nextPredicates()).toEqual([
-      { type: "turnCountUnder", turns: 10 },
-      { type: "toolCalledAtLeastOnce", toolName: "search" },
-    ]);
-  });
-});

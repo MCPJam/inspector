@@ -58,8 +58,7 @@ describe("groupGradersByStage", () => {
       const inStages = USER_VALUE_STAGES.flatMap(
         (stage) => model.byStage[stage],
       ).filter((row) => row.kind === "predicate");
-      const inBudgets = model.budgets.filter((row) => row.kind === "predicate");
-      const total = inStages.length + inBudgets.length;
+      const total = inStages.length;
       if (total !== 1) unplaced.push(`${kind} landed in ${total} groups`);
     }
     expect(
@@ -96,7 +95,11 @@ describe("groupGradersByStage", () => {
     );
   });
 
-  it("lifts the budget kinds out of the stage groups", () => {
+  it("files the ceiling kinds with every other check, not in a bucket", () => {
+    // The Limits tab lifted these two out for PRESENTATION only —
+    // `GRADER_PRESENTATION_GROUP` carries no analytical weight. With the tab
+    // gone they file where the contract puts them, and they remain fully
+    // valid, evaluable checks that the Checks list still shows and grades.
     const model = groupGradersByStage({
       predicates: [
         samplePredicate("tokenBudgetUnder"),
@@ -104,17 +107,18 @@ describe("groupGradersByStage", () => {
         samplePredicate("responseContains"),
       ],
     });
-    expect(model.budgets.map((row) => row.label)).toEqual([
-      "Token budget under 100",
-      "Fewer than 3 user turns",
-    ]);
-    // The one non-budget check stays where the contract files it, and the two
-    // budgets are NOT also listed there — a grader shown twice reads as two
-    // graders.
-    const userValueIds = model.byStage.userValue
-      .filter((row) => row.kind === "predicate")
-      .map((row) => row.id);
-    expect(userValueIds).toEqual(["predicate:2"]);
+    // All three, in authored order, in one group — no bucket, nothing lifted.
+    expect(
+      model.byStage.userValue
+        .filter((row) => row.kind === "predicate")
+        .map((row) => row.id),
+    ).toEqual(["predicate:0", "predicate:1", "predicate:2"]);
+    expect(
+      model.byStage.userValue
+        .filter((row) => row.kind === "predicate")
+        .map((row) => row.label)
+        .slice(0, 2),
+    ).toEqual(["Token budget under 100", "Fewer than 3 user turns"]);
   });
 
   it("reads the judge's role from the config, advisory by default", () => {
@@ -214,9 +218,7 @@ describe("STAGE_EMPTY_COPY", () => {
 });
 
 describe("stageConfigStates", () => {
-  function statesFor(
-    input: Parameters<typeof groupGradersByStage>[0],
-  ) {
+  function statesFor(input: Parameters<typeof groupGradersByStage>[0]) {
     const model = groupGradersByStage(input);
     return stageConfigStates(model, judgeMode(input.judgeConfig));
   }

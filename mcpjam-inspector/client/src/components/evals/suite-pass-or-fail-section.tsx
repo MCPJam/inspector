@@ -45,11 +45,8 @@ import { JudgesSection } from "./judges-section";
 import { AddCheckMenu, blankPredicate, ChecksSection } from "./checks-section";
 import { GlobalGatesSectionInfoHint } from "./global-gates-info";
 import {
-  BUDGET_PREDICATE_KINDS,
   groupGradersByStage,
-  isBudgetPredicate,
   judgeMode,
-  mergeBudgetPredicates,
   stageEmptyIsGap,
   STAGE_EMPTY_COPY,
   type GraderRow,
@@ -84,9 +81,7 @@ function RoleChip({ role }: { role: GraderRow["role"] }) {
   );
 }
 
-function judgeLineLabel(
-  mode: ReturnType<typeof judgeMode>,
-): string {
+function judgeLineLabel(mode: ReturnType<typeof judgeMode>): string {
   switch (mode) {
     case "off":
       return "Judge off";
@@ -252,66 +247,68 @@ export function SuitePassOrFailSection({
     <div>
       {showStages
         ? stagesToShow.map((stage) => (
-        <StageGroup
-          key={stage}
-          stage={stage}
-          rows={model.byStage[stage]}
-          judge={judge}
-          facts={stageFacts?.[stage]}
-        >
-          {stage === "selection" ? (
-            <div className="space-y-3" data-setting-key="matchOptions">
-              <div>
-                <h4 className="text-sm font-semibold text-foreground">
-                  Tool-call matching
-                </h4>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Arguments is edited here and measured at Tool call.
-                </p>
-              </div>
-              <ValidatorsSection
-                title=""
-                value={matchOptions}
-                inheritedFrom={MATCH_OPTIONS_DEFAULTS}
-                onChange={onMatchOptionsChange}
-              />
-            </div>
-          ) : null}
-          {stage === "userValue" ? (
-            <div className="space-y-5" data-setting-key="judge">
-              <div>
-                <h4 className="text-sm font-semibold text-foreground">Judge</h4>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  Advisory by default. A calibrated judge may gate; see Judge
-                  criteria.
-                </p>
-              </div>
-              <JudgesSection
-                chrome="bare"
-                value={judgeConfig}
-                availableModels={availableModels}
-                onChange={onJudgeConfigChange}
-              />
-              {judgeAccessory}
-              {rubricEditor ? (
-                <div className="space-y-2" data-setting-key="judgeRubric">
+            <StageGroup
+              key={stage}
+              stage={stage}
+              rows={model.byStage[stage]}
+              judge={judge}
+              facts={stageFacts?.[stage]}
+            >
+              {stage === "selection" ? (
+                <div className="space-y-3" data-setting-key="matchOptions">
                   <div>
                     <h4 className="text-sm font-semibold text-foreground">
-                      Judge criteria
+                      Tool-call matching
                     </h4>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      Applied to every case, alongside each case&apos;s own
-                      expected output. The judge cites criterion ids in its
-                      reasons.
+                      Arguments is edited here and measured at Tool call.
                     </p>
                   </div>
-                  {rubricEditor}
+                  <ValidatorsSection
+                    title=""
+                    value={matchOptions}
+                    inheritedFrom={MATCH_OPTIONS_DEFAULTS}
+                    onChange={onMatchOptionsChange}
+                  />
                 </div>
               ) : null}
-            </div>
-          ) : null}
-        </StageGroup>
-      ))
+              {stage === "userValue" ? (
+                <div className="space-y-5" data-setting-key="judge">
+                  <div>
+                    <h4 className="text-sm font-semibold text-foreground">
+                      Judge
+                    </h4>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Advisory by default. A calibrated judge may gate; see
+                      Judge criteria.
+                    </p>
+                  </div>
+                  <JudgesSection
+                    chrome="bare"
+                    value={judgeConfig}
+                    availableModels={availableModels}
+                    onChange={onJudgeConfigChange}
+                  />
+                  {judgeAccessory}
+                  {rubricEditor ? (
+                    <div className="space-y-2" data-setting-key="judgeRubric">
+                      <div>
+                        <h4 className="text-sm font-semibold text-foreground">
+                          Judge criteria
+                        </h4>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          Applied to every case, alongside each case&apos;s own
+                          expected output. The judge cites criterion ids in its
+                          reasons.
+                        </p>
+                      </div>
+                      {rubricEditor}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+            </StageGroup>
+          ))
         : null}
 
       {/* The ONE editor for every authored check.
@@ -319,89 +316,41 @@ export function SuitePassOrFailSection({
           person to know which stage their check files under before they can
           write it, and that routing is the page's job rather than theirs. */}
       {showChecks ? (
-      <section
-        className={suiteSettingsChainSectionClass()}
-        data-setting-key="checks"
-      >
-        <SuiteSettingsChainNode />
-        <div className="mb-5 flex items-start justify-between gap-4">
-          <div className="flex items-center gap-1.5">
-            <h3 className="text-lg font-semibold tracking-tight text-foreground">
-              Checks
-            </h3>
-            <GlobalGatesSectionInfoHint />
+        <section
+          className={suiteSettingsChainSectionClass()}
+          data-setting-key="checks"
+        >
+          <SuiteSettingsChainNode />
+          <div className="mb-5 flex items-start justify-between gap-4">
+            <div className="flex items-center gap-1.5">
+              <h3 className="text-lg font-semibold tracking-tight text-foreground">
+                Checks
+              </h3>
+              <GlobalGatesSectionInfoHint />
+            </div>
+            <AddCheckMenu
+              globalGatesMenu
+              onAdd={(kind) =>
+                onPredicatesChange((previous) => [
+                  ...previous,
+                  blankPredicate(kind),
+                ])
+              }
+            />
           </div>
-          <AddCheckMenu
+          {scenarioMigrationNotice ? (
+            <div className="mb-4">{scenarioMigrationNotice}</div>
+          ) : null}
+          <ChecksSection
+            title=""
+            hideAddButton
+            hideEmptyState
             globalGatesMenu
-            onAdd={(kind) =>
-              onPredicatesChange((previous) => [
-                ...previous,
-                blankPredicate(kind),
-              ])
-            }
+            value={predicates}
+            onChange={(next) => onPredicatesChange(next)}
           />
-        </div>
-        {scenarioMigrationNotice ? (
-          <div className="mb-4">{scenarioMigrationNotice}</div>
-        ) : null}
-        <ChecksSection
-          title=""
-          hideAddButton
-          hideEmptyState
-          globalGatesMenu
-          value={predicates}
-          onChange={(next) => onPredicatesChange(next)}
-        />
-      </section>
+        </section>
       ) : null}
     </div>
-  );
-}
-
-/**
- * Budgets, as their own row — and as their own editor.
- *
- * A token ceiling and a turn ceiling both file at `userValue` analytically —
- * `GRADER_PRESENTATION_GROUP` says so and nothing derives a verdict from this
- * grouping — but reading them beside "did the answer contain the right thing"
- * makes neither legible. So they are lifted out of the stage list and shown
- * here.
- *
- * EDITABLE. This row used to be a read-only summary that told the reader to
- * go add a ceiling from Checks: the tab named a setting and then refused to
- * set it, and half its own instruction was false — the Checks menu offers a
- * token budget and has never offered a turn budget. It edits the SAME
- * `defaultPredicates` array the Checks editor does, filtered to the two
- * ceiling kinds, so a ceiling written here is the same check written there
- * and both lists show it.
- */
-export function SuiteBudgetsSection({
-  predicates,
-  onPredicatesChange,
-}: {
-  predicates: Predicate[];
-  onPredicatesChange: (
-    next: Predicate[] | ((previous: Predicate[]) => Predicate[]),
-  ) => void;
-}) {
-  const budgets = useMemo(
-    () => predicates.filter(isBudgetPredicate),
-    [predicates],
-  );
-  return (
-    <ChecksSection
-      title=""
-      value={budgets}
-      allowedKinds={BUDGET_PREDICATE_KINDS}
-      emptyStateText="No ceilings — a trial may spend whatever it needs."
-      onChange={(nextBudgets) =>
-        // The updater form, not the resolved list: the reducer holds the
-        // authoritative draft, and a check added to Checks in the same commit
-        // would be lost by an array computed from this render's copy.
-        onPredicatesChange((previous) =>
-          mergeBudgetPredicates(previous, nextBudgets),
-        )
-      }
-    />
   );
 }

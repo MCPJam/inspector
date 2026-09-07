@@ -12,14 +12,15 @@ import {
 } from "@mcpjam/sdk/contract";
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import { PREDICATE_KIND_LABELS } from "@/shared/predicate-kinds";
-import {
-  compactModelIdTail,
-  environmentLabel,
-} from "@/lib/environment-label";
+import { compactModelIdTail, environmentLabel } from "@/lib/environment-label";
 import { OUTAGE_POLICY_LABELS } from "@/components/settings/github-checks-outage-policy";
 import { PAUSE_COPY, type SuiteSchedule } from "./schedule-editor";
 import { formatNextDue } from "./suite-automation-row";
-import { judgeMode, type JudgeMode, type StageConfigState } from "./suite-grading-model";
+import {
+  judgeMode,
+  type JudgeMode,
+  type StageConfigState,
+} from "./suite-grading-model";
 import type { SuiteGradingModel } from "./suite-grading-model";
 import type {
   SuiteSettingsValues,
@@ -141,8 +142,7 @@ export function summarizeValidity(values: SuiteSettingsValues): SettingSummary {
   return {
     state: "ready",
     text: describeValidity(values.verdictPolicyDefaults),
-    detail:
-      "Checked before the verdict; a miss is inconclusive, not failed.",
+    detail: "Checked before the verdict; a miss is inconclusive, not failed.",
     tone: "set",
   };
 }
@@ -189,22 +189,6 @@ export function summarizeChecks(predicates: Predicate[]): SettingSummary {
   };
 }
 
-export function summarizeBudgets(predicates: Predicate[]): SettingSummary {
-  const budgets = predicates.filter(
-    (predicate) =>
-      predicate.type === "tokenBudgetUnder" ||
-      predicate.type === "turnCountUnder",
-  );
-  if (budgets.length === 0) {
-    return { state: "ready", text: "None", tone: "empty" };
-  }
-  return {
-    state: "ready",
-    text: describePredicates(budgets),
-    tone: "set",
-  };
-}
-
 export function summarizeComputerEnvironment(input: {
   id: string | undefined;
   computerEnvironments:
@@ -224,7 +208,11 @@ export function summarizeComputerEnvironment(input: {
     };
   }
   if (input.computerEnvironments === undefined) {
-    return { state: "loading", text: "Loading computer images…", tone: "empty" };
+    return {
+      state: "loading",
+      text: "Loading computer images…",
+      tone: "empty",
+    };
   }
   if (!input.id) {
     return { state: "ready", text: "Default image", tone: "set" };
@@ -377,10 +365,7 @@ export function summarizeEnvironments(input: {
   };
 }
 
-const PAUSE_CHIP: Record<
-  Exclude<SuiteSchedule["state"], "active">,
-  string
-> = {
+const PAUSE_CHIP: Record<Exclude<SuiteSchedule["state"], "active">, string> = {
   paused_quota: "quota",
   paused_auth: "sign-in",
   paused_failures: "failures",
@@ -431,13 +416,15 @@ const CONNECTION_LABEL: Record<GithubCheckConnectionStatus, string> = {
 
 export function summarizeGithubChecks(input: {
   availability: GithubChecksAvailability;
-  rows: Array<{
-    suiteId: string;
-    repoFullName: string;
-    enabled: boolean;
-    outagePolicy?: GithubCheckOutagePolicy;
-    connectionStatus: GithubCheckConnectionStatus;
-  }> | undefined;
+  rows:
+    | Array<{
+        suiteId: string;
+        repoFullName: string;
+        enabled: boolean;
+        outagePolicy?: GithubCheckOutagePolicy;
+        connectionStatus: GithubCheckConnectionStatus;
+      }>
+    | undefined;
   suiteId: string;
 }): SettingSummary {
   if (input.availability === undefined || input.rows === undefined) {

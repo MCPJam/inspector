@@ -135,6 +135,18 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 
 When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
 
+<Note>
+**A per-trial token ceiling is not a spend control.** It is set without seeing
+what the suite normally uses, it is in a unit that is not comparable across
+models, and it goes stale on every prompt or model change. `Token budget under
+N` remains a valid check and keeps working wherever it is already authored,
+but for spend, two things replace it: [cost on every run](#cost), which shows
+what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+when a change makes the suite more expensive relative to its own baseline. For
+a ceiling on what the whole organization may spend, see the [spend
+budget](/hosted/overview#spend-budget).
+</Note>
+
 ### Harness system tools in assertion dropdowns
 
 When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.

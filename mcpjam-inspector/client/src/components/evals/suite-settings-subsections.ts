@@ -82,14 +82,6 @@ export function getSubsectionsForGroup(
       });
       return subs;
     }
-    case "limits":
-      return [
-        {
-          id: "budgets",
-          label: manifestLabel("budgets"),
-          target: { type: "row", key: "budgets" },
-        },
-      ];
     case "triggers": {
       const subs: SuiteSettingsSubsection[] = [];
       if (options.showSchedule) {
@@ -138,18 +130,16 @@ export function subsectionForSettingKey(
   if (groupId === "grading" && key === "passOrFail") {
     return subsections.find((sub) => sub.target.type === "stage");
   }
-  const nestedStageKeys: Partial<
-    Record<EvalSuiteSettingKey, UserValueStage>
-  > = {
-    matchOptions: "selection",
-    judge: "userValue",
-    judgeRubric: "userValue",
-  };
+  const nestedStageKeys: Partial<Record<EvalSuiteSettingKey, UserValueStage>> =
+    {
+      matchOptions: "selection",
+      judge: "userValue",
+      judgeRubric: "userValue",
+    };
   const stage = nestedStageKeys[key];
   if (groupId === "grading" && stage) {
     return subsections.find(
-      (sub) =>
-        sub.target.type === "stage" && sub.target.stage === stage,
+      (sub) => sub.target.type === "stage" && sub.target.stage === stage,
     );
   }
   if (groupId === "grading" && key === "checks") {
@@ -192,8 +182,7 @@ export function pickActiveSubsectionFromScroll(
   const activationY = root.scrollTop + root.clientHeight * 0.12;
   let activeId = anchors[0].id;
   for (const { id, element } of anchors) {
-    const top =
-      element.getBoundingClientRect().top - rootTop + root.scrollTop;
+    const top = element.getBoundingClientRect().top - rootTop + root.scrollTop;
     if (top <= activationY + 1) activeId = id;
   }
   return activeId;
