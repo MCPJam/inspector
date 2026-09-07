@@ -130,6 +130,9 @@ import { useHostCatalog } from "@/lib/host-compat/use-host-catalog";
 import { getCatalogHost, getCatalogTemplate } from "@mcpjam/sdk/host-compat";
 import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useComputerEngine } from "@/hooks/useComputerEngine";
+import { useLocalHarnessController } from "@/hooks/useLocalHarnessTarget";
+import { isLocalHarnessScope } from "@/lib/local-harness-scope";
+import { HOSTED_MODE } from "@/lib/config";
 import { usePlaygroundEnvironment } from "@/hooks/use-playground-environment";
 import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
 import { useWebmcpInspectorStore } from "@/stores/webmcp-inspector-store";
@@ -908,6 +911,52 @@ export function PlaygroundMain({
   const { tools: harnessBuiltinTools, harnessId: previewedHarnessId } =
     useHarnessBuiltinTools(previewedHostId);
 
+  // ── Local Claude Code execution ──────────────────────────────────────────
+  //
+  // Owned HERE, beside `useComputerEngine`, and passed down as an option — the
+  // same shape and the same reason: the central chat hook must not run an
+  // availability fetch, an install poll and a consent lifecycle, because every
+  // chat surface in the app mounts it.
+  //
+  // The scope predicate is the shared one, so the chip, this gate and the
+  // transport cannot drift into disagreeing about whether a send is even the
+  // kind of send local execution applies to. `previewedHarnessId` is what the
+  // composer is PREVIEWING; the transport re-derives from the host that
+  // actually sends.
+  const localHarnessInScope = isLocalHarnessScope({
+    harnessId: previewedHarnessId,
+    hostedMode: HOSTED_MODE,
+    environmentId: isEnvironmentMode
+      ? (playgroundEnvironment.environmentId ?? null)
+      : null,
+    requiresWebChatApi: isEnvironmentMode,
+  });
+  // Identifies WHAT an approval was captured against, so switching host or
+  // surface invalidates it rather than carrying a click across.
+  const localHarnessScopeKey = `${previewedHostId ?? "no-host"}:${
+    previewedHarnessId ?? "no-harness"
+  }`;
+  const localHarness = useLocalHarnessController({
+    projectId: convexProjectId,
+    // The signed-in member as this surface knows it. Not an identity the
+    // server trusts — it resolves that itself — but a change to it invalidates
+    // a captured approval, because the human who clicked is not necessarily
+    // the human who would now run.
+    userKey: isConvexAuthenticated ? (convexProjectId ?? "member") : null,
+    inScope: localHarnessInScope,
+    scopeKey: localHarnessScopeKey,
+  });
+  const localHarnessRequested =
+    localHarnessInScope && localHarness.requestedTarget === "local-native";
+  const localHarnessResolveSendTarget = localHarness.resolveSendTarget;
+  const localHarnessExecutionOption = useMemo(
+    () => ({
+      requested: localHarnessRequested,
+      resolveSendTarget: localHarnessResolveSendTarget,
+    }),
+    [localHarnessRequested, localHarnessResolveSendTarget],
+  );
+
   // COMP-14 gate: composer attachments go into the sandbox only when the
   // previewed host actually attaches a computer (honesty rule — no computer, no
   // sandbox upload; attachments stay inline-only exactly as before) AND the
@@ -1049,6 +1098,7 @@ export function PlaygroundMain({
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
     personalComputerEngine: personalComputerEngineOption,
+    localHarnessExecution: localHarnessExecutionOption,
     onReset: (reason?: ChatSessionResetReason) => {
       setModelContextQueue([]);
       setPreludeTraceExecutions([]);
@@ -5072,6 +5122,7 @@ export function PlaygroundMain({
                           }}
                           hostedOrgModelConfig={hostedOrgModelConfig}
                           personalComputerEngine={personalComputerEngineOption}
+                          localHarnessExecution={localHarnessExecutionOption}
                           displayMode={displayMode}
                           onDisplayModeChange={handleDisplayModeChange}
                           hostStyle={column.hostSnapshot.hostStyle}
@@ -5175,6 +5226,9 @@ export function PlaygroundMain({
                             }}
                             personalComputerEngine={
                               personalComputerEngineOption
+                            }
+                            localHarnessExecution={
+                              localHarnessExecutionOption
                             }
                             displayMode={displayMode}
                             onDisplayModeChange={handleDisplayModeChange}
