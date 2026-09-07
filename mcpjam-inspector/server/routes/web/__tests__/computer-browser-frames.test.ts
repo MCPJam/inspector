@@ -191,7 +191,8 @@ describe("browser frames socket — carrying frames", () => {
       ts: 5,
       seq: 3,
     });
-    expect(JSON.parse(ws.sent[0])).toEqual({
+    const message = JSON.parse(ws.sent[0]);
+    expect(message).toMatchObject({
       type: "frame",
       frame: {
         data: "AAAA",
@@ -202,6 +203,47 @@ describe("browser frames socket — carrying frames", () => {
         seq: 3,
       },
     });
+    // The sandbox's `ts` is not comparable to the viewer's clock — different
+    // machines — so the relay adds its OWN stamp, which is the hop the pane
+    // measures its round trip against.
+    expect(message.frame.relayTs).toBeGreaterThan(0);
+  });
+
+  it("echoes the pane's ping stamp so a round trip is measurable", async () => {
+    const f = build();
+    const { ws, events } = await f.connect();
+    (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+      { data: JSON.stringify({ type: "ping", t: 4242 }) },
+      ws,
+    );
+    expect(ws.sent.map((raw) => JSON.parse(raw))).toContainEqual({
+      type: "pong",
+      t: 4242,
+    });
+  });
+
+  it("reports what it forwarded on a cadence", async () => {
+    vi.useFakeTimers();
+    try {
+      const f = build();
+      const { ws } = await f.connect();
+      f.upstreamCalls[0].onFrame({
+        data: "AAAA",
+        deviceWidth: 1024,
+        deviceHeight: 768,
+        scale: 1,
+        ts: 5,
+        seq: 3,
+      });
+      expect(ws.sent.some((raw) => raw.includes('"stats"'))).toBe(false);
+      vi.advanceTimersByTime(1_000);
+      const stats = ws.sent
+        .map((raw) => JSON.parse(raw))
+        .find((message) => message.type === "stats");
+      expect(stats).toMatchObject({ framesIn: 1, framesOut: 1, dropped: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("closes 4409 — retryable — when the lease moves", async () => {

@@ -11,6 +11,8 @@ import {
   type BrowserInputEvent,
   type PaneFrame,
 } from "@/lib/browser-pane/input";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnHostedBrowserLease,
   createBrowserTokenCache,
@@ -297,13 +299,46 @@ export function HostedBrowserBody({
 
       const opened = openHostedBrowserFrameStream({ token });
       stream = opened;
+      paneFrameStats.noteTransport("jpeg-json");
       opened.socket.onmessage = (event) => {
         try {
-          const parsed = JSON.parse(String(event.data)) as {
+          const raw = String(event.data);
+          const parsed = JSON.parse(raw) as {
             type?: string;
             frame?: PaneFrame;
+            t?: number;
+            framesIn?: number;
+            framesOut?: number;
+            bytes?: number;
+            dropped?: number;
+            subscribers?: number;
+            daemon?: Record<string, unknown>;
           };
+          if (parsed.type === "pong") {
+            // The pane's own stamp, echoed. One clock, so the subtraction is
+            // a round trip rather than the drift between two machines.
+            if (typeof parsed.t === "number") {
+              paneFrameStats.noteRtt(Date.now() - parsed.t);
+            }
+            return;
+          }
+          if (parsed.type === "stats") {
+            paneFrameStats.noteRelayStats({
+              framesIn: parsed.framesIn ?? 0,
+              ...(parsed.framesOut !== undefined
+                ? { framesOut: parsed.framesOut }
+                : {}),
+              bytes: parsed.bytes ?? 0,
+              dropped: parsed.dropped ?? 0,
+              subscribers: parsed.subscribers ?? 0,
+              ...(parsed.daemon
+                ? { daemon: parsed.daemon as never }
+                : {}),
+            });
+            return;
+          }
           if (parsed.type === "frame" && parsed.frame) {
+            paneFrameStats.noteFrameArrived({ bytes: raw.length });
             setFrame(parsed.frame);
             // The attempt worked: forgive the refusals that came before it,
             // and clear whatever the last close told the viewer, since the
@@ -396,7 +431,9 @@ export function HostedBrowserBody({
         if (!activeRef.current) return;
         if (document.visibilityState !== "visible") return;
         if (opened.socket.readyState !== WebSocket.OPEN) return;
-        opened.socket.send(JSON.stringify({ type: "ping" }));
+        // Stamped, so the pong measures a round trip. A server too old to echo
+        // `t` simply produces no rtt sample rather than a wrong one.
+        opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
       }, WATCH_PING_MS);
     })();
 
@@ -480,6 +517,9 @@ export function HostedBrowserBody({
   // forwarder per HOLD, not per session: whatever it has queued belonged to
   // the hold that queued it, so a hand-back or an expiry must retire it rather
   // than let its tail arrive under whoever holds the browser next.
+  // One analytics event per pane, on the way out — see `session-summary`.
+  useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
+
   const forwarder = useMemo(() => {
     if (!tokens || !holding) return null;
     return createInputForwarder((events) =>
@@ -562,6 +602,7 @@ export function HostedBrowserBody({
       placeholder={placeholder}
       error={notice ?? error}
       active={active}
+      engine="hosted"
     />
   );
 }

@@ -7,6 +7,8 @@ import {
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
+import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
   actOnLocalBrowserLease,
   createInputForwarder,
@@ -248,13 +250,44 @@ export function LocalBrowserBody({
           nonce,
         });
         stream = opened;
+        paneFrameStats.noteTransport("jpeg-json");
         opened.socket.onmessage = (event) => {
           try {
-            const parsed = JSON.parse(String(event.data)) as {
+            const raw = String(event.data);
+            const parsed = JSON.parse(raw) as {
               type?: string;
               frame?: PaneFrame;
+              t?: number;
+              framesIn?: number;
+              framesOut?: number;
+              bytes?: number;
+              dropped?: number;
+              subscribers?: number;
+              daemon?: Record<string, unknown>;
             };
-            if (parsed.type === "frame" && parsed.frame) setFrame(parsed.frame);
+            if (parsed.type === "pong") {
+              if (typeof parsed.t === "number") {
+                paneFrameStats.noteRtt(Date.now() - parsed.t);
+              }
+              return;
+            }
+            if (parsed.type === "stats") {
+              paneFrameStats.noteRelayStats({
+                framesIn: parsed.framesIn ?? 0,
+                ...(parsed.framesOut !== undefined
+                  ? { framesOut: parsed.framesOut }
+                  : {}),
+                bytes: parsed.bytes ?? 0,
+                dropped: parsed.dropped ?? 0,
+                subscribers: parsed.subscribers ?? 0,
+                ...(parsed.daemon ? { daemon: parsed.daemon as never } : {}),
+              });
+              return;
+            }
+            if (parsed.type === "frame" && parsed.frame) {
+              paneFrameStats.noteFrameArrived({ bytes: raw.length });
+              setFrame(parsed.frame);
+            }
           } catch {
             // Not our protocol.
           }
@@ -300,7 +333,7 @@ export function LocalBrowserBody({
           if (!activeRef.current) return;
           if (document.visibilityState !== "visible") return;
           if (opened.socket.readyState !== WebSocket.OPEN) return;
-          opened.socket.send(JSON.stringify({ type: "ping" }));
+          opened.socket.send(JSON.stringify({ type: "ping", t: Date.now() }));
         }, 20_000);
       } catch (err) {
         if (!closed) setError(err instanceof Error ? err.message : String(err));
@@ -398,6 +431,14 @@ export function LocalBrowserBody({
     [forwarder, holding],
   );
 
+  // One analytics event per pane, on the way out — see `session-summary`.
+  const engineRef = useRef(status?.runtime ?? "local");
+  engineRef.current = status?.runtime ?? "local";
+  useEffect(
+    () => () => captureBrowserPaneSessionSummary(engineRef.current),
+    [],
+  );
+
   /**
    * What this pane shows when there is no picture yet.
    *
@@ -492,6 +533,7 @@ export function LocalBrowserBody({
       placeholder={placeholder}
       error={error}
       active={active}
+      engine={status?.runtime ?? "local"}
     />
   );
 }

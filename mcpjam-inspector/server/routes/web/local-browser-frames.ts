@@ -31,6 +31,10 @@ import {
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportFrame } from "../../services/browserd/daemon/viewport.js";
+import {
+  createFrameRelayStats,
+  pongFor,
+} from "./browser-frame-relay-stats.js";
 
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
@@ -151,12 +155,16 @@ export function createLocalBrowserFramesWsHandler(
     let unsubscribe: (() => void) | undefined;
     let revalidate: (() => void) | undefined;
     let registered: { close(): void } | undefined;
+    /** Per socket, so one congested pane's loss is not averaged away. */
+    let stats: ReturnType<typeof createFrameRelayStats> | undefined;
     let closed = false;
     const detach = () => {
       closed = true;
       unsubscribe?.();
       unsubscribe = undefined;
       revalidate = undefined;
+      stats?.stop();
+      stats = undefined;
       if (registered) {
         // Removed by IDENTITY, so a reconnect cannot retain the dead
         // `WSContext` of the connection it replaced: without this the set grows
@@ -210,12 +218,16 @@ export function createLocalBrowserFramesWsHandler(
             // overhead costs a memcpy and buys one obvious wire format; the
             // hosted path, which crosses a real network, is where the packed
             // frame earns its complexity.
-            try {
-              ws.send(JSON.stringify({ type: "frame", frame }));
-            } catch {
-              // A socket that has gone away: the unsubscribe on close handles
-              // the rest.
+            if (closed) {
+              stats?.countDrop();
+              return;
             }
+            // `relayTs` even on loopback, where it equals `ts` to within a
+            // millisecond. The pane must not have to know which engine drew a
+            // frame to know which field it may subtract from its own clock.
+            const stamped = { ...frame, relayTs: Date.now() };
+            const payload = JSON.stringify({ type: "frame", frame: stamped });
+            stats?.offer(payload.length, () => ws.send(payload));
           },
         });
 
@@ -246,6 +258,13 @@ export function createLocalBrowserFramesWsHandler(
         revalidate = subscription.revalidate;
         registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
         liveSockets.add(registered);
+        stats = createFrameRelayStats({
+          send: (payload) => ws.send(payload),
+          bufferedAmount: () =>
+            (ws.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount,
+        });
+        stats.setSubscribers(1);
+        stats.start();
         // Watching IS using it: a person with the pane open must not have the
         // browser reaped out from under them. Frames themselves never tick the
         // clock — a CSS spinner would keep a browser alive forever.
@@ -255,7 +274,10 @@ export function createLocalBrowserFramesWsHandler(
         // The only inbound message is a heartbeat, sent while the tab is
         // visible. It is what tells us somebody is still there.
         try {
-          const parsed = JSON.parse(String(event.data)) as { type?: unknown };
+          const parsed = JSON.parse(String(event.data)) as {
+            type?: unknown;
+            t?: unknown;
+          };
           if (parsed?.type !== "ping") return;
           // The heartbeat is also when a watcher's right to watch is re-asked
           // out of band. Revocation otherwise rides frame delivery, and a
@@ -266,7 +288,7 @@ export function createLocalBrowserFramesWsHandler(
           if (closed) return;
           const session = findLocalBrowserSession(bootId);
           if (session) touchLocalBrowserSession(session.handle);
-          ws.send(JSON.stringify({ type: "pong" }));
+          ws.send(pongFor(parsed));
         } catch {
           // Not our protocol; ignore rather than close.
         }

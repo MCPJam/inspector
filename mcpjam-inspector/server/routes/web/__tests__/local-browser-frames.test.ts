@@ -192,6 +192,42 @@ describe("the agent browser's frame socket", () => {
     ws.close();
   });
 
+  it("stamps every frame with the hop the pane can measure against", async () => {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    const received = new Promise<Record<string, never>>((resolve) => {
+      ws.on("message", (data) => resolve(JSON.parse(String(data))));
+    });
+    sessionState.subscriptions[0]?.listener({ seq: 1, data: "Zm9v", ts: 1 });
+
+    const message = (await received) as unknown as {
+      frame: { relayTs: number; ts: number };
+    };
+    // Even on loopback, where it equals `ts`: the pane must not have to know
+    // which engine drew a frame to know which field it may subtract from its
+    // own clock.
+    expect(message.frame.relayTs).toBeGreaterThan(0);
+    ws.close();
+  });
+
+  it("echoes the pane's ping stamp", async () => {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+
+    const pong = new Promise<{ type: string; t?: number }>((resolve) => {
+      ws.on("message", (data) => {
+        const parsed = JSON.parse(String(data)) as { type: string; t?: number };
+        if (parsed.type === "pong") resolve(parsed);
+      });
+    });
+    ws.send(JSON.stringify({ type: "ping", t: 777 }));
+    expect(await pong).toEqual({ type: "pong", t: 777 });
+    ws.close();
+  });
+
   it("refuses a nonce minted for a DIFFERENT project", async () => {
     // The nonce is the authorization and it names a project; the bootId is
     // supplied by the caller. Without comparing them, one project's pane opens

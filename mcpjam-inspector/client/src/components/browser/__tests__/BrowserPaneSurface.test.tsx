@@ -9,12 +9,16 @@
  * header for each way a browser can be driven, the one placeholder it owns
  * itself, and what it forgets when a hold ends.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import {
   BrowserPaneSurface,
   type BrowserPaneSurfaceProps,
 } from "../BrowserPaneSurface";
+import {
+  BROWSER_PANE_STATS_FLAG,
+  paneFrameStats,
+} from "@/lib/browser-pane/frame-stats";
 
 const FRAME = {
   data: "Zm9v",
@@ -222,5 +226,64 @@ describe("the pane surface — a hold that ends", () => {
     fireEvent.mouseDown(image(), { clientX: 100, clientY: 100 });
     fireEvent.wheel(image(), { clientX: 100, clientY: 100, deltaY: 20 });
     expect(onInput).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("the pane surface — stats for nerds", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    paneFrameStats.resetFlagForTests();
+  });
+  afterEach(() => {
+    localStorage.clear();
+    paneFrameStats.resetFlagForTests();
+  });
+
+  it("hides the overlay by default", () => {
+    renderSurface();
+    expect(screen.queryByTestId("pane-stats-overlay")).toBeNull();
+  });
+
+  it("shows it when the flag is already set", () => {
+    localStorage.setItem(BROWSER_PANE_STATS_FLAG, "1");
+    paneFrameStats.resetFlagForTests();
+    renderSurface();
+    expect(screen.getByTestId("pane-stats-overlay")).toBeTruthy();
+  });
+
+  it("turning it on from the menu persists the choice", async () => {
+    renderSurface();
+    fireEvent.pointerDown(
+      screen.getByTestId("pane-settings"),
+      new MouseEvent("pointerdown", { bubbles: true }) as never,
+    );
+    fireEvent.click(screen.getByTestId("pane-settings"));
+    const toggle = await screen.findByTestId("pane-stats-toggle");
+    fireEvent.click(toggle);
+    expect(localStorage.getItem(BROWSER_PANE_STATS_FLAG)).toBe("1");
+    expect(screen.getByTestId("pane-stats-overlay")).toBeTruthy();
+  });
+
+  it("records a paint against the relay stamp, not the sandbox clock", () => {
+    localStorage.setItem(BROWSER_PANE_STATS_FLAG, "1");
+    paneFrameStats.resetFlagForTests();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(1_000_000);
+      renderSurface({
+        frame: { ...FRAME, ts: 1, relayTs: 999_980, seq: 4 },
+      });
+      // A frame that arrived is not a frame that was seen: the load event is
+      // the only honest moment to record one.
+      expect(paneFrameStats.report().captureToPaint.n).toBe(0);
+      fireEvent.load(screen.getByTestId("rail-browser-frame"));
+      expect(paneFrameStats.report().captureToPaint).toMatchObject({
+        n: 1,
+        p50: 20,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

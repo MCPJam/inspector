@@ -1,7 +1,18 @@
-import { useCallback, useEffect, useRef, type ReactNode } from "react";
-import { Hand, Loader2, MousePointer2 } from "lucide-react";
-import { Button } from "@mcpjam/design-system/button";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
+import { Loader2 } from "lucide-react";
 import { PaneMessage } from "@/components/computer/PaneMessage";
+import {
+  PaneControlBar,
+  type PaneControl,
+} from "@/components/browser/PaneControlBar";
+import { StatsOverlay } from "@/components/browser/StatsOverlay";
+import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
 import {
   modifiersOf,
   toPageCoordinates,
@@ -28,8 +39,7 @@ import {
  * than decoration over it.
  */
 
-/** Who is driving, in the words the header says. */
-export type PaneControl = "agent" | "you" | "script" | "other";
+export type { PaneControl };
 
 export interface BrowserPaneSurfaceProps {
   /** The latest frame, or null while none has arrived. */
@@ -71,6 +81,8 @@ export interface BrowserPaneSurfaceProps {
    * here; what a hidden pane must stop CLAIMING is each engine's own business.
    */
   active?: boolean;
+  /** Which engine drew this, for the stats overlay and the session summary. */
+  engine?: string;
 }
 
 /** The DOM's button numbering, in the daemon's names. */
@@ -78,20 +90,6 @@ function buttonOf(event: { button?: number }): "left" | "middle" | "right" {
   if (event.button === 1) return "middle";
   if (event.button === 2) return "right";
   return "left";
-}
-
-/** The header's sentence, for each way a browser can be driven. */
-function controlLabel(control: PaneControl): string {
-  switch (control) {
-    case "you":
-      return "You have control";
-    case "script":
-      return "A script has control";
-    case "other":
-      return "Someone else has control";
-    default:
-      return "The agent is driving";
-  }
 }
 
 export function BrowserPaneSurface({
@@ -104,7 +102,16 @@ export function BrowserPaneSurface({
   placeholder,
   error,
   active = true,
+  engine = "unknown",
 }: BrowserPaneSurfaceProps) {
+  /**
+   * Is the overlay up?
+   *
+   * Seeded from the stats flag, so somebody who set `browser:frame-stats` in
+   * the console gets the overlay without hunting for the menu — and the menu
+   * writes the same key back, so the choice survives a reload either way.
+   */
+  const [statsOpen, setStatsOpen] = useState(() => paneFrameStats.enabled());
   const imageRef = useRef<HTMLImageElement | null>(null);
   const paneRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -182,6 +189,18 @@ export function BrowserPaneSurface({
         src={`data:image/jpeg;base64,${frame.data}`}
         className="h-full w-full select-none object-contain"
         draggable={false}
+        // The one place a paint is observable, and the only honest moment to
+        // record one: `setFrame` means the bytes arrived, not that anybody saw
+        // them. Dark unless the stats flag is set.
+        onLoad={() => {
+          paneFrameStats.notePainted({
+            ...(frame.relayTs !== undefined ? { relayTs: frame.relayTs } : {}),
+            ts: frame.ts,
+            seq: frame.seq,
+            width: frame.deviceWidth,
+            height: frame.deviceHeight,
+          });
+        }}
         onMouseMove={(event) => {
           // Mid-drag a move must still land, even over a letterbox bar: the
           // page is tracking the pointer and a gap reads as a jump.
@@ -276,25 +295,22 @@ export function BrowserPaneSurface({
 
   return (
     <>
-      <div className="flex shrink-0 items-center justify-between gap-2 px-3 py-2">
-        <span className="text-xs text-muted-foreground">
-          {controlLabel(control)}
-        </span>
-        {onHandBack ? (
-          <Button size="sm" variant="outline" onClick={onHandBack}>
-            <Hand className="mr-1.5 h-3.5 w-3.5" />
-            Hand back
-          </Button>
-        ) : onTakeControl ? (
-          <Button size="sm" onClick={onTakeControl}>
-            <MousePointer2 className="mr-1.5 h-3.5 w-3.5" />
-            Take control
-          </Button>
-        ) : null}
-      </div>
+      <PaneControlBar
+        control={control}
+        onTakeControl={onTakeControl}
+        onHandBack={onHandBack}
+        statsOpen={statsOpen}
+        onToggleStats={(next) => {
+          // The menu is the flag: turning the overlay on from here is what a
+          // person who has never heard of `localStorage` can do, and turning it
+          // on has to START the recording, not merely reveal a set of zeros.
+          paneFrameStats.setEnabled(next);
+          setStatsOpen(next);
+        }}
+      />
       <div
         ref={paneRef}
-        className="min-h-0 flex-1 px-3 pb-3 outline-none"
+        className="relative min-h-0 flex-1 px-3 pb-3 outline-none"
         // Keys go to the page only while this pane holds the browser.
         tabIndex={holding ? 0 : -1}
         onPaste={(event) => {
@@ -354,6 +370,7 @@ export function BrowserPaneSurface({
           ]);
         }}
       >
+        {statsOpen ? <StatsOverlay engine={engine} /> : null}
         {paneBody()}
       </div>
       {error ? (

@@ -50,6 +50,10 @@ import {
 } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserdClient } from "../../services/browserd/browserd-client.js";
 import { browserdBundleHash } from "../../services/browserd/live-session-deps.js";
+import {
+  createFrameRelayStats,
+  pongFor,
+} from "./browser-frame-relay-stats.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -226,6 +230,14 @@ export function createComputerBrowserFramesWsHandler(
     let registered: { close(): void } | undefined;
     let activityTimer: ReturnType<typeof setInterval> | undefined;
     /**
+     * What this socket saw, and what it could not pass on.
+     *
+     * Created per socket rather than per route: the interesting number is one
+     * pane's loss, and a process-wide counter would average a congested viewer
+     * away against every healthy one.
+     */
+    let stats: ReturnType<typeof createFrameRelayStats> | undefined;
+    /**
      * Has the pane said it is being looked at since the last activity touch?
      *
      * Reset by each touch and set by each ping, so a pane that goes quiet stops
@@ -241,6 +253,8 @@ export function createComputerBrowserFramesWsHandler(
       abort.abort();
       if (activityTimer) clearInterval(activityTimer);
       activityTimer = undefined;
+      stats?.stop();
+      stats = undefined;
       if (registered) {
         // By identity, so a reconnect cannot retain the dead `WSContext` of the
         // connection it replaced.
@@ -262,6 +276,14 @@ export function createComputerBrowserFramesWsHandler(
 
         registered = { close: () => ws.close(CLOSE_UNAVAILABLE, "closed") };
         liveSockets.add(registered);
+
+        stats = createFrameRelayStats({
+          send: (payload) => ws.send(payload),
+          bufferedAmount: () =>
+            (ws.raw as { bufferedAmount?: number } | undefined)?.bufferedAmount,
+        });
+        stats.setSubscribers(1);
+        stats.start();
 
         /**
          * A watching pane issues no COMMANDS, so nothing else keeps the session
@@ -316,12 +338,18 @@ export function createComputerBrowserFramesWsHandler(
           ...(tabId ? { tabId } : {}),
           signal: abort.signal,
           onFrame: (frame) => {
-            if (closed) return;
-            try {
-              ws.send(JSON.stringify({ type: "frame", frame }));
-            } catch {
-              /* the socket went away between the check and the send */
+            if (closed) {
+              stats?.countDrop();
+              return;
             }
+            // `relayTs` and not the sandbox's `ts`: the two clocks belong to
+            // different machines, so a pane subtracting `ts` from `Date.now()`
+            // reports the drift between two boxes and calls it latency. This
+            // one is stamped by the hop the pane can actually compare against
+            // — it measured this replica's round trip with its own ping.
+            const stamped = { ...frame, relayTs: Date.now() };
+            const payload = JSON.stringify({ type: "frame", frame: stamped });
+            stats?.offer(payload.length, () => ws.send(payload));
           },
           onEnd: (reason) => {
             if (closed) return;
@@ -363,11 +391,17 @@ export function createComputerBrowserFramesWsHandler(
         // on its own tick now, because a one-way stream has no ping to borrow.
         // It still says somebody is watching.
         try {
-          const parsed = JSON.parse(String(event.data)) as { type?: unknown };
+          const parsed = JSON.parse(String(event.data)) as {
+            type?: unknown;
+            t?: unknown;
+          };
           if (parsed?.type !== "ping" || closed) return;
           // The evidence the activity timer waits for.
           watched = true;
-          ws.send(JSON.stringify({ type: "pong" }));
+          // The pane's own stamp comes back untouched, which is what makes the
+          // round trip measurable at all: nothing here reads it, because this
+          // clock is not the pane's.
+          ws.send(pongFor(parsed));
         } catch {
           // Not our protocol; ignore rather than close.
         }

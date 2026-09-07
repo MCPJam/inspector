@@ -61,7 +61,18 @@ export interface PaneFrame {
   deviceWidth: number;
   deviceHeight: number;
   scale: number;
+  /**
+   * The SANDBOX's capture clock. Fine for ordering; useless for latency,
+   * because on the hosted path it belongs to a different machine than the
+   * viewer's.
+   */
   ts: number;
+  /**
+   * When the RELAY saw this frame — the last hop the pane can honestly compare
+   * itself against, because it is the hop the pane pings. Absent from a server
+   * too old to stamp it.
+   */
+  relayTs?: number;
   seq: number;
 }
 
