@@ -16,6 +16,19 @@ what it measured.
 GitHub Checks is configured in the hosted app, at **Settings → Integrations →
 GitHub**. Connecting a repository needs an organization admin.
 
+Two buttons live there, and which one you need depends on whether the MCPJam
+app is already installed on the GitHub account:
+
+- **Install on a GitHub account** — for a fresh install. GitHub sends you back
+  and the account is connected automatically.
+- **Claim an existing installation** — if somebody already installed the app.
+  GitHub skips the return trip for an account it has already installed on, so
+  the first button quietly leaves you on GitHub's settings page.
+
+A GitHub account connects to **one MCPJam organization at a time**. If it is
+already connected somewhere else, the account picker marks it and says so —
+disconnect it there first, or install the app on a different account.
+
 The **pull-request comment** described below is rolling out: it is enabled per
 deployment by an operator, and until it is on for yours a connected repository
 gets the check run and no comment. The per-repository toggle is visible before

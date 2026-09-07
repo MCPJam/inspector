@@ -131,6 +131,16 @@ export type ClaimableInstallation = {
   installationId: number;
   accountLogin: string;
   accountType: GithubInstallationAccountType;
+  /**
+   * Present when this installation is already connected to another MCPJam
+   * organization, so the row can say so instead of offering a click the
+   * backend will refuse. Absent means connectable.
+   *
+   * `organizationName` is present ONLY when the signed-in user is a member of
+   * the organization holding it. Its absence is the backend's answer, not a
+   * missing lookup — do not retry for it, and do not imply one exists to name.
+   */
+  conflict?: { organizationName?: string };
 };
 
 /**
