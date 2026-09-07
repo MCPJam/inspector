@@ -294,6 +294,19 @@ jobs:
           }
           NODE
 
+      # The local-execution release gate. It refuses a build whose derived
+      # OFFER is inconsistent with what it can serve — a platform advertised
+      # with no pack digest, or a digest table stamped at a version whose
+      # assets this release will not publish. A build that offers local
+      # execution nowhere (no conformance evidence recorded) is reported as
+      # unshipped rather than failed: that is a consistent dark release, and
+      # blocking every release until an unrelated feature lands is noise.
+      - name: Local harness release consistency
+        working-directory: mcpjam-inspector
+        env:
+          INSPECTOR_VERSION: ${{ steps.plan.outputs.inspector_version }}
+        run: node scripts/check-local-harness-release.mjs --version "$INSPECTOR_VERSION"
+
       - name: Version packages with Changesets
         run: npx changeset version
 
@@ -876,3 +889,31 @@ jobs:
             .release-assets/macos/**
             .release-assets/windows/**
             .release-assets/runtime/**
+
+      # The gate that proves the PUBLISHED assets are usable by the shipped
+      # Inspector, without any development override.
+      #
+      # The pack workflow's own verification installs from a local file through
+      # `MCPJAM_LOCAL_HARNESS_PACK_SOURCE`. That override is a development
+      # affordance and a shipped Inspector never takes it: it fetches the
+      # release asset by URL and verifies against the committed digest and the
+      # signing key it was built with. Only reading back what was just
+      # published exercises that path — a signature that does not verify, an
+      # asset that did not upload, or a manifest whose tree digest disagrees
+      # with the committed table all produce artifacts that exist and cannot be
+      # installed, which is the failure this release must not ship silently.
+      - name: Published packs are installable by the shipped Inspector
+        if: >-
+          ${{ needs.preflight.outputs.release_tag != ''
+          && fromJSON(needs.preflight.outputs.build_harness_pack) }}
+        working-directory: mcpjam-inspector
+        env:
+          INSPECTOR_VERSION: ${{ needs.preflight.outputs.inspector_version }}
+          # The artifacts as downloaded, rather than the release URL: the assets
+          # are byte-identical, and reading them locally does not depend on the
+          # CDN having caught up with a release created seconds earlier.
+          ASSET_DIR: ${{ github.workspace }}/.release-assets/runtime
+        run: |
+          node scripts/check-local-harness-release.mjs \
+            --version "$INSPECTOR_VERSION" \
+            --base-url "file://$ASSET_DIR/"
