@@ -219,11 +219,31 @@ export async function prepareLocalHarnessTurn(
         };
   let runtimeUse: RuntimeUseReservation | null = null;
   if (lifecycleKey !== null) {
-    runtimeUse = await reserveRuntimeUse({
-      key: lifecycleKey,
-      runtimeRoot: runtimeStatus.runtimeRoot,
-      label: args.sessionId,
-    });
+    try {
+      runtimeUse = await reserveRuntimeUse({
+        key: lifecycleKey,
+        runtimeRoot: runtimeStatus.runtimeRoot,
+        label: args.sessionId,
+      });
+    } catch (error) {
+      // A reservation that cannot be TAKEN is a refusal, not something to
+      // shrug off. It is what stops another Inspector — or the install CLI —
+      // replacing the tree this session's children are about to execute from,
+      // so running without one means running unprotected, quietly.
+      //
+      // Refused as `runtime-unavailable` with the reason, rather than letting
+      // an ENOSPC or an EACCES on a read-only runtime root escape as an
+      // unhandled error out of turn preparation. The user sees what is wrong
+      // with their machine instead of a stack trace.
+      return {
+        ok: false,
+        status: "runtime-unavailable",
+        message:
+          "This Inspector could not reserve the local runtime, so it will " +
+          "not start a session that another process could replace underneath: " +
+          `${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
   }
   const releaseRuntimeUse = async () => {
     const held = runtimeUse;

@@ -57,9 +57,15 @@ vi.mock("../runtime-install.js", () => ({
     // children execute from.
     packVersion: "test-pack-1",
     digest: `sha256:${"a".repeat(64)}`,
+    // The RUNTIME root stays unreachable: these tests are about what happens
+    // when a later step fails, and the bundle never has to resolve.
     runtimeRoot: "/nonexistent/runtime-root",
   }),
-  runtimeInstallRoot: () => "/nonexistent/runtime-root-base",
+  // The INSTALL root must be writable, though — the reservation is a real file
+  // in a real directory. Pointing it at `/nonexistent` made every test in this
+  // file fail with EACCES on any machine that is not root, which is what CI
+  // caught and a root-owned sandbox did not.
+  runtimeInstallRoot: () => installRoot,
 }));
 vi.mock("../instance-key.js", () => ({
   readLocalInstanceIdentity: async () => ({
@@ -121,10 +127,13 @@ function turnArgs() {
 }
 
 let tempDir = "";
+/** Writable install root for the turn's runtime-use reservation. */
+let installRoot = "";
 
 beforeEach(async () => {
   tempDir = await realpath(await mkdtemp(join(tmpdir(), "mcpjam-turn-")));
   stateRoot = tempDir;
+  installRoot = join(tempDir, "runtime");
   // `reset`, not `clear`: a `…Once` override that a failing test never consumed
   // would otherwise leak into the next one. Vitest 3's reset restores the
   // implementation each spy was created with, which is the base behaviour here.
@@ -212,5 +221,29 @@ describe("a local setup that succeeds", () => {
     expect(gatewayRevoke).toHaveBeenCalledTimes(1);
     expect(revokeHarnessModelBroker).toHaveBeenCalledTimes(1);
     expect(getLocalHarnessSession("s_local_1")).toBeUndefined();
+  });
+});
+
+describe("a runtime this Inspector cannot reserve", () => {
+  it("refuses the turn instead of throwing out of preparation", async () => {
+    // The reservation is what stops another Inspector — or the install CLI —
+    // replacing the tree this session's children are about to execute from.
+    // A machine where it cannot be taken (a read-only runtime root, a full
+    // disk, the wrong owner) must not run the session unprotected, and must
+    // not surface the failure as an unhandled ENOSPC/EACCES either: CI caught
+    // exactly that, with every test in this file dying on `mkdir` before it
+    // reached its own subject.
+    // A FILE where the reservation needs a directory, so `mkdir` fails with
+    // ENOTDIR for every user. Deliberately not a `chmod`: this suite runs as
+    // root in some containers, where a permission bit stops nothing — which is
+    // precisely how the original defect survived a green local run.
+    await writeFile(join(tempDir, "not-a-directory"), "");
+    installRoot = join(tempDir, "not-a-directory", "runtime");
+
+    const result = await prepareLocalHarnessTurn(turnArgs());
+    expect(result).toMatchObject({ ok: false, status: "runtime-unavailable" });
+    expect((result as { message: string }).message).toMatch(/could not reserve/);
+    // And nothing was started that would then need tearing down.
+    expect(startLoopbackModelBroker).not.toHaveBeenCalled();
   });
 });
