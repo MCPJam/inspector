@@ -3814,12 +3814,19 @@ const runLocalIteration = async ({
         attachmentsNote = await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
-          // The EFFECTIVE id, as every other consumer resolves it. Today the
-          // fallback is unreachable here — the outer `testCaseId` is the
-          // quick/single-case surface, which passes `runId: null`, and no box
-          // is booted without a run — but the two must not disagree if that
-          // ever changes: a seeder handed `undefined` returns no note and
-          // silently seeds nothing.
+          // The EFFECTIVE id. Today the fallback is unreachable here — the
+          // outer `testCaseId` is the quick/single-case surface, which passes
+          // `runId: null`, and no box is booted without a run — but the two
+          // must not disagree if that ever changes: a seeder handed
+          // `undefined` returns no note and silently seeds nothing.
+          //
+          // MIND THE PRECEDENCE. This matches the persistence sites, which
+          // prefer `test.testCaseId`; the two `resolveEnforcementGate` calls
+          // resolve the same pair the other way round (`testCaseId ??
+          // test.testCaseId`). Neither order is reachable with both ids set,
+          // so nothing diverges today — but a path that ever sets both must
+          // reconcile them rather than pick one, or a case would seed its
+          // attachments under one id and be policy-gated under the other.
           testCaseId: test.testCaseId ?? testCaseId,
           sandboxId: evalSandbox.value.sandboxId,
           promptTurns,
