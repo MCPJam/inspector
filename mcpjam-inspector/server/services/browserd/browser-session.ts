@@ -38,6 +38,7 @@ import type {
 import { formatBrowserdError, type BrowserCommand } from "./protocol";
 import type {
   BrowserContextMode,
+  BrowserRelaunchClaim,
   BrowserSessionLookup,
   BrowserSessionRecord,
   BrowserSessionRecordResult,
@@ -121,6 +122,27 @@ export interface SessionStore {
     replacesSessionId?: string;
     signal?: AbortSignal;
   }): Promise<BrowserSessionRecordResult>;
+  /**
+   * Take the exclusive right to relaunch this computer's browser.
+   *
+   * OPTIONAL, and its absence means "proceed as before". Two things arrive as
+   * absence: a control plane that predates the route, and a test fake that has
+   * no opinion about claims. Neither should turn a relaunch into a refusal —
+   * the claim narrows a race that the record compare-and-swap still catches
+   * afterwards, at the cost of a wasted boot.
+   */
+  claimRelaunch?(args: {
+    computerId: string;
+    claimId: string;
+    ttlMs?: number;
+    signal?: AbortSignal;
+  }): Promise<BrowserRelaunchClaim>;
+  /** Give it back. Best-effort: an unreleased claim expires on its own. */
+  releaseRelaunch?(args: {
+    computerId: string;
+    claimId: string;
+    signal?: AbortSignal;
+  }): Promise<void>;
   touch(args: {
     sessionId: string;
     kind: "command" | "panel";
@@ -418,9 +440,20 @@ async function fenceForRelaunch(
   // is exactly this case. Closing it needs the control plane to hand back a
   // stale row's credentials for an ownership read, which is a backend change
   // and belongs in the backend PR, not smuggled into this one.
-  const session = owner?.session;
-  if (!session) return { fence: null, owner: owner ?? null };
-  const client = deps.createClient(session.publicOrigin, session.browserdToken);
+  // A STALE ROW STILL HAS A DAEMON. The lookup above answers `null` the moment
+  // the bundle hash has moved — and every daemon change rotates it, so right
+  // after each deploy this is the state EVERY box is in. Reading that as "no
+  // row, nothing to protect" is what killed people mid-login on the first
+  // relaunch after every release.
+  //
+  // The control plane now hands back just enough of such a row to ask its
+  // daemon who is holding it. Absent means there is genuinely nobody to ask —
+  // the box is not serving, or the control plane predates the field — and the
+  // relaunch proceeds exactly as it did before, which is what lets this ship
+  // ahead of the backend.
+  const askable = owner?.session ?? owner?.staleSession;
+  if (!askable) return { fence: null, owner: owner ?? null };
+  const client = deps.createClient(askable.publicOrigin, askable.browserdToken);
   const holder = `${RELAUNCH_HOLDER_PREFIX}${randomUUID()}`;
   const taken = await client
     .leaseAction?.({
@@ -588,6 +621,16 @@ async function ensureOnComputer(
   const sandboxId = await deps.resolveSandboxId(computerId);
   const sandbox = await deps.connect(sandboxId);
   let handle: BrowserdHandle | undefined;
+  /**
+   * Give back the relaunch claim, whatever happens.
+   *
+   * Assigned only once a claim is actually held, so the `finally` below can
+   * call it unconditionally. Everything the relaunch can do after taking it —
+   * a refused fence, a kill that fails, a lost record, a thrown boot — has to
+   * end with the claim released, or the next attempt waits out its whole TTL
+   * for no reason.
+   */
+  let releaseClaim: () => Promise<void> = async () => {};
   try {
     // WAKE, THEN ASK AGAIN, before deciding the daemon is gone.
     //
@@ -600,6 +643,43 @@ async function ensureOnComputer(
     // against this box breaks, to replace a daemon that was only asleep.
     const awake = await tryReuse(deps, lookup, contextMode, args.signal);
     if (awake) return awake;
+
+    // AND ANOTHER REPLICA MAY BE ABOUT TO DO THE SAME THING.
+    //
+    // The fence below is a lease on the daemon being replaced, which is
+    // exactly the wrong tool for this: the race that hurts is the one where
+    // there is no daemon yet to hold a lease on — a first boot, or a row the
+    // sweep took — and there the second replica's `pkill` reaps the daemon the
+    // first has just booted. The record compare-and-swap cannot save that
+    // either, because it fires long after the kill and the damage IS the kill.
+    //
+    // So the claim comes first, and it lives in the control plane because that
+    // is the only thing both replicas can see.
+    const claimId = randomUUID();
+    const claimed = await deps.store.claimRelaunch?.({
+      computerId,
+      claimId,
+      ...(args.signal ? { signal: args.signal } : {}),
+    });
+    if (claimed?.ok === false && claimed.reason === "claimed") {
+      throw new BrowserSessionInUseError(
+        "another replica is restarting this browser right now; try again in a moment",
+      );
+    }
+    // `undefined` (no claim support) and `unavailable` (unreachable, or a
+    // control plane that predates the route) both proceed unclaimed, as every
+    // relaunch did before this existed. Releasing is then a no-op.
+    if (claimed?.ok === true) {
+      releaseClaim = async () => {
+        await deps.store
+          .releaseRelaunch?.({
+            computerId,
+            claimId,
+            ...(args.signal ? { signal: args.signal } : {}),
+          })
+          .catch(() => {});
+      };
+    }
 
     // A person may be DRIVING this browser. The relaunch below pkills their
     // Chromium and rotates the boot, which from their side is the page
@@ -725,5 +805,8 @@ async function ensureOnComputer(
     // never kill the durable computer itself.
     await handle?.stop().catch(() => {});
     await sandbox.disconnect().catch(() => {});
+    // The claim last: it is the thing another replica is waiting on, and
+    // holding it while this one tidies up is time nobody else can use.
+    await releaseClaim();
   }
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Copy, Loader2 } from "lucide-react";
+import { AlertTriangle, Copy, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@mcpjam/design-system/button";
 import { copyToClipboard } from "@/lib/clipboard";
@@ -20,6 +20,13 @@ import { TraceViewer } from "@/components/evals/trace-viewer";
 import { BrowserArtifactsView } from "@/components/evals/browser-artifacts-view";
 import { hasReplayArtifacts } from "@/components/evals/browser-step-replay";
 import {
+  expectedTurnTraceSpanCount,
+  hydrateTurnTraceSpans,
+  SPAN_LOAD_FAILURE,
+  SPAN_LOAD_FAILURE_CONSEQUENCE,
+  turnTraceWallClockRange,
+} from "@/components/evals/turn-trace-spans";
+import {
   ChatTraceViewModeHeaderBar,
   type TraceViewMode,
 } from "@/components/evals/trace-view-mode-tabs";
@@ -28,7 +35,6 @@ import {
   useSharedChatWidgetSnapshots,
   useSharedChatTurnTraces,
   useSessionBrowserArtifacts,
-  type SharedChatTurnTrace,
 } from "@/hooks/useSharedChatThreads";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { SessionScoredTranscript } from "@/components/connection/share-usage/session-scored-transcript";
@@ -292,28 +298,6 @@ interface ShareUsageThreadDetailProps {
  */
 const PROMOTABLE_SOURCE_TYPES = new Set(["swarm", "scenario"]);
 
-/**
- * Fetch span blobs from turn trace URLs and flatten into a single span array.
- */
-async function hydrateSpans(
-  traces: SharedChatTurnTrace[],
-): Promise<EvalTraceSpan[]> {
-  const results = await Promise.all(
-    traces.map(async (trace) => {
-      if (!trace.spansBlobUrl) return [];
-      try {
-        const response = await fetch(trace.spansBlobUrl);
-        if (!response.ok) return [];
-        const parsed = await response.json();
-        return Array.isArray(parsed) ? (parsed as EvalTraceSpan[]) : [];
-      } catch {
-        return [];
-      }
-    }),
-  );
-  return results.flat();
-}
-
 export function ShareUsageThreadDetail({
   threadId,
   sessionLink,
@@ -334,6 +318,14 @@ export function ShareUsageThreadDetail({
   // own internal state.
   const [viewMode, setViewMode] = useState<TraceViewMode | "browser">("chat");
   const [hydratedSpans, setHydratedSpans] = useState<EvalTraceSpan[]>([]);
+  /**
+   * The recorded spans could not be loaded, though the transcript may have
+   * been. Its OWN slot, never `error`: that one belongs to the transcript,
+   * gets cleared on every re-run of the transcript effect, and drives a
+   * branch that replaces the whole viewer — none of which fits a session
+   * whose transcript rendered fine and whose span blobs did not.
+   */
+  const [spanError, setSpanError] = useState<string | null>(null);
 
   // Fetch messages from blob URL
   useEffect(() => {
@@ -380,21 +372,63 @@ export function ShareUsageThreadDetail({
     };
   }, [thread?.messagesBlobUrl]);
 
+  /**
+   * Eval blobs are anchored at the RUN start by `drive-local-eval-turn`, while
+   * their per-turn rows carry a persist-time `turnStartedAt`. Rebasing them
+   * would displace every span by the persist round-trip, so an eval thread
+   * keeps the offsets its blobs already carry.
+   *
+   * Compared as a string on purpose: `SharedChatSourceType` is
+   * `"scenario" | "swarm"`, so TS calls this branch dead — but the sessions
+   * feed types the same field as `"direct" | "scenario" | "eval" | "swarm"`
+   * and `SessionsPanel` renders this component for every row without a gate.
+   * The narrow type is the thing that is wrong here, not the check.
+   *
+   * Hoisted out of the hydration effect because the axis anchor below has to
+   * make the SAME call: the rows' timestamps are persist-time noise for evals,
+   * which is why their spans aren't rebased from them, and that disqualifies
+   * them as the wall clock too.
+   */
+  const sessionAnchored = (thread?.sourceType as string | undefined) === "eval";
+
   // Hydrate span blobs when turn traces arrive
   useEffect(() => {
     if (!turnTraces || turnTraces.length === 0) {
       setHydratedSpans(EMPTY_SPANS);
+      setSpanError(null);
       return;
     }
 
     let isActive = true;
-    void hydrateSpans(turnTraces).then((spans) => {
-      if (isActive) setHydratedSpans(spans);
-    });
+    // Each attempt decides for itself, so a retry that succeeds is not
+    // reported through the failure its predecessor left behind.
+    setSpanError(null);
+    const expectedSpans = expectedTurnTraceSpanCount(turnTraces);
+    void hydrateTurnTraceSpans(turnTraces, { sessionAnchored })
+      .then((spans) => {
+        if (!isActive) return;
+        setHydratedSpans(spans);
+        // `hydrateTurnTraceSpans` swallows every per-blob failure and returns
+        // [], which made a total load failure indistinguishable from a session
+        // that never recorded spans — and the timeline then states the wrong
+        // one of those two: `getRecordedSpans` reads [] as `undefined`, the
+        // timeline lands on `mode: "none"`, and it prints "No timing data
+        // recorded" — a claim about the SESSION. `spanCount` is the rows' own
+        // record of what should be there, so "expected some, got none" is
+        // exactly the case where that claim is false.
+        if (expectedSpans > 0 && spans.length === 0) {
+          setSpanError(SPAN_LOAD_FAILURE);
+        }
+      })
+      .catch(() => {
+        if (!isActive) return;
+        setHydratedSpans(EMPTY_SPANS);
+        setSpanError(SPAN_LOAD_FAILURE);
+      });
     return () => {
       isActive = false;
     };
-  }, [turnTraces]);
+  }, [turnTraces, sessionAnchored]);
 
   // Transform snapshots to TraceWidgetSnapshot format
   const widgetSnapshots: TraceWidgetSnapshot[] = useMemo(() => {
@@ -474,21 +508,30 @@ export function ShareUsageThreadDetail({
     [thread?.modelId],
   );
 
-  // Compute trace timing from turn traces
-  const traceStartedAtMs = useMemo(() => {
-    if (!turnTraces || turnTraces.length === 0) return null;
-    return Math.min(...turnTraces.map((t: SharedChatTurnTrace) => t.startedAt));
-  }, [turnTraces]);
-
-  const traceEndedAtMs = useMemo(() => {
-    if (!turnTraces || turnTraces.length === 0) return null;
-    return Math.max(...turnTraces.map((t: SharedChatTurnTrace) => t.endedAt));
-  }, [turnTraces]);
+  // Trace timing from the turn rows. Non-finite rows are filtered inside the
+  // shared helper, matching `hydrateTurnTraceSpans` — without that a single
+  // garbage `startedAt` gave the axis a NaN anchor while the spans kept a
+  // finite base, measuring labels and positions from two different origins.
+  // `null` when nothing usable is left, the same answer as having no traces.
+  //
+  // An eval thread gets NO anchor rather than a wrong one. `getTraceStartAnchorMs`
+  // labels span offset 0 with `traceStartedAtMs`, and for an eval that offset is
+  // the RUN start while these rows hold each turn's persist time — the earliest
+  // of which lands after turn 1 finished. Passing it would print a clock time
+  // for offset 0 that is minutes off. This is the same disqualification that
+  // keeps `sessionAnchored` from rebasing off those timestamps; making it twice
+  // from one flag is the point of hoisting it.
+  const wallClock = useMemo(
+    () => turnTraceWallClockRange(turnTraces ?? []),
+    [turnTraces],
+  );
+  const traceStartedAtMs = sessionAnchored ? null : wallClock.startedAtMs;
+  const traceEndedAtMs = sessionAnchored ? null : wallClock.endedAtMs;
 
   const canPromoteThread = Boolean(
     promote?.canPromote &&
-      thread?.sourceType &&
-      PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
+    thread?.sourceType &&
+    PROMOTABLE_SOURCE_TYPES.has(thread.sourceType),
   );
 
   // Reset when the viewer switches sessions, so a dialog opened on one thread
@@ -685,16 +728,33 @@ export function ShareUsageThreadDetail({
             </ErrorBoundary>
           </div>
         ) : (
-          <TraceViewer
-            trace={traceEnvelope}
-            model={resolvedModel}
-            forcedViewMode={effectiveViewMode === "raw" ? "raw" : "timeline"}
-            hideToolbar
-            fillContent
-            traceStartedAtMs={traceStartedAtMs}
-            traceEndedAtMs={traceEndedAtMs}
-            interactive={false}
-          />
+          <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+            {/* Same warning the swarm pane carries, for the same reason: the
+                timeline below states "No timing data recorded" whenever it has
+                no spans, which is a claim about the SESSION — and it is false
+                when the spans exist and the fetch is what failed. This surface
+                used to stay silent while the swarm one spoke, so the two views
+                of one session disagreed about whether anything was wrong. */}
+            {spanError ? (
+              <div
+                className="mx-4 mt-2 flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-[11px] text-warning-foreground"
+                data-testid="share-usage-span-error"
+              >
+                <AlertTriangle className="size-3 shrink-0" aria-hidden />
+                {spanError} — {SPAN_LOAD_FAILURE_CONSEQUENCE}.
+              </div>
+            ) : null}
+            <TraceViewer
+              trace={traceEnvelope}
+              model={resolvedModel}
+              forcedViewMode={effectiveViewMode === "raw" ? "raw" : "timeline"}
+              hideToolbar
+              fillContent
+              traceStartedAtMs={traceStartedAtMs}
+              traceEndedAtMs={traceEndedAtMs}
+              interactive={false}
+            />
+          </div>
         )}
       </div>
 

@@ -29,18 +29,51 @@ Evals are available to both signed-in users and guests. Guests authenticate auto
 
 ## Authoring a case
 
-Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open a blank case editor. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
+Click **New case** in the suite header (or in the empty-state screen when no cases exist yet) to open the case workspace. The case is a draft until you press **Save** — backing out without saving leaves your suite unchanged.
 
-Each case has four moving parts:
+### Case workspace
 
-- **Scenario** — short label so you can find it later ("Draw a rectangle", "Refuses unsafe delete").
-- **Prompt turns** — one or more user messages. Multi-turn is supported; expected tools and checks attach per turn, so you can model "ask, get a result, follow up."
-- **Expected tools** — for each turn, the tool calls the model should make. Arguments can be exact values or typed placeholders (`"string"`, `"number"`) so you're not chasing flaky literals.
-- **Expected output** — optional free-text description of what a good final answer looks like. Used by the judge.
+The case editor is a two-pane workspace. The left column is where you write the case; the right column shows the selected trial — a live run in progress, a persisted iteration from history, a recording session, or a spec preview.
+
+**Left column — the simple form**
+
+The simple form organizes authoring into three sections:
+
+- **User asks** — the prompt the model receives.
+- **In the app** — interact steps (clicks, typing) and widget assertions recorded against a live widget, shown in the order they run.
+- **Check the result** — tool-call assertions and other checks that decide pass/fail.
+
+Steps are stored and executed in the order you author them. Adding a new tool check splices it after the last existing tool check, so the grading order matches what you see.
+
+**Right column — the selected trial**
+
+The right column resolves to one of these views, in precedence order:
+
+1. **Explicit history pick** — a trial you selected from History.
+2. **Recording** — a live recording session is active.
+3. **Live run** — a quick run is in progress.
+4. **Latest** — the most recent persisted iteration with a trace.
+5. **Spec preview** — the authored steps rendered as a conversation preview.
+6. **Empty** — no trial yet; start typing a prompt.
 
 <Note>
   A **negative case** is just a case whose checks say "this tool should *not* fire." Meta questions ("what params does `search` take?"), conversational drift, and ambiguous prompts are the usual shape.
 </Note>
+
+### History inspect
+
+Click **History** in the trial header to open a list of past iterations. Selecting one freezes the left form on that trial's snapshot — the exact steps, checks, and settings that were in effect when it ran — so you can compare what you see in the trace against what was authored at the time.
+
+While a trial is frozen, an **Inspecting** banner appears at the top of the left column. If the current draft differs from the frozen snapshot, a **Changed** indicator appears. Click **Edit case** to return to the live draft; the selected trial stays visible on the right.
+
+### Next run sheet
+
+Click the **Model**, **Trials**, or **Host** chip above the form to open the **Next run** sheet. It separates two kinds of settings:
+
+- **Saved with this case** — *Trials* and *Model* are written to the case before every quick run and on Save. Changes here persist.
+- **For this run** — *Host* applies only to the next run and is not saved to the case.
+
+Click **Suite settings** in the sheet to configure hosts and other suite-level defaults.
 
 ## Case attachments
 
@@ -62,7 +95,9 @@ When attachments are present, a note is automatically prepended to the case's fi
 
 If your MCP server uses MCP Apps (widgets rendered in a sandboxed iframe), you can record real in-widget interactions — clicks and typing — directly into a test case as `interact` steps.
 
-When you arm record mode on a test case, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+Click **Start recording** in the *In the app* section of the case form. The button is disabled until the prompt is non-empty — type a prompt first, then start recording. Once active, a recorder shim is injected into the widget sandbox. Every click and text input you make in the widget is captured as a locator-stable `interact` step and appended to the case. The locator is built from stable identifiers in priority order: `data-testid` → ARIA role + accessible name → visible text → CSS path. This means the recorded step resolves to the same element when the case runs headlessly.
+
+Recorded interact steps and widget assertions appear in the **In the app** section in the order they were captured. This order is also the execution order — the runner processes steps sequentially and stops at the first failure.
 
 ### Widget `ui/message` follow-ups
 
@@ -73,6 +108,9 @@ This means an eval case can faithfully verify a full widget interaction sequence
 ### What the trace shows
 
 The Chat/Trace tab renders widget tool calls as the same app-attributed cards you see in Playground, so you can inspect exactly what the widget returned and what the model did with it.
+
+- **JSON tool results** — Tool outputs that are JSON (including JSON wrapped in a text block) render as structured data in the card's **Data** tab rather than as a raw text block. There is no duplicate result row below the card.
+- **Frozen widget diagnostics** — When a widget was captured as a screenshot during the run, the card's **Sandbox** tab shows the recorded policy: resource URI, CSP declaration, permissions, permissive mode, and any console errors or blocked requests logged during that run. Live-only fields (sandbox attributes, lifecycle, view origin) show as **not recorded** because they are not available after the run completes.
 
 
 

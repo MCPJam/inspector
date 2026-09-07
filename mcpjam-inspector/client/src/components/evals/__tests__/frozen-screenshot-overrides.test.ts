@@ -7,7 +7,7 @@ import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render
 import { buildFrozenScreenshotOverrides } from "../frozen-screenshot-overrides";
 
 const obs = (
-  o: Partial<EvalTraceWidgetRenderObservationView>
+  o: Partial<EvalTraceWidgetRenderObservationView>,
 ): EvalTraceWidgetRenderObservationView => ({
   toolCallId: "tc1",
   toolName: "search-products",
@@ -19,7 +19,7 @@ const obs = (
 });
 
 const interaction = (
-  o: Partial<EvalTraceBrowserInteractionStepView>
+  o: Partial<EvalTraceBrowserInteractionStepView>,
 ): EvalTraceBrowserInteractionStepView => ({
   toolCallId: "tc1",
   stepIndex: 0,
@@ -36,6 +36,43 @@ describe("buildFrozenScreenshotOverrides", () => {
       obs({ toolCallId: "tc1", screenshotUrl: "https://s/a.png" }),
     ]);
     expect(out["tc1"]?.frozenScreenshotUrl).toBe("https://s/a.png");
+  });
+
+  it("carries saved eval errors and the observation resource URI into the frozen override", () => {
+    const out = buildFrozenScreenshotOverrides({}, [
+      obs({
+        toolCallId: "tc1",
+        screenshotUrl: "https://s/a.png",
+        resourceUri: "ui://widget/view.html",
+        consoleErrors: ["TypeError: broken"],
+        blockedRequests: ["https://blocked.example.com"],
+      }),
+    ]);
+
+    expect(out.tc1).toMatchObject({
+      resourceUri: "ui://widget/view.html",
+      recordedWidgetErrors: {
+        consoleErrors: ["TypeError: broken"],
+        blockedRequests: ["https://blocked.example.com"],
+      },
+    });
+  });
+
+  it("keeps errors from later failed observations with the last good screenshot", () => {
+    const out = buildFrozenScreenshotOverrides({}, [
+      obs({ screenshotUrl: "https://s/good.png", consoleErrors: ["first"] }),
+      obs({
+        ts: 2,
+        status: "render_error",
+        screenshotUrl: undefined,
+        consoleErrors: ["first", "later"],
+      }),
+    ]);
+
+    expect(out.tc1?.recordedWidgetErrors?.consoleErrors).toEqual([
+      "first",
+      "later",
+    ]);
   });
 
   it("merges onto an existing snapshot override without dropping its fields", () => {
@@ -116,9 +153,35 @@ describe("buildFrozenScreenshotOverrides", () => {
           ts: 90,
           screenshotUrl: "https://s/cart-open.png",
         }),
-      ]
+      ],
     );
     expect(out["tc1"]?.frozenScreenshotUrl).toBe("https://s/cart-open.png");
+  });
+
+  it("keeps the render resource URI when a later interaction supplies only a screenshot", () => {
+    const out = buildFrozenScreenshotOverrides(
+      {},
+      [
+        obs({
+          toolCallId: "tc1",
+          ts: 1,
+          screenshotUrl: "https://s/initial.png",
+          resourceUri: "ui://widget/view.html",
+        }),
+      ],
+      [
+        interaction({
+          toolCallId: "tc1",
+          ts: 50,
+          screenshotUrl: "https://s/final.png",
+        }),
+      ],
+    );
+
+    expect(out.tc1).toMatchObject({
+      frozenScreenshotUrl: "https://s/final.png",
+      resourceUri: "ui://widget/view.html",
+    });
   });
 
   it("falls back to the render screenshot when no interaction step has one", () => {
@@ -131,7 +194,7 @@ describe("buildFrozenScreenshotOverrides", () => {
           screenshotUrl: "https://s/initial.png",
         }),
       ],
-      [interaction({ toolCallId: "tc1", ts: 50, screenshotUrl: null })]
+      [interaction({ toolCallId: "tc1", ts: 50, screenshotUrl: null })],
     );
     expect(out["tc1"]?.frozenScreenshotUrl).toBe("https://s/initial.png");
   });

@@ -10,6 +10,7 @@ interface PolicyDiffTabProps {
   jumpToHost?: string | null;
   /** Cleared after the jump animation completes. */
   onJumpHandled?: () => void;
+  recorded?: boolean;
 }
 
 type RowState = "allowed" | "blocked" | "stripped" | "cors" | "mismatch";
@@ -24,7 +25,8 @@ interface Row {
 function expressionToHost(expr: string): string | null {
   const trimmed = expr.trim();
   if (!trimmed || trimmed.startsWith("'")) return null;
-  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:") return trimmed;
+  if (trimmed === "*" || trimmed === "data:" || trimmed === "blob:")
+    return trimmed;
   if (/^[a-zA-Z][a-zA-Z0-9+\-.]*:$/.test(trimmed)) return trimmed;
   let rest = trimmed.replace(/^[a-zA-Z][a-zA-Z0-9+\-.]*:\/\//, "");
   const slash = rest.indexOf("/");
@@ -45,7 +47,10 @@ function buildRequestedRows(
     }
   };
   pushAll(declared.connectDomains ?? declared.connect_domains, "connect-src");
-  pushAll(declared.resourceDomains ?? declared.resource_domains, "img/script/font/style-src");
+  pushAll(
+    declared.resourceDomains ?? declared.resource_domains,
+    "img/script/font/style-src",
+  );
   pushAll(declared.frameDomains, "frame-src");
   pushAll(declared.baseUriDomains, "base-uri");
   return rows;
@@ -197,9 +202,11 @@ function PolicyColumn({
   const summaryText =
     rows.length === 0
       ? emptyLabel
-      : tone === "warn" && (title === "Observed")
-        ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
-        : `${summary.directives} ${summary.directives === 1 ? "directive" : "directives"} · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
+      : tone === "warn" && title === "Observed"
+      ? `${rows.length} ${rows.length === 1 ? "block" : "blocks"}`
+      : `${summary.directives} ${
+          summary.directives === 1 ? "directive" : "directives"
+        } · ${summary.sources} ${summary.sources === 1 ? "source" : "sources"}`;
 
   return (
     <div className="rounded-md border border-border/40 bg-card min-w-0">
@@ -232,10 +239,10 @@ function PolicyColumn({
               rows.length === 0
                 ? "text-muted-foreground italic"
                 : tone === "warn"
-                  ? title === "Observed"
-                    ? "text-destructive"
-                    : "text-amber-600 dark:text-amber-400"
-                  : "text-foreground"
+                ? title === "Observed"
+                  ? "text-destructive"
+                  : "text-amber-600 dark:text-amber-400"
+                : "text-foreground"
             }`}
           >
             {summaryText}
@@ -243,7 +250,9 @@ function PolicyColumn({
         </div>
         <ChevronDown
           aria-hidden
-          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          className={`size-3.5 text-muted-foreground shrink-0 mt-1 transition-transform ${
+            isOpen ? "rotate-180" : ""
+          }`}
         />
       </button>
 
@@ -260,7 +269,9 @@ function PolicyColumn({
                   r.state === "mismatch"
                     ? "bg-sky-500/5 border border-sky-500/25 border-l-2 border-l-sky-500/60"
                     : "border border-transparent"
-                } ${matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""} transition-colors motion-reduce:transition-none`}
+                } ${
+                  matches ? "ring-1 ring-sky-500 bg-sky-500/15" : ""
+                } transition-colors motion-reduce:transition-none`}
               >
                 <span className={`text-center ${m.cls}`}>{m.glyph}</span>
                 <span
@@ -268,11 +279,15 @@ function PolicyColumn({
                     r.state === "blocked" || r.state === "stripped"
                       ? "text-destructive"
                       : r.state === "cors"
-                        ? "text-amber-600 dark:text-amber-400"
-                        : r.state === "mismatch"
-                          ? "text-sky-600 dark:text-sky-400"
-                          : "text-foreground"
-                  } ${r.state === "stripped" ? "line-through decoration-destructive/60" : ""}`}
+                      ? "text-amber-600 dark:text-amber-400"
+                      : r.state === "mismatch"
+                      ? "text-sky-600 dark:text-sky-400"
+                      : "text-foreground"
+                  } ${
+                    r.state === "stripped"
+                      ? "line-through decoration-destructive/60"
+                      : ""
+                  }`}
                   title={r.host}
                 >
                   {r.host}
@@ -293,7 +308,7 @@ function hostMatches(rowHost: string, target: string): boolean {
   if (!target) return false;
   const r = rowHost.toLowerCase();
   const t = target.toLowerCase().replace(/^https?:\/\//, "");
-  return r === t || r.endsWith("." + t) || ("*." + r.replace(/^\*\./, "")) === t;
+  return r === t || r.endsWith("." + t) || "*." + r.replace(/^\*\./, "") === t;
 }
 
 export function PolicyDiffTab({
@@ -301,6 +316,7 @@ export function PolicyDiffTab({
   diagnoses,
   jumpToHost,
   onJumpHandled,
+  recorded = false,
 }: PolicyDiffTabProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -323,11 +339,14 @@ export function PolicyDiffTab({
     [input.widgetDeclared],
   );
   const effectiveRows = useMemo(
-    () => [
-      ...buildEffectiveRows(input.effective, mismatchHosts),
-      ...buildStrippedRows(input.widgetDeclared, input.effective),
-    ],
-    [input.effective, input.widgetDeclared, mismatchHosts],
+    () =>
+      recorded
+        ? []
+        : [
+            ...buildEffectiveRows(input.effective, mismatchHosts),
+            ...buildStrippedRows(input.widgetDeclared, input.effective),
+          ],
+    [input.effective, input.widgetDeclared, mismatchHosts, recorded],
   );
   const observedRows = useMemo(() => buildObservedRows(diagnoses), [diagnoses]);
 
@@ -339,7 +358,9 @@ export function PolicyDiffTab({
   useEffect(() => {
     if (!jumpToHost || !containerRef.current) return;
     const target = containerRef.current.querySelector(
-      `[data-policy-host="${CSS.escape(jumpToHost.replace(/^https?:\/\//, ""))}"]`,
+      `[data-policy-host="${CSS.escape(
+        jumpToHost.replace(/^https?:\/\//, ""),
+      )}"]`,
     );
     if (target instanceof HTMLElement) {
       target.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -370,7 +391,7 @@ export function PolicyDiffTab({
           title="Effective"
           subtitle={applied ? "proxy applied" : "widget asked · unverified"}
           rows={effectiveRows}
-          emptyLabel="No allowlist captured"
+          emptyLabel={recorded ? "Not recorded" : "No allowlist captured"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
           unconfirmed={!applied}
@@ -379,7 +400,7 @@ export function PolicyDiffTab({
           title="Observed"
           subtitle="browser saw"
           rows={observedRows}
-          emptyLabel="No violations"
+          emptyLabel={recorded ? "Not recorded" : "No violations"}
           jumpHost={jumpToHost}
           forceOpen={Boolean(jumpToHost)}
         />

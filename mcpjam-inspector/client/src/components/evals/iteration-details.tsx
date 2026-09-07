@@ -225,6 +225,8 @@ export function IterationDetails({
   judgeCase = null,
   enableJudgeReview = false,
   trialChainSlot,
+  syncedStepId,
+  onSyncStep,
 }: {
   iteration: EvalIteration;
   testCase: EvalCase | null;
@@ -257,6 +259,13 @@ export function IterationDetails({
    * fetch four of its callers never asked for.
    */
   trialChainSlot?: ReactNode;
+  /**
+   * Step cursor shared with a host that lists the authored steps beside this
+   * pane (the Evaluate case workspace). Forwarded to the trace viewer's Steps
+   * view untouched; absent for the other hosts.
+   */
+  syncedStepId?: string | null;
+  onSyncStep?: (stepId: string | null) => void;
 }) {
   const getBlob = useAction(
     "testSuites:getTestIterationBlob" as any,
@@ -1022,6 +1031,8 @@ export function IterationDetails({
               stepStatusById={
                 stepStatusById.size > 0 ? stepStatusById : undefined
               }
+              syncedStepId={syncedStepId}
+              onSyncStep={onSyncStep}
               iterationResult={iteration.result}
               expectedToolCalls={expectedToolCalls}
               actualToolCalls={actualToolCalls}

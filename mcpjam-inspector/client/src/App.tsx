@@ -199,10 +199,19 @@ import {
 } from "./lib/project-route";
 import { useProjectRouteCoordinator } from "./hooks/use-project-route-coordinator";
 import {
+  createProjectSignInReturnRecoveryIntent,
+  resolveProjectSignInReturnRecovery,
+  type ProjectSignInReturnRecoveryIntent,
+} from "./lib/project-route-recovery";
+import {
   captureAppSignInReturnPath,
   consumeAppSignInReturnPath,
+  readAppSignInReturnPath,
 } from "./lib/app-signin-return-path";
-import { trackSignInReturnRestored } from "./lib/project-route-telemetry";
+import {
+  trackSignInReturnRestored,
+  trackStaleProjectReturnRecovered,
+} from "./lib/project-route-telemetry";
 import { isHostedTabBlocked } from "./lib/hosted-tab-policy";
 import { buildOAuthTokensByServerId } from "./lib/oauth/oauth-tokens";
 import type { OAuthTrace } from "./lib/oauth/oauth-trace";
@@ -2505,6 +2514,15 @@ export default function App() {
   const [oauthServerModalNonce, setOauthServerModalNonce] = useState(0);
   const [callbackCompleted, setCallbackCompleted] = useState(false);
   const [callbackRecoveryExpired, setCallbackRecoveryExpired] = useState(false);
+  const [pendingProjectReturnRecovery, setPendingProjectReturnRecovery] =
+    useState<ProjectSignInReturnRecoveryIntent | null>(() => {
+      if (window.location.pathname === routePaths.callback) return null;
+      const restoredPath = readAppSignInReturnPath();
+      const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+      return restoredPath === currentPath
+        ? createProjectSignInReturnRecoveryIntent(restoredPath)
+        : null;
+    });
   const billingDeepLinkNavRef = useRef(false);
   /** True after we read valid plan/interval from the URL and stripped query params; avoids clearing session on the next /billing tick. */
   const billingCheckoutQueryConsumedRef = useRef(false);
@@ -2519,6 +2537,25 @@ export default function App() {
   const conformanceEnabled = useFeatureFlagEnabled("mcpjam-conformance");
   const compatibilityEnabled = useFeatureFlagEnabled("mcpjam-compatibility");
   const xaaEnabled = useFeatureFlagEnabled("xaa");
+
+  // AuthKit can restore a permalink from `main.tsx` before the callback route
+  // ever renders. Consume the generic return path on that restored page so it
+  // can still arm stale-project recovery. Layout timing prevents the generic
+  // unavailable boundary from painting first.
+  useLayoutEffect(() => {
+    if (window.location.pathname === routePaths.callback) return;
+    const restoredPath = consumeAppSignInReturnPath();
+    if (!restoredPath) return;
+    const currentPath = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (restoredPath !== currentPath) {
+      trackSignInReturnRestored("superseded");
+      return;
+    }
+    trackSignInReturnRestored("restored");
+    setPendingProjectReturnRecovery(
+      createProjectSignInReturnRecoveryIntent(restoredPath),
+    );
+  }, []);
 
   // Per-tab "hide from this header" list for the OAuth / XAA debugger chip strip.
   // View-only (localStorage) — the x on a chip dismisses it from this header
@@ -2945,6 +2982,9 @@ export default function App() {
           : restoredPath === appReturnPath
             ? "restored"
             : "superseded",
+      );
+      setPendingProjectReturnRecovery(
+        createProjectSignInReturnRecoveryIntent(restoredPath),
       );
       // `navigateApp`, not `history.replaceState`: a raw history write leaves
       // the ROUTER matched on `/callback` while the address bar says
@@ -3684,8 +3724,10 @@ export default function App() {
     // connection negotiates, which an unpinned host only learns at connect.
     const cancellationLeaves = Object.fromEntries(
       (["legacy", "modern"] as const)
-        .filter((key) => activeMcpProfile?.toolCallCancellation?.[key] === false)
-        .map((key) => [key, false])
+        .filter(
+          (key) => activeMcpProfile?.toolCallCancellation?.[key] === false,
+        )
+        .map((key) => [key, false]),
     );
     const toolCallCancellation =
       Object.keys(cancellationLeaves).length > 0
@@ -4487,6 +4529,24 @@ export default function App() {
   const { allProjects: allMembershipProjects } = useProjectQueries({
     isAuthenticated,
   });
+  const allMembershipProjectIds = useMemo(
+    () =>
+      allMembershipProjects
+        ? new Set(allMembershipProjects.map((project) => project._id))
+        : undefined,
+    [allMembershipProjects],
+  );
+  const currentLocation = useCurrentLocationParts();
+  const currentProjectPath = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
+  const confirmedStaleReturnProjectId =
+    pendingProjectReturnRecovery &&
+    isProjectIdShape(pendingProjectReturnRecovery.requestedProjectId) &&
+    allMembershipProjectIds !== undefined &&
+    !allMembershipProjectIds.has(
+      pendingProjectReturnRecovery.requestedProjectId,
+    )
+      ? pendingProjectReturnRecovery.requestedProjectId
+      : null;
   // Silent: the URL already told the user which project they are in, so a
   // toast on every cold open of a shared link would be narrating the address
   // bar back at them.
@@ -4504,7 +4564,48 @@ export default function App() {
     activeOrganizationId,
     setActiveOrganizationId,
     switchProject: switchProjectForRoute,
+    suppressInaccessibleTelemetryFor: confirmedStaleReturnProjectId,
   });
+
+  const fallbackProjectForStaleReturn =
+    activeProject && allMembershipProjectIds?.has(activeProjectId)
+      ? { id: activeProjectId, name: activeProject.name }
+      : null;
+  const projectReturnRecoveryDecision = resolveProjectSignInReturnRecovery({
+    intent: pendingProjectReturnRecovery,
+    routeState: projectRouteState,
+    currentPath: currentProjectPath,
+    membershipProjectIds: allMembershipProjectIds,
+    fallbackProject: fallbackProjectForStaleReturn,
+  });
+  const projectRouteStateForBoundary =
+    projectReturnRecoveryDecision.kind === "switch" ||
+    projectReturnRecoveryDecision.kind === "home"
+      ? {
+          status: "resolving" as const,
+          requestedProjectId:
+            pendingProjectReturnRecovery?.requestedProjectId ?? "",
+        }
+      : projectRouteState;
+
+  // Layout timing keeps the generic unavailable screen from painting for a
+  // stale sign-in return. The intent is cleared before navigation so a bad
+  // fallback can show the normal error but can never loop.
+  useLayoutEffect(() => {
+    if (projectReturnRecoveryDecision.kind === "none") return;
+    setPendingProjectReturnRecovery(null);
+
+    if (projectReturnRecoveryDecision.kind === "clear") return;
+    if (projectReturnRecoveryDecision.kind === "home") {
+      trackStaleProjectReturnRecovered("no-fallback");
+      navigateApp(routePaths.root, { replace: true, unscoped: true });
+      return;
+    }
+
+    trackStaleProjectReturnRecovered("switched");
+    navigateApp(projectReturnRecoveryDecision.path, { replace: true });
+    toast.error(projectReturnRecoveryDecision.message);
+  }, [pendingProjectReturnRecovery, projectReturnRecoveryDecision]);
 
   /**
    * Picking another project in the switcher NAVIGATES. It does not switch
@@ -4890,7 +4991,7 @@ export default function App() {
     // What the URL's project segment resolved to. `ProjectRouteBoundary`
     // renders on it, and the legacy normalizer reads the rest of this bag to
     // decide which project an old link should adopt.
-    projectRouteState,
+    projectRouteState: projectRouteStateForBoundary,
     activeMcpProfile,
     activeOrganizationId,
     activeOrganizationName,

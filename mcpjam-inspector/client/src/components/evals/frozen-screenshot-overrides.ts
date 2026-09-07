@@ -25,21 +25,45 @@ import type { ToolRenderOverride } from "@/components/chat-v2/thread/tool-render
 export function buildFrozenScreenshotOverrides(
   base: Record<string, ToolRenderOverride>,
   observations: readonly EvalTraceWidgetRenderObservationView[],
-  interactionSteps: readonly EvalTraceBrowserInteractionStepView[] = []
+  interactionSteps: readonly EvalTraceBrowserInteractionStepView[] = [],
 ): Record<string, ToolRenderOverride> {
-  const latestByTool = new Map<string, { url: string; ts: number }>();
+  const latestByTool = new Map<
+    string,
+    { url: string; ts: number; resourceUri?: string }
+  >();
+  const errorsByTool = new Map<
+    string,
+    { consoleErrors: Set<string>; blockedRequests: Set<string> }
+  >();
   const consider = (
     toolCallId: string,
     url: string | null | undefined,
-    ts: number
+    ts: number,
+    resourceUri?: string,
   ) => {
     if (!url) return;
     const prev = latestByTool.get(toolCallId);
-    if (!prev || ts > prev.ts) latestByTool.set(toolCallId, { url, ts });
+    if (!prev || ts > prev.ts) {
+      latestByTool.set(toolCallId, {
+        url,
+        ts,
+        resourceUri: resourceUri ?? prev?.resourceUri,
+      });
+    }
   };
   for (const obs of observations) {
+    const errors = errorsByTool.get(obs.toolCallId) ?? {
+      consoleErrors: new Set<string>(),
+      blockedRequests: new Set<string>(),
+    };
+    for (const error of obs.consoleErrors ?? [])
+      errors.consoleErrors.add(error);
+    for (const request of obs.blockedRequests ?? []) {
+      errors.blockedRequests.add(request);
+    }
+    errorsByTool.set(obs.toolCallId, errors);
     if (obs.status === "rendered")
-      consider(obs.toolCallId, obs.screenshotUrl, obs.ts);
+      consider(obs.toolCallId, obs.screenshotUrl, obs.ts, obs.resourceUri);
   }
   // Interaction-step captures are later than the initial render (they happen on
   // each click), so they win on `ts` — surfacing the post-interaction state.
@@ -48,10 +72,19 @@ export function buildFrozenScreenshotOverrides(
   }
   if (latestByTool.size === 0) return base;
   const merged = { ...base };
-  for (const [toolCallId, { url }] of latestByTool) {
+  for (const [toolCallId, { url, resourceUri }] of latestByTool) {
+    const errors = errorsByTool.get(toolCallId);
+    const consoleErrors = [...(errors?.consoleErrors ?? [])];
+    const blockedRequests = [...(errors?.blockedRequests ?? [])];
     merged[toolCallId] = {
       ...merged[toolCallId],
       frozenScreenshotUrl: url,
+      ...(merged[toolCallId]?.resourceUri || !resourceUri
+        ? {}
+        : { resourceUri }),
+      ...(consoleErrors.length || blockedRequests.length
+        ? { recordedWidgetErrors: { consoleErrors, blockedRequests } }
+        : {}),
     };
   }
   return merged;

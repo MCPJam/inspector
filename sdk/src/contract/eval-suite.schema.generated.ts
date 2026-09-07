@@ -255,6 +255,12 @@ export const evalSuiteFileJsonSchema: Record<string, unknown> = {
               { type: "null" },
             ],
           },
+          kind: {
+            anyOf: [
+              { type: "string", enum: ["capability", "regression"] },
+              { type: "null" },
+            ],
+          },
           steps: {
             minItems: 1,
             maxItems: 200,

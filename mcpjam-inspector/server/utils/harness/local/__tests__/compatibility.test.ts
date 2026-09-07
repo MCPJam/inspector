@@ -208,7 +208,11 @@ describe("claude-code native resolution", () => {
     ).toMatchObject({ ok: true, permissionMode: "allow-edits" });
   });
 
-  it("refuses Windows native, where process-tree ownership is unproven", () => {
+  it("offers Windows native, where the Job Object launcher is the tree guarantee", () => {
+    // Eligibility only. Whether a given machine may actually run a session is
+    // still gated by `supportsOwnershipProof('win32')`, which stays false
+    // until runtime resolution has verified the launcher inside the pack —
+    // see `process-identity.test.ts` and `availability.test.ts`.
     expect(
       resolveLocalCompatibility(
         {
@@ -220,7 +224,7 @@ describe("claude-code native resolution", () => {
         },
         manifests,
       ),
-    ).toMatchObject({ status: "native-not-eligible" });
+    ).toMatchObject({ ok: true, permissionMode: "allow-edits" });
   });
 
   it("refuses an unrestricted native turn even if a manifest offered it", () => {
