@@ -24,7 +24,9 @@ import {
 import type { Predicate } from "@mcpjam/sdk/predicates";
 import {
   groupGradersByStage,
+  judgeMode,
   STAGE_EMPTY_COPY,
+  stageConfigStates,
   stageEmptyIsGap,
 } from "../suite-grading-model";
 
@@ -208,5 +210,94 @@ describe("STAGE_EMPTY_COPY", () => {
       expect(stageEmptyIsGap(stage), stage).toBe(true);
       expect(STAGE_EMPTY_COPY[stage]).toBe("No grader");
     }
+  });
+});
+
+describe("stageConfigStates", () => {
+  function statesFor(
+    input: Parameters<typeof groupGradersByStage>[0],
+  ) {
+    const model = groupGradersByStage(input);
+    return stageConfigStates(model, judgeMode(input.judgeConfig));
+  }
+
+  function stateOf(
+    states: ReturnType<typeof stageConfigStates>,
+    stage: (typeof states)[number]["stage"],
+  ) {
+    return states.find((row) => row.stage === stage);
+  }
+
+  it("reads the default suite as runner / gated / gap / judge on request", () => {
+    const states = statesFor({ predicates: [] });
+    expect(stateOf(states, "connection")).toMatchObject({
+      state: "runner",
+      gates: 0,
+    });
+    expect(stateOf(states, "discovery")).toMatchObject({
+      state: "runner",
+      gates: 0,
+    });
+    expect(stateOf(states, "selection")).toMatchObject({
+      state: "gated",
+      gates: 2,
+    });
+    expect(stateOf(states, "call")).toMatchObject({
+      state: "gated",
+      gates: 1,
+    });
+    expect(stateOf(states, "response")).toMatchObject({
+      state: "gap",
+      gates: 0,
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeOnRequest",
+      gates: 0,
+      judge: "manual",
+    });
+  });
+
+  it("autoRun: true is judgeAutomatic", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { autoRun: true } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeAutomatic",
+      judge: "automatic",
+    });
+  });
+
+  it("role: gating is gated", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { role: "gating" } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "gated",
+      judge: "gating",
+    });
+  });
+
+  it("enabled: false is judgeOff", () => {
+    const states = statesFor({
+      predicates: [],
+      judgeConfig: { goalCompletion: { enabled: false } },
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "judgeOff",
+      judge: "off",
+    });
+  });
+
+  it("a userValue predicate beside a manual judge is gated with judge: manual", () => {
+    const states = statesFor({
+      predicates: [samplePredicate("responseContains")],
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      state: "gated",
+      gates: 1,
+      judge: "manual",
+    });
   });
 });

@@ -2,8 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   EVAL_SUITE_SETTINGS_MANIFEST,
   EVAL_SUITE_SETTING_KEYS,
+  type EvalSuiteSettingKey,
 } from "@/shared/eval-suite-settings-manifest";
-import { renderSettingsSheet, v2Suite } from "./settings-sheet-harness";
+import { LEGACY_CLIENTS_ROW_LABEL } from "../suite-settings-groups";
+import {
+  renderSettingsSheet,
+  v2Suite,
+  baseSuite,
+  collectAllSettingKeys,
+  showSettingsKey,
+} from "./settings-sheet-harness";
 
 /**
  * The RENDER half of the settings-parity ratchet.
@@ -41,6 +49,10 @@ vi.mock("@workos-inc/authkit-react", () => ({
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
   useGithubChecksAvailability: (organizationId: unknown) =>
     mocks.availability(organizationId),
+  useGithubChecksSettings: () => ({
+    availability: { state: "enabled" },
+    repos: [],
+  }),
 }));
 
 vi.mock("../suite-github-checks-section", () => ({
@@ -78,7 +90,15 @@ vi.mock("../use-suite-data", () => ({
 }));
 
 vi.mock("../suite-header", () => ({
-  SuiteHeader: () => <div data-testid="suite-header" />,
+  SuiteHeader: () => (
+    <div data-testid="suite-header">
+      <div data-setting-key="name">
+        <span className="sr-only">Name</span>
+        <button type="button">Test Suite</button>
+        <input aria-label="Suite name" />
+      </div>
+    </div>
+  ),
 }));
 
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
@@ -177,12 +197,12 @@ describe("eval suite settings manifest — render parity", () => {
   }
 
   it("gives every rendered row a manifest entry", () => {
-    // BOTH policies, because the sheet renders one set of policy rows or the
-    // other and a key that only appears on a v2 suite is still a key someone
-    // has to reach from an agent.
     for (const overrides of [{}, { suite: v2Suite }]) {
       const { container, unmount } = renderSettingsSheet(overrides);
-      const rendered = renderedSettingKeys(container);
+      const rendered = collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      );
       expect(rendered.length).toBeGreaterThan(0);
       const unlisted = rendered.filter(
         (key) => !EVAL_SUITE_SETTING_KEYS.includes(key as never)
@@ -198,11 +218,12 @@ describe("eval suite settings manifest — render parity", () => {
   });
 
   it("renders no key twice", () => {
-    // A duplicated key would make the coverage check below pass for a row that
-    // is not really there.
     for (const overrides of [{}, { suite: v2Suite }]) {
       const { container, unmount } = renderSettingsSheet(overrides);
-      const rendered = renderedSettingKeys(container);
+      const rendered = collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      );
       expect(rendered).toEqual([...new Set(rendered)]);
       unmount();
     }
@@ -220,11 +241,16 @@ describe("eval suite settings manifest — render parity", () => {
     const rendered = new Set<string>();
     for (const overrides of [{}, { suite: v2Suite }]) {
       const { container, unmount } = renderSettingsSheet(overrides);
-      for (const key of renderedSettingKeys(container)) rendered.add(key);
+      for (const key of collectAllSettingKeys(
+        container,
+        overrides.suite ?? undefined,
+      )) {
+        rendered.add(key);
+      }
       unmount();
     }
     const orphaned = EVAL_SUITE_SETTINGS_MANIFEST.filter(
-      (row) => !rendered.has(row.key)
+      (row) => !("excluded" in row) && !rendered.has(row.key),
     ).map((row) => `${row.key} (${row.label})`);
     expect(
       orphaned,
@@ -234,22 +260,83 @@ describe("eval suite settings manifest — render parity", () => {
     ).toEqual([]);
   });
 
+  it("leaves no ledger row collapsed shut once it has been navigated to", () => {
+    // WAS "exposes aria-expanded on every ledger row trigger". The tabbed page
+    // renders each section EXPANDED, so most rows no longer have a disclosure
+    // control at all and asserting one exists pinned the old shape rather than
+    // the property that mattered: that navigating to a row shows you its
+    // editor. Both designs satisfy the form below — a row with no toggle is
+    // reachable by construction, and one that still has a toggle must be open
+    // rather than announcing `aria-expanded="false"` at a reader who just
+    // asked for it.
+    const { container } = renderSettingsSheet();
+    for (const key of [
+      "policy",
+      "environments",
+      "budgets",
+      "schedule",
+      "githubChecks",
+      "deleteSuite",
+    ] as const) {
+      showSettingsKey(container, key);
+      const row = container.querySelector(`[data-setting-key="${key}"]`);
+      expect(row, key).toBeTruthy();
+      // Scoped to the DISCLOSURE control, not to `[aria-expanded]` at large:
+      // that attribute is also on every Radix select and menu inside a row's
+      // editor, and a closed dropdown is not a collapsed section.
+      const trigger = row?.querySelector('[data-slot="collapsible-trigger"]');
+      if (trigger) {
+        expect(trigger.getAttribute("aria-expanded"), key).toBe("true");
+      }
+    }
+  });
+
   it("labels each row the way the manifest says it does", () => {
     // Keeps the manifest READABLE next to the screen: an entry a maintainer
     // cannot match to a row is one they will not maintain.
     const seen = new Map<string, string>();
     for (const overrides of [{}, { suite: v2Suite }]) {
       const { container, unmount } = renderSettingsSheet(overrides);
+      const suite = overrides.suite ?? undefined;
       for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+        if ("excluded" in row) continue;
+        const suite = overrides.suite ?? baseSuite;
+        const isV2 = suite.verdictPolicyVersion === 2;
+        if (
+          (row.key === "validity" ||
+            row.key === "repetitions" ||
+            row.key === "passThreshold") &&
+          !isV2
+        ) {
+          continue;
+        }
+        if (
+          (row.key === "minimumAccuracy" ||
+            row.key === "minimumIterations") &&
+          isV2
+        ) {
+          continue;
+        }
+        showSettingsKey(container, row.key as EvalSuiteSettingKey, {}, suite);
         const node = container.querySelector(`[data-setting-key="${row.key}"]`);
         if (node) seen.set(row.key, node.textContent ?? "");
       }
       unmount();
     }
     for (const row of EVAL_SUITE_SETTINGS_MANIFEST) {
+      if ("excluded" in row) continue;
       const text = seen.get(row.key);
       expect(text, `no rendered row for ${row.key}`).toBeDefined();
-      expect(text ?? "").toContain(row.label);
+      // The environments row is titled for the axes it actually edits: the
+      // manifest label with project environments on, "Clients" with them off.
+      const accepted =
+        row.key === "environments"
+          ? [row.label, LEGACY_CLIENTS_ROW_LABEL]
+          : [row.label];
+      expect(
+        accepted.some((label) => (text ?? "").includes(label)),
+        `row ${row.key} is not labelled ${accepted.join(" or ")}`,
+      ).toBe(true);
     }
   });
 
@@ -262,9 +349,8 @@ describe("eval suite settings manifest — render parity", () => {
    * screen full of controls can convey.
    */
   it("shows the legacy policy's fields only on a legacy suite", () => {
-    const legacy = new Set(
-      renderedSettingKeys(renderSettingsSheet().container)
-    );
+    const { container } = renderSettingsSheet();
+    const legacy = new Set(collectAllSettingKeys(container));
     expect(legacy.has("minimumAccuracy")).toBe(true);
     expect(legacy.has("minimumIterations")).toBe(true);
     expect(legacy.has("repetitions")).toBe(false);
@@ -273,9 +359,8 @@ describe("eval suite settings manifest — render parity", () => {
   });
 
   it("shows the v2 policy's fields only on a v2 suite", () => {
-    const v2 = new Set(
-      renderedSettingKeys(renderSettingsSheet({ suite: v2Suite }).container),
-    );
+    const { container } = renderSettingsSheet({ suite: v2Suite });
+    const v2 = new Set(collectAllSettingKeys(container, v2Suite));
     expect(v2.has("repetitions")).toBe(true);
     expect(v2.has("passThreshold")).toBe(true);
     expect(v2.has("validity")).toBe(true);
@@ -302,6 +387,7 @@ describe("eval suite settings manifest — render parity", () => {
       })
     );
     const { container } = renderSettingsSheet();
+    showSettingsKey(container, "computerEnvironment");
     const row = container.querySelector(
       '[data-setting-key="computerEnvironment"]'
     );
@@ -328,6 +414,7 @@ describe("eval suite settings manifest — render parity", () => {
       })
     );
     const { container } = renderSettingsSheet();
+    showSettingsKey(container, "computerEnvironment");
     // Collapsing these two is how a temporary outage teaches somebody their
     // organization does not have a feature it has.
     expect(
@@ -354,7 +441,8 @@ describe("eval suite settings manifest — render parity", () => {
       })
     );
     const { container } = renderSettingsSheet();
-    for (const key of ["schedule", "deleteSuite"]) {
+    for (const key of ["schedule", "deleteSuite"] as const) {
+      showSettingsKey(container, key);
       expect(
         container
           .querySelector(`[data-setting-key="${key}"]`)
@@ -372,16 +460,14 @@ describe("eval suite settings manifest — render parity", () => {
     expect(container.querySelectorAll("[data-disabled-reason]")).toHaveLength(
       0
     );
-    expect(
-      container.querySelector('[data-setting-key="computerEnvironment"]')
-    ).toBeTruthy();
-    expect(
-      container.querySelector('[data-setting-key="schedule"]')
-    ).toBeTruthy();
+    const keys = collectAllSettingKeys(container);
+    expect(keys).toContain("computerEnvironment");
+    expect(keys).toContain("schedule");
   });
 
   it("puts the environment composer on the Environments row", () => {
     const { container } = renderSettingsSheet();
+    showSettingsKey(container, "environments");
     const row = container.querySelector('[data-setting-key="environments"]');
     expect(row).toBeTruthy();
     expect(row?.querySelector('[data-testid="suite-environment-bar"]')).toBeTruthy();

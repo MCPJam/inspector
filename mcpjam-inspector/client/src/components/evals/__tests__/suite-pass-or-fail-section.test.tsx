@@ -16,7 +16,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
+import {
+  SuiteBudgetsSection,
+  SuitePassOrFailSection,
+} from "../suite-pass-or-fail-section";
 import {
   VerdictPolicyUpgradeButton,
   VerdictPolicyV2Controls,
@@ -33,6 +36,7 @@ function renderSection(
     judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
     judgeAccessory?: React.ReactNode;
     rubricEditor?: React.ReactNode;
+    stageFacts?: Parameters<typeof SuitePassOrFailSection>[0]["stageFacts"];
   } = {},
 ) {
   const onPredicatesChange = vi.fn();
@@ -49,6 +53,7 @@ function renderSection(
       availableModels={[]}
       judgeAccessory={overrides.judgeAccessory}
       rubricEditor={overrides.rubricEditor}
+      stageFacts={overrides.stageFacts}
     />,
   );
   return { ...result, onPredicatesChange, onJudgeConfigChange };
@@ -63,6 +68,38 @@ function emptyCopy(container: HTMLElement, stage: string): string | null {
 }
 
 describe("SuitePassOrFailSection", () => {
+  it("mounts config facts under the stages the runner measures", () => {
+    const { container } = renderSection({
+      stageFacts: {
+        connection: <div data-testid="connection-facts">connection facts</div>,
+        discovery: <div data-testid="discovery-facts">discovery facts</div>,
+      },
+    });
+    for (const stage of ["connection", "discovery"] as const) {
+      const group = container.querySelector(`[data-stage-group="${stage}"]`);
+      expect(
+        group?.querySelector(`[data-testid="${stage}-facts"]`),
+        stage,
+      ).toBeTruthy();
+    }
+  });
+
+  it("tints the stages waiting on a grader, not the ones the runner measures", () => {
+    // The tint marks a GAP somebody should close. Connection and discovery
+    // have no grader to author at all, so tinting them grouped the stages
+    // that need nothing with the ones that are waiting on the reader.
+    const { container } = renderSection();
+    const tinted = (stage: string) =>
+      Boolean(
+        container
+          .querySelector(`[data-stage-group="${stage}"]`)
+          ?.querySelector('[class*="bg-muted/60"]'),
+      );
+    expect(tinted("connection")).toBe(false);
+    expect(tinted("discovery")).toBe(false);
+    expect(tinted("response")).toBe(true);
+  });
+
   it("says 'No grader' for an unconfigured selection stage", () => {
     // A suite with no checks still has the tool-call matcher, which files at
     // selection — so the empty state only appears once the matcher rows are
@@ -90,7 +127,7 @@ describe("SuitePassOrFailSection", () => {
         advisory.container.querySelector(
           '[data-stage-group="userValue"]',
         ) as HTMLElement,
-      ).getByText("Advisory"),
+      ).getByText("Judge on request"),
     ).toBeTruthy();
     advisory.unmount();
 
@@ -100,7 +137,7 @@ describe("SuitePassOrFailSection", () => {
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
-    expect(within(group).getByText("Gate")).toBeTruthy();
+    expect(within(group).getByText("Judge gates the verdict")).toBeTruthy();
   });
 
   it("mounts the judge's gate panel and rubric editor under user value", () => {
@@ -215,5 +252,77 @@ describe("VerdictPolicyUpgradeButton", () => {
       repetitions: 3,
       passThreshold: 0.8,
     });
+  });
+});
+
+/**
+ * The Limits tab.
+ *
+ * It used to render a read-only list that told the reader to add a ceiling
+ * "from Checks" — a tab that names a setting and refuses to set it, and whose
+ * own instruction was half false, since the Checks menu has never offered a
+ * turn budget. These tests hold the two properties that fix depends on: both
+ * ceiling kinds are addable HERE, and an edit re-seats itself in the one
+ * `defaultPredicates` array without disturbing the checks around it.
+ */
+describe("SuiteBudgetsSection", () => {
+  function renderBudgets(predicates: Predicate[]) {
+    const onPredicatesChange = vi.fn();
+    const result = render(
+      <SuiteBudgetsSection
+        predicates={predicates}
+        onPredicatesChange={onPredicatesChange}
+      />,
+    );
+    // The caller passes an updater; resolve it against the same list the row
+    // was rendered from, which is what the draft reducer does.
+    const nextPredicates = () => {
+      const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
+      return typeof arg === "function" ? arg(predicates) : arg;
+    };
+    return { ...result, onPredicatesChange, nextPredicates };
+  }
+
+  it("offers both ceilings, and only ceilings, to add", async () => {
+    const user = userEvent.setup();
+    renderBudgets([]);
+    await user.click(screen.getByRole("combobox"));
+    const options = screen
+      .getAllByRole("option")
+      .map((option) => option.textContent?.trim());
+    expect(options).toEqual([
+      "Token budget under N",
+      "Fewer than N user turns",
+    ]);
+  });
+
+  it("adds a ceiling without disturbing the checks beside it", async () => {
+    const user = userEvent.setup();
+    const existing: Predicate[] = [
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+    ];
+    const { nextPredicates } = renderBudgets(existing);
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: /Token budget/ }));
+    expect(nextPredicates()).toEqual([
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+      { type: "tokenBudgetUnder", tokens: 1000 },
+    ]);
+  });
+
+  it("removes a ceiling from its own slot, leaving the rest in place", async () => {
+    const user = userEvent.setup();
+    const existing: Predicate[] = [
+      { type: "tokenBudgetUnder", tokens: 1000 },
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+      { type: "turnCountUnder", turns: 10 },
+    ];
+    const { nextPredicates } = renderBudgets(existing);
+    const [removeFirst] = screen.getAllByRole("button", { name: /remove/i });
+    await user.click(removeFirst);
+    expect(nextPredicates()).toEqual([
+      { type: "turnCountUnder", turns: 10 },
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+    ]);
   });
 });

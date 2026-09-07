@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import { renderSettingsSheet } from "./settings-sheet-harness";
+import userEvent from "@testing-library/user-event";
+import { openSettingsRow, renderSettingsSheet, baseSuite } from "./settings-sheet-harness";
 import { GLOBAL_GATE_CATALOG } from "@/shared/predicate-kinds";
 
 /**
@@ -54,7 +55,11 @@ vi.mock("@workos-inc/authkit-react", () => ({
   useAuth: () => ({ user: null, isLoading: false, signIn: vi.fn() }),
 }));
 vi.mock("@/hooks/useGithubChecksSettings", () => ({
-  useGithubChecksAvailability: () => ({ status: "disabled" }),
+  useGithubChecksAvailability: () => ({ state: "disabled" }),
+  useGithubChecksSettings: () => ({
+    availability: { state: "disabled" },
+    repos: [],
+  }),
 }));
 vi.mock("../suite-github-checks-section", () => ({
   SuiteGithubChecksSection: () => <div data-testid="github-checks-section" />,
@@ -77,20 +82,62 @@ vi.mock("../use-suite-data", () => ({
   useSuiteData: () => ({ runTrendData: [], modelStats: [] }),
   useRunDetailData: () => ({ caseGroupsForSelectedRun: [] }),
 }));
-vi.mock("../suite-header", () => ({
-  SuiteHeader: () => <div data-testid="suite-header" />,
-}));
 vi.mock("../eval-export-modal", () => ({ EvalExportModal: () => null }));
 vi.mock("@/state/app-state-context", () => ({
   useSharedAppState: () => ({ servers: {} }),
 }));
+vi.mock("@mcpjam/design-system/popover", () => ({
+  Popover: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  PopoverContent: ({ children }: { children: React.ReactNode }) => (
+    <div>{children}</div>
+  ),
+  PopoverTrigger: ({ children }: { children: React.ReactNode }) => (
+    <>{children}</>
+  ),
+}));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  Object.defineProperty(HTMLElement.prototype, "hasPointerCapture", {
+    configurable: true,
+    value: vi.fn(() => false),
+  });
+  Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 function editName(value: string) {
+  if (!screen.queryByRole("textbox", { name: "Suite name" })) {
+    const button = document.querySelector(
+      '[data-setting-key="name"] button',
+    ) as HTMLButtonElement | null;
+    if (!button) throw new Error("no header name button");
+    fireEvent.click(button);
+  }
   fireEvent.change(screen.getByLabelText("Suite name"), { target: { value } });
+}
+
+function expectSuiteName(value: string) {
+  const input = screen.queryByRole("textbox", { name: "Suite name" });
+  if (input) {
+    expect((input as HTMLInputElement).value).toBe(value);
+    return;
+  }
+  expect(screen.getByRole("button", { name: value })).toBeTruthy();
+}
+
+function editMinIterations(value: string) {
+  openSettingsRow(document.body, "policy");
+  fireEvent.change(
+    screen.getByLabelText("Minimum iterations per case for every run"),
+    { target: { value } },
+  );
 }
 
 describe("nothing is written until the person says so", () => {
@@ -122,10 +169,7 @@ describe("nothing is written until the person says so", () => {
     editName("R");
     editName("Re");
     editName("Renamed");
-    fireEvent.change(
-      screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } },
-    );
+    editMinIterations("5");
 
     // Two settings, four interactions. The old sheet would have written four
     // times and toasted four times.
@@ -137,19 +181,25 @@ describe("nothing is written until the person says so", () => {
 
 describe("adding a check does not break the sheet", () => {
   it("Add check appends a check and the sheet keeps rendering", async () => {
-    renderSettingsSheet();
+    const user = userEvent.setup();
+    const { container } = renderSettingsSheet();
+    openSettingsRow(container, "checks");
 
     // The regression this covers: the menu passes an UPDATER, and a setter
     // that stored it verbatim put a function where a list belongs. Everything
     // that iterates `defaultPredicates` then threw, taking the sheet down.
-    fireEvent.click(
+    await user.click(
       screen.getByRole("button", { name: "Add whole-run check" }),
     );
-    const menuItem = await screen.findByText(GLOBAL_GATE_CATALOG[0].label);
-    fireEvent.click(menuItem);
+    await user.click(
+      await screen.findByTestId(
+        `add-global-gate-${GLOBAL_GATE_CATALOG[0].kind}`,
+      ),
+    );
 
     // Still standing, and the edit registered as one drafted change.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
+    openSettingsRow(container, "name");
     expect(screen.getByLabelText("Suite name")).toBeTruthy();
   });
 });
@@ -158,10 +208,7 @@ describe("saving sends exactly what changed", () => {
   it("one mutation carrying only the edited keys", async () => {
     renderSettingsSheet();
     editName("Renamed");
-    fireEvent.change(
-      screen.getByLabelText("Minimum iterations per case for every run"),
-      { target: { value: "5" } },
-    );
+    editMinIterations("5");
 
     fireEvent.click(screen.getByRole("button", { name: "Review and save" }));
     fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
@@ -259,12 +306,8 @@ describe("a note belongs to one change", () => {
     expect(
       (mocks.applySuiteSettings.mock.calls[0][0] as { name: string }).name,
     ).toBe("Renamed");
-    // And the input agrees, rather than holding whitespace the server dropped.
-    await waitFor(() =>
-      expect(
-        (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-      ).toBe("Renamed"),
-    );
+    // And the header agrees, rather than holding whitespace the server dropped.
+    await waitFor(() => expectSuiteName("Renamed"));
   });
 
   it("announces the count on the text, not on the whole bar", () => {
@@ -292,9 +335,7 @@ describe("a note belongs to one change", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull(),
     );
-    expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-    ).toBe("Renamed");
+    expectSuiteName("Renamed");
   });
 });
 
@@ -331,9 +372,7 @@ describe("degrading and refusing", () => {
     // outcome the precondition exists to PREVENT, not one to implement on its
     // refusal.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
-    expect(
-      (screen.getByLabelText("Suite name") as HTMLInputElement).value,
-    ).toBe("Renamed");
+    expectSuiteName("Renamed");
     expect(mocks.updateTestSuite).not.toHaveBeenCalled();
   });
 
