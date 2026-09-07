@@ -169,4 +169,26 @@ describe("telemetry under congestion", () => {
       dropped: 1,
     });
   });
+
+  it("stops once the socket is not draining at all", () => {
+    let buffered = 0;
+    const { stats, sent, tick } = build({
+      maxBufferedBytes: 1_000,
+      bufferedAmount: () => buffered,
+    });
+    stats.start();
+    // Just over the frame mark is exactly the band the pane has to hear about:
+    // it is still reading, and `dropped` is what tells it to step down.
+    buffered = 2_000;
+    tick();
+    expect(sent).toHaveLength(1);
+    // Far past it is a peer that has stopped reading. Nothing sent now will
+    // ever be acted on, and it would sit in a buffer nobody empties.
+    buffered = 100_000;
+    tick();
+    expect(sent).toHaveLength(1);
+    buffered = 0;
+    tick();
+    expect(sent).toHaveLength(2);
+  });
 });

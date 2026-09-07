@@ -521,4 +521,39 @@ describe("the agent browser pane — when somebody else is driving", () => {
       vi.useRealTimers();
     }
   });
+
+  it("stops asking the moment the grant is withdrawn", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const view = renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+
+      view.rerender(
+        <LocalBrowserBody
+          projectId="proj-1"
+          consentGranted={false}
+          consentToken="tok"
+        />,
+      );
+      const watchesAfterRevoke = api.watches.length;
+      await vi.advanceTimersByTimeAsync(20_000);
+      // Every call this poll makes carries the consent token. A pane whose
+      // grant has been withdrawn asking again every five seconds is a pane
+      // arguing with a decision the person already made.
+      expect(api.watches.length).toBe(watchesAfterRevoke);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

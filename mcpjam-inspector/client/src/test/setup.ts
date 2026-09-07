@@ -269,7 +269,6 @@ if (typeof HTMLCanvasElement !== "undefined") {
     "clearRect",
     "clip",
     "closePath",
-    "createConicGradient",
     "drawFocusIfNeeded",
     "drawImage",
     "ellipse",
@@ -317,10 +316,14 @@ if (typeof HTMLCanvasElement !== "undefined") {
         stack.push(new Map(assigned));
       },
       restore: () => {
+        // A `restore` with nothing saved is a NO-OP in a real context, not a
+        // reset. Clearing here made a component that calls it defensively —
+        // without a matching `save` — silently lose every property it had
+        // ever set, and every read after that answer with a spec default.
         const previous = stack.pop();
+        if (!previous) return;
         assigned.clear();
-        if (previous)
-          for (const [key, value] of previous) assigned.set(key, value);
+        for (const [key, value] of previous) assigned.set(key, value);
       },
       isContextLost: () => false,
       getContextAttributes: () => ({ alpha: true, desynchronized: false }),
@@ -335,6 +338,7 @@ if (typeof HTMLCanvasElement !== "undefined") {
         width: w,
         height: h,
       }),
+      createConicGradient: () => ({ addColorStop: () => {} }),
       createLinearGradient: () => ({ addColorStop: () => {} }),
       createRadialGradient: () => ({ addColorStop: () => {} }),
       createPattern: () => null,

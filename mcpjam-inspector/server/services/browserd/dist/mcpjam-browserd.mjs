@@ -3876,7 +3876,7 @@ var ChromiumDriver = class {
       const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
       return { ...active ? { active } : {}, list };
     };
-    while (list.length > 0 && JSON.stringify(payload()).length > TABS_SNAPSHOT_BYTES) {
+    while (list.length > 0 && Buffer.byteLength(JSON.stringify(payload()), "utf8") > TABS_SNAPSHOT_BYTES) {
       list.splice(dropIndex(list, this.activeTabId), 1);
     }
     return payload();

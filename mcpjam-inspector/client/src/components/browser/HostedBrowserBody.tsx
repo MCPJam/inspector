@@ -468,15 +468,18 @@ export function HostedBrowserBody({
         }
       >();
       /**
-       * How many units may wait for a picture that may never come.
+       * A LEAK GUARD, not a policy.
        *
-       * A decoder holds several access units at once and can drop one
-       * outright, so entries are not guaranteed to be claimed. Bounded and
-       * evicted oldest-first: a stream that runs for an hour must not grow a
-       * map for an hour, and by the time this many units have gone by, an
-       * unclaimed one is a picture that is not going to be painted.
+       * What actually retires an entry is the paint: everything at or below
+       * the sequence on screen can never be claimed again. This is only for
+       * units a decoder swallowed without ever outputting, and it is set where
+       * no working decoder reaches — eight seconds of backlog at thirty frames
+       * a second. Evicting on a small count instead was a freeze waiting to
+       * happen: a decoder that fell behind by more than the count would have
+       * every one of its outputs miss, and a pane whose lookups all miss draws
+       * nothing at all.
        */
-      const UNITS_MAX = 16;
+      const UNITS_MAX = 240;
       /** The newest sequence PAINTED, so a slow decode cannot go backwards. */
       let paintedSeq = -1;
       const paintVideo = (unit: {
@@ -505,9 +508,15 @@ export function HostedBrowserBody({
           relayTs: unit.relayTs,
           seq: unit.seq,
         });
+        // Insertion order IS sequence order: the wire delivers in order and a
+        // repeat of a sequence overwrites rather than appends. So everything
+        // up to what is on screen is at the front, and everything at or below
+        // it is a picture that has already been drawn or superseded.
+        for (const seq of units.keys()) {
+          if (seq > paintedSeq) break;
+          units.delete(seq);
+        }
         while (units.size > UNITS_MAX) {
-          // Insertion order IS sequence order: the wire delivers in order and
-          // a repeat of a sequence overwrites rather than appends.
           const oldest = units.keys().next();
           if (oldest.done) break;
           units.delete(oldest.value);

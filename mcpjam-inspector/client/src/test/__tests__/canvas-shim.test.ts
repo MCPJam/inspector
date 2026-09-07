@@ -46,6 +46,32 @@ describe("the jsdom 2D context", () => {
     expect(ctx.globalAlpha).toBe(0.25);
   });
 
+  it("treats a `restore` with nothing saved as the no-op it is", () => {
+    // Not a reset. A component that calls `restore` defensively, without a
+    // matching `save`, was losing every property it had ever set — and every
+    // read after that answered with a spec default.
+    const ctx = contextOf()!;
+    ctx.fillStyle = "#abcdef";
+    (ctx.restore as () => void)();
+    expect(ctx.fillStyle).toBe("#abcdef");
+  });
+
+  it("hands back a gradient from every gradient factory", () => {
+    const ctx = contextOf()!;
+    for (const name of [
+      "createLinearGradient",
+      "createRadialGradient",
+      "createConicGradient",
+    ]) {
+      const gradient = (ctx[name] as (...args: number[]) => unknown)(0, 0, 1);
+      // `createConicGradient` was filed with the drawing calls, so it answered
+      // `undefined` and the `.addColorStop` every caller chains onto it threw.
+      expect(
+        (gradient as { addColorStop?: unknown } | undefined)?.addColorStop,
+      ).toBeTypeOf("function");
+    }
+  });
+
   it("still answers every drawing call", () => {
     const ctx = contextOf()!;
     // The whole point of the shim: no component's paint path may fail on it.

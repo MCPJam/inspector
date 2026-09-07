@@ -992,15 +992,17 @@ export class ChromiumDriver implements BrowserDriver {
           : undefined;
       return { ...(active ? { active } : {}), list };
     };
-    // MEASURED, not estimated. The estimate above misses two things, and both
-    // are under the caller's control: the payload repeats the active id in its
-    // own field, and `JSON.stringify` expands every quote, backslash and
-    // control character in an id — up to six bytes for one character. A sum of
-    // raw lengths is therefore not a bound on what goes on the wire, and the
-    // wire is where the 8 KiB record limit is enforced by dropping the stream.
+    // MEASURED, not estimated, and in BYTES rather than characters. The
+    // estimate above misses three things, all of them under the caller's
+    // control: the payload repeats the active id in its own field,
+    // `JSON.stringify` expands every quote, backslash and control character in
+    // an id, and a `.length` counts UTF-16 units — so one CJK character is 1
+    // there and 3 on the wire, and an emoji 2 and 4. The wire is where the 8
+    // KiB record limit is enforced, by dropping the stream, so the wire's own
+    // unit is the only one worth counting in.
     while (
       list.length > 0 &&
-      JSON.stringify(payload()).length > TABS_SNAPSHOT_BYTES
+      Buffer.byteLength(JSON.stringify(payload()), "utf8") > TABS_SNAPSHOT_BYTES
     ) {
       list.splice(dropIndex(list, this.activeTabId), 1);
     }

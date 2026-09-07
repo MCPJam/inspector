@@ -1697,6 +1697,25 @@ describe("ChromiumDriver — the human pane's tab strip", () => {
     expect(snapshot.active).toBe(`${quotes}7`);
   });
 
+  it("counts the bytes that go on the wire, not the characters", async () => {
+    // One of these is 1 UTF-16 unit and 3 UTF-8 bytes. `.length` says the
+    // strip fits; the reader, which applies its 8 KiB limit to bytes and drops
+    // the stream when a record is over, says it does not.
+    const cjk = "\u4e2d".repeat(400);
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 6; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `${cjk}${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(
+      Buffer.byteLength(JSON.stringify(snapshot), "utf8"),
+    ).toBeLessThanOrEqual(4_096);
+    expect(snapshot.active).toBe(`${cjk}5`);
+  });
+
   it("bounds the strip in bytes, not just in entries", async () => {
     // A tab id is whatever the caller asked for — `getOrCreateTab` opens a
     // page under any string — so eight tabs is well inside the entry bound and

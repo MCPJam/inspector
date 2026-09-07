@@ -609,15 +609,29 @@ export function LocalBrowserBody({
    */
   useEffect(() => {
     if (!session || !projectId || holding || lease.state === "free") return;
+    // A REVOKED GRANT STOPS IT. Every call this makes carries the consent
+    // token, and a pane whose grant has been withdrawn asking again every five
+    // seconds is a pane arguing with a decision the person already made.
+    if (!consentGranted) return;
     const bootId = session.bootId;
     const generation = railGeneration.current;
     let stopped = false;
+    /** Which read is the LATEST, so a slow one cannot land on top of it. */
+    let issued = 0;
+    let applied = 0;
     const timer = setInterval(() => {
       if (!activeRef.current) return;
       if (document.visibilityState !== "visible") return;
+      const serial = (issued += 1);
       void noteLocalBrowserWatch({ bootId }, consentToken)
         .then((next) => {
           if (stopped || railGeneration.current !== generation) return;
+          // An older answer arriving after a newer one would put the lease
+          // back to what it was BEFORE the newer read — and if that older
+          // answer said `free`, the pane would offer Take control for a
+          // browser the server is about to refuse.
+          if (serial <= applied) return;
+          applied = serial;
           if (!next.lease) return;
           setLease(next.lease);
           // Retract the message, and only it: the browser is available again.
@@ -635,7 +649,14 @@ export function LocalBrowserBody({
       stopped = true;
       clearInterval(timer);
     };
-  }, [session, projectId, consentToken, holding, lease.state]);
+  }, [
+    session,
+    projectId,
+    consentToken,
+    consentGranted,
+    holding,
+    lease.state,
+  ]);
 
   // Hand the browser back when this tab goes away.
   //

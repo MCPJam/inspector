@@ -125,6 +125,28 @@ export function createFrameRelayStats(
   let timer: unknown;
   let stopped = false;
 
+  /**
+   * How far past the FRAME high-water mark a control message will still go.
+   *
+   * Stats keep flowing while frames are being dropped, because they are what
+   * ends the congestion. That argument stops holding when the socket is not
+   * draining AT ALL: a peer that has stopped reading will never act on the
+   * telemetry, and appending a few hundred bytes a second to a buffer nobody
+   * is emptying is a slow leak with no reader at the end of it. Generous,
+   * because the band this has to keep working in is the one just above the
+   * frame mark — that is where a pane still watching needs to hear that it
+   * should step down.
+   */
+  const CONTROL_BUFFER_MULTIPLE = 8;
+
+  const stalled = (): boolean => {
+    const buffered = options.bufferedAmount?.();
+    return (
+      typeof buffered === "number" &&
+      buffered > maxBuffered * CONTROL_BUFFER_MULTIPLE
+    );
+  };
+
   const congested = (): boolean => {
     const buffered = options.bufferedAmount?.();
     return typeof buffered === "number" && buffered > maxBuffered;
@@ -174,6 +196,11 @@ export function createFrameRelayStats(
         // would have fixed. A few hundred bytes on a timer is not what put a
         // socket over its high-water mark; the frames it is reporting on are,
         // and those are still dropped.
+        //
+        // The exception is a socket that is not draining at all — see
+        // `CONTROL_BUFFER_MULTIPLE`. Past that there is no reader to act on
+        // this, and every message is one more thing queued for nobody.
+        if (stalled()) return;
         try {
           options.send(
             JSON.stringify({

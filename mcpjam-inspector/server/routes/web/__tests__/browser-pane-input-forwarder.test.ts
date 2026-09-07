@@ -333,4 +333,23 @@ describe("bursts the daemon would refuse whole", () => {
     expect(releases).toHaveLength(1);
     expect(releases[0]!.tabId).toBe("b");
   });
+
+  it("counts what it carried against the bound, not on top of it", async () => {
+    const f = build();
+    f.hold();
+    // Every message a release, so every eviction has something to carry, and
+    // alternating tabs so every message starts a new group.
+    for (let seq = 1; seq <= 200; seq += 1) {
+      f.forwarder.submit({
+        seq,
+        tabId: seq % 2 === 0 ? "b" : "a",
+        events: [{ type: "mouse_up", x: seq, y: seq, button: "left" }],
+      });
+    }
+    // The queue settles AT the bound rather than at the bound plus the carry:
+    // what is put back on the front is part of what the bound is counting.
+    expect(f.forwarder.pendingGroups()).toBeLessThanOrEqual(32);
+    f.release();
+    for (let at = 0; at < 200; at += 1) await tick();
+  });
 });

@@ -74,6 +74,8 @@ export interface RelayInputForwarder {
   cancel(): void;
   /** For tests: is a dispatch outstanding? */
   busy(): boolean;
+  /** For tests: how many groups are queued, carried releases included. */
+  pendingGroups(): number;
 }
 
 export interface RelayInputForwarderOptions {
@@ -217,7 +219,16 @@ export function createRelayInputForwarder(
         // is making now is the one worth keeping. Every dropped batch is
         // acked, because a message with no answer is a pane that waits forever.
         const carried: typeof pending = [];
-        while (pending.length >= MAX_PENDING_GROUPS) {
+        // COUNTING THE CARRIED ONES TOO. They go back on the front, and the
+        // new group goes on the end, so a bound that only looked at what was
+        // left in `pending` would settle at the limit PLUS the carry rather
+        // than at the limit. This terminates: `carried` stops growing at
+        // `MAX_RELEASE_CARRY`, and every turn of the loop takes one out of
+        // `pending`.
+        while (
+          pending.length > 0 &&
+          pending.length + carried.length >= MAX_PENDING_GROUPS
+        ) {
           const dropped = pending.shift()!;
           for (const entry of dropped.acks) {
             options.ack({
@@ -255,5 +266,6 @@ export function createRelayInputForwarder(
       pending = [];
     },
     busy: () => inFlight,
+    pendingGroups: () => pending.length,
   };
 }
