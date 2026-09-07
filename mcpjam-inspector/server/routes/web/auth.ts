@@ -71,6 +71,7 @@ import {
   buildHostedOAuthUnauthorizedHandler,
   refreshHostedOAuthAccessTokenWithLocalFallback,
 } from "../../utils/hosted-oauth-refresh.js";
+import { assertSecretsOriginMatches } from "../../utils/secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -413,6 +414,14 @@ export type ConvexAuthorizeResponse = {
     httpVariant?: "streamable-http" | "sse";
     headers?: Record<string, string>;
     hasHeaders?: boolean;
+    /**
+     * The origin this row's stored credentials were bound to, from the backend
+     * (`convex/webAuthorize.ts`). MJ-003: the connect path must not send a
+     * credential to a URL it was not saved against. Absent on a row with no
+     * stored credential — and, on an older backend, on one that has them, which
+     * `assertSecretsOriginMatches` treats as a refusal.
+     */
+    secretsBoundOrigin?: string;
     useOAuth?: boolean;
     // Cross-App Access (XAA) discriminator + non-secret config, surfaced by the
     // hosted authorize endpoint. The confidential client secret + token endpoint
@@ -1725,6 +1734,33 @@ export async function createAuthorizedManager(
       // would inject the wrong credential.
       let connectToken = oauthToken;
       let connectOnUnauthorized = onUnauthorized;
+      // MJ-003. A token derived from the ROW was obtained against the origin
+      // the row held at the time; if it has since been repointed, sending it
+      // hands the victim's bearer to whoever now owns that URL.
+      //
+      // ROW-DERIVED ONLY, and that distinction is load-bearing. `oauthToken`
+      // above is a precedence chain over three sources, and only two of them
+      // belong to the row: `auth.oauthAccessToken` (stored) and
+      // `recoveredOAuthTokens` (minted in PASS 1b from the row's stored refresh
+      // material). The third, `oauthTokens?.[serverId]`, is a token the CALLER
+      // supplied for this request — their own credential, never stored against
+      // this row — and gating it would refuse a connection nobody's saved
+      // secret is at risk in.
+      //
+      // Checked before the XAA branch below and deliberately not applied to it:
+      // an XAA token is minted per connect with `resource` set to the CURRENT
+      // url, so it is bound by construction and a stale binding must not block
+      // it.
+      const oauthTokenIsRowDerived =
+        recoveredOAuthTokens[serverId] != null ||
+        auth.oauthAccessToken != null;
+      if (oauthToken && oauthTokenIsRowDerived) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
+      }
       const useXaa =
         auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
       if (useXaa) {
@@ -1849,6 +1885,18 @@ export async function createAuthorizedManager(
             },
           );
         };
+      }
+
+      // MJ-003. Checked before the reveal, not after: a mismatch means these
+      // credentials are not going on this connection either way, and asking
+      // Convex to decrypt them first would put the plaintext in this process
+      // for no reason and log a reveal that never needed to happen.
+      if (auth.serverConfig.hasHeaders === true) {
+        assertSecretsOriginMatches({
+          boundOrigin: auth.serverConfig.secretsBoundOrigin,
+          targetUrl: auth.serverConfig.url,
+          serverName: displayServerName,
+        });
       }
 
       const authForConfig =

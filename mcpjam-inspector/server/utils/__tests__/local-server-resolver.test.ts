@@ -618,6 +618,10 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://header.example.com/mcp",
+            // MJ-003: a row whose stored credential is bound to its own
+            // origin. Absent, the connect gate refuses — which is why the
+            // backend backfill gates the deploy that turns this on.
+            secretsBoundOrigin: "https://header.example.com",
             useOAuth: false,
             headers: { Authorization: "Bearer static-token" },
             hasHeaders: true,
@@ -652,6 +656,10 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hidden-header.example.com/mcp",
+            // MJ-003: a row whose stored credential is bound to its own
+            // origin. Absent, the connect gate refuses — which is why the
+            // backend backfill gates the deploy that turns this on.
+            secretsBoundOrigin: "https://hidden-header.example.com",
             useOAuth: false,
             headers: {},
             hasHeaders: true,

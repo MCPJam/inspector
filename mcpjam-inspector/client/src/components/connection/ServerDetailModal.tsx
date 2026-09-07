@@ -39,6 +39,7 @@ import { useServerForm } from "./hooks/use-server-form";
 import { ServerInfoContent } from "./ServerInfoContent";
 import { ServerInfoToolsMetadataContent } from "./ServerInfoToolsMetadataContent";
 import { EditServerFormContent } from "./EditServerFormContent";
+import { ServerUrlChangeHistory } from "./ServerUrlChangeHistory";
 import { ServerHistoryContent } from "./ServerHistoryContent";
 import { ServerHistoryDriftChip } from "./ServerHistoryDriftChip";
 import { HostCompatContent } from "@/components/compat/HostCompatContent";
@@ -710,6 +711,11 @@ export function ServerDetailModal({
                         : undefined
                     }
                   />
+                  {/* MJ-003 AC 3: where this server has been repointed, and
+                      whether that cleared credentials. Readable on every plan,
+                      unlike the organization audit log. Renders nothing when
+                      there is no history. */}
+                  <ServerUrlChangeHistory serverId={hostedServerId} />
                 </div>
               </TabsContent>
 
@@ -738,7 +744,8 @@ export function ServerDetailModal({
                     isSaving ||
                     isReconnecting ||
                     (!formState.hasChanges && !isConnected) ||
-                    formState.authConfigurationBlocksSubmit
+                    formState.authConfigurationBlocksSubmit ||
+                    formState.credentialClearBlocksSubmit
                   }
                   size="sm"
                 >

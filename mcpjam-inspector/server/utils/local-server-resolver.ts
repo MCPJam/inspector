@@ -39,6 +39,7 @@ import {
   type InternalLogContext,
   mapInternalToRequestContext,
 } from "./internal-log-context.js";
+import { assertSecretsOriginMatches } from "./secret-origin-binding.js";
 import {
   fetchRuntimeServerSecrets,
   fetchServerClientSecret,
@@ -74,6 +75,12 @@ type LocalAuthorizeServerConfig =
       httpVariant?: "streamable-http" | "sse";
       headers: Record<string, string>;
       hasHeaders?: boolean;
+      /**
+       * The origin this row's stored credentials were bound to (MJ-003). See
+       * `secret-origin-binding.ts`; absence on a credential-bearing row is a
+       * refusal, not permission.
+       */
+      secretsBoundOrigin?: string;
       timeout?: number;
       clientCapabilities?: unknown;
       useOAuth?: boolean;
@@ -913,6 +920,27 @@ async function applyLocalRuntimeResolution<
     (result.serverConfig.transportType === "http" &&
       result.serverConfig.hasHeaders === true &&
       !hasNonEmptyStringRecord(result.serverConfig.headers));
+  // MJ-003, the same gate the hosted path applies at its own merge — this
+  // resolver is the OTHER place a stored credential is composed onto a target,
+  // and a fix that touched only `auth.ts` would leave the desktop and
+  // `/api/mcp` surfaces open.
+  //
+  // HTTP only. A stdio row has no url, so it has no origin to bind and none is
+  // written; its `env` reaches a locally-spawned child rather than a remote
+  // host, so there is no repoint that redirects it. The stdio exposure is a
+  // TRANSPORT FLIP to http, and that is covered write-side by the backend's
+  // clear, which treats "no origin" to "an origin" as a change.
+  if (
+    result.serverConfig.transportType === "http" &&
+    result.serverConfig.hasHeaders === true
+  ) {
+    assertSecretsOriginMatches({
+      boundOrigin: result.serverConfig.secretsBoundOrigin,
+      targetUrl: result.serverConfig.url,
+      serverName: result.serverConfig.name,
+    });
+  }
+
   if (needsRuntimeSecrets) {
     const secrets = await fetchRuntimeServerSecrets({
       bearerToken,
