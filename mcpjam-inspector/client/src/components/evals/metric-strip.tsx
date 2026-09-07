@@ -238,12 +238,17 @@ export function MetricStrip({
   );
   const costSeries = costFullyPriced ? seriesOf((p) => p.costUsd ?? 0) : [];
   const costHeadline = formatCostOrDash(latest.costUsd);
+  // "per run" is a claim that MCPJam measured the whole thing. It is only
+  // true when every trial was priced AND none of the figures came from a
+  // customer's runner; otherwise the sub-label says which of those is not so.
   const costSub =
     latest.costUsd === null
       ? "not priced"
       : latest.costedIterations < latest.total
         ? `${latest.costedIterations} of ${latest.total} trials`
-        : "per run";
+        : latest.hasRunnerReportedCost
+          ? "includes runner-reported"
+          : "per run";
   const toolCallSeries = seriesOf((p) => p.toolCalls);
   const toolCallHeadline = latest.toolCalls;
   const toolCallSub = "per run";

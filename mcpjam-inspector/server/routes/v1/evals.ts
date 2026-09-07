@@ -1389,16 +1389,6 @@ function toRunJudgesDto(run: RunDoc) {
 }
 
 /**
- * The run's MCPJam-billed cost, with the COVERAGE that produced it.
- *
- * Coverage is not decoration: `estimatedCostUsd` is stamped per iteration and
- * absent whenever the model was not MCPJam-billed (BYOK), was a harness run
- * (mixed models), or reported no tokens. Summing what is present and omitting
- * the rest yields a number indistinguishable from a complete one — which is
- * exactly how a half-priced run reads as a cheap run. `totalUsd` is null,
- * never 0, when nothing was priced.
- */
-/**
  * NO RUN-LEVEL `cost` BLOCK HERE, deliberately.
  *
  * An earlier revision took an optional `iterations` argument and summed a

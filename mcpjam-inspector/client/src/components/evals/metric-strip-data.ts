@@ -30,6 +30,15 @@ export interface MetricStripPoint {
    * the strip needs the coverage to know when to withhold the point.
    */
   costedIterations: number;
+  /**
+   * True when a customer's own runner supplied part of `costUsd`.
+   *
+   * Carried alongside the amount because the headline cannot say it: the
+   * number is real either way, but "MCPJam measured this" and "your runner
+   * told us this" are different claims, and the per-iteration rows already
+   * mark the difference.
+   */
+  hasRunnerReportedCost: boolean;
   /** Total tool calls across all iterations in this run/batch. */
   toolCalls: number;
 }
@@ -96,6 +105,7 @@ function metricPointFromCellTrend(
     // zero, and the strip withholds the point.
     costUsd: null,
     costedIterations: 0,
+    hasRunnerReportedCost: false,
   };
 }
 
@@ -227,8 +237,13 @@ function pointFromIterations(
     tokens: averageTokensPerIteration(iterations),
     toolCalls: runToolCallTotal(iterations),
     ...(() => {
-      const { totalUsd, costedIterations } = sumIterationCost(iterations);
-      return { costUsd: totalUsd, costedIterations };
+      const { totalUsd, costedIterations, hasRunnerReported } =
+        sumIterationCost(iterations);
+      return {
+        costUsd: totalUsd,
+        costedIterations,
+        hasRunnerReportedCost: hasRunnerReported,
+      };
     })(),
   };
 }

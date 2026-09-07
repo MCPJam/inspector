@@ -25,8 +25,18 @@ const mocks = vi.hoisted(() => ({
   budget: undefined as unknown,
 }));
 
+/**
+ * The second argument is captured, not ignored. Without it these tests pass
+ * even if the hook ASKS for budget data on behalf of an unresolved actor or a
+ * guest — which is the thing the skip is for.
+ */
+const queryArgs = vi.fn();
+
 vi.mock("convex/react", () => ({
-  useQuery: () => mocks.budget,
+  useQuery: (_name: string, args: unknown) => {
+    queryArgs(args);
+    return mocks.budget;
+  },
   useMutation: () => vi.fn(),
 }));
 
@@ -49,7 +59,11 @@ describe("useOrgSpendBudget — waiting vs refusing", () => {
     mocks.isMember = undefined;
     mocks.isUserReady = false;
     mocks.budget = undefined;
+    queryArgs.mockClear();
   });
+
+  /** The argument the hook last passed to `useQuery`. */
+  const lastQueryArg = () => queryArgs.mock.calls.at(-1)?.[0];
 
   it("waits while the actor is still settling", () => {
     // An ordinary hosted cold load. `undefined` is "we do not know yet",
@@ -58,6 +72,7 @@ describe("useOrgSpendBudget — waiting vs refusing", () => {
     const { result } = renderHook(() => useOrgSpendBudget("org_1"));
     expect(result.current.querySkipped).toBe(false);
     expect(result.current.isLoading).toBe(true);
+    expect(lastQueryArg()).toBe("skip");
   });
 
   it("waits while the database user is still bootstrapping", () => {
@@ -68,6 +83,7 @@ describe("useOrgSpendBudget — waiting vs refusing", () => {
     const { result } = renderHook(() => useOrgSpendBudget("org_1"));
     expect(result.current.querySkipped).toBe(false);
     expect(result.current.isLoading).toBe(true);
+    expect(lastQueryArg()).toBe("skip");
   });
 
   it("refuses only once the actor is RESOLVED as a guest", () => {
@@ -75,6 +91,8 @@ describe("useOrgSpendBudget — waiting vs refusing", () => {
     const { result } = renderHook(() => useOrgSpendBudget("org_1"));
     expect(result.current.querySkipped).toBe(true);
     expect(result.current.isLoading).toBe(false);
+    // Never asked on a guest's behalf — the backend would refuse it anyway.
+    expect(lastQueryArg()).toBe("skip");
   });
 
   it("stops waiting once the budget arrives", () => {

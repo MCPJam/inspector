@@ -1971,7 +1971,14 @@ export interface PlatformRunCompareCase {
    * same reason as the run-level block above. */
   metrics?: {
     estimatedCostUsd: PlatformNumericDiff;
-    costCoverage: PlatformCostCoverage;
+    /**
+     * OPTIONAL for the same reason it is optional at the run level, and the
+     * projection omits it on the same condition: a deployment predating cost
+     * coverage sends no block, and absence means "no opinion", never "fully
+     * covered". Declaring it required here would promise typed consumers a
+     * field the wire does not always carry.
+     */
+    costCoverage?: PlatformCostCoverage;
   };
 }
 
