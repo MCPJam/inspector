@@ -1156,20 +1156,22 @@ export function NewSwarmCreateFlow({
       const runLabels = new Map<string, string>();
       const launchedBatch: SwarmLaunchedRun[] = [];
 
-      // Minted OUTSIDE the retry branch below: a retry has to reuse the wave
-      // the first attempt's runs were stamped with, or one swarm lands as two
-      // rows in the Overview.
-      persistedRunGroupIdRef.current ??= crypto.randomUUID();
-      const swarmRunGroupId = persistedRunGroupIdRef.current;
-      // Same reason, same placement: keys derived from this must be identical
-      // across a retry or the backend can't recognise the replay.
-      flowIdRef.current ??= crypto.randomUUID();
-      const flowId = flowIdRef.current;
-
       // Every exit from here has to clear the latch. Without the finally, an
       // unexpected throw would leave the button spinning on "Creating &
       // launching…" with Cancel disabled — the user's only escape a reload.
       try {
+        // Minted INSIDE the try so the finally covers them. `crypto.randomUUID`
+        // is undefined outside a secure context (e.g. http://<lan-ip>:6274, the
+        // self-hosted address the app now supports), so it throws there — and a
+        // throw out beyond the finally would strand the latch. Still OUTSIDE the
+        // retry branch below: a retry has to reuse the same wave and keys, or one
+        // swarm lands as two rows in the Overview and the backend can't recognise
+        // the replay.
+        persistedRunGroupIdRef.current ??= crypto.randomUUID();
+        const swarmRunGroupId = persistedRunGroupIdRef.current;
+        flowIdRef.current ??= crypto.randomUUID();
+        const flowId = flowIdRef.current;
+
         // The authoring container, written ONCE per launch and — critically —
         // OUTSIDE the retry branch below. That branch is skipped wholesale on a
         // retry, so anything placed inside it never runs on the attempt that
@@ -1532,6 +1534,22 @@ export function NewSwarmCreateFlow({
     targetState.stack.hostIds.length > 0;
 
   /**
+   * Whether the USER has started a draft — the gate for the discard toast, and
+   * deliberately NARROWER than `hasResumableWork`. That flag counts the
+   * auto-seeded target (so a remount restores it), but the seed is not the
+   * user's doing: opening the flow and leaving without typing, picking a
+   * persona, or generating discards nothing worth announcing.
+   */
+  const hasUserDraft =
+    step !== "describe" ||
+    nameEdited ||
+    draft.trim().length > 0 ||
+    reusedIds.length > 0 ||
+    proposed.length > 0 ||
+    launchedRuns.length > 0 ||
+    generatingSince !== null;
+
+  /**
    * Mirror the resumable flow into session storage on every change, so a
    * remount picks up where the user was instead of at Describe.
    *
@@ -1588,15 +1606,26 @@ export function NewSwarmCreateFlow({
 
   /** Leaving the flow ends it — the draft is for remounts, not for history. */
   const leaveFlow = useCallback(() => {
+    // Read the "is there anything to discard" signal BEFORE clearing the draft.
+    const hadDraft = hasUserDraft;
+    const keptGoals = (persistedTargetsRef.current?.length ?? 0) > 0;
     clearNewSwarmFlowDraft();
-    // Feedback that the exit registered — a draft thrown away, not a success,
-    // so `toast.info`. Both exits (Cancel and the ← Swarms header link) land
-    // here, so this is the one place to say it. It promises ONLY the draft:
-    // rows a failed launch already persisted are real and stay, and the header
-    // link is disabled mid-launch so this never races handleLaunch's toast.
-    toast.info("New swarm draft discarded");
+    // Only announce a discard when there was actually a draft to discard.
+    // Opening the flow and leaving it untouched discards nothing, and a notice
+    // for that is just noise — the sibling discard toast one component over
+    // (new-swarm-confirm-step.tsx) is gated on dirtiness the same way. Both
+    // exits (Cancel and the ← Swarms header link) land here, and a discard is
+    // not a success, so `toast.info`. After a failed launch the rows that
+    // landed are real and stay, so the copy then names the draft, not the goals.
+    if (hadDraft) {
+      toast.info(
+        keptGoals
+          ? "New swarm draft discarded — created goals were kept"
+          : "New swarm draft discarded",
+      );
+    }
     onCancel();
-  }, [onCancel]);
+  }, [hasUserDraft, onCancel]);
 
   const leaveRunning = useCallback(() => {
     clearNewSwarmFlowDraft();
@@ -1662,7 +1691,17 @@ export function NewSwarmCreateFlow({
       <button
         type="button"
         onClick={leaveFlow}
-        disabled={launching}
+        // Disabled for the whole of any row-creating operation, not just
+        // launch. `flowHeader` also renders on Describe, where `handleGenerate`
+        // awaits `resolveTargets` and writes personas — leaving mid-generation
+        // would fire the discard toast over a running batch, the same race this
+        // guards for launch. Matches `goToStep`'s own gate.
+        disabled={launching || generating || materializing}
+        title={
+          launching || generating || materializing
+            ? "Available once the current step finishes"
+            : undefined
+        }
         className="flex w-fit items-center gap-1 text-sm font-medium text-primary hover:underline disabled:pointer-events-none disabled:opacity-50"
         data-testid="new-swarm-back-to-swarms"
       >
