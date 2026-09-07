@@ -49,11 +49,18 @@ import {
   type BrowserSessionRecord,
 } from "../../services/browserd/browser-sessions-client.js";
 import { BrowserdClient } from "../../services/browserd/browserd-client.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 import { browserdBundleHash } from "../../services/browserd/live-session-deps.js";
 import {
   createFrameRelayStats,
   pongFor,
 } from "./browser-frame-relay-stats.js";
+import {
+  createRelayInputForwarder,
+  type InputRefusal,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import { parseBrowserPaneInputMessage } from "../../../shared/browser-pane-input.js";
 import { logger } from "../../utils/logger.js";
 
 /**
@@ -100,6 +107,17 @@ export interface BrowserFramesDeps {
       seq: number;
     }) => void;
     onEnd: (reason: string | undefined) => void;
+  }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
+  /**
+   * Forward one batch to the daemon. Injected so tests need no sandbox, and
+   * separate from `openUpstream` because input and frames now share a socket
+   * but still take opposite hops.
+   */
+  sendInput?: (args: {
+    session: BrowserSessionRecord;
+    holder: string;
+    tabId?: string;
+    events: readonly ViewportInputEvent[];
   }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
 }
 
@@ -170,6 +188,17 @@ export function createComputerBrowserFramesWsHandler(
           }),
         onEnd: args.onEnd,
       }));
+  const sendInput =
+    deps.sendInput ??
+    (async (args) =>
+      new BrowserdClient({
+        baseUrl: args.session.publicOrigin,
+        bearer: args.session.browserdToken,
+      }).sendInput({
+        holder: args.holder,
+        events: args.events,
+        ...(args.tabId ? { tabId: args.tabId } : {}),
+      }));
 
   return upgradeWebSocket(async (c) => {
     // The token rides `Sec-WebSocket-Protocol`: a browser cannot set a header
@@ -237,6 +266,8 @@ export function createComputerBrowserFramesWsHandler(
      * away against every healthy one.
      */
     let stats: ReturnType<typeof createFrameRelayStats> | undefined;
+    /** One dispatch in flight per socket — see the forwarder's docstring. */
+    let input: RelayInputForwarder | undefined;
     /**
      * Has the pane said it is being looked at since the last activity touch?
      *
@@ -255,6 +286,10 @@ export function createComputerBrowserFramesWsHandler(
       activityTimer = undefined;
       stats?.stop();
       stats = undefined;
+      // Whatever is queued belonged to the hold that queued it; delivering it
+      // after the socket went away types into whoever holds the browser next.
+      input?.cancel();
+      input = undefined;
       if (registered) {
         // By identity, so a reconnect cannot retain the dead `WSContext` of the
         // connection it replaced.
@@ -284,6 +319,63 @@ export function createComputerBrowserFramesWsHandler(
         });
         stats.setSubscribers(1);
         stats.start();
+
+        input = createRelayInputForwarder({
+          dispatch: async ({ tabId, events }) => {
+            const outcome = await sendInput({
+              session: live,
+              // NEVER from the client, exactly as `POST /input` derives it: the
+              // daemon admits input when `holder === lease.holder`, so a holder
+              // read off the wire would let anyone who echoed the right id type
+              // into somebody else's held session — a password field, mid-login.
+              holder: viewerId,
+              ...(tabId ? { tabId } : {}),
+              events: events as readonly ViewportInputEvent[],
+            });
+            if (outcome.ok) return { ok: true };
+            return { ok: false, refused: refusalFor(outcome.status) };
+          },
+          ack: (payload) => {
+            if (closed) return;
+            try {
+              ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            } catch {
+              /* the socket went away */
+            }
+          },
+          onDispatched: () => {
+            // A person typing is REAL USE, and `kind: "command"` says so: the
+            // panel keepalive stops counting once the last real command is old
+            // enough, which is exactly the case for somebody who took control
+            // to solve a CAPTCHA and issues no agent commands at all.
+            //
+            // Throttled through the shared per-computer window — input arrives
+            // twenty times a second and a touch is a control-plane write — and
+            // only on a dispatch that actually landed.
+            if (closed) return;
+            if (!shouldTouchActivity(live.computerId)) return;
+            void touchSession({
+              sessionId: live.sessionId,
+              kind: "command",
+            }).catch(() => {});
+            void touchActivity({ computerId: live.computerId }).catch(() => {});
+          },
+        });
+
+        // What this server can do, said before the pane has to guess. A client
+        // that does not see `input` here keeps POSTing, which is how a new
+        // build talks to an old server for one release.
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "hello",
+              features: ["input"],
+              codecs: ["jpeg"],
+            }),
+          );
+        } catch {
+          /* the socket went away between the upgrade and the first send */
+        }
 
         /**
          * A watching pane issues no COMMANDS, so nothing else keeps the session
@@ -395,7 +487,28 @@ export function createComputerBrowserFramesWsHandler(
             type?: unknown;
             t?: unknown;
           };
-          if (parsed?.type !== "ping" || closed) return;
+          if (closed) return;
+          if (parsed?.type === "input") {
+            const message = parseBrowserPaneInputMessage(parsed);
+            if (!message.ok) {
+              // An ack, not a close: a malformed batch is a bug in one
+              // message, and dropping the socket would take the picture with
+              // it.
+              const seq = (parsed as { seq?: unknown }).seq;
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq: typeof seq === "number" ? seq : -1,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+              return;
+            }
+            input?.submit(message);
+            return;
+          }
+          if (parsed?.type !== "ping") return;
           // The evidence the activity timer waits for.
           watched = true;
           // The pane's own stamp comes back untouched, which is what makes the
@@ -417,6 +530,22 @@ export function createComputerBrowserFramesWsHandler(
       },
     };
   });
+}
+
+/**
+ * Turn the daemon's input status into the ack's `refused` word.
+ *
+ * A 423 is the ORDINARY answer while the agent is driving, not a failure —
+ * which is exactly why it must not become a close. Everything else the daemon
+ * can answer (a stale bearer, a 500, an origin refusal) is an upstream
+ * problem, and dressing one up as a lease refusal would tell the pane to wait
+ * for a hand-back from a holder who does not exist.
+ */
+function refusalFor(status: number): InputRefusal {
+  if (status === 423) return "lease_held";
+  if (status === 404) return "unknown_tab";
+  if (status === 409) return "no_browser_session";
+  return "upstream_error";
 }
 
 /**

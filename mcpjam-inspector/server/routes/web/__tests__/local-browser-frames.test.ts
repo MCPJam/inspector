@@ -50,6 +50,9 @@ const sessionState = vi.hoisted(() => ({
   touches: 0,
   refuse: null as string | null,
   revokeOnRevalidate: false,
+  /** Input batches the route dispatched, in the order it dispatched them. */
+  inputs: [] as Array<{ holder?: string; tabId?: string; events: unknown[] }>,
+  refuseInput: null as string | null,
 }));
 
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
@@ -83,6 +86,17 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
               }
             },
           };
+        },
+        async dispatchInput(args: {
+          holder?: string;
+          tabId?: string;
+          events: unknown[];
+        }) {
+          sessionState.inputs.push(args);
+          if (sessionState.refuseInput) {
+            return { ok: false as const, error: sessionState.refuseInput };
+          }
+          return { ok: true as const };
         },
       },
     };
@@ -166,6 +180,8 @@ beforeEach(async () => {
   sessionState.touches = 0;
   sessionState.refuse = null;
   sessionState.revokeOnRevalidate = false;
+  sessionState.inputs = [];
+  sessionState.refuseInput = null;
   server = await startServer();
 });
 
@@ -375,6 +391,112 @@ describe("the agent browser's frame socket — losing the right to watch", () =>
 
     expect(sessionState.subscriptions[0]?.revalidated).toBe(1);
     expect(sessionState.subscriptions[0]?.unsubscribed).toBe(false);
+    ws.close();
+  });
+});
+
+
+describe("input on the frame socket", () => {
+  /** Open a socket and wait until it is subscribed. */
+  async function open() {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    await new Promise<void>((resolve) => ws.on("open", () => resolve()));
+    await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
+    return ws;
+  }
+
+  function collect(ws: WebSocket): Array<Record<string, unknown>> {
+    const seen: Array<Record<string, unknown>> = [];
+    ws.on("message", (data) => seen.push(JSON.parse(String(data))));
+    return seen;
+  }
+
+  it("says it can take input before the pane has to guess", async () => {
+    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const hello = new Promise<Record<string, unknown>>((resolve) => {
+      ws.on("message", (data) => {
+        const parsed = JSON.parse(String(data)) as Record<string, unknown>;
+        if (parsed.type === "hello") resolve(parsed);
+      });
+    });
+    expect(await hello).toEqual({
+      type: "hello",
+      features: ["input"],
+      codecs: ["jpeg"],
+    });
+    ws.close();
+  });
+
+  it("dispatches with the holder the SOCKET was opened with", async () => {
+    const ws = await open();
+    const seen = collect(ws);
+    ws.send(
+      JSON.stringify({
+        type: "input",
+        seq: 5,
+        // Ignored: the holder comes from the socket's own query, which the
+        // nonce authorized, not from a field anyone can put in a message.
+        holder: "rail-someone-else",
+        events: [{ type: "mouse_move", x: 7, y: 8 }],
+      }),
+    );
+    await vi.waitFor(() => expect(sessionState.inputs).toHaveLength(1));
+    expect(sessionState.inputs[0]).toMatchObject({
+      holder: "rail-1",
+      events: [{ type: "mouse_move", x: 7, y: 8 }],
+    });
+    await vi.waitFor(() =>
+      expect(seen.some((m) => m.type === "input_ack")).toBe(true),
+    );
+    expect(seen.find((m) => m.type === "input_ack")).toEqual({
+      type: "input_ack",
+      seq: 5,
+      dispatched: 1,
+    });
+    ws.close();
+  });
+
+  it("answers a lease refusal with an ack and stays open", async () => {
+    sessionState.refuseInput = "lease_held";
+    const ws = await open();
+    const seen = collect(ws);
+    ws.send(
+      JSON.stringify({
+        type: "input",
+        seq: 2,
+        events: [{ type: "text", text: "hi" }],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(seen.some((m) => m.type === "input_ack")).toBe(true),
+    );
+    expect(seen.find((m) => m.type === "input_ack")).toEqual({
+      type: "input_ack",
+      seq: 2,
+      dispatched: 0,
+      refused: "lease_held",
+    });
+    expect(ws.readyState).toBe(WebSocket.OPEN);
+    ws.close();
+  });
+
+  it("refuses a malformed batch whole", async () => {
+    const ws = await open();
+    const seen = collect(ws);
+    ws.send(
+      JSON.stringify({
+        type: "input",
+        seq: 3,
+        events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(seen.some((m) => m.type === "input_ack")).toBe(true),
+    );
+    expect(seen.find((m) => m.type === "input_ack")).toMatchObject({
+      refused: "invalid_input",
+    });
+    expect(sessionState.inputs).toHaveLength(0);
     ws.close();
   });
 });

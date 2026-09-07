@@ -1,0 +1,136 @@
+/**
+ * The one input allowlist.
+ *
+ * It exists because three copies of it disagreed, and the way they disagreed
+ * was silent: an event the daemon does not recognise comes back 200 having
+ * done nothing, and still counts as use — which on a metered box defers the
+ * idle sweep for a caller who never touched the browser.
+ */
+import { describe, expect, it } from "vitest";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  coalesceBrowserPaneInput,
+  isBrowserPaneInputEvent,
+  parseBrowserPaneInputMessage,
+  type BrowserPaneInputEvent,
+} from "../browser-pane-input";
+
+describe("input allowlist", () => {
+  it("accepts each event the pane can produce", () => {
+    const events: BrowserPaneInputEvent[] = [
+      { type: "mouse_move", x: 1, y: 2 },
+      { type: "mouse_down", x: 1, y: 2, button: "right" },
+      { type: "mouse_up", x: 1, y: 2, button: "middle" },
+      { type: "wheel", x: 1, y: 2, deltaX: 0, deltaY: -3 },
+      { type: "key_down", key: "Enter" },
+      { type: "key_up", key: "Enter" },
+      { type: "text", text: "hi" },
+    ];
+    for (const event of events) expect(isBrowserPaneInputEvent(event)).toBe(true);
+  });
+
+  it("refuses a shape with the fields its type needs missing", () => {
+    expect(isBrowserPaneInputEvent(null)).toBe(false);
+    expect(isBrowserPaneInputEvent({ type: "nonsense" })).toBe(false);
+    expect(isBrowserPaneInputEvent({ type: "mouse_move" })).toBe(false);
+    expect(
+      isBrowserPaneInputEvent({ type: "mouse_move", x: NaN, y: 0 }),
+    ).toBe(false);
+    expect(
+      isBrowserPaneInputEvent({ type: "mouse_down", x: 0, y: 0, button: "four" }),
+    ).toBe(false);
+    expect(
+      isBrowserPaneInputEvent({ type: "wheel", x: 0, y: 0, deltaX: 1 }),
+    ).toBe(false);
+    expect(isBrowserPaneInputEvent({ type: "key_down", key: "" })).toBe(false);
+  });
+});
+
+describe("coalescing", () => {
+  it("keeps only the last of a run of moves", () => {
+    expect(
+      coalesceBrowserPaneInput([
+        { type: "mouse_move", x: 1, y: 1 },
+        { type: "mouse_move", x: 2, y: 2 },
+        { type: "mouse_move", x: 3, y: 3 },
+      ]),
+    ).toEqual([{ type: "mouse_move", x: 3, y: 3 }]);
+  });
+
+  it("sums adjacent wheels rather than dropping distance", () => {
+    expect(
+      coalesceBrowserPaneInput([
+        { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: -10 },
+        { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: -15 },
+      ]),
+    ).toEqual([{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: -25 }]);
+  });
+
+  it("never merges a zoom into a scroll, or across a different point", () => {
+    const events: BrowserPaneInputEvent[] = [
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: -10 },
+      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: -10, modifiers: 2 },
+      { type: "wheel", x: 9, y: 9, deltaX: 0, deltaY: -10, modifiers: 2 },
+    ];
+    expect(coalesceBrowserPaneInput(events)).toEqual(events);
+  });
+
+  it("keeps a press and its release either side of a collapsed run", () => {
+    const events: BrowserPaneInputEvent[] = [
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_move", x: 2, y: 2 },
+      { type: "mouse_move", x: 3, y: 3 },
+      { type: "mouse_up", x: 3, y: 3, button: "left" },
+    ];
+    expect(coalesceBrowserPaneInput(events)).toEqual([
+      events[0],
+      { type: "mouse_move", x: 3, y: 3 },
+      events[3],
+    ]);
+  });
+});
+
+describe("the wire message", () => {
+  it("reads a well-formed batch", () => {
+    expect(
+      parseBrowserPaneInputMessage({
+        seq: 7,
+        tabId: "tab-1",
+        events: [{ type: "mouse_move", x: 1, y: 2 }],
+      }),
+    ).toEqual({
+      ok: true,
+      seq: 7,
+      tabId: "tab-1",
+      events: [{ type: "mouse_move", x: 1, y: 2 }],
+    });
+  });
+
+  it("refuses the whole batch when any event is not one", () => {
+    // Filtering would deliver a drag missing its release, and the page would
+    // sit holding a button down with nothing to say why.
+    expect(
+      parseBrowserPaneInputMessage({
+        seq: 1,
+        events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+      }),
+    ).toEqual({ ok: false, error: "invalid_input" });
+  });
+
+  it("refuses a message with no seq to acknowledge", () => {
+    expect(
+      parseBrowserPaneInputMessage({
+        events: [{ type: "mouse_move", x: 1, y: 1 }],
+      }),
+    ).toEqual({ ok: false, error: "invalid_input" });
+  });
+
+  it("slices at the daemon's own batch limit", () => {
+    const events = Array.from({ length: 100 }, (_, i) => ({
+      type: "key_down" as const,
+      key: String(i),
+    }));
+    const parsed = parseBrowserPaneInputMessage({ seq: 1, events });
+    expect(parsed.ok && parsed.events).toHaveLength(BROWSER_INPUT_BATCH_LIMIT);
+  });
+});

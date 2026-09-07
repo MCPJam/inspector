@@ -557,4 +557,73 @@ describe("the hosted pane — driving it", () => {
     await userEvent.keyboard("k");
     expect(api.inputs).toHaveLength(0);
   });
+
+  it("puts a keystroke on the socket once the relay says it can", async () => {
+    // The socket is ordered and already open; a POST spends a whole round trip
+    // buying an ordering it already has.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() =>
+      expect(
+        socket().sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input"),
+      ).toBe(true),
+    );
+    const message = socket()
+      .sent.map((raw) => JSON.parse(raw))
+      .find((m) => m.type === "input");
+    expect(message).toMatchObject({
+      type: "input",
+      seq: 1,
+      events: [{ type: "text", text: "k" }],
+    });
+    // And NOT over HTTP: one release of fallback, not two paths at once.
+    expect(api.inputs).toHaveLength(0);
+  });
+
+  it("falls back to POST against a relay that never advertised input", async () => {
+    // A new client against an old server for one release. The relay's `hello`
+    // is the only thing that says the socket can take input; absent it, the
+    // POST route is still there.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: [], codecs: ["jpeg"] }),
+      });
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() => expect(api.inputs).toHaveLength(1));
+    expect(
+      socket().sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input"),
+    ).toBe(false);
+  });
+
+  it("goes back to POST when the socket drops mid-hold", async () => {
+    // A reconnect must not inherit the previous connection's answer: the new
+    // socket has said nothing yet, and input sent into it would vanish.
+    api.session = { ...RUNNING, lease: { state: "held" }, yours: true };
+    renderBody();
+    const image = await deliverFrame();
+    act(() => {
+      socket().onmessage?.({
+        data: JSON.stringify({ type: "hello", features: ["input"] }),
+      });
+    });
+    act(() => {
+      socket().readyState = 3;
+    });
+    (image.parentElement as HTMLElement).focus();
+    await userEvent.keyboard("k");
+    await waitFor(() => expect(api.inputs).toHaveLength(1));
+  });
 });

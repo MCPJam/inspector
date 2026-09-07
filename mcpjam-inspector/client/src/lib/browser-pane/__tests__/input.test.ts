@@ -116,7 +116,135 @@ describe("releases and drags", () => {
   });
 });
 
-describe("bounding pointer traffic", () => {
+/**
+ * A scheduler a test can step.
+ *
+ * The forwarder batches on an animation frame, and "one frame later" is
+ * exactly the behaviour under test — a fake timer would measure the timer.
+ */
+function stepper() {
+  let pending: Array<() => void> = [];
+  return {
+    schedule: (fn: () => void) => {
+      pending.push(fn);
+    },
+    /** One animation frame. */
+    frame() {
+      const due = pending;
+      pending = [];
+      for (const fn of due) fn();
+    },
+    pendingCount: () => pending.length,
+  };
+}
+
+describe("batching a gesture", () => {
+  it("holds a run of moves for one frame and sends the last of them", () => {
+    const batches: BrowserInputEvent[][] = [];
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      (events) => {
+        batches.push([...events]);
+      },
+      { schedule: clock.schedule },
+    );
+
+    forwarder.push([{ type: "mouse_move", x: 1, y: 1 }]);
+    forwarder.push([{ type: "mouse_move", x: 2, y: 2 }]);
+    forwarder.push([{ type: "mouse_move", x: 3, y: 3 }]);
+    // Nothing yet: a move is one of a stream and nobody notices which frame
+    // it went in.
+    expect(batches).toEqual([]);
+
+    clock.frame();
+    expect(batches).toEqual([[{ type: "mouse_move", x: 3, y: 3 }]]);
+  });
+
+  it("flushes a press, a release, a key and text at once", () => {
+    // The transitions a person can FEEL. A click that waits for the next
+    // animation frame is a click that feels late, which is the whole subject
+    // of this wave.
+    const urgent: BrowserInputEvent[] = [
+      { type: "mouse_down", x: 1, y: 1, button: "left" },
+      { type: "mouse_up", x: 1, y: 1, button: "left" },
+      { type: "key_down", key: "Enter" },
+      { type: "key_up", key: "Enter" },
+      { type: "text", text: "a" },
+    ];
+    for (const event of urgent) {
+      const batches: BrowserInputEvent[][] = [];
+      const clock = stepper();
+      const forwarder = createInputForwarder(
+        (events) => {
+          batches.push([...events]);
+        },
+        { schedule: clock.schedule },
+      );
+      forwarder.push([event]);
+      expect(batches).toEqual([[event]]);
+    }
+  });
+
+  it("carries the move that preceded a press in the same flush", () => {
+    // A press is dispatched at a point, and the page tracks the pointer to get
+    // there: splitting them across frames is how a click lands on the element
+    // the pointer was over one frame ago.
+    const batches: BrowserInputEvent[][] = [];
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      (events) => {
+        batches.push([...events]);
+      },
+      { schedule: clock.schedule },
+    );
+    forwarder.push([{ type: "mouse_move", x: 9, y: 9 }]);
+    forwarder.push([{ type: "mouse_down", x: 9, y: 9, button: "left" }]);
+    expect(batches).toEqual([
+      [
+        { type: "mouse_move", x: 9, y: 9 },
+        { type: "mouse_down", x: 9, y: 9, button: "left" },
+      ],
+    ]);
+  });
+
+  it("does NOT wait for the last send when the transport is ordered", () => {
+    // The socket is ordered, so the round trip the old queue spent buying
+    // ordering is pure latency. Reverting this — serializing on the socket —
+    // puts a full RTT back into every gesture after the first.
+    const batches: BrowserInputEvent[][] = [];
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      (events) => {
+        batches.push([...events]);
+        // Never resolves: an unanswered send must not stop the next one.
+        return new Promise<void>(() => {});
+      },
+      { schedule: clock.schedule },
+    );
+    forwarder.push([{ type: "text", text: "a" }]);
+    forwarder.push([{ type: "text", text: "b" }]);
+    expect(batches).toEqual([
+      [{ type: "text", text: "a" }],
+      [{ type: "text", text: "b" }],
+    ]);
+  });
+
+  it("stamps each batch with a seq the ack can name", () => {
+    const seqs: number[] = [];
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      (_events, seq) => {
+        seqs.push(seq);
+      },
+      { schedule: clock.schedule },
+    );
+    forwarder.push([{ type: "text", text: "a" }]);
+    forwarder.push([{ type: "text", text: "b" }]);
+    expect(seqs).toEqual([1, 2]);
+  });
+});
+
+describe("bounding pointer traffic on the POST fallback", () => {
   it("collapses a run of moves and keeps everything else in order", () => {
     expect(
       coalesceInput([
@@ -135,19 +263,27 @@ describe("bounding pointer traffic", () => {
   });
 
   it("keeps ONE request in flight and sends the rest behind it", async () => {
+    // Concurrent POSTs arrive in whatever order the network felt like, and an
+    // out-of-order drag lands where nobody aimed. The socket does not need
+    // this; HTTP does.
     const batches: BrowserInputEvent[][] = [];
     let release!: () => void;
     const first = new Promise<void>((resolve) => {
       release = resolve;
     });
     let sends = 0;
-    const forwarder = createInputForwarder(async (events) => {
-      batches.push([...events]);
-      sends += 1;
-      if (sends === 1) await first;
-    });
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      async (events) => {
+        batches.push([...events]);
+        sends += 1;
+        if (sends === 1) await first;
+      },
+      { schedule: clock.schedule, serialize: () => true },
+    );
 
     forwarder.push([{ type: "mouse_move", x: 1, y: 1 }]);
+    clock.frame();
     // Everything below arrives while the first request is still open.
     forwarder.push([{ type: "mouse_move", x: 2, y: 2 }]);
     forwarder.push([{ type: "mouse_move", x: 3, y: 3 }]);
@@ -156,6 +292,7 @@ describe("bounding pointer traffic", () => {
 
     release();
     await new Promise((r) => setTimeout(r, 0));
+    clock.frame();
 
     // Two requests, not four — and the queued moves collapsed to the last one,
     // with the release still behind it and in order.
@@ -170,10 +307,13 @@ describe("bounding pointer traffic", () => {
 
   it("keeps going after a refused batch", async () => {
     const batches: unknown[][] = [];
-    const forwarder = createInputForwarder(async (events) => {
-      batches.push([...events]);
-      throw new Error("423");
-    });
+    const forwarder = createInputForwarder(
+      async (events) => {
+        batches.push([...events]);
+        throw new Error("423");
+      },
+      { schedule: (fn) => fn(), serialize: () => true },
+    );
     forwarder.push([{ type: "mouse_move", x: 1, y: 1 }]);
     await new Promise((r) => setTimeout(r, 0));
     forwarder.push([{ type: "mouse_move", x: 2, y: 2 }]);
@@ -192,17 +332,22 @@ describe("input the browser must not receive", () => {
       release = resolve;
     });
     let sends = 0;
-    const forwarder = createInputForwarder(async (events) => {
-      batches.push([...events]);
-      sends += 1;
-      if (sends === 1) await first;
-    });
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      async (events) => {
+        batches.push([...events]);
+        sends += 1;
+        if (sends === 1) await first;
+      },
+      { schedule: clock.schedule, serialize: () => true },
+    );
 
     forwarder.push([{ type: "text", text: "a" }]);
     forwarder.push([{ type: "text", text: "b" }]);
     forwarder.cancel();
     release();
     await new Promise((r) => setTimeout(r, 0));
+    clock.frame();
 
     // The one already in flight went; the queued "b" did not.
     expect(batches).toEqual([[{ type: "text", text: "a" }]]);
@@ -228,11 +373,15 @@ describe("input the browser must not receive", () => {
       release = resolve;
     });
     let sends = 0;
-    const forwarder = createInputForwarder(async (events) => {
-      batches.push([...events]);
-      sends += 1;
-      if (sends === 1) await first;
-    });
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      async (events) => {
+        batches.push([...events]);
+        sends += 1;
+        if (sends === 1) await first;
+      },
+      { schedule: clock.schedule, serialize: () => true },
+    );
 
     forwarder.push([{ type: "text", text: "first" }]);
     // 100 non-coalescible events pile up behind the open request.
@@ -241,6 +390,9 @@ describe("input the browser must not receive", () => {
     }
     release();
     await new Promise((r) => setTimeout(r, 0));
+    clock.frame();
+    await new Promise((r) => setTimeout(r, 0));
+    clock.frame();
     await new Promise((r) => setTimeout(r, 0));
 
     expect(batches[0]).toEqual([{ type: "text", text: "first" }]);
@@ -260,31 +412,29 @@ describe("input the browser must not receive", () => {
 });
 
 describe("a scroll that outlived the gesture", () => {
-  it("SUMS adjacent wheels instead of replaying them one at a time", async () => {
+  it("SUMS adjacent wheels instead of replaying them one at a time", () => {
     // Each wheel is a DELTA, so it cannot be dropped like a superseded move —
     // but queueing them individually means the page goes on scrolling long
     // after the person stopped, by however long the queue was. Summed, the
     // distance is exact and arrives as one movement.
     const batches: unknown[][] = [];
-    let release: (() => void) | null = null;
-    const forwarder = createInputForwarder(async (events) => {
-      batches.push(events);
-      await new Promise<void>((resolve) => {
-        release = resolve;
-      });
-    });
+    const clock = stepper();
+    const forwarder = createInputForwarder(
+      (events) => {
+        batches.push([...events]);
+      },
+      { schedule: clock.schedule },
+    );
 
-    forwarder.push([{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 }]);
-    // The first is in flight; the rest of the gesture piles up behind it.
-    for (let i = 0; i < 5; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       forwarder.push([{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 10 }]);
     }
-    release?.();
-    await new Promise((resolve) => setTimeout(resolve, 0));
-
-    expect(batches).toHaveLength(2);
-    expect(batches[1]).toEqual([
-      { type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 50 },
+    // A wheel is not a transition a person feels as a discrete act, so the
+    // whole gesture rides one frame.
+    expect(batches).toEqual([]);
+    clock.frame();
+    expect(batches).toEqual([
+      [{ type: "wheel", x: 5, y: 5, deltaX: 0, deltaY: 60 }],
     ]);
   });
 

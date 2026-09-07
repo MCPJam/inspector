@@ -49,6 +49,10 @@ import {
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
 
 const computers = new Hono();
 
@@ -59,7 +63,7 @@ const computers = new Hono();
  * moves; this is the server's own bound so a hostile or broken caller cannot
  * hand the browser an unbounded array to replay.
  */
-const INPUT_BATCH_LIMIT = 64;
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
 
 computers.use("/local-consent/*", bearerAuthMiddleware, requireVerifiedAuth());
 computers.use("/local-consent/*", async (c, next) => {
@@ -399,6 +403,14 @@ computers.post("/local-browser/input", async (c) => {
       { error: "A holder and at least one event are required" },
       400,
     );
+  }
+  // Refused WHOLE rather than filtered, and by the same allowlist the frame
+  // socket and the hosted panel use: dropping the bad ones would deliver a
+  // drag missing its release, leaving the page holding a button down. The
+  // daemon ignores a type it does not know, which is a 200 that did nothing —
+  // and on a metered box a 200 defers the idle sweep.
+  if (!events.every(isBrowserPaneInputEvent)) {
+    return c.json({ error: "invalid_input" }, 400);
   }
   const session = findLocalBrowserSession(bootId);
   if (!session) return c.json({ error: "No such local browser" }, 404);

@@ -123,6 +123,16 @@ export function LocalBrowserBody({
    * same hands it was before.
    */
   const holder = usePaneHolderId();
+  /**
+   * The live socket and what it said it could do — see the hosted pane's twin.
+   *
+   * A ref, so a reconnect does not rebuild the input forwarder mid-drag and
+   * drop its queue, and because `hello` lands after the forwarder exists.
+   */
+  const socketRef = useRef<WebSocket | null>(null);
+  const socketInputRef = useRef(false);
+  /** The seq on screen when a gesture goes, for the input→paint sample. */
+  const frameSeqRef = useRef(0);
   const holding = lease.state !== "free" && lease.holder === holder;
   // Read inside the heartbeat interval, which must not be torn down and
   // rebuilt (and the socket with it) every time the user changes tab.
@@ -234,6 +244,15 @@ export function LocalBrowserBody({
     if (!session || !projectId) return;
     let closed = false;
     let stream: { close(): void } | null = null;
+    /**
+     * This attempt's socket, captured for the cleanup.
+     *
+     * Compared by IDENTITY on teardown so a reconnect that already replaced
+     * the ref is not cleared by the closure of the connection it replaced —
+     * which would leave the pane POSTing input while a perfectly good socket
+     * was open.
+     */
+    let openedSocket: WebSocket | null = null;
     let heartbeat: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -250,6 +269,9 @@ export function LocalBrowserBody({
           nonce,
         });
         stream = opened;
+        openedSocket = opened.socket;
+      socketRef.current = opened.socket;
+        socketInputRef.current = false;
         paneFrameStats.noteTransport("jpeg-json");
         opened.socket.onmessage = (event) => {
           try {
@@ -265,6 +287,22 @@ export function LocalBrowserBody({
               subscribers?: number;
               daemon?: Record<string, unknown>;
             };
+            if (parsed.type === "hello") {
+              const features = Array.isArray(
+                (parsed as { features?: unknown }).features,
+              )
+                ? ((parsed as { features: unknown[] }).features as unknown[])
+                : [];
+              socketInputRef.current = features.includes("input");
+              return;
+            }
+            if (parsed.type === "input_ack") {
+              const ack = parsed as unknown as { seq?: number };
+              if (typeof ack.seq === "number") {
+                paneFrameStats.noteInputAck(ack.seq);
+              }
+              return;
+            }
             if (parsed.type === "pong") {
               if (typeof parsed.t === "number") {
                 paneFrameStats.noteRtt(Date.now() - parsed.t);
@@ -286,6 +324,7 @@ export function LocalBrowserBody({
             }
             if (parsed.type === "frame" && parsed.frame) {
               paneFrameStats.noteFrameArrived({ bytes: raw.length });
+              frameSeqRef.current = parsed.frame.seq;
               setFrame(parsed.frame);
             }
           } catch {
@@ -344,6 +383,10 @@ export function LocalBrowserBody({
       closed = true;
       if (heartbeat) clearInterval(heartbeat);
       if (retry) clearTimeout(retry);
+      if (socketRef.current === openedSocket) {
+        socketRef.current = null;
+        socketInputRef.current = false;
+      }
       stream?.close();
     };
   }, [session, projectId, consentToken, holder, streamAttempt]);
@@ -417,8 +460,17 @@ export function LocalBrowserBody({
   const forwarder = useMemo(() => {
     if (!session || !holding) return null;
     const bootId = session.bootId;
-    return createInputForwarder((events) =>
-      sendLocalBrowserInput({ bootId, holder, events }, consentToken),
+    return createInputForwarder(
+      (events, seq) => {
+        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
+        const socket = socketRef.current;
+        if (socketInputRef.current && socket?.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "input", seq, events }));
+          return;
+        }
+        return sendLocalBrowserInput({ bootId, holder, events }, consentToken);
+      },
+      { serialize: () => !socketInputRef.current },
     );
   }, [session, holding, holder, consentToken]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);

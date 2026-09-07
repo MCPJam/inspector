@@ -35,6 +35,12 @@ import {
   createFrameRelayStats,
   pongFor,
 } from "./browser-frame-relay-stats.js";
+import {
+  createRelayInputForwarder,
+  type RelayInputForwarder,
+} from "./browser-pane-input-forwarder.js";
+import { parseBrowserPaneInputMessage } from "../../../shared/browser-pane-input.js";
+import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
 
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
@@ -157,6 +163,8 @@ export function createLocalBrowserFramesWsHandler(
     let registered: { close(): void } | undefined;
     /** Per socket, so one congested pane's loss is not averaged away. */
     let stats: ReturnType<typeof createFrameRelayStats> | undefined;
+    /** One dispatch at a time, so a drag arrives in the order it was made. */
+    let input: RelayInputForwarder | undefined;
     let closed = false;
     const detach = () => {
       closed = true;
@@ -165,6 +173,9 @@ export function createLocalBrowserFramesWsHandler(
       revalidate = undefined;
       stats?.stop();
       stats = undefined;
+      // Whatever is queued belonged to the hold that queued it.
+      input?.cancel();
+      input = undefined;
       if (registered) {
         // Removed by IDENTITY, so a reconnect cannot retain the dead
         // `WSContext` of the connection it replaced: without this the set grows
@@ -265,6 +276,56 @@ export function createLocalBrowserFramesWsHandler(
         });
         stats.setSubscribers(1);
         stats.start();
+
+        input = createRelayInputForwarder({
+          dispatch: async ({ tabId, events }) => {
+            // Resolved per batch rather than captured: the browser can be
+            // relaunched under a live pane, and the handle this socket opened
+            // with would then dispatch into a session that is gone.
+            const current = findLocalBrowserSession(bootId);
+            if (!current) return { ok: false, refused: "no_browser_session" };
+            const result = await current.handler.dispatchInput({
+              // From the SOCKET's query, mirroring `POST /local-browser/input`.
+              // The nonce proved consent for this project; the holder only has
+              // to tell one pane from another so two tabs cannot each believe
+              // they have control.
+              ...(holder ? { holder } : { holder: "" }),
+              ...(tabId ? { tabId } : {}),
+              events: events as readonly ViewportInputEvent[],
+            });
+            if (result.ok) {
+              touchLocalBrowserSession(current.handle);
+              return { ok: true };
+            }
+            return {
+              ok: false,
+              refused:
+                result.error === "unknown_tab" ? "unknown_tab" : "lease_held",
+            };
+          },
+          ack: (payload) => {
+            if (closed) return;
+            try {
+              ws.send(JSON.stringify({ type: "input_ack", ...payload }));
+            } catch {
+              // Already gone.
+            }
+          },
+        });
+
+        // What this server can do, said before the pane has to guess. A client
+        // that does not see `input` here keeps POSTing.
+        try {
+          ws.send(
+            JSON.stringify({
+              type: "hello",
+              features: ["input"],
+              codecs: ["jpeg"],
+            }),
+          );
+        } catch {
+          // Already gone.
+        }
         // Watching IS using it: a person with the pane open must not have the
         // browser reaped out from under them. Frames themselves never tick the
         // clock — a CSS spinner would keep a browser alive forever.
@@ -278,6 +339,24 @@ export function createLocalBrowserFramesWsHandler(
             type?: unknown;
             t?: unknown;
           };
+          if (closed) return;
+          if (parsed?.type === "input") {
+            const message = parseBrowserPaneInputMessage(parsed);
+            if (!message.ok) {
+              const seq = (parsed as { seq?: unknown }).seq;
+              ws.send(
+                JSON.stringify({
+                  type: "input_ack",
+                  seq: typeof seq === "number" ? seq : -1,
+                  dispatched: 0,
+                  refused: "invalid_input",
+                }),
+              );
+              return;
+            }
+            input?.submit(message);
+            return;
+          }
           if (parsed?.type !== "ping") return;
           // The heartbeat is also when a watcher's right to watch is re-asked
           // out of band. Revocation otherwise rides frame delivery, and a

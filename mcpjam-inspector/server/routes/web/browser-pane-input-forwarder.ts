@@ -1,0 +1,148 @@
+/**
+ * Ordered input forwarding for a frame socket.
+ *
+ * A WebSocket is ordered; the hops behind it are not. The hosted relay
+ * forwards to the daemon over HTTP, and N concurrent POSTs arrive in whatever
+ * order the network felt like — which for a drag means the pointer lands
+ * somewhere it never went, and for a press/release pair means a page left
+ * holding a button down. So: ONE dispatch in flight per socket, and whatever
+ * queues behind it is COALESCED rather than replayed. An intermediate pointer
+ * position nobody saw is not worth a round trip; the one they stopped at
+ * always is, and a wheel's distance is summed rather than lost.
+ *
+ * The same shape serves the local relay, whose dispatch is in-process. It has
+ * no network to reorder it, but it does have the same "a slow page must not
+ * make the queue grow without bound" problem, and one implementation of the
+ * queue is one place for that to be right.
+ *
+ * A REFUSAL IS AN ACK, NEVER A CLOSE. "Somebody else has the browser" is the
+ * ordinary state of affairs while the agent is driving; a socket that closed
+ * on it would make the pane reconnect in a loop against a browser that is
+ * working exactly as designed.
+ */
+import {
+  coalesceBrowserPaneInput,
+  type BrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
+
+/** Why a batch did not reach the page. The daemon's own vocabulary. */
+export type InputRefusal =
+  | "lease_required"
+  | "lease_held"
+  | "lease_parked"
+  | "unknown_tab"
+  | "no_browser_session"
+  | "upstream_error";
+
+export interface RelayInputForwarder {
+  /** Queue one client message. Ordering and coalescing are this module's job. */
+  submit(message: {
+    seq: number;
+    tabId?: string;
+    events: readonly BrowserPaneInputEvent[];
+  }): void;
+  /** Drop what is queued and refuse more. Not reusable afterwards. */
+  cancel(): void;
+  /** For tests: is a dispatch outstanding? */
+  busy(): boolean;
+}
+
+export interface RelayInputForwarderOptions {
+  dispatch(args: {
+    tabId?: string;
+    events: readonly BrowserPaneInputEvent[];
+  }): Promise<{ ok: true } | { ok: false; refused: InputRefusal }>;
+  /**
+   * Answer one client message.
+   *
+   * `dispatched` is that message's OWN event count on a flush that landed, and
+   * 0 on a refusal — not the size of the coalesced batch, which is a number
+   * about the relay rather than about the caller's gesture.
+   */
+  ack(payload: { seq: number; dispatched: number; refused?: InputRefusal }): void;
+  /** Called once per flush that actually reached the page. */
+  onDispatched?: () => void;
+}
+
+export function createRelayInputForwarder(
+  options: RelayInputForwarderOptions,
+): RelayInputForwarder {
+  /**
+   * Batches waiting for the in-flight dispatch, grouped by tab.
+   *
+   * Grouped rather than flat because coalescing is only sound WITHIN one page:
+   * two tabs' pointer events merged into a single dispatch would put half the
+   * gesture on the wrong one. A tab change simply starts a new group, and the
+   * groups go out in order.
+   */
+  let pending: Array<{
+    tabId?: string;
+    events: BrowserPaneInputEvent[];
+    acks: Array<{ seq: number; count: number }>;
+  }> = [];
+  let inFlight = false;
+  let cancelled = false;
+
+  const flush = (): void => {
+    if (inFlight || cancelled || pending.length === 0) return;
+    const group = pending.shift()!;
+    const events = coalesceBrowserPaneInput(group.events);
+    inFlight = true;
+    void options
+      .dispatch({ ...(group.tabId ? { tabId: group.tabId } : {}), events })
+      .then((outcome) => {
+        if (cancelled) return;
+        if (outcome.ok) {
+          for (const entry of group.acks) {
+            options.ack({ seq: entry.seq, dispatched: entry.count });
+          }
+          options.onDispatched?.();
+          return;
+        }
+        for (const entry of group.acks) {
+          options.ack({
+            seq: entry.seq,
+            dispatched: 0,
+            refused: outcome.refused,
+          });
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        for (const entry of group.acks) {
+          options.ack({
+            seq: entry.seq,
+            dispatched: 0,
+            refused: "upstream_error",
+          });
+        }
+      })
+      .finally(() => {
+        inFlight = false;
+        flush();
+      });
+  };
+
+  return {
+    submit(message) {
+      if (cancelled || message.events.length === 0) return;
+      const tail = pending[pending.length - 1];
+      if (tail && tail.tabId === message.tabId) {
+        tail.events.push(...message.events);
+        tail.acks.push({ seq: message.seq, count: message.events.length });
+      } else {
+        pending.push({
+          ...(message.tabId !== undefined ? { tabId: message.tabId } : {}),
+          events: [...message.events],
+          acks: [{ seq: message.seq, count: message.events.length }],
+        });
+      }
+      flush();
+    },
+    cancel() {
+      cancelled = true;
+      pending = [];
+    },
+    busy: () => inFlight,
+  };
+}

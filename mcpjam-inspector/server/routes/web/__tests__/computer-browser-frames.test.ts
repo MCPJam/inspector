@@ -54,6 +54,15 @@ type Upstream = NonNullable<BrowserFramesDeps["openUpstream"]>;
 function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
   const { counted = true, ...depsOver } = over;
   const upstreamCalls: Parameters<Upstream>[0][] = [];
+  const inputCalls: Array<{
+    holder: string;
+    tabId?: string;
+    events: readonly unknown[];
+  }> = [];
+  let inputOutcome: { ok: true } | { ok: false; status: number; error: string } =
+    { ok: true };
+  /** Held open so a test can drive "a second batch while the first is out". */
+  let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
   const touchActivity = vi.fn(async () => {});
 
@@ -93,6 +102,23 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
       upstreamCalls.push(args);
       return { ok: true };
     }) as Upstream,
+    sendInput: (async (args: {
+      holder: string;
+      tabId?: string;
+      events: readonly unknown[];
+    }) => {
+      inputCalls.push(args);
+      if (releaseInput) {
+        await new Promise<void>((resolve) => {
+          const previous = releaseInput;
+          releaseInput = () => {
+            previous?.();
+            resolve();
+          };
+        });
+      }
+      return inputOutcome;
+    }) as BrowserFramesDeps["sendInput"],
     ...depsOver,
   });
 
@@ -116,7 +142,24 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     return { ws, events };
   }
 
-  return { connect, upstreamCalls, touchSession, touchActivity };
+  return {
+    connect,
+    upstreamCalls,
+    inputCalls,
+    touchSession,
+    touchActivity,
+    setInputOutcome(next: typeof inputOutcome) {
+      inputOutcome = next;
+    },
+    holdInput() {
+      releaseInput = () => {};
+    },
+    releaseInput() {
+      const release = releaseInput;
+      releaseInput = null;
+      release?.();
+    },
+  };
 }
 
 beforeEach(() => {
@@ -191,7 +234,10 @@ describe("browser frames socket — carrying frames", () => {
       ts: 5,
       seq: 3,
     });
-    const message = JSON.parse(ws.sent[0]);
+    // `sent[0]` is the `hello`; the frame is the next thing out.
+    const message = ws.sent
+      .map((raw) => JSON.parse(raw))
+      .find((entry) => entry.type === "frame");
     expect(message).toMatchObject({
       type: "frame",
       frame: {
@@ -413,5 +459,215 @@ describe("browser frames socket — keeping the box awake", () => {
     const { ws } = await f.connect();
     expect(ws.closed?.code).toBe(4503);
     expect(f.upstreamCalls).toHaveLength(0);
+  });
+});
+
+
+describe("browser frames socket — input on the socket", () => {
+  /** Drive one client message through the route's handler. */
+  function say(
+    events: Record<string, (...args: never[]) => unknown>,
+    ws: unknown,
+    message: unknown,
+  ) {
+    (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+      { data: JSON.stringify(message) },
+      ws,
+    );
+  }
+
+  it("advertises what it can do before the pane has to guess", async () => {
+    const f = build();
+    const { ws } = await f.connect();
+    expect(JSON.parse(ws.sent[0])).toEqual({
+      type: "hello",
+      features: ["input"],
+      codecs: ["jpeg"],
+    });
+  });
+
+  it("dispatches with the holder from the TOKEN, never the wire", async () => {
+    const f = build();
+    const { ws, events } = await f.connect();
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      // A holder read off the wire would let anyone who echoed the right id
+      // type into somebody else's held session — a password field, mid-login.
+      holder: "users_victim",
+      events: [{ type: "mouse_move", x: 4, y: 5 }],
+    });
+    await vi.waitFor(() => expect(f.inputCalls).toHaveLength(1));
+    expect(f.inputCalls[0]).toMatchObject({
+      holder: CLAIMS.userId,
+      events: [{ type: "mouse_move", x: 4, y: 5 }],
+    });
+    await vi.waitFor(() =>
+      expect(
+        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+      ).toBe(true),
+    );
+    expect(
+      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+    ).toEqual({ type: "input_ack", seq: 1, dispatched: 1 });
+  });
+
+  it("answers a lease refusal with an ack, not a close", async () => {
+    // "Somebody else has the browser" is the ordinary state of affairs while
+    // the agent is driving. A close would put the pane in a reconnect loop
+    // against a browser that is working exactly as designed.
+    const f = build();
+    f.setInputOutcome({ ok: false, status: 423, error: "lease_held" });
+    const { ws, events } = await f.connect();
+    say(events, ws, {
+      type: "input",
+      seq: 9,
+      events: [{ type: "text", text: "hi" }],
+    });
+    await vi.waitFor(() =>
+      expect(
+        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+      ).toBe(true),
+    );
+    expect(
+      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+    ).toEqual({
+      type: "input_ack",
+      seq: 9,
+      dispatched: 0,
+      refused: "lease_held",
+    });
+    expect(ws.closed).toBeUndefined();
+  });
+
+  it("refuses a malformed batch whole, and stays open", async () => {
+    const f = build();
+    const { ws, events } = await f.connect();
+    say(events, ws, {
+      type: "input",
+      seq: 3,
+      // Filtering would deliver a drag missing its release, leaving the page
+      // holding a button down with nothing to say why.
+      events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+    });
+    expect(
+      ws.sent.map((raw) => JSON.parse(raw)).find((m) => m.type === "input_ack"),
+    ).toEqual({
+      type: "input_ack",
+      seq: 3,
+      dispatched: 0,
+      refused: "invalid_input",
+    });
+    expect(f.inputCalls).toHaveLength(0);
+    expect(ws.closed).toBeUndefined();
+  });
+
+  it("keeps one dispatch in flight and coalesces what queues behind it", async () => {
+    // A socket is ordered; the POST behind it is not. N concurrent POSTs
+    // arrive in whatever order the network felt like, and an out-of-order drag
+    // lands where nobody aimed.
+    const f = build();
+    const { ws, events } = await f.connect();
+    f.holdInput();
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      events: [{ type: "mouse_move", x: 1, y: 1 }],
+    });
+    await vi.waitFor(() => expect(f.inputCalls).toHaveLength(1));
+    say(events, ws, {
+      type: "input",
+      seq: 2,
+      events: [{ type: "mouse_move", x: 2, y: 2 }],
+    });
+    say(events, ws, {
+      type: "input",
+      seq: 3,
+      events: [
+        { type: "mouse_move", x: 3, y: 3 },
+        { type: "mouse_up", x: 3, y: 3, button: "left" },
+      ],
+    });
+    expect(f.inputCalls).toHaveLength(1);
+
+    f.releaseInput();
+    await vi.waitFor(() => expect(f.inputCalls).toHaveLength(2));
+    // The queued moves collapsed to the one they stopped at, with the release
+    // still behind it and in order.
+    expect(f.inputCalls[1]?.events).toEqual([
+      { type: "mouse_move", x: 3, y: 3 },
+      { type: "mouse_up", x: 3, y: 3, button: "left" },
+    ]);
+    // Both queued messages get their own ack.
+    await vi.waitFor(() => {
+      const acks = ws.sent
+        .map((raw) => JSON.parse(raw))
+        .filter((m) => m.type === "input_ack");
+      expect(acks.map((a) => a.seq)).toEqual([1, 2, 3]);
+    });
+  });
+
+  it("counts a landed dispatch as real use of a metered box", async () => {
+    // Somebody who took control to solve a CAPTCHA issues no agent commands at
+    // all. Left as a panel touch, their box would hibernate while they typed.
+    const f = build();
+    const { ws, events } = await f.connect();
+    // AFTER the open, whose own touch spends the per-computer window.
+    resetActivityThrottleForTests();
+    f.touchSession.mockClear();
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      events: [{ type: "text", text: "hi" }],
+    });
+    await vi.waitFor(() =>
+      expect(f.touchSession).toHaveBeenCalledWith(
+        expect.objectContaining({ kind: "command" }),
+      ),
+    );
+  });
+
+  it("does not count a REFUSED dispatch", async () => {
+    const f = build();
+    f.setInputOutcome({ ok: false, status: 423, error: "lease_held" });
+    const { ws, events } = await f.connect();
+    resetActivityThrottleForTests();
+    f.touchSession.mockClear();
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      events: [{ type: "text", text: "hi" }],
+    });
+    await vi.waitFor(() =>
+      expect(
+        ws.sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input_ack"),
+      ).toBe(true),
+    );
+    expect(f.touchSession).not.toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "command" }),
+    );
+  });
+
+  it("drops what is queued when the socket goes away", async () => {
+    const f = build();
+    const { ws, events } = await f.connect();
+    f.holdInput();
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      events: [{ type: "text", text: "a" }],
+    });
+    await vi.waitFor(() => expect(f.inputCalls).toHaveLength(1));
+    say(events, ws, {
+      type: "input",
+      seq: 2,
+      events: [{ type: "text", text: "b" }],
+    });
+    (events.onClose as unknown as () => void)();
+    f.releaseInput();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Whatever was queued belonged to the hold that queued it; delivering it
+    // afterwards types into whoever holds the browser next.
+    expect(f.inputCalls).toHaveLength(1);
   });
 });

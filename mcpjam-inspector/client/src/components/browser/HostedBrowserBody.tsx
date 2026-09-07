@@ -118,6 +118,20 @@ export function HostedBrowserBody({
    * refuses inside it.
    */
   const tokenRetriesRef = useRef(0);
+  /**
+   * The live socket and what it said it could do.
+   *
+   * A REF because the input forwarder must not be rebuilt on every reconnect —
+   * rebuilding it mid-drag drops the queue — and because the `hello` that
+   * answers "can this server take input on the socket?" arrives after the
+   * forwarder already exists. A server that does not advertise `input` keeps
+   * getting POSTs, which is how a new client talks to an old relay for one
+   * release.
+   */
+  const socketRef = useRef<WebSocket | null>(null);
+  const socketInputRef = useRef(false);
+  /** The seq on screen when a gesture goes, for the input→paint sample. */
+  const frameSeqRef = useRef(0);
 
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -283,6 +297,15 @@ export function HostedBrowserBody({
     if (!session || !tokens) return;
     let closed = false;
     let stream: { close(): void } | null = null;
+    /**
+     * This attempt's socket, captured for the cleanup.
+     *
+     * Compared by IDENTITY on teardown so a reconnect that already replaced
+     * the ref is not cleared by the closure of the connection it replaced —
+     * which would leave the pane POSTing input while a perfectly good socket
+     * was open.
+     */
+    let openedSocket: WebSocket | null = null;
     let ping: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
 
@@ -299,6 +322,11 @@ export function HostedBrowserBody({
 
       const opened = openHostedBrowserFrameStream({ token });
       stream = opened;
+      openedSocket = opened.socket;
+      socketRef.current = opened.socket;
+      // Until this socket's own `hello` says otherwise. A reconnect must not
+      // inherit the previous connection's answer.
+      socketInputRef.current = false;
       paneFrameStats.noteTransport("jpeg-json");
       opened.socket.onmessage = (event) => {
         try {
@@ -314,6 +342,20 @@ export function HostedBrowserBody({
             subscribers?: number;
             daemon?: Record<string, unknown>;
           };
+          if (parsed.type === "hello") {
+            const features = Array.isArray(
+              (parsed as { features?: unknown }).features,
+            )
+              ? ((parsed as { features: unknown[] }).features as unknown[])
+              : [];
+            socketInputRef.current = features.includes("input");
+            return;
+          }
+          if (parsed.type === "input_ack") {
+            const ack = parsed as unknown as { seq?: number };
+            if (typeof ack.seq === "number") paneFrameStats.noteInputAck(ack.seq);
+            return;
+          }
           if (parsed.type === "pong") {
             // The pane's own stamp, echoed. One clock, so the subtraction is
             // a round trip rather than the drift between two machines.
@@ -339,6 +381,7 @@ export function HostedBrowserBody({
           }
           if (parsed.type === "frame" && parsed.frame) {
             paneFrameStats.noteFrameArrived({ bytes: raw.length });
+            frameSeqRef.current = parsed.frame.seq;
             setFrame(parsed.frame);
             // The attempt worked: forgive the refusals that came before it,
             // and clear whatever the last close told the viewer, since the
@@ -441,6 +484,10 @@ export function HostedBrowserBody({
       closed = true;
       if (ping) clearInterval(ping);
       if (retry) clearTimeout(retry);
+      if (socketRef.current === openedSocket) {
+        socketRef.current = null;
+        socketInputRef.current = false;
+      }
       stream?.close();
     };
   }, [session, tokens, refresh, streamAttempt]);
@@ -522,8 +569,24 @@ export function HostedBrowserBody({
 
   const forwarder = useMemo(() => {
     if (!tokens || !holding) return null;
-    return createInputForwarder((events) =>
-      sendHostedBrowserInput(tokens, { events }),
+    return createInputForwarder(
+      (events, seq) => {
+        paneFrameStats.noteInputSent(frameSeqRef.current, seq);
+        const socket = socketRef.current;
+        if (socketInputRef.current && socket?.readyState === WebSocket.OPEN) {
+          // Ordered by the socket, so nothing here waits — see the
+          // forwarder's docstring. A refusal comes back as an `input_ack`,
+          // never a close.
+          socket.send(JSON.stringify({ type: "input", seq, events }));
+          return;
+        }
+        // One release of fallback: an old relay that did not advertise
+        // `input`, or a socket that is between reconnects.
+        return sendHostedBrowserInput(tokens, { events });
+      },
+      // Only the POST needs ordering imposed on it; concurrent POSTs arrive in
+      // whatever order the network felt like.
+      { serialize: () => !socketInputRef.current },
     );
   }, [tokens, holding]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
