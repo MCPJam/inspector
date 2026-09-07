@@ -16,11 +16,11 @@
  *
  * TWO RULES KEEP IT HONEST.
  *
- *   1. The routing is NOT decided here. `PREDICATE_STAGE`, `GRADER_STAGE` and
- *      `GRADER_PRESENTATION_GROUP` come from `@mcpjam/sdk/contract`, where the
- *      analyzer's own selection routing is derived from the same table. A
- *      second copy in the client is a second opinion, and the one that
- *      disagrees with the analyzer is the one on the settings page.
+ *   1. The routing is NOT decided here. `PREDICATE_STAGE` and `GRADER_STAGE`
+ *      come from `@mcpjam/sdk/contract`, where the analyzer's own selection
+ *      routing is derived from the same table. A second copy in the client is
+ *      a second opinion, and the one that disagrees with the analyzer is the
+ *      one on the settings page.
  *   2. Nothing here decides a VERDICT, a stage STATE, or a rate. This is
  *      configuration — "what will be measured" — and the run-state vocabulary
  *      (`STAGE_STATE_LABELS`, and `notMeasured` in particular) describes
@@ -35,7 +35,6 @@
  */
 
 import {
-  GRADER_PRESENTATION_GROUP,
   GRADER_STAGE,
   PREDICATE_STAGE,
   USER_VALUE_STAGES,
@@ -85,14 +84,6 @@ export type GraderRow = {
 export type SuiteGradingModel = {
   /** Every stage, always — an empty list is the answer "nothing here". */
   byStage: Record<UserValueStage, GraderRow[]>;
-  /**
-   * Token and turn ceilings, lifted out of `userValue` for READING ONLY.
-   *
-   * They file at `userValue` analytically (`GRADER_PRESENTATION_GROUP` is the
-   * source, and it carries no analytical weight); reading them beside "did the
-   * answer contain the right thing" makes neither legible.
-   */
-  budgets: GraderRow[];
 };
 
 const ORDER_LABEL = new Map(
@@ -198,7 +189,6 @@ export function groupGradersByStage(input: {
   judgeConfig?: EvalJudgeConfig;
 }): SuiteGradingModel {
   const byStage = emptyByStage();
-  const budgets: GraderRow[] = [];
 
   for (const row of matchRows(input.matchOptions)) {
     byStage[GRADER_STAGE["toolCalls:match"]].push(row);
@@ -219,13 +209,15 @@ export function groupGradersByStage(input: {
       severity: checkSeverity(predicate),
       predicateIndex: index,
     };
-    if (GRADER_PRESENTATION_GROUP[kind] === "budget") {
-      budgets.push(row);
-      return;
-    }
     // An unknown kind files at `userValue` rather than throwing: the last link
     // is where "we could not place this" does the least damage, since it is
     // already the catch-all the contract routes its own unsplit evidence to.
+    //
+    // The token and turn ceilings land here too, now that the Limits tab is
+    // gone. They were only ever split out for PRESENTATION —
+    // `GRADER_PRESENTATION_GROUP` carries no analytical weight — and they
+    // remain fully valid, evaluable checks that the Checks list still shows
+    // and grades.
     byStage[PREDICATE_STAGE[kind] ?? "userValue"].push(row);
   });
 
@@ -252,7 +244,7 @@ export function groupGradersByStage(input: {
     judgeSlot: "groundedness",
   });
 
-  return { byStage, budgets };
+  return { byStage };
 }
 
 /**
@@ -356,51 +348,4 @@ export function stageConfigStates(
     }
     return { stage, state: "judgeOff", gates, warn, report, judge };
   });
-}
-
-/**
- * The predicate kinds the settings page presents as ceilings.
- *
- * Derived from `GRADER_PRESENTATION_GROUP` rather than listed here: the
- * contract already decides which kinds read as budgets, and a second list in
- * the client is a second opinion that drifts the first time a kind is added.
- */
-export const BUDGET_PREDICATE_KINDS = Object.entries(GRADER_PRESENTATION_GROUP)
-  .filter(([, group]) => group === "budget")
-  .map(([kind]) => kind) as readonly Predicate["type"][];
-
-export function isBudgetPredicate(predicate: Predicate): boolean {
-  return (
-    GRADER_PRESENTATION_GROUP[
-      predicate.type as keyof typeof GRADER_PRESENTATION_GROUP
-    ] === "budget"
-  );
-}
-
-/**
- * Fold an edited budget sub-list back into the suite's whole check list.
- *
- * The Limits tab edits a FILTERED view — the two ceiling kinds — of the one
- * `defaultPredicates` array, so what comes back has to be re-seated rather
- * than appended: budgets keep the slots they already occupied, so a save
- * diffs as "this ceiling changed" instead of "every check moved". Slots run
- * out when a ceiling was removed (the extra slots are dropped) and run over
- * when one was added (the new ones land at the end, where a new check goes).
- * Every non-budget check keeps its exact position, untouched.
- */
-export function mergeBudgetPredicates(
-  all: Predicate[],
-  nextBudgets: Predicate[],
-): Predicate[] {
-  const merged: Predicate[] = [];
-  let next = 0;
-  for (const predicate of all) {
-    if (isBudgetPredicate(predicate)) {
-      if (next < nextBudgets.length) merged.push(nextBudgets[next++]);
-      continue;
-    }
-    merged.push(predicate);
-  }
-  for (; next < nextBudgets.length; next++) merged.push(nextBudgets[next]);
-  return merged;
 }

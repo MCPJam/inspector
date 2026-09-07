@@ -18,7 +18,10 @@ import {
   toBrowserStepPayload,
   toObservationPayload,
 } from "./finalize-iteration-browser-artifacts.js";
-import { buildIterationUsageMetadata } from "./iteration-usage-metadata.js";
+import {
+  buildIterationUsageMetadata,
+  buildIterationUsagePayload,
+} from "./iteration-usage-metadata.js";
 import { buildIterationMetadata } from "./iteration-metadata.js";
 import {
   buildHostIterationMetadata,
@@ -1137,6 +1140,7 @@ export async function finalizeEvalIteration(
   // call on a deleted session, AND so the lock fires even when
   // the iteration update threw a transient error.
   let iterationGoneOrCancelled = false;
+  const usagePayload = buildIterationUsagePayload(usage);
   try {
     await convexClient.action("testSuites:updateTestIteration" as any, {
       iterationId,
@@ -1144,6 +1148,12 @@ export async function finalizeEvalIteration(
       result,
       actualToolCalls: sanitizeForConvexTransport(toolsCalled),
       tokensUsed: usage.totalTokens ?? 0,
+      // The structured token field, beside (not instead of) `tokensUsed` and
+      // the metadata breakdown — old readers keep working unchanged. Without
+      // it `testIteration.usage` stayed undefined on every hosted iteration,
+      // so the run-vs-run diff fell back to trace tokens and could not cost
+      // the run at all. It is also what the backend prices from.
+      ...(usagePayload ? { usage: usagePayload } : {}),
       ...(useW1Fallback
         ? {
             messages: sanitizeForConvexTransport(messages),

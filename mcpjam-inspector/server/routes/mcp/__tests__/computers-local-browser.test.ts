@@ -74,6 +74,10 @@ const browserState = vi.hoisted(() => ({
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
   runtime: "playwright" as "playwright" | "electron",
+  /** Every session a route marked as in use, so "watching" is provable. */
+  touched: [] as string[],
+  /** Whether the desktop app builds its context with views the pane can show. */
+  surface: "native" as "native" | "frames",
 }));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   listLocalBrowserSessions: () =>
@@ -85,8 +89,14 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     })),
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
-  touchLocalBrowserSession: () => {},
+  touchLocalBrowserSession: (handle: { bootId: string }) => {
+    browserState.touched.push(handle.bootId);
+  },
   resolveLocalBrowserRuntime: () => browserState.runtime,
+  resolveLocalBrowserSurface: (
+    _env: NodeJS.ProcessEnv,
+    runtime: "playwright" | "electron",
+  ) => (runtime === "electron" ? browserState.surface : "frames"),
   ensureLocalBrowserSession: async () => {
     const { buildBrowserdStack } =
       await import("../../../services/browserd/daemon/server.js");
@@ -167,6 +177,95 @@ beforeEach(() => {
   chromiumState.installed = false;
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
+  browserState.surface = "native";
+  browserState.touched = [];
+});
+
+describe("POST /local-browser/watch", () => {
+  const watch = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/watch", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("counts a watcher as use, so the idle reap does not close it underneath them", async () => {
+    // The NATIVE Electron surface has no frame socket, and the socket's own
+    // heartbeat was the only thing that said "somebody is looking at this".
+    // Without this route a person watching the agent work — and not holding
+    // the lease — has their browser closed while they are looking at it.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    browserState.touched.length = 0;
+
+    const res = await watch({ bootId }, token);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      watching: true,
+      lease: { state: "free" },
+    });
+    expect(browserState.touched).toEqual([bootId]);
+  });
+
+  it("says who has the browser, so a refused pane can hear the hand-back", async () => {
+    // The refusal reaches the pane on the frame socket. The HAND-BACK reaches
+    // it as nothing at all — the frames were flowing the whole time — so this
+    // is the only thing that can tell it. Answered HERE rather than by making
+    // the pane call `ensure`, which would START a browser when the watched one
+    // has gone: a Chromium nobody asked for, whose lease belongs to a
+    // different boot than the pane is looking at.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    const session = browserState.sessions.get(bootId)!;
+    session.lease.acquire("someone-else");
+
+    const held = await watch({ bootId }, token);
+    expect(await held.json()).toMatchObject({
+      watching: true,
+      lease: { state: "held", holder: "someone-else" },
+    });
+
+    session.lease.release("someone-else");
+    expect(await (await watch({ bootId }, token)).json()).toMatchObject({
+      lease: { state: "free" },
+    });
+  });
+
+  it("says so about a browser that has already gone", async () => {
+    const res = await watch({ bootId: "boot-nope" }, await grantConsent());
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ watching: false });
+  });
+
+  it("requires consent, like everything that touches the browser", async () => {
+    expect((await watch({ bootId: "boot-1" }, null)).status).toBe(403);
+  });
 });
 
 describe("GET /local-browser/status", () => {
@@ -185,6 +284,22 @@ describe("GET /local-browser/status", () => {
 
   it("answers without consent, so the consent screen can describe itself", async () => {
     expect((await status()).status).toBe(200);
+  });
+
+  it("says how the pane will see this browser", async () => {
+    // The pane BRANCHES on this: a native surface has no frame socket to open,
+    // and a pane that opened one anyway would make the engine encode JPEGs at
+    // 30 fps that nobody ever draws. A Playwright browser is a separate
+    // process with no view to place, so it is always frames.
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
+
+    browserState.runtime = "electron";
+    expect(await (await status()).json()).toMatchObject({ surface: "native" });
+
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` — hidden windows and frames over a
+    // socket, exactly as before this wave.
+    browserState.surface = "frames";
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
   });
 
   it("has nothing to install in the desktop app", async () => {

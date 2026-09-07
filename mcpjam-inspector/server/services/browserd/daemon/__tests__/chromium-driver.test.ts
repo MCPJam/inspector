@@ -1660,3 +1660,100 @@ describe("ChromiumDriver — teardown is bounded, and nothing opens behind it", 
     expect(created).toHaveLength(0);
   });
 });
+
+describe("ChromiumDriver — the human pane's tab strip", () => {
+  it("keeps the tab the video is showing inside the bounded strip", async () => {
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 20; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `t${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(snapshot.list).toHaveLength(16);
+    // The last one opened is the one Chromium is showing, which is what the
+    // encoder is grabbing. Cutting the strip at sixteen dropped it, `active`
+    // then fell away, and the picture changed with nothing highlighted.
+    expect(snapshot.active).toBe("t19");
+    expect(snapshot.list.map((tab) => tab.id)).toContain("t19");
+  });
+
+  it("bounds the strip by what JSON actually costs, not by raw length", async () => {
+    // Every character here is two bytes once serialised, and the estimate that
+    // sums raw lengths cannot see that. Eight of these pass a 4 KiB
+    // raw-length budget and blow straight through it as JSON — which is the
+    // form the 8 KiB record limit is applied to, by dropping the stream.
+    const quotes = '"'.repeat(500);
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 8; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `${quotes}${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(JSON.stringify(snapshot).length).toBeLessThanOrEqual(4_096);
+    expect(snapshot.active).toBe(`${quotes}7`);
+  });
+
+  it("never serialises an id the estimate has already rejected", async () => {
+    // The estimate only ever UNDERCOUNTS, so "over budget by raw length" is
+    // proof on its own. Without that shortcut the exact pass stringified a
+    // megabyte of caller-chosen id on every heartbeat of every open stream,
+    // only to throw the result away — attacker-priced CPU, several times a
+    // second, for a strip that was always going to be empty.
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    await driver.execute(
+      cmd({ kind: "navigate", url: "https://t.test/" }, "x".repeat(1_000_000)),
+    );
+    const stringify = vi.spyOn(JSON, "stringify");
+    try {
+      const snapshot = driver.tabsSnapshot();
+      expect(snapshot.list).toHaveLength(0);
+      expect(snapshot.active).toBeUndefined();
+      expect(stringify).not.toHaveBeenCalled();
+    } finally {
+      stringify.mockRestore();
+    }
+  });
+
+  it("counts the bytes that go on the wire, not the characters", async () => {
+    // One of these is 1 UTF-16 unit and 3 UTF-8 bytes. `.length` says the
+    // strip fits; the reader, which applies its 8 KiB limit to bytes and drops
+    // the stream when a record is over, says it does not.
+    const cjk = "\u4e2d".repeat(400);
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 6; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `${cjk}${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(
+      Buffer.byteLength(JSON.stringify(snapshot), "utf8"),
+    ).toBeLessThanOrEqual(4_096);
+    expect(snapshot.active).toBe(`${cjk}5`);
+  });
+
+  it("bounds the strip in bytes, not just in entries", async () => {
+    // A tab id is whatever the caller asked for — `getOrCreateTab` opens a
+    // page under any string — so eight tabs is well inside the entry bound and
+    // still over the reader's record limit.
+    const long = "x".repeat(1_000);
+    const { context } = fakeContext();
+    const driver = new ChromiumDriver(context);
+    for (let at = 0; at < 8; at += 1) {
+      await driver.execute(
+        cmd({ kind: "navigate", url: `https://t${at}.test/` }, `${long}-${at}`),
+      );
+    }
+    const snapshot = driver.tabsSnapshot();
+    expect(snapshot.list.length).toBeLessThan(8);
+    expect(JSON.stringify(snapshot).length).toBeLessThan(8 * 1_024);
+    // And what survives the trim is the one on screen.
+    expect(snapshot.active).toBe(`${long}-7`);
+  });
+});

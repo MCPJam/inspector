@@ -44,6 +44,8 @@ interface ToolListProps {
   builtinTools?: HarnessBuiltinToolInfo[];
   /** Currently-selected built-in tool key (so its row highlights). */
   selectedBuiltinKey?: string | null;
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
   /** Select a built-in tool (drives the same detail+Run flow as server tools). */
   onSelectBuiltin?: (key: string) => void;
   /**
@@ -71,6 +73,7 @@ export function ToolList({
   onCollapseList,
   builtinTools = [],
   selectedBuiltinKey = null,
+  builtinToolsRunLocally = false,
   onSelectBuiltin,
   hasConnectedServer = true,
   onAddServerRequested,
@@ -327,6 +330,7 @@ export function ToolList({
                 searchQuery={searchQuery}
                 selectedKey={selectedBuiltinKey}
                 onSelect={onSelectBuiltin}
+                localExecution={builtinToolsRunLocally}
               />
             )}
           </div>

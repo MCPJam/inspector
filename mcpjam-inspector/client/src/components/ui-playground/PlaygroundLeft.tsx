@@ -66,6 +66,8 @@ interface PlaygroundLeftProps {
   showLogger?: boolean;
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
   /** Whether any MCP server is connected — drives the tool list's empty state. */
   hasConnectedServer?: boolean;
   /** Connect a server from the empty state without leaving the surface. */
@@ -93,6 +95,7 @@ export function PlaygroundLeft({
   onClose,
   showLogger = true,
   builtinTools = [],
+  builtinToolsRunLocally = false,
   hasConnectedServer = true,
   onAddServerRequested,
 }: PlaygroundLeftProps) {
@@ -212,6 +215,7 @@ export function PlaygroundLeft({
           onSelectTool={handleToolListSelect}
           onCollapseList={() => setIsListExpanded(false)}
           builtinTools={builtinTools}
+          builtinToolsRunLocally={builtinToolsRunLocally}
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
           hasConnectedServer={hasConnectedServer}

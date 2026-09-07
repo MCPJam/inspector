@@ -71,14 +71,6 @@ export function getSubsectionsForGroup(
       });
       return subs;
     }
-    case "limits":
-      return [
-        {
-          id: "budgets",
-          label: manifestLabel("budgets"),
-          target: { type: "row", key: "budgets" },
-        },
-      ];
     case "triggers": {
       const subs: SuiteSettingsSubsection[] = [];
       if (options.showSchedule) {

@@ -53,6 +53,10 @@ import {
 } from "../../services/browserd/live-session-deps.js";
 import { attachBrowserSession } from "../../services/browserd/browser-session.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
+import {
+  BROWSER_INPUT_BATCH_LIMIT,
+  isBrowserPaneInputEvent,
+} from "../../../shared/browser-pane-input.js";
 import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 import { logger } from "../../utils/logger.js";
 import { reportRouteFailure } from "../../utils/route-error-report.js";
@@ -64,63 +68,17 @@ import { reportRouteFailure } from "../../utils/route-error-report.js";
 const LEASE_TTL_MS = 2 * 60_000;
 
 /**
- * The most events one input request may carry.
+ * The most events one input request may carry, and what counts as one.
  *
- * The daemon enforces the same number (`MAX_INPUT_EVENTS`) and is the real
- * gate; this only keeps a well-behaved pane's batches from being rejected
- * wholesale at the far end.
+ * Both now live in `shared/browser-pane-input.ts`, because the frame socket
+ * validates the same shape (V-2) and the local route validates it too. Three
+ * copies drifted silently: an event type added in one place was dropped by the
+ * others with a 200 and no page change.
  */
-const INPUT_BATCH_LIMIT = 64;
-
-/**
- * Is this actually an input event?
- *
- * The cast alone let anything through: the daemon's dispatcher ignores a type
- * it does not recognise, so a batch of nonsense came back 200 having done
- * nothing — and was then counted as REAL USE, which is what defers the idle
- * sweep on a metered machine. A caller with a valid token could hold a box
- * awake indefinitely without touching the browser at all.
- *
- * Deliberately shape-only. What the coordinates MEAN is the daemon's business;
- * this just refuses to call something an event when it has no type, or a type
- * with none of the fields that type needs.
- */
-function isInputEvent(value: unknown): value is ViewportInputEvent {
-  if (typeof value !== "object" || value === null) return false;
-  const event = value as Record<string, unknown>;
-  const xy =
-    typeof event.x === "number" &&
-    Number.isFinite(event.x) &&
-    typeof event.y === "number" &&
-    Number.isFinite(event.y);
-  switch (event.type) {
-    case "mouse_move":
-      return xy;
-    case "mouse_down":
-    case "mouse_up":
-      return (
-        xy &&
-        (event.button === "left" ||
-          event.button === "middle" ||
-          event.button === "right")
-      );
-    case "wheel":
-      return (
-        xy &&
-        typeof event.deltaX === "number" &&
-        Number.isFinite(event.deltaX) &&
-        typeof event.deltaY === "number" &&
-        Number.isFinite(event.deltaY)
-      );
-    case "key_down":
-    case "key_up":
-      return typeof event.key === "string" && event.key.length > 0;
-    case "text":
-      return typeof event.text === "string";
-    default:
-      return false;
-  }
-}
+const INPUT_BATCH_LIMIT = BROWSER_INPUT_BATCH_LIMIT;
+const isInputEvent = isBrowserPaneInputEvent as (
+  value: unknown,
+) => value is ViewportInputEvent;
 
 type Claims = { userId: string; computerId: string; projectId: string };
 

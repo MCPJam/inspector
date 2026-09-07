@@ -51,6 +51,10 @@ import {
   ClientSelector,
   type ClientSelectorData,
 } from "@/components/chat-v2/chat-input/client-selector";
+import {
+  ExecutionTargetChip,
+  type ExecutionTargetChipData,
+} from "@/components/chat-v2/chat-input/execution-target-chip";
 import { ModelDefinition, ServerFormData } from "@/shared/types";
 import { AddServerModal } from "@/components/connection/AddServerModal";
 import type { ServerWithName } from "@/hooks/use-app-state";
@@ -282,6 +286,16 @@ interface ChatInputProps {
   enableMultiModel?: boolean;
   /** Playground-only: renders a client chip beside the model chip. */
   clientSelector?: ClientSelectorData;
+  /**
+   * Where this turn's Claude Code agent runs, as a chip in the toolbar.
+   *
+   * A DATA prop, mirroring `clientSelector`: one key on
+   * `sharedChatInputProps` reaches all six `<ChatInput>` sites, and the
+   * component itself owns no lifecycle. The dialog it opens lives in
+   * PlaygroundMain, once — six composers each owning their own would be six
+   * dialogs racing one approval.
+   */
+  executionTarget?: ExecutionTargetChipData;
   systemPrompt: string;
   onSystemPromptChange: (prompt: string) => void;
   temperature: number;
@@ -416,6 +430,7 @@ export function ChatInput({
   onMultiModelEnabledChange,
   enableMultiModel = false,
   clientSelector,
+  executionTarget,
   systemPrompt,
   onSystemPromptChange,
   temperature,
@@ -1883,6 +1898,9 @@ export function ChatInput({
                   themeMode={resolvedThemeMode}
                   modalThemeMode={globalThemeMode}
                 />
+              ) : null}
+              {!minimalMode && executionTarget ? (
+                <ExecutionTargetChip {...executionTarget} />
               ) : null}
               {!minimalMode && (
                 <ModelSelector

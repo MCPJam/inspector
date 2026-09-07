@@ -55,6 +55,8 @@ interface InnerProps {
   activeServerNames: string[];
   /** Harness native built-in tools (display-only). Present for harness hosts. */
   builtinTools?: HarnessBuiltinToolInfo[];
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
 }
 
 interface Selection {
@@ -65,6 +67,7 @@ interface Selection {
 export function MultiServerToolsPaneInner({
   activeServerNames,
   builtinTools = [],
+  builtinToolsRunLocally = false,
 }: InnerProps) {
   const state = usePlaygroundStateContext();
   const appState = useSharedAppState();
@@ -259,6 +262,7 @@ export function MultiServerToolsPaneInner({
             searchQuery={searchQuery}
             onSearchQueryChange={setSearchQuery}
             builtinTools={builtinTools}
+            builtinToolsRunLocally={builtinToolsRunLocally}
             selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
             onSelectBuiltin={handleSelectBuiltin}
             selected={selected}
@@ -312,6 +316,7 @@ interface FlatToolListProps {
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
   builtinTools: HarnessBuiltinToolInfo[];
+  builtinToolsRunLocally: boolean;
   selectedBuiltinKey: string | null;
   onSelectBuiltin: (key: string) => void;
   selected: Selection | null;
@@ -327,6 +332,7 @@ function FlatToolList({
   searchQuery,
   onSearchQueryChange,
   builtinTools,
+  builtinToolsRunLocally,
   selectedBuiltinKey,
   onSelectBuiltin,
   selected,
@@ -474,6 +480,7 @@ function FlatToolList({
           searchQuery={searchQuery}
           selectedKey={selectedBuiltinKey}
           onSelect={onSelectBuiltin}
+          localExecution={builtinToolsRunLocally}
         />
         <WebmcpPageToolsSection />
       </div>

@@ -2761,6 +2761,122 @@
         }
       }
     },
+    "/organizations/{organizationId}/spend-budget": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/organizationId"
+        }
+      ],
+      "get": {
+        "operationId": "getSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Read the organization's spend budget",
+        "description": "The ceiling on what this organization may spend on MCPJam-billed work — chat, evals, judges and computer time — in the current billing window, and how much of it has been spent.\n\nAny member may read it: a member who cannot raise the ceiling still needs to know it exists, because it is what refused their run. `capUsd: null` means the organization is uncapped, which is the default.\n\nRuns that use your own provider keys are never counted against the budget and never blocked by it. Neither is the free daily allowance — it is not credits.",
+        "responses": {
+          "200": {
+            "description": "The organization's spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "setSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Set the organization's spend budget",
+        "description": "Set or replace the ceiling. **Requires organization owner or admin.**\n\nWhen the budget is reached, new MCPJam-billed work — chat turns, eval runs, computer starts — is refused for the whole organization until the window resets or an owner or admin raises the cap. Work already in flight finishes, and running computers keep going until they hibernate.\n\n`capUsd` is stored as whole credits (1 credit = 1 cent), so it is rounded to the cent; the response reports what was kept. Changing the cap mid-window does not reset the spend counter, and does not re-announce a threshold the organization was already told about.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpendBudgetInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The stored spend budget.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "clearSpendBudget",
+        "tags": ["Catalog"],
+        "summary": "Remove the organization's spend budget",
+        "description": "Leave the organization uncapped. **Requires organization owner or admin.**\n\nThe window's spend counter survives: it is a record of spend, not of the budget, and a budget set again later measures against the spend already made this period.",
+        "responses": {
+          "200": {
+            "description": "The spend budget, now uncapped.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SpendBudget"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalError"
+          }
+        }
+      }
+    },
     "/organizations": {
       "get": {
         "operationId": "listOrganizations",
@@ -14680,6 +14796,29 @@
           }
         }
       },
+      "CostCoverage": {
+        "type": "object",
+        "description": "How many iterations on each side of a comparison actually contributed a cost. Cost is stamped per iteration and is absent whenever the model was not MCPJam-billed (your own API key), the run used a harness (which mixes models within a turn), or the trial reported no tokens. Summing the priced iterations and skipping the rest yields a figure indistinguishable from a complete one — so a drop in `estimatedCostUsd` is only a cost signal when coverage is full on both sides. A CI gate should treat partial coverage as non-gateable rather than as a pass or a fail.",
+        "required": ["base", "compare"],
+        "properties": {
+          "base": { "$ref": "#/components/schemas/CostCoverageSide" },
+          "compare": { "$ref": "#/components/schemas/CostCoverageSide" }
+        }
+      },
+      "CostCoverageSide": {
+        "type": "object",
+        "required": ["costed", "total"],
+        "properties": {
+          "costed": {
+            "type": "integer",
+            "description": "Iterations that contributed a cost."
+          },
+          "total": {
+            "type": "integer",
+            "description": "Iterations on this side."
+          }
+        }
+      },
       "NumericDiff": {
         "description": "A base/compare pair with its delta. Rate-valued instances are FRACTIONS unless the field name ends in `Percent`.",
         "type": "object",
@@ -14902,6 +15041,19 @@
           },
           "compare": {
             "$ref": "#/components/schemas/EvalRunCompareCaseSide"
+          },
+          "metrics": {
+            "type": "object",
+            "description": "Per-case cost, with the coverage that produced it. `costCoverage` is absent when the platform does not report coverage; absence means no opinion, never full coverage, and a cost gate refuses to judge on it.",
+            "required": ["estimatedCostUsd"],
+            "properties": {
+              "estimatedCostUsd": {
+                "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
+              }
+            }
           }
         },
         "required": [
@@ -15148,6 +15300,9 @@
               },
               "estimatedCostUsd": {
                 "$ref": "#/components/schemas/NumericDiff"
+              },
+              "costCoverage": {
+                "$ref": "#/components/schemas/CostCoverage"
               }
             },
             "required": ["wallDurationMs", "totalTokens", "estimatedCostUsd"]
@@ -15382,7 +15537,7 @@
           },
           "usage": {
             "type": ["object", "null"],
-            "description": "Structured token usage (input/output/cached/reasoning) when available.",
+            "description": "Structured token usage (input/output/cached/reasoning) when available, plus `estimatedCostUsd` and the `costBasis` it was priced from.\n\n`estimatedCostUsd` ABSENT means no cost was observed — never that the trial was free. `costBasis.reason` says which: `no_pricing` (not an MCPJam-billed model, e.g. your own API key), `harness_mixed_models` (a harness turn mixes models and carries no per-model split, so its cost arrives with billed attribution instead), or `no_tokens`.\n\n`costBasis.source` is `gateway_pricing` when MCPJam priced its own token counts, and `sdk_runner` when the figure came from your runner — real, but neither computed nor verified by MCPJam.",
             "additionalProperties": true
           },
           "actualToolCalls": {
@@ -16329,6 +16484,106 @@
           "createdAt": {
             "type": ["number", "null"],
             "description": "Epoch milliseconds."
+          }
+        }
+      },
+      "SpendBudget": {
+        "type": "object",
+        "description": "An organization's ceiling on MCPJam-billed spend for the current billing window. Amounts appear in both USD and credits (1 credit = 1 cent); the credit figures are what the ledger actually stores.",
+        "required": [
+          "capUsd",
+          "capCredits",
+          "alertPercents",
+          "spentUsd",
+          "spentCredits",
+          "windowStartAt",
+          "windowEndsAt",
+          "alertedPercents",
+          "capReachedAt",
+          "updatedAt",
+          "minCapUsd",
+          "maxCapUsd",
+          "supported"
+        ],
+        "properties": {
+          "capUsd": {
+            "type": ["number", "null"],
+            "description": "The ceiling in USD. `null` means uncapped."
+          },
+          "capCredits": {
+            "type": ["integer", "null"],
+            "description": "The same ceiling as the ledger stores it."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Whole percents of the cap that notify owners and admins. Reaching the cap always notifies, whether or not 100 is listed."
+          },
+          "spentUsd": {
+            "type": "number",
+            "description": "MCPJam-billed spend so far in this window, in USD."
+          },
+          "spentCredits": {
+            "type": "integer",
+            "description": "The same spend as the ledger counted it."
+          },
+          "windowStartAt": {
+            "type": "integer",
+            "description": "Start of the current billing window (epoch ms). Team and enterprise organizations run on their own subscription cycle; everyone else on the UTC month."
+          },
+          "windowEndsAt": {
+            "type": "integer",
+            "description": "When the window resets and the counter returns to zero (epoch ms)."
+          },
+          "alertedPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer"
+            },
+            "description": "Thresholds already announced this window. Each fires once per window."
+          },
+          "capReachedAt": {
+            "type": ["integer", "null"],
+            "description": "When the cap was reached this window, or `null`."
+          },
+          "updatedAt": {
+            "type": ["integer", "null"],
+            "description": "When the budget was last changed (epoch ms)."
+          },
+          "minCapUsd": {
+            "type": "number",
+            "description": "The smallest budget the platform accepts."
+          },
+          "maxCapUsd": {
+            "type": "number",
+            "description": "The largest budget the platform accepts."
+          },
+          "supported": {
+            "type": "boolean",
+            "description": "False for a personal organization, which cannot have a budget."
+          }
+        }
+      },
+      "SpendBudgetInput": {
+        "type": "object",
+        "required": ["capUsd"],
+        "additionalProperties": false,
+        "properties": {
+          "capUsd": {
+            "type": "number",
+            "minimum": 0,
+            "description": "The ceiling in USD, rounded to the cent."
+          },
+          "alertPercents": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99
+            },
+            "description": "Whole percents of the cap to notify at. Defaults to `[80]`. 100 is not accepted: reaching the cap always notifies, so listing it would show the same threshold twice."
           }
         }
       },

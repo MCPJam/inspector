@@ -160,6 +160,18 @@ Set defaults on the suite; override per case with **inherit** (use suite default
 
 When a check is authored on an individual prompt turn it is evaluated against **that turn's slice** of the transcript — tool calls, assistant message, tool errors, and widget observations for that turn only. `Token budget under N` is case-only because per-turn token usage is not reliably captured; all other checks are turn-scopable.
 
+<Note>
+**A per-trial token ceiling is not a spend control.** It is set without seeing
+what the suite normally uses, it is in a unit that is not comparable across
+models, and it goes stale on every prompt or model change. `Token budget under
+N` remains a valid check and keeps working wherever it is already authored,
+but for spend, two things replace it: [cost on every run](#cost), which shows
+what a suite actually costs, and `--max-cost-increase-percent`, which fails CI
+when a change makes the suite more expensive relative to its own baseline. For
+a ceiling on what the whole organization may spend, see the [spend
+budget](/hosted/overview#spend-budget).
+</Note>
+
 ### Harness system tools in assertion dropdowns
 
 When a suite is configured to run under a harness host (such as Claude Code or Codex), the tool-name pickers in the case editor also offer the harness's native **system tools** — for example `bash`, `read`, `webSearch`, `WebFetch` — alongside your MCP server tools. This lets you write assertions like **Tool was never called** for `bash` or **Tool was called with…** for `read` without having to type the wire name by hand.
@@ -342,9 +354,33 @@ The **Runs / Cases** segmented control switches between the run history list and
 
 When two or more host configurations are attached to a suite, a **By case / By host** toggle appears. **By host** shows a matrix — one column per host, one row per case. Each cell shows pass/fail dots, pass rate, median latency, and token usage. A host detached after runs were recorded stays visible, labelled **historical**.
 
+### Cost
+
+Every iteration carries the MCPJam-billed cost of the model work it did,
+priced when the trial finished and stamped with the rates used — so a run's
+cost does not move later when prices change. It rolls up onto cases, runs and
+the metric strip.
+
+A dash (`—`) means **no cost was observed**, never that the trial was free:
+
+| Why | What you see |
+|---|---|
+| Your own API key (BYOK) | MCPJam did not bill it, so there is no cost to report. |
+| A harness run (Claude Code, Codex, Cursor) | A harness turn mixes models — sub-agents on cheaper models under a main one — and the trial's totals carry no per-model split, so no honest single figure exists. Harness cost arrives with billed attribution. |
+| No token usage reported | Nothing to price. |
+
+A cost your own SDK runner reported is shown but labelled **runner** — it is
+real, but MCPJam neither computed nor verified it.
+
+When only some of a run's trials were priced, the total says so. That
+distinction matters most in CI: a run that looks cheaper may simply be a run
+we priced less of, which is why the compare API reports coverage counts
+alongside the cost and a cost gate treats partial coverage as non-gateable
+rather than as a pass.
+
 ### Run view
 
-- **Per-iteration row** with case, model, pass/fail, tokens, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
+- **Per-iteration row** with case, model, pass/fail, tokens, cost, duration, and the tool calls that actually happened. Each row also shows a one-line summary of where that trial's user-value chain stopped — for example `broke at Tool response`, `Request satisfied`, or `chain withheld` — so you can scan the table without opening each row.
 - **Expected vs actual** tool calls side-by-side when an iteration fails. For failed iterations, a **Categorized diff** above the raw Expected/Actual grids groups discrepancies into four categories:
   - **Missing** — expected tool calls that were never made
   - **Extra** — actual calls that weren't expected (reported but non-fatal by default)

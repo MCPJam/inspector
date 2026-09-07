@@ -474,6 +474,12 @@ export const ANALYTICS_EVENTS = {
   project_route_stale_return_recovered: { source: "client" },
   project_route_scope_mismatch: { source: "client" },
   app_signin_return_restored: { source: "client" },
+  // `browser_pane_session_summary`   props: engine, transport, tier, fps,
+  //   kbps, rtt, input_to_paint_p50/p95, frames, dropped. ONE event per pane,
+  //   on unmount — a per-frame event would be tens of thousands of captures an
+  //   hour, and the question ("did the viewport work move the numbers?") is
+  //   answered by the session, not the frame.
+  browser_pane_session_summary: { source: "client" },
 } as const satisfies Record<string, { source: "client" | "server" }>;
 
 export type AnalyticsEventName = keyof typeof ANALYTICS_EVENTS;

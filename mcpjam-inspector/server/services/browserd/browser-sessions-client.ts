@@ -20,8 +20,26 @@ import { logger } from "../../utils/logger.js";
 
 /** Why the backend refused to hand back an otherwise-existing session. */
 export type BrowserSessionStale =
-  /** The daemon bundle shipped new bytes: the running daemon is old code. */
+  /**
+   * The daemon bundle shipped new bytes: the running daemon is old code.
+   *
+   * NO LONGER GROUNDS FOR A RELAUNCH on its own (V-4a). Every edit anywhere in
+   * the daemon's import graph rotates the hash, so this fired on most deploys
+   * during a wave of daemon work — and each time it killed every live hosted
+   * browser mid-use. The inspector now stops asking the backend this question
+   * and asks `protocol_changed` instead; a hash difference becomes an UPGRADE,
+   * applied the first moment the session is idle. Kept in the union because an
+   * older backend can still answer it.
+   */
   | "bundle_changed"
+  /**
+   * The running daemon speaks a wire this build cannot talk to.
+   *
+   * The only staleness that still means "relaunch now", because it is the only
+   * one where continuing would produce wrong answers rather than merely old
+   * ones.
+   */
+  | "protocol_changed"
   /** The live daemon runs the OTHER profile mode (persistent vs ephemeral). */
   | "context_mode_changed"
   /** The box the session named is gone, hibernating, or never live. */
@@ -54,6 +72,12 @@ interface BrowserSessionRecordCommon {
   publicOrigin: string;
   bundleHash: string;
   contextMode: BrowserContextMode;
+  /**
+   * The wire compatibility number recorded at boot, when the daemon announced
+   * one. Absent for a row written before V-4a, or by a backend that does not
+   * store the column yet — both of which mean "unknown", never "compatible".
+   */
+  protocolVersion?: number;
 }
 
 /**
@@ -303,6 +327,7 @@ function parseSession(
     streamPassword,
     bundleHash,
     contextMode,
+    protocolVersion,
   } = raw;
   if (
     typeof sessionId !== "string" ||
@@ -331,6 +356,17 @@ function parseSession(
     publicOrigin,
     bundleHash,
     contextMode,
+    // Dropped rather than coerced when it is the wrong shape: an unreadable
+    // number must read as UNKNOWN, which relaunches, and never as a match.
+    //
+    // On `common` so BOTH targets carry it: a per-run box runs the same daemon
+    // and answers the same wire, so its session is just as capable of being
+    // one version behind.
+    ...(typeof protocolVersion === "number" &&
+    Number.isInteger(protocolVersion) &&
+    protocolVersion >= 1
+      ? { protocolVersion }
+      : {}),
   } as const;
   if (typeof sandboxRowId === "string" && sandboxRowId.length > 0) {
     if (expectedTarget !== "sandbox") return null;
@@ -406,6 +442,15 @@ interface LookupOptions {
    * persistent daemon carrying someone's live cookies.
    */
   expectedContextMode: BrowserContextMode | "any";
+  /**
+   * The wire this build can talk to.
+   *
+   * When present the backend answers `protocol_changed` instead of
+   * `bundle_changed`, so a deploy that only rotated the bundle hash leaves live
+   * sessions alone. Omitted, the backend behaves exactly as it did before —
+   * which is what a rollback wants, and what an older backend does regardless.
+   */
+  expectedProtocolVersion?: number;
   signal?: AbortSignal;
 }
 
@@ -428,6 +473,9 @@ export async function lookupBrowserSession(
       ...targetBody(args),
       expectedBundleHash: args.expectedBundleHash,
       expectedContextMode: args.expectedContextMode,
+      ...(args.expectedProtocolVersion !== undefined
+        ? { expectedProtocolVersion: args.expectedProtocolVersion }
+        : {}),
     },
     args.signal,
   );
@@ -456,6 +504,7 @@ export async function lookupBrowserSession(
     ),
     ...(staleSession ? { staleSession } : {}),
     ...(stale === "bundle_changed" ||
+    stale === "protocol_changed" ||
     stale === "context_mode_changed" ||
     stale === "box_unavailable"
       ? { stale }
@@ -517,6 +566,8 @@ interface BrowserSessionRecordArgsCommon {
   publicOrigin: string;
   bundleHash: string;
   contextMode: BrowserContextMode;
+  /** Announced by the daemon at boot; absent from one that predates V-4a. */
+  protocolVersion?: number;
   replacesSessionId?: string;
   signal?: AbortSignal;
 }
@@ -564,6 +615,9 @@ export async function recordBrowserSession(
         : {}),
       bundleHash: args.bundleHash,
       contextMode: args.contextMode,
+      ...(args.protocolVersion !== undefined
+        ? { protocolVersion: args.protocolVersion }
+        : {}),
       ...(args.replacesSessionId
         ? { replacesSessionId: args.replacesSessionId }
         : {}),

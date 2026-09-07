@@ -1388,6 +1388,23 @@ function toRunJudgesDto(run: RunDoc) {
   };
 }
 
+/**
+ * NO RUN-LEVEL `cost` BLOCK HERE, deliberately.
+ *
+ * An earlier revision took an optional `iterations` argument and summed a
+ * `cost` block from it. Exactly one caller passed them — the decision-summary
+ * route — and `assembleEvalRunDecisionSummary` builds its response from a
+ * fixed set of fields rather than spreading the run DTO, so the block was
+ * computed and then dropped on the floor. It reached no response and no
+ * OpenAPI schema.
+ *
+ * Run-level cost IS on the public API, through the surface built for it: the
+ * compare endpoint's `metrics.estimatedCostUsd` with its `costCoverage`,
+ * which is what the SDK and CLI cost gates read. Per-iteration cost rides on
+ * `toIterationDto`. Adding a total here would mean loading every iteration on
+ * a detail read, or a run-level rollup stamped by the backend — either is a
+ * real decision, not a spare argument.
+ */
 function toRunDto(run: RunDoc) {
   return {
     id: String(run._id),
@@ -5798,8 +5815,7 @@ async function readBackDescriptionExperimentArms(
         { experimentId },
       )) as Record<string, unknown> | null;
       const recorded = current?.arms as
-        | { original?: unknown; rewrite?: unknown }
-        | undefined;
+        { original?: unknown; rewrite?: unknown } | undefined;
       return current &&
         recorded?.original === arms.original &&
         recorded?.rewrite === arms.rewrite
@@ -5888,9 +5904,7 @@ function descriptionOverrideAttributionRefusal(
   message: string;
 } | null {
   const doc = run as
-    | { toolSnapshot?: unknown; toolSnapshotDebug?: unknown }
-    | null
-    | undefined;
+    { toolSnapshot?: unknown; toolSnapshotDebug?: unknown } | null | undefined;
   const servers = readSnapshotServers(doc?.toolSnapshot);
   const offering = servers
     .filter((server) => server.toolNames?.includes(toolName))
@@ -5909,9 +5923,7 @@ function descriptionOverrideAttributionRefusal(
   const captureResult = (
     doc?.toolSnapshotDebug as { captureResult?: unknown } | null | undefined
   )?.captureResult as
-    | { status?: unknown; failedServerIds?: unknown }
-    | null
-    | undefined;
+    { status?: unknown; failedServerIds?: unknown } | null | undefined;
   if (Array.isArray(captureResult?.failedServerIds)) {
     for (const id of captureResult.failedServerIds) {
       if (typeof id === "string") failed.add(id);

@@ -49,6 +49,11 @@ function appInventory(): Set<string> {
 /** Route -> the `PlatformApiClient` method that calls it. */
 const ROUTE_TO_SDK: Readonly<Record<string, string>> = {
   // Identity and catalogs
+  // Spend budget — the organization's ceiling on MCPJam-billed spend.
+  "get /organizations/{organizationId}/spend-budget": "getSpendBudget",
+  "put /organizations/{organizationId}/spend-budget": "setSpendBudget",
+  "delete /organizations/{organizationId}/spend-budget": "clearSpendBudget",
+
   // Trace destinations — where an organization's traces are streamed.
   "get /organizations/{organizationId}/trace-destinations":
     "listTraceDestinations",

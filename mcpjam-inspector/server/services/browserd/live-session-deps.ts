@@ -96,6 +96,12 @@ export interface ConnectedSandboxLike {
   files: {
     write(path: string, data: ArrayBuffer): Promise<unknown>;
     makeDir(path: string): Promise<unknown>;
+    /**
+     * Optional because an older `@e2b/desktop` may not expose it, and because
+     * every failure to read means the same thing to the caller: boot a daemon
+     * yourself.
+     */
+    read?(path: string): Promise<string | Uint8Array>;
   };
   getHost(port: number): string;
 }
@@ -129,6 +135,37 @@ export function adaptSandbox(sandbox: ConnectedSandboxLike): BrowserdSandbox {
     },
     getHost: (port) => sandbox.getHost(port),
   };
+}
+
+/**
+ * Read a small text file out of the sandbox.
+ *
+ * The prelaunch token's channel. A daemon baked into the image mints its own
+ * bearer into a 0600 file, and this is how the inspector learns it — over the
+ * SAME API-key-authenticated files API that already writes the daemon's bytes
+ * (`writeBundleInto`), so no new trust relationship is created. The agent's own
+ * shell runs on a different box (a different `runtimeKind`), so nothing the
+ * model drives can reach the file.
+ *
+ * `undefined` for "not there", which is the ordinary answer on an image that
+ * predates prelaunch, and the answer the caller treats as "boot one yourself".
+ */
+export async function readTextFileFrom(
+  sandbox: ConnectedSandboxLike,
+  path: string,
+): Promise<string | undefined> {
+  try {
+    if (!sandbox.files.read) return undefined;
+    const raw = await sandbox.files.read(path);
+    const text =
+      typeof raw === "string" ? raw : new TextDecoder().decode(raw as never);
+    const trimmed = text.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  } catch {
+    // A missing file, an unreadable one, an SDK that does not have `read`:
+    // every one of them means the same thing to the caller.
+    return undefined;
+  }
 }
 
 /** Write `content` at `path`, creating the parent directory idempotently. */
@@ -265,6 +302,7 @@ export function connectSessionSandbox(
 ): SessionSandbox {
   return {
     writeBundle: (path, content) => writeBundleInto(sandbox, path, content),
+    readTextFile: (path) => readTextFileFrom(sandbox, path),
     browserd: adaptSandbox(sandbox),
     killBrowserd: () => killBrowserdIn(sandbox),
     ensureStream: () => ensureStreamOn(sandbox),

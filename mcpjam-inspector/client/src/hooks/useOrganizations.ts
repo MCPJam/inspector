@@ -22,6 +22,12 @@ export interface Organization {
    * org (opening one crashed the route: Sentry INSPECTOR-CLIENT-24C).
    */
   seatPending?: boolean;
+  /**
+   * A guest's own organization, created implicitly to give their projects a
+   * billing subject. It has no admins to configure anything, so org-admin
+   * surfaces (today: the spend budget) hide themselves for it.
+   */
+  isPersonal?: boolean;
 }
 
 export const ORGANIZATION_CREATION_LIMIT = 1;
