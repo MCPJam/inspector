@@ -414,8 +414,16 @@ export async function lookupBrowserSession(
   );
   // A backend that does not know this target shape. Answered as itself, so
   // the caller can refuse rather than treat it as "no session" and boot.
+  //
+  // ONLY for a sandbox target. A 400 is also how the control plane rejects a
+  // malformed COMPUTER request, and that has nothing to do with a backend
+  // predating per-run boxes — reporting it as an unsupported target would tell
+  // a Playground relaunch failure the wrong story. Every computer caller
+  // predates this branch and read a 400 as unreachable; keep it that way.
   if (raw === BAD_REQUEST) {
-    return { reachable: true, unsupportedTarget: true, session: null };
+    return targetsSandbox(args)
+      ? { reachable: true, unsupportedTarget: true, session: null }
+      : { reachable: false, session: null };
   }
   if (!isRecord(raw)) return { reachable: false, session: null };
   const stale = raw.stale;
@@ -434,6 +442,16 @@ export async function lookupBrowserSession(
       ? { observedSessionId }
       : {}),
   } as BrowserSessionLookup;
+}
+
+/**
+ * Whether this request addresses a PER-RUN box. The only place the distinction
+ * matters client-side is reading a 400: that shape is new, so a refusal of it
+ * is evidence about the backend's version, while the computer shape has been
+ * accepted since the beginning and a refusal there is about the payload.
+ */
+function targetsSandbox(args: BrowserSessionTargetArgs): boolean {
+  return args.sandboxRowId !== undefined;
 }
 
 /** The one target id a request carries, as the wire spells it. */
@@ -507,7 +525,14 @@ export async function recordBrowserSession(
     args.signal,
   );
   if (raw === CONFLICT) return { status: "conflict" };
-  if (raw === BAD_REQUEST) return { status: "unsupported_target" };
+  // Sandbox target only, for the reason spelled out on the lookup path: a
+  // malformed computer record is a plain write failure, and the caller says so
+  // in those words rather than blaming a control plane that is in fact fine.
+  if (raw === BAD_REQUEST) {
+    return targetsSandbox(args)
+      ? { status: "unsupported_target" }
+      : { status: "failed" };
+  }
   // An EMPTY id is a failure, not a record: it would ride out in the handle and
   // then address every later touch and release at nothing, so the session would
   // look alive to us and idle to the sweeper.

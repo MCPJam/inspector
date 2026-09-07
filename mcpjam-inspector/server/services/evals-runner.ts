@@ -12,6 +12,7 @@ import {
 } from "./evals/types";
 import { buildEvalIterationVerdict } from "./evals/iteration-verdict";
 import { browserApprovalDeliveryFor } from "./evals/browser-tool-policy.js";
+import { evalBoxFilesystemIsReachable } from "./evals/eval-box-access";
 import { needsEphemeralEvalSandbox } from "./evals/needs-ephemeral-sandbox";
 import { createStepExecutionState, executeSteps } from "./evals/step-executor";
 import {
@@ -4914,14 +4915,19 @@ const runHostedIterationWithBrowser = async (
         ),
       );
     }
-    // `bash` is injected OUT-OF-BAND into the prepared tool map (the hosted
-    // path serializes those to toolDefs for the backend agent, then executes
-    // tool calls inspector-side), so it lands here rather than through the
-    // registry — and only for a TERMINAL box. A desktop box has no shell to
-    // offer: `browser` and `bash` are mutually exclusive on a host config, and
-    // seeding attachments there would place files nothing can read while
-    // annotating the prompt with paths the model cannot use.
-    if (evalSandbox?.ok && sandboxNeed.runtimeKind === "terminal") {
+    // Seed the case's attachments onto the box whenever anything in this
+    // iteration can READ it — the emulated `bash` tool below, or a harness
+    // running on the box with its own file tools. See
+    // `evalBoxFilesystemIsReachable`; both gates read what ACTUALLY booted
+    // rather than what the need asked for, for the same reason
+    // `sandboxBinding` does.
+    if (
+      sandboxBinding &&
+      evalBoxFilesystemIsReachable({
+        runtimeKind: sandboxBinding.runtimeKind,
+        harness: resolvedExecution.harness,
+      })
+    ) {
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
@@ -4929,12 +4935,19 @@ const runHostedIterationWithBrowser = async (
         bearer: convexAuthToken,
         runId: String(runId),
         testCaseId: test.testCaseId,
-        sandboxId: evalSandbox.value.sandboxId,
+        sandboxId: sandboxBinding.sandboxId,
         promptTurns,
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
+    }
+    // `bash` is injected OUT-OF-BAND into the prepared tool map (the hosted
+    // path serializes those to toolDefs for the backend agent, then executes
+    // tool calls inspector-side), so it lands here rather than through the
+    // registry — and only for a TERMINAL box, the only class that has a shell
+    // to offer.
+    if (sandboxBinding && sandboxBinding.runtimeKind === "terminal") {
       prepared.allTools[EVAL_BASH_TOOL_NAME] = buildEvalBashTool({
-        sandboxId: evalSandbox.value.sandboxId,
+        sandboxId: sandboxBinding.sandboxId,
       });
     }
   } catch (error) {

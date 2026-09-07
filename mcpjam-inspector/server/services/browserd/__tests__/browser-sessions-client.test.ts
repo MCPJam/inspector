@@ -241,13 +241,13 @@ describe("browser-sessions-client", () => {
     stubFetch(409, { error: "session_record_conflict" });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "conflict" });
 
-    // A REJECTED SHAPE is its own answer: for a per-run target it means a
-    // control plane that predates them, and the caller must refuse rather
-    // than retry a shape that will never be accepted.
+    // A 400 on a COMPUTER record is a plain write failure. The computer shape
+    // has been accepted since the beginning, so a refusal of it says something
+    // about the payload, never about the backend's vintage — calling it
+    // `unsupported_target` would tell a Playground relaunch failure that
+    // per-run boxes are unsupported, which is both false and unactionable.
     stubFetch(400, { error: "Malformed browser session record" });
-    expect(await recordBrowserSession(RECORD)).toEqual({
-      status: "unsupported_target",
-    });
+    expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
 
     stubFetch(200, { notASessionId: true });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
@@ -257,6 +257,25 @@ describe("browser-sessions-client", () => {
     // session would look alive to us and idle to the sweeper.
     stubFetch(200, { sessionId: "" });
     expect(await recordBrowserSession(RECORD)).toEqual({ status: "failed" });
+  });
+
+  it("record: a 400 is unsupported_target only for a SANDBOX target", async () => {
+    // Where the distinction earns its keep. The sandbox shape is new, so a
+    // control plane refusing it is evidence of a backend that predates per-run
+    // boxes — and the caller must refuse rather than retry a shape that will
+    // never be accepted, or boot another cold desktop to reach the same wall.
+    stubFetch(400, { error: "exactly one of computerId or sandboxRowId" });
+    expect(
+      await recordBrowserSession({
+        sandboxRowId: "sbxrow-1",
+        bootId: "boot-1",
+        browserdToken: "token-1",
+        browserdPort: 8791,
+        publicOrigin: "https://origin.example",
+        bundleHash: "hash-1",
+        contextMode: "ephemeral",
+      }),
+    ).toEqual({ status: "unsupported_target" });
   });
 
   it("parses a SANDBOX row — no computer, and no stream at all", async () => {
@@ -340,6 +359,21 @@ describe("browser-sessions-client", () => {
       unsupportedTarget: true,
       session: null,
     });
+  });
+
+  it("a 400 on a COMPUTER lookup stays unreachable", async () => {
+    // The mirror of the record case. Every computer caller predates the
+    // unsupported-target branch and read a 400 as unreachable; a malformed
+    // computer lookup must keep landing there rather than claiming the
+    // backend cannot do per-run boxes.
+    stubFetch(400, { error: "Malformed browser session lookup" });
+    expect(
+      await lookupBrowserSession({
+        computerId: "computer-1",
+        expectedBundleHash: "hash-1",
+        expectedContextMode: "any",
+      }),
+    ).toEqual({ reachable: false, session: null });
   });
 
   it("puts the sandbox id on the wire, and never a computer id", async () => {
