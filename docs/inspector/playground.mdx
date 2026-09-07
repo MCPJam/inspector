@@ -274,6 +274,12 @@ In Strict mode, a badge shows the number of blocked requests. The panel includes
 - **Blocked requests** — Each violation with the directive and source that was blocked.
 - **Declared domains** — The connect, resource, frame, and base URI domains your widget currently declares.
 
+The panel also has a **Policy Diff** tab with three columns:
+
+- **Requested** — The allowlists your widget declared in its CSP metadata.
+- **Effective** — The policy the sandbox proxy actually injected for this mount. When the proxy has reported the applied policy, the subtitle reads **proxy applied** and the column reflects what the browser is enforcing — including tokens like `'unsafe-inline'`, `data:`, and `blob:` that `buildCSP` adds, and the full permissive wildcard in permissive mode. When no applied policy has been reported yet (an offline replay from a cached URL, a saved eval trace, or the window between mount and message arrival), the column falls back to the declared allowlists and is labeled **UNCONFIRMED** in amber to make clear it is a guess, not a reading.
+- **Observed** — Requests the browser actually blocked, from CSP violation reports.
+
 #### Mounts
 
 The debug panel includes a **Mounts** section that appears only when a widget iframe has been torn down and rebuilt more than once during a session. Each entry shows the mount index, the reason it fired, and a timestamp. A healthy widget has exactly one mount; multiple entries indicate an unexpected re-mount that may have wiped widget state.
