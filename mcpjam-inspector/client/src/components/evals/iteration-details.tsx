@@ -676,12 +676,19 @@ export function IterationDetails({
     expectedToolCalls.length > 0 || actualToolCalls.length > 0;
   const hasTrace = Boolean(iteration.blob || iteration.chatSessionId);
   const traceFirst = layoutMode === "full" && hasTrace;
-  // With a scorecard the toolbar is not gated on a trace: a traceless failed
-  // trial still has scorers, and hiding the tabs would hide the only view of
-  // them. The trace-backed tabs hide individually instead.
+  // With a scorecard the toolbar does not wait on the trace, and does not
+  // disappear when it fails to load: the scorecard reads persisted metadata,
+  // so a traceless or blob-errored trial still has scorers to show — and
+  // hiding the tabs would hide the only view of them, which is the failure
+  // this pane exists to fix. The trace-backed tabs hide individually instead.
+  /** The tabs that read the trace blob, and therefore wait for it. */
+  const traceTabsReady = hasTrace && !loading && !error;
   const previewTraceToolbar =
     layoutMode === "full" &&
-    (scorecard ? !loading && !error : hasTrace && !loading && !error) ? (
+    // A trial with NO trace has only its scorecard, so it gets no tab row
+    // rather than a row of tabs that lead nowhere. With a trace the row
+    // appears immediately; the trace-backed tabs join it once the blob lands.
+    (scorecard ? hasTrace : hasTrace && !loading && !error) ? (
       <PreviewHeaderSlot>
         <TraceViewModeTabs
           mode={
@@ -692,11 +699,11 @@ export function IterationDetails({
               : previewTraceMode
           }
           onModeChange={setPreviewTraceMode}
-          showToolsTab={hasEvalToolCalls}
-          showBrowserTab={hasBrowserArtifacts}
+          showToolsTab={hasEvalToolCalls && traceTabsReady}
+          showBrowserTab={hasBrowserArtifacts && traceTabsReady}
           browserActive={previewTraceMode === "browser"}
           onSelectBrowser={() => setPreviewTraceMode("browser")}
-          showStepsTab={hasSteps && hasTrace}
+          showStepsTab={hasSteps && traceTabsReady}
           stepsActive={previewTraceMode === "steps"}
           onSelectSteps={() => setPreviewTraceMode("steps")}
           showScorecardTab={Boolean(scorecard)}

@@ -85,6 +85,9 @@ describe("IterationDetails — the scorecard layout", () => {
         scorecard={scorecard}
       />,
     );
+    // The trace-backed tabs join the row once the blob lands; the Scorecard
+    // is there from the first frame, because it reads persisted metadata.
+    await screen.findByTestId("trace-viewer-steps-tab");
     const tabs = (await screen.findAllByRole("button")).filter((button) =>
       ["Scorecard", "Chat", "Tool Calls", "Trace", "Steps", "Raw"].includes(
         button.textContent?.trim() ?? "",
@@ -97,6 +100,35 @@ describe("IterationDetails — the scorecard layout", () => {
       "Steps",
       "Raw",
     ]);
+  });
+
+  it("shows the Scorecard before the trace has loaded, and without one at all", async () => {
+    // The failure this pane exists to fix: a trial whose blob is slow, or
+    // missing, had nothing to show but a spinner where its scorers should be.
+    const { rerender } = render(
+      <IterationDetails
+        iteration={iteration}
+        testCase={testCase}
+        layoutMode="full"
+        scorecard={scorecard}
+      />,
+    );
+    expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
+
+    const { blob: _blob, ...traceless } = iteration;
+    rerender(
+      <IterationDetails
+        iteration={traceless as typeof iteration}
+        testCase={testCase}
+        layoutMode="full"
+        scorecard={scorecard}
+      />,
+    );
+    expect(screen.getByTestId("mock-scorecard")).toBeInTheDocument();
+    // ...and no tab row, rather than tabs that lead nowhere.
+    expect(
+      screen.queryByTestId("trace-viewer-scorecard-tab"),
+    ).not.toBeInTheDocument();
   });
 
   it("opens on the Scorecard", async () => {
