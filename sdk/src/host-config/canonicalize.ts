@@ -32,6 +32,7 @@ import {
   PAGINATION_TRAVERSAL_MODES,
   SEP_1865_PERMISSION_FEATURES,
   TOOL_PARAM_HEADER_MIRRORING_MODES,
+  type CanonicalHostConfigBrowserToolPolicy,
   type CanonicalHostConfigSkillSelection,
   type CanonicalHostConfigV2,
   type CspDomainSet,
@@ -435,6 +436,118 @@ function canonicalizeBuiltInToolIds(value: unknown): string[] | undefined {
   }
   if (seen.size === 0) return undefined;
   return Array.from(seen).sort();
+}
+
+// Allowed keys on browserToolPolicy, and the closed set of modes. Explicit
+// construction below keeps stray keys out of the canonical JSON; this set
+// makes a stray key a loud error rather than a silent drop (the `computer`
+// precedent).
+const BROWSER_TOOL_POLICY_KEYS = new Set([
+  "mode",
+  "originAllowlist",
+  "toolAllowlist",
+]);
+const BROWSER_TOOL_POLICY_MODES = new Set([
+  "allow_all",
+  "read_only",
+  "allowlist",
+]);
+
+// Canonicalize one of the policy's allowlists as a SET of trimmed entries.
+//
+// Trimming (unlike builtInToolIds, which preserves ids verbatim) is right here
+// because these are matched by VALUE at runtime: `"example.com "` never
+// matches any origin, so a stored-verbatim entry is a rule that silently does
+// nothing. Normalizing it is the difference between an allowlist that works
+// and one that reads as though it does. Absent OR empty collapses to undefined
+// so the key is dropped, keeping "no allowlist" a single canonical shape.
+function canonicalizeBrowserAllowlist(
+  value: unknown,
+  field: string
+): string[] | undefined {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value)) {
+    throw new Error(`hostConfigV2: browserToolPolicy.${field} must be a string[]`);
+  }
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be strings`
+      );
+    }
+    const trimmed = entry.trim();
+    if (trimmed === "") {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy.${field} entries must be non-empty strings`
+      );
+    }
+    seen.add(trimmed);
+  }
+  if (seen.size === 0) return undefined;
+  return Array.from(seen).sort();
+}
+
+// Canonicalize the unattended browser tool policy.
+//
+// This field is HASHED, which is the whole point of teaching the canonicalizer
+// about it: a canonicalizer that does not know a field drops it, and a dropped
+// field means editing the policy leaves the content hash unchanged — so the
+// edited config dedupes onto the old row, and a frozen/pinned config keeps the
+// old policy forever, with nothing anywhere saying so.
+//
+// Order does not survive (both allowlists are sets), key order does not
+// survive (the shape is rebuilt explicitly), but the VALUES do: two policies
+// that permit different things must hash differently.
+function canonicalizeBrowserToolPolicy(
+  value: unknown
+): CanonicalHostConfigBrowserToolPolicy | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!isPlainObject(value)) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy must be a plain object or null"
+    );
+  }
+  for (const key of Object.keys(value)) {
+    if (!BROWSER_TOOL_POLICY_KEYS.has(key)) {
+      throw new Error(
+        `hostConfigV2: browserToolPolicy has unknown key "${key}"`
+      );
+    }
+  }
+  const mode = value.mode;
+  if (typeof mode !== "string" || !BROWSER_TOOL_POLICY_MODES.has(mode)) {
+    throw new Error(
+      `hostConfigV2: browserToolPolicy.mode must be one of ${Array.from(
+        BROWSER_TOOL_POLICY_MODES
+      )
+        .map((m) => `"${m}"`)
+        .join(", ")}`
+    );
+  }
+  const originAllowlist = canonicalizeBrowserAllowlist(
+    value.originAllowlist,
+    "originAllowlist"
+  );
+  const toolAllowlist = canonicalizeBrowserAllowlist(
+    value.toolAllowlist,
+    "toolAllowlist"
+  );
+  // An `allowlist` mode naming nothing would mean "everything" — the opposite
+  // of what an allowlist says. Refuse it here rather than let a run inherit
+  // the widest possible policy from an empty one. (The inspector's parser
+  // reaches the same verdict at read time; this stops it being written.)
+  if (mode === "allowlist" && !originAllowlist && !toolAllowlist) {
+    throw new Error(
+      "hostConfigV2: browserToolPolicy mode \"allowlist\" needs a non-empty " +
+        "originAllowlist or toolAllowlist"
+    );
+  }
+  return {
+    mode: mode as CanonicalHostConfigBrowserToolPolicy["mode"],
+    ...(originAllowlist ? { originAllowlist } : {}),
+    ...(toolAllowlist ? { toolAllowlist } : {}),
+  };
 }
 
 // Allowed keys per skillSelection mode. Explicit construction below keeps
@@ -2392,6 +2505,10 @@ export function canonicalizeHostConfigV2(
     // Opaque built-in tool ids. Helper returns undefined for absent/empty, so
     // JSON.stringify drops the key and pre-feature rows hash byte-identically.
     builtInToolIds: canonicalizeBuiltInToolIds(input.builtInToolIds),
+    // What an unattended run's browser may do. Absent ⇒ key omitted, so every
+    // row written before the policy existed hashes byte-identically; a
+    // declared policy is part of the identity, so editing it MOVES the hash.
+    browserToolPolicy: canonicalizeBrowserToolPolicy(input.browserToolPolicy),
     // Skill selection. all-visible collapses to absent (single identity per
     // behavior); explicit — including explicit-empty — survives.
     skillSelection: canonicalizeSkillSelection(input.skillSelection),

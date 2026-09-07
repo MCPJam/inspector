@@ -132,6 +132,205 @@ describe("canonicalizeHostConfigV2 — builtInToolIds", () => {
   });
 });
 
+describe("canonicalizeHostConfigV2 — browserToolPolicy", () => {
+  it("omits browserToolPolicy when absent (pre-feature rows stay byte-identical)", () => {
+    const canonical = JSON.parse(
+      JSON.stringify(canonicalizeHostConfigV2(base()))
+    );
+    expect("browserToolPolicy" in canonical).toBe(false);
+  });
+
+  it("HASHES the policy — two configs differing only by it are different hosts", async () => {
+    // The whole reason the canonicalizer must learn this field: a canonicalizer
+    // that does not know a field DROPS it, so editing the policy would leave
+    // the content hash unchanged — the edited config would dedupe onto the old
+    // row, and a frozen config would keep the old policy forever.
+    expect(await hash(base())).not.toBe(
+      await hash(base({ browserToolPolicy: { mode: "allow_all" } }))
+    );
+    expect(await hash(base({ browserToolPolicy: { mode: "allow_all" } }))).not.toBe(
+      await hash(base({ browserToolPolicy: { mode: "read_only" } }))
+    );
+  });
+
+  it("hashes a widened origin allowlist differently from a narrow one", async () => {
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["example.com"],
+          },
+        })
+      )
+    ).not.toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["example.com", "evil.test"],
+          },
+        })
+      )
+    );
+  });
+
+  it("is insensitive to allowlist ORDER and duplicates (they are sets)", async () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: ["b.test", "a.test", "b.test"],
+          toolAllowlist: ["browser_observe", "browser_act", "browser_observe"],
+        },
+      })
+    );
+    expect(c.browserToolPolicy?.originAllowlist).toEqual(["a.test", "b.test"]);
+    expect(c.browserToolPolicy?.toolAllowlist).toEqual([
+      "browser_act",
+      "browser_observe",
+    ]);
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["a.test", "b.test"],
+          },
+        })
+      )
+    ).toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["b.test", "a.test", "a.test"],
+          },
+        })
+      )
+    );
+  });
+
+  it("is insensitive to FIELD order", async () => {
+    expect(
+      await hash(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: ["a.test"],
+            toolAllowlist: ["browser_observe"],
+          },
+        })
+      )
+    ).toBe(
+      await hash(
+        base({
+          browserToolPolicy: {
+            toolAllowlist: ["browser_observe"],
+            originAllowlist: ["a.test"],
+            mode: "allowlist",
+          } as never,
+        })
+      )
+    );
+  });
+
+  it("trims entries — a stored-verbatim rule would silently match nothing", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: {
+          mode: "allowlist",
+          originAllowlist: [" example.com "],
+        },
+      })
+    );
+    expect(c.browserToolPolicy?.originAllowlist).toEqual(["example.com"]);
+  });
+
+  it("collapses an empty allowlist to an omitted key", () => {
+    const c = canonicalizeHostConfigV2(
+      base({
+        browserToolPolicy: { mode: "allow_all", originAllowlist: [] },
+      })
+    );
+    expect(c.browserToolPolicy).toEqual({ mode: "allow_all" });
+  });
+
+  it("collapses null to absent, so cleared and never-set hash identically", async () => {
+    expect(await hash(base({ browserToolPolicy: null as never }))).toBe(
+      await hash(base())
+    );
+  });
+
+  it("rejects an unknown mode", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({ browserToolPolicy: { mode: "anything_goes" as never } })
+      )
+    ).toThrow(/browserToolPolicy\.mode must be one of/);
+  });
+
+  it("rejects a stray key rather than silently dropping it", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allow_all",
+            originAllowList: ["a.test"],
+          } as never,
+        })
+      )
+    ).toThrow(/browserToolPolicy has unknown key "originAllowList"/);
+  });
+
+  it("rejects a non-array or non-string allowlist", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allow_all",
+            originAllowlist: "a.test" as never,
+          },
+        })
+      )
+    ).toThrow(/originAllowlist must be a string\[\]/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allow_all",
+            toolAllowlist: [7 as never],
+          },
+        })
+      )
+    ).toThrow(/toolAllowlist entries must be strings/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: { mode: "allow_all", toolAllowlist: ["  "] },
+        })
+      )
+    ).toThrow(/toolAllowlist entries must be non-empty strings/);
+  });
+
+  it("refuses an `allowlist` mode that names nothing (it would mean everything)", () => {
+    expect(() =>
+      canonicalizeHostConfigV2(base({ browserToolPolicy: { mode: "allowlist" } }))
+    ).toThrow(/needs a non-empty originAllowlist or toolAllowlist/);
+    expect(() =>
+      canonicalizeHostConfigV2(
+        base({
+          browserToolPolicy: {
+            mode: "allowlist",
+            originAllowlist: [],
+            toolAllowlist: [],
+          },
+        })
+      )
+    ).toThrow(/needs a non-empty originAllowlist or toolAllowlist/);
+  });
+});
+
 describe("canonicalizeHostConfigV2 — undefined vs explicit", () => {
   it("distinguishes hostCapabilitiesOverride undefined from {}", async () => {
     const omitted = canonicalizeHostConfigV2(base());
