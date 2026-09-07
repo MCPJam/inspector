@@ -124,8 +124,9 @@ export function saveHarnessTarget(
   try {
     localStorage.setItem(key, target);
     // Durably stored, so the fallback must stop speaking for this key —
-    // including a failure recorded earlier in this session. Leaving it would
-    // shadow both this write and anything another tab stores later.
+    // including a failure recorded earlier in this session. A write from
+    // ANOTHER tab never reaches here, which is why the `storage` listener
+    // below clears it too.
     sessionTargets.delete(key);
   } catch {
     // Kept for this session only. Nothing here survives a reload when the
@@ -145,7 +146,18 @@ export function resetSessionHarnessTargetsForTests(): void {
 
 function subscribeTarget(callback: () => void): () => void {
   const onStorage = (event: StorageEvent) => {
-    if (event.key?.startsWith(STORAGE_PREFIX)) callback();
+    if (!event.key?.startsWith(STORAGE_PREFIX)) return;
+    // Another tab just stored this key, so whatever THIS tab could not store
+    // for it is now the older answer. Dropping the fallback here is what lets
+    // the cross-tab value through: `loadStoredHarnessTarget` reads memory
+    // first, and a `storage` event never runs this tab's `saveHarnessTarget`,
+    // so nothing else would ever clear it — the stale local choice would keep
+    // answering until a reload.
+    //
+    // Only the key that changed. Other projects' unstored choices are still
+    // the newest thing anyone knows about them.
+    sessionTargets.delete(event.key);
+    callback();
   };
   window.addEventListener(TARGET_EVENT, callback);
   window.addEventListener("storage", onStorage);

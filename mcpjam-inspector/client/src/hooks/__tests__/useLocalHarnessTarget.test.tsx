@@ -280,6 +280,40 @@ describe("the target survives a browser that will not store it", () => {
     resetSessionHarnessTargetsForTests();
   });
 
+  it("yields to another tab that stored a target this one could not", async () => {
+    // A `storage` event never runs THIS tab's `saveHarnessTarget`, so nothing
+    // in the save path can clear the fallback for a cross-tab write. Without
+    // the listener doing it, the local unstored choice kept answering here
+    // until a reload, while every other tab had moved on.
+    resetSessionHarnessTargetsForTests();
+    const key = `mcp-local-harness-target-v1:${PROJECT}`;
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+    saveHarnessTarget(PROJECT, "local-native");
+    setItem.mockRestore();
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
+
+    // Mounting the controller registers the `storage` listener that does the
+    // clearing; the hook is the only thing that subscribes in production.
+    const { result } = render();
+    await waitFor(() => expect(result.current.phase).not.toBe("loading"));
+
+    // Another tab's write. jsdom does not emit `storage` for same-document
+    // writes, so the event is dispatched explicitly after the value lands.
+    localStorage.setItem(key, "hosted");
+    act(() => {
+      window.dispatchEvent(
+        new StorageEvent("storage", { key, newValue: "hosted" }),
+      );
+    });
+
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+    resetSessionHarnessTargetsForTests();
+  });
+
   it("prefers what localStorage holds once it works again", () => {
     resetSessionHarnessTargetsForTests();
     saveHarnessTarget(PROJECT, "hosted");
