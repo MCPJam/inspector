@@ -27,6 +27,7 @@ import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
 import {
   createPaneVideoDecoder,
   videoDecodeSupported,
+  seqOfUnitTimestamp,
 } from "@/lib/browser-pane/video-decoder";
 import { captureBrowserPaneSessionSummary } from "@/lib/browser-pane/session-summary";
 import {
@@ -456,13 +457,26 @@ export function HostedBrowserBody({
        * timestamp and geometry — a pane whose clicks map through a rectangle
        * from ten minutes ago.
        */
-      let latest: {
-        deviceWidth: number;
-        deviceHeight: number;
-        scale: number;
-        relayTs: number;
-        seq: number;
-      } | null = null;
+      const units = new Map<
+        number,
+        {
+          deviceWidth: number;
+          deviceHeight: number;
+          scale: number;
+          relayTs: number;
+          seq: number;
+        }
+      >();
+      /**
+       * How many units may wait for a picture that may never come.
+       *
+       * A decoder holds several access units at once and can drop one
+       * outright, so entries are not guaranteed to be claimed. Bounded and
+       * evicted oldest-first: a stream that runs for an hour must not grow a
+       * map for an hour, and by the time this many units have gone by, an
+       * unclaimed one is a picture that is not going to be painted.
+       */
+      const UNITS_MAX = 16;
       /** The newest sequence PAINTED, so a slow decode cannot go backwards. */
       let paintedSeq = -1;
       const paintVideo = (unit: {
@@ -478,23 +492,46 @@ export function HostedBrowserBody({
         if (closed) return;
         paneFrameStats.noteTransport("h264");
         paneFrameStats.noteFrameArrived({ bytes: unit.bytes });
-        latest = {
+        // BY SEQUENCE, not "the newest". The decoder is asynchronous and can
+        // hold several units at once, so by the time it outputs the picture
+        // for unit N the wire has usually delivered N+1 — and reading a
+        // mutable `latest` at output time gave that picture the NEXT unit's
+        // geometry and timestamp. Which is a pane whose clicks map through the
+        // wrong rectangle for as long as the sizes differ.
+        units.set(unit.seq, {
           deviceWidth: unit.deviceWidth,
           deviceHeight: unit.deviceHeight,
           scale: unit.scale,
           relayTs: unit.relayTs,
           seq: unit.seq,
-        };
+        });
+        while (units.size > UNITS_MAX) {
+          // Insertion order IS sequence order: the wire delivers in order and
+          // a repeat of a sequence overwrites rather than appends.
+          const oldest = units.keys().next();
+          if (oldest.done) break;
+          units.delete(oldest.value);
+        }
         // A picture arriving is the same proof of life a JPEG is: the token
         // works, the lease is ours, and whatever the last close said is over.
         tokenRetriesRef.current = 0;
         setNotice(null);
-        if (leaseIsStale.current) leaseIsStale.current = false;
+        if (leaseIsStale.current) {
+          // Frames are flowing again, so whoever was holding the browser is
+          // not holding it any more — and nothing else says so. The JPEG path
+          // has always re-read here; the video path cleared the flag and left
+          // the header and the take-control button describing the old holder
+          // until something else happened to read the lease.
+          leaseIsStale.current = false;
+          void refresh();
+        }
         if (!video) {
           video = createPaneVideoDecoder({
             onFrame: (decoded) => {
-              // The unit this picture belongs to, read at OUTPUT time.
-              const at = latest;
+              // The unit this picture belongs to, found by the timestamp the
+              // decoder carried through from the chunk (`seq * 1_000`).
+              const at = units.get(seqOfUnitTimestamp(decoded.timestamp));
+              if (at) units.delete(at.seq);
               if (closed || !at) {
                 decoded.close();
                 return;

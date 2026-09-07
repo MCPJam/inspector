@@ -157,6 +157,31 @@ export function codecStringFor(units: readonly Uint8Array[]): string {
   return `avc1.${hex.toUpperCase()}`;
 }
 
+/**
+ * The chunk timestamp for one access unit, and the way back.
+ *
+ * The wire's own sequence, in microseconds. Monotonic is all a
+ * latency-optimised decoder needs, and the wire has no other clock the pane
+ * can trust — but the timestamp is also the ONLY thing that survives the
+ * decoder, so it is how a caller finds the unit a picture came from. A
+ * `VideoDecoder` holds several units at once and outputs them a beat later,
+ * so "the newest unit" is the wrong answer by then: it is usually the NEXT
+ * one, and a picture given the next unit's geometry maps clicks through the
+ * wrong rectangle.
+ *
+ * One definition rather than a `* 1_000` at each end, because the two ends
+ * are in different files and a pair that disagrees fails silently — every
+ * lookup misses and every picture is dropped.
+ */
+export function unitTimestamp(seq: number): number {
+  return seq * 1_000;
+}
+
+/** The sequence a decoded picture came from. */
+export function seqOfUnitTimestamp(timestamp: number): number {
+  return Math.round(timestamp / 1_000);
+}
+
 export interface PaneVideoDecoder {
   /** Hand over one access unit, as it came off the wire. */
   push(unit: { key: boolean; au: Uint8Array; seq: number }): void;
@@ -280,10 +305,7 @@ export function createPaneVideoDecoder(
         decoder.decode(
           new EncodedVideoChunk({
             type: unit.key ? "key" : "delta",
-            // The wire's own sequence, in microseconds. Monotonic is all a
-            // latency-optimised decoder needs, and the wire has no other
-            // clock the pane can trust.
-            timestamp: unit.seq * 1_000,
+            timestamp: unitTimestamp(unit.seq),
             data,
           }),
         );

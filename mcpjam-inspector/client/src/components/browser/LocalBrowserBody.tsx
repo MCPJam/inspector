@@ -79,6 +79,19 @@ function usePaneHolderId(): string {
  * `BrowserPaneSurface`, shared with the hosted pane — what a person does to a
  * rendered browser does not depend on where it runs.
  */
+/**
+ * What the pane says when the server refuses its input.
+ *
+ * A constant because the re-read below has to be able to RETRACT exactly this
+ * message and nothing else — clearing whatever `error` happens to hold would
+ * swallow a real failure that arrived in the meantime.
+ */
+const SOMEBODY_ELSE_HAS_IT =
+  "Somebody else has taken control of this browser. The view will resume when they hand it back.";
+
+/** How often to ask again while somebody else is holding the browser. */
+const LEASE_RECHECK_MS = 5_000;
+
 export function LocalBrowserBody({
   projectId,
   consentGranted,
@@ -411,9 +424,7 @@ export function LocalBrowserBody({
                 ack.refused === "lease_parked"
               ) {
                 setLease({ state: "held" });
-                setError(
-                  "Somebody else has taken control of this browser. The view will resume when they hand it back.",
-                );
+                setError(SOMEBODY_ELSE_HAS_IT);
               } else if (ack.refused === "lease_required") {
                 setLease({ state: "free" });
               }
@@ -573,6 +584,45 @@ export function LocalBrowserBody({
     }, 60_000);
     return () => clearInterval(timer);
   }, [holding, session, holder, consentToken]);
+
+  /**
+   * Ask again while somebody else has it.
+   *
+   * The refusal that told this pane it does not have control arrives on the
+   * frame socket — and NOTHING arrives when the other holder gives it back.
+   * The frames were flowing the whole time, so there is no reconnection, no
+   * `hello`, and no ack to carry the news. Without this the pane goes on
+   * saying somebody else is driving, and withholds Take control (offered only
+   * on a `free` lease) until the page is reloaded.
+   *
+   * Only while this pane is on screen and the document is visible: a rail
+   * behind another tab is not waiting for anything.
+   */
+  useEffect(() => {
+    if (!session || !projectId || holding || lease.state === "free") return;
+    const generation = railGeneration.current;
+    let stopped = false;
+    const timer = setInterval(() => {
+      if (!activeRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      void ensureLocalBrowser(projectId, consentToken)
+        .then((next) => {
+          if (stopped || railGeneration.current !== generation) return;
+          setLease(next.lease);
+          // Retract the message, and only it: the browser is available again.
+          if (next.lease.state === "free") {
+            setError((prev) => (prev === SOMEBODY_ELSE_HAS_IT ? null : prev));
+          }
+        })
+        .catch(() => {
+          // The next tick asks again.
+        });
+    }, LEASE_RECHECK_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [session, projectId, consentToken, holding, lease.state]);
 
   // Hand the browser back when this tab goes away.
   //

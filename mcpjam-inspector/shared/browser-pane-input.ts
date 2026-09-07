@@ -64,10 +64,16 @@ export const BROWSER_INPUT_BATCH_LIMIT = 64;
  * NOT "absent or anything": a `modifiers: "ctrl"` passed the guard, reached
  * CDP as a string where a bitmask belongs, and the dispatch failed there — on a
  * batch this relay had already acknowledged as delivered. Silently.
+ *
+ * INTEGER, not merely finite. The two fields this guards — `modifiers` and
+ * `clickCount` — are both declared `integer` in CDP, and `modifiers` is a
+ * BITMASK besides: 1.5 is not a weaker version of 1, it is a value with no
+ * meaning at all. A fraction fails at the same place a string did, one hop
+ * past the acknowledgement.
  */
-function optionalFiniteNumber(value: unknown): boolean {
+function optionalInteger(value: unknown): boolean {
   return (
-    value === undefined || (typeof value === "number" && Number.isFinite(value))
+    value === undefined || (typeof value === "number" && Number.isInteger(value))
   );
 }
 
@@ -85,7 +91,7 @@ export function isBrowserPaneInputEvent(
     Number.isFinite(event.x) &&
     typeof event.y === "number" &&
     Number.isFinite(event.y);
-  if (!optionalFiniteNumber(event.modifiers)) return false;
+  if (!optionalInteger(event.modifiers)) return false;
   switch (event.type) {
     case "mouse_move":
       return xy;
@@ -93,7 +99,7 @@ export function isBrowserPaneInputEvent(
     case "mouse_up":
       return (
         xy &&
-        optionalFiniteNumber(event.clickCount) &&
+        optionalInteger(event.clickCount) &&
         (event.button === "left" ||
           event.button === "middle" ||
           event.button === "right")

@@ -37,6 +37,21 @@ import {
  */
 const MAX_PENDING_GROUPS = 32;
 
+/**
+ * How many release-only groups may ride past that bound.
+ *
+ * A release is the one event a queue may not throw away: dispatch is FIFO, so
+ * by the time a group is evicted the press it ends may already be on the page,
+ * and a dropped `mouse_up` or `key_up` leaves that page holding a button
+ * nobody is pressing with no later event able to end it. Small, because only
+ * so many buttons and keys can be down at once — and finite, so a pane that
+ * sends nothing but releases still cannot grow this relay without limit.
+ */
+const MAX_RELEASE_CARRY = 8;
+
+/** The events that END something the page is now holding. */
+const RELEASE_TYPES: ReadonlySet<string> = new Set(["mouse_up", "key_up"]);
+
 /** Why a batch did not reach the page. The daemon's own vocabulary. */
 export type InputRefusal =
   | "lease_required"
@@ -72,6 +87,13 @@ export interface RelayInputForwarderOptions {
    * `dispatched` is that message's OWN event count on a flush that landed, and
    * 0 on a refusal — not the size of the coalesced batch, which is a number
    * about the relay rather than about the caller's gesture.
+   *
+   * A group that is refused PART WAY THROUGH is the one case with no exact
+   * answer: coalescing has already merged the messages, so no event can be
+   * traced back to the message that produced it. What is delivered is credited
+   * to the earliest messages in the group, which is the order they were sent
+   * in — and every message in the group still carries the refusal, because the
+   * gesture as a whole did not land.
    */
   ack(payload: {
     seq: number;
@@ -112,15 +134,26 @@ export function createRelayInputForwarder(
   const dispatchGroup = async (
     tabId: string | undefined,
     events: readonly BrowserPaneInputEvent[],
-  ): Promise<{ ok: true } | { ok: false; refused: InputRefusal }> => {
+  ): Promise<
+    { ok: true } | { ok: false; refused: InputRefusal; sent: number }
+  > => {
+    let sent = 0;
     for (let at = 0; at < events.length; at += BROWSER_INPUT_BATCH_LIMIT) {
+      // CHECKED PER CHUNK, not once. `cancel()` runs when the socket goes
+      // away, and a long gesture can still have chunks left in this loop when
+      // it does — chunks that would reach the page on behalf of a pane that
+      // is no longer there, and possibly after the lease has moved to
+      // somebody else.
+      if (cancelled) return { ok: false, refused: "overloaded", sent };
+      const chunk = events.slice(at, at + BROWSER_INPUT_BATCH_LIMIT);
       const outcome = await options.dispatch({
         ...(tabId ? { tabId } : {}),
-        events: events.slice(at, at + BROWSER_INPUT_BATCH_LIMIT),
+        events: chunk,
       });
       // In ORDER and stopping at the first refusal: carrying on would put the
-      // tail of a gesture into a page that never received its head.
-      if (!outcome.ok) return outcome;
+      // tail of a gesture into a page that stopped accepting it half way.
+      if (!outcome.ok) return { ...outcome, sent };
+      sent += chunk.length;
     }
     return { ok: true };
   };
@@ -140,10 +173,17 @@ export function createRelayInputForwarder(
           options.onDispatched?.();
           return;
         }
+        // A PREFIX THAT LANDED IS STILL USE. `onDispatched` is what defers
+        // the idle sweep on a metered machine, and a gesture whose first half
+        // reached the page is somebody working, not somebody idle.
+        if (outcome.sent > 0) options.onDispatched?.();
+        let credit = outcome.sent;
         for (const entry of group.acks) {
+          const dispatched = Math.min(entry.count, credit);
+          credit -= dispatched;
           options.ack({
             seq: entry.seq,
-            dispatched: 0,
+            dispatched,
             refused: outcome.refused,
           });
         }
@@ -176,6 +216,7 @@ export function createRelayInputForwarder(
         // one whose old positions are already wrong, and the gesture somebody
         // is making now is the one worth keeping. Every dropped batch is
         // acked, because a message with no answer is a pane that waits forever.
+        const carried: typeof pending = [];
         while (pending.length >= MAX_PENDING_GROUPS) {
           const dropped = pending.shift()!;
           for (const entry of dropped.acks) {
@@ -185,7 +226,22 @@ export function createRelayInputForwarder(
               refused: "overloaded",
             });
           }
+          // Its POSITIONS are already wrong and go; its releases do not.
+          // Answered as `overloaded` either way — the caller's batch did not
+          // land as a batch — but what is left of it still has to reach the
+          // page, or a drag that overflowed the queue ends with the button
+          // still down.
+          const releases = dropped.events.filter((event) =>
+            RELEASE_TYPES.has(event.type),
+          );
+          if (releases.length > 0 && carried.length < MAX_RELEASE_CARRY) {
+            carried.push({ ...dropped, events: releases, acks: [] });
+          }
         }
+        // AHEAD of what is still queued, in the order they were made: they are
+        // older than everything left, and a release that arrives after the
+        // next press would end the wrong one.
+        if (carried.length > 0) pending = [...carried, ...pending];
         pending.push({
           ...(message.tabId !== undefined ? { tabId: message.tabId } : {}),
           events: [...message.events],

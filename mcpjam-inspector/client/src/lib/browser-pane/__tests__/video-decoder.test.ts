@@ -15,6 +15,8 @@ import {
   createPaneVideoDecoder,
   splitNalUnits,
   videoDecodeSupported,
+  seqOfUnitTimestamp,
+  unitTimestamp,
 } from "../video-decoder";
 
 /**
@@ -329,5 +331,18 @@ describe("the pane's decoder", () => {
     expect(videoDecodeSupported()).toBe(false);
     vi.stubGlobal("VideoDecoder", function VideoDecoderStub() {});
     expect(videoDecodeSupported()).toBe(true);
+  });
+});
+
+describe("finding the unit a picture came from", () => {
+  it("round-trips a sequence through the only field that survives the decoder", () => {
+    // The pane reads the geometry, scale and relay timestamp of the unit a
+    // picture belongs to, and the decoder hands back nothing but the chunk
+    // timestamp. A pair that disagreed would fail silently: every lookup
+    // misses, every picture is dropped, and the pane goes blank on a stream
+    // that is arriving perfectly.
+    for (const seq of [0, 1, 7, 1_000, 2_147_483]) {
+      expect(seqOfUnitTimestamp(unitTimestamp(seq))).toBe(seq);
+    }
   });
 });

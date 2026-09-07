@@ -163,10 +163,17 @@ export function createFrameRelayStats(
     start() {
       if (timer !== undefined || stopped) return;
       timer = setTimer(() => {
-        // NOT WHILE CONGESTED. Every counter here is cumulative, so a skipped
-        // message loses nothing — and telemetry that queued behind the frames
-        // it is reporting on would be backpressure defeating itself.
-        if (congested()) return;
+        // SENT WHILE CONGESTED TOO, unlike the frames themselves.
+        //
+        // This is the one message that ENDS congestion. `dropped` is what the
+        // pane's adaptive tier reads to step down, and the tab list is what
+        // its strip redraws from; withholding both exactly while frames are
+        // being dropped is a control loop with its feedback wire cut — the
+        // pane keeps asking for a quality the socket cannot carry, so the
+        // congestion that suppressed the telemetry is what the telemetry
+        // would have fixed. A few hundred bytes on a timer is not what put a
+        // socket over its high-water mark; the frames it is reporting on are,
+        // and those are still dropped.
         try {
           options.send(
             JSON.stringify({

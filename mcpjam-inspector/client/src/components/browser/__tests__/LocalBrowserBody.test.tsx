@@ -473,3 +473,43 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
   });
 });
+
+describe("the agent browser pane — when somebody else is driving", () => {
+  it("asks again until they hand it back", async () => {
+    // The refusal arrives on the frame socket. The HAND-BACK arrives as
+    // nothing at all — the frames were flowing the whole time, so there is no
+    // reconnect, no `hello`, and no ack to carry the news. Without a re-read
+    // the pane goes on saying somebody else is driving and withholds Take
+    // control (offered only on a free lease) until the page is reloaded.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      renderBody();
+      await userEvent.click(
+        await screen.findByRole("button", { name: /open the browser/i }),
+      );
+      await screen.findByRole("button", { name: /take control/i });
+      api.socket?.onmessage?.({
+        data: JSON.stringify({
+          type: "input_ack",
+          seq: 1,
+          refused: "lease_held",
+        }),
+      });
+      await screen.findByText(/somebody else has taken control/i);
+      expect(
+        screen.queryByRole("button", { name: /take control/i }),
+      ).toBeNull();
+
+      api.lease = { state: "free", holder: undefined };
+      await vi.advanceTimersByTimeAsync(6_000);
+      expect(
+        await screen.findByRole("button", { name: /take control/i }),
+      ).toBeTruthy();
+      expect(
+        screen.queryByText(/somebody else has taken control/i),
+      ).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

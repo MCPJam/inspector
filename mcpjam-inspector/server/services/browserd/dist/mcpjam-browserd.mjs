@@ -3275,6 +3275,8 @@ function parseScrollDelta(value) {
 }
 var TABS_SNAPSHOT_MAX = 16;
 var TAB_URL_MAX = 256;
+var TABS_SNAPSHOT_BYTES = 4096;
+var TAB_ENTRY_OVERHEAD = 24;
 var ChromiumDriver = class {
   context;
   settleOptions;
@@ -3853,10 +3855,21 @@ var ChromiumDriver = class {
    * stream.
    */
   tabsSnapshot() {
-    const list = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed()).slice(0, TABS_SNAPSHOT_MAX).map(([id, entry]) => ({
+    const live = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed());
+    const activeAt = this.activeTabId ? live.findIndex(([id]) => id === this.activeTabId) : -1;
+    const ordered = activeAt >= TABS_SNAPSHOT_MAX ? [...live.slice(0, TABS_SNAPSHOT_MAX - 1), live[activeAt]] : live.slice(0, TABS_SNAPSHOT_MAX);
+    const list = ordered.map(([id, entry]) => ({
       id,
       url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
     }));
+    const costOf = (tab) => tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
+    let cost = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && cost > TABS_SNAPSHOT_BYTES) {
+      const at = list[list.length - 1].id === this.activeTabId ? list.length - 2 : list.length - 1;
+      cost -= costOf(list[at]);
+      list.splice(at, 1);
+    }
+    if (cost > TABS_SNAPSHOT_BYTES) list.length = 0;
     const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
     return { ...active ? { active } : {}, list };
   }

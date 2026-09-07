@@ -61,6 +61,13 @@ function build(
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+/** `text` is the one event kind the coalescer never merges. */
+const texts = (count: number) =>
+  Array.from({ length: count }, (_, at) => ({
+    type: "text" as const,
+    text: String(at),
+  }));
+
 describe("relay input forwarder", () => {
   it("sends the first batch straight through", async () => {
     const f = build();
@@ -244,5 +251,86 @@ describe("bursts the daemon would refuse whole", () => {
     );
     expect(Math.max(...acks.map((a) => a.seq))).toBeLessThan(80);
     release();
+  });
+
+  it("stops chunking the moment the socket goes away", async () => {
+    const f = build();
+    f.hold();
+    f.forwarder.submit({
+      seq: 1,
+      events: texts(BROWSER_INPUT_BATCH_LIMIT + 1),
+    });
+    await tick();
+    expect(f.dispatched).toHaveLength(1);
+    // The pane is gone. What is left of this gesture belongs to nobody, and
+    // the lease may be somebody else's by the time it lands.
+    f.forwarder.cancel();
+    f.release();
+    await tick();
+    expect(f.dispatched).toHaveLength(1);
+  });
+
+  it("credits the part of a gesture that landed, and counts it as use", async () => {
+    let calls = 0;
+    const f = build(() => {
+      calls += 1;
+      return calls === 1
+        ? { ok: true }
+        : { ok: false, refused: "lease_held" as InputRefusal };
+    });
+    f.forwarder.submit({
+      seq: 1,
+      events: texts(BROWSER_INPUT_BATCH_LIMIT + 1),
+    });
+    await tick();
+    expect(f.dispatched).toHaveLength(2);
+    expect(f.acks).toEqual([
+      { seq: 1, dispatched: BROWSER_INPUT_BATCH_LIMIT, refused: "lease_held" },
+    ]);
+    // A prefix that reached the page is somebody working, not somebody idle —
+    // which is what defers the sweep on a metered machine.
+    expect(f.landed()).toBe(1);
+  });
+
+  it("carries a release past the queue bound", async () => {
+    const f = build();
+    f.hold();
+    // The press goes out at once...
+    f.forwarder.submit({
+      seq: 1,
+      tabId: "a",
+      events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }],
+    });
+    await tick();
+    // ...its release queues behind, and then alternating tabs bury it until
+    // the bound evicts the group it is in.
+    f.forwarder.submit({
+      seq: 2,
+      tabId: "b",
+      events: [{ type: "mouse_up", x: 1, y: 1, button: "left" }],
+    });
+    for (let seq = 3; seq <= 40; seq += 1) {
+      f.forwarder.submit({
+        seq,
+        tabId: seq % 2 === 0 ? "b" : "a",
+        events: [{ type: "mouse_move", x: seq, y: seq }],
+      });
+    }
+    f.release();
+    for (let at = 0; at < 80; at += 1) await tick();
+    // Its batch was refused — that much is the bound doing its job...
+    expect(
+      f.acks.some((ack) => ack.seq === 2 && ack.refused === "overloaded"),
+    ).toBe(true);
+    // ...but the release itself still reached the page it belonged to. A
+    // dropped `mouse_up` leaves that page holding a button with no later
+    // event able to end it.
+    const releases = f.dispatched.filter((entry) =>
+      entry.events.some(
+        (event) => (event as { type?: string }).type === "mouse_up",
+      ),
+    );
+    expect(releases).toHaveLength(1);
+    expect(releases[0]!.tabId).toBe("b");
   });
 });

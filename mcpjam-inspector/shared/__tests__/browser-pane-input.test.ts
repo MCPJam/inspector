@@ -177,3 +177,41 @@ describe("the wire message", () => {
     ).toBe(true);
   });
 });
+
+describe("fields CDP declares as integers", () => {
+  it("refuses a fractional modifier bitmask", () => {
+    // 1.5 is not a weaker Ctrl. It is a value with no meaning, and it failed
+    // one hop past the acknowledgement — in CDP, on a batch this relay had
+    // already told the pane was delivered.
+    expect(
+      isBrowserPaneInputEvent({ type: "mouse_move", x: 1, y: 1, modifiers: 1.5 }),
+    ).toBe(false);
+    expect(
+      isBrowserPaneInputEvent({ type: "mouse_move", x: 1, y: 1, modifiers: 2 }),
+    ).toBe(true);
+  });
+
+  it("refuses a fractional click count", () => {
+    const event = {
+      type: "mouse_down",
+      x: 1,
+      y: 1,
+      button: "left",
+      clickCount: 2.5,
+    };
+    expect(isBrowserPaneInputEvent(event)).toBe(false);
+    expect(isBrowserPaneInputEvent({ ...event, clickCount: 2 })).toBe(true);
+  });
+
+  it("still takes a fractional wheel delta, which is a real distance", () => {
+    expect(
+      isBrowserPaneInputEvent({
+        type: "wheel",
+        x: 1,
+        y: 1,
+        deltaX: 0,
+        deltaY: -0.5,
+      }),
+    ).toBe(true);
+  });
+});

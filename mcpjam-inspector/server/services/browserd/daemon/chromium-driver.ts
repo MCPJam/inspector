@@ -165,6 +165,19 @@ function parseScrollDelta(value: string | undefined): [number, number] {
 const TABS_SNAPSHOT_MAX = 16;
 /** And each URL: the strip shows a HOST, so a path is already more than it needs. */
 const TAB_URL_MAX = 256;
+/**
+ * And the whole strip, in bytes of JSON.
+ *
+ * Counting entries is not the same as bounding cost: a tab id is whatever the
+ * CALLER asked for — `getOrCreateTab` opens a page under any string — so
+ * sixteen tabs named with a kilobyte each is a heartbeat over the reader's
+ * limit and a stream that dies on a record it cannot take. Well under the 8
+ * KiB the reader allows, because the strip is not the only field in that
+ * message.
+ */
+const TABS_SNAPSHOT_BYTES = 4_096;
+/** `{"id":"","url":""},` — what one entry costs beyond its two strings. */
+const TAB_ENTRY_OVERHEAD = 24;
 
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
@@ -914,16 +927,46 @@ export class ChromiumDriver implements BrowserDriver {
     active?: string;
     list: Array<{ id: string; url: string }>;
   } {
-    const list = [...this.tabs.entries()]
+    const live = [...this.tabs.entries()]
       // A page can close ITSELF — `window.close()`, a crashed renderer — with
       // nothing routed through the driver, and the strip then showed a
       // phantom tab and could mark the closed id active.
-      .filter(([, entry]) => !entry.page.isClosed())
-      .slice(0, TABS_SNAPSHOT_MAX)
-      .map(([id, entry]) => ({
-        id,
-        url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
-      }));
+      .filter(([, entry]) => !entry.page.isClosed());
+    // THE ACTIVE ONE IS NOT WHAT A BOUND DROPS. It is the tab the video is
+    // showing, and cutting at sixteen sent a strip that did not contain it —
+    // so `active` fell away below and the picture changed with nothing
+    // highlighted, which reads as "no tab is on screen". Position is kept:
+    // it takes the last slot rather than jumping to the front, because a
+    // strip that reorders itself when a tab is activated is its own puzzle.
+    const activeAt = this.activeTabId
+      ? live.findIndex(([id]) => id === this.activeTabId)
+      : -1;
+    const ordered =
+      activeAt >= TABS_SNAPSHOT_MAX
+        ? [...live.slice(0, TABS_SNAPSHOT_MAX - 1), live[activeAt]!]
+        : live.slice(0, TABS_SNAPSHOT_MAX);
+    const list = ordered.map(([id, entry]) => ({
+      id,
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
+    }));
+    // Then by SIZE, dropping from the end and never the active one. A caller
+    // that invents long tab ids cannot be answered with a truncated id — the
+    // strip matches `active` against it — so what gives is the number of
+    // entries, and in the last resort the strip itself.
+    const costOf = (tab: { id: string; url: string }): number =>
+      tab.id.length + tab.url.length + TAB_ENTRY_OVERHEAD;
+    let cost = list.reduce((total, tab) => total + costOf(tab), 0);
+    while (list.length > 1 && cost > TABS_SNAPSHOT_BYTES) {
+      const at =
+        list[list.length - 1]!.id === this.activeTabId
+          ? list.length - 2
+          : list.length - 1;
+      cost -= costOf(list[at]!);
+      list.splice(at, 1);
+    }
+    // One entry that is over the bound on its own is not a tab anybody opened
+    // by hand. No strip is better than no stream.
+    if (cost > TABS_SNAPSHOT_BYTES) list.length = 0;
     // Only if it is still there: the strip highlights `active`, and pointing
     // at a tab that is not in the list reads as "no tab is on screen".
     const active =

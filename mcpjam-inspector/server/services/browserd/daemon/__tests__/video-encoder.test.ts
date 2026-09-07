@@ -252,14 +252,21 @@ describe("the encoder's lifecycle", () => {
     // watcher: a flag taken by the first watcher's heartbeat told the second
     // that nothing had been emitted, every single time.
     const { encoder, ffmpeg } = build();
+    // TWO watchers, which is the case the counter exists for: a person's pane
+    // and an eval's recorder on the same box.
     encoder.subscribe(() => {});
-    const start = encoder.emitted();
+    encoder.subscribe(() => {});
+    const paneLastSaw = encoder.emitted();
+    const recorderLastSaw = encoder.emitted();
     ffmpeg.latest().stdout.emit("data", Buffer.from(concat(KEY(), DELTA())));
-    const after = encoder.emitted();
-    expect(after).toBeGreaterThan(start);
-    // Two readers, each comparing against what IT last saw, both see the same
-    // two units — which is the whole point of not consuming.
-    expect(encoder.emitted()).toBe(after);
+    // ONE unit, not two: an access unit is published only once the NEXT
+    // delimiter proves it complete, so DELTA's delimiter finishes KEY and
+    // DELTA itself is still buffered.
+    expect(encoder.emitted()).toBe(paneLastSaw + 1);
+    // And the second watcher sees that same publication against ITS own
+    // last-seen value. A consumed flag would have told it nothing had been
+    // emitted, every single time.
+    expect(encoder.emitted()).toBe(recorderLastSaw + 1);
   });
 
   it("survives a subscriber that throws", () => {

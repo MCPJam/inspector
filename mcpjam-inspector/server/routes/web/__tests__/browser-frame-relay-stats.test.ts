@@ -144,3 +144,29 @@ describe("frame relay stats", () => {
     spy.mockRestore();
   });
 });
+
+describe("telemetry under congestion", () => {
+  it("keeps reporting while it is dropping frames", () => {
+    let buffered = 0;
+    const { stats, sent, tick } = build({
+      maxBufferedBytes: 1_000,
+      bufferedAmount: () => buffered,
+    });
+    stats.start();
+    // Over the high-water mark: the frames stop...
+    buffered = 2_000;
+    expect(stats.offer(100, () => {})).toBe(false);
+    tick();
+    // ...and the telemetry does not. This is the message that ENDS the
+    // congestion: `dropped` is what the pane's adaptive tier reads to step
+    // down, so withholding it exactly while frames are being dropped cuts the
+    // feedback wire of the loop that would have fixed it.
+    expect(sent).toHaveLength(1);
+    expect(JSON.parse(sent[0]!)).toMatchObject({
+      type: "stats",
+      framesIn: 1,
+      framesOut: 0,
+      dropped: 1,
+    });
+  });
+});
