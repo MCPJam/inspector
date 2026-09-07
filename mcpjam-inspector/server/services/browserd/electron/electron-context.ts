@@ -249,9 +249,7 @@ export async function launchElectronContext(
         }
         // `WebContentsView` has no `destroy()`; closing its contents is what
         // releases the renderer process.
-        (
-          view.webContents as unknown as { close?: () => void }
-        ).close?.();
+        (view.webContents as unknown as { close?: () => void }).close?.();
       },
       focus: () => options.surface?.setActive(view),
     };
