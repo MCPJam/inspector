@@ -220,10 +220,21 @@ export function SidebarContextSwitcher({
     return name;
   })();
 
-  // A seat-pending org is denied every server-side query, so a project created
-  // in one could not then be opened.
+  // Organizations this viewer could actually create a project in. Two rules
+  // are decidable from the membership list we already have:
+  //   - a seat-pending org is denied every server-side query, so a project
+  //     created in one could not then be opened;
+  //   - a guest cannot create at all.
+  // A per-organization project cap is NOT decidable here — the billing gate is
+  // resolved for the active organization only — so a create into a capped
+  // organization still relies on the server rejection and its toast.
   const creatableOrganizations = sortedOrganizations.filter(
-    (org) => org.seatPending !== true
+    (org) =>
+      org.seatPending !== true &&
+      (org.myRole === undefined ||
+        org.myRole === "owner" ||
+        org.myRole === "admin" ||
+        org.myRole === "member")
   );
 
   const openCreateProjectDialog = () => {

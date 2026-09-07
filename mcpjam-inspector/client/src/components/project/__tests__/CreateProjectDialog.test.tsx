@@ -132,6 +132,87 @@ describe("CreateProjectDialog", () => {
     });
   });
 
+  it("stays open, keeping the input, when creation fails", async () => {
+    // `handleCreateProject` catches billing and network failures and resolves
+    // with "" after raising its own toast. Closing on that would drop the name
+    // and the organization and send the user back through "+" to retype both.
+    const onCreate = vi.fn(async () => "");
+    const onOpenChange = vi.fn();
+    render(
+      <CreateProjectDialog
+        open
+        onOpenChange={onOpenChange}
+        organizations={organizations}
+        defaultOrganizationId="org_a"
+        defaultName="Project 3"
+        onCreate={onCreate}
+      />,
+    );
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Payments" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalledWith("Payments", "org_a");
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("Name")).toHaveValue("Payments");
+    // Re-armed for an immediate retry rather than stuck on "Creating...".
+    expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
+  });
+
+  it("survives a rejected create without an unhandled rejection", async () => {
+    const onCreate = vi.fn(async () => {
+      throw new Error("network down");
+    });
+    const onOpenChange = vi.fn();
+    render(
+      <CreateProjectDialog
+        open
+        onOpenChange={onOpenChange}
+        organizations={organizations}
+        defaultOrganizationId="org_a"
+        defaultName="Project 3"
+        onCreate={onCreate as never}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Create" }));
+
+    await waitFor(() => {
+      expect(onCreate).toHaveBeenCalled();
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Create" })).toBeEnabled();
+  });
+
+  it("keeps what the user typed when the defaults change while it is open", async () => {
+    // The dialog stays mounted for the life of the switcher, so a project
+    // created in another tab moves `defaultName` underneath it. That must not
+    // overwrite a name the user is halfway through typing.
+    const { rerender } = renderDialog();
+
+    fireEvent.change(screen.getByLabelText("Name"), {
+      target: { value: "Payments" },
+    });
+
+    rerender(
+      <CreateProjectDialog
+        open
+        onOpenChange={vi.fn()}
+        organizations={organizations}
+        defaultOrganizationId="org_b"
+        defaultName="Project 7"
+        onCreate={vi.fn(async () => "")}
+      />,
+    );
+
+    expect(screen.getByLabelText("Name")).toHaveValue("Payments");
+    expect(screen.getByLabelText("Organization")).toHaveTextContent("Acme");
+  });
+
   it("re-prefills each time it opens", () => {
     // The dialog stays mounted for the life of the switcher, so the prefill
     // has to reflect the project list at the moment it is opened, not at mount.

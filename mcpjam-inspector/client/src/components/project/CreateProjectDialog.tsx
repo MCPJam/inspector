@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "@mcpjam/design-system/button";
 import { Input } from "@mcpjam/design-system/input";
 import { Label } from "@mcpjam/design-system/label";
@@ -31,6 +31,11 @@ interface CreateProjectDialogProps {
   defaultOrganizationId?: string;
   /** Prefilled name; the caller owns the "Project N" uniqueness rule. */
   defaultName: string;
+  /**
+   * Creates the project and resolves with its id. An empty string is the
+   * caller's "handled failure" answer (it has already raised a toast) and
+   * keeps the dialog open so the typed name survives a retry.
+   */
   onCreate: (name: string, organizationId?: string) => Promise<string> | void;
 }
 
@@ -56,13 +61,18 @@ export function CreateProjectDialog({
   );
   const [isCreating, setIsCreating] = useState(false);
 
-  // Reset on each open rather than on mount: the dialog is mounted for the
-  // life of the switcher, and the prefill has to reflect the project list and
-  // the active organization AT THE MOMENT the user opens it.
+  // Prefill on the closed → open transition, not on mount and not whenever a
+  // default changes: the dialog stays mounted for the life of the switcher, so
+  // the prefill has to reflect the project list and the active organization AT
+  // THE MOMENT the user opens it — but a project created in another tab while
+  // this is open must not overwrite the name they are halfway through typing.
+  const wasOpenRef = useRef(false);
   useEffect(() => {
-    if (!open) return;
-    setName(defaultName);
-    setOrganizationId(defaultOrganizationId);
+    if (open && !wasOpenRef.current) {
+      setName(defaultName);
+      setOrganizationId(defaultOrganizationId);
+    }
+    wasOpenRef.current = open;
   }, [open, defaultName, defaultOrganizationId]);
 
   // Guests and local installs have no organizations at all; there is nothing
@@ -73,8 +83,18 @@ export function CreateProjectDialog({
     if (!name.trim() || isCreating) return;
     setIsCreating(true);
     try {
-      await onCreate(name.trim(), organizationId);
-      onOpenChange(false);
+      const projectId = await onCreate(name.trim(), organizationId);
+      // "" is a handled failure that already raised its own toast; anything
+      // else (an id, or a caller that returns nothing) succeeded. Closing on a
+      // failure would drop the name and the organization the user chose and
+      // send them back through the "+" to retype both.
+      if (projectId !== "") {
+        onOpenChange(false);
+      }
+    } catch {
+      // An unexpected rejection must not escape as an unhandled promise from
+      // a click handler. `onCreate` reports its own failures; the dialog's job
+      // is to stay open so the input survives.
     } finally {
       setIsCreating(false);
     }

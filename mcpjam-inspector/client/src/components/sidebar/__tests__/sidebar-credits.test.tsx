@@ -130,7 +130,7 @@ describe("SidebarCredits", () => {
     expect(dailyRow).toHaveTextContent("resets in 3h");
   });
 
-  it("hides the label on the collapsed rail but keeps the row", () => {
+  it("hides the label on the collapsed rail but keeps the row named", () => {
     renderCredits();
 
     // The rail keeps the icon; the hover card is the only surface that can
@@ -138,6 +138,42 @@ describe("SidebarCredits", () => {
     expect(screen.getByText("See credits")).toHaveClass(
       "group-data-[collapsible=icon]:hidden",
     );
+    // With the label hidden and the coin decorative, the aria-label is the
+    // only accessible name left on the collapsed rail.
+    expect(screen.getByTestId("sidebar-see-credits")).toHaveAttribute(
+      "aria-label",
+      "See credits",
+    );
+  });
+
+  it("renders nothing once the balance settles with nothing to show", () => {
+    // A permanent row over a blank number and an empty bar reads as a broken
+    // meter rather than as absent data.
+    balanceState = undefined;
+    isLoadingState = false;
+
+    renderCredits();
+
+    expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
+  });
+
+  it("names each meter for screen readers", () => {
+    evalQuotaState = {
+      used: 12,
+      allowed: 50,
+      resetsAt: Date.now() + 60 * 60 * 1000,
+      windowKind: "day",
+    };
+
+    renderCredits();
+
+    const daily = screen.getByRole("progressbar", {
+      name: "Free daily credits",
+    });
+    expect(daily).toHaveAttribute("aria-valuetext", "36 / 300");
+    expect(
+      screen.getByRole("progressbar", { name: "Daily eval iterations" }),
+    ).toHaveAttribute("aria-valuetext", "12 / 50 used");
   });
 
   it("shows the monthly team allowance without the absolute reset date", () => {

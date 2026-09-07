@@ -1549,6 +1549,90 @@ describe("App hosted OAuth callback handling", () => {
     });
   });
 
+  it("creating from the switcher navigates rather than pre-selecting", async () => {
+    // Same contract as a project row: the URL performs the switch. Passing
+    // `switchTo` would be the state-then-URL ordering this surface stopped
+    // using, and for a cross-organization create the write is undone on the
+    // next render anyway — `activeProjectId` is derived from the
+    // organization-FILTERED map, which cannot contain the new project yet.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const handleCreateProjectSpy = vi.fn(async () => ORG_B_PROJECT_ID);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      activeOrganizationId: "org-a",
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Payments", "org-b");
+    });
+
+    expect(handleCreateProjectSpy).toHaveBeenCalledWith("Payments", false, {
+      organizationId: "org-b",
+    });
+    expect(handleSwitchProjectSpy).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
+  });
+
+  it("creating a local project switches state, since no URL can name it", async () => {
+    // The one case the URL cannot carry: a local-fallback id is a UUID, which
+    // `buildProjectPath` refuses to put in the canonical position. State is
+    // the only thing that can select it, so `switchTo: false` alone would
+    // leave a guest on the project they were already in.
+    clearHostedOAuthPendingState();
+    clearScenarioSession();
+    window.history.replaceState({}, "", "/servers");
+
+    const localProjectId = "3f1b2c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d";
+    const handleCreateProjectSpy = vi.fn(async () => localProjectId);
+    const handleSwitchProjectSpy = vi.fn();
+    (mockUseAppState as any).mockImplementation(() => ({
+      ...createAppStateMock(),
+      handleCreateProject: handleCreateProjectSpy,
+      handleSwitchProject: handleSwitchProjectSpy,
+    }));
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(mockMCPSidebar).toHaveBeenCalled();
+    });
+
+    const getLastSidebarProps = () =>
+      mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1]?.[0] as {
+        onCreateProject?: (
+          name: string,
+          organizationId?: string,
+        ) => Promise<string>;
+      };
+
+    await act(async () => {
+      await getLastSidebarProps().onCreateProject?.("Scratch");
+    });
+
+    expect(handleSwitchProjectSpy).toHaveBeenCalledWith(localProjectId);
+    expect(window.location.pathname).toBe("/servers");
+  });
+
   it("keeps sidebar project creation enabled for uncapped free routed orgs", async () => {
     clearHostedOAuthPendingState();
     clearScenarioSession();

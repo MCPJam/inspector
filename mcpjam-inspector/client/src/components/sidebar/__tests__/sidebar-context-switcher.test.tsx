@@ -872,6 +872,36 @@ describe("SidebarContextSwitcher", () => {
     ).toEqual(["org_a"]);
   });
 
+  it("keeps an organization the viewer cannot create in out of the dialog", () => {
+    // A guest has no create permission anywhere in that org, so offering it
+    // only produces a server rejection. A per-org project CAP is still not
+    // decidable here — that gate is resolved for the active org only.
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [orgs[0], { ...orgs[1], myRole: "guest" }],
+      isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    expect(
+      mockCreateProjectDialog.mock.calls
+        .at(-1)?.[0]
+        .organizations.map((o: { _id: string }) => o._id)
+    ).toEqual(["org_a"]);
+  });
+
   it("confirms before deleting a project from the switcher", async () => {
     // Deleting takes every server in the project. It used to happen on one
     // click of a button that only appears on hover.

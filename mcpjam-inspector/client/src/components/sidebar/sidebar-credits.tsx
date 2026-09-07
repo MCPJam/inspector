@@ -63,6 +63,14 @@ export function SidebarCredits({
   const { quota: evalIterationQuota, isLoading: isEvalIterationQuotaLoading } =
     useEvalIterationQuota({ organizationId });
 
+  // Settled with nothing to show. Rendering the row anyway leaves a permanent
+  // "See credits" whose card is a blank number over an empty bar, which reads
+  // as a broken meter rather than as absent data. The meter this replaced made
+  // the same call.
+  if (!isLoading && !balance) {
+    return null;
+  }
+
   const showMonthly = balance?.billingModel === "monthly_per_seat";
   const monthlyTotal = balance?.monthlyAllowanceTotal ?? 0;
   const monthlyRemaining = balance?.monthlyAllowanceRemaining ?? 0;
@@ -97,6 +105,10 @@ export function SidebarCredits({
           <HoverCardTrigger asChild>
             <SidebarMenuButton
               data-testid="sidebar-see-credits"
+              // The label is hidden on the collapsed rail and the coin is
+              // decorative, which would otherwise leave the button nameless
+              // there. No tooltip: see the comment above.
+              aria-label="See credits"
               onClick={onExplorePlans}
             >
               <CoinStackIcon aria-hidden="true" className="size-4" />
@@ -267,7 +279,12 @@ function SidebarUsageRow({
         isLoading ? (
           <Skeleton className="h-1.5 w-full rounded-full" />
         ) : (
-          <Progress className="h-1.5 bg-primary/15" value={fillPercent} />
+          <Progress
+            className="h-1.5 bg-primary/15"
+            value={fillPercent}
+            aria-label={label}
+            aria-valuetext={percentText || undefined}
+          />
         )
       ) : null}
       {helperText && !isLoading ? (

@@ -249,7 +249,10 @@ describe("sidebar invite CTA", () => {
       user: null,
     });
 
-    renderSidebar({ activeOrganizationId: undefined });
+    // The organization stays set so this isolates the auth half of the gate:
+    // with it also cleared, the assertion would pass even if the
+    // `isAuthenticated && user` check were dropped entirely.
+    renderSidebar();
 
     expect(screen.queryByTestId("sidebar-see-credits")).not.toBeInTheDocument();
   });

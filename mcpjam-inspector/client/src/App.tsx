@@ -4627,18 +4627,32 @@ export default function App() {
    * coordinator: the URL names a project the active org's filtered list does
    * not contain, so the coordinator switches organization first and then the
    * project, once the subscription delivers the new row.
+   *
+   * `switchTo` is deliberately false. Pre-selecting the new project would be
+   * the state-then-URL ordering this whole surface just stopped using, and for
+   * a cross-organization create the write is undone on the next render anyway:
+   * `activeProjectId` is derived from the organization-FILTERED project map,
+   * which does not contain a project in the org being moved to.
+   *
+   * A local-fallback project is the exception, and the only reason the switch
+   * is not purely a navigation: its id is a UUID, which `buildProjectPath`
+   * refuses to put in the canonical position, so `/p/<id>` cannot name it and
+   * state is the only thing that can select it.
    */
   const handleSidebarCreateProject = useCallback(
     async (name: string, organizationId?: string) => {
-      const projectId = await handleCreateProject(name, true, {
+      const projectId = await handleCreateProject(name, false, {
         organizationId,
       });
-      if (projectId) {
+      if (!projectId) return projectId;
+      if (isProjectIdShape(projectId)) {
         navigateToTarget(buildProjectSwitchTarget(projectId));
+      } else {
+        await handleSwitchProject(projectId);
       }
       return projectId;
     },
-    [handleCreateProject, navigateToTarget],
+    [handleCreateProject, handleSwitchProject, navigateToTarget],
   );
 
   /**
