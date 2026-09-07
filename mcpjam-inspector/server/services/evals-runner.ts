@@ -914,6 +914,46 @@ function descriptionAppliedOnPreparedTools(
   );
 }
 
+/**
+ * What to tell the author when a box could not be provisioned.
+ *
+ * An eval surface has no separate "notice" channel — a failed setup IS the
+ * message the author reads — so the wording has to carry the whole story:
+ *
+ *   - the DESKTOP refusals (`desktop_pin_conflict`, `desktop_not_advertised`,
+ *     `desktop_unavailable`) already arrive as a sentence written for a human
+ *     ("this run pins a custom environment AND advertises the browser tool…"),
+ *     so they are passed through verbatim. Wrapping them in
+ *     "Could not provision the eval's reproducible sandbox: <409>" would bury
+ *     the one part the author can act on.
+ *   - CAPACITY is a WAIT, not a mistake, and which budget was hit decides what
+ *     the author does about it. A desktop wait is a different sentence — and a
+ *     different remedy — from "this deployment is full".
+ */
+const DESKTOP_SETUP_REFUSAL_CODES = new Set([
+  "desktop_pin_conflict",
+  "desktop_not_advertised",
+  "desktop_unavailable",
+  "runtime_kind_mismatch",
+]);
+
+export function describeEvalSandboxRefusal(refusal: {
+  status: number;
+  error: string;
+  code?: string;
+  resource?: string;
+}): string {
+  if (refusal.code && DESKTOP_SETUP_REFUSAL_CODES.has(refusal.code)) {
+    return refusal.error;
+  }
+  if (refusal.status === 503) {
+    return refusal.resource === "desktop"
+      ? `Waiting on desktop (browser) capacity for this organization: ${refusal.error}`
+      : `Waiting on sandbox capacity: ${refusal.error}`;
+  }
+  return `Could not provision the eval's reproducible sandbox: ${refusal.error}`;
+}
+
 function throwIfDescriptionOverrideOnHarness(
   override: ToolDescriptionOverrideMarker | undefined,
   harness: string | undefined,
@@ -3702,6 +3742,10 @@ const runLocalIteration = async ({
       const pinnedEnvironmentId = (
         environment as { computerEnvironmentId?: string } | undefined
       )?.computerEnvironmentId;
+      // TERMINAL ONLY, and no `runtimeKind`. This is the local-BYOK path: it
+      // resolves NO built-in tools at all (there is no Convex auth to execute
+      // them with), so a browser can never be advertised here and a desktop
+      // box would be paid for and unused.
       if (pinnedEnvironmentId && runId !== null) {
         // Don't provision unless this server is a fully-configured data plane.
         // Provisioning only needs the user bearer, but EXEC needs E2B_API_KEY
@@ -4667,20 +4711,39 @@ const runHostedIterationWithBrowser = async (
     resolvedExecution.browserToolPolicy,
     { source: "evals-runner" },
   );
-  const builtInTools = resolveHostTools(
-    { builtInToolIds: resolvedExecution.builtInToolIds },
-    builtInTarget && "projectId" in builtInTarget
-      ? {
-          authHeader: convexAuthToken,
-          projectId: builtInTarget.projectId,
-          ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
-          // Names THIS iteration, so an unattended browser gets a profile no
-          // other iteration of this suite can reach. The suite's project is
-          // not enough: iterations run concurrently against it.
-          ...(iterationId ? { runKey: iterationId } : {}),
-        }
-      : null,
-  );
+  // RESOLVED AFTER THE BOX, not before.
+  //
+  // A browser binds to the run's OWN sandbox, and the binding reaches the
+  // resolver on `ctx` — so the tools cannot be built until the box exists.
+  // This used to run here, unconditionally, which is why it is a thunk rather
+  // than a value: the one call site below is inside the try that turns a
+  // provisioning failure into a cleanly recorded failed iteration.
+  const buildBuiltInTools = (
+    sandboxBinding?: {
+      sandboxId: string;
+      sandboxRowId: string;
+      runtimeKind: "terminal" | "desktop-browser";
+    },
+  ) =>
+    resolveHostTools(
+      { builtInToolIds: resolvedExecution.builtInToolIds },
+      builtInTarget && "projectId" in builtInTarget
+        ? {
+            authHeader: convexAuthToken,
+            projectId: builtInTarget.projectId,
+            ...(browserApprovalDelivery ? { browserApprovalDelivery } : {}),
+            // Names THIS iteration, so an unattended browser gets a profile no
+            // other iteration of this suite can reach. The suite's project is
+            // not enough: iterations run concurrently against it.
+            ...(iterationId ? { runKey: iterationId } : {}),
+            // The trusted binding to THIS iteration's box. It reaches the
+            // resolver on `ctx`, never on the host config, so nothing in a
+            // member-readable snapshot can forge one.
+            ...(sandboxBinding ? { sandboxBinding } : {}),
+          }
+        : null,
+    );
+  let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
   // Both are cheap and harness-gated: `resolveWebAuthorizedHarnessStrategy`
@@ -4745,6 +4808,63 @@ const runHostedIterationWithBrowser = async (
       toolDescriptionOverride,
       resolvedExecution.harness,
     );
+
+    // ── THE BOX FIRST, because the browser binds to it ──────────────────────
+    //
+    // Provisioning used to happen after `prepareChatV2`, which was fine while
+    // the only consumer was `bash` (injected out-of-band into `allTools`). A
+    // browser rides the tool REGISTRY, and the registry needs the binding on
+    // `ctx` — so the box has to exist before the tools are resolved.
+    //
+    // Still inside this try, so a provisioning failure records a clean failed
+    // iteration rather than an unhandled throw.
+    const pinnedEnvironmentId = (
+      environment as { computerEnvironmentId?: string } | undefined
+    )?.computerEnvironmentId;
+    const sandboxNeed = needsEphemeralEvalSandbox({
+      pinnedEnvironmentId,
+      harness: resolvedExecution.harness,
+      builtInToolIds: resolvedExecution.builtInToolIds,
+      browserToolPolicy: resolvedExecution.browserToolPolicy,
+      runId,
+    });
+    if (sandboxNeed.needed) {
+      if (!isComputersDataPlaneConfigured()) {
+        throw new Error(
+          sandboxNeed.runtimeKind === "desktop-browser"
+            ? "This eval declares a browser tool policy, which boots a disposable desktop computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+            : pinnedEnvironmentId
+              ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
+              : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
+        );
+      }
+      evalSandbox = await provisionEvalSandbox({
+        bearer: convexAuthToken,
+        runId: String(runId),
+        ...(iterationId ? { iterationId: String(iterationId) } : {}),
+        // Absent for a terminal box, so every request that predates desktops
+        // is byte-identical on the wire.
+        ...(sandboxNeed.runtimeKind === "desktop-browser"
+          ? { runtimeKind: "desktop-browser" as const }
+          : {}),
+        ...(abortSignal ? { signal: abortSignal } : {}),
+      });
+      if (!evalSandbox.ok) {
+        throw new Error(describeEvalSandboxRefusal(evalSandbox));
+      }
+    }
+    const sandboxBinding =
+      evalSandbox?.ok && sandboxNeed.needed
+        ? {
+            sandboxId: evalSandbox.value.sandboxId,
+            sandboxRowId: evalSandbox.value.sandboxRowId,
+            // What ACTUALLY booted, read off the response rather than off the
+            // request: a reuse answers with the row's own kind.
+            runtimeKind: evalSandbox.value.runtimeKind ?? "terminal",
+          }
+        : undefined;
+    builtInTools = buildBuiltInTools(sandboxBinding);
+
     prepared = await prepareChatV2({
       mcpClientManager,
       selectedServers,
@@ -4794,38 +4914,14 @@ const runHostedIterationWithBrowser = async (
         ),
       );
     }
-    // Pinned env → boot a fresh ephemeral sandbox and add the `bash` tool to
-    // prepared.allTools (the hosted path serializes those to toolDefs for the
-    // backend agent, then executes tool calls inspector-side). A provision
-    // failure throws → the catch below persists a failed iteration.
-    const pinnedEnvironmentId = (
-      environment as { computerEnvironmentId?: string } | undefined
-    )?.computerEnvironmentId;
-    if (
-      needsEphemeralEvalSandbox({
-        pinnedEnvironmentId,
-        harness: resolvedExecution.harness,
-        runId,
-      })
-    ) {
-      if (!isComputersDataPlaneConfigured()) {
-        throw new Error(
-          pinnedEnvironmentId
-            ? "This eval pins a reproducible computer environment, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it."
-            : "This eval runs on a harness, which boots a disposable computer per iteration, but this server isn't a computers data plane (deployed servers bootstrap credentials from INSPECTOR_SERVICE_TOKEN; see docs/project-computers.md) — it could provision a sandbox but not exec or release it.",
-        );
-      }
-      evalSandbox = await provisionEvalSandbox({
-        bearer: convexAuthToken,
-        runId: String(runId),
-        ...(iterationId ? { iterationId: String(iterationId) } : {}),
-        ...(abortSignal ? { signal: abortSignal } : {}),
-      });
-      if (!evalSandbox.ok) {
-        throw new Error(
-          `Could not provision the eval's reproducible sandbox: ${evalSandbox.error}`,
-        );
-      }
+    // `bash` is injected OUT-OF-BAND into the prepared tool map (the hosted
+    // path serializes those to toolDefs for the backend agent, then executes
+    // tool calls inspector-side), so it lands here rather than through the
+    // registry — and only for a TERMINAL box. A desktop box has no shell to
+    // offer: `browser` and `bash` are mutually exclusive on a host config, and
+    // seeding attachments there would place files nothing can read while
+    // annotating the prompt with paths the model cannot use.
+    if (evalSandbox?.ok && sandboxNeed.runtimeKind === "terminal") {
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.

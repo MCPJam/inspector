@@ -373,5 +373,15 @@ export function ensureLiveBrowserSession(
 export function ensureLiveBrowserSession(
   args: EnsureBrowserSessionArgs,
 ): Promise<HostedBrowserSessionHandle> {
-  return ensureBrowserSession(liveBrowserSessionDeps(), args);
+  // Dispatched rather than cast: the two overloads above are the checked
+  // surface, and narrowing here is what makes the implementation satisfy both
+  // without an `as` that a later edit could quietly widen.
+  const { target, ...rest } = args;
+  if (target?.kind === "sandbox") {
+    return ensureBrowserSession(liveBrowserSessionDeps(), { ...rest, target });
+  }
+  return ensureBrowserSession(liveBrowserSessionDeps(), {
+    ...rest,
+    ...(target ? { target } : {}),
+  });
 }
