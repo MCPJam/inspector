@@ -4,7 +4,7 @@ import type { EvalSuiteSettingKey } from "@/shared/eval-suite-settings-manifest"
 export const SUITE_SETTINGS_HEADER_KEYS = ["name"] as const satisfies readonly EvalSuiteSettingKey[];
 
 export const SUITE_SETTINGS_GROUPS = [
-  { id: "grading", label: "Grading", rows: ["policy", "validity", "passOrFail"] },
+  { id: "grading", label: "Grading", rows: ["policy", "passOrFail"] },
   { id: "runs", label: "Where it runs", rows: ["computerEnvironment", "environments"] },
   { id: "limits", label: "Limits", rows: ["budgets"] },
   { id: "triggers", label: "Triggers", rows: ["schedule", "githubChecks"] },
@@ -16,8 +16,19 @@ export type SuiteSettingsGroupId = (typeof SUITE_SETTINGS_GROUPS)[number]["id"];
 export type SuiteSettingsTabId = SuiteSettingsGroupId;
 
 export const NESTED_SETTING_KEYS: Record<string, readonly EvalSuiteSettingKey[]> = {
-  policy: ["minimumAccuracy", "minimumIterations", "repetitions", "passThreshold"],
-  passOrFail: ["matchOptions", "judge", "judgeRubric", "checks"],
+  policy: [
+    "minimumAccuracy",
+    "minimumIterations",
+    "repetitions",
+    "passThreshold",
+    "validity",
+    "qualityGateBaseline",
+    "qualityGateAllowedDrop",
+    "qualityGateNoDeterministicRegressions",
+    "qualityGateMaximumP95LatencyIncreaseMs",
+    "qualityGateNoGatingScoreErrors",
+  ],
+  passOrFail: ["matchOptions", "judge", "judgeRubric", "judgeGroundedness", "checks"],
 };
 
 /**

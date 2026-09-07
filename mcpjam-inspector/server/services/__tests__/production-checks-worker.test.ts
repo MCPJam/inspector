@@ -104,6 +104,33 @@ describe("executeClaimedCheck", () => {
     expect(calls[0].body.error).toBe("transcript envelope unreadable");
   });
 
+  it("an only-advisory failure stays green (complete, passed: true)", async () => {
+    const calls = mockServiceFetch();
+    await executeClaimedCheck({
+      ...BASE_CLAIM,
+      criteria: [
+        {
+          id: "crit-advisory",
+          predicate: {
+            type: "responseContains" as const,
+            needle: "this text is absent",
+            role: "advisory",
+            severity: "warn",
+          },
+        },
+      ],
+    });
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].path).toBe("/internal/v1/production-checks/complete");
+    expect(calls[0].body.passed).toBe(true);
+    expect(calls[0].body.criterionResults[0]).toMatchObject({
+      criterionId: "crit-advisory",
+      passed: false,
+      role: "advisory",
+    });
+  });
+
   it("grades an EMPTY transcript rather than skipping it", async () => {
     const calls = mockServiceFetch();
     await executeClaimedCheck({

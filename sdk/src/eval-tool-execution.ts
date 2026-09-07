@@ -2,6 +2,7 @@ import type {
   EvalTraceInput,
   EvalTraceSpanInput,
 } from "./eval-reporting-types.js";
+import { checkRole } from "./predicates/policy.js";
 import type { ToolErrorKind, ToolErrorRecord } from "./predicates/types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -201,10 +202,14 @@ export type FinalizeEvalPassedParams = {
   failOnToolError?: boolean;
   /**
    * State-based predicate verdicts (see `./predicates`). When present, the case
-   * additionally fails unless every predicate passed. Predicates are their own
+   * additionally fails unless every **gating** predicate passed. Advisory
+   * results are recorded and never fail the trial. Predicates are their own
    * assertion layer — they apply regardless of `failOnToolError`.
    */
-  predicateResults?: ReadonlyArray<{ passed: boolean }>;
+  predicateResults?: ReadonlyArray<{
+    passed: boolean;
+    predicate?: { role?: "gating" | "advisory" };
+  }>;
 };
 
 /**
@@ -215,9 +220,15 @@ export function finalizePassedForEval(
 ): boolean {
   const { matchPassed, trace, iterationError, failOnToolError, predicateResults } =
     params;
-  // The predicate gate is independent of failOnToolError: a failing predicate
-  // fails the case even when tool-error gating is disabled.
-  if (predicateResults && predicateResults.some((r) => !r.passed)) {
+  // The predicate gate is independent of failOnToolError: a failing gating
+  // predicate fails the case even when tool-error gating is disabled.
+  // Advisory (Warn/Report) results never fail the trial.
+  if (
+    predicateResults &&
+    predicateResults.some(
+      (r) => !r.passed && checkRole(r.predicate) !== "advisory"
+    )
+  ) {
     return false;
   }
   const gateActive = failOnToolError !== false;

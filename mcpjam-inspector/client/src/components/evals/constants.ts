@@ -118,6 +118,9 @@ export const EVAL_PASSED_BADGE_STRONG_CLASS =
   "bg-green-500/15 text-green-700 dark:text-green-300";
 export const EVAL_FAILED_BADGE_STRONG_CLASS =
   "bg-red-500/15 text-red-700 dark:text-red-300";
+/** Authored Warn/Report severity — not a computed verdict. */
+export const EVAL_WARN_BADGE_STRONG_CLASS =
+  "bg-warning/15 text-warning";
 
 // UI configuration
 export const UI_CONFIG = {

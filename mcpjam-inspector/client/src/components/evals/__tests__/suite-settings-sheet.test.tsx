@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { openSettingsRow, renderSettingsSheet, baseSuite } from "./settings-sheet-harness";
-import { GLOBAL_GATE_CATALOG } from "@/shared/predicate-kinds";
 
 /**
  * The settings sheet as a DRAFT (S1).
@@ -40,9 +39,18 @@ vi.mock("convex/react", () => ({
 // pre-capabilities behaviour, which is what every assertion in this file was
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
-vi.mock("@/hooks/use-suite-capabilities", () => ({
-  useSuiteCapabilities: () => ({ state: "unavailable", capabilities: null }),
-}));
+vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import("@/hooks/use-suite-capabilities")
+  >();
+  return {
+    ...actual,
+    useSuiteCapabilities: () => ({
+      state: "unavailable",
+      capabilities: null,
+    }),
+  };
+});
 
 vi.mock("sonner", () => ({
   toast: {
@@ -188,14 +196,8 @@ describe("adding a check does not break the sheet", () => {
     // The regression this covers: the menu passes an UPDATER, and a setter
     // that stored it verbatim put a function where a list belongs. Everything
     // that iterates `defaultPredicates` then threw, taking the sheet down.
-    await user.click(
-      screen.getByRole("button", { name: "Add whole-run check" }),
-    );
-    await user.click(
-      await screen.findByTestId(
-        `add-global-gate-${GLOBAL_GATE_CATALOG[0].kind}`,
-      ),
-    );
+    await user.click(screen.getByRole("button", { name: "Add scorer" }));
+    await user.click(await screen.findByTestId("add-scorer-noToolErrors"));
 
     // Still standing, and the edit registered as one drafted change.
     expect(screen.getByTestId("suite-settings-commit-bar")).toBeTruthy();
