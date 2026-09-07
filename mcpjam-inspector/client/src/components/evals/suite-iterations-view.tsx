@@ -2246,7 +2246,14 @@ export function SuiteIterationsView({
 
                       <div data-setting-key="passOrFail" className="contents">
                         <SuitePassOrFailSection
-                          focus={{ kind: "all" }}
+                          capabilities={
+                            capabilitiesReady ? capabilities : null
+                          }
+                          unavailableReason={
+                            capabilitiesState === "unavailable"
+                              ? CAPABILITY_REASON_COPY.flag_unavailable
+                              : undefined
+                          }
                           stageFacts={{
                             connection: (
                               <SuiteStageFactsList

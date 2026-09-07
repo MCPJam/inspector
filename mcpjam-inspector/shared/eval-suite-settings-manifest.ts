@@ -85,7 +85,7 @@ export const EVAL_SUITE_SETTINGS_MANIFEST = [
   },
   {
     key: "matchOptions",
-    label: "Tool-call matching",
+    label: "Edit tool-call matching",
     api: "settings.matchOptions",
   },
   {
@@ -170,3 +170,30 @@ export type EvalSuiteSettingKey =
 
 export const EVAL_SUITE_SETTING_KEYS: readonly EvalSuiteSettingKey[] =
   EVAL_SUITE_SETTINGS_MANIFEST.map((row) => row.key);
+
+/**
+ * One value per `api:` path, of the shape the PATCH schema actually accepts.
+ *
+ * Roles ride the check items themselves — there is no `scorerRoles` row.
+ * The advisory sample exists so a future schema that dropped `role` /
+ * `severity` fails the parity ratchet instead of silently stripping them.
+ */
+export const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
+  name: "Renamed",
+  "settings.minimumAccuracy": 80,
+  "settings.minimumIterations": 3,
+  "settings.matchOptions": { toolCallOrder: "exact" },
+  "settings.checks": [
+    { type: "responseContains", needle: "hi" },
+    { type: "noToolErrors", role: "advisory", severity: "warn" },
+  ],
+  "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
+  "settings.judge.rubric": {
+    criteria: [{ id: "cites", label: "Cites a source" }],
+  },
+  "settings.repetitions": 3,
+  "settings.passThreshold": 0.8,
+  "settings.validity": { minCompletionRate: 0.9 },
+  "environment.computerEnvironment": "Playwright",
+  environmentIds: ["env_1"],
+};

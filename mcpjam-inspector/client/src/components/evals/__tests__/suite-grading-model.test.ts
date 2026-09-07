@@ -145,17 +145,27 @@ describe("groupGradersByStage", () => {
     ).toBe("advisory");
   });
 
-  it("every predicate and match row is a gate", () => {
+  it("reads a predicate's role from checkRole", () => {
     const model = groupGradersByStage({
-      predicates: [samplePredicate("responseContains")],
+      predicates: [
+        samplePredicate("responseContains"),
+        {
+          ...samplePredicate("noToolErrors"),
+          role: "advisory",
+          severity: "warn",
+        },
+      ],
     });
-    const nonJudge = USER_VALUE_STAGES.flatMap(
+    const predicates = USER_VALUE_STAGES.flatMap(
       (stage) => model.byStage[stage],
-    ).filter((row) => row.kind !== "judge");
-    expect(nonJudge.length).toBeGreaterThan(0);
-    // There is no per-predicate role on the backend, so a row rendered as
-    // advisory here would be a control with nowhere to go.
-    expect(nonJudge.every((row) => row.role === "gating")).toBe(true);
+    ).filter((row) => row.kind === "predicate");
+    expect(predicates.map((row) => row.role)).toEqual(["gating", "advisory"]);
+    expect(predicates.map((row) => row.severity)).toEqual([undefined, "warn"]);
+    expect(
+      USER_VALUE_STAGES.flatMap((stage) => model.byStage[stage])
+        .filter((row) => row.kind === "match")
+        .every((row) => row.role === "gating"),
+    ).toBe(true);
   });
 
   it("places an unknown predicate kind without throwing", () => {
@@ -233,27 +243,53 @@ describe("stageConfigStates", () => {
     expect(stateOf(states, "connection")).toMatchObject({
       state: "runner",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "discovery")).toMatchObject({
       state: "runner",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "selection")).toMatchObject({
       state: "gated",
       gates: 2,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "call")).toMatchObject({
       state: "gated",
       gates: 1,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "response")).toMatchObject({
       state: "gap",
       gates: 0,
+      warn: 0,
+      report: 0,
     });
     expect(stateOf(states, "userValue")).toMatchObject({
       state: "judgeOnRequest",
       gates: 0,
+      warn: 0,
+      report: 0,
       judge: "manual",
+    });
+  });
+
+  it("counts warn and report separately from gates", () => {
+    const states = statesFor({
+      predicates: [
+        { type: "noToolErrors", role: "advisory", severity: "warn" },
+        { type: "responseContains", needle: "hi", role: "advisory" },
+      ],
+    });
+    expect(stateOf(states, "userValue")).toMatchObject({
+      gates: 0,
+      warn: 1,
+      report: 1,
     });
   });
 

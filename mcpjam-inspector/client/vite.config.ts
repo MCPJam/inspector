@@ -53,6 +53,10 @@ const sdkHostCompatEntry = path.resolve(
 // source like its siblings so a clean checkout builds without a prior
 // `npm run build -w @mcpjam/sdk`.
 const sdkContractEntry = path.resolve(rootDir, "../sdk/src/contract/index.ts");
+const sdkPredicatesEntry = path.resolve(
+  rootDir,
+  "../sdk/src/predicates/index.ts",
+);
 const sdkWidgetRuntimeEntry = path.resolve(
   rootDir,
   "../sdk/src/widget-runtime/index.ts",
@@ -170,6 +174,7 @@ export default defineConfig(({ mode }) => {
         "@mcpjam/widget-react": widgetReactEntry,
         "@mcpjam/sdk/browser": sdkBrowserEntry,
         "@mcpjam/sdk/contract": sdkContractEntry,
+        "@mcpjam/sdk/predicates": sdkPredicatesEntry,
         "@mcpjam/sdk/widget-runtime": sdkWidgetRuntimeEntry,
         "@mcpjam/sdk/plugin-bundle": sdkPluginBundleEntry,
         "@mcpjam/sdk/host-compat": sdkHostCompatEntry,

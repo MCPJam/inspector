@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { ALL_OPERATIONS } from "@mcpjam/sdk/platform";
 import { updateSuiteSchema } from "../evals.js";
-import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manifest";
+import {
+  EVAL_SUITE_SETTINGS_MANIFEST,
+  SAMPLE_BY_PATH,
+} from "@/shared/eval-suite-settings-manifest";
 
 /**
  * The API half of the settings-parity ratchet.
@@ -26,29 +29,6 @@ import { EVAL_SUITE_SETTINGS_MANIFEST } from "@/shared/eval-suite-settings-manif
  * reason. Any path added to the manifest without a sample here fails loudly
  * below rather than being skipped.
  */
-const SAMPLE_BY_PATH: Readonly<Record<string, unknown>> = {
-  // S1 — the name moved into the sheet, so the manifest claims it and the
-  // PATCH schema has to actually accept it.
-  name: "Renamed",
-  "settings.minimumAccuracy": 80,
-  "settings.minimumIterations": 3,
-  "settings.matchOptions": { toolCallOrder: "exact" },
-  "settings.checks": [{ type: "responseContains", needle: "hi" }],
-  "settings.judge": { enabled: true, autoRun: true, threshold: 0.8 },
-  // S6 — the suite's judge criteria, nested under the judge on the wire.
-  "settings.judge.rubric": {
-    criteria: [{ id: "cites", label: "Cites a source" }],
-  },
-  // B9b — the v2 verdict policy. FRACTIONS: `passThreshold: 0.8` is the same
-  // bar `minimumAccuracy: 80` sets in the other unit, which is why the schema
-  // refuses the two together.
-  "settings.repetitions": 3,
-  "settings.passThreshold": 0.8,
-  "settings.validity": { minCompletionRate: 0.9 },
-  "environment.computerEnvironment": "Playwright",
-  environmentIds: ["env_1"],
-};
-
 /** Build `{a: {b: value}}` from `"a.b"`. */
 function bodyForPath(path: string, value: unknown): Record<string, unknown> {
   const segments = path.split(".");

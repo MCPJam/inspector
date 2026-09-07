@@ -112,6 +112,11 @@ export type SuiteCapabilities = {
       current: boolean;
     } | null;
   };
+  /**
+   * Scorer-authoring capabilities. Absent on a backend that predates A1 —
+   * the Role control then degrades to today's read-only Gate chip.
+   */
+  scorers?: { checkPolicy?: boolean };
   revisionNumber: number | null;
 };
 

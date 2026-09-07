@@ -46,7 +46,7 @@ import {
   MATCH_OPTIONS_DEFAULTS,
   resolveMatchOptions,
 } from "@/shared/eval-matching";
-import type { Predicate } from "@mcpjam/sdk/predicates";
+import { checkRole, checkSeverity, type Predicate } from "@mcpjam/sdk/predicates";
 import {
   formatCriterion,
   PREDICATE_KIND_LABELS,
@@ -60,11 +60,10 @@ export type GraderRowKind = "match" | "predicate" | "judge";
 /**
  * One grader, as the settings page shows it.
  *
- * `role` is DERIVED, never authored. Every predicate and every match rule is a
- * gate — that is what it means for the runner to grade against it — and the
- * judge's role is whatever `judgeConfig.goalCompletion.role` says, defaulting
- * to advisory. There is no per-predicate role to read, and inventing one here
- * would put a control on the page that the backend has no field for.
+ * `role` is DERIVED. Match rules are always gates. A predicate's role is
+ * `checkRole(predicate)` — absent means gating; only the literal `"advisory"`
+ * is advisory. The judge's role is whatever `judgeConfig.goalCompletion.role`
+ * says, defaulting to advisory.
  */
 export type GraderRow = {
   /** Stable within one render; used as a React key, not persisted. */
@@ -73,6 +72,8 @@ export type GraderRow = {
   /** One line a reader can match to the control that edits it. */
   label: string;
   role: "gating" | "advisory";
+  /** Authored warn severity, only meaningful on an advisory predicate. */
+  severity?: "warn";
   /** Index into `defaultPredicates`, for a predicate row. */
   predicateIndex?: number;
   /** Which match-options field a `match` row came from. */
@@ -212,9 +213,8 @@ export function groupGradersByStage(input: {
       id: `predicate:${index}`,
       kind: "predicate",
       label,
-      // Every authored check is a gate. There is no per-predicate role on the
-      // backend, so offering one here would be a control with nowhere to go.
-      role: "gating",
+      role: checkRole(predicate),
+      severity: checkSeverity(predicate),
       predicateIndex: index,
     };
     if (GRADER_PRESENTATION_GROUP[kind] === "budget") {
@@ -305,6 +305,10 @@ export type StageConfigState = {
     | "judgeOff";
   /** Deterministic gating rows (match + predicate). The judge is excluded. */
   gates: number;
+  /** Advisory predicates authored as Warn. The judge is excluded. */
+  warn: number;
+  /** Advisory predicates without warn severity. The judge is excluded. */
+  report: number;
   /** Only on `userValue`. */
   judge?: JudgeMode;
 };
@@ -314,24 +318,31 @@ export function stageConfigStates(
   judge: JudgeMode,
 ): StageConfigState[] {
   return USER_VALUE_STAGES.map((stage) => {
-    const gates = model.byStage[stage].filter(
-      (row) => row.kind !== "judge" && row.role === "gating",
+    const rows = model.byStage[stage].filter((row) => row.kind !== "judge");
+    const gates = rows.filter((row) => row.role === "gating").length;
+    const warn = rows.filter(
+      (row) => row.role === "advisory" && row.severity === "warn",
+    ).length;
+    const report = rows.filter(
+      (row) => row.role === "advisory" && row.severity !== "warn",
     ).length;
     if (stage !== "userValue") {
-      if (gates >= 1) return { stage, state: "gated", gates };
-      if (!stageEmptyIsGap(stage)) return { stage, state: "runner", gates };
-      return { stage, state: "gap", gates };
+      if (gates >= 1) return { stage, state: "gated", gates, warn, report };
+      if (!stageEmptyIsGap(stage)) {
+        return { stage, state: "runner", gates, warn, report };
+      }
+      return { stage, state: "gap", gates, warn, report };
     }
     if (gates >= 1 || judge === "gating") {
-      return { stage, state: "gated", gates, judge };
+      return { stage, state: "gated", gates, warn, report, judge };
     }
     if (judge === "automatic") {
-      return { stage, state: "judgeAutomatic", gates, judge };
+      return { stage, state: "judgeAutomatic", gates, warn, report, judge };
     }
     if (judge === "manual") {
-      return { stage, state: "judgeOnRequest", gates, judge };
+      return { stage, state: "judgeOnRequest", gates, warn, report, judge };
     }
-    return { stage, state: "judgeOff", gates, judge };
+    return { stage, state: "judgeOff", gates, warn, report, judge };
   });
 }
 
