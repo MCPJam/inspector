@@ -63,6 +63,7 @@ import {
   buildWidgetModelContextSystemPrompt,
   prepareChatV2,
   type AppToolEntry,
+  type PageToolEntry,
   type UiToolEntry,
   type WidgetModelContextEntry,
 } from "./chat-v2-orchestration.js";
@@ -89,6 +90,7 @@ import { ErrorCode, WebRouteError } from "./../routes/web/errors.js";
 import { readUrlElicitations } from "@/shared/http-tool-calls";
 import { wrapToolsWithScopeStepUp } from "./insufficient-scope-step-up.js";
 import {
+  classifyPageToolApprovals,
   classifyUiToolApprovals,
   mergeUiToolApprovalClassifications,
   type UiToolApprovalClassification,
@@ -361,6 +363,16 @@ export interface WebChatTurnPrepareInputs {
   appTools?: AppToolEntry[];
   /** WebMCP-shaped MCPJam UI tools (client-fulfilled, like `appTools`). */
   uiTools?: UiToolEntry[];
+  /**
+   * The tools of the web page an open WebMCP Inspector session is driving,
+   * client-fulfilled like `appTools` — the client invokes them through the
+   * session it already owns, hosted or local, and posts the result back.
+   *
+   * The CALLER validates and gates them (`webmcpInspectorReachable`), because
+   * a turn must never advertise a page tool on a deployment where no session
+   * can exist: the model would call it and the turn would strand.
+   */
+  pageTools?: PageToolEntry[];
   /** Server-side built-in tools (e.g. web_search) to merge into the tool set. */
   builtInTools?: ToolSet;
   /**
@@ -605,10 +617,19 @@ function uiToolApprovalsFrom(
   uiTools: UiToolEntry[] | undefined,
   requireToolApproval: boolean | undefined,
   browserToolApprovals?: UiToolApprovalClassification,
+  pageTools?: PageToolEntry[],
 ): UiToolApprovalClassification {
+  // Page tools ALWAYS gate, and the hosted engines classify approval by NAME
+  // rather than reading a tool's own `needsApproval` — so a page tool that is
+  // not named here reaches them approval-less, the client defers the call, and
+  // the turn waits forever on a pill the server never sends. Same reasoning,
+  // and the same single `uiToolApprovals` slot, as `browserToolApprovals`.
   return mergeUiToolApprovalClassifications(
-    classifyUiToolApprovals(uiTools, requireToolApproval === true),
-    browserToolApprovals,
+    mergeUiToolApprovalClassifications(
+      classifyUiToolApprovals(uiTools, requireToolApproval === true),
+      browserToolApprovals,
+    ),
+    classifyPageToolApprovals((pageTools ?? []).map((entry) => entry.alias)),
   );
 }
 
@@ -679,6 +700,7 @@ export async function streamWebChatTurn(
         : {}),
       appTools: prepare.appTools,
       uiTools: prepare.uiTools,
+      pageTools: prepare.pageTools,
       builtInTools: prepare.builtInTools,
 
       // Environment-resolved skills outrank the cloud/HOSTED/local chain for the
@@ -1232,6 +1254,7 @@ export async function streamWebChatTurn(
         effectiveUiTools,
         persist.requireToolApproval,
         prepare.browserToolApprovals,
+        prepare.pageTools,
       ),
       modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
       onConversationComplete,
@@ -1321,6 +1344,7 @@ export async function streamWebChatTurn(
       effectiveUiTools,
       persist.requireToolApproval,
       prepare.browserToolApprovals,
+      prepare.pageTools,
     ),
     modelVisibleMcpToolResults: prepare.modelVisibleMcpToolResults,
     // Harness engine only: it builds its own MCP tool set (host-executed

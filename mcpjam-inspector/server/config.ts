@@ -105,6 +105,26 @@ export function webmcpInspectorHostedEnabled(
 }
 
 /**
+ * Can a WebMCP Inspector SESSION exist on this deployment at all?
+ *
+ * The kill switch and the hosted-reachability switch, composed — the same
+ * question the inspector router answers with a 404, asked by anything that
+ * must not offer a capability the session behind it cannot provide. The chat
+ * routes ask it before advertising a page's tools to a model: a turn that
+ * offered them where no session can exist would strand on a call nothing can
+ * fulfil.
+ *
+ * Lives HERE rather than in the router so a caller can ask without importing
+ * a Hono app.
+ */
+export function webmcpInspectorReachable(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  if (!WEBMCP_INSPECTOR_ENABLED) return false;
+  return !HOSTED_MODE || webmcpInspectorHostedEnabled(env);
+}
+
+/**
  * Is the hosted browser (E2B Desktop + browserd) reachable at all?
  *
  * The dark switch the hosted runtime ships behind until the durable backend
@@ -162,10 +182,18 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
-// Hosted web route timeouts (ms)
-export const WEB_CONNECT_TIMEOUT_MS = 10_000;
-export const WEB_CALL_TIMEOUT_MS = 30_000;
-export const WEB_STREAM_TIMEOUT_MS = 120_000;
+// Hosted web route timeouts (ms). Defined in `shared/` so the client can read
+// the same numbers to DESCRIBE what a hosted run does (the eval settings
+// Connection card names the call timeout); every server importer keeps
+// importing them from here.
+export {
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_CALL_TIMEOUT_MS,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../shared/hosted-web-timeouts.js";
+// Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
+// derived from the call timeout, and a re-export does not bind the name here.
+import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.
