@@ -5,6 +5,7 @@ import {
   getLocalHarnessSession,
   listLocalHarnessSessions,
   registerLocalHarnessSession,
+  resetLocalHarnessRegistryForTests,
   stopAllLocalHarnessSessions,
   type LocalHarnessSessionRecord,
 } from "../session-registry.js";
@@ -49,9 +50,9 @@ function record(
 }
 
 afterEach(() => {
-  for (const session of listLocalHarnessSessions()) {
-    forgetLocalHarnessSession(session.sessionId);
-  }
+  // Both collections, not just the map: a record kept only in the escaped set
+  // has no map entry to iterate, and would leak into the next test.
+  resetLocalHarnessRegistryForTests();
 });
 
 describe("what the registry holds", () => {
@@ -300,6 +301,34 @@ describe("ending one session", () => {
     expect(escapedStops).toBe(2);
     expect(escapedRelease).toHaveBeenCalledTimes(1);
     expect(all).toMatchObject({ ok: true, stopped: 2, failed: 0 });
+  });
+
+  it("keeps an escaped tree when the id it used is forgotten", async () => {
+    // `forgetLocalHarnessSession` is a map operation. The abandoned-setup path
+    // calls it by id, and sweeping the escaped set by id too would take an
+    // escaped predecessor's only stop handle whenever a later turn had already
+    // claimed the slot — the exact loss that set exists to prevent.
+    let escapes = 1;
+    const escapedStop = vi.fn(async () =>
+      escapes > 0 ? { stopped: false, escaped: escapes } : { stopped: true },
+    );
+    const escapedRelease = vi.fn(async () => undefined);
+    registerLocalHarnessSession(
+      record({ stop: escapedStop, releaseRuntime: escapedRelease }),
+    );
+    expect((await endLocalHarnessSession("s1")).stopped).toBe(false);
+
+    // A later turn takes the id, then its own setup is abandoned by id.
+    registerLocalHarnessSession(record({ runtimeId: "rt_newer" }));
+    forgetLocalHarnessSession("s1");
+    expect(getLocalHarnessSession("s1")).toBeUndefined();
+
+    // The escaped tree is still reachable, and the brake still stops it.
+    escapes = 0;
+    const all = await stopAllLocalHarnessSessions();
+    expect(escapedStop).toHaveBeenCalledTimes(2);
+    expect(escapedRelease).toHaveBeenCalledTimes(1);
+    expect(all).toMatchObject({ ok: true, stopped: 1, failed: 0 });
   });
 
   it("does not put a stale record back over a newer one for the same id", async () => {

@@ -84,11 +84,27 @@ export function getLocalHarnessSession(
   return sessions.get(sessionId);
 }
 
+/**
+ * Drop the map entry for this id. The registered LOOKUP, nothing more.
+ *
+ * Deliberately does not touch `unstopped`, which is keyed by record: an id can
+ * name a session this caller knows about while an escaped predecessor is still
+ * held under the same id, and sweeping by id would take the predecessor's only
+ * stop handle with it — the exact loss `unstopped` exists to prevent. The one
+ * production caller is the abandoned-setup path, where the session never
+ * started a tree and so was never in `unstopped` at all.
+ *
+ * A stop that PROVES a tree down clears both; that is
+ * `forgetLocalHarnessSessionRecord`, which can do it because it has the record.
+ */
 export function forgetLocalHarnessSession(sessionId: string): void {
   sessions.delete(sessionId);
-  for (const record of unstopped) {
-    if (record.sessionId === sessionId) unstopped.delete(record);
-  }
+}
+
+/** Test seam: both collections are module state. */
+export function resetLocalHarnessRegistryForTests(): void {
+  sessions.clear();
+  unstopped.clear();
 }
 
 /**
