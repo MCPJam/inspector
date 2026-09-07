@@ -212,6 +212,7 @@ type CreateOptions = PlatformOptions & {
   model?: string;
   provider?: string;
   server?: string[];
+  host?: string[];
 };
 
 /**
@@ -780,6 +781,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.server !== undefined ? { servers: options.server } : {}),
+    ...(options.host !== undefined ? { hosts: options.host } : {}),
   };
 
   const parsed = createEvalSuiteOperation.inputSchema.safeParse(merged);
@@ -3053,6 +3055,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--server <id-or-name...>",
       "Project HTTP server names or IDs (overrides the file)"
+    )
+    .option(
+      "--host <id-or-name...>",
+      "Clients (hosts) to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --host` has nothing to select"
     )
     .action(async (options: CreateOptions, command) => {
       const globalOptions = getGlobalOptions(command);

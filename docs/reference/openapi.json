@@ -13125,6 +13125,31 @@
               "type": "string"
             }
           },
+          "hosts": {
+            "type": "array",
+            "description": "Clients (hosts) to attach the suite to, in attach order. A suite with no attached client reports none wherever it is listed, and a run has no host to select. Same shape as the PATCH `hosts` field.",
+            "items": {
+              "type": "object",
+              "required": [
+                "host"
+              ],
+              "properties": {
+                "host": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "Host name or id."
+                },
+                "servers": {
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "description": "Server names (as bound in the suite's environment) or project-server ids."
+                }
+              }
+            }
+          },
           "model": {
             "type": "string",
             "minLength": 1,
@@ -13219,6 +13244,22 @@
           "servers": {
             "type": "array",
             "description": "The servers attached to the suite. `name` is present when supplied.",
+            "items": {
+              "type": "object",
+              "required": ["id"],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "hosts": {
+            "type": "array",
+            "description": "The clients (hosts) attached to the suite at create time. Empty when none were named.",
             "items": {
               "type": "object",
               "required": ["id"],

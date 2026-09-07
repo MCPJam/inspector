@@ -394,6 +394,34 @@ describe("computeRunTargets", () => {
       }),
     ).toEqual({ kind: "single", serverIds: ["s1"] });
   });
+
+  it("carries server names through, paired with the ids by index", () => {
+    expect(
+      computeRunTargets({
+        attachedEnvironments: [],
+        attachedHosts: [],
+        serverIds: ["s1", "s2"],
+        serverNames: ["Echo", "Docs"],
+      }),
+    ).toEqual({
+      kind: "single",
+      serverIds: ["s1", "s2"],
+      serverNames: ["Echo", "Docs"],
+    });
+  });
+
+  it("drops names that do not line up with the ids", () => {
+    // A mismatched pair would label servers with each other's names, which is
+    // worse than showing the id — so the names are dropped, not zipped.
+    expect(
+      computeRunTargets({
+        attachedEnvironments: [],
+        attachedHosts: [],
+        serverIds: ["s1", "s2"],
+        serverNames: ["Echo"],
+      }),
+    ).toEqual({ kind: "single", serverIds: ["s1", "s2"] });
+  });
 });
 
 describe("run_eval_suite target selection", () => {

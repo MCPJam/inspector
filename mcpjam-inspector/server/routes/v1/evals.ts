@@ -494,6 +494,19 @@ const createEvalSuiteSchema = z.strictObject({
   description: z.string().optional(),
   serverIds: z.array(z.string()).min(1),
   serverNames: z.array(z.string()).optional(),
+  // Client (host) attachments, same shape PATCH accepts. Without this the
+  // API-authored suite had no way to say which client it runs as, so every
+  // CLI/MCP/SDK-created suite read back with an empty Client — and
+  // `run_eval_suite`'s host selector, which only accepts an ATTACHED host,
+  // had nothing to select.
+  hosts: z
+    .array(
+      z.object({
+        host: z.string().min(1),
+        servers: z.array(z.string().min(1)).optional(),
+      }),
+    )
+    .optional(),
   model: z.string().min(1),
   provider: z.string().optional(),
   passCriteria: z.object({ minimumPassRate: z.number() }).optional(),
@@ -4068,6 +4081,21 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
   try {
     const resolvedServerIds = resolveServerIdsOrThrow(serverIds, manager);
     const { convexClient } = createConvexClients(convexAuthToken);
+
+    // Resolve the named clients BEFORE anything is authored, so an unknown or
+    // ambiguous client name is a clean 404/400 with no half-created suite left
+    // behind. The per-host `servers` picks are deliberately dropped for this
+    // pass: they resolve against the suite's environment bindings, which do
+    // not exist until the suite is written. The real resolution runs below.
+    if (body.hosts?.length) {
+      await resolveHostAttachments(
+        convexClient,
+        projectId,
+        { environment: {} },
+        body.hosts.map(({ host }) => ({ host })),
+      );
+    }
+
     const { suiteId, caseUpsert } = await authorEvalSuite({
       convexClient,
       tests: normalizedTests,
@@ -4085,6 +4113,36 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
       // re-authors the same suite instead of a second one.
       ...(idempotencyKey ? { idempotencyKey } : {}),
     });
+
+    // Attach the clients AFTER authoring: a per-host `servers` pick resolves
+    // against the suite's environment bindings, which the write above is what
+    // creates. Re-read for the same reason the PATCH route does.
+    let attachedHostIds: string[] = [];
+    if (body.hosts?.length) {
+      const suite = await readSuiteInProject(
+        convexAuthToken,
+        projectId,
+        suiteId,
+      );
+      const hostAttachments = await resolveHostAttachments(
+        convexClient,
+        projectId,
+        suite,
+        body.hosts,
+      );
+      try {
+        await convexClient.mutation("testSuites:updateTestSuite" as any, {
+          suiteId,
+          hostAttachments,
+        });
+      } catch (error) {
+        throw translateConvexWriteError(error);
+      }
+      attachedHostIds = hostAttachments.map((attachment) =>
+        String(attachment.namedHostId),
+      );
+    }
+
     return v1Resource(
       c,
       {
@@ -4094,6 +4152,7 @@ evals.post("/projects/:projectId/eval-suites", async (c) => {
           id,
           ...(serverNames?.[index] ? { name: serverNames[index] } : {}),
         })),
+        hosts: attachedHostIds.map((id) => ({ id })),
         caseUpsert,
       },
       201,
