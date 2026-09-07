@@ -187,8 +187,8 @@ export function isHostedBrowserRefused(): boolean {
 }
 
 /**
- * Can this replica advertise a hosted browser AT ALL — the rollout env flag
- * and the backend gate above, together?
+ * Is booking a per-run DESKTOP BOX for a hosted browser worth doing on this
+ * replica — the rollout env flag, plus BOTH backend verdicts?
  *
  * One definition because there are now two kinds of caller and they must not
  * disagree: `resolveHostTools` asks at tool-resolution time, and the eval and
@@ -198,12 +198,26 @@ export function isHostedBrowserRefused(): boolean {
  * this (`desktop_not_advertised`, `desktop_unavailable`), but it cannot see an
  * inspector-side env flag, so the provisioning side has to ask here.
  *
+ * BOTH verdicts, because they are different questions and a caller that books
+ * a box needs both answered yes: `isHostedBrowserRefused` folds in the tool
+ * catalog ("may we advertise `browser_*`?"), `isHostedDesktopUnavailable`
+ * does not ("would a desktop boot, and is there a rate to bill it at?"). A
+ * hosted replica whose bootstrap answered `exposable: true` and said nothing
+ * about desktops passes the first and fails the second — and booking on the
+ * first alone is the same shape as the bug documented above
+ * `isHostedDesktopUnavailable`, where a replica suppressed the model tools and
+ * reserved a desktop in the same breath.
+ *
  * NOT a substitute for the resolver's own checks: this says nothing about a
  * local engine, a guest actor, or bash co-tenancy, all of which are per-turn
  * facts rather than deployment ones.
  */
 export function hostedBrowserAdvertisable(): boolean {
-  return hostedBrowserEnabled() && !isHostedBrowserRefused();
+  return (
+    hostedBrowserEnabled() &&
+    !isHostedBrowserRefused() &&
+    !isHostedDesktopUnavailable()
+  );
 }
 
 /**

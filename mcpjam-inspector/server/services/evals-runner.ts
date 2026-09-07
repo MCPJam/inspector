@@ -3300,24 +3300,56 @@ async function seedAndAnnotateEvalAttachments(args: {
   testCaseId: string | undefined;
   sandboxId: string;
   promptTurns: PromptTurn[];
+  /** See `buildAttachmentsNote`: the tool THIS iteration's reader holds. */
+  readWith?: string;
   signal?: AbortSignal;
-}): Promise<void> {
+}): Promise<string | null> {
   const seeded = await seedEvalCaseAttachments({
     bearer: args.bearer,
     runId: args.runId,
     testCaseId: args.testCaseId,
     sandboxId: args.sandboxId,
+    ...(args.readWith ? { readWith: args.readWith } : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   });
-  if (!seeded.note) return;
+  if (!seeded.note) return null;
   const firstModelTurnIndex = args.promptTurns.findIndex(
     (t) => !isPinnedTurn(t),
   );
-  if (firstModelTurnIndex < 0) return;
-  args.promptTurns[firstModelTurnIndex] = {
-    ...args.promptTurns[firstModelTurnIndex],
-    prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
-  };
+  if (firstModelTurnIndex >= 0) {
+    args.promptTurns[firstModelTurnIndex] = {
+      ...args.promptTurns[firstModelTurnIndex],
+      prompt: `${args.promptTurns[firstModelTurnIndex].prompt}\n\n${seeded.note}`,
+    };
+  }
+  // RETURNED as well as applied, because `promptTurns` is not what the model
+  // reads. Both runners drive the iteration through `executeSteps`, whose
+  // steps come from `resolveSteps(test)` — and that returns `test.steps`
+  // verbatim whenever the case carries them, so a case authored in the step
+  // model never saw this note at all: the files landed on the box and nothing
+  // told the model where. See `annotateStepsWithAttachments`.
+  return seeded.note;
+}
+
+/**
+ * Put the attachment note on the first PROMPT step, which is what the model
+ * actually reads.
+ *
+ * Returns a new array; steps are persisted and replayed, and mutating the
+ * case's own objects would write the note into the stored case.
+ */
+export function annotateStepsWithAttachments(
+  steps: TestStep[],
+  note: string | null,
+): TestStep[] {
+  if (!note) return steps;
+  const index = steps.findIndex((step) => step.kind === "prompt");
+  if (index < 0) return steps;
+  const target = steps[index]!;
+  if (target.kind !== "prompt") return steps;
+  const annotated = [...steps];
+  annotated[index] = { ...target, prompt: `${target.prompt}\n\n${note}` };
+  return annotated;
 }
 
 // PR6: the single local (BYOK) iteration runner for BOTH quick-run modes.
@@ -3508,6 +3540,8 @@ const runLocalIteration = async ({
     iterationMetadataBase.compareRunId = compareRunId;
   }
   const resolvedSteps = resolveSteps(test);
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   const testCaseSnapshot = {
     title: test.title,
     query,
@@ -3775,7 +3809,9 @@ const runLocalIteration = async ({
         // first turn already sees the files. Fail-honest — a seed failure throws
         // (we're inside the try) and becomes a recorded failed iteration rather
         // than a silent run without the files.
-        await seedAndAnnotateEvalAttachments({
+        // This path is TERMINAL-only (see the comment on the branch), so the
+        // reader is always the `bash` tool injected on the next line.
+        attachmentsNote = await seedAndAnnotateEvalAttachments({
           bearer: convexAuthToken,
           runId: String(runId),
           testCaseId: test.testCaseId,
@@ -3925,7 +3961,13 @@ const runLocalIteration = async ({
     // Drive the iteration through the sequential executeSteps engine: the handlers
     // wrap driveLocalEvalTurn (which mutates `acc`), so the post-loop verdict +
     // finishParams below consume `acc` + the executor's StepExecutionState.
-    const steps = resolveSteps(test);
+    // ANNOTATED for the same reason as the hosted path: `resolveSteps` returns
+    // `test.steps` verbatim when the case carries them, so the note applied to
+    // `promptTurns` above would never reach a step-authored case.
+    const steps = annotateStepsWithAttachments(
+      resolveSteps(test),
+      attachmentsNote,
+    );
     const stepHandlers = buildLocalStepHandlers({
       acc,
       browser,
@@ -4586,6 +4628,8 @@ const runHostedIterationWithBrowser = async (
     promptTurns,
     advancedConfig,
   } = resolvedTest;
+  /** Set by attachment seeding below; applied to the executed steps. */
+  let attachmentsNote: string | null = null;
   // PR 4d of the engine consolidation: same resolver shape as
   // `runIterationWithAiSdk` above — suite hostConfig provides defaults,
   // per-case `advancedConfig` overrides win. `withHostContextSystemPrompt`
@@ -4954,12 +4998,19 @@ const runHostedIterationWithBrowser = async (
       // COMP-17: seed the case's pinned attachments before exposing `bash`
       // (parity with the local-BYOK path). Fail-honest — a throw here is caught
       // below and persisted as a failed iteration, never a silent run.
-      await seedAndAnnotateEvalAttachments({
+      attachmentsNote = await seedAndAnnotateEvalAttachments({
         bearer: convexAuthToken,
         runId: String(runId),
         testCaseId: test.testCaseId,
         sandboxId: sandboxBinding.sandboxId,
         promptTurns,
+        // Name the tool this iteration's reader actually holds: the `bash`
+        // injected just below on a terminal box, or the harness's own file
+        // tools on a desktop one, which has no shell to offer.
+        readWith:
+          sandboxBinding.runtimeKind === "terminal"
+            ? "the bash tool"
+            : "your file tools",
         ...(abortSignal ? { signal: abortSignal } : {}),
       });
     }
@@ -5111,7 +5162,13 @@ const runHostedIterationWithBrowser = async (
   // Hosted unify: drive the iteration through executeSteps; the handlers wrap
   // driveHostedEvalTurn (which mutates the acc), so the post-loop verdict +
   // finishParams below consume `acc` + the executor's StepExecutionState.
-  const steps = resolveSteps(test);
+  // ANNOTATED, because `resolveSteps` returns `test.steps` verbatim when the
+  // case carries them — so the note `seedAndAnnotateEvalAttachments` put on
+  // `promptTurns` would never reach the model on a step-authored case.
+  const steps = annotateStepsWithAttachments(
+    resolveSteps(test),
+    attachmentsNote,
+  );
   /**
    * What the run FROZE about tool-call evidence, as reported by the first
    * harness turn's proxy-token mint.

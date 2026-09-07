@@ -343,35 +343,43 @@ function bindSessionEmit(
  * "shell". A harness-only target reached the same branches next, and a
  * BROWSER-only target after that — which the two-branch version described as
  * "the undefined harness", because it fell through to the harness arm with no
- * harness to name. Every arm below names something the target actually
- * declared.
+ * harness to name.
  *
- * `bash` and `browser` are mutually exclusive on a host config, so no arm has
- * to describe both.
+ * Built from what the target ACTUALLY declares rather than from a first
+ * matching branch, because the combinations are not exclusive: `bash` and
+ * `browser` conflict on a host config only while a deployment has NOT accepted
+ * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
+ * accompany either. A target that lost its box lost every one of them, so the
+ * sentence names every one of them.
+ *
+ * The `toolId` is the capability that DECIDED the image, because that is the
+ * one the failure is about: a browser forces the desktop image, and the
+ * refusals that reach here (`desktop_pin_conflict`, desktop capacity) are
+ * desktop refusals. Without a browser it stays what it has always been.
  */
-function describeSandboxConsumer(target: PinnedHostExecutionSpec): {
+function describeSandboxConsumer(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable: boolean,
+): {
   label: string;
   toolId: string;
 } {
-  if (targetWantsBash(target)) {
-    return target.harness
-      ? {
-          label: `the shell and the ${target.harness} harness`,
-          toolId: "bash",
-        }
-      : { label: "the shell", toolId: "bash" };
-  }
-  if (target.harness) {
-    return targetWantsBrowser(target)
-      ? {
-          label: `the ${target.harness} harness and the browser`,
-          toolId: "harness",
-        }
-      : { label: `the ${target.harness} harness`, toolId: "harness" };
-  }
-  // Browser-only. Reached whenever the target declares neither a shell nor a
-  // harness, which for a box-needing target means the browser is why.
-  return { label: "the browser", toolId: "browser" };
+  const wantsBash = targetWantsBash(target);
+  const wantsBrowser = targetWantsBrowser(target, hostedBrowserAvailable);
+  const parts: string[] = [];
+  if (wantsBash) parts.push("the shell");
+  if (wantsBrowser) parts.push("the browser");
+  if (target.harness) parts.push(`the ${target.harness} harness`);
+  const label =
+    parts.length === 0
+      ? "the disposable computer"
+      : parts.length === 1
+        ? parts[0]!
+        : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
+  return {
+    label,
+    toolId: wantsBrowser ? "browser" : wantsBash ? "bash" : "harness",
+  };
 }
 
 async function runJourneyFanOut(
@@ -808,7 +816,10 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = describeSandboxConsumer(target);
+        const sandboxConsumer = describeSandboxConsumer(
+          target,
+          hostedBrowserAdvertisable(),
+        );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
