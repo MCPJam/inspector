@@ -208,6 +208,10 @@ describe("ServerPickerPanel — Server Groups tab", () => {
     // Straight from the design: `Group 1` holds six servers and shows TWO
     // `excalidraw` chips plus `+4`, while a group of three shorter names shows
     // all three. A fixed count showed three wide names and wrapped the row.
+    //
+    // This is also the reservation case: a third chip fits on its own (192 of
+    // 200px) but not once `+3` is counted, so dropping the reservation turns
+    // this into three chips and a wrapped row.
     render(
       <ServerPickerPanel
         {...onGroups({
@@ -251,30 +255,30 @@ describe("ServerPickerPanel — Server Groups tab", () => {
     expect(screen.queryByText(/^\+/)).toBeNull();
   });
 
-  it("leaves room for the +N chip itself", () => {
-    // The summary chip takes width too. Names that exactly fill the budget
-    // pushed `+N` past it, and the row wrapped — the thing fitting-to-width
-    // was supposed to stop. Budget 24: 10 + 10 = 20, and the third name (4)
-    // would fit on its own but not alongside a "+3".
+  it("uses the room a chip actually takes, padding included", () => {
+    // Measured in the app: the chip lane is 202px, and `big-mcp` (47px) +
+    // `Excalidraw (App)` (86px) + `+1` (21px) + gaps is 160px — they fit. A
+    // budget counted in CHARACTERS cut after the first name with 42px to
+    // spare, because it ignored the ~16px of padding every chip carries.
     render(
       <ServerPickerPanel
         {...onGroups({
           groups: [
             {
-              id: "g_edge",
-              name: "Group 1",
-              serverNames: ["abcdefghij", "abcdefghij", "abcd", "e", "f"],
+              id: "g_real",
+              name: "big-mcp + 2",
+              serverNames: ["big-mcp", "Excalidraw (App)", "no-existe.invalid"],
             },
           ],
         })}
       />,
     );
-    expect(screen.getAllByText("abcdefghij")).toHaveLength(2);
-    expect(screen.queryByText("abcd")).toBeNull();
-    expect(screen.getByText("+3")).toBeInTheDocument();
+    expect(screen.getByText("big-mcp")).toBeInTheDocument();
+    expect(screen.getByText("Excalidraw (App)")).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
   });
 
-  it("always shows one chip, even for a name wider than the budget", () => {
+  it("always shows one chip, even for a name wider than the room", () => {
     render(
       <ServerPickerPanel
         {...onGroups({
@@ -299,7 +303,7 @@ describe("ServerPickerPanel — Server Groups tab", () => {
       <ServerPickerPanel
         {...onGroups({
           groups: [{ id: "g", name: "G", serverNames: ["a", "b", "c"] }],
-          chipBudget: 40,
+          chipRoomPx: 400,
         })}
       />,
     );

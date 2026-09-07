@@ -91,14 +91,15 @@ export type ServerPickerPanelProps = {
    */
   canDeleteSelected?: boolean;
   /**
-   * How much room the chips get, in characters of server name.
+   * How much room the chips get, in pixels. Defaults to the lane a `w-72`
+   * popover leaves them, measured in the app.
    *
    * A COUNT, while the design's own overflow looks driven by the width of the
    * names it happens to hold. Width is not observable in jsdom, so a count is
    * the part that can be pinned by a test; the visual pass in a browser owns
    * the rest.
    */
-  chipBudget?: number;
+  chipRoomPx?: number;
 };
 
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
@@ -110,6 +111,19 @@ const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
  */
 const CHIP =
   "rounded-full border-transparent bg-muted px-2 py-0 text-[11px] font-normal text-muted-foreground";
+
+/**
+ * Roughly what a chip occupies, in pixels.
+ *
+ * Measured in the app at 11px: `big-mcp` 47px, `Excalidraw (App)` 86px,
+ * `no-existe.invalid` 85px — about 4.4px a character plus a flat 16px of
+ * padding, and 4px of gap after it. Counting CHARACTERS instead dropped the
+ * padding, so a two-chip row was cut to one with 42px still free.
+ *
+ * ponytail: a formula, not a measurement. Swap in a real one only if a font
+ * change makes it wrong enough to wrap.
+ */
+const chipWidth = (text: string) => 20 + text.length * 4.4;
 
 /**
  * Tabs as the design draws them: no container strip, the two split evenly
@@ -149,7 +163,7 @@ export function ServerPickerPanel({
   busy = false,
   onDeleteGroup,
   canDeleteSelected = true,
-  chipBudget = 24,
+  chipRoomPx = 200,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
   // stays controlled by the caller — that is the part that persists.
@@ -395,16 +409,20 @@ export function ServerPickerPanel({
           // ponytail: character budget, measure for real if a name's glyph
           // width ever diverges enough to wrap.
           const shown: string[] = [];
-          let budgetLeft = chipBudget;
+          let used = 0;
           for (const [i, name] of group.serverNames.entries()) {
-            // `+N` takes width too. Without reserving for it, names that
-            // exactly filled the budget pushed the summary past it and the row
-            // wrapped anyway. `+1` is two characters, `+10` three.
-            const hiddenAfter = group.serverNames.length - i - 1;
-            const summary = hiddenAfter > 0 ? String(hiddenAfter).length + 1 : 0;
-            if (shown.length > 0 && name.length + summary > budgetLeft) break;
+            // `+N` takes room too, so each candidate has to leave space for
+            // the summary that would follow it.
+            const hidden = group.serverNames.length - i - 1;
+            const next = used + chipWidth(name);
+            if (
+              shown.length > 0 &&
+              next + (hidden > 0 ? chipWidth(`+${hidden}`) : 0) > chipRoomPx
+            ) {
+              break;
+            }
             shown.push(name);
-            budgetLeft -= name.length;
+            used = next;
           }
           const hidden = group.serverNames.length - shown.length;
           return (
