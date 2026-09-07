@@ -74,29 +74,60 @@ function storageKey(projectId: string): string {
   return `${STORAGE_PREFIX}:${projectId}`;
 }
 
+/**
+ * The target for this session, when `localStorage` will not hold it.
+ *
+ * A private window, a blocked-site-data setting or a full quota all make
+ * `setItem` throw. Without this the write vanished AND the notify vanished with
+ * it — `dispatchEvent` sat inside the same `try`, after the call that threw —
+ * so every reader kept answering `null`.
+ *
+ * That is not a cosmetic loss. `requestedTarget` still derives `local-native`
+ * on a machine with no cloud target, so the TURN runs on the user's machine
+ * while `useLocalHarnessRunsHere` reads no stored target and labels the tools
+ * "runs in sandbox". Of everything this feature can get wrong, that sentence is
+ * the one it must not: there is no sandbox, and the agent is running as the
+ * user's own account.
+ *
+ * Per-session rather than durable, which is the honest scope of it: nothing
+ * here can outlive a reload when the browser refuses to store anything.
+ */
+const sessionTargets = new Map<string, HarnessExecutionTarget>();
+
 export function loadStoredHarnessTarget(
   projectId: string,
 ): HarnessExecutionTarget | null {
   try {
     const raw = localStorage.getItem(storageKey(projectId));
-    return raw === "hosted" || raw === "local-native" ? raw : null;
+    if (raw === "hosted" || raw === "local-native") return raw;
   } catch {
-    return null;
+    // Fall through to the in-memory copy: a read that throws is a browser that
+    // will not answer, not a user who chose nothing.
   }
+  return sessionTargets.get(storageKey(projectId)) ?? null;
 }
 
 export function saveHarnessTarget(
   projectId: string,
   target: HarnessExecutionTarget,
 ): void {
+  // Recorded in memory FIRST, so a storage failure cannot lose it, and the
+  // notify happens either way — it used to be unreachable on exactly the path
+  // that needed it most.
+  sessionTargets.set(storageKey(projectId), target);
   try {
     localStorage.setItem(storageKey(projectId), target);
-    window.dispatchEvent(new CustomEvent(TARGET_EVENT));
   } catch {
-    // A preference we cannot store is a preference that resets next load. The
-    // resolution below still honours it for this session because it is read
-    // through the same subscription that just fired.
+    // Kept for this session only. Nothing here can survive a reload when the
+    // browser refuses to store anything, and pretending otherwise would be a
+    // worse answer than a target the user re-confirms.
   }
+  window.dispatchEvent(new CustomEvent(TARGET_EVENT));
+}
+
+/** Test seam: the in-memory fallback is module state. */
+export function resetSessionHarnessTargetsForTests(): void {
+  sessionTargets.clear();
 }
 
 function subscribeTarget(callback: () => void): () => void {

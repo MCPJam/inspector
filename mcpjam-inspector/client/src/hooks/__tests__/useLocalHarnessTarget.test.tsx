@@ -53,7 +53,12 @@ vi.mock("@/lib/local-harness-consent", async () => {
   };
 });
 
-import { useLocalHarnessController } from "../useLocalHarnessTarget";
+import {
+  loadStoredHarnessTarget,
+  resetSessionHarnessTargetsForTests,
+  saveHarnessTarget,
+  useLocalHarnessController,
+} from "../useLocalHarnessTarget";
 import {
   localHarnessConsentStorageKey,
   type LocalHarnessAvailabilityView,
@@ -129,6 +134,10 @@ function render(args: Partial<Parameters<typeof useLocalHarnessController>[0]> =
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  // Module state, so `localStorage.clear()` does not reach it. The controller
+  // records its derived default through `saveHarnessTarget`, which means one
+  // test's default was readable as the next test's stored preference.
+  resetSessionHarnessTargetsForTests();
   flagMock.mockReturnValue(true);
   fetchAvailabilityMock.mockResolvedValue({
     ok: true,
@@ -208,6 +217,46 @@ describe("what the user asked for is preserved", () => {
     await waitFor(() => expect(result.current.loading).toBe(false));
     expect(result.current.requestedTarget).toBeNull();
     expect(result.current.hostedAvailable).toBe(true);
+  });
+});
+
+describe("the target survives a browser that will not store it", () => {
+  // A private window, blocked site data or a full quota all make `setItem`
+  // throw. That used to lose the write AND the notify with it, because
+  // `dispatchEvent` sat inside the same `try` after the call that threw.
+  //
+  // The consequence is not cosmetic: `requestedTarget` still derives
+  // `local-native` on a machine with no cloud target, so the turn runs on the
+  // user's machine while `useLocalHarnessRunsHere` reads nothing and labels the
+  // tools "runs in sandbox" — the one claim this feature must never make.
+  it("keeps a target that localStorage refused, and still notifies", () => {
+    resetSessionHarnessTargetsForTests();
+    const setItem = vi
+      .spyOn(window.localStorage, "setItem")
+      .mockImplementation(() => {
+        throw new Error("QuotaExceededError");
+      });
+    const notified = vi.fn();
+    window.addEventListener("local-harness-target-changed", notified);
+    try {
+      saveHarnessTarget(PROJECT, "local-native");
+      expect(setItem).toHaveBeenCalled();
+      expect(loadStoredHarnessTarget(PROJECT)).toBe("local-native");
+      // Subscribers have to hear about it, or the surfaces reading through
+      // `useSyncExternalStore` never re-read.
+      expect(notified).toHaveBeenCalled();
+    } finally {
+      window.removeEventListener("local-harness-target-changed", notified);
+      setItem.mockRestore();
+      resetSessionHarnessTargetsForTests();
+    }
+  });
+
+  it("prefers what localStorage holds once it works again", () => {
+    resetSessionHarnessTargetsForTests();
+    saveHarnessTarget(PROJECT, "hosted");
+    expect(loadStoredHarnessTarget(PROJECT)).toBe("hosted");
+    resetSessionHarnessTargetsForTests();
   });
 });
 
