@@ -452,7 +452,9 @@ export function writeSimpleCase(
   prevSteps: TestStep[],
   view: WriteSimpleCaseView,
 ): TestStep[] {
-  const prevPrompt = isPromptStep(prevSteps[0]) ? prevSteps[0] : undefined;
+  const firstStep = prevSteps[0];
+  const prevPrompt =
+    firstStep && isPromptStep(firstStep) ? firstStep : undefined;
   /**
    * Lead with a prompt only when the case already had one, the case is empty
    * (a fresh draft), or the author actually typed one. Every tool button in

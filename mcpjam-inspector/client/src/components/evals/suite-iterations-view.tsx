@@ -171,7 +171,12 @@ export interface SuiteNavigation {
   toTestEdit: (
     suiteId: string,
     testId: string,
-    options?: { openCompare?: boolean; replace?: boolean; iteration?: string },
+    options?: {
+      openCompare?: boolean;
+      replace?: boolean;
+      iteration?: string;
+      fromEvalServer?: string;
+    },
   ) => void;
   toSuiteEdit: (suiteId: string) => void;
 }

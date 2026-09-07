@@ -33,6 +33,11 @@ import { Button } from "@mcpjam/design-system/button";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ErrorBoundary } from "@/components/ui/error-boundary";
 import { EvalsEmptyHero } from "./evaluate/evals-empty-hero";
+import { EvalServerPreviewPage } from "./evaluate/eval-server-preview-page";
+import {
+  EvalServerCaseEditPage,
+  previewCaseTitleFromDraft,
+} from "./evaluate/eval-server-case-edit-page";
 import {
   runExcalidrawQuickstart,
   EXCALIDRAW_QUICKSTART_SUITE_NAME,
@@ -363,7 +368,12 @@ function EvaluateTabContent({
   );
 
   useEffect(() => {
-    if (route.type === "list" || route.type === "create") {
+    if (
+      route.type === "list" ||
+      route.type === "create" ||
+      route.type === "eval-server" ||
+      (route.type === "test-edit" && route.fromEvalServer)
+    ) {
       return;
     }
     if (!selectedSuiteId) {
@@ -377,7 +387,7 @@ function EvaluateTabContent({
     }
   }, [
     overviewQueries.isOverviewLoading,
-    route.type,
+    route,
     selectedSuiteEntry,
     selectedSuiteId,
   ]);
@@ -432,14 +442,12 @@ function EvaluateTabContent({
     navigatePlaygroundEvalsRoute({ type: "create" });
   }, []);
 
-  const handleOpenCreateSuiteFromServer = useCallback(
-    (server: { id: string; name: string }) => {
-      setCreateSuitePrefillName(server.name);
-      setCreateSuitePrefillServerId(server.id);
-      navigatePlaygroundEvalsRoute({ type: "create" });
-    },
-    []
-  );
+  const handleEvalServer = useCallback((server: { id: string; name: string }) => {
+    navigatePlaygroundEvalsRoute({
+      type: "eval-server",
+      serverId: server.id,
+    });
+  }, []);
 
   const [isQuickstartRunning, setIsQuickstartRunning] = useState(false);
   const [landingView, setLandingView] = useState<EvalLandingView>("suites");
@@ -1050,7 +1058,57 @@ function EvaluateTabContent({
     return isNestedDetail ? nestedPageLabel : suiteBreadcrumbLabel;
   };
 
+  const evalServer =
+    route.type === "eval-server"
+      ? (emptyHeroServers.find((server) => server.id === route.serverId) ?? {
+          id: route.serverId,
+          name: "Connected server",
+        })
+      : null;
+  const fromEvalServerId =
+    route.type === "test-edit" ? route.fromEvalServer : undefined;
+  const evalServerReturn =
+    fromEvalServerId
+      ? (emptyHeroServers.find((server) => server.id === fromEvalServerId) ?? {
+          id: fromEvalServerId,
+          name: "Connected server",
+        })
+      : null;
+
+  const handleBackToEvalServer = useCallback((serverId: string) => {
+    navigatePlaygroundEvalsRoute({ type: "eval-server", serverId });
+  }, []);
+
   const renderSuitesBrowsePanel = () => {
+    if (route.type === "test-edit" && route.fromEvalServer && evalServerReturn) {
+      return (
+        <EvalServerCaseEditPage
+          server={evalServerReturn}
+          suiteId={route.suiteId}
+          caseId={route.testId}
+          onBack={() => handleBackToEvalServer(route.fromEvalServer!)}
+        />
+      );
+    }
+
+    if (evalServer) {
+      return (
+        <EvalServerPreviewPage
+          server={evalServer}
+          onOpenCase={(target) =>
+            playgroundNavigation.toTestEdit(target.suiteId, target.caseId, {
+              fromEvalServer: evalServer.id,
+            })
+          }
+          onRunFirstEvals={() => {
+            toast.message(
+              "A first run starts here once generation is wired.",
+            );
+          }}
+        />
+      );
+    }
+
     const isLandingList = route.type === "list";
 
     if (isLandingList && landingView === "runs") {
@@ -1091,7 +1149,7 @@ function EvaluateTabContent({
       return (
         <EvalsEmptyHero
           onCreateSuite={handleOpenCreateSuite}
-          onCreateSuiteFromServer={handleOpenCreateSuiteFromServer}
+          onEvalServer={handleEvalServer}
           onQuickstart={() => void handleExcalidrawQuickstart()}
           isQuickstartRunning={isQuickstartRunning}
           showQuickstart={showQuickstart}
@@ -1254,22 +1312,37 @@ function EvaluateTabContent({
               route.type === "list" ? handleOpenCreateSuite : undefined
             }
             onEvaluateClick={handleNavigateToEvalList}
-            isDetail={Boolean(hasDetailRoute)}
+            isDetail={Boolean(hasDetailRoute) || route.type === "eval-server"}
             parentCrumb={
-              isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+              route.type === "test-edit" && route.fromEvalServer
                 ? {
-                    label: suiteBreadcrumbLabel,
+                    label:
+                      evalServerReturn?.name ?? "Connected server",
                     onClick: () =>
-                      playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                      handleBackToEvalServer(route.fromEvalServer!),
                   }
-                : undefined
+                : isNestedDetail && suiteBreadcrumbLabel && selectedSuiteId
+                  ? {
+                      label: suiteBreadcrumbLabel,
+                      onClick: () =>
+                        playgroundNavigation.toSuiteOverview(selectedSuiteId),
+                    }
+                  : undefined
             }
             landingView={route.type === "list" ? landingView : undefined}
             onLandingViewChange={
               route.type === "list" ? setLandingView : undefined
             }
           >
-            {renderPlaygroundBreadcrumb()}
+            {route.type === "eval-server"
+              ? evalServer?.name
+              : route.type === "test-edit" && route.fromEvalServer
+                ? previewCaseTitleFromDraft(
+                    route.fromEvalServer,
+                    route.suiteId,
+                    route.testId,
+                  ) ?? nestedPageLabel
+                : renderPlaygroundBreadcrumb()}
           </EvalsHeader>
         )
       }

@@ -58,12 +58,12 @@ describe("EvalsEmptyHero", () => {
     ).toBeTruthy();
   });
 
-  it("keeps Try sample suite alongside project server cards, not a third Create suite", () => {
-    const onCreateSuiteFromServer = vi.fn();
+  it("starts the first-run preview from Eval my server, not Create suite", () => {
+    const onEvalServer = vi.fn();
     render(
       <EvalsEmptyHero
         {...defaultProps}
-        onCreateSuiteFromServer={onCreateSuiteFromServer}
+        onEvalServer={onEvalServer}
         servers={[
           { id: "srv-1", name: "checkout-server" },
           { id: "srv-2", name: "payments-server" },
@@ -72,14 +72,11 @@ describe("EvalsEmptyHero", () => {
     );
 
     expect(
-      screen.getByRole("button", { name: "Create suite from checkout-server" }),
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
     ).toBeTruthy();
     expect(
-      screen.getByRole("button", { name: "Create suite from payments-server" }),
+      screen.getByRole("button", { name: "Eval my server: payments-server" }),
     ).toBeTruthy();
-    // The quickstart has no other entry point in the product, so a project
-    // that already has servers must not lose it. Create suite does: header
-    // plus the cards, so a third ghost under them is gone.
     expect(
       screen.getByRole("button", { name: /^try sample suite$/i }),
     ).toBeTruthy();
@@ -88,10 +85,10 @@ describe("EvalsEmptyHero", () => {
     ).toBeNull();
 
     fireEvent.click(
-      screen.getByRole("button", { name: "Create suite from checkout-server" }),
+      screen.getByRole("button", { name: "Eval my server: checkout-server" }),
     );
-    expect(onCreateSuiteFromServer).toHaveBeenCalledTimes(1);
-    expect(onCreateSuiteFromServer).toHaveBeenCalledWith({
+    expect(onEvalServer).toHaveBeenCalledTimes(1);
+    expect(onEvalServer).toHaveBeenCalledWith({
       id: "srv-1",
       name: "checkout-server",
     });
@@ -105,16 +102,16 @@ describe("EvalsEmptyHero", () => {
     render(<EvalsEmptyHero {...defaultProps} servers={servers} />);
 
     expect(
-      screen.getByRole("button", { name: "Create suite from server-0" }),
+      screen.getByRole("button", { name: "Eval my server: server-0" }),
     ).toBeTruthy();
     expect(
       screen.getByRole("button", {
-        name: `Create suite from server-${EVALS_EMPTY_HERO_MAX_SERVERS - 1}`,
+        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS - 1}`,
       }),
     ).toBeTruthy();
     expect(
       screen.queryByRole("button", {
-        name: `Create suite from server-${EVALS_EMPTY_HERO_MAX_SERVERS}`,
+        name: `Eval my server: server-${EVALS_EMPTY_HERO_MAX_SERVERS}`,
       }),
     ).toBeNull();
   });

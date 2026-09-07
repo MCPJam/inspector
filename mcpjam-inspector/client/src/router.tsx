@@ -281,6 +281,7 @@ const ROUTE_ELEMENTS: Record<
   // routes above changes while the redesign is behind a flag.
   evaluate: { element: <EvaluateRoute /> },
   "evaluate/create": { element: <EvaluateRoute /> },
+  "evaluate/eval-server/:serverId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/runs/:runId": { element: <EvaluateRoute /> },
   "evaluate/suite/:suiteId/test/:testId": { element: <EvaluateRoute /> },

@@ -15,7 +15,7 @@ export type EvalsEmptyHeroServer = {
 
 interface EvalsEmptyHeroProps {
   onCreateSuite: () => void;
-  onCreateSuiteFromServer?: (server: EvalsEmptyHeroServer) => void;
+  onEvalServer?: (server: EvalsEmptyHeroServer) => void;
   onQuickstart: () => void;
   isQuickstartRunning: boolean;
   showQuickstart: boolean;
@@ -25,7 +25,7 @@ interface EvalsEmptyHeroProps {
 
 export function EvalsEmptyHero({
   onCreateSuite,
-  onCreateSuiteFromServer,
+  onEvalServer,
   onQuickstart,
   isQuickstartRunning,
   showQuickstart,
@@ -35,10 +35,9 @@ export function EvalsEmptyHero({
   const visibleServers = servers.slice(0, EVALS_EMPTY_HERO_MAX_SERVERS);
   const showServerCards = visibleServers.length > 0;
   // Sample-suite lives down here because it has no other entry point. A
-  // blank suite does: the header Create suite. When server cards are up,
-  // repeating Create suite under them is just a third copy of the same
-  // action. Loading withholds the row so it does not reflow when servers
-  // arrive.
+  // blank suite does: the header Create suite. Server cards start the
+  // first-run preview, not that form. Loading withholds the row so it
+  // does not reflow when servers arrive.
   const showCtas = !serversLoading;
 
   return (
@@ -68,11 +67,9 @@ export function EvalsEmptyHero({
               <button
                 key={server.id}
                 type="button"
-                aria-label={`Create suite from ${server.name}`}
+                aria-label={`Eval my server: ${server.name}`}
                 onClick={() =>
-                  onCreateSuiteFromServer
-                    ? onCreateSuiteFromServer(server)
-                    : onCreateSuite()
+                  onEvalServer ? onEvalServer(server) : onCreateSuite()
                 }
                 className="inline-flex max-w-full items-center gap-3 rounded-md border border-border bg-background px-3 py-2 text-left shadow-xs transition-colors hover:bg-muted/40"
               >
@@ -80,7 +77,7 @@ export function EvalsEmptyHero({
                   {server.name}
                 </span>
                 <span className="shrink-0 text-sm font-medium text-primary">
-                  Create suite
+                  Eval my server
                 </span>
               </button>
             ))}
@@ -103,7 +100,7 @@ export function EvalsEmptyHero({
 
 /**
  * When server cards are up, only the sample suite stays here. Create suite
- * already lives in the header and on each card.
+ * lives in the header. The cards start the first-run preview.
  */
 function EmptyHeroCtas({
   onCreateSuite,

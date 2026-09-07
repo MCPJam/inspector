@@ -478,6 +478,12 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       return prefix;
     case "create":
       return `${prefix}/create`;
+    case "eval-server":
+      // The first-run preview is Evaluate (New) only. /evals has no home
+      // for it, so degrade to that prefix's list the same way commit-detail
+      // degrades on /evaluate.
+      if (prefix !== routePaths.evaluate) return prefix;
+      return `${prefix}/eval-server/${encodeURIComponent(route.serverId)}`;
     case "suite-overview": {
       const params = new URLSearchParams();
       if (route.view && route.view !== "runs") params.set("view", route.view);
@@ -510,6 +516,7 @@ function buildEvalRoutePath(prefix: EvalRoutePrefix, route: EvalRoute): string {
       const params = new URLSearchParams();
       if (route.openCompare) params.set("compare", "1");
       if (route.iteration) params.set("iteration", route.iteration);
+      if (route.fromEvalServer) params.set("fromEvalServer", route.fromEvalServer);
       const query = params.toString();
       return `${prefix}/suite/${encodeURIComponent(
         route.suiteId,

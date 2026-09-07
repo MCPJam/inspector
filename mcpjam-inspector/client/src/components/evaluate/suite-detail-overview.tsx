@@ -53,6 +53,8 @@ import { SuiteRunHistorySnapshot } from "./suite-run-history-snapshot";
 export const SUITE_EMPTY_CASES_TITLE = "No cases yet";
 export const SUITE_EMPTY_CASES_DESCRIPTION =
   "Describe a behavior, generate from your servers' live discovery, or import an existing test file.";
+export const SUITE_EMPTY_CASES_DESCRIPTION_NO_GENERATE =
+  "Describe a behavior or import an existing test file.";
 export const SUITE_IMPORT_UNAVAILABLE_MESSAGE =
   "Import from Markdown, Word, or a test file isn't available yet.";
 
@@ -640,7 +642,7 @@ function GenerateCasesButton({
   );
 }
 
-function SuiteEmptyCasesHero({
+export function SuiteEmptyCasesHero({
   readOnly,
   onDescribe,
   onGenerate,
@@ -649,6 +651,7 @@ function SuiteEmptyCasesHero({
   isGenerating,
   onImport,
   fillRemaining,
+  hideGenerate = false,
 }: {
   readOnly: boolean;
   onDescribe?: () => void;
@@ -658,6 +661,8 @@ function SuiteEmptyCasesHero({
   isGenerating: boolean;
   onImport?: () => void;
   fillRemaining: boolean;
+  /** First-run already generated. Only Describe and Import remain. */
+  hideGenerate?: boolean;
 }) {
   const handleAction = (id: (typeof EMPTY_CASE_ACTIONS)[number]["id"]) => {
     if (id === "describe") {
@@ -687,11 +692,15 @@ function SuiteEmptyCasesHero({
         {SUITE_EMPTY_CASES_TITLE}
       </h3>
       <p className="mt-1 max-w-md text-center text-sm text-muted-foreground">
-        {SUITE_EMPTY_CASES_DESCRIPTION}
+        {hideGenerate
+          ? SUITE_EMPTY_CASES_DESCRIPTION_NO_GENERATE
+          : SUITE_EMPTY_CASES_DESCRIPTION}
       </p>
       {!readOnly ? (
         <div className="mt-6 flex w-full max-w-2xl flex-col gap-3 sm:flex-row">
-          {EMPTY_CASE_ACTIONS.map((action) => {
+          {EMPTY_CASE_ACTIONS.filter(
+            (action) => !hideGenerate || action.id !== "generate",
+          ).map((action) => {
             const disabled =
               action.id === "describe"
                 ? !onDescribe
