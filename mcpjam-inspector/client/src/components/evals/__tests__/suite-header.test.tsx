@@ -5,6 +5,11 @@ import { SuiteHeader } from "../suite-header";
 vi.mock("convex/react", () => ({
   useMutation: () => vi.fn(),
   useConvexAuth: () => ({ isAuthenticated: false, isLoading: false }),
+  usePaginatedQuery: () => ({
+    results: [],
+    status: "Exhausted",
+    loadMore: vi.fn(),
+  }),
 }));
 
 vi.mock("@workos-inc/authkit-react", () => ({
@@ -549,13 +554,7 @@ describe("SuiteHeader", () => {
   });
 
   /**
-   * S5 — the settings header carries the REVISION, not a Done button.
-   *
-   * Done told a reader this sheet was a form to fill in and submit. It has not
-   * been one since the draft-and-commit bar shipped: the button only
-   * navigated, and the save lives in the bar. What belongs in that corner is
-   * the thing a reader of a shared suite actually needs — which version of
-   * these settings am I looking at.
+   * S5 — the settings header has no Done button. Saving lives in the commit bar.
    */
   describe("settings header", () => {
     const editProps = {
@@ -567,33 +566,27 @@ describe("SuiteHeader", () => {
     };
 
     it("has no Done button", () => {
-      renderWithProviders(
-        <SuiteHeader {...editProps} onOpenRevisionHistory={vi.fn()} />
-      );
+      renderWithProviders(<SuiteHeader {...editProps} />);
       expect(screen.queryByRole("button", { name: /^Done$/ })).toBeNull();
     });
 
-    it("hides the pill when the backend records no revisions", () => {
-      renderWithProviders(<SuiteHeader {...editProps} />);
-      // "r—" is a number that does not exist, and a reader cannot tell it from
-      // a suite nobody has ever edited.
-      expect(screen.queryByTestId("suite-revision-pill")).toBeNull();
-    });
-
-    it("shows the revision and opens the history", async () => {
+    it("edits the suite name through the settings draft", async () => {
       const user = userEvent.setup();
-      const onOpenRevisionHistory = vi.fn();
+      const onChange = vi.fn();
       renderWithProviders(
         <SuiteHeader
           {...editProps}
-          suite={{ ...baseSuite, revisionNumber: 7 }}
-          onOpenRevisionHistory={onOpenRevisionHistory}
-        />
+          settingsDraftName={{
+            value: "Test Suite",
+            onChange,
+          }}
+        />,
       );
-      const pill = screen.getByTestId("suite-revision-pill");
-      expect(pill.textContent).toContain("On r7");
-      await user.click(pill);
-      expect(onOpenRevisionHistory).toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Test Suite" }));
+      const input = screen.getByRole("textbox", { name: "Suite name" });
+      await user.clear(input);
+      await user.type(input, "Renamed");
+      expect(onChange).toHaveBeenCalled();
     });
   });
 });

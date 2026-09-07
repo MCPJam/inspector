@@ -95,6 +95,6 @@
     ],
     "firstFailedStage": "call",
     "failureCategory": "arguments",
-    "stageAnalyzerVersion": 8
+    "stageAnalyzerVersion": 10
   }
 }

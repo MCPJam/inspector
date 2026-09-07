@@ -182,10 +182,18 @@ export const CORS_ORIGINS =
     ? WEB_ALLOWED_ORIGINS
     : Array.from(new Set([...DEFAULT_CORS_ORIGINS, ...WEB_ALLOWED_ORIGINS]));
 
-// Hosted web route timeouts (ms)
-export const WEB_CONNECT_TIMEOUT_MS = 10_000;
-export const WEB_CALL_TIMEOUT_MS = 30_000;
-export const WEB_STREAM_TIMEOUT_MS = 120_000;
+// Hosted web route timeouts (ms). Defined in `shared/` so the client can read
+// the same numbers to DESCRIBE what a hosted run does (the eval settings
+// Connection card names the call timeout); every server importer keeps
+// importing them from here.
+export {
+  WEB_CONNECT_TIMEOUT_MS,
+  WEB_CALL_TIMEOUT_MS,
+  WEB_STREAM_TIMEOUT_MS,
+} from "../shared/hosted-web-timeouts.js";
+// Imported as well as re-exported: `MRTR_CONTINUATION_LEASE_TTL_MS` below is
+// derived from the call timeout, and a re-export does not bind the name here.
+import { WEB_CALL_TIMEOUT_MS } from "../shared/hosted-web-timeouts.js";
 
 // ── Hosted elicitation (MCP 2025-11-25) ─────────────────────────────────────
 // An elicitation blocks a `tools/call` on a HUMAN, so these are human-scale.

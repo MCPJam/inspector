@@ -1,5 +1,5 @@
 /**
- * The "Pass or fail" section, and the policy controls beside it.
+ * The "Scorers and judges" section, and the policy controls beside it.
  *
  * Two properties are worth a test rather than a reading:
  *
@@ -16,7 +16,10 @@
 import { describe, expect, it, vi } from "vitest";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { SuitePassOrFailSection } from "../suite-pass-or-fail-section";
+import {
+  SuiteBudgetsSection,
+  SuitePassOrFailSection,
+} from "../suite-pass-or-fail-section";
 import {
   VerdictPolicyUpgradeButton,
   VerdictPolicyV2Controls,
@@ -33,6 +36,7 @@ function renderSection(
     judgeConfig?: Parameters<typeof SuitePassOrFailSection>[0]["judgeConfig"];
     judgeAccessory?: React.ReactNode;
     rubricEditor?: React.ReactNode;
+    stageFacts?: Parameters<typeof SuitePassOrFailSection>[0]["stageFacts"];
   } = {},
 ) {
   const onPredicatesChange = vi.fn();
@@ -49,6 +53,7 @@ function renderSection(
       availableModels={[]}
       judgeAccessory={overrides.judgeAccessory}
       rubricEditor={overrides.rubricEditor}
+      stageFacts={overrides.stageFacts}
     />,
   );
   return { ...result, onPredicatesChange, onJudgeConfigChange };
@@ -63,10 +68,23 @@ function emptyCopy(container: HTMLElement, stage: string): string | null {
 }
 
 describe("SuitePassOrFailSection", () => {
-  it("says 'No grader' for an unconfigured selection stage", () => {
-    // A suite with no checks still has the tool-call matcher, which files at
-    // selection — so the empty state only appears once the matcher rows are
-    // gone. Read the response stage instead, which has neither.
+  it("mounts config facts under the stages the runner measures", () => {
+    const { container } = renderSection({
+      stageFacts: {
+        connection: <div data-testid="connection-facts">connection facts</div>,
+        discovery: <div data-testid="discovery-facts">discovery facts</div>,
+      },
+    });
+    for (const stage of ["connection", "discovery"] as const) {
+      const group = container.querySelector(`[data-stage-group="${stage}"]`);
+      expect(
+        group?.querySelector(`[data-testid="${stage}-facts"]`),
+        stage,
+      ).toBeTruthy();
+    }
+  });
+
+  it("says 'No grader' for an unconfigured response stage", () => {
     const { container } = renderSection();
     expect(emptyCopy(container, "response")).toBe("No grader");
   });
@@ -75,7 +93,7 @@ describe("SuitePassOrFailSection", () => {
     const { container } = renderSection();
     for (const stage of ["connection", "discovery"]) {
       const copy = emptyCopy(container, stage) ?? "";
-      expect(copy, stage).toContain("Measured by the runner");
+      expect(copy, stage).toContain("Observed by the runner");
       expect(copy.toLowerCase(), stage).not.toContain("no grader");
       // The run-state word. Settings has observed nothing, so claiming a
       // measurement did not happen states something nobody looked at.
@@ -86,21 +104,26 @@ describe("SuitePassOrFailSection", () => {
   it("marks the judge advisory by default and gating when the role says so", () => {
     const advisory = renderSection();
     expect(
-      within(
-        advisory.container.querySelector(
-          '[data-stage-group="userValue"]',
-        ) as HTMLElement,
-      ).getByText("Advisory"),
-    ).toBeTruthy();
+      advisory.container.querySelector(
+        '[data-testid="stage-chain-card-userValue"]',
+      )?.textContent,
+    ).toContain("Judge on request");
     advisory.unmount();
 
     const gating = renderSection({
       judgeConfig: { goalCompletion: { role: "gating" } },
     });
+    const card = gating.container.querySelector(
+      '[data-testid="stage-chain-card-userValue"]',
+    );
+    expect(card?.textContent).toContain("Gated");
     const group = gating.container.querySelector(
       '[data-stage-group="userValue"]',
     ) as HTMLElement;
-    expect(within(group).getByText("Gate")).toBeTruthy();
+    const judgeRole = group.querySelector('[aria-label="Judge role"]');
+    expect(
+      within(judgeRole as HTMLElement).getByRole("button", { name: "Gate" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("mounts the judge's gate panel and rubric editor under user value", () => {
@@ -123,7 +146,7 @@ describe("SuitePassOrFailSection", () => {
     expect(rubricRow?.textContent).toContain("Judge criteria");
   });
 
-  it("keeps one Add-check affordance for the whole section", () => {
+  it("keeps one Add-scorer affordance for the whole section", () => {
     // Per-stage Add menus would ask a person to know which stage their check
     // files under before they can write it, which is the page's job.
     const { container } = renderSection();
@@ -157,6 +180,18 @@ describe("VerdictPolicyV2Controls", () => {
       // hundred and be refused after the save rather than at the keystroke.
       passThreshold: 0.8,
     });
+  });
+
+  it("shows how many passes the case decision rule needs", () => {
+    render(
+      <VerdictPolicyV2Controls
+        defaults={{ repetitions: 3, passThreshold: 0.8 }}
+        onChange={vi.fn()}
+      />,
+    );
+    expect(
+      screen.getByText(/A case with 3 trials needs 3 passes/),
+    ).toBeTruthy();
   });
 
   it("clamps a typed percent into the unit interval", async () => {
@@ -215,5 +250,77 @@ describe("VerdictPolicyUpgradeButton", () => {
       repetitions: 3,
       passThreshold: 0.8,
     });
+  });
+});
+
+/**
+ * The Limits tab.
+ *
+ * It used to render a read-only list that told the reader to add a ceiling
+ * "from Checks" — a tab that names a setting and refuses to set it, and whose
+ * own instruction was half false, since the Checks menu has never offered a
+ * turn budget. These tests hold the two properties that fix depends on: both
+ * ceiling kinds are addable HERE, and an edit re-seats itself in the one
+ * `defaultPredicates` array without disturbing the checks around it.
+ */
+describe("SuiteBudgetsSection", () => {
+  function renderBudgets(predicates: Predicate[]) {
+    const onPredicatesChange = vi.fn();
+    const result = render(
+      <SuiteBudgetsSection
+        predicates={predicates}
+        onPredicatesChange={onPredicatesChange}
+      />,
+    );
+    // The caller passes an updater; resolve it against the same list the row
+    // was rendered from, which is what the draft reducer does.
+    const nextPredicates = () => {
+      const arg = onPredicatesChange.mock.calls.at(-1)?.[0];
+      return typeof arg === "function" ? arg(predicates) : arg;
+    };
+    return { ...result, onPredicatesChange, nextPredicates };
+  }
+
+  it("offers both ceilings, and only ceilings, to add", async () => {
+    const user = userEvent.setup();
+    renderBudgets([]);
+    await user.click(screen.getByRole("combobox"));
+    const options = screen
+      .getAllByRole("option")
+      .map((option) => option.textContent?.trim());
+    expect(options).toEqual([
+      "Token budget under N",
+      "Fewer than N user turns",
+    ]);
+  });
+
+  it("adds a ceiling without disturbing the checks beside it", async () => {
+    const user = userEvent.setup();
+    const existing: Predicate[] = [
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+    ];
+    const { nextPredicates } = renderBudgets(existing);
+    await user.click(screen.getByRole("combobox"));
+    await user.click(screen.getByRole("option", { name: /Token budget/ }));
+    expect(nextPredicates()).toEqual([
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+      { type: "tokenBudgetUnder", tokens: 1000 },
+    ]);
+  });
+
+  it("removes a ceiling from its own slot, leaving the rest in place", async () => {
+    const user = userEvent.setup();
+    const existing: Predicate[] = [
+      { type: "tokenBudgetUnder", tokens: 1000 },
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+      { type: "turnCountUnder", turns: 10 },
+    ];
+    const { nextPredicates } = renderBudgets(existing);
+    const [removeFirst] = screen.getAllByRole("button", { name: /remove/i });
+    await user.click(removeFirst);
+    expect(nextPredicates()).toEqual([
+      { type: "turnCountUnder", turns: 10 },
+      { type: "toolCalledAtLeastOnce", toolName: "search" },
+    ]);
   });
 });

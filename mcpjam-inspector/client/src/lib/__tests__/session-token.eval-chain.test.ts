@@ -96,6 +96,10 @@ describe("authFetch bearer on the eval chain routes", () => {
     "/api/v1/projects/proj_1/eval-suites/suite_1/stage-analytics/overall",
     // The run-scoped suffix is a closed set, not a wildcard.
     "/api/v1/projects/proj_1/eval-runs/run_1/insights",
+    // The suite quality-gate report is a CLI/SDK read. The app does not
+    // call this route, so allowlisting it would widen the UI bearer for
+    // nothing the sheet uses.
+    "/api/v1/projects/proj_1/eval-runs/run_1/gate",
     // Granting the iterations LIST must not grant what hangs beneath it. A
     // trace is a transcript and steps are authored results; both are read by
     // other paths with their own auth, and a pattern that swallowed them
