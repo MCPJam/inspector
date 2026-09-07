@@ -175,6 +175,68 @@ export const BROWSER_IGNORE_ERRORS: (string | RegExp)[] = [
   "Load failed",
 ];
 
+/**
+ * The two wordings browsers use when a DOM mutation targets a node that is no
+ * longer where the mutating code last saw it. Blink names the method, WebKit
+ * emits one generic sentence for the whole `NotFoundError` class.
+ */
+const DOM_MUTATION_CONFLICT_VALUES: RegExp[] = [
+  /^Failed to execute '(?:removeChild|insertBefore)' on 'Node'/,
+  /^The object can not be found here\.$/,
+];
+
+/**
+ * Minimal structural view of the event `beforeSend` receives.
+ *
+ * Declared here rather than imported so this module keeps its "no SDK, no
+ * globals" property — it is compiled into four bundles, two of which pull a
+ * different Sentry package.
+ */
+export interface FingerprintableEvent {
+  environment?: string;
+  fingerprint?: string[];
+  exception?: {
+    values?: { type?: string; value?: string }[];
+  };
+}
+
+/**
+ * Group DOM mutation conflicts by class instead of by stack.
+ *
+ * React reports these from `commitDeletionEffectsOnFiber`, so the frames are
+ * all react-dom internals: a recursive `recursivelyTraverseMutationEffects` /
+ * `commitMutationEffectsOnFiber` chain whose depth follows the component tree
+ * and whose minified column offsets move with every build. Sentry fingerprints
+ * on frames, so each occurrence lands in its own issue — 23 production events
+ * of one bug arrived as nine issues of one to seven events, none of them big
+ * enough to trip an alert, while a 394-event `dev` group with the same title
+ * sat on top of the list. The billing crash in #4730 surfaced through a
+ * PostHog alert instead, and only because that event happened to be the one
+ * someone looked at.
+ *
+ * Matching on the exception type and message, not on frames: the prod frames
+ * are minified to names like `mze`/`fg` with no `react-dom` string left to
+ * test, and the message is the one part that survives minification.
+ *
+ * `environment` is part of the fingerprint because an issue spans
+ * environments in Sentry, and dev is the larger share of this project's error
+ * volume — collapsing without it would bury the production signal again.
+ */
+export function groupDomMutationConflicts<T extends FingerprintableEvent>(
+  event: T,
+): T {
+  const exception = event.exception?.values?.[0];
+  if (exception?.type !== "NotFoundError") return event;
+
+  const value = exception.value ?? "";
+  if (!DOM_MUTATION_CONFLICT_VALUES.some((pattern) => pattern.test(value))) {
+    return event;
+  }
+
+  event.fingerprint = ["dom-mutation-conflict", event.environment ?? "unknown"];
+  return event;
+}
+
 export function buildSentryConfig(ctx: SentryConfigContext): SentryConfig {
   return {
     dsn: ctx.dsn,
@@ -229,6 +291,10 @@ export function buildClientSentryConfig(
   return {
     ...buildSentryConfig({ ...ctx, dsn: ctx.dsn ?? SENTRY_DSN.client }),
     ignoreErrors: BROWSER_IGNORE_ERRORS,
+    // Browser surfaces only. A `NotFoundError` on the server is an upstream
+    // or storage failure that has nothing to do with DOM mutation, and
+    // collapsing those by message would merge unrelated defects.
+    beforeSend: groupDomMutationConflicts,
     ...(ctx.replayEnabled
       ? CLIENT_REPLAY_SAMPLE_RATES
       : REPLAY_DISABLED_SAMPLE_RATES),
