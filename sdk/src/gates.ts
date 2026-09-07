@@ -53,7 +53,26 @@ export type GateInput = {
    * than passing: a token cap evaluated against a partial token count is a
    * gate that reports green for the wrong reason.
    */
-  totals?: { tokens?: number; e2eP95Ms?: number };
+  totals?: {
+    tokens?: number;
+    e2eP95Ms?: number;
+    /**
+     * MCPJam-billed cost for the whole run.
+     *
+     * ABSENT means no cost was observed — never that the run was free. A
+     * cost gate treats absence as non-gateable for the same reason the
+     * token cap does: a cap evaluated against a partial figure reports
+     * green for the wrong reason.
+     */
+    costUsd?: number;
+    /**
+     * How much of the run that cost actually covers. Partial coverage makes
+     * a cost gate NON-GATEABLE: summing the priced iterations and skipping
+     * the rest yields a number indistinguishable from a complete one, and
+     * "cheaper" would then be reported for a run we simply priced less of.
+     */
+    costCoverage?: { costed: number; total: number };
+  };
 };
 
 export type GatePolicy = {
@@ -67,10 +86,16 @@ export type GatePolicy = {
   minimumScorerPassRate?: Record<string, number>;
   /** Per-scorer mean of `value` over scored rows, keyed by stable scorerId. */
   minimumMeanScore?: Record<string, number>;
-  // No `maximumCostUsd`: there is no price source yet, and a cost gate that
-  // silently evaluates against zero is worse than no cost gate. The name is
-  // reserved. `maximumCostIncrease` — its comparative twin — is reserved for
-  // the same reason and on the same condition.
+  /**
+   * Absolute ceiling on the run's MCPJam-billed cost, in USD.
+   *
+   * This name was RESERVED until there was a price source, because a cost
+   * gate that silently evaluates against zero is worse than no cost gate.
+   * The platform now stamps cost per iteration with the rates it used, so
+   * the gate has something real to read — and it still refuses to judge on
+   * an absent or partial figure (see `totals.costCoverage`).
+   */
+  maximumCostUsd?: number;
 
   // ── comparative gates ────────────────────────────────────────────────────
   // These need a BASELINE and are evaluated by `evaluateCompareGates`, not by
@@ -82,6 +107,17 @@ export type GatePolicy = {
   noDeterministicRegressions?: boolean;
   /** Fail if p95 e2e latency rose by more than this many ms. */
   maximumP95LatencyIncreaseMs?: number;
+  /**
+   * Fail if the run's cost rose by more than this percentage of the
+   * baseline's. The comparative twin of `maximumCostUsd`, and the one that
+   * answers the question people actually have: "did my change make this more
+   * expensive?"
+   *
+   * A percentage rather than an absolute delta because an absolute one goes
+   * stale on every prompt and model change, which is the failure the old
+   * per-trial token ceiling had.
+   */
+  maximumCostIncreasePercent?: number;
   /** Statistical pass-rate regression. Fractions; see `compare-stats.ts`. */
   passRateRegression?: {
     minSampleSize?: number;
@@ -96,6 +132,7 @@ export type GatePolicy = {
 export const COMPARATIVE_GATE_FIELDS = [
   "noDeterministicRegressions",
   "maximumP95LatencyIncreaseMs",
+  "maximumCostIncreasePercent",
   "passRateRegression",
 ] as const satisfies ReadonlyArray<keyof GatePolicy>;
 
@@ -401,6 +438,15 @@ export function gateInputFromSuiteResult(result: EvalSuiteResult): GateInput {
     totals: {
       tokens: result.aggregate.tokenUsage.total,
       e2eP95Ms: result.aggregate.latency.e2e.p95,
+      // No `costUsd`, and its absence is the correct answer rather than a
+      // gap: a LOCAL run executes on the caller's own provider keys, so
+      // MCPJam never billed it and has no price for it. A cost gate on a
+      // local run therefore reports `non_gateable` — which is exactly what
+      // the reserved-name comment on `maximumCostUsd` demanded, since a gate
+      // that silently evaluated against zero would pass every local run.
+      //
+      // Cost gates belong on PLATFORM runs (`gateInputFromPlatformRun`),
+      // where the platform priced the work it billed.
     },
   };
 }
@@ -461,6 +507,35 @@ export function gateInputFromPlatformRun(
       ? (tokenCounts as number[]).reduce((sum, count) => sum + count, 0)
       : undefined;
 
+  // Cost is the one total that is legitimately PARTIAL rather than all-or-
+  // nothing, because absence has a meaning here that it does not have for
+  // tokens: an iteration on a BYOK model was never billed by MCPJam, so it has
+  // no cost to contribute and never will. Refusing the whole run for it would
+  // make the gate unusable on any mixed suite.
+  //
+  // So the sum is reported WITH its coverage, and the gate refuses on partial
+  // coverage rather than the adapter refusing to compute. Two things are
+  // excluded from the total outright:
+  //   - a `sdk_runner` cost, which a customer's own runner reported and
+  //     MCPJam neither computed nor verified. Letting it into a platform
+  //     total would let a runner move its own gate.
+  //   - an incomplete iterations page, handled by the `complete` check below,
+  //     exactly as tokens and latency already are.
+  let costUsd: number | undefined;
+  let costedIterations = 0;
+  for (const iteration of usable) {
+    const usage = iteration.usage;
+    const cost = usage?.estimatedCostUsd;
+    if (typeof cost !== "number") continue;
+    if (usage?.costBasis?.source === "sdk_runner") continue;
+    costUsd = (costUsd ?? 0) + cost;
+    costedIterations += 1;
+  }
+  const costCoverage =
+    usable.length > 0
+      ? { costed: costedIterations, total: usable.length }
+      : undefined;
+
   // Same rule for latency: p95 over a partial set is not this run's p95.
   const durations = usable.map((iteration) => iteration.durationMs);
   const e2eP95Ms =
@@ -488,6 +563,8 @@ export function gateInputFromPlatformRun(
           totals: {
             ...(tokens !== undefined ? { tokens } : {}),
             ...(e2eP95Ms !== undefined ? { e2eP95Ms } : {}),
+            ...(costUsd !== undefined ? { costUsd } : {}),
+            ...(costCoverage !== undefined ? { costCoverage } : {}),
           },
         }
       : {}),
@@ -533,7 +610,9 @@ function resolveScorer(
   scorerId: string,
   byId: Map<string, ResolvedScoreDefinition[]>,
   gate: string
-): { ok: true; definition: ResolvedScoreDefinition } | { ok: false; verdict: GateVerdict } {
+):
+  | { ok: true; definition: ResolvedScoreDefinition }
+  | { ok: false; verdict: GateVerdict } {
   const variants = byId.get(scorerId) ?? [];
   const definition = variants[0];
   if (!definition) {
@@ -591,7 +670,10 @@ function resolveScorer(
  * this run partly on another one's evidence. It drops out instead, and a gate
  * left with nothing reports `non_gateable` rather than passing on the remainder.
  */
-function rowsFor(scores: GateScore[], definition: ResolvedScoreDefinition): GateScore[] {
+function rowsFor(
+  scores: GateScore[],
+  definition: ResolvedScoreDefinition
+): GateScore[] {
   const hash = definitionHash(definition);
   return scores.filter((score) => score.definitionHash === hash);
 }
@@ -701,11 +783,39 @@ export function evaluateGates(
           }
         : {
             gate: "maximumTotalTokens",
-            status:
-              observed <= policy.maximumTotalTokens ? "passed" : "failed",
+            status: observed <= policy.maximumTotalTokens ? "passed" : "failed",
             message: `${observed} tokens used`,
             observed,
             threshold: policy.maximumTotalTokens,
+          }
+    );
+  }
+
+  if (policy.maximumCostUsd !== undefined) {
+    const observed = input.totals?.costUsd;
+    const coverage = input.totals?.costCoverage;
+    // Partial coverage is refused BEFORE the comparison, not folded into it:
+    // a total built from some of the run is a smaller number than the truth,
+    // so judging a ceiling against it passes exactly the runs we understand
+    // least.
+    const partial = coverage !== undefined && coverage.costed < coverage.total;
+    verdicts.push(
+      observed === undefined || partial
+        ? {
+            gate: "maximumCostUsd",
+            status: "non_gateable",
+            message: partial
+              ? `only ${coverage!.costed} of ${coverage!.total} iterations have a cost, ` +
+                "so the run total is incomplete"
+              : "no cost is available for this run",
+            threshold: policy.maximumCostUsd,
+          }
+        : {
+            gate: "maximumCostUsd",
+            status: observed <= policy.maximumCostUsd ? "passed" : "failed",
+            message: `$${observed.toFixed(4)} spent`,
+            observed,
+            threshold: policy.maximumCostUsd,
           }
     );
   }
@@ -809,8 +919,7 @@ export function evaluateGates(
       });
       continue;
     }
-    const rate =
-      rows.filter((row) => row.passed === true).length / rows.length;
+    const rate = rows.filter((row) => row.passed === true).length / rows.length;
     verdicts.push({
       gate,
       status: rate >= minimum ? "passed" : "failed",
@@ -975,7 +1084,9 @@ export function formatGateReport(report: GateReport): string {
   }
   for (const verdict of report.verdicts) {
     const threshold =
-      verdict.threshold === undefined ? "" : ` [threshold ${verdict.threshold}]`;
+      verdict.threshold === undefined
+        ? ""
+        : ` [threshold ${verdict.threshold}]`;
     lines.push(
       `  ${STATUS_LABEL[verdict.status]} ${verdict.gate}: ${verdict.message}${threshold}`
     );

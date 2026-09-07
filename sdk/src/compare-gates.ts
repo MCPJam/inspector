@@ -160,7 +160,7 @@ function passRateSample(input: GateInput) {
 
 function formatDelta(assessment: RegressionAssessment): string {
   return (
-    `pass rate ${(assessment.delta >= 0 ? "+" : "")}` +
+    `pass rate ${assessment.delta >= 0 ? "+" : ""}` +
     `${assessment.delta.toFixed(4)} ` +
     `(95% CI ${assessment.lower.toFixed(4)} to ${assessment.upper.toFixed(4)})`
   );
@@ -192,7 +192,11 @@ export function evaluateCompareGates(
   if (policy.noDeterministicRegressions) {
     const gate = "noDeterministicRegressions";
     if (!integrity.gateable) {
-      verdicts.push({ gate, status: "non_gateable", message: integrity.message });
+      verdicts.push({
+        gate,
+        status: "non_gateable",
+        message: integrity.message,
+      });
     } else if (!input.scoreDeltasAvailable) {
       verdicts.push({
         gate,
@@ -212,8 +216,7 @@ export function evaluateCompareGates(
             : `${regressions.length} deterministic gating regression(s): ` +
               regressions
                 .map(
-                  (regression) =>
-                    `${regression.caseKey}/${regression.scorerId}`
+                  (regression) => `${regression.caseKey}/${regression.scorerId}`
                 )
                 .join(", "),
         observed: regressions.length,
@@ -254,12 +257,81 @@ export function evaluateCompareGates(
             }
           : {
               gate,
-              status:
-                assessment.verdict === "regression" ? "failed" : "passed",
+              status: assessment.verdict === "regression" ? "failed" : "passed",
               message: formatDelta(assessment),
               observed: assessment.delta,
             }
       );
+    }
+  }
+
+  // ── Cost increase. Whole-run, so the population rule applies.
+  //
+  // A PERCENTAGE, because the question is "did my change make this more
+  // expensive?" — and an absolute threshold answers that only until the next
+  // prompt or model change moves the baseline. That staleness is exactly what
+  // made a fixed per-trial token ceiling useless.
+  if (policy.maximumCostIncreasePercent !== undefined) {
+    const gate = "maximumCostIncreasePercent";
+    const threshold = policy.maximumCostIncreasePercent;
+    const baseCost = input.base.totals?.costUsd;
+    const compareCost = input.compare.totals?.costUsd;
+    const baseCoverage = input.base.totals?.costCoverage;
+    const compareCoverage = input.compare.totals?.costCoverage;
+    const partialSide = (
+      coverage: { costed: number; total: number } | undefined
+    ) => coverage !== undefined && coverage.costed < coverage.total;
+    if (!comparablePopulation) {
+      verdicts.push({
+        gate,
+        status: "non_gateable",
+        message: populationMessage(problems),
+        threshold,
+      });
+    } else if (baseCost === undefined || compareCost === undefined) {
+      verdicts.push({
+        gate,
+        status: "non_gateable",
+        message:
+          `no cost on ${baseCost === undefined ? "the base" : "the compare"} ` +
+          "run, so an increase cannot be measured",
+        threshold,
+      });
+    } else if (partialSide(baseCoverage) || partialSide(compareCoverage)) {
+      // Comparing a complete total against a partial one is worse than not
+      // comparing at all: the partial side reads as the cheaper run whichever
+      // way the real costs went.
+      verdicts.push({
+        gate,
+        status: "non_gateable",
+        message:
+          "cost is only partially measured on " +
+          (partialSide(baseCoverage) ? "the base" : "the compare") +
+          " run, so an increase cannot be measured",
+        threshold,
+      });
+    } else if (baseCost === 0) {
+      // A percentage of nothing is not a number. Refusing is the honest
+      // answer; treating it as an infinite increase would fail every run
+      // whose baseline happened to be free.
+      verdicts.push({
+        gate,
+        status: "non_gateable",
+        message:
+          "the base run cost nothing, so a percentage increase is undefined",
+        threshold,
+      });
+    } else {
+      const percent = ((compareCost - baseCost) / baseCost) * 100;
+      verdicts.push({
+        gate,
+        status: percent <= threshold ? "passed" : "failed",
+        message:
+          `cost $${baseCost.toFixed(4)} -> $${compareCost.toFixed(4)} ` +
+          `(${percent >= 0 ? "+" : ""}${percent.toFixed(1)}%)`,
+        observed: percent,
+        threshold,
+      });
     }
   }
 

@@ -540,6 +540,7 @@ test("comparePolicyFromGateOptions: every comparative flag requires --baseline",
     { minEffectSizePercent: "5" },
     { gateDeterministicRegressions: true },
     { maxP95LatencyIncreaseMs: "100" },
+    { maxCostIncreasePercent: "10" },
   ]) {
     assert.throws(
       () => comparePolicyFromGateOptions(options),
@@ -556,12 +557,42 @@ test("comparePolicyFromGateOptions: tuning flags apply once --baseline is set", 
     minEffectSizePercent: "1",
     gateDeterministicRegressions: true,
     maxP95LatencyIncreaseMs: "250",
+    maxCostIncreasePercent: "10",
   });
   assert.equal(policy.passRateRegression?.minSampleSize, 10);
   // Percent -> fraction at the boundary, same conversion `eval compare` uses.
   assert.equal(policy.passRateRegression?.minEffectSize, 0.01);
   assert.equal(policy.noDeterministicRegressions, true);
   assert.equal(policy.maximumP95LatencyIncreaseMs, 250);
+  // Stays a PERCENTAGE, unlike `minEffectSizePercent` directly above: the
+  // gate compares it against a percentage it computes, so dividing by 100
+  // here would make `--max-cost-increase-percent 10` mean 0.1%.
+  assert.equal(policy.maximumCostIncreasePercent, 10);
+});
+
+test("policyFromOptions: --max-cost-usd accepts a decimal", () => {
+  // The other numeric parsers are integer- or percent-shaped; a cost ceiling
+  // of a few cents is the ordinary case and must not be rejected.
+  assert.equal(policyFromOptions({ maxCostUsd: "0.05" }).maximumCostUsd, 0.05);
+  assert.equal(policyFromOptions({ maxCostUsd: "0" }).maximumCostUsd, 0);
+});
+
+test("policyFromOptions: --max-cost-usd rejects blank and negative", () => {
+  // `Number("")` is 0, which would become a $0 ceiling failing every run.
+  assert.throws(
+    () => policyFromOptions({ maxCostUsd: "" }),
+    /--max-cost-usd must be a non-negative number/
+  );
+  assert.throws(
+    () => policyFromOptions({ maxCostUsd: "-1" }),
+    /--max-cost-usd must be a non-negative number/
+  );
+});
+
+test("policyNeedsIterations: --max-cost-usd needs the iterations", () => {
+  // Cost is summed from per-iteration usage; without the fetch the gate could
+  // only ever answer non-gateable.
+  assert.equal(policyNeedsIterations({ maximumCostUsd: 0.5 }), true);
 });
 
 function gateReport(

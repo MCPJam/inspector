@@ -4408,6 +4408,14 @@ export function registerEvalCommands(program: Command): void {
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds vs the baseline; requires --baseline or --baseline-sha"
     )
+    .option(
+      "--max-cost-usd <usd>",
+      "Fail if the run's MCPJam-billed cost exceeded this many dollars; non-gateable when the run's cost is unknown or only partly measured"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; requires --baseline or --baseline-sha"
+    )
     .option("--wait", "Poll until the run reaches a terminal status")
     .option(
       "--wait-timeout <ms>",
@@ -4514,6 +4522,10 @@ export function registerEvalCommands(program: Command): void {
     .option(
       "--max-p95-latency-increase-ms <ms>",
       "Fail if p95 end-to-end latency rose by more than this many milliseconds"
+    )
+    .option(
+      "--max-cost-increase-percent <percent>",
+      "Fail if cost rose by more than this percentage of the baseline's; non-gateable when either run's cost is unknown or only partly measured"
     )
     .option(
       "--reporter <json-summary|junit-xml|html>",

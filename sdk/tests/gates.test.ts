@@ -135,7 +135,10 @@ describe("pass-rate gate", () => {
     expect(zero.outcome).toBe("passed");
     expect(zero.verdicts).toHaveLength(1);
 
-    const unset = evaluateGates(input({ iterations: { total: 2, passed: 0 } }), {});
+    const unset = evaluateGates(
+      input({ iterations: { total: 2, passed: 0 } }),
+      {}
+    );
     expect(unset.verdicts).toHaveLength(0);
     expect(unset.outcome).toBe("passed");
   });
@@ -202,7 +205,10 @@ describe("score-integrity tri-state", () => {
       { noGatingScoreErrors: true },
     ];
     for (const policy of policies) {
-      const report = evaluateGates(input({ scoreIntegrity: undefined }), policy);
+      const report = evaluateGates(
+        input({ scoreIntegrity: undefined }),
+        policy
+      );
       expect(report.outcome, JSON.stringify(policy)).not.toBe("passed");
       expect(report.outcome, JSON.stringify(policy)).toBe("incomplete");
     }
@@ -233,12 +239,12 @@ describe("score-integrity tri-state", () => {
   });
 
   it("an exceeded resource budget FAILS rather than passing vacuously", () => {
-    expect(
-      evaluateGates(input(), { maximumTotalTokens: 999 }).outcome
-    ).toBe("failed");
-    expect(
-      evaluateGates(input(), { maximumP95LatencyMs: 499 }).outcome
-    ).toBe("failed");
+    expect(evaluateGates(input(), { maximumTotalTokens: 999 }).outcome).toBe(
+      "failed"
+    );
+    expect(evaluateGates(input(), { maximumP95LatencyMs: 499 }).outcome).toBe(
+      "failed"
+    );
   });
 
   it("an ABSENT total is non-gateable, never a pass", () => {
@@ -274,7 +280,9 @@ describe("scoresPassed", () => {
     // this used to pass — absent evidence reading as a pass.
     expect(
       scoresPassed(
-        [{ ...score("refund"), scorerVersion: "1", deterministic: true }] as never,
+        [
+          { ...score("refund"), scorerVersion: "1", deterministic: true },
+        ] as never,
         definitions
       )
     ).toBe(false);
@@ -287,7 +295,9 @@ describe("scoresPassed", () => {
     ];
     expect(
       scoresPassed(
-        [{ ...score("refund"), scorerVersion: "1", deterministic: true }] as never,
+        [
+          { ...score("refund"), scorerVersion: "1", deterministic: true },
+        ] as never,
         advisoryDefinitions
       )
     ).toBe(true);
@@ -524,7 +534,9 @@ describe("adapters", () => {
     expect(built.scores).toBeUndefined();
     expect(built.totals).toBeUndefined();
 
-    const report = evaluateGates(built, { minimumScorerPassRate: { refund: 1 } });
+    const report = evaluateGates(built, {
+      minimumScorerPassRate: { refund: 1 },
+    });
     expect(report.outcome).toBe("incomplete");
   });
 
@@ -535,7 +547,12 @@ describe("adapters", () => {
       failures: 0,
       results: [true],
       iterationDetails: [
-        { passed: true, latencies: [], tokens: { total: 1, input: 0, output: 1 }, scores: [score("refund")] },
+        {
+          passed: true,
+          latencies: [],
+          tokens: { total: 1, input: 0, output: 1 },
+          scores: [score("refund")],
+        },
       ],
       tokenUsage: { total: 1, input: 0, output: 1, perIteration: [] },
       latency: {
@@ -549,7 +566,12 @@ describe("adapters", () => {
     const caseB = {
       ...caseA,
       iterationDetails: [
-        { passed: true, latencies: [], tokens: { total: 1, input: 0, output: 1 }, scores: [score("refund"), score("tone", { value: 0.9 })] },
+        {
+          passed: true,
+          latencies: [],
+          tokens: { total: 1, input: 0, output: 1 },
+          scores: [score("refund"), score("tone", { value: 0.9 })],
+        },
       ],
       evaluationConfig: buildEvaluationConfigSnapshot([GATING, JUDGE]),
     };
@@ -662,7 +684,10 @@ describe("adapters", () => {
     // A row carrying a known id but an unknown hash came from a different
     // configuration. Averaging it in would grade this run partly on another
     // one's evidence; it drops out, and a gate left with nothing says so.
-    const stale = { ...score("refund", { passed: false, value: 0 }), definitionHash: "0".repeat(64) };
+    const stale = {
+      ...score("refund", { passed: false, value: 0 }),
+      definitionHash: "0".repeat(64),
+    };
     expect(
       evaluateGates(input({ scores: [score("refund"), stale] }), {
         minimumScorerPassRate: { refund: 1 },
@@ -695,9 +720,9 @@ describe("adapters", () => {
       { complete: true, items: [] }
     );
     expect(built.totals?.tokens).toBeUndefined();
-    expect(
-      evaluateGates(built, { maximumTotalTokens: 1 }).outcome
-    ).toBe("incomplete");
+    expect(evaluateGates(built, { maximumTotalTokens: 1 }).outcome).toBe(
+      "incomplete"
+    );
   });
 
   it("drops the token total when ANY iteration lacks one", () => {
@@ -745,9 +770,9 @@ describe("adapters", () => {
       items: [iteration(10), iteration(null)] as never,
     });
     expect(partial.totals?.tokens).toBeUndefined();
-    expect(
-      evaluateGates(partial, { maximumTotalTokens: 5 }).outcome
-    ).toBe("incomplete");
+    expect(evaluateGates(partial, { maximumTotalTokens: 5 }).outcome).toBe(
+      "incomplete"
+    );
   });
 
   it("maps a null platform integrity to undefined (no verdict)", () => {
@@ -832,8 +857,18 @@ describe("formatGateReport", () => {
 
 describe("evaluateGates — comparative fields fail closed", () => {
   const COMPARATIVE_POLICIES: Array<{ label: string; policy: GatePolicy }> = [
-    { label: "noDeterministicRegressions", policy: { noDeterministicRegressions: true } },
-    { label: "maximumP95LatencyIncreaseMs", policy: { maximumP95LatencyIncreaseMs: 50 } },
+    {
+      label: "noDeterministicRegressions",
+      policy: { noDeterministicRegressions: true },
+    },
+    {
+      label: "maximumP95LatencyIncreaseMs",
+      policy: { maximumP95LatencyIncreaseMs: 50 },
+    },
+    {
+      label: "maximumCostIncreasePercent",
+      policy: { maximumCostIncreasePercent: 10 },
+    },
     { label: "passRateRegression", policy: { passRateRegression: {} } },
   ];
 
@@ -901,5 +936,80 @@ describe("evaluateGates — an explicit false disables, it does not error", () =
 
   it("the roster itself cannot be mutated to open a hole", () => {
     expect(Object.isFrozen(COMPARATIVE_GATE_FIELDS)).toBe(true);
+  });
+});
+
+describe("maximumCostUsd — the absolute cost gate", () => {
+  /**
+   * This name was reserved until there was a price source, on the stated
+   * grounds that "a cost gate that silently evaluates against zero is worse
+   * than no cost gate". Every case below defends that: an absent or partial
+   * cost must reach `non_gateable`, never `passed`.
+   */
+  const base = { iterations: { total: 4, passed: 4 } };
+
+  it("passes under the ceiling and fails over it", () => {
+    expect(
+      evaluateGates(
+        {
+          ...base,
+          totals: { costUsd: 0.25, costCoverage: { costed: 4, total: 4 } },
+        },
+        { maximumCostUsd: 0.5 }
+      ).verdicts.find((v) => v.gate === "maximumCostUsd")?.status
+    ).toBe("passed");
+
+    expect(
+      evaluateGates(
+        {
+          ...base,
+          totals: { costUsd: 0.25, costCoverage: { costed: 4, total: 4 } },
+        },
+        { maximumCostUsd: 0.1 }
+      ).verdicts.find((v) => v.gate === "maximumCostUsd")?.status
+    ).toBe("failed");
+  });
+
+  it("is NON-GATEABLE with no cost at all, never a pass", () => {
+    // A local (BYOK) run reaches here. Passing it would green-light every
+    // run MCPJam never priced.
+    const verdict = evaluateGates(
+      { ...base, totals: { tokens: 100 } },
+      { maximumCostUsd: 0.5 }
+    ).verdicts.find((v) => v.gate === "maximumCostUsd");
+    expect(verdict?.status).toBe("non_gateable");
+    expect(verdict?.message).toMatch(/no cost is available/i);
+  });
+
+  it("is NON-GATEABLE on partial coverage, and says how partial", () => {
+    // The sum of the priced iterations is smaller than the truth, so judging
+    // a ceiling against it passes exactly the runs we understand least.
+    const verdict = evaluateGates(
+      {
+        ...base,
+        totals: { costUsd: 0.25, costCoverage: { costed: 1, total: 4 } },
+      },
+      { maximumCostUsd: 0.5 }
+    ).verdicts.find((v) => v.gate === "maximumCostUsd");
+    expect(verdict?.status).toBe("non_gateable");
+    expect(verdict?.message).toMatch(/only 1 of 4 iterations/i);
+  });
+
+  it("gates on a genuinely observed zero", () => {
+    // $0 that was MEASURED is a real fact, unlike $0 that was assumed.
+    expect(
+      evaluateGates(
+        {
+          ...base,
+          totals: { costUsd: 0, costCoverage: { costed: 4, total: 4 } },
+        },
+        { maximumCostUsd: 0.5 }
+      ).verdicts.find((v) => v.gate === "maximumCostUsd")?.status
+    ).toBe("passed");
+  });
+
+  it("is listed as a single-run gate, not a comparative one", () => {
+    expect(COMPARATIVE_GATE_FIELDS).not.toContain("maximumCostUsd");
+    expect(COMPARATIVE_GATE_FIELDS).toContain("maximumCostIncreasePercent");
   });
 });

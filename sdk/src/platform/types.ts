@@ -1893,6 +1893,23 @@ export interface PlatformCaseScoreDelta {
   value: PlatformNumericDiff;
 }
 
+/**
+ * Cost coverage for one side of a comparison.
+ *
+ * Travels with the cost rather than beside it: a 40% drop across full
+ * coverage is a regression signal, and the same 40% with half the compare
+ * side unpriced is an artifact of what we managed to price.
+ */
+export interface PlatformCostCoverageSide {
+  costed: number;
+  total: number;
+}
+
+export interface PlatformCostCoverage {
+  base: PlatformCostCoverageSide;
+  compare: PlatformCostCoverageSide;
+}
+
 export interface PlatformRunCompareCaseSide {
   outcome: "passed" | "failed" | "absent";
   /** Iteration ids are public; `traceBlobIds` are NOT and never appear here. */
@@ -1912,6 +1929,12 @@ export interface PlatformRunCompareCase {
   scoreDeltas: PlatformCaseScoreDelta[];
   base: PlatformRunCompareCaseSide;
   compare: PlatformRunCompareCaseSide;
+  /** Per-case cost, with the coverage that produced it. Optional for the
+   * same reason as the run-level block above. */
+  metrics?: {
+    estimatedCostUsd: PlatformNumericDiff;
+    costCoverage: PlatformCostCoverage;
+  };
 }
 
 export interface PlatformRunCompareSide {
@@ -1987,6 +2010,16 @@ export interface PlatformRunCompare {
     wallDurationMs: PlatformNumericDiff;
     totalTokens: PlatformNumericDiff;
     estimatedCostUsd: PlatformNumericDiff;
+    /**
+     * How many iterations on each side actually contributed a cost.
+     *
+     * OPTIONAL because a deployment predating cost coverage answers without
+     * it, and absence must not read as "fully covered" — a gate that assumed
+     * so would judge a cost regression on a partial sum from an older
+     * platform. `undefined` means the deployment has no opinion; a present
+     * block with `costed < total` means it does and the answer is partial.
+     */
+    costCoverage?: PlatformCostCoverage;
   };
   scoreContract: PlatformScoreContractDiff;
   /**
@@ -2670,6 +2703,31 @@ export interface PlatformEvalCasesGenerated {
   skipped?: Array<{ title: string; error: string }>;
 }
 
+/** What produced a stored cost, or why there is none. */
+export interface PlatformEvalIterationCostBasis {
+  status: "not_reported" | "provider_reported" | "estimated";
+  source?: "gateway_pricing" | "sdk_runner";
+  modelId?: string;
+  inputUsdPerToken?: number;
+  outputUsdPerToken?: number;
+  cachedInputUsdPerToken?: number;
+  pricingRefreshedAt?: number;
+  reason?: "no_pricing" | "no_tokens" | "harness_mixed_models";
+}
+
+export interface PlatformEvalIterationUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+  cachedInputTokens?: number;
+  reasoningTokens?: number;
+  /** Absent means NO COST WAS OBSERVED. Never treat it as zero. */
+  estimatedCostUsd?: number;
+  cacheHit?: boolean;
+  costBasis?: PlatformEvalIterationCostBasis;
+  [key: string]: unknown;
+}
+
 export interface PlatformEvalIteration {
   id: string;
   /**
@@ -2714,8 +2772,23 @@ export interface PlatformEvalIteration {
   /** Wall-clock duration; null until terminal. */
   durationMs: number | null;
   tokensUsed: number | null;
-  /** Structured token usage (input/output/cached/reasoning) when available. */
-  usage: Record<string, unknown> | null;
+  /**
+   * Structured token usage when available, plus the cost the platform priced
+   * from it and the basis it used.
+   *
+   * `estimatedCostUsd` ABSENT means no cost was observed — never that the
+   * trial was free. `costBasis.reason` says which: `no_pricing` (not an
+   * MCPJam-billed model), `harness_mixed_models`, or `no_tokens`.
+   *
+   * `costBasis.source` distinguishes a figure MCPJam computed from its own
+   * token counts (`gateway_pricing`) from one a customer's runner reported
+   * (`sdk_runner`), which MCPJam neither computed nor verified. Gate totals
+   * EXCLUDE the latter — see `gateInputFromPlatformRun`.
+   *
+   * Narrowed from `Record<string, unknown>` so a gate reading cost does not
+   * have to re-guess the shape. Unknown keys still round-trip.
+   */
+  usage: PlatformEvalIterationUsage | null;
   actualToolCalls: Array<Record<string, unknown>>;
   expectedToolCalls: Array<Record<string, unknown>>;
   error: string | null;
