@@ -232,7 +232,7 @@ export function buildSdkEnvSnippet(
       lines.push(
         connection.placeholder
           ? `export ${connection.envVarName}=<replace-with-server-url>`
-          : `export ${connection.envVarName}=${collapseToSingleLine(
+          : `export ${connection.envVarName}=${shellSingleQuote(
               connection.url
             )}`
       );
@@ -836,6 +836,19 @@ const LINE_TERMINATORS = /[\r\n\u2028\u2029]/;
  */
 function toCommentLines(value: unknown): string[] {
   return String(value).split(LINE_TERMINATORS);
+}
+
+/**
+ * Quote a value for a POSIX shell so the shell treats it as literal text.
+ *
+ * Collapsing line terminators is not enough on its own: this snippet is meant
+ * to be COPIED INTO A TERMINAL, so an unquoted `$(...)`, backtick, `;` or `&`
+ * in a saved server URL runs as a command the moment it is pasted. Single
+ * quotes suppress every expansion, and the `'\''` dance is the standard way
+ * to carry a literal single quote through them.
+ */
+function shellSingleQuote(value: string): string {
+  return `'${collapseToSingleLine(value).replace(/'/g, "'\\''")}'`;
 }
 
 /**

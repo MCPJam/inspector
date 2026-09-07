@@ -240,7 +240,13 @@ describe("exported SDK test files compile against the real SDK", () => {
     // fine and still run. Every line mentioning the payload must be a comment.
     expect(typecheck({ "injection.test.ts": INJECTION })).toEqual([]);
 
-    const offending = INJECTION.split("\n").filter(
+    // Split on the SAME terminator set the generator splits on. Splitting on
+    // "\n" alone would miss this fixture's own vector: a U+2028 inside a tool
+    // name is a line terminator to TypeScript but not to String.split("\n"),
+    // so a regression that stopped splitting on it would leave
+    // `// ...evil\u2028throw ...` looking like one comment line here AND
+    // compiling cleanly — both checks green with the injection live.
+    const offending = INJECTION.split(/[\r\n\u2028\u2029]/).filter(
       (line) => line.includes(INJECTION_MARKER) && !line.trim().startsWith("//")
     );
     expect(offending).toEqual([]);
