@@ -350,6 +350,12 @@ describe("SidebarContextSwitcher", () => {
     expect(
       screen.queryByTestId("project-active-check-p2")
     ).not.toBeInTheDocument();
+    // The check is decorative, so this is what a screen reader actually reads.
+    const rows = screen.getAllByRole("menuitem");
+    const activeRow = rows.find((row) => row.textContent?.includes("Inspector"));
+    const otherRow = rows.find((row) => row.textContent?.includes("Sandbox"));
+    expect(activeRow).toHaveAttribute("aria-current", "true");
+    expect(otherRow).not.toHaveAttribute("aria-current");
   });
 
   it("the org header drills into the organization list, and the back header returns", () => {
@@ -397,6 +403,13 @@ describe("SidebarContextSwitcher", () => {
     expect(
       screen.queryByTestId("org-active-check-org_b")
     ).not.toBeInTheDocument();
+    expect(screen.getByTestId("org-row-org_a")).toHaveAttribute(
+      "aria-current",
+      "true"
+    );
+    expect(screen.getByTestId("org-row-org_b")).not.toHaveAttribute(
+      "aria-current"
+    );
   });
 
   it("reopening the menu returns to the projects view", () => {

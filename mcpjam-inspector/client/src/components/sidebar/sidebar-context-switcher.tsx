@@ -464,6 +464,9 @@ export function SidebarContextSwitcher({
                 role="menuitem"
                 tabIndex={isSeatPending ? -1 : 0}
                 aria-disabled={isSeatPending || undefined}
+                // The check is decorative, so without this a screen reader
+                // reads every row identically and the active one is invisible.
+                aria-current={isActive ? "true" : undefined}
                 data-testid={`org-row-${org._id}`}
                 onClick={() => {
                   if (isSeatPending) return;
@@ -610,6 +613,9 @@ function ProjectRow({
     <div
       role="menuitem"
       tabIndex={0}
+      // The check beside the name is decorative; this is what actually tells a
+      // screen reader which row is the one you are in.
+      aria-current={isActive ? "true" : undefined}
       onClick={onClick}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
