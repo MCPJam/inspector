@@ -104,6 +104,17 @@ export function ElectronNativeBody({
   const pendingRef = useRef<number | null>(null);
   const bootIdRef = useRef<string | null>(null);
   bootIdRef.current = session?.bootId ?? null;
+  /**
+   * The browser this pane last asked to have ON SCREEN.
+   *
+   * Tracked separately from `bootIdRef` because a view that is parented into
+   * the window can only be taken out BY NAME, and by the time the pane knows
+   * it should come out — a project switch, a reap, a browser that was stopped
+   * — `session` is already null and the name is gone. Without this the last
+   * view of the previous project stays painted over whatever the rail shows
+   * next, and nothing short of an unmount removes it.
+   */
+  const shownRef = useRef<string | null>(null);
   const holderRef = useRef(holder);
   holderRef.current = holder;
   const wantVisibleRef = useRef(wantVisible);
@@ -111,8 +122,19 @@ export function ElectronNativeBody({
 
   const push = useCallback(() => {
     const api = window.electronAPI?.agentBrowser;
+    if (!api) return;
     const bootId = bootIdRef.current;
-    if (!api || !bootId) return;
+    // A browser we are no longer looking at comes out FIRST, and by its own
+    // name — this is the only moment its id is still known.
+    const previous = shownRef.current;
+    if (previous && previous !== bootId) {
+      shownRef.current = null;
+      setPlaced({ shown: false });
+      void api
+        .setViewport({ bootId: previous, visible: false })
+        .catch(() => {});
+    }
+    if (!bootId) return;
     const element = slotRef.current;
     const visible = wantVisibleRef.current && !!element;
     // The ELEMENT's viewport rectangle, which is the window's content
@@ -138,6 +160,10 @@ export function ElectronNativeBody({
           : {}),
       })
       .then((result) => {
+        // What is PARENTED, not what was asked for: a refused ask leaves
+        // nothing in the window, and remembering it would send a pointless
+        // hide for a view that is not there.
+        shownRef.current = result.shown ? bootId : null;
         setPlaced(
           result.reason
             ? { shown: result.shown, reason: result.reason }
@@ -145,6 +171,7 @@ export function ElectronNativeBody({
         );
       })
       .catch(() => {
+        shownRef.current = null;
         // A channel that is not there, or a main process mid-teardown. The
         // pane says nothing rather than showing an error over a browser that
         // may be perfectly fine — `shown: false` is already the honest state.
@@ -205,10 +232,12 @@ export function ElectronNativeBody({
    * during teardown still hides the RIGHT browser.
    */
   useEffect(() => {
-    const bootId = bootIdRef.current;
     return () => {
       const api = window.electronAPI?.agentBrowser;
-      const last = bootIdRef.current ?? bootId;
+      // Whatever is actually in the window — which is not necessarily the
+      // session this render knows about, and is the only thing worth hiding.
+      const last = shownRef.current ?? bootIdRef.current;
+      shownRef.current = null;
       if (!api || !last) return;
       void api.setViewport({ bootId: last, visible: false }).catch(() => {});
     };
@@ -268,8 +297,14 @@ export function ElectronNativeBody({
           setStatsOpen(next);
         }}
       />
-      <div className="relative min-h-0 flex-1 px-3 pb-3">
-        {statsOpen ? <StatsOverlay engine={engine} /> : null}
+      <div className="relative flex min-h-0 flex-1 flex-col px-3 pb-3">
+        {/*
+          IN FLOW, not over the picture. There is no picture: the view paints
+          over the slot's rectangle, so an overlay inside it would be on screen
+          in the DOM and invisible on the glass. Taking its own strip costs the
+          view some height and is the only way the numbers are readable at all.
+        */}
+        {statsOpen ? <StatsOverlay engine={engine} inline /> : null}
         <div
           ref={slotRef}
           data-testid="rail-browser-native-slot"
@@ -277,10 +312,11 @@ export function ElectronNativeBody({
           data-holding={holding ? "true" : undefined}
           aria-label="The agent's browser"
           // Nothing is drawn in here — the view paints over it — so the slot is
-          // an empty box whose only job is to have a rectangle. `h-full w-full`
-          // rather than an aspect ratio: the view is a real browser and resizes
-          // its own page, so there is no fixed picture to letterbox.
-          className="h-full w-full"
+          // an empty box whose only job is to have a rectangle. It FLEXES
+          // rather than filling: the stats strip above takes its own height,
+          // and a slot that still claimed the whole box would put the view
+          // back over it.
+          className="min-h-0 w-full flex-1"
         />
         {/*
           OVER the slot rather than beside it. The slot must keep its rectangle
@@ -289,7 +325,9 @@ export function ElectronNativeBody({
           would report a shrinking box on every refusal.
         */}
         {message ? (
-          <div className="absolute inset-0 px-3 pb-3">{message}</div>
+          <div className="pointer-events-none absolute inset-x-3 bottom-3 top-0">
+            <div className="pointer-events-auto h-full">{message}</div>
+          </div>
         ) : null}
       </div>
       {error ? (

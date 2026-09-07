@@ -267,6 +267,36 @@ async function requireConsent(c: {
 }
 
 /**
+ * "Somebody is looking at this browser."
+ *
+ * The idle reap closes a browser nobody has used for ten minutes, and until
+ * now WATCHING was reported by the frame socket's own heartbeat: a pane with a
+ * stream open was, by definition, a pane somebody had open. The NATIVE Electron
+ * surface has no such socket — the page is a real view in the app's window,
+ * with no frames to carry a heartbeat — so without this a person who is
+ * watching the agent work, and not holding the lease, has their browser closed
+ * underneath them while they are looking at it.
+ *
+ * Deliberately not a lease action: watching is not holding, and a route that
+ * conflated the two would let a viewer block the agent by doing nothing.
+ */
+computers.post("/local-browser/watch", async (c) => {
+  if (!(await requireConsent(c))) {
+    return c.json({ error: "Local computer consent is required" }, 403);
+  }
+  const body = (await c.req.json().catch(() => null)) as {
+    bootId?: unknown;
+  } | null;
+  const bootId = typeof body?.bootId === "string" ? body.bootId : "";
+  const session = findLocalBrowserSession(bootId);
+  // A browser that has already gone is not an error worth showing anybody: the
+  // pane's next measure will discover it for itself.
+  if (!session) return c.json({ watching: false }, 404);
+  touchLocalBrowserSession(session.handle);
+  return c.json({ watching: true });
+});
+
+/**
  * Start (or find) this project's browser and report how to reach it.
  *
  * The rail calls this when its tab opens. It is separate from the chat turn's

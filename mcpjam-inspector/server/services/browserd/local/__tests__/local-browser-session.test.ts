@@ -653,10 +653,12 @@ describe("local browser session — the pane's own view of it", () => {
     // it would prove nothing about the route.
     expect(surface.inputAllowed()).toBe(false);
     expect(surface.isShown()).toBe(false);
-    await client.leaseAction({ action: "acquire", holder: "rail-1" });
+    const act = (action: "acquire" | "resume", holder: string) =>
+      client.leaseAction!({ action, holder });
+    await act("acquire", "rail-1");
     expect(surface.inputAllowed()).toBe(true);
-    await client.leaseAction({ action: "resume", holder: "rail-1" });
-    await client.leaseAction({ action: "acquire", holder: "someone-else" });
+    await act("resume", "rail-1");
+    await act("acquire", "someone-else");
     expect(surface.inputAllowed()).toBe(false);
   });
 

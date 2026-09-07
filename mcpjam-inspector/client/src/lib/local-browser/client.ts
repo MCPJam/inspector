@@ -165,6 +165,22 @@ export function actOnLocalBrowserLease(
   return post("lease", args, consentToken, options);
 }
 
+/**
+ * Tell the server somebody is still looking at this browser.
+ *
+ * The frame socket's heartbeat did this for every other engine; the native
+ * Electron surface has no socket, so a watcher who is not holding the lease
+ * would otherwise be reaped mid-glance. Failure is ignored by every caller —
+ * a missed heartbeat costs one interval, and an error here would be a red
+ * message over a browser that is working perfectly.
+ */
+export function noteLocalBrowserWatch(
+  args: { bootId: string },
+  consentToken: string | null,
+): Promise<{ watching: boolean }> {
+  return post("watch", args, consentToken);
+}
+
 export function sendLocalBrowserInput(
   args: { bootId: string; holder: string; events: BrowserInputEvent[] },
   consentToken: string | null,

@@ -64,6 +64,23 @@ export interface BootBrowserdOptions {
   contextMode?: "persistent" | "ephemeral";
   /** The X display browserd's Chromium draws on. Defaults to `:0`. */
   display?: string;
+  /**
+   * Make the window cover the display, with no chrome.
+   *
+   * The static half of the video gate: the encoder grabs the WHOLE display, so
+   * "the display IS the page" only holds if the window fills it. Without it the
+   * grab is a desktop with a browser somewhere on it, and every click the pane
+   * mapped would be off by the window's origin.
+   */
+  kiosk?: boolean;
+  /**
+   * The device pixel ratio the box renders at.
+   *
+   * Sent only when a deployment is trying a candidate — the shipped default is
+   * 1 — and applied to the X screen and to Chromium together, or the browser
+   * paints past the edge of what is captured.
+   */
+  deviceScaleFactor?: number;
 }
 
 export interface BrowserdHandle {

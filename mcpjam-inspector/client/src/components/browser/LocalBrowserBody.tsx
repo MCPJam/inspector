@@ -17,6 +17,7 @@ import {
   ensureLocalBrowser,
   fetchLocalBrowserStatus,
   mintLocalBrowserFrameNonce,
+  noteLocalBrowserWatch,
   openLocalBrowserFrameStream,
   sendLocalBrowserInput,
   startLocalBrowserInstall,
@@ -508,6 +509,32 @@ export function LocalBrowserBody({
     },
     [session, holder, consentToken],
   );
+
+  /**
+   * Say somebody is watching, when no frame socket is saying it for us.
+   *
+   * The idle reap closes a browser nobody has used for ten minutes, and for
+   * every other engine the frame socket's own heartbeat is the evidence. The
+   * native surface has no socket — the page is a real view in this app's
+   * window — so without this a person watching the agent work, and not holding
+   * the lease, gets their browser closed while they are looking at it.
+   *
+   * Same conditions as the view itself: this pane visible, the document
+   * visible, a grant in force. A pane behind the Logs tab is not watching, and
+   * must not claim to be.
+   */
+  useEffect(() => {
+    if (!native || !session || !consentGranted) return;
+    const bootId = session.bootId;
+    const beat = () => {
+      if (!activeRef.current) return;
+      if (document.visibilityState !== "visible") return;
+      void noteLocalBrowserWatch({ bootId }, consentToken).catch(() => {});
+    };
+    beat();
+    const timer = setInterval(beat, 20_000);
+    return () => clearInterval(timer);
+  }, [native, session, consentGranted, consentToken]);
 
   // Keep the lease alive while somebody is holding it: it expires into
   // `parked` on purpose, and a person mid-login should not have to re-take a

@@ -74,6 +74,8 @@ const browserState = vi.hoisted(() => ({
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
   runtime: "playwright" as "playwright" | "electron",
+  /** Every session a route marked as in use, so "watching" is provable. */
+  touched: [] as string[],
   /** Whether the desktop app builds its context with views the pane can show. */
   surface: "native" as "native" | "frames",
 }));
@@ -87,7 +89,9 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     })),
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
-  touchLocalBrowserSession: () => {},
+  touchLocalBrowserSession: (handle: { bootId: string }) => {
+    browserState.touched.push(handle.bootId);
+  },
   resolveLocalBrowserRuntime: () => browserState.runtime,
   resolveLocalBrowserSurface: (
     _env: NodeJS.ProcessEnv,
@@ -174,6 +178,56 @@ beforeEach(() => {
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
   browserState.surface = "native";
+  browserState.touched = [];
+});
+
+describe("POST /local-browser/watch", () => {
+  const watch = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/watch", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  it("counts a watcher as use, so the idle reap does not close it underneath them", async () => {
+    // The NATIVE Electron surface has no frame socket, and the socket's own
+    // heartbeat was the only thing that said "somebody is looking at this".
+    // Without this route a person watching the agent work — and not holding
+    // the lease — has their browser closed while they are looking at it.
+    const token = await grantConsent();
+    const start = await createApp().request(
+      "/api/mcp/computers/local-browser/ensure",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          [LOCAL_CONSENT_HEADER]: token,
+        },
+        body: JSON.stringify({ projectId: "proj" }),
+      },
+    );
+    const { bootId } = (await start.json()) as { bootId: string };
+    browserState.touched.length = 0;
+
+    const res = await watch({ bootId }, token);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ watching: true });
+    expect(browserState.touched).toEqual([bootId]);
+  });
+
+  it("says so about a browser that has already gone", async () => {
+    const res = await watch({ bootId: "boot-nope" }, await grantConsent());
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({ watching: false });
+  });
+
+  it("requires consent, like everything that touches the browser", async () => {
+    expect((await watch({ bootId: "boot-1" }, null)).status).toBe(403);
+  });
 });
 
 describe("GET /local-browser/status", () => {

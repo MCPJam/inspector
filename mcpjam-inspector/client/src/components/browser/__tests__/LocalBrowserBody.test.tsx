@@ -13,6 +13,8 @@ const api = vi.hoisted(() => ({
   installs: 0,
   inputs: [] as unknown[],
   ensures: [] as string[],
+  /** Every "somebody is looking at this" the pane sent, by boot id. */
+  watches: [] as string[],
   /** Holds the next lease answer open, so a test can move the pane under it. */
   leaseGate: null as Promise<void> | null,
   /** The last socket handed to the pane, so a test can deliver a frame. */
@@ -61,6 +63,10 @@ vi.mock("@/lib/local-browser/client", async () => {
       api.inputs.push(args);
       return { ok: true as const };
     },
+    noteLocalBrowserWatch: async (args: any) => {
+      api.watches.push(args.bootId);
+      return { watching: true as const };
+    },
     openLocalBrowserFrameStream: () => {
       const socket = {
         readyState: 1,
@@ -86,6 +92,7 @@ beforeEach(() => {
   api.installs = 0;
   api.inputs = [];
   api.ensures = [];
+  api.watches = [];
   api.leaseGate = null;
   api.socket = null;
   window.sessionStorage.clear();
@@ -412,11 +419,27 @@ describe("the agent browser pane — the desktop app's own browser", () => {
     // ever draws.
     asDesktopApp();
     renderBody();
-    await userEvent.click(await screen.findByText("Open the browser"));
+    // The slot FIRST: `capability()` resolves a tick after mount, and the pane
+    // swaps component trees when it does — a button found before that is a
+    // detached node by the time a click reaches it.
     expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.ensures).toContain("proj-1"));
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(api.socket).toBeNull();
     expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("still says somebody is watching, with no socket to say it", async () => {
+    // The frame socket's heartbeat was the only evidence the idle reap ever
+    // saw. Without a replacement, a person watching the agent work — and not
+    // holding the lease — has their browser closed while they are looking at
+    // it.
+    asDesktopApp();
+    renderBody();
+    await screen.findByTestId("rail-browser-native-slot");
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await waitFor(() => expect(api.watches).toContain("boot-proj-1"));
   });
 
   it("falls back to frames when the box turned the native surface off", async () => {

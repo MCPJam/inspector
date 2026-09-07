@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import { ElectronNativeBody } from "../ElectronNativeBody";
+import {
+  BROWSER_PANE_STATS_FLAG,
+  paneFrameStats,
+} from "@/lib/browser-pane/frame-stats";
 
 /** Every `setViewport` the pane asked for, in order. */
 let asked: Array<{
@@ -142,6 +146,64 @@ describe("the native Electron browser pane", () => {
       expect(last.visible).toBe(false);
       expect(last.bootId).toBe("boot-1");
     });
+  });
+
+  it("takes the OLD browser out when the pane moves to another one", async () => {
+    // A native view can only be removed BY NAME, and by the time the pane
+    // knows it should go, `session` is already the next project's. Without
+    // remembering what is parented, the previous project's page stays painted
+    // over the rail.
+    const { rerender } = renderBody();
+    await lastAsk();
+    rerender(
+      <ElectronNativeBody
+        session={{ bootId: "boot-2" }}
+        holder="rail-1"
+        control="agent"
+        holding={false}
+        consentGranted
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        asked.some((a) => a.bootId === "boot-1" && a.visible === false),
+      ).toBe(true),
+    );
+    expect(await lastAsk()).toMatchObject({ bootId: "boot-2", visible: true });
+  });
+
+  it("takes the view out when the browser it was watching stops", async () => {
+    const { rerender } = renderBody();
+    await lastAsk();
+    rerender(
+      <ElectronNativeBody
+        session={null}
+        holder="rail-1"
+        control="agent"
+        holding={false}
+        consentGranted
+      />,
+    );
+    await waitFor(async () => {
+      const last = await lastAsk();
+      expect(last).toEqual({ bootId: "boot-1", visible: false });
+    });
+  });
+
+  it("puts the stats in the flow, where the view cannot paint over them", async () => {
+    // A `WebContentsView` is a sibling of the renderer: an overlay inside the
+    // rectangle it was given is in the DOM and invisible on the glass.
+    localStorage.setItem(BROWSER_PANE_STATS_FLAG, "1");
+    paneFrameStats.resetFlagForTests();
+    try {
+      renderBody();
+      await lastAsk();
+      const overlay = await screen.findByTestId("pane-stats-overlay");
+      expect(overlay.className).not.toContain("absolute");
+    } finally {
+      localStorage.clear();
+      paneFrameStats.resetFlagForTests();
+    }
   });
 
   it("never asks with no browser to ask about", async () => {
