@@ -660,6 +660,24 @@ export type CompareRunRecord = {
    * step-card "ticking" during a quick run.
    */
   streamingStepStatus?: Record<string, EvalStepStatusEntry>;
+  /**
+   * Evaluate workspace: minted per launch, never reused on retry. The compare
+   * session id is reused across retries so it cannot identify an attempt.
+   */
+  attemptId?: string;
+  /**
+   * Evaluate workspace: authored case + run settings captured from the save
+   * payload at launch. Overlay matching reads this for a live attempt.
+   */
+  launchSnapshot?: {
+    steps?: TestStep[];
+    predicates?: CasePredicates | Predicate[];
+    matchOptions?: EvalMatchOptions;
+    expectedOutput?: string;
+    runs?: number;
+    namedHostId?: string;
+    modelValue?: string;
+  };
 };
 
 /**

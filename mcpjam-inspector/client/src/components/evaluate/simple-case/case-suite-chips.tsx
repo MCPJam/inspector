@@ -1,10 +1,13 @@
 import { Button } from "@mcpjam/design-system/button";
 import { cn } from "@/lib/utils";
+import { resolveModelOptionLabel } from "../../evals/compare-playground-helpers";
 
 export type CaseSuiteChipsProps = {
   models: string[];
+  modelLabelByValue?: Record<string, string>;
   trials: number;
   hostLabel: string;
+  onOpen?: () => void;
   onOpenSuiteSettings?: () => void;
 };
 
@@ -43,28 +46,27 @@ function Chip({
 
 export function CaseSuiteChips({
   models,
+  modelLabelByValue = {},
   trials,
   hostLabel,
+  onOpen,
   onOpenSuiteSettings,
 }: CaseSuiteChipsProps) {
-  const modelValue =
+  const open = onOpen ?? onOpenSuiteSettings;
+  const firstLabel =
     models.length === 0
       ? "Suite default"
-      : models.length === 1
-        ? models[0]
-        : `${models[0]} +${models.length - 1}`;
+      : resolveModelOptionLabel(models[0]!, modelLabelByValue);
+  const modelValue =
+    models.length <= 1 ? firstLabel : `${firstLabel} +${models.length - 1}`;
   return (
     <div
       className="flex flex-wrap items-center gap-1.5"
       data-testid="case-suite-chips"
     >
-      <Chip label="Model" value={modelValue} onOpen={onOpenSuiteSettings} />
-      <Chip
-        label="Trials"
-        value={String(trials)}
-        onOpen={onOpenSuiteSettings}
-      />
-      <Chip label="Host" value={hostLabel} onOpen={onOpenSuiteSettings} />
+      <Chip label="Model" value={modelValue} onOpen={open} />
+      <Chip label="Trials" value={String(trials)} onOpen={open} />
+      <Chip label="Host" value={hostLabel} onOpen={open} />
     </div>
   );
 }

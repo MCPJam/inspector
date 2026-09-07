@@ -9,8 +9,10 @@ import {
   deriveCaseKind,
   displayCaseKind,
   EXCLUDED_FROM_MORE_CHECKS,
+  inAppStepLabel,
   initialToolsChoice,
   isSimpleCaseShape,
+  isToolCalledWithAssert,
   matchOptionsForKind,
   MORE_CHECK_GROUPS,
   readSimpleCase,
@@ -186,7 +188,7 @@ describe("isSimpleCaseShape", () => {
     ).toBe(false);
   });
 
-  it("rejects an interact step", () => {
+  it("accepts an interact step after the prompt", () => {
     expect(
       isSimpleCaseShape([
         prompt("p1", "go"),
@@ -197,20 +199,24 @@ describe("isSimpleCaseShape", () => {
           action: { kind: "click", target: { testId: "canvas" } },
         },
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
-  it("rejects a widget assert", () => {
+  it("accepts a widget assert after the prompt", () => {
     expect(
       isSimpleCaseShape([
         prompt("p1", "go"),
         {
           id: "w1",
           kind: "assert",
-          assertion: { kind: "textVisible", text: "ok" },
+          assertion: {
+            kind: "textVisible",
+            toolName: "create_view",
+            text: "ok",
+          },
         },
       ]),
-    ).toBe(false);
+    ).toBe(true);
   });
 
   it("rejects a non-toolCalledWith inline predicate", () => {
@@ -247,6 +253,7 @@ describe("readSimpleCase / writeSimpleCase", () => {
     const view = readSimpleCase(steps);
     expect(view).toEqual({
       prompt: "Find the latest incidents",
+      inApp: [],
       noTool: false,
       tools: [
         { id: "a1", toolName: "list_incidents", arguments: { limit: 5 } },
@@ -303,6 +310,64 @@ describe("readSimpleCase / writeSimpleCase", () => {
     });
     expect(next[1]).toEqual(toolCalledWith("a1", "search", { q: "new" }));
   });
+
+  it("preserves executor order on a read/write round-trip", () => {
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "create_view",
+      action: { kind: "click", target: { testId: "canvas" } },
+    };
+    const widget: TestStep = {
+      id: "w1",
+      kind: "assert",
+      assertion: {
+        kind: "textVisible",
+        toolName: "create_view",
+        text: "ok",
+      },
+    };
+    const prev: TestStep[] = [
+      prompt("p1", "Draw a box"),
+      interact,
+      toolCalledWith("a1", "create_view"),
+      widget,
+    ];
+    const view = readSimpleCase(prev);
+    expect(view.inApp).toEqual([interact, widget]);
+    expect(writeSimpleCase(prev, view)).toEqual(prev);
+    expect(
+      writeSimpleCase(prev, {
+        prompt: view.prompt,
+        tools: [...view.tools, { toolName: "search", arguments: {} }],
+        noTool: false,
+      }).map((step) => step.id),
+    ).toEqual(["p1", "i1", "a1", expect.any(String), "w1"]);
+  });
+
+  it("does not let interact steps flip the tools-assert set", () => {
+    const interact: TestStep = {
+      id: "i1",
+      kind: "interact",
+      toolName: "create_view",
+      action: { kind: "click", target: { testId: "canvas" } },
+    };
+    const withTool = [prompt("p1", "go"), toolCalledWith("a1", "search")];
+    const withToolAndInteract = [
+      prompt("p1", "go"),
+      interact,
+      toolCalledWith("a1", "search"),
+    ];
+    expect(withTool.some(isToolCalledWithAssert)).toBe(
+      withToolAndInteract.some(isToolCalledWithAssert),
+    );
+    expect([prompt("p1", "go")].some(isToolCalledWithAssert)).toBe(
+      [prompt("p1", "go"), interact].some(isToolCalledWithAssert),
+    );
+    expect(
+      writeSimpleCase(withToolAndInteract, readSimpleCase(withToolAndInteract)),
+    ).toEqual(withToolAndInteract);
+  });
 });
 
 describe("matchOptionsForKind carries argument matching over", () => {
@@ -349,5 +414,66 @@ describe("More checks groups partition the predicate catalog", () => {
     for (const kind of EXCLUDED_FROM_MORE_CHECKS) {
       expect(kind in PREDICATE_KIND_LABELS).toBe(true);
     }
+  });
+});
+
+describe("inAppStepLabel", () => {
+  it("names a role locator by its accessible name, never by the role object", () => {
+    expect(
+      inAppStepLabel({
+        id: "i1",
+        kind: "interact",
+        toolName: "cart",
+        action: {
+          kind: "click",
+          target: { role: { role: "button", name: "Add to cart" } },
+        },
+      }),
+    ).toBe("Click Add to cart");
+    expect(
+      inAppStepLabel({
+        id: "i2",
+        kind: "interact",
+        toolName: "cart",
+        action: { kind: "click", target: { role: { role: "button" } } },
+      }),
+    ).toBe("Click button");
+  });
+
+  it("follows the recorder's precedence: testId, role name, text, css", () => {
+    expect(
+      inAppStepLabel({
+        id: "i3",
+        kind: "interact",
+        toolName: "cart",
+        action: {
+          kind: "type",
+          target: { testId: "qty", role: { role: "textbox", name: "Qty" } },
+          text: "2",
+        },
+      }),
+    ).toBe("Type qty");
+    expect(
+      inAppStepLabel({
+        id: "i4",
+        kind: "interact",
+        toolName: "cart",
+        action: { kind: "click", target: { css: ".buy" } },
+      }),
+    ).toBe("Click .buy");
+  });
+
+  it("labels widget asserts with a role-located target", () => {
+    expect(
+      inAppStepLabel({
+        id: "w1",
+        kind: "assert",
+        assertion: {
+          kind: "elementVisible",
+          toolName: "cart",
+          target: { role: { role: "heading", name: "Your cart" } },
+        },
+      }),
+    ).toContain("Your cart");
   });
 });
