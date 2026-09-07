@@ -116,12 +116,6 @@ interface StoreRecordOptions {
   browserdToken: string;
   browserdPort: number;
   publicOrigin: string;
-  /**
-   * REQUIRED on a computer target, OMITTED on a sandbox one. The password
-   * exists nowhere else durable, so a computer's row is the only way another
-   * replica recovers it; a per-run box has no panel and starts no stream.
-   */
-  stream?: { url: string; password: string };
   bundleHash: string;
   contextMode: BrowserContextMode;
   replacesSessionId?: string;
@@ -138,11 +132,23 @@ export interface SessionStore {
   lookup(
     args: { sandboxRowId: string } & StoreLookupOptions,
   ): Promise<SandboxBrowserSessionLookup>;
+  // The stream rides the TARGET, not the options: it is REQUIRED on a computer
+  // (the password exists nowhere else durable, so this row is the only way
+  // another replica recovers it) and REFUSED on a per-run box (no panel, no
+  // stream, nothing minted a password). Optional on both would let either
+  // mistake compile and be caught only by the backend — after a daemon had
+  // been booted on a paid box.
   record(
-    args: { computerId: string } & StoreRecordOptions,
+    args: {
+      computerId: string;
+      stream: { url: string; password: string };
+    } & StoreRecordOptions,
   ): Promise<BrowserSessionRecordResult>;
   record(
-    args: { sandboxRowId: string } & StoreRecordOptions,
+    args: {
+      sandboxRowId: string;
+      stream?: undefined;
+    } & StoreRecordOptions,
   ): Promise<BrowserSessionRecordResult>;
   /**
    * Take the exclusive right to relaunch this computer's browser.

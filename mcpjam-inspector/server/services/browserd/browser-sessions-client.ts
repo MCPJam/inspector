@@ -510,23 +510,46 @@ export type BrowserSessionRecordResult =
  * backend refuses the write when the current row disagrees — see
  * `internalRecordSession`'s compare-and-swap.
  */
+interface BrowserSessionRecordArgsCommon {
+  bootId: string;
+  browserdToken: string;
+  browserdPort: number;
+  publicOrigin: string;
+  bundleHash: string;
+  contextMode: BrowserContextMode;
+  replacesSessionId?: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * The two ways to write a row, as a DISCRIMINATED UNION rather than one shape
+ * with an optional `stream`.
+ *
+ * The backend refuses either mistake — a computer record with no stream, a
+ * sandbox record that has one — but an optional field lets both compile, so
+ * the mistake would be found after a daemon had already been booted on a paid
+ * box. Same reason the RECORD types above are a union: a state nothing can
+ * represent needs no runtime check.
+ */
+type ComputerBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
+  computerId: string;
+  sandboxRowId?: undefined;
+  /**
+   * REQUIRED: the stream holds its password only in memory, and this row is
+   * the only durable copy any replica can recover it from.
+   */
+  stream: { url: string; password: string };
+};
+
+type SandboxBrowserSessionRecordArgs = BrowserSessionRecordArgsCommon & {
+  sandboxRowId: string;
+  computerId?: undefined;
+  /** REFUSED: nobody is watching a per-run box, so nothing minted a password. */
+  stream?: undefined;
+};
+
 export async function recordBrowserSession(
-  args: BrowserSessionTargetArgs & {
-    bootId: string;
-    browserdToken: string;
-    browserdPort: number;
-    publicOrigin: string;
-    /**
-     * REQUIRED on a computer target, and OMITTED on a sandbox one — the
-     * backend refuses either mistake. A per-run box has no panel, so no
-     * stream is started and there is no password to cache.
-     */
-    stream?: { url: string; password: string };
-    bundleHash: string;
-    contextMode: BrowserContextMode;
-    replacesSessionId?: string;
-    signal?: AbortSignal;
-  },
+  args: ComputerBrowserSessionRecordArgs | SandboxBrowserSessionRecordArgs,
 ): Promise<BrowserSessionRecordResult> {
   const raw = await postServiceAuthorized(
     RECORD_PATH,
