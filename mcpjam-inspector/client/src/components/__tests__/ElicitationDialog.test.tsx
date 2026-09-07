@@ -411,9 +411,12 @@ describe("ElicitationDialog", () => {
       expect(screen.queryByText("name is required")).toBeNull();
     });
 
-    it("ignores a dismissal while a response is in flight", async () => {
-      // The footer buttons are already disabled by `loading`. A dismissal that
-      // still fired would put a second response on the same request.
+    it("still cancels while a response is in flight", async () => {
+      // The footer buttons are disabled by `loading`, so this is the only way
+      // out at that point. It has to keep working: the respond call carries no
+      // timeout, so one that hangs leaves `loading` true for good, and a
+      // dismissal gated on it would strand the dialog exactly as this issue
+      // describes. A duplicate cancel is the cheaper failure.
       render(
         <ElicitationDialog
           elicitationRequest={request()}
@@ -423,10 +426,8 @@ describe("ElicitationDialog", () => {
       );
 
       fireEvent.click(screen.getByRole("button", { name: /close/i }));
-      fireEvent.keyDown(document, { key: "Escape" });
 
-      await Promise.resolve();
-      expect(onResponse).not.toHaveBeenCalled();
+      await waitFor(() => expect(onResponse).toHaveBeenCalledWith("cancel"));
     });
   });
 
