@@ -9,6 +9,7 @@ import {
 import {
   PaneControlBar,
   PaneTabStrip,
+  labelFor,
 } from "@/components/browser/PaneControlBar";
 import { BrowserPanel } from "@/components/computer/BrowserPanel";
 import {
@@ -60,6 +61,14 @@ import {
 const CLOSE_UNAUTHORIZED = 4401;
 const CLOSE_NOT_FOUND = 4404;
 const CLOSE_LEASE_HELD = 4409;
+/**
+ * This box cannot encode video. Reconnect WITHOUT asking for it.
+ *
+ * Its own code because the answer differs from every other close: retrying the
+ * request as-is asks a daemon that has already said it has no encoder for
+ * H.264 again, forever, while the JPEG wire underneath works perfectly.
+ */
+const CLOSE_VIDEO_UNAVAILABLE = 4415;
 
 /** How often the pane says somebody is looking. */
 const WATCH_PING_MS = 20_000;
@@ -165,6 +174,8 @@ export function HostedBrowserBody({
    * few seconds later each time.
    */
   const videoRefusedRef = useRef(false);
+  /** The latest round trip, for the tier controller's latency rule. */
+  const rttRef = useRef<number | undefined>(undefined);
   /**
    * Which tab the box is showing.
    *
@@ -392,8 +403,13 @@ export function HostedBrowserBody({
       const previous = activeTabRef.current;
       activeTabRef.current = next.active;
       if (!previous || !next.active || previous === next.active) return;
-      const url = next.list?.find((tab) => tab.id === next.active)?.url;
-      setTabNotice(`The agent switched to ${url || next.active}`);
+      const tab = next.list?.find((entry) => entry.id === next.active);
+      // The HOST, like the strip beside it — a path carries reset tokens,
+      // share links and account ids, and this notice is the one thing on
+      // screen large enough for somebody at the next desk to read.
+      setTabNotice(
+        `The agent switched to ${tab ? labelFor(tab) : next.active}`,
+      );
     };
     let ping: ReturnType<typeof setInterval> | null = null;
     let retry: ReturnType<typeof setTimeout> | null = null;
@@ -431,6 +447,24 @@ export function HostedBrowserBody({
        * something to say, and a decoder constructed for a stream that turns
        * out to be JPEG is a `VideoDecoder` held open for nothing.
        */
+      /**
+       * The access unit currently being decoded.
+       *
+       * A REF, not the closure's `unit`: the decoder is built on the FIRST
+       * unit and its `onFrame` lives as long as the socket, so closing over
+       * that one made every later picture report the first frame's sequence,
+       * timestamp and geometry — a pane whose clicks map through a rectangle
+       * from ten minutes ago.
+       */
+      let latest: {
+        deviceWidth: number;
+        deviceHeight: number;
+        scale: number;
+        relayTs: number;
+        seq: number;
+      } | null = null;
+      /** The newest sequence PAINTED, so a slow decode cannot go backwards. */
+      let paintedSeq = -1;
       const paintVideo = (unit: {
         key: boolean;
         au: Uint8Array;
@@ -444,34 +478,62 @@ export function HostedBrowserBody({
         if (closed) return;
         paneFrameStats.noteTransport("h264");
         paneFrameStats.noteFrameArrived({ bytes: unit.bytes });
+        latest = {
+          deviceWidth: unit.deviceWidth,
+          deviceHeight: unit.deviceHeight,
+          scale: unit.scale,
+          relayTs: unit.relayTs,
+          seq: unit.seq,
+        };
+        // A picture arriving is the same proof of life a JPEG is: the token
+        // works, the lease is ours, and whatever the last close said is over.
+        tokenRetriesRef.current = 0;
+        setNotice(null);
+        if (leaseIsStale.current) leaseIsStale.current = false;
         if (!video) {
           video = createPaneVideoDecoder({
             onFrame: (decoded) => {
-              if (closed) return;
-              frameSeqRef.current = unit.seq;
-              // A `VideoFrame` is closed by the decoder wrapper the moment
-              // this returns, so the pane converts it to a bitmap it owns —
-              // the same shape every other wire produces, which is what keeps
-              // the surface free of codec knowledge.
+              // The unit this picture belongs to, read at OUTPUT time.
+              const at = latest;
+              if (closed || !at) {
+                decoded.close();
+                return;
+              }
+              frameSeqRef.current = at.seq;
+              // The pane converts to a bitmap it owns — the same shape every
+              // other wire produces, which is what keeps the surface free of
+              // codec knowledge. The `VideoFrame` is closed only once that
+              // conversion has finished reading it.
               void createImageBitmap(decoded)
                 .then((bitmap) => {
-                  if (closed) {
+                  // Decodes can finish out of order. An older picture painted
+                  // over a newer one is a visibly stale page whose clicks map
+                  // through the wrong rectangle.
+                  if (closed || at.seq <= paintedSeq) {
                     bitmap.close();
                     return;
                   }
+                  paintedSeq = at.seq;
+                  // The pane releases each bitmap as the next replaces it; a
+                  // frame that never reached the surface has no successor to
+                  // do it.
+                  lastBitmap?.close();
                   lastBitmap = bitmap;
                   setFrame({
                     bitmap,
-                    deviceWidth: unit.deviceWidth,
-                    deviceHeight: unit.deviceHeight,
-                    scale: unit.scale,
-                    ts: unit.relayTs,
-                    relayTs: unit.relayTs,
-                    seq: unit.seq,
+                    deviceWidth: at.deviceWidth,
+                    deviceHeight: at.deviceHeight,
+                    scale: at.scale,
+                    ts: at.relayTs,
+                    relayTs: at.relayTs,
+                    seq: at.seq,
                   });
                 })
                 .catch(() => {
                   // One picture. The next one replaces it.
+                })
+                .finally(() => {
+                  decoded.close();
                 });
             },
             onGiveUp: () => {
@@ -487,46 +549,54 @@ export function HostedBrowserBody({
         video.push({ key: unit.key, au: unit.au, seq: unit.seq });
       };
 
-      wire = createFrameWireReader({
-        onVideo: paintVideo,
-        onFrame: (decoded) => {
-          if (closed) return;
-          paneFrameStats.noteTransport("jpeg-binary");
-          paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
-          frameSeqRef.current = decoded.seq;
-          tokenRetriesRef.current = 0;
-          setNotice(null);
-          if (leaseIsStale.current) {
-            leaseIsStale.current = false;
-            void refresh();
-          }
-          lastBitmap = decoded.bitmap;
-          setFrame({
-            bitmap: decoded.bitmap,
-            deviceWidth: decoded.deviceWidth,
-            deviceHeight: decoded.deviceHeight,
-            scale: decoded.scale,
-            ts: decoded.relayTs,
-            relayTs: decoded.relayTs,
-            seq: decoded.seq,
-          });
+      wire = createFrameWireReader(
+        {
+          onVideo: paintVideo,
+          onFrame: (decoded) => {
+            if (closed) return;
+            paneFrameStats.noteTransport("jpeg-binary");
+            paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
+            frameSeqRef.current = decoded.seq;
+            tokenRetriesRef.current = 0;
+            setNotice(null);
+            if (leaseIsStale.current) {
+              leaseIsStale.current = false;
+              void refresh();
+            }
+            // React can coalesce two `setFrame` calls into one render, and the
+            // surface only ever releases a frame it PAINTED — so a picture that
+            // was superseded before the commit has nobody to free it.
+            lastBitmap?.close();
+            lastBitmap = decoded.bitmap;
+            setFrame({
+              bitmap: decoded.bitmap,
+              decodeMs: decoded.decodeMs,
+              deviceWidth: decoded.deviceWidth,
+              deviceHeight: decoded.deviceHeight,
+              scale: decoded.scale,
+              ts: decoded.relayTs,
+              relayTs: decoded.relayTs,
+              seq: decoded.seq,
+            });
+          },
+          onHeartbeat: (daemon) => {
+            // MERGED, not assigned: the relay's own counters arrive on the
+            // `stats` message and the daemon's ride the frame wire, at different
+            // cadences. Writing the whole object from either would blank the
+            // other's numbers between ticks.
+            if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+            noteTabs(
+              (daemon as { tabs?: { active?: string } } | undefined)?.tabs,
+            );
+          },
+          onFatal: () => {
+            // A reader that has lost its place in a byte stream can never find
+            // it again, so the connection goes rather than the record.
+            opened.close();
+          },
         },
-        onHeartbeat: (daemon) => {
-          // MERGED, not assigned: the relay's own counters arrive on the
-          // `stats` message and the daemon's ride the frame wire, at different
-          // cadences. Writing the whole object from either would blank the
-          // other's numbers between ticks.
-          if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
-          noteTabs(
-            (daemon as { tabs?: { active?: string } } | undefined)?.tabs,
-          );
-        },
-        onFatal: () => {
-          // A reader that has lost its place in a byte stream can never find
-          // it again, so the connection goes rather than the record.
-          opened.close();
-        },
-      }, { video: wantsVideo });
+        { video: wantsVideo },
+      );
       openedSocket = opened.socket;
       socketRef.current = opened.socket;
       // Until this socket's own `hello` says otherwise. A reconnect must not
@@ -565,15 +635,42 @@ export function HostedBrowserBody({
             return;
           }
           if (parsed.type === "input_ack") {
-            const ack = parsed as unknown as { seq?: number };
-            if (typeof ack.seq === "number") paneFrameStats.noteInputAck(ack.seq);
+            const ack = parsed as unknown as {
+              seq?: number;
+              refused?: string;
+            };
+            if (typeof ack.seq === "number")
+              paneFrameStats.noteInputAck(ack.seq);
+            // A REFUSAL IS THE SERVER SAYING THIS PANE DOES NOT HAVE CONTROL.
+            // Recording only the latency left the pane believing it did —
+            // still forwarding keys and clicks into a page that discards every
+            // one, with nothing on screen to say why.
+            if (
+              ack.refused === "lease_held" ||
+              ack.refused === "lease_parked"
+            ) {
+              setHolding(false);
+              setNotice(
+                "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+              );
+              leaseIsStale.current = true;
+              void refresh();
+            } else if (ack.refused === "lease_required") {
+              setHolding(false);
+            }
             return;
           }
           if (parsed.type === "pong") {
             // The pane's own stamp, echoed. One clock, so the subtraction is
             // a round trip rather than the drift between two machines.
             if (typeof parsed.t === "number") {
-              paneFrameStats.noteRtt(Date.now() - parsed.t);
+              const rtt = Date.now() - parsed.t;
+              paneFrameStats.noteRtt(rtt);
+              // Kept for the tier controller, which reads loss AND latency: a
+              // link that drops nothing but answers in half a second is still
+              // a link somebody is waiting on, and without this the whole
+              // latency half of the auto rule never fired.
+              rttRef.current = rtt;
             }
             return;
           }
@@ -581,6 +678,7 @@ export function HostedBrowserBody({
             // The tier decision is made from what the RELAY saw, not from what
             // this pane painted: a pane that dropped a frame because a tab was
             // hidden is not a link that cannot carry the stream.
+            const before = tierController.current.current();
             const next = tierController.current.observe({
               ...(parsed.framesIn !== undefined
                 ? { framesIn: parsed.framesIn }
@@ -588,6 +686,7 @@ export function HostedBrowserBody({
               ...(parsed.dropped !== undefined
                 ? { dropped: parsed.dropped }
                 : {}),
+              ...(rttRef.current !== undefined ? { rtt: rttRef.current } : {}),
               ...(typeof (parsed.daemon as { encoderIdle?: boolean })
                 ?.encoderIdle === "boolean"
                 ? {
@@ -598,6 +697,29 @@ export function HostedBrowserBody({
             });
             setTier(next);
             paneFrameStats.noteTier(next);
+            // TELL THE DAEMON. Auto used to move only the pane's own state,
+            // so a viewer on a link that could not carry the stream was
+            // labelled "Data saver" while the encoder went on producing
+            // exactly the bitrate that was being dropped.
+            if (next !== before) {
+              const socket = socketRef.current;
+              if (socket?.readyState === WebSocket.OPEN) {
+                socket.send(
+                  JSON.stringify({
+                    type: "quality",
+                    tier: encoderTierFor(next),
+                  }),
+                );
+              }
+            }
+            // THE TAB STRIP LIVES HERE ON HOSTED. The relay consumes the
+            // daemon's heartbeat to build this message, so the frame wire's
+            // own `onHeartbeat` never fires on this engine — and the strip,
+            // which only hosted has, never updated once.
+            noteTabs(
+              (parsed.daemon as { tabs?: { active?: string } } | undefined)
+                ?.tabs,
+            );
             paneFrameStats.noteRelayStats({
               framesIn: parsed.framesIn ?? 0,
               ...(parsed.framesOut !== undefined
@@ -606,9 +728,7 @@ export function HostedBrowserBody({
               bytes: parsed.bytes ?? 0,
               dropped: parsed.dropped ?? 0,
               subscribers: parsed.subscribers ?? 0,
-              ...(parsed.daemon
-                ? { daemon: parsed.daemon as never }
-                : {}),
+              ...(parsed.daemon ? { daemon: parsed.daemon as never } : {}),
             });
             return;
           }
@@ -680,6 +800,16 @@ export function HostedBrowserBody({
           setNotice(
             "This view is no longer authorized. Reopen the pane to watch again.",
           );
+          return;
+        }
+        if (event.code === CLOSE_VIDEO_UNAVAILABLE) {
+          // A box with no ffmpeg, or an encoder that failed to spawn. The same
+          // fallback a browser with no `VideoDecoder` takes, and the same one
+          // the daemon's own `video_unavailable` was always meant to trigger.
+          videoRefusedRef.current = true;
+          retry = setTimeout(() => {
+            if (!closed) setStreamAttempt((n) => n + 1);
+          }, RETRY_MS);
           return;
         }
         if (event.code === CLOSE_NOT_FOUND) {
@@ -814,17 +944,33 @@ export function HostedBrowserBody({
   // One analytics event per pane, on the way out — see `session-summary`.
   useEffect(() => () => captureBrowserPaneSessionSummary("hosted"), []);
 
+  /**
+   * Will the next batch go on the SOCKET?
+   *
+   * One predicate for two decisions that must agree: which transport the send
+   * callback picks, and whether the forwarder has to serialize. Two spellings
+   * of the same question drifted, and the drift was silent — concurrent POSTs
+   * on a socket that had merely dropped.
+   */
+  const socketSendable = useCallback(
+    () =>
+      socketInputRef.current &&
+      socketRef.current?.readyState === WebSocket.OPEN,
+    [],
+  );
+
   const forwarder = useMemo(() => {
     if (!tokens || !holding) return null;
     return createInputForwarder(
       (events, seq) => {
         paneFrameStats.noteInputSent(frameSeqRef.current, seq);
-        const socket = socketRef.current;
-        if (socketInputRef.current && socket?.readyState === WebSocket.OPEN) {
+        if (socketSendable()) {
           // Ordered by the socket, so nothing here waits — see the
           // forwarder's docstring. A refusal comes back as an `input_ack`,
           // never a close.
-          socket.send(JSON.stringify({ type: "input", seq, events }));
+          socketRef.current!.send(
+            JSON.stringify({ type: "input", seq, events }),
+          );
           return;
         }
         // One release of fallback: an old relay that did not advertise
@@ -833,9 +979,14 @@ export function HostedBrowserBody({
       },
       // Only the POST needs ordering imposed on it; concurrent POSTs arrive in
       // whatever order the network felt like.
-      { serialize: () => !socketInputRef.current },
+      // The predicate has to match the TRANSPORT the callback actually
+      // chooses, not merely the capability: the send falls back to POST
+      // whenever the socket is not open, and a `serialize` that only read the
+      // flag let two POSTs travel at once — an unordered drag lands where
+      // nobody aimed, and an unordered press/release leaves a button held.
+      { serialize: () => !socketSendable() },
     );
-  }, [tokens, holding]);
+  }, [tokens, holding, socketSendable]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(
@@ -945,7 +1096,8 @@ export function HostedBrowserBody({
       onTier={(next) => {
         setTierPreference(next);
         const resolved = tierController.current.setPreference(next);
-        const wasVideo = tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
+        const wasVideo =
+          tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
         const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
         setTier(resolved);
         tierRef.current = resolved;

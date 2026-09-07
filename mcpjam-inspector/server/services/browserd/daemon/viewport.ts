@@ -39,6 +39,18 @@ import { readJpegDimensions } from "../../../../shared/jpeg-dimensions";
 import type { CdpLike } from "./webmcp-bridge";
 
 /** One frame, as the transports carry it. Base64 so it survives JSON. */
+/**
+ * How many bytes a base64 string actually encodes.
+ *
+ * `length * 3 / 4` counts the `=` padding as data — `"AQ=="` is one byte and
+ * was recorded as three. It rides the heartbeat, so every padded frame
+ * inflated the daemon's own `bytesOut`.
+ */
+function base64Bytes(data: string): number {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((data.length * 3) / 4) - padding);
+}
+
 export interface ViewportFrame {
   /** Base64 JPEG. */
   data: string;
@@ -214,7 +226,7 @@ export function createTabViewport(
 
   const publish = (frame: ViewportFrame) => {
     counters.framesOut += 1;
-    counters.bytesOut += Math.floor((frame.data.length * 3) / 4);
+    counters.bytesOut += base64Bytes(frame.data);
     for (const listener of listeners) {
       try {
         listener(frame);

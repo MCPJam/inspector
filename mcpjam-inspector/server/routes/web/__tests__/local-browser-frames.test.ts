@@ -1,11 +1,4 @@
-import {
-  afterEach,
-  beforeEach,
-  describe,
-  expect,
-  it,
-  vi,
-} from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
@@ -37,6 +30,13 @@ vi.mock("../../../utils/computers/local-consent.js", () => ({
 }));
 
 const sessionState = vi.hoisted(() => ({
+  /** What the viewport says it dropped, as the daemon's counters would. */
+  counters: {
+    framesIn: 0,
+    framesOut: 0,
+    bytesOut: 0,
+    dropped: { dedupe: 0, oversize: 0, pacer: 0 },
+  },
   /** bootId → the project that browser belongs to. */
   browsers: new Map<string, string>(),
   /** Frame listeners, so a test can push a frame or revoke a subscription. */
@@ -85,6 +85,16 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
                 entry.onRevoked?.("lease_held");
               }
             },
+            // The viewport's own drop accounting, which the relay folds into
+            // the pane's `stats` message: in-process there is no heartbeat to
+            // carry it, so this is the only way the local overlay ever shows a
+            // dedupe, oversize or pacer drop.
+            counters: () => sessionState.counters,
+            noteTransportDrop: () => {
+              sessionState.counters.dropped.pacer += 1;
+            },
+            stillCurrent: async () => true,
+            subscriberCount: () => 1,
           };
         },
         async dispatchInput(args: {
@@ -169,7 +179,9 @@ function connect(
   );
 }
 
-function waitForClose(ws: WebSocket): Promise<{ code: number; reason: string }> {
+function waitForClose(
+  ws: WebSocket,
+): Promise<{ code: number; reason: string }> {
   return new Promise((resolve) => {
     ws.on("close", (code, reason) =>
       resolve({ code, reason: reason.toString() }),
@@ -203,7 +215,10 @@ afterEach(async () => {
 
 describe("the agent browser's frame socket", () => {
   it("streams frames to a caller whose nonce names this browser's project", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -220,7 +235,10 @@ describe("the agent browser's frame socket", () => {
   });
 
   it("stamps every frame with the hop the pane can measure against", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -240,7 +258,10 @@ describe("the agent browser's frame socket", () => {
   });
 
   it("echoes the pane's ping stamp", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -259,7 +280,10 @@ describe("the agent browser's frame socket", () => {
     // The nonce is the authorization and it names a project; the bootId is
     // supplied by the caller. Without comparing them, one project's pane opens
     // another project's persistent, signed-in profile.
-    const ws = connect(server.port, { bootId: "boot-b", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-b",
+      nonce: mint("proj-a"),
+    });
     const closed = await waitForClose(ws);
 
     expect(closed.code).toBe(4401);
@@ -298,7 +322,10 @@ describe("the agent browser's frame socket", () => {
 
   it("closes 4404 for a browser that is no longer running", async () => {
     sessionState.browsers.delete("boot-a");
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     expect((await waitForClose(ws)).code).toBe(4404);
   });
 
@@ -306,7 +333,10 @@ describe("the agent browser's frame socket", () => {
     // Somebody else took control while this pane was watching. Going quiet
     // would read as a broken stream; the pane can offer "wait for them to hand
     // it back" only if it is told what happened.
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -322,7 +352,10 @@ describe("the agent browser's frame socket", () => {
   it("unsubscribes when the client hangs up", async () => {
     // A viewport listener left attached to a dead socket keeps the screencast
     // running for nobody.
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -334,7 +367,10 @@ describe("the agent browser's frame socket", () => {
 
   it("passes the daemon's refusal through when the lease is held elsewhere", async () => {
     sessionState.refuse = "lease_held";
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
 
     const closed = await waitForClose(ws);
     expect(closed.code).toBe(4409);
@@ -375,7 +411,10 @@ describe("the agent browser's frame socket — losing the right to watch", () =>
     // Revocation rides frame delivery, and a STATIC page delivers none — so
     // without this the pane sits on a frozen picture, unable to tell "somebody
     // took control" apart from "the page is quiet".
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -388,7 +427,10 @@ describe("the agent browser's frame socket — losing the right to watch", () =>
   });
 
   it("re-asks on every heartbeat while the lease is still theirs", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 
@@ -406,11 +448,13 @@ describe("the agent browser's frame socket — losing the right to watch", () =>
   });
 });
 
-
 describe("input on the frame socket", () => {
   /** Open a socket and wait until it is subscribed. */
   async function open() {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
     return ws;
@@ -423,7 +467,10 @@ describe("input on the frame socket", () => {
   }
 
   it("says it can take input before the pane has to guess", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     const hello = new Promise<Record<string, unknown>>((resolve) => {
       ws.on("message", (data) => {
         const parsed = JSON.parse(String(data)) as Record<string, unknown>;
@@ -500,7 +547,10 @@ describe("input on the frame socket", () => {
       JSON.stringify({
         type: "input",
         seq: 3,
-        events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+        events: [
+          { type: "mouse_down", x: 1, y: 1, button: "left" },
+          { type: "?" },
+        ],
       }),
     );
     await vi.waitFor(() =>
@@ -513,7 +563,6 @@ describe("input on the frame socket", () => {
     ws.close();
   });
 });
-
 
 /**
  * V-4b. The local pane reads the same wire the hosted one does — not because
@@ -556,14 +605,17 @@ describe("the binary wire", () => {
       seq: 4,
     });
     expect((frame as { ts: number }).ts).toBeGreaterThanOrEqual(before);
-    expect(
-      Buffer.from((frame as { jpeg: Uint8Array }).jpeg).toString(),
-    ).toBe("hello");
+    expect(Buffer.from((frame as { jpeg: Uint8Array }).jpeg).toString()).toBe(
+      "hello",
+    );
     ws.close();
   });
 
   it("keeps JSON for a pane that did not ask", async () => {
-    const ws = connect(server.port, { bootId: "boot-a", nonce: mint("proj-a") });
+    const ws = connect(server.port, {
+      bootId: "boot-a",
+      nonce: mint("proj-a"),
+    });
     await new Promise<void>((resolve) => ws.on("open", () => resolve()));
     await vi.waitFor(() => expect(sessionState.subscriptions).toHaveLength(1));
 

@@ -335,9 +335,14 @@ export function LocalBrowserBody({
             paneFrameStats.noteTransport("jpeg-binary");
             paneFrameStats.noteFrameArrived({ bytes: decoded.bytes });
             frameSeqRef.current = decoded.seq;
+            // React can coalesce two `setFrame` calls into one render, and the
+            // surface only ever releases a frame it PAINTED — so a picture
+            // superseded before the commit has nobody to free it.
+            lastBitmap?.close();
             lastBitmap = decoded.bitmap;
             setFrame({
               bitmap: decoded.bitmap,
+              decodeMs: decoded.decodeMs,
               deviceWidth: decoded.deviceWidth,
               deviceHeight: decoded.deviceHeight,
               scale: decoded.scale,
@@ -389,9 +394,28 @@ export function LocalBrowserBody({
               return;
             }
             if (parsed.type === "input_ack") {
-              const ack = parsed as unknown as { seq?: number };
+              const ack = parsed as unknown as {
+                seq?: number;
+                refused?: string;
+              };
               if (typeof ack.seq === "number") {
                 paneFrameStats.noteInputAck(ack.seq);
+              }
+              // A REFUSAL IS THE SERVER SAYING THIS PANE DOES NOT HAVE
+              // CONTROL. Recording only the latency left the pane believing it
+              // did — still forwarding keys and clicks into a page that
+              // discards every one, with nothing on screen to say why, until
+              // some later read happened to notice.
+              if (
+                ack.refused === "lease_held" ||
+                ack.refused === "lease_parked"
+              ) {
+                setLease({ state: "held" });
+                setError(
+                  "Somebody else has taken control of this browser. The view will resume when they hand it back.",
+                );
+              } else if (ack.refused === "lease_required") {
+                setLease({ state: "free" });
               }
               return;
             }
@@ -579,22 +603,43 @@ export function LocalBrowserBody({
   // must retire it rather than let its tail arrive under whoever holds the
   // browser next — which is what the cleanup below does, and why the identity
   // includes `holding`.
+  /**
+   * Will the next batch go on the SOCKET?
+   *
+   * One predicate for two decisions that must agree: which transport the send
+   * callback picks, and whether the forwarder has to serialize. Two spellings
+   * of the same question drifted, and the drift was silent — concurrent POSTs
+   * on a socket that had merely dropped.
+   */
+  const socketSendable = useCallback(
+    () =>
+      socketInputRef.current &&
+      socketRef.current?.readyState === WebSocket.OPEN,
+    [],
+  );
+
   const forwarder = useMemo(() => {
     if (!session || !holding) return null;
     const bootId = session.bootId;
     return createInputForwarder(
       (events, seq) => {
         paneFrameStats.noteInputSent(frameSeqRef.current, seq);
-        const socket = socketRef.current;
-        if (socketInputRef.current && socket?.readyState === WebSocket.OPEN) {
-          socket.send(JSON.stringify({ type: "input", seq, events }));
+        if (socketSendable()) {
+          socketRef.current!.send(
+            JSON.stringify({ type: "input", seq, events }),
+          );
           return;
         }
         return sendLocalBrowserInput({ bootId, holder, events }, consentToken);
       },
-      { serialize: () => !socketInputRef.current },
+      // The predicate has to match the TRANSPORT the callback actually
+      // chooses, not merely the capability: the send falls back to POST
+      // whenever the socket is not open, and a `serialize` that only read the
+      // flag let two POSTs travel at once — an unordered drag lands where
+      // nobody aimed, and an unordered press/release leaves a button held.
+      { serialize: () => !socketSendable() },
     );
-  }, [session, holding, holder, consentToken]);
+  }, [session, holding, holder, consentToken, socketSendable]);
   useEffect(() => () => forwarder?.cancel(), [forwarder]);
 
   const send = useCallback(

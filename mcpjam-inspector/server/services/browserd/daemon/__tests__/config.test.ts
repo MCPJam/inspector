@@ -15,7 +15,9 @@ const withToken = (over: Record<string, string> = {}) => ({
 
 describe("readBrowserdConfig", () => {
   it("fails closed when the token is missing (public host → no open browser)", () => {
-    expect(() => readBrowserdConfig({})).toThrow(/MCPJAM_BROWSERD_TOKEN is required/);
+    expect(() => readBrowserdConfig({})).toThrow(
+      /MCPJAM_BROWSERD_TOKEN is required/,
+    );
     expect(() => readBrowserdConfig({ MCPJAM_BROWSERD_TOKEN: "" })).toThrow(
       /required/,
     );
@@ -100,6 +102,21 @@ describe("readBrowserdConfig", () => {
     for (const bad of ["", "x", "0", "-1", "9"]) expect(dpr(bad)).toBe(1);
   });
 
+  it("refuses kiosk on a headless browser, which has no display to fill", () => {
+    // Kiosk is what makes "the display IS the page" true for the encoder, and
+    // a headless Chromium draws on no display at all — so the daemon would
+    // advertise `h264`, grab an empty X screen, and hand every watcher a
+    // picture of nothing.
+    expect(
+      readBrowserdConfig(
+        withToken({
+          MCPJAM_BROWSERD_KIOSK: "1",
+          MCPJAM_BROWSERD_HEADLESS: "true",
+        }),
+      ).kiosk,
+    ).toBe(false);
+  });
+
   it("kiosk is the exact string, like every other opt-in here", () => {
     expect(readBrowserdConfig(withToken()).kiosk).toBe(false);
     expect(
@@ -129,11 +146,12 @@ describe("readBrowserdConfig", () => {
     const persistent = readBrowserdConfig(
       withToken({ MCPJAM_BROWSERD_DPR: "2" }),
     );
-    expect(extraArgsFor(persistent)).toContain(
-      "--force-device-scale-factor=2",
-    );
+    expect(extraArgsFor(persistent)).toContain("--force-device-scale-factor=2");
     const ephemeral = readBrowserdConfig(
-      withToken({ MCPJAM_BROWSERD_DPR: "2", MCPJAM_BROWSERD_EPHEMERAL: "true" }),
+      withToken({
+        MCPJAM_BROWSERD_DPR: "2",
+        MCPJAM_BROWSERD_EPHEMERAL: "true",
+      }),
     );
     expect(extraArgsFor(ephemeral).join(" ")).not.toContain(
       "force-device-scale-factor",
@@ -176,9 +194,15 @@ describe("readBrowserdConfig", () => {
   });
 
   it("rejects a nonsensical port", () => {
-    expect(() => readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "0" }))).toThrow(/port/);
-    expect(() => readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "abc" }))).toThrow(/port/);
-    expect(() => readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "70000" }))).toThrow(/port/);
+    expect(() =>
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "0" })),
+    ).toThrow(/port/);
+    expect(() =>
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "abc" })),
+    ).toThrow(/port/);
+    expect(() =>
+      readBrowserdConfig(withToken({ MCPJAM_BROWSERD_PORT: "70000" })),
+    ).toThrow(/port/);
   });
 });
 
@@ -186,7 +210,11 @@ describe("extraArgsFor / formatReadyLine", () => {
   it("emits a --window-size arg only when configured", () => {
     expect(extraArgsFor(readBrowserdConfig(withToken()))).toEqual([]);
     expect(
-      extraArgsFor(readBrowserdConfig(withToken({ MCPJAM_BROWSERD_WINDOW_SIZE: "1600,1200" }))),
+      extraArgsFor(
+        readBrowserdConfig(
+          withToken({ MCPJAM_BROWSERD_WINDOW_SIZE: "1600,1200" }),
+        ),
+      ),
     ).toEqual(["--window-size=1600,1200"]);
   });
 

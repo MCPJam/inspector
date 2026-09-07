@@ -150,7 +150,6 @@ export function PaneControlBar({
   );
 }
 
-
 /**
  * The tabs the box has open, and which one is on screen.
  *
@@ -179,8 +178,12 @@ export function PaneTabStrip({
       {list.map((tab) => (
         <span
           key={tab.id}
-          title={tab.url || tab.id}
+          // The HOST, in the tooltip too. A path carries reset tokens, share
+          // links and account ids, and a tooltip puts them on screen next to
+          // somebody's shoulder exactly as the label would.
+          title={labelFor(tab)}
           data-active={tab.id === tabs?.active ? "true" : undefined}
+          aria-current={tab.id === tabs?.active ? "true" : undefined}
           className={cn(
             "max-w-[10rem] truncate rounded px-1.5 py-0.5 text-[11px]",
             tab.id === tabs?.active
@@ -202,7 +205,7 @@ export function PaneTabStrip({
  * path carries reset tokens, share links and account ids that have no business
  * being on screen next to somebody's shoulder.
  */
-function labelFor(tab: { id: string; url: string }): string {
+export function labelFor(tab: { id: string; url: string }): string {
   if (!tab.url) return tab.id;
   try {
     return new URL(tab.url).host || tab.id;

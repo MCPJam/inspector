@@ -57,7 +57,8 @@ describe("the frame wire reader", () => {
   it("hands over a decoded picture with the record's own geometry", async () => {
     const frames: Array<Record<string, unknown>> = [];
     const reader = createFrameWireReader({
-      onFrame: (frame) => frames.push(frame as unknown as Record<string, unknown>),
+      onFrame: (frame) =>
+        frames.push(frame as unknown as Record<string, unknown>),
     });
     reader.push(frameRecord());
     await settle();
@@ -218,5 +219,47 @@ describe("painting", () => {
         deviceHeight: 8,
       }),
     ).toBe(false);
+  });
+});
+
+describe("frames that decode out of order", () => {
+  it("drops a picture a newer one already overtook", async () => {
+    // `createImageBitmap` runs concurrently for every record and resolves in
+    // whatever order the image pipeline finishes them. Without a guard a slow
+    // older JPEG lands after a fast newer one and paints the page backwards —
+    // taking the click mapping with it, because the geometry travels with the
+    // frame.
+    const settle: Array<(bitmap: ImageBitmap) => void> = [];
+    const closed: number[] = [];
+    let made = 0;
+    vi.stubGlobal("createImageBitmap", () => {
+      const id = made++;
+      return new Promise<ImageBitmap>((resolve) => {
+        settle.push(() =>
+          resolve({
+            close: () => closed.push(id),
+          } as unknown as ImageBitmap),
+        );
+      });
+    });
+    try {
+      const seen: number[] = [];
+      const reader = createFrameWireReader({
+        onFrame: (frame) => seen.push(frame.seq),
+      });
+      reader.push(frameRecord({ seq: 1 }));
+      reader.push(frameRecord({ seq: 2 }));
+      // The SECOND decode finishes first.
+      settle[1]!({} as never);
+      await Promise.resolve();
+      settle[0]!({} as never);
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(seen).toEqual([2]);
+      // And the overtaken picture is released rather than leaked.
+      expect(closed).toEqual([0]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });

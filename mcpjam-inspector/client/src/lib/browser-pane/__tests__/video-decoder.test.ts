@@ -65,9 +65,20 @@ describe("splitting Annex-B", () => {
     // x264 writes four-byte codes before the parameter sets and three-byte
     // ones elsewhere; a splitter that knew only one would fuse units together.
     const bytes = new Uint8Array([
-      0, 0, 0, 1, ...SPS,
-      0, 0, 1, ...PPS,
-      0, 0, 0, 1, ...IDR,
+      0,
+      0,
+      0,
+      1,
+      ...SPS,
+      0,
+      0,
+      1,
+      ...PPS,
+      0,
+      0,
+      0,
+      1,
+      ...IDR,
     ]);
     const units = splitNalUnits(bytes);
     expect(units).toEqual([SPS, PPS, IDR]);
@@ -88,6 +99,18 @@ describe("the avcC description", () => {
     expect(description[5]).toBe(0xe1);
     expect((description[6]! << 8) | description[7]!).toBe(SPS.byteLength);
     expect(description.slice(8, 8 + SPS.byteLength)).toEqual(SPS);
+  });
+
+  it("ends exactly at the PPS, with no trailing byte", () => {
+    // A strict `VideoDecoder` may reject a description with junk on the end,
+    // and a rejected configure fails on EVERY keyframe — so the pane would
+    // never see a single video frame, on any box, and fall back forever.
+    const description = buildAvccDescription([AUD, SPS, PPS, IDR])!;
+    expect(description.byteLength).toBe(
+      6 + 2 + SPS.byteLength + 1 + 2 + PPS.byteLength,
+    );
+    const ppsAt = 8 + SPS.byteLength + 3;
+    expect(description.slice(ppsAt)).toEqual(PPS);
   });
 
   it("is absent for a unit that carries no parameter sets", () => {
@@ -193,14 +216,39 @@ describe("the pane's decoder", () => {
     expect(fake.state.chunks[0]!.timestamp).toBe(3_000);
   });
 
-  it("closes every frame it hands out", () => {
-    // A `VideoFrame` holds a decoded surface the garbage collector cannot see
-    // the cost of; a decoder at 30fps that leaked them exhausts the pool
-    // within a second and stalls.
+  it("hands the frame over rather than closing it underneath the caller", () => {
+    // The pane converts each frame with `createImageBitmap`, which resolves
+    // LATER. Closing here the moment `onFrame` returned was a surface being
+    // read after it had been released — so ownership passes to the caller,
+    // which closes it when the conversion has finished.
+    const fake = fakeDecoder();
+    let closed = false;
+    const handed: VideoFrame[] = [];
+    const decoder = createPaneVideoDecoder({
+      onFrame: (frame) => handed.push(frame),
+      onGiveUp: () => {},
+      createDecoder: fake.create,
+    });
+    decoder.push({ key: true, au: annexB(AUD, SPS, PPS, IDR), seq: 1 });
+    fake.state.output?.({
+      close: () => {
+        closed = true;
+      },
+    } as unknown as VideoFrame);
+    expect(handed).toHaveLength(1);
+    expect(closed).toBe(false);
+  });
+
+  it("closes a frame the caller refused, because nothing else will", () => {
+    // A handler that threw did not take ownership. A `VideoFrame` holds a
+    // decoded surface the garbage collector cannot see the cost of, and a
+    // decoder at 30fps leaking them exhausts the pool within a second.
     const fake = fakeDecoder();
     let closed = false;
     const decoder = createPaneVideoDecoder({
-      onFrame: () => {},
+      onFrame: () => {
+        throw new Error("the pane blew up");
+      },
       onGiveUp: () => {},
       createDecoder: fake.create,
     });
@@ -211,6 +259,30 @@ describe("the pane's decoder", () => {
       },
     } as unknown as VideoFrame);
     expect(closed).toBe(true);
+  });
+
+  it("closes a decoder whose configure threw, rather than leaking one per retry", () => {
+    // `onError` closes `decoder`, and a decoder assigned only AFTER a
+    // successful configure is one it cannot reach — so every retry constructed
+    // another `VideoDecoder` that nothing ever released.
+    let closes = 0;
+    const decoder = createPaneVideoDecoder({
+      onFrame: () => {},
+      onGiveUp: () => {},
+      createDecoder: () =>
+        ({
+          configure: () => {
+            throw new Error("unsupported");
+          },
+          decode: () => {},
+          close: () => {
+            closes += 1;
+          },
+          state: "unconfigured",
+        }) as unknown as VideoDecoder,
+    });
+    decoder.push({ key: true, au: annexB(AUD, SPS, PPS, IDR), seq: 1 });
+    expect(closes).toBe(1);
   });
 
   it("survives a few errors and then gives up honestly", () => {

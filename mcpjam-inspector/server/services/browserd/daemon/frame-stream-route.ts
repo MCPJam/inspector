@@ -283,6 +283,14 @@ export function createFrameStreamHost(
     release = gate.release;
 
     unsubscribe = encoder.subscribe((unit) => {
+      if (ended) return;
+      // BEFORE EVERY UNIT, not only on the heartbeat. A lease acquired between
+      // beats left the previous watcher receiving pictures of a page somebody
+      // else had taken — for up to ten seconds, while they typed into it. That
+      // is the exact observation the lease exists to prevent, and a ten-second
+      // window is not a smaller version of it.
+      gate.revalidate();
+      if (ended) return; // revalidate may have revoked us
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key
@@ -295,6 +303,10 @@ export function createFrameStreamHost(
           seq: (seq += 1),
           au: unit.bytes,
         }),
+        // A KEYFRAME is the one record a decoder cannot proceed without: give
+        // its slot to the delta behind it and the pane sits frozen until the
+        // next GOP, four seconds later, being sent units it cannot decode.
+        unit.key ? { essential: true } : {},
       );
     });
 
@@ -306,9 +318,14 @@ export function createFrameStreamHost(
       return;
     }
 
+    /** What the encoder had published at this stream's last heartbeat. */
+    let lastEmitted = encoder.emitted();
     const beat = (): void => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      const emitted = encoder.emitted();
+      const idle = emitted === lastEmitted;
+      lastEmitted = emitted;
       pacer.push(
         encodeFrameStreamRecord({
           kind: FRAME_STREAM_KIND.heartbeat,
@@ -323,9 +340,13 @@ export function createFrameStreamHost(
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
             // page that is simply not moving.
-            encoderIdle: encoder.takeIdle(),
+            encoderIdle: idle,
           },
         }),
+        // Liveness and counters, not a picture: another arrives in ten
+        // seconds, and counting its overwrite made `dropped.pacer` describe a
+        // link that had dropped nothing at all.
+        { counts: false },
       );
       gate.revalidate();
       if (ended) return;
@@ -353,7 +374,9 @@ export function createFrameStreamHost(
     reason: FrameStreamEndReason,
   ): void {
     try {
-      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }),
+      );
       res.end();
     } catch {
       // Already gone.
@@ -442,8 +465,7 @@ export function createFrameStreamHost(
      * itself to, and is skipped rather than guessed at.
      */
     let subscription:
-      | Awaited<ReturnType<typeof handler.subscribeFrames>>
-      | undefined;
+      Awaited<ReturnType<typeof handler.subscribeFrames>> | undefined;
 
     const entry = {
       end: (reason: FrameStreamEndReason) => end(reason),
@@ -474,31 +496,31 @@ export function createFrameStreamHost(
 
     const pacer = createFramePacer(
       {
-      send: (data, cb) => {
-        // Armed per write and cleared by the acknowledgement: a peer that stops
-        // reading never acknowledges, and without this the in-flight slot — and
-        // the screencast behind it — would stay busy for the daemon's lifetime.
-        stallTimer = timers.setTimer(() => {
-          if (ended) return;
-          ended = true;
-          timers.clearTimer(beatTimer);
-          unsubscribe?.();
-          open.delete(entry);
-          // Closed HERE as well as in `end()`, because this path does not go
-          // through it: setting `ended` makes the close handler return early,
-          // so without this the pacer keeps its held frame and ships it into a
-          // destroyed socket the moment the write callback fires — arming one
-          // more stall timer on the way.
-          pacer.close();
-          // Destroy rather than end: a peer that is not reading will not read a
-          // reason either, and a graceful close would wait on the same buffer.
-          res.destroy();
-        }, stallMs);
-        res.write(data, (error) => {
-          timers.clearTimer(stallTimer);
-          cb(error ?? undefined);
-        });
-      },
+        send: (data, cb) => {
+          // Armed per write and cleared by the acknowledgement: a peer that stops
+          // reading never acknowledges, and without this the in-flight slot — and
+          // the screencast behind it — would stay busy for the daemon's lifetime.
+          stallTimer = timers.setTimer(() => {
+            if (ended) return;
+            ended = true;
+            timers.clearTimer(beatTimer);
+            unsubscribe?.();
+            open.delete(entry);
+            // Closed HERE as well as in `end()`, because this path does not go
+            // through it: setting `ended` makes the close handler return early,
+            // so without this the pacer keeps its held frame and ships it into a
+            // destroyed socket the moment the write callback fires — arming one
+            // more stall timer on the way.
+            pacer.close();
+            // Destroy rather than end: a peer that is not reading will not read a
+            // reason either, and a graceful close would wait on the same buffer.
+            res.destroy();
+          }, stallMs);
+          res.write(data, (error) => {
+            timers.clearTimer(stallTimer);
+            cb(error ?? undefined);
+          });
+        },
       },
       // The pacer's overwrite is the third silent drop path (the viewport owns
       // the other two). Counting it HERE, on the viewport that produced the

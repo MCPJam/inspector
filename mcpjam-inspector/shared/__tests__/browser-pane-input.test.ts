@@ -26,18 +26,24 @@ describe("input allowlist", () => {
       { type: "key_up", key: "Enter" },
       { type: "text", text: "hi" },
     ];
-    for (const event of events) expect(isBrowserPaneInputEvent(event)).toBe(true);
+    for (const event of events)
+      expect(isBrowserPaneInputEvent(event)).toBe(true);
   });
 
   it("refuses a shape with the fields its type needs missing", () => {
     expect(isBrowserPaneInputEvent(null)).toBe(false);
     expect(isBrowserPaneInputEvent({ type: "nonsense" })).toBe(false);
     expect(isBrowserPaneInputEvent({ type: "mouse_move" })).toBe(false);
+    expect(isBrowserPaneInputEvent({ type: "mouse_move", x: NaN, y: 0 })).toBe(
+      false,
+    );
     expect(
-      isBrowserPaneInputEvent({ type: "mouse_move", x: NaN, y: 0 }),
-    ).toBe(false);
-    expect(
-      isBrowserPaneInputEvent({ type: "mouse_down", x: 0, y: 0, button: "four" }),
+      isBrowserPaneInputEvent({
+        type: "mouse_down",
+        x: 0,
+        y: 0,
+        button: "four",
+      }),
     ).toBe(false);
     expect(
       isBrowserPaneInputEvent({ type: "wheel", x: 0, y: 0, deltaX: 1 }),
@@ -112,7 +118,10 @@ describe("the wire message", () => {
     expect(
       parseBrowserPaneInputMessage({
         seq: 1,
-        events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+        events: [
+          { type: "mouse_down", x: 1, y: 1, button: "left" },
+          { type: "?" },
+        ],
       }),
     ).toEqual({ ok: false, error: "invalid_input" });
   });
@@ -125,12 +134,46 @@ describe("the wire message", () => {
     ).toEqual({ ok: false, error: "invalid_input" });
   });
 
-  it("slices at the daemon's own batch limit", () => {
-    const events = Array.from({ length: 100 }, (_, i) => ({
-      type: "key_down" as const,
-      key: String(i),
-    }));
-    const parsed = parseBrowserPaneInputMessage({ seq: 1, events });
+  it("refuses an oversized batch rather than silently dropping its tail", () => {
+    // Slicing acknowledged a batch as delivered while discarding the end of
+    // it — and a burst that ends with a release then leaves the page holding a
+    // button or a key nobody is pressing. Every pane chunks at this same
+    // number before it sends, so nothing well-behaved meets this.
+    const events = Array.from(
+      { length: BROWSER_INPUT_BATCH_LIMIT + 1 },
+      (_, i) => ({
+        type: "key_down" as const,
+        key: String(i),
+      }),
+    );
+    expect(parseBrowserPaneInputMessage({ seq: 1, events })).toEqual({
+      ok: false,
+      error: "invalid_input",
+    });
+    // And exactly at the limit is fine.
+    const atLimit = events.slice(0, BROWSER_INPUT_BATCH_LIMIT);
+    const parsed = parseBrowserPaneInputMessage({ seq: 1, events: atLimit });
     expect(parsed.ok && parsed.events).toHaveLength(BROWSER_INPUT_BATCH_LIMIT);
+  });
+
+  it("refuses an optional field of the wrong shape", () => {
+    // Accepted, a `modifiers: "ctrl"` reached CDP as a string where a bitmask
+    // belongs: the dispatch failed there, on a batch already acknowledged as
+    // delivered, and nothing anywhere said so.
+    for (const bad of [
+      { type: "mouse_move", x: 1, y: 1, modifiers: "ctrl" },
+      { type: "mouse_move", x: 1, y: 1, modifiers: Number.NaN },
+      { type: "mouse_down", x: 1, y: 1, button: "left", clickCount: "2" },
+      { type: "key_down", key: "a", code: 65 },
+    ]) {
+      expect(isBrowserPaneInputEvent(bad)).toBe(false);
+    }
+    // And the same events with the right shapes still pass.
+    expect(
+      isBrowserPaneInputEvent({ type: "mouse_move", x: 1, y: 1, modifiers: 2 }),
+    ).toBe(true);
+    expect(
+      isBrowserPaneInputEvent({ type: "key_down", key: "a", code: "KeyA" }),
+    ).toBe(true);
   });
 });

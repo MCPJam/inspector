@@ -13,6 +13,7 @@ import {
   createRelayInputForwarder,
   type InputRefusal,
 } from "../browser-pane-input-forwarder";
+import { BROWSER_INPUT_BATCH_LIMIT } from "../../../../shared/browser-pane-input";
 
 function build(
   outcome: () => { ok: true } | { ok: false; refused: InputRefusal } = () => ({
@@ -73,9 +74,15 @@ describe("relay input forwarder", () => {
   it("holds the rest behind one in flight and collapses the moves", async () => {
     const f = build();
     f.hold();
-    f.forwarder.submit({ seq: 1, events: [{ type: "mouse_move", x: 1, y: 1 }] });
+    f.forwarder.submit({
+      seq: 1,
+      events: [{ type: "mouse_move", x: 1, y: 1 }],
+    });
     await tick();
-    f.forwarder.submit({ seq: 2, events: [{ type: "mouse_move", x: 2, y: 2 }] });
+    f.forwarder.submit({
+      seq: 2,
+      events: [{ type: "mouse_move", x: 2, y: 2 }],
+    });
     f.forwarder.submit({
       seq: 3,
       events: [
@@ -128,9 +135,7 @@ describe("relay input forwarder", () => {
     const f = build(() => ({ ok: false, refused: "lease_held" }));
     f.forwarder.submit({ seq: 4, events: [{ type: "text", text: "a" }] });
     await tick();
-    expect(f.acks).toEqual([
-      { seq: 4, dispatched: 0, refused: "lease_held" },
-    ]);
+    expect(f.acks).toEqual([{ seq: 4, dispatched: 0, refused: "lease_held" }]);
     // A refusal is not use of the machine.
     expect(f.landed()).toBe(0);
   });
@@ -173,5 +178,71 @@ describe("relay input forwarder", () => {
     f.forwarder.submit({ seq: 3, events: [{ type: "text", text: "c" }] });
     await tick();
     expect(f.dispatched).toHaveLength(1);
+  });
+});
+
+describe("bursts the daemon would refuse whole", () => {
+  it("chunks a long burst at the daemon's own cap", async () => {
+    // `/v1/input` answers 413 to an oversized batch and dispatches NOTHING of
+    // it — so one fast drag refused the entire gesture, RELEASES INCLUDED, and
+    // left the page holding a button nobody was pressing.
+    const sizes: number[] = [];
+    const acks: unknown[] = [];
+    const forwarder = createRelayInputForwarder({
+      dispatch: async ({ events }) => {
+        sizes.push(events.length);
+        return { ok: true as const };
+      },
+      ack: (payload) => acks.push(payload),
+    });
+    // Key events do not coalesce, so the burst survives to the dispatch.
+    forwarder.submit({
+      seq: 1,
+      events: Array.from({ length: 150 }, (_, n) => ({
+        type: "key_down" as const,
+        key: String(n % 10),
+      })),
+    });
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(sizes.every((size) => size <= BROWSER_INPUT_BATCH_LIMIT)).toBe(true);
+    expect(sizes.reduce((a, b) => a + b, 0)).toBe(150);
+    expect(acks).toEqual([{ seq: 1, dispatched: 150 }]);
+  });
+
+  it("answers every batch it drops, rather than leaving a pane waiting", async () => {
+    // Coalescing bounds ONE tab's queue; input that alternates tabs starts a
+    // new group every message, and a slow page then lets an authenticated pane
+    // grow this relay's memory without limit.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const acks: Array<{ seq: number; refused?: string }> = [];
+    const forwarder = createRelayInputForwarder({
+      dispatch: async () => {
+        await held;
+        return { ok: true as const };
+      },
+      ack: (payload) => acks.push(payload),
+    });
+    for (let n = 1; n <= 80; n += 1) {
+      forwarder.submit({
+        seq: n,
+        tabId: `tab-${n}`,
+        events: [{ type: "mouse_move", x: n, y: n }],
+      });
+    }
+    expect(acks.length).toBeGreaterThan(0);
+    expect(acks.every((a) => a.refused === "overloaded")).toBe(true);
+    // The NEWEST survive: a pane whose queue ran away has old positions that
+    // are already wrong, and the gesture being made now is the one worth
+    // keeping.
+    expect(acks.map((a) => a.seq)).toEqual(
+      acks.map((a) => a.seq).sort((a, b) => a - b),
+    );
+    expect(Math.max(...acks.map((a) => a.seq))).toBeLessThan(80);
+    release();
   });
 });

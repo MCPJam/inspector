@@ -64,37 +64,40 @@ export interface DecodedFrame {
  * arrive in one WebSocket frame, and a decoder that assumed whole records would
  * work in every test and fail on the first real picture.
  */
-export function createFrameWireReader(handlers: {
-  onFrame(frame: DecodedFrame): void;
-  /**
-   * An H.264 access unit, undecoded.
-   *
-   * Handed over rather than decoded here because a `VideoDecoder` is a
-   * long-lived object with its own configuration and error budget — see
-   * `video-decoder.ts`. Absent means the caller did not ask for video, and the
-   * decoder below is built to refuse a record it never negotiated.
-   */
-  onVideo?(unit: WireVideoUnit): void;
-  /** Proof of life, with the daemon's counters when it sent them. */
-  onHeartbeat?(stats: Record<string, unknown> | undefined): void;
-  /** The stream said why it stopped. */
-  onEnd?(reason: string): void;
-  /**
-   * The reader lost its place. TERMINAL: there is no framing marker to
-   * resynchronise against, so the caller must drop the connection rather than
-   * try to carry on.
-   */
-  onFatal?(error: string): void;
-}, options: {
-  /**
-   * Accept the video records too.
-   *
-   * Off by default, matching the daemon's own decoder: a reader that never
-   * asked for video refuses one at the version check rather than guessing at a
-   * kind it does not know.
-   */
-  video?: boolean;
-} = {}): {
+export function createFrameWireReader(
+  handlers: {
+    onFrame(frame: DecodedFrame): void;
+    /**
+     * An H.264 access unit, undecoded.
+     *
+     * Handed over rather than decoded here because a `VideoDecoder` is a
+     * long-lived object with its own configuration and error budget — see
+     * `video-decoder.ts`. Absent means the caller did not ask for video, and the
+     * decoder below is built to refuse a record it never negotiated.
+     */
+    onVideo?(unit: WireVideoUnit): void;
+    /** Proof of life, with the daemon's counters when it sent them. */
+    onHeartbeat?(stats: Record<string, unknown> | undefined): void;
+    /** The stream said why it stopped. */
+    onEnd?(reason: string): void;
+    /**
+     * The reader lost its place. TERMINAL: there is no framing marker to
+     * resynchronise against, so the caller must drop the connection rather than
+     * try to carry on.
+     */
+    onFatal?(error: string): void;
+  },
+  options: {
+    /**
+     * Accept the video records too.
+     *
+     * Off by default, matching the daemon's own decoder: a reader that never
+     * asked for video refuses one at the version check rather than guessing at a
+     * kind it does not know.
+     */
+    video?: boolean;
+  } = {},
+): {
   push(chunk: ArrayBuffer | Uint8Array): void;
   /** Stop decoding and release the pending bitmap, if any. */
   close(): void;
@@ -103,12 +106,22 @@ export function createFrameWireReader(handlers: {
     options.video ? { video: true } : {},
   );
   let closed = false;
+  /**
+   * The newest sequence already handed to the caller.
+   *
+   * `createImageBitmap` runs concurrently for every record and resolves in
+   * whatever order the browser's image pipeline finishes them — so without
+   * this a slow older JPEG lands after a fast newer one and paints the page
+   * backwards, taking the click mapping with it. The JSON path in the surface
+   * has always guarded this with a `stale` flag; the binary path is the one
+   * both panes now ask for.
+   */
+  let deliveredSeq = -1;
 
   return {
     push(chunk) {
       if (closed) return;
-      const bytes =
-        chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
+      const bytes = chunk instanceof Uint8Array ? chunk : new Uint8Array(chunk);
       const decoded = decoder.push(bytes);
       if (!decoded.ok) {
         closed = true;
@@ -158,12 +171,14 @@ export function createFrameWireReader(handlers: {
           }),
         )
           .then((bitmap) => {
-            if (closed) {
-              // The socket went while we were decoding. Nobody will draw this,
-              // and nobody else will free it.
+            if (closed || record.seq <= deliveredSeq) {
+              // The socket went while we were decoding, or a newer picture
+              // already landed. Nobody will draw this, and nobody else will
+              // free it.
               bitmap.close();
               return;
             }
+            deliveredSeq = record.seq;
             handlers.onFrame({
               bitmap,
               deviceWidth: record.deviceWidth,

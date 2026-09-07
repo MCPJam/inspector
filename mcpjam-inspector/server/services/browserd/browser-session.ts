@@ -25,6 +25,7 @@
  * `live-session-deps.ts` (VALIDATE-ON-STAGING).
  */
 import { randomUUID } from "node:crypto";
+import { logger } from "../../utils/logger.js";
 import type {
   BootBrowserdOptions,
   BrowserdHandle,
@@ -776,13 +777,15 @@ async function tryAdoptPrelaunched(
  * screenshot on one host has to match a screenshot on another (L5); the daemon
  * pins its scale factor at 1 there too, and this is the belt to that braces.
  */
-function hostedDisplayEnv(
-  contextMode: BrowserContextMode,
-): { deviceScaleFactor?: number; kiosk?: boolean } {
+function hostedDisplayEnv(contextMode: BrowserContextMode): {
+  deviceScaleFactor?: number;
+  kiosk?: boolean;
+} {
   const kiosk = process.env.MCPJAM_BROWSER_VIDEO !== "false";
   if (contextMode !== "persistent") return { kiosk };
   const raw = Number(process.env.MCPJAM_HOSTED_BROWSER_DPR);
-  const dpr = Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : HOSTED_DISPLAY.dpr;
+  const dpr =
+    Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : HOSTED_DISPLAY.dpr;
   return { kiosk, ...(dpr !== 1 ? { deviceScaleFactor: dpr } : {}) };
 }
 
@@ -916,12 +919,24 @@ async function ensureOnComputer(
     // bearer, speak this build's wire, and be running the profile mode this
     // caller asked for. Anything short of that and it is killed and replaced,
     // exactly as before.
+    //
+    // AND NEVER FATAL. Adoption is an optimisation over a path that already
+    // works; a transient failure inside it — a stream that would not start, a
+    // record that lost its race — must fall through to the kill-and-boot
+    // below rather than fail the whole ensure, which would leave the caller
+    // with no browser at all because a shortcut did not pay off.
     const adopted = await tryAdoptPrelaunched(
       deps,
       sandbox,
       { computerId, contextMode, observedSessionId: lookup.observedSessionId },
       args.signal,
-    );
+    ).catch((error: unknown) => {
+      logger.warn("[browser-session] prelaunch adoption failed; relaunching", {
+        computerId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    });
     if (adopted) {
       await fence?.release();
       return adopted;

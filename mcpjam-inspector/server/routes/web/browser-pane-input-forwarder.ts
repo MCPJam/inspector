@@ -21,9 +21,21 @@
  * working exactly as designed.
  */
 import {
+  BROWSER_INPUT_BATCH_LIMIT,
   coalesceBrowserPaneInput,
   type BrowserPaneInputEvent,
 } from "../../../shared/browser-pane-input.js";
+
+/**
+ * How many tab groups may wait behind one dispatch.
+ *
+ * Coalescing bounds a single tab's queue — a hundred pointer moves become one
+ * — but input that ALTERNATES tabs starts a new group every message, and a
+ * slow page then lets an authenticated pane grow this relay's memory without
+ * limit. Generous enough that no real gesture reaches it, small enough that
+ * nothing here is a memory story.
+ */
+const MAX_PENDING_GROUPS = 32;
 
 /** Why a batch did not reach the page. The daemon's own vocabulary. */
 export type InputRefusal =
@@ -32,7 +44,9 @@ export type InputRefusal =
   | "lease_parked"
   | "unknown_tab"
   | "no_browser_session"
-  | "upstream_error";
+  | "upstream_error"
+  /** Dropped by the relay: too much queued behind a dispatch that is slow. */
+  | "overloaded";
 
 export interface RelayInputForwarder {
   /** Queue one client message. Ordering and coalescing are this module's job. */
@@ -59,7 +73,11 @@ export interface RelayInputForwarderOptions {
    * 0 on a refusal — not the size of the coalesced batch, which is a number
    * about the relay rather than about the caller's gesture.
    */
-  ack(payload: { seq: number; dispatched: number; refused?: InputRefusal }): void;
+  ack(payload: {
+    seq: number;
+    dispatched: number;
+    refused?: InputRefusal;
+  }): void;
   /** Called once per flush that actually reached the page. */
   onDispatched?: () => void;
 }
@@ -83,13 +101,36 @@ export function createRelayInputForwarder(
   let inFlight = false;
   let cancelled = false;
 
+  /**
+   * Send one group, in pieces the daemon will accept.
+   *
+   * CHUNKED, because `/v1/input` answers 413 to an oversized batch and
+   * dispatches NOTHING of it. A long burst — a fast drag, a key sequence that
+   * did not coalesce — therefore refused the whole gesture, RELEASES INCLUDED,
+   * and left the page holding a button nobody was pressing.
+   */
+  const dispatchGroup = async (
+    tabId: string | undefined,
+    events: readonly BrowserPaneInputEvent[],
+  ): Promise<{ ok: true } | { ok: false; refused: InputRefusal }> => {
+    for (let at = 0; at < events.length; at += BROWSER_INPUT_BATCH_LIMIT) {
+      const outcome = await options.dispatch({
+        ...(tabId ? { tabId } : {}),
+        events: events.slice(at, at + BROWSER_INPUT_BATCH_LIMIT),
+      });
+      // In ORDER and stopping at the first refusal: carrying on would put the
+      // tail of a gesture into a page that never received its head.
+      if (!outcome.ok) return outcome;
+    }
+    return { ok: true };
+  };
+
   const flush = (): void => {
     if (inFlight || cancelled || pending.length === 0) return;
     const group = pending.shift()!;
     const events = coalesceBrowserPaneInput(group.events);
     inFlight = true;
-    void options
-      .dispatch({ ...(group.tabId ? { tabId: group.tabId } : {}), events })
+    void dispatchGroup(group.tabId, events)
       .then((outcome) => {
         if (cancelled) return;
         if (outcome.ok) {
@@ -131,6 +172,20 @@ export function createRelayInputForwarder(
         tail.events.push(...message.events);
         tail.acks.push({ seq: message.seq, count: message.events.length });
       } else {
+        // The OLDEST goes, not the newest: a pane whose queue has run away is
+        // one whose old positions are already wrong, and the gesture somebody
+        // is making now is the one worth keeping. Every dropped batch is
+        // acked, because a message with no answer is a pane that waits forever.
+        while (pending.length >= MAX_PENDING_GROUPS) {
+          const dropped = pending.shift()!;
+          for (const entry of dropped.acks) {
+            options.ack({
+              seq: entry.seq,
+              dispatched: 0,
+              refused: "overloaded",
+            });
+          }
+        }
         pending.push({
           ...(message.tabId !== undefined ? { tabId: message.tabId } : {}),
           events: [...message.events],

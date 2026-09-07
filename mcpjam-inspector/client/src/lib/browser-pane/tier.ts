@@ -75,7 +75,8 @@ export function createTierController(
   let lastFramesIn: number | undefined;
   let lastDropped: number | undefined;
 
-  const resolve = (): QualityTier => (preference === "auto" ? auto : preference);
+  const resolve = (): QualityTier =>
+    preference === "auto" ? auto : preference;
 
   return {
     preference: () => preference,
@@ -118,13 +119,16 @@ export function createTierController(
         return resolve();
       }
 
-      const loss = deltaDropped / (deltaFrames + deltaDropped);
+      // `framesIn` is incremented for EVERY frame the relay was offered,
+      // including the ones it went on to drop — so the dropped frames are
+      // already in the denominator, and adding them again understated loss on
+      // exactly the congested links this exists to notice.
+      const loss = deltaDropped / deltaFrames;
       const rtt = signals.rtt;
       const bad =
         loss >= LOSS_DEGRADE || (rtt !== undefined && rtt >= RTT_DEGRADE_MS);
       const good =
-        loss <= LOSS_RECOVER &&
-        (rtt === undefined || rtt <= RTT_RECOVER_MS);
+        loss <= LOSS_RECOVER && (rtt === undefined || rtt <= RTT_RECOVER_MS);
 
       if (bad) {
         recoverRun = 0;

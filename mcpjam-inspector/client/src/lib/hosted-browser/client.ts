@@ -280,6 +280,14 @@ export function openHostedBrowserFrameStream(args: {
   tabId?: string;
   /** `"binary"` asks for the daemon's frame records; omitted keeps JSON. */
   wire?: "binary" | "json";
+  /**
+   * Ask for H.264 instead of JPEG stills.
+   *
+   * Only ever sent when the PANE has a `VideoDecoder`; the relay asks the
+   * daemon separately and falls back to JPEG when it cannot answer, so a
+   * request here is not a promise of video.
+   */
+  codec?: "h264";
 }): { socket: WebSocket; close(): void } {
   const url = new URL(HOSTED_BROWSER_FRAMES_PATH, window.location.origin);
   // The token rides the subprotocol and the body is a live picture of a
@@ -297,6 +305,11 @@ export function openHostedBrowserFrameStream(args: {
   // old to negotiate this ignores the param and keeps sending JSON, which is
   // why the pane branches on the message type rather than assuming.
   if (args.wire === "binary") url.searchParams.set("wire", "binary");
+  // WITHOUT THIS THE ROUTE NEVER OFFERS VIDEO. The hosted relay enables H.264
+  // only when the URL carries it, so a pane that asked in its own options and
+  // not on the wire negotiated JPEG every time and the whole video path was
+  // dead code.
+  if (args.codec === "h264") url.searchParams.set("codec", "h264");
   const socket = new WebSocket(url.toString(), [args.token]);
   // Set BEFORE any message can arrive: the default is `blob`, and a `Blob`
   // would have to be read asynchronously, which reorders frames against the

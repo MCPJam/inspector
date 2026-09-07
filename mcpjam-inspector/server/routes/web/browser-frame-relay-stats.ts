@@ -18,12 +18,14 @@
  * same message here, so a pane reads one `stats` shape whichever engine it is
  * looking at.
  *
- * BACKPRESSURE IS A DROP, NOT A QUEUE. A socket that cannot take a frame is
- * not helped by being handed the next one as well: a pane behind a congested
- * link would walk an ever-older page. One frame is held, newest wins, and the
- * overwrite is counted — the same rule as `webmcp-inspector/frame-pacer.ts`,
- * which cannot be reused here because a Hono `WSContext` reports no send
- * completion to pace against, only `bufferedAmount`.
+ * BACKPRESSURE IS A DROP, NOT A QUEUE — and here it is a drop with NO held
+ * slot, unlike `webmcp-inspector/frame-pacer.ts`. That pacer can hold one
+ * frame because a callback tells it when the socket drained; a Hono
+ * `WSContext` reports no send completion at all, only `bufferedAmount`, so a
+ * held frame would have nothing to wake it and the pane would freeze with the
+ * stream healthy. Dropping the current frame instead converges the pane on the
+ * live picture: the next one is already on its way, and it is the one worth
+ * showing. Every drop is counted.
  */
 
 /** How often the relay tells the pane what it has seen. */
@@ -41,10 +43,22 @@ const DEFAULT_MAX_BUFFERED_BYTES = 512 * 1024;
 /** Drop counters the daemon reports about itself (V-4a). */
 export interface DaemonFrameCounters {
   framesIn?: number;
+  framesOut?: number;
+  bytesOut?: number;
   dropped?: { dedupe?: number; oversize?: number; pacer?: number };
   subscribers?: number;
   /** The encoder has nothing to send, so silence is not loss. */
   encoderIdle?: boolean;
+  /**
+   * What is open on the box, and which one is on screen.
+   *
+   * Carried HERE and not only on the frame wire, because the hosted relay
+   * consumes the daemon's heartbeat itself: it reads the stats off it and
+   * emits its own `stats` message, so the pane's frame-wire `onHeartbeat`
+   * never fires on that engine at all. Without this the tab strip — a
+   * hosted-only feature — never updated once.
+   */
+  tabs?: { active?: string; list?: Array<{ id: string; url: string }> };
 }
 
 export interface FrameRelayStatsSnapshot {
@@ -61,9 +75,11 @@ export interface FrameRelayStats {
    * Offer a frame to the socket.
    *
    * Returns false when it was dropped, so the caller can skip whatever it was
-   * about to do with it. The bytes are counted as INPUT either way: a frame
-   * the relay received and could not forward is exactly the loss this exists
-   * to make visible.
+   * about to do with it. The FRAME is counted either way — one the relay
+   * received and could not forward is exactly the loss this exists to make
+   * visible — while `bytes` counts only what was actually written, because it
+   * sits beside `framesOut` and the pane's kbps figure is about what reached
+   * it rather than about what it missed.
    */
   offer(bytes: number, write: () => void): boolean;
   /** A drop the caller detected itself (a closed socket, a failed send). */
@@ -97,7 +113,8 @@ export function createFrameRelayStats(
     options.setTimer ?? ((fn: () => void, ms: number) => setInterval(fn, ms));
   const clearTimer =
     options.clearTimer ??
-    ((handle: unknown) => clearInterval(handle as ReturnType<typeof setInterval>));
+    ((handle: unknown) =>
+      clearInterval(handle as ReturnType<typeof setInterval>));
 
   let framesIn = 0;
   let framesOut = 0;
@@ -146,6 +163,10 @@ export function createFrameRelayStats(
     start() {
       if (timer !== undefined || stopped) return;
       timer = setTimer(() => {
+        // NOT WHILE CONGESTED. Every counter here is cumulative, so a skipped
+        // message loses nothing — and telemetry that queued behind the frames
+        // it is reporting on would be backpressure defeating itself.
+        if (congested()) return;
         try {
           options.send(
             JSON.stringify({

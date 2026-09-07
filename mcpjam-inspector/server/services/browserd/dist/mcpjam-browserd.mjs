@@ -635,11 +635,17 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body || "{}");
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
-    const tier = parsed.tier;
+    const tier = typeof parsed === "object" && parsed !== null ? parsed.tier : void 0;
     if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
-      return { status: 400, body: { error: "invalid_tier", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_tier", bootId: this.bootId }
+      };
     }
     this.setVideoTier?.(tier);
     return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
@@ -649,10 +655,16 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body || "{}");
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     if (typeof parsed !== "object" || parsed === null) {
-      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId }
+      };
     }
     const { holder, tabId, events } = parsed;
     if (typeof holder !== "string" || holder.length === 0) {
@@ -679,7 +691,8 @@ var BrowserdRequestHandler = class {
       holder,
       events
     });
-    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    if (outcome.ok)
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
       status: outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId }
@@ -690,7 +703,10 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body);
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     if (!isValidCommand(parsed?.command)) {
       return {
@@ -868,7 +884,9 @@ var BrowserdRequestHandler = class {
       () => stillTheirs() === void 0,
       args.holder
     );
-    viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    if (args.events.length > 0) {
+      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    }
     return { ok: true };
   }
   /** May this watcher see frames right now? */
@@ -889,11 +907,17 @@ var BrowserdRequestHandler = class {
     try {
       parsed = JSON.parse(req.body);
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
     }
     const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
     if (!holder) {
-      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId }
+      };
     }
     const ttlMs = typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs) ? parsed.ttlMs : void 0;
     const kind = parsed?.kind === "script" ? "script" : "human";
@@ -956,7 +980,11 @@ var BrowserdRequestHandler = class {
         }
         return {
           status: 200,
-          body: { status: "ok", result: outcome.result, bootId: outcome.bootId }
+          body: {
+            status: "ok",
+            result: outcome.result,
+            bootId: outcome.bootId
+          }
         };
       case "busy":
         return {
@@ -1062,15 +1090,21 @@ function createFramePacer(sink, onDrop) {
       if (closed) return;
       const next = pending;
       pending = void 0;
-      if (next) ship(next);
+      if (next) ship(next.bytes);
     });
   };
   return {
-    push(bytes) {
+    push(bytes, record = {}) {
       if (closed) return;
       if (inFlight) {
-        if (pending !== void 0) onDrop?.();
-        pending = bytes;
+        if (pending !== void 0) {
+          if (pending.record.essential && !record.essential) {
+            if (record.counts !== false) onDrop?.();
+            return;
+          }
+          if (pending.record.counts !== false) onDrop?.();
+        }
+        pending = { bytes, record };
         return;
       }
       ship(bytes);
@@ -1213,6 +1247,9 @@ function createFrameStreamHost(handler, options = {}) {
     }
     release = gate.release;
     unsubscribe = encoder.subscribe((unit) => {
+      if (ended) return;
+      gate.revalidate();
+      if (ended) return;
       pacer.push(
         encodeFrameStreamRecord({
           kind: unit.key ? FRAME_STREAM_KIND.video_key : FRAME_STREAM_KIND.video_delta,
@@ -1222,7 +1259,11 @@ function createFrameStreamHost(handler, options = {}) {
           ts: Date.now(),
           seq: seq += 1,
           au: unit.bytes
-        })
+        }),
+        // A KEYFRAME is the one record a decoder cannot proceed without: give
+        // its slot to the delta behind it and the pane sits frozen until the
+        // next GOP, four seconds later, being sent units it cannot decode.
+        unit.key ? { essential: true } : {}
       );
     });
     const failure = encoder.failure();
@@ -1230,9 +1271,13 @@ function createFrameStreamHost(handler, options = {}) {
       end("video_unavailable");
       return;
     }
+    let lastEmitted = encoder.emitted();
     const beat = () => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      const emitted = encoder.emitted();
+      const idle = emitted === lastEmitted;
+      lastEmitted = emitted;
       pacer.push(
         encodeFrameStreamRecord({
           kind: FRAME_STREAM_KIND.heartbeat,
@@ -1247,9 +1292,13 @@ function createFrameStreamHost(handler, options = {}) {
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
             // page that is simply not moving.
-            encoderIdle: encoder.takeIdle()
+            encoderIdle: idle
           }
-        })
+        }),
+        // Liveness and counters, not a picture: another arrives in ten
+        // seconds, and counting its overwrite made `dropped.pacer` describe a
+        // link that had dropped nothing at all.
+        { counts: false }
       );
       gate.revalidate();
       if (ended) return;
@@ -1263,7 +1312,9 @@ function createFrameStreamHost(handler, options = {}) {
   }
   function writeEndAndClose(res, reason) {
     try {
-      res.write(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason }));
+      res.write(
+        encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.end, reason })
+      );
       res.end();
     } catch {
     }
@@ -1791,9 +1842,9 @@ function createVideoEncoder(options) {
   let disposed = false;
   let ring = [];
   let ringBytes = 0;
-  let emittedSinceIdleCheck = false;
+  let emittedCount = 0;
   const publish = (unit) => {
-    emittedSinceIdleCheck = true;
+    emittedCount += 1;
     if (unit.key) {
       ring = [unit];
       ringBytes = unit.bytes.byteLength;
@@ -1886,10 +1937,8 @@ function createVideoEncoder(options) {
       stop();
       start();
     },
-    takeIdle() {
-      const idle = !emittedSinceIdleCheck;
-      emittedSinceIdleCheck = false;
-      return idle;
+    emitted() {
+      return emittedCount;
     },
     dispose() {
       disposed = true;
@@ -2943,6 +2992,10 @@ function readJpegDimensions(bytes) {
 }
 
 // server/services/browserd/daemon/viewport.ts
+function base64Bytes(data) {
+  const padding = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor(data.length * 3 / 4) - padding);
+}
 var DEFAULT_QUALITY = 75;
 var DEFAULT_MIN_INTERVAL_MS = 100;
 var DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
@@ -2967,7 +3020,7 @@ function createTabViewport(cdp, options) {
   };
   const publish = (frame) => {
     counters.framesOut += 1;
-    counters.bytesOut += Math.floor(frame.data.length * 3 / 4);
+    counters.bytesOut += base64Bytes(frame.data);
     for (const listener of listeners) {
       try {
         listener(frame);
@@ -3220,6 +3273,8 @@ function parseScrollDelta(value) {
   if (Number.isFinite(pixels)) return [0, pixels];
   return [0, DEFAULT_SCROLL_STEP];
 }
+var TABS_SNAPSHOT_MAX = 16;
+var TAB_URL_MAX = 256;
 var ChromiumDriver = class {
   context;
   settleOptions;
@@ -3586,7 +3641,13 @@ var ChromiumDriver = class {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+        return this.observation(
+          tabId,
+          entry,
+          { url: frame.url },
+          frame,
+          permit
+        );
       }
       case "dom": {
         const frame = await this.snapshot(entry.page);
@@ -3792,14 +3853,12 @@ var ChromiumDriver = class {
    * stream.
    */
   tabsSnapshot() {
-    const list = [...this.tabs.entries()].map(([id, entry]) => ({
+    const list = [...this.tabs.entries()].filter(([, entry]) => !entry.page.isClosed()).slice(0, TABS_SNAPSHOT_MAX).map(([id, entry]) => ({
       id,
-      url: safeUrl(entry.page)
+      url: safeUrl(entry.page).slice(0, TAB_URL_MAX)
     }));
-    return {
-      ...this.activeTabId ? { active: this.activeTabId } : {},
-      list
-    };
+    const active = this.activeTabId && list.some((tab) => tab.id === this.activeTabId) ? this.activeTabId : void 0;
+    return { ...active ? { active } : {}, list };
   }
   async viewport(tabId) {
     const key = tabId ?? DEFAULT_TAB;
@@ -4565,18 +4624,25 @@ function readBrowserdConfig(env = process.env, mintToken = defaultMintToken) {
       `MCPJAM_BROWSERD_PORT must be a valid port (1-65535), got ${rawPort}`
     );
   }
+  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
   return {
     token,
     port,
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir: env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
-    headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
+    headless,
     windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || void 0,
     // Only the exact string opts in. An unset or misspelled value keeps the
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
     contextMode: env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
-    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1",
+    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
+    // for the video encoder, and a headless Chromium draws on no display at
+    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
+    // screen, and hand every watcher a picture of nothing. The two are
+    // contradictory rather than merely unusual, so the one that decides
+    // whether there is a picture wins.
+    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
     ...tokenFile ? { tokenFile } : {},
     // Only a daemon that had to mint its own token was started by the box.

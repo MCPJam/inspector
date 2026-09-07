@@ -90,7 +90,11 @@ export function buildAvccDescription(
   const pps = units.find((unit) => nalType(unit) === NAL_PPS);
   if (!sps || !pps || sps.byteLength < 4) return undefined;
 
-  const size = 7 + 2 + sps.byteLength + 1 + 2 + pps.byteLength;
+  // SIX header bytes, not seven: version, three profile bytes, the length-size
+  // byte and the SPS count. A seventh left a trailing zero on the end of the
+  // description, which a strict `VideoDecoder` may reject — and a rejected
+  // configure fails on every keyframe, so the pane never sees video at all.
+  const size = 6 + 2 + sps.byteLength + 1 + 2 + pps.byteLength;
   const out = new Uint8Array(size);
   let at = 0;
   out[at++] = 1; // configurationVersion
@@ -161,7 +165,19 @@ export interface PaneVideoDecoder {
 }
 
 export interface PaneVideoDecoderOptions {
-  /** Draw one decoded picture. The frame is closed for you afterwards. */
+  /**
+   * Draw one decoded picture.
+   *
+   * THE CALLER OWNS IT and must `close()` it — including on the path where it
+   * throws. Closing here instead used to be the contract, and it was wrong for
+   * the only caller there is: the pane converts the frame with
+   * `createImageBitmap`, which resolves later, and a frame closed the moment
+   * this returned was a frame being read after it was released.
+   *
+   * A `VideoFrame` holds a decoded surface the garbage collector cannot see
+   * the cost of; a decoder at 30fps whose frames are never closed exhausts the
+   * pool within a second and stalls.
+   */
   onFrame(frame: VideoFrame): void;
   /**
    * Video is not going to work for this session.
@@ -178,7 +194,8 @@ export function createPaneVideoDecoder(
   options: PaneVideoDecoderOptions,
 ): PaneVideoDecoder {
   const construct =
-    options.createDecoder ?? ((init: VideoDecoderInit) => new VideoDecoder(init));
+    options.createDecoder ??
+    ((init: VideoDecoderInit) => new VideoDecoder(init));
   let decoder: VideoDecoder | undefined;
   let errors = 0;
   let closed = false;
@@ -229,15 +246,22 @@ export function createPaneVideoDecoder(
             output: (frame) => {
               try {
                 options.onFrame(frame);
-              } finally {
-                // A `VideoFrame` holds a decoded surface the garbage collector
-                // cannot see the cost of; a decoder at 30fps that leaked them
-                // would exhaust the pool within a second and stall.
-                frame.close();
+              } catch {
+                // A handler that threw did not take ownership, so nothing else
+                // will release this surface.
+                try {
+                  frame.close();
+                } catch {
+                  // Already closed.
+                }
               }
             },
             error: onError,
           });
+          // ASSIGNED BEFORE `configure`, which can throw: `onError` closes
+          // `decoder`, and a decoder that was never assigned is one it cannot
+          // reach — so every retry constructed another one nothing released.
+          decoder = created;
           created.configure({
             codec: codecStringFor(units),
             description,
@@ -245,7 +269,6 @@ export function createPaneVideoDecoder(
             // are about to take control of.
             optimizeForLatency: true,
           });
-          decoder = created;
         } catch (error) {
           onError(error);
           return;

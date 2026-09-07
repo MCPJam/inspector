@@ -213,6 +213,15 @@ export function BrowserPaneSurface({
    * checks it is still the current frame before drawing, or a slow decode from
    * two frames ago would paint over a newer picture.
    */
+  // A stream that ENDED — a revoked grant, a lease taken, a socket closed —
+  // sets the frame to null, and the last picture's surface has no successor to
+  // release it. Several megabytes held for as long as the pane stays mounted.
+  useEffect(() => {
+    if (frame) return;
+    paintedRef.current?.bitmap?.close();
+    paintedRef.current = null;
+  }, [frame]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !frame) return;
@@ -233,7 +242,9 @@ export function BrowserPaneSurface({
 
     const bitmap = frame.bitmap;
     if (bitmap) {
-      if (paintFrame(canvas, { ...frame, bitmap })) record();
+      // The producer's own measurement: the decode happened off the main
+      // thread before this frame existed, so there is nothing to time here.
+      if (paintFrame(canvas, { ...frame, bitmap })) record(frame.decodeMs);
       return;
     }
     if (!frame.data) return;
@@ -467,6 +478,11 @@ export function BrowserPaneSurface({
         {notice ? (
           <div
             data-testid="pane-notice"
+            // ANNOUNCED. The agent switching tabs changes everything on
+            // screen, and a person using a screen reader has no picture to
+            // notice it in.
+            role="status"
+            aria-live="polite"
             className="pointer-events-none absolute inset-x-0 top-2 z-10 mx-auto w-fit rounded-md bg-foreground/85 px-2 py-1 text-[11px] text-background"
           >
             {notice}

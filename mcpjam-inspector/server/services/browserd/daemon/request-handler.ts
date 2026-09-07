@@ -197,8 +197,7 @@ export class BrowserdRequestHandler {
    * reads as "this engine cannot tell you" rather than as "no tabs".
    */
   tabsSnapshot():
-    | { active?: string; list?: Array<{ id: string; url: string }> }
-    | undefined {
+    { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
     return this.driver.tabsSnapshot?.();
   }
 
@@ -341,11 +340,22 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body || "{}");
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
-    const tier = (parsed as { tier?: unknown }).tier;
+    // `JSON.parse("null")` is a successful parse of a non-object, and reading
+    // a property off it throws — a 500 where this endpoint has a 400 to give.
+    const tier =
+      typeof parsed === "object" && parsed !== null
+        ? (parsed as { tier?: unknown }).tier
+        : undefined;
     if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
-      return { status: 400, body: { error: "invalid_tier", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_tier", bootId: this.bootId },
+      };
     }
     // A box with no encoder answers 200 and does nothing: the caller's picture
     // is a JPEG, whose quality this endpoint does not govern, and reporting a
@@ -359,10 +369,16 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body || "{}");
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
     if (typeof parsed !== "object" || parsed === null) {
-      return { status: 400, body: { error: "invalid_input", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_input", bootId: this.bootId },
+      };
     }
     const { holder, tabId, events } = parsed as {
       holder?: unknown;
@@ -396,7 +412,8 @@ export class BrowserdRequestHandler {
       holder,
       events: events as ViewportInputEvent[],
     });
-    if (outcome.ok) return { status: 200, body: { ok: true, bootId: this.bootId } };
+    if (outcome.ok)
+      return { status: 200, body: { ok: true, bootId: this.bootId } };
     return {
       status: outcome.error === "unknown_tab" ? 404 : 423,
       body: { error: outcome.error, bootId: this.bootId },
@@ -408,7 +425,10 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body) as CommandRequestBody;
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
     if (!isValidCommand(parsed?.command)) {
       return {
@@ -682,8 +702,12 @@ export class BrowserdRequestHandler {
       args.holder,
     );
     // AFTER the dispatch, so the boost covers the repaint it caused rather
-    // than the frame before it.
-    viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    // than the frame before it — and only when there WAS a dispatch: an empty
+    // batch changed nothing on the page, and raising the screencast to 30fps
+    // for a second and a half over it is a box paying for nothing.
+    if (args.events.length > 0) {
+      viewport.boost?.(INPUT_BOOST_INTERVAL_MS, INPUT_BOOST_WINDOW_MS);
+    }
     return { ok: true };
   }
 
@@ -715,11 +739,17 @@ export class BrowserdRequestHandler {
     try {
       parsed = JSON.parse(req.body) as typeof parsed;
     } catch {
-      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
     }
     const holder = typeof parsed?.holder === "string" ? parsed.holder : "";
     if (!holder) {
-      return { status: 400, body: { error: "holder_required", bootId: this.bootId } };
+      return {
+        status: 400,
+        body: { error: "holder_required", bootId: this.bootId },
+      };
     }
     const ttlMs =
       typeof parsed?.ttlMs === "number" && Number.isFinite(parsed.ttlMs)
@@ -728,7 +758,8 @@ export class BrowserdRequestHandler {
     // Anything but the exact string is a person: a mislabelled script would
     // make the resume note tell the model a human was here, and the note's
     // whole job is to say what actually touched the page.
-    const kind: LeaseHolderKind = parsed?.kind === "script" ? "script" : "human";
+    const kind: LeaseHolderKind =
+      parsed?.kind === "script" ? "script" : "human";
 
     let state: LeaseState;
     switch (parsed?.action) {
@@ -813,7 +844,11 @@ export class BrowserdRequestHandler {
         }
         return {
           status: 200,
-          body: { status: "ok", result: outcome.result, bootId: outcome.bootId },
+          body: {
+            status: "ok",
+            result: outcome.result,
+            bootId: outcome.bootId,
+          },
         };
       case "busy":
         return {

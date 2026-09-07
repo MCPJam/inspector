@@ -67,8 +67,8 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     tabId?: string;
     events: readonly unknown[];
   }> = [];
-  let inputOutcome: { ok: true } | { ok: false; status: number; error: string } =
-    { ok: true };
+  let inputOutcome:
+    { ok: true } | { ok: false; status: number; error: string } = { ok: true };
   /** Held open so a test can drive "a second batch while the first is out". */
   let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
@@ -490,7 +490,6 @@ describe("browser frames socket — keeping the box awake", () => {
   });
 });
 
-
 describe("browser frames socket — input on the socket", () => {
   /** Drive one client message through the route's handler. */
   function say(
@@ -517,6 +516,22 @@ describe("browser frames socket — input on the socket", () => {
     });
   });
 
+  it("aims input at the tab this socket is watching", async () => {
+    // The frame stream is pinned to `?tabId=`, and input with no tab of its
+    // own resolves to the daemon's DEFAULT tab — so a pane watching a second
+    // tab was clicking into the first one, at coordinates measured against a
+    // picture of the second.
+    const f = build();
+    const { ws, events } = await f.connect("tok", "tabId=tab-9");
+    say(events, ws, {
+      type: "input",
+      seq: 1,
+      events: [{ type: "mouse_move", x: 4, y: 5 }],
+    });
+    await vi.waitFor(() => expect(f.inputCalls).toHaveLength(1));
+    expect(f.inputCalls[0]).toMatchObject({ tabId: "tab-9" });
+  });
+
   it("dispatches with the holder from the TOKEN, never the wire", async () => {
     const f = build();
     const { ws, events } = await f.connect();
@@ -535,11 +550,15 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
+        ws.sent
+          .map((raw) => JSON.parse(String(raw)))
+          .some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(
-      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
+      ws.sent
+        .map((raw) => JSON.parse(String(raw)))
+        .find((m) => m.type === "input_ack"),
     ).toEqual({ type: "input_ack", seq: 1, dispatched: 1 });
   });
 
@@ -557,11 +576,15 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
+        ws.sent
+          .map((raw) => JSON.parse(String(raw)))
+          .some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(
-      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
+      ws.sent
+        .map((raw) => JSON.parse(String(raw)))
+        .find((m) => m.type === "input_ack"),
     ).toEqual({
       type: "input_ack",
       seq: 9,
@@ -579,10 +602,15 @@ describe("browser frames socket — input on the socket", () => {
       seq: 3,
       // Filtering would deliver a drag missing its release, leaving the page
       // holding a button down with nothing to say why.
-      events: [{ type: "mouse_down", x: 1, y: 1, button: "left" }, { type: "?" }],
+      events: [
+        { type: "mouse_down", x: 1, y: 1, button: "left" },
+        { type: "?" },
+      ],
     });
     expect(
-      ws.sent.map((raw) => JSON.parse(String(raw))).find((m) => m.type === "input_ack"),
+      ws.sent
+        .map((raw) => JSON.parse(String(raw)))
+        .find((m) => m.type === "input_ack"),
     ).toEqual({
       type: "input_ack",
       seq: 3,
@@ -671,7 +699,9 @@ describe("browser frames socket — input on the socket", () => {
     });
     await vi.waitFor(() =>
       expect(
-        ws.sent.map((raw) => JSON.parse(String(raw))).some((m) => m.type === "input_ack"),
+        ws.sent
+          .map((raw) => JSON.parse(String(raw)))
+          .some((m) => m.type === "input_ack"),
       ).toBe(true),
     );
     expect(f.touchSession).not.toHaveBeenCalledWith(
@@ -703,7 +733,6 @@ describe("browser frames socket — input on the socket", () => {
   });
 });
 
-
 /**
  * V-4b. The pixel path stopped being base64 in a JSON envelope. What these pin
  * is that the change is NEGOTIATED — a pane that predates it keeps the wire it
@@ -733,8 +762,7 @@ describe("browser frames socket — the binary wire", () => {
     f.upstreamCalls[0].onFrame(FRAME);
 
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      | Uint8Array
-      | undefined;
+      Uint8Array | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder().push(binary!);
     expect(decoded.ok).toBe(true);
@@ -750,9 +778,7 @@ describe("browser frames socket — the binary wire", () => {
     // The SANDBOX's `ts` is not comparable to the viewer's clock — different
     // machines — so this hop stamps its own, and that is the one the pane
     // measured its round trip against.
-    expect(
-      (record as { ts: number }).ts,
-    ).toBeGreaterThanOrEqual(before);
+    expect((record as { ts: number }).ts).toBeGreaterThanOrEqual(before);
     expect((record as { ts: number }).ts).not.toBe(5);
     // And NOT a JSON frame beside it: one wire, not two.
     expect(
@@ -792,7 +818,6 @@ describe("browser frames socket — the binary wire", () => {
     ).toContainEqual({ type: "pong", t: 9 });
   });
 });
-
 
 /**
  * V-5. Video is NEGOTIATED twice over: the pane asks only when its browser has
@@ -848,8 +873,7 @@ describe("browser frames socket — negotiating h264", () => {
       seq: 2,
     });
     const binary = ws.sent.find((entry) => entry instanceof Uint8Array) as
-      | Uint8Array
-      | undefined;
+      Uint8Array | undefined;
     expect(binary).toBeDefined();
     const decoded = createFrameStreamDecoder({ video: true }).push(binary!);
     expect(decoded.ok && decoded.records[0]).toMatchObject({
@@ -859,7 +883,7 @@ describe("browser frames socket — negotiating h264", () => {
     });
     // Stamped by THIS hop, like every other frame.
     expect(
-      (decoded.ok ? (decoded.records[0] as { ts: number }).ts : 0),
+      decoded.ok ? (decoded.records[0] as { ts: number }).ts : 0,
     ).toBeGreaterThanOrEqual(before);
   });
 
@@ -875,7 +899,6 @@ describe("browser frames socket — negotiating h264", () => {
     expect(f.upstreamCalls[0]?.codec).toBeUndefined();
   });
 });
-
 
 /**
  * V-7. A tier is not a lease-gated action: it changes how the picture is

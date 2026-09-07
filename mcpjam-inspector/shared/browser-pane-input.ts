@@ -58,6 +58,23 @@ export type BrowserPaneInputEvent =
  */
 export const BROWSER_INPUT_BATCH_LIMIT = 64;
 
+/**
+ * An optional field is either absent or the right kind of value.
+ *
+ * NOT "absent or anything": a `modifiers: "ctrl"` passed the guard, reached
+ * CDP as a string where a bitmask belongs, and the dispatch failed there — on a
+ * batch this relay had already acknowledged as delivered. Silently.
+ */
+function optionalFiniteNumber(value: unknown): boolean {
+  return (
+    value === undefined || (typeof value === "number" && Number.isFinite(value))
+  );
+}
+
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
 export function isBrowserPaneInputEvent(
   value: unknown,
 ): value is BrowserPaneInputEvent {
@@ -68,6 +85,7 @@ export function isBrowserPaneInputEvent(
     Number.isFinite(event.x) &&
     typeof event.y === "number" &&
     Number.isFinite(event.y);
+  if (!optionalFiniteNumber(event.modifiers)) return false;
   switch (event.type) {
     case "mouse_move":
       return xy;
@@ -75,6 +93,7 @@ export function isBrowserPaneInputEvent(
     case "mouse_up":
       return (
         xy &&
+        optionalFiniteNumber(event.clickCount) &&
         (event.button === "left" ||
           event.button === "middle" ||
           event.button === "right")
@@ -89,7 +108,11 @@ export function isBrowserPaneInputEvent(
       );
     case "key_down":
     case "key_up":
-      return typeof event.key === "string" && event.key.length > 0;
+      return (
+        typeof event.key === "string" &&
+        event.key.length > 0 &&
+        optionalString(event.code)
+      );
     case "text":
       return typeof event.text === "string";
     default:
@@ -167,8 +190,17 @@ export function parseBrowserPaneInputMessage(
   if (seq === undefined || !Array.isArray(parsed.events)) {
     return { ok: false, error: "invalid_input" };
   }
-  const batch = parsed.events.slice(0, BROWSER_INPUT_BATCH_LIMIT);
-  if (batch.length === 0 || !batch.every(isBrowserPaneInputEvent)) {
+  const batch = parsed.events;
+  // REFUSED, not truncated. Slicing here silently discarded the tail of a
+  // batch this relay then acknowledged as delivered — and a burst that ends
+  // with a release leaves the page holding a button or a key nobody is
+  // pressing, with the ack saying it all arrived. Every pane chunks at this
+  // same number before it sends, so nothing well-behaved ever meets this.
+  if (
+    batch.length === 0 ||
+    batch.length > BROWSER_INPUT_BATCH_LIMIT ||
+    !batch.every(isBrowserPaneInputEvent)
+  ) {
     return { ok: false, error: "invalid_input" };
   }
   return {

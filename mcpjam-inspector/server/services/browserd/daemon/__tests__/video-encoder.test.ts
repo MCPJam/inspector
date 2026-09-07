@@ -243,16 +243,23 @@ describe("the encoder's lifecycle", () => {
     expect(ffmpeg.spawned).toHaveLength(2);
   });
 
-  it("says when it has emitted nothing since it was last asked", () => {
+  it("counts what it has published, so every watcher can tell idle from lost", () => {
     // `mpdecimate` means an idle page produces no frames at all; a client that
     // read that silence as loss would step the quality down on a page that is
     // simply not moving.
+    //
+    // A COUNTER rather than a consumed flag, because ONE encoder serves every
+    // watcher: a flag taken by the first watcher's heartbeat told the second
+    // that nothing had been emitted, every single time.
     const { encoder, ffmpeg } = build();
     encoder.subscribe(() => {});
-    expect(encoder.takeIdle()).toBe(true);
+    const start = encoder.emitted();
     ffmpeg.latest().stdout.emit("data", Buffer.from(concat(KEY(), DELTA())));
-    expect(encoder.takeIdle()).toBe(false);
-    expect(encoder.takeIdle()).toBe(true);
+    const after = encoder.emitted();
+    expect(after).toBeGreaterThan(start);
+    // Two readers, each comparing against what IT last saw, both see the same
+    // two units — which is the whole point of not consuming.
+    expect(encoder.emitted()).toBe(after);
   });
 
   it("survives a subscriber that throws", () => {

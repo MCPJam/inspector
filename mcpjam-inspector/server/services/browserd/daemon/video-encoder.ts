@@ -86,8 +86,15 @@ export interface VideoEncoder {
   /** Change the bitrate/sharpness trade. Restarts ffmpeg — see the note below. */
   setTier(tier: VideoTier): void;
   tier(): VideoTier;
-  /** Has nothing been emitted since the last time this was asked? */
-  takeIdle(): boolean;
+  /**
+   * How many access units this encoder has published, ever.
+   *
+   * A COUNTER rather than a "has anything happened since you last asked"
+   * flag, because ONE encoder serves every watcher: a flag consumed by the
+   * first watcher's heartbeat told the second that nothing had been emitted,
+   * every time. Each stream remembers the count it last saw and compares.
+   */
+  emitted(): number;
   dispose(): void;
 }
 
@@ -293,9 +300,7 @@ export function containsIdr(bytes: Uint8Array): boolean {
   return false;
 }
 
-export function createVideoEncoder(
-  options: VideoEncoderOptions,
-): VideoEncoder {
+export function createVideoEncoder(options: VideoEncoderOptions): VideoEncoder {
   const spawnProcess =
     options.spawnProcess ??
     ((command, args, spawnOptions) =>
@@ -312,11 +317,11 @@ export function createVideoEncoder(
   /** The current GOP, so a late joiner sees a picture without waiting. */
   let ring: VideoAccessUnit[] = [];
   let ringBytes = 0;
-  /** Has anything been emitted since the last `takeIdle()`? */
-  let emittedSinceIdleCheck = false;
+  /** Monotonic count of published units — see `emitted()`. */
+  let emittedCount = 0;
 
   const publish = (unit: VideoAccessUnit): void => {
-    emittedSinceIdleCheck = true;
+    emittedCount += 1;
     if (unit.key) {
       // A new GOP: everything before it is unreachable from here anyway.
       ring = [unit];
@@ -428,10 +433,8 @@ export function createVideoEncoder(
       stop();
       start();
     },
-    takeIdle() {
-      const idle = !emittedSinceIdleCheck;
-      emittedSinceIdleCheck = false;
-      return idle;
+    emitted() {
+      return emittedCount;
     },
     dispose() {
       disposed = true;

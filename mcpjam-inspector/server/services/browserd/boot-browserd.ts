@@ -258,7 +258,7 @@ function parseReadyLine(line: string): BrowserdReadyLine | null {
   if (
     protocolVersion !== undefined &&
     (typeof protocolVersion !== "number" ||
-      !Number.isInteger(protocolVersion) ||
+      !Number.isSafeInteger(protocolVersion) ||
       protocolVersion < 1)
   ) {
     // A field that IS there and is nonsense is a daemon we do not understand.

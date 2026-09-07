@@ -99,7 +99,10 @@ export interface ChromiumDriverOptions {
    */
   lease?: Pick<
     HandoffLease,
-    "consumeResumedDirty" | "consumeResumedHeldSince" | "resumedFromKind" | "state"
+    | "consumeResumedDirty"
+    | "consumeResumedHeldSince"
+    | "resumedFromKind"
+    | "state"
   >;
   a11y?: A11yBudget;
   console?: ConsoleBudget;
@@ -149,6 +152,19 @@ function parseScrollDelta(value: string | undefined): [number, number] {
   if (Number.isFinite(pixels)) return [0, pixels];
   return [0, DEFAULT_SCROLL_STEP];
 }
+
+/**
+ * How much of a tab list may ride the heartbeat.
+ *
+ * The heartbeat is a frame-stream record, and a record over 8 KiB is REJECTED
+ * by the reader as `record too large` — which drops an otherwise healthy
+ * pane's whole stream. A page that opens twenty tabs with long URLs is not a
+ * reason for the picture to stop, so the strip is bounded here rather than
+ * discovered at the decoder.
+ */
+const TABS_SNAPSHOT_MAX = 16;
+/** And each URL: the strip shows a HOST, so a path is already more than it needs. */
+const TAB_URL_MAX = 256;
 
 export class ChromiumDriver implements BrowserDriver {
   private readonly context: DriverContext;
@@ -219,7 +235,8 @@ export class ChromiumDriver implements BrowserDriver {
     this.consoleBudget = options.console ?? DEFAULT_CONSOLE_BUDGET;
     this.webmcpOutputBudgetBytes =
       options.webmcpOutputBytes ?? DEFAULT_WEBMCP_OUTPUT_BYTES;
-    this.pageTextMaxBytes = options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
+    this.pageTextMaxBytes =
+      options.pageTextBytes ?? DEFAULT_PAGE_TEXT_MAX_BYTES;
     this.lease = options.lease;
   }
 
@@ -629,7 +646,13 @@ export class ChromiumDriver implements BrowserDriver {
     switch (action.mode) {
       case "url": {
         const frame = await this.snapshot(entry.page);
-        return this.observation(tabId, entry, { url: frame.url }, frame, permit);
+        return this.observation(
+          tabId,
+          entry,
+          { url: frame.url },
+          frame,
+          permit,
+        );
       }
       case "dom": {
         // The token is computed from the SAME snapshot returned as output, so
@@ -887,15 +910,27 @@ export class ChromiumDriver implements BrowserDriver {
    * than asking Chromium — because it runs on every heartbeat of every open
    * stream.
    */
-  tabsSnapshot(): { active?: string; list: Array<{ id: string; url: string }> } {
-    const list = [...this.tabs.entries()].map(([id, entry]) => ({
-      id,
-      url: safeUrl(entry.page),
-    }));
-    return {
-      ...(this.activeTabId ? { active: this.activeTabId } : {}),
-      list,
-    };
+  tabsSnapshot(): {
+    active?: string;
+    list: Array<{ id: string; url: string }>;
+  } {
+    const list = [...this.tabs.entries()]
+      // A page can close ITSELF — `window.close()`, a crashed renderer — with
+      // nothing routed through the driver, and the strip then showed a
+      // phantom tab and could mark the closed id active.
+      .filter(([, entry]) => !entry.page.isClosed())
+      .slice(0, TABS_SNAPSHOT_MAX)
+      .map(([id, entry]) => ({
+        id,
+        url: safeUrl(entry.page).slice(0, TAB_URL_MAX),
+      }));
+    // Only if it is still there: the strip highlights `active`, and pointing
+    // at a tab that is not in the list reads as "no tab is on screen".
+    const active =
+      this.activeTabId && list.some((tab) => tab.id === this.activeTabId)
+        ? this.activeTabId
+        : undefined;
+    return { ...(active ? { active } : {}), list };
   }
 
   async viewport(tabId?: string): Promise<TabViewport | null> {
@@ -1152,7 +1187,11 @@ export class ChromiumDriver implements BrowserDriver {
   private async readA11y(
     tabId: string,
     entry: TabEntry,
-    action: { rootSelector?: string; rootRef?: string; filter?: "interactive" | "all" },
+    action: {
+      rootSelector?: string;
+      rootRef?: string;
+      filter?: "interactive" | "all";
+    },
   ): Promise<
     | { ok: true; tree: A11yNode | null; filter: "interactive" | "all" }
     | { ok: false; error: BrowserCommandResult }

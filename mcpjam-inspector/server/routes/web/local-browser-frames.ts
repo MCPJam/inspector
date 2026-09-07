@@ -35,10 +35,7 @@ import {
   encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
 } from "../../services/browserd/frame-stream.js";
-import {
-  createFrameRelayStats,
-  pongFor,
-} from "./browser-frame-relay-stats.js";
+import { createFrameRelayStats, pongFor } from "./browser-frame-relay-stats.js";
 import {
   createRelayInputForwarder,
   type RelayInputForwarder,
@@ -179,8 +176,17 @@ export function createLocalBrowserFramesWsHandler(
     /** One dispatch at a time, so a drag arrives in the order it was made. */
     let input: RelayInputForwarder | undefined;
     let closed = false;
+    /** Timers and the like this socket started, torn down with it. */
+    const cleanups: Array<() => void> = [];
     const detach = () => {
       closed = true;
+      for (const stop of cleanups.splice(0)) {
+        try {
+          stop();
+        } catch {
+          // A timer already cleared.
+        }
+      }
       unsubscribe?.();
       unsubscribe = undefined;
       revalidate = undefined;
@@ -218,7 +224,10 @@ export function createLocalBrowserFramesWsHandler(
         // bootId says which browser they are asking to watch. They have to be
         // the same one.
         if (!nonceProject || session.projectKey !== nonceProject) {
-          ws.close(CLOSE_UNAUTHORIZED, "That browser belongs to another project.");
+          ws.close(
+            CLOSE_UNAUTHORIZED,
+            "That browser belongs to another project.",
+          );
           return;
         }
 
@@ -307,6 +316,29 @@ export function createLocalBrowserFramesWsHandler(
         });
         stats.setSubscribers(1);
         stats.start();
+        // THE VIEWPORT'S OWN LOSS, on the same message. The hosted pane gets
+        // it because the daemon sends it in the heartbeat across the sandbox
+        // boundary; in-process there is no heartbeat to ride, so without this
+        // the local overlay silently reported no dedupe, oversize or pacer
+        // drops at all — the one engine a developer debugs against.
+        const mergeViewport = () => {
+          if (closed || !subscription.ok) return;
+          try {
+            const counters = subscription.counters();
+            stats?.mergeDaemon({
+              framesIn: counters.framesIn,
+              framesOut: counters.framesOut,
+              bytesOut: counters.bytesOut,
+              dropped: counters.dropped,
+            });
+          } catch {
+            // Telemetry. A subscription that cannot answer is not a reason to
+            // take down a pane that is watching perfectly well.
+          }
+        };
+        mergeViewport();
+        const viewportCounters = setInterval(mergeViewport, 1_000);
+        cleanups.push(() => clearInterval(viewportCounters));
 
         input = createRelayInputForwarder({
           dispatch: async ({ tabId, events }) => {

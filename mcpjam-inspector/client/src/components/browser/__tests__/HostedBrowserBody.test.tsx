@@ -9,7 +9,13 @@
  * picture nobody is looking at.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
@@ -586,7 +592,9 @@ describe("the hosted pane — driving it", () => {
     await userEvent.keyboard("k");
     await waitFor(() =>
       expect(
-        socket().sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input"),
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "input"),
       ).toBe(true),
     );
     const message = socket()
@@ -617,7 +625,9 @@ describe("the hosted pane — driving it", () => {
     await userEvent.keyboard("k");
     await waitFor(() => expect(api.inputs).toHaveLength(1));
     expect(
-      socket().sent.map((raw) => JSON.parse(raw)).some((m) => m.type === "input"),
+      socket()
+        .sent.map((raw) => JSON.parse(raw))
+        .some((m) => m.type === "input"),
     ).toBe(false);
   });
 
@@ -640,7 +650,6 @@ describe("the hosted pane — driving it", () => {
     await waitFor(() => expect(api.inputs).toHaveLength(1));
   });
 });
-
 
 /**
  * V-4b. One socket carries bytes for pixels and text for control. The pane has
@@ -700,7 +709,6 @@ describe("the hosted pane — the binary wire", () => {
     expect(api.streamArgs.at(-1)).toMatchObject({ wire: "binary" });
   });
 });
-
 
 /**
  * V-5. The video stream grabs the X display, so a model `activate_tab` changes
@@ -767,7 +775,6 @@ describe("the hosted pane — which tab is on screen", () => {
   });
 });
 
-
 /**
  * V-7. The tier menu. What it changes depends on which tier: a bitrate change
  * is a message on the open socket, and a change of TRANSPORT is a reconnect —
@@ -808,9 +815,56 @@ describe("the hosted pane — quality tiers", () => {
     const before = api.sockets.length;
     await openMenu();
     fireEvent.click(await screen.findByTestId("pane-tier-mjpeg"));
+    await waitFor(() => expect(api.sockets.length).toBeGreaterThan(before));
+  });
+
+  it("tells the DAEMON when auto steps the quality down", async () => {
+    // Auto used to move only the pane's own state, so a viewer on a link that
+    // could not carry the stream was labelled "Data saver" while the encoder
+    // went on producing exactly the bitrate that was being dropped.
+    renderBody();
+    await deliverFrame();
+    // Three consecutive readings, because the controller refuses to act on
+    // one: half the frames offered are dropped each second.
+    for (let n = 1; n <= 4; n += 1) {
+      act(() => {
+        socket().onmessage?.({
+          data: JSON.stringify({
+            type: "stats",
+            framesIn: n * 20,
+            dropped: n * 10,
+            bytes: 0,
+            subscribers: 1,
+          }),
+        });
+      });
+    }
     await waitFor(() =>
-      expect(api.sockets.length).toBeGreaterThan(before),
+      expect(
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "quality" && m.tier === "saver"),
+      ).toBe(true),
     );
+  });
+
+  it("falls back to JPEG when the box says it cannot encode video", async () => {
+    // A generic drop is worth retrying as-is; this one is not — retrying asks
+    // a daemon that has already said it has no encoder for H.264 again,
+    // forever, while the JPEG wire underneath works perfectly.
+    vi.useFakeTimers();
+    renderBody();
+    await vi.waitFor(() => expect(api.sockets.length).toBe(1));
+    act(() => socket().onclose?.({ code: 4415 }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(api.sockets.length).toBe(2);
+    const last = api.streamArgs[api.streamArgs.length - 1] as {
+      codec?: string;
+    };
+    expect(last.codec).toBeUndefined();
+    vi.useRealTimers();
   });
 
   it("offers the desktop view as the last resort it is", async () => {

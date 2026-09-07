@@ -83,6 +83,16 @@ const CLOSE_NOT_FOUND = 4404; // no browser there
  */
 const CLOSE_LEASE_HELD = 4409;
 const CLOSE_UNAVAILABLE = 4503; // shutting down, or an unexplained drop
+/**
+ * This box cannot encode video; ask again without it.
+ *
+ * Its OWN code, because the pane's answer is different from every other close:
+ * a generic 4503 is a transient fault worth retrying as-is, and retrying as-is
+ * here means asking for H.264 again from a daemon that has already said it has
+ * no encoder — an endless reconnect loop with no picture, when the JPEG wire
+ * beneath it works perfectly.
+ */
+const CLOSE_VIDEO_UNAVAILABLE = 4415;
 
 /**
  * How often a WATCHED pane keeps the session row and the box awake.
@@ -229,9 +239,7 @@ export function createComputerBrowserFramesWsHandler(
         signal: args.signal,
         // Straight through: the relay owns the wire decision, not this seam.
         onFrame: (frame) => args.onFrame(frame),
-        ...(args.onStats
-          ? { onStats: (stats) => args.onStats?.(stats) }
-          : {}),
+        ...(args.onStats ? { onStats: (stats) => args.onStats?.(stats) } : {}),
         onEnd: args.onEnd,
       }));
   const setQuality =
@@ -269,6 +277,8 @@ export function createComputerBrowserFramesWsHandler(
     const protocolHeader = c.req.header("sec-websocket-protocol") ?? "";
     const token = protocolHeader.split(",")[0]?.trim() ?? "";
     const tabId = c.req.query("tabId") ?? undefined;
+    /** This socket's tab, for the input path that must agree with the stream. */
+    const tabIdParam = tabId;
     /**
      * Does this pane want the daemon's own bytes instead of a JSON envelope?
      *
@@ -412,7 +422,13 @@ export function createComputerBrowserFramesWsHandler(
         stats.start();
 
         input = createRelayInputForwarder({
-          dispatch: async ({ tabId, events }) => {
+          dispatch: async ({ tabId: messageTab, events }) => {
+            // THIS SOCKET'S tab when the message did not name one. The frame
+            // stream is pinned to `?tabId=`, and input with no tab resolves to
+            // the daemon's DEFAULT tab — so a pane watching a second tab was
+            // clicking into the first one, at coordinates measured against a
+            // picture of the second.
+            const tabId = messageTab ?? tabIdParam;
             const outcome = await sendInput({
               session: live,
               // NEVER from the client, exactly as `POST /input` derives it: the
@@ -743,6 +759,8 @@ function closeFor(reason: string | undefined): [number, string] {
       return [CLOSE_NOT_FOUND, reason];
     case "shutting_down":
       return [CLOSE_UNAVAILABLE, reason];
+    case "video_unavailable":
+      return [CLOSE_VIDEO_UNAVAILABLE, reason];
     default:
       return [CLOSE_UNAVAILABLE, "stream ended"];
   }

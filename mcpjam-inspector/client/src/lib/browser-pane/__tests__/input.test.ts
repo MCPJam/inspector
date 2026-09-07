@@ -322,6 +322,45 @@ describe("bounding pointer traffic on the POST fallback", () => {
   });
 });
 
+describe("a transport that changes mid-gesture", () => {
+  it("keeps waiting on a POST even after the socket comes back", async () => {
+    // The serialize predicate is read per batch, so a `hello` (or a reconnect)
+    // arriving while a POST is still travelling used to let the very next
+    // batch go straight down the socket — where it can reach the daemon FIRST.
+    // An unordered press/release leaves the page holding a button.
+    const batches: unknown[][] = [];
+    let release!: () => void;
+    const first = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let onSocket = false;
+    let sends = 0;
+    const forwarder = createInputForwarder(
+      async (events) => {
+        batches.push([...events]);
+        sends += 1;
+        if (sends === 1) await first;
+      },
+      { schedule: (fn) => fn(), serialize: () => !onSocket },
+    );
+
+    forwarder.push([{ type: "mouse_down", x: 1, y: 1, button: "left" }]);
+    expect(batches).toHaveLength(1);
+
+    // The socket announces itself while the POST is still open.
+    onSocket = true;
+    forwarder.push([{ type: "mouse_up", x: 1, y: 1, button: "left" }]);
+    expect(batches).toHaveLength(1);
+
+    release();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(batches).toHaveLength(2);
+    expect(batches[1]).toEqual([
+      { type: "mouse_up", x: 1, y: 1, button: "left" },
+    ]);
+  });
+});
+
 describe("input the browser must not receive", () => {
   it("drops what is queued when the hold ends", async () => {
     // The queue is a way to send input under a permission that has since

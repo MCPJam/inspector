@@ -73,6 +73,15 @@ export interface PaneFrame {
    * one it replaced.
    */
   bitmap?: ImageBitmap;
+  /**
+   * How long the decode took, in ms, when the producer measured it.
+   *
+   * On the JSON wire the surface times its own `Image` load; on the binary
+   * wire the decode already happened off the main thread, before the frame
+   * ever reached React — so without carrying the number here, the one path
+   * every modern viewer takes reported no decode samples at all.
+   */
+  decodeMs?: number;
   deviceWidth: number;
   deviceHeight: number;
   scale: number;
@@ -191,12 +200,23 @@ export function createInputForwarder(
   const schedule =
     options.schedule ??
     ((fn: () => void) => {
-      if (typeof requestAnimationFrame === "function") requestAnimationFrame(fn);
+      if (typeof requestAnimationFrame === "function")
+        requestAnimationFrame(fn);
       else setTimeout(fn, 16);
     });
   let queue: BrowserInputEvent[] = [];
   let scheduled = false;
   let inFlight = false;
+  /**
+   * Was the outstanding send one that has to be waited on?
+   *
+   * The transport can change WHILE a send is in flight — a `hello` arrives, a
+   * socket reconnects — and a socket message sent while an older POST is still
+   * travelling can reach the daemon first. So the wait outlives the condition
+   * that caused it: whatever started serialized stays serialized until it
+   * settles.
+   */
+  let inFlightSerialized = false;
   let cancelled = false;
   /** The id this pane stamps on each batch, so an ack can name one. */
   let seq = 0;
@@ -213,7 +233,7 @@ export function createInputForwarder(
       // and an unordered drag lands where nobody aimed. On the socket this is
       // false, because the socket is ordered and waiting would put a round
       // trip back into every gesture.
-      if (inFlight && options.serialize?.()) return;
+      if (inFlight && (inFlightSerialized || options.serialize?.())) return;
       // Chunked at the server's own batch limit. The routes SLICE what they
       // will accept, so a single oversized message silently drops its tail —
       // which for key and button events means a page left holding a key
@@ -223,9 +243,14 @@ export function createInputForwarder(
       queue = coalesced;
       const mine = (seq += 1);
       inFlight = true;
+      inFlightSerialized = options.serialize?.() ?? false;
       const outcome = send(batch, mine);
-      if (!outcome || typeof (outcome as Promise<unknown>).then !== "function") {
+      if (
+        !outcome ||
+        typeof (outcome as Promise<unknown>).then !== "function"
+      ) {
         inFlight = false;
+        inFlightSerialized = false;
         continue;
       }
       void (outcome as Promise<unknown>)
@@ -235,6 +260,7 @@ export function createInputForwarder(
         })
         .finally(() => {
           inFlight = false;
+          inFlightSerialized = false;
           // Directly, not on the next frame: this batch already waited a
           // whole round trip for its turn.
           if (queue.length > 0) flush();

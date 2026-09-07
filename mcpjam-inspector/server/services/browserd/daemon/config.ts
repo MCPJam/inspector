@@ -9,7 +9,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 
-
 export interface BrowserdConfig {
   token: string;
   port: number;
@@ -100,20 +99,28 @@ export function readBrowserdConfig(
     );
   }
 
+  const headless = env.MCPJAM_BROWSERD_HEADLESS === "true";
+
   return {
     token,
     port,
     host: env.MCPJAM_BROWSERD_HOST || DEFAULT_BROWSERD_HOST,
     userDataDir:
       env.MCPJAM_BROWSERD_USER_DATA_DIR || DEFAULT_BROWSERD_USER_DATA_DIR,
-    headless: env.MCPJAM_BROWSERD_HEADLESS === "true",
+    headless,
     windowSize: env.MCPJAM_BROWSERD_WINDOW_SIZE || undefined,
     // Only the exact string opts in. An unset or misspelled value keeps the
     // persistent profile — the mode a human's logins depend on — rather than
     // silently wiping state because a typo read as "ephemeral".
     contextMode:
       env.MCPJAM_BROWSERD_EPHEMERAL === "true" ? "ephemeral" : "persistent",
-    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1",
+    // NEVER WITH HEADLESS. Kiosk is what makes "the display IS the page" true
+    // for the video encoder, and a headless Chromium draws on no display at
+    // all — so the daemon would advertise `h264`, spawn a grab of an empty X
+    // screen, and hand every watcher a picture of nothing. The two are
+    // contradictory rather than merely unusual, so the one that decides
+    // whether there is a picture wins.
+    kiosk: env.MCPJAM_BROWSERD_KIOSK === "1" && !headless,
     deviceScaleFactor: readDeviceScaleFactor(env),
     ...(tokenFile ? { tokenFile } : {}),
     // Only a daemon that had to mint its own token was started by the box.
