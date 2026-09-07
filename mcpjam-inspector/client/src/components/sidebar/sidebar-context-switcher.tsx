@@ -1,10 +1,11 @@
 import { useState, useMemo, useEffect } from "react";
 import { permalinkSignInOptions } from "@/lib/permalink-signin-return";
 import {
-  ArrowLeftRight,
   Building2,
+  Check,
   ChevronDown,
-  ChevronsUpDown,
+  ChevronLeft,
+  ChevronRight,
   LogIn,
   Plus,
   Settings,
@@ -52,7 +53,6 @@ import {
 } from "@mcpjam/design-system/alert-dialog";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
 import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
-import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
 interface SidebarContextSwitcherProps {
@@ -69,19 +69,15 @@ interface SidebarContextSwitcherProps {
   onLearnMoreExpand?: (tabId: string, sourceRect: DOMRect | null) => void;
   activeOrganizationId?: string;
   /**
-   * Navigates to an organization's overview/billing page.
-   * Used by the footer org row's gear and the per-row gear in the switch list.
+   * Switches the active organization by NAVIGATING to a project inside it.
+   *
+   * The URL is the switch, exactly as it is for a project row: the route
+   * coordinator reads the new project out of the pathname and moves the
+   * organization to match. Setting hidden state instead is what made the
+   * previous org rows appear to do nothing — the pathname still named a
+   * project in the old organization, and the coordinator switched back to it.
    */
-  onSwitchOrganization?: (
-    organizationId: string,
-    section?: OrganizationRouteSection
-  ) => void;
-  /**
-   * Switches the active organization context globally without navigating away from
-   * the current page. The rest of the app re-renders with the new org's data and
-   * the sidebar skeleton kicks in until projects are refetched.
-   */
-  onSwitchActiveOrganization?: (organizationId: string) => void;
+  onSwitchOrganization?: (organizationId: string) => void;
 }
 
 interface ProjectDeleteState {
@@ -125,8 +121,19 @@ function getOrgTint(orgId: string): { bg: string; fg: string } {
   return ORG_TINTS[Math.abs(hash) % ORG_TINTS.length];
 }
 
-const SECTION_LABEL_CLASS = "text-[11px] font-semibold text-foreground";
-
+/**
+ * The organization and project picker.
+ *
+ * Two views behind one trigger, because the two questions are asked at very
+ * different rates. Opening it lands on projects every time — the frequent
+ * choice owns the body — and the organization is a header row you drill into,
+ * not a permanently expanded second list competing for the same space.
+ *
+ * Everything that changes what you are looking at happens by NAVIGATING. A
+ * project row and an organization row both mint a URL and let the route
+ * coordinator perform the switch; neither writes hidden state and then repairs
+ * the address bar afterwards, which is the shape that made both of them racy.
+ */
 export function SidebarContextSwitcher({
   activeProjectId,
   projects,
@@ -140,7 +147,6 @@ export function SidebarContextSwitcher({
   onLearnMoreExpand,
   activeOrganizationId,
   onSwitchOrganization,
-  onSwitchActiveOrganization,
 }: SidebarContextSwitcherProps) {
   const { isMobile } = useSidebar();
   const { isAuthenticated } = useConvexAuth();
@@ -151,7 +157,7 @@ export function SidebarContextSwitcher({
   const showSignInChip = !user;
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const [orgListOpen, setOrgListOpen] = useState(false);
+  const [view, setView] = useState<"projects" | "organizations">("projects");
   const [showCreateOrgDialog, setShowCreateOrgDialog] = useState(false);
   const [showCreateProjectDialog, setShowCreateProjectDialog] = useState(false);
   // Deleting a project takes everything in it. The switcher used to do that
@@ -162,7 +168,7 @@ export function SidebarContextSwitcher({
 
   // Switching orgs is rare; start every menu open on the common case (projects).
   useEffect(() => {
-    setOrgListOpen(false);
+    setView("projects");
   }, [menuOpen]);
 
   const activeProject = projects[activeProjectId];
@@ -186,10 +192,9 @@ export function SidebarContextSwitcher({
   }
 
   const projectName = activeProject?.name || "No Project";
-  const initial = projectName.charAt(0).toUpperCase();
+  const organizationName = activeOrg?.name ?? "No organization";
 
   const projectsList = Object.values(projects);
-  const activeOrgTint = activeOrg ? getOrgTint(activeOrg._id) : undefined;
   const activeOrgProjects = projectsList
     .filter((p) => {
       if (!activeOrganizationId) return !p.organizationId;
@@ -200,10 +205,6 @@ export function SidebarContextSwitcher({
       if (b.isDefault) return 1;
       return a.name.localeCompare(b.name);
     });
-
-  // Membership in >1 org (e.g. invited to an external one) is what makes
-  // switching meaningful; with a single org we render context only.
-  const canSwitchOrganizations = sortedOrganizations.length > 1;
 
   // "Project", "Project 2", "Project 3" — the first name not already taken.
   // The dialog prefills it and the user is free to replace it.
@@ -236,6 +237,13 @@ export function SidebarContextSwitcher({
     setMenuOpen(false);
   };
 
+  const switchOrganization = (organizationId: string) => {
+    if (organizationId !== activeOrganizationId) {
+      onSwitchOrganization?.(organizationId);
+    }
+    setMenuOpen(false);
+  };
+
   const newOrganizationRow = canCreateOrganization ? (
     <button
       type="button"
@@ -263,21 +271,236 @@ export function SidebarContextSwitcher({
       }
       className="h-10 p-1.5 data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground"
     >
-      <ProjectIconBadge
-        icon={activeProject?.icon}
-        fallback={initial}
-        size={8}
-      />
+      <OrgIconBadge org={activeOrg} size={8} />
+      {/* Organization first and bold, project beneath it: the org is the
+          broader context, and reading them the other way round made the
+          heading change every time you switched project inside one org. */}
       <div className="grid flex-1 text-left text-xs leading-tight group-data-[collapsible=icon]:hidden min-w-0">
-        <span className="truncate font-semibold">{projectName}</span>
-        {activeOrg ? (
-          <span className="truncate text-xs text-muted-foreground">
-            {activeOrg.name}
+        <span className="truncate font-semibold">{organizationName}</span>
+        <span className="truncate text-xs text-muted-foreground">
+          {projectName}
+        </span>
+      </div>
+      <ChevronDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
+    </SidebarMenuButton>
+  );
+
+  const createProjectRow =
+    isCreateDisabled && createDisabledReason ? (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex">
+            <button
+              type="button"
+              disabled
+              aria-disabled="true"
+              aria-label="Create project"
+              title={createDisabledReason}
+              className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground/40 cursor-not-allowed"
+            >
+              <div className="flex items-center justify-center size-6 rounded bg-muted/50 shrink-0">
+                <Plus className="size-3.5" />
+              </div>
+              <span className="flex-1 truncate text-left font-medium">
+                Create project
+              </span>
+            </button>
           </span>
+        </TooltipTrigger>
+        <TooltipContent side="right">{createDisabledReason}</TooltipContent>
+      </Tooltip>
+    ) : (
+      <button
+        type="button"
+        aria-label="Create project"
+        title="Create project"
+        onClick={openCreateProjectDialog}
+        className="flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+      >
+        <div className="flex items-center justify-center size-6 rounded bg-muted shrink-0">
+          <Plus className="size-3.5" />
+        </div>
+        <span className="flex-1 truncate text-left font-medium">
+          Create project
+        </span>
+      </button>
+    );
+
+  const projectsView = (
+    <>
+      <div className="px-1.5 pt-1.5 pb-1">
+        {showSignInChip ? (
+          <button
+            type="button"
+            data-testid="org-sign-in-button"
+            onClick={() => {
+              captureAppSignInReturnPath();
+              signIn(permalinkSignInOptions());
+              setMenuOpen(false);
+            }}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
+          >
+            <div className="flex items-center justify-center size-6 rounded-md bg-primary/10 text-primary shrink-0">
+              <LogIn className="size-3.5" />
+            </div>
+            <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
+              Sign in
+            </span>
+          </button>
+        ) : (
+          // Always openable for a signed-in viewer, even with one organization:
+          // the list is also where "New organization" lives, and a header that
+          // only sometimes responds to a click is worse than one that always
+          // shows you what you have.
+          <button
+            type="button"
+            data-testid="org-header-button"
+            aria-label={`Switch organization. Current: ${organizationName}`}
+            onClick={() => setView("organizations")}
+            className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
+          >
+            <OrgIconBadge org={activeOrg} size={6} />
+            <span className="flex-1 min-w-0">
+              <span className="block truncate text-[13px] font-medium">
+                {organizationName}
+              </span>
+              <span className="block truncate text-[11px] text-muted-foreground">
+                Organization
+              </span>
+            </span>
+            <ChevronRight
+              aria-hidden="true"
+              className="size-3.5 shrink-0 text-muted-foreground"
+            />
+          </button>
+        )}
+      </div>
+
+      {/* Inset hairline divider */}
+      <div className="mx-3 h-px bg-border/70" />
+
+      <div className="px-1.5 pt-1 pb-1.5">
+        <div className="max-h-64 overflow-y-auto">
+          {activeOrgProjects.length === 0 ? (
+            <div className="px-2 py-3 text-xs text-muted-foreground">
+              No projects in this organization
+            </div>
+          ) : (
+            activeOrgProjects.map((project) => (
+              <ProjectRow
+                key={project.id}
+                project={project}
+                isActive={project.id === activeProjectId}
+                isAuthenticated={isAuthenticated}
+                onClick={() => {
+                  onSwitchProject(project.id);
+                  setMenuOpen(false);
+                }}
+                onOpenSettings={
+                  onNavigateToSettings
+                    ? () => {
+                        setMenuOpen(false);
+                        // ONE navigation, to that project's settings URL. No
+                        // pre-switch: the URL is the switch, and the route
+                        // coordinator performs it. The old switch-then-navigate
+                        // pair is what the snap-to-Servers effect used to race.
+                        onNavigateToSettings(project.id);
+                      }
+                    : undefined
+                }
+                onRequestDelete={setPendingDeleteProject}
+              />
+            ))
+          )}
+        </div>
+        <div className="mt-0.5">{createProjectRow}</div>
+      </div>
+    </>
+  );
+
+  const organizationsView = (
+    <>
+      <div className="px-1.5 pt-1.5 pb-1">
+        <button
+          type="button"
+          data-testid="org-list-back-button"
+          aria-label="Back to projects"
+          onClick={() => setView("projects")}
+          className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
+        >
+          <ChevronLeft
+            aria-hidden="true"
+            className="size-3.5 shrink-0 text-muted-foreground"
+          />
+          <span className="flex-1 min-w-0 truncate text-[13px] font-semibold">
+            Organizations
+          </span>
+        </button>
+      </div>
+
+      <div className="mx-3 h-px bg-border/70" />
+
+      <div data-testid="org-switch-list" className="px-1.5 pt-1 pb-1.5">
+        <div className="max-h-64 overflow-y-auto">
+          {sortedOrganizations.map((org) => {
+            // Paid-seat invite that hasn't linked yet: the backend denies every
+            // query for this org, so the row is shown but not openable.
+            const isSeatPending = org.seatPending === true;
+            const isActive = org._id === activeOrganizationId;
+            const row = (
+              <div
+                key={org._id}
+                role="menuitem"
+                tabIndex={isSeatPending ? -1 : 0}
+                aria-disabled={isSeatPending || undefined}
+                data-testid={`org-row-${org._id}`}
+                onClick={() => {
+                  if (isSeatPending) return;
+                  switchOrganization(org._id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    if (isSeatPending) return;
+                    switchOrganization(org._id);
+                  }
+                }}
+                className={cn(
+                  "flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px]",
+                  isSeatPending
+                    ? "cursor-not-allowed opacity-50"
+                    : "cursor-pointer",
+                  isActive
+                    ? "bg-accent"
+                    : !isSeatPending && "hover:bg-accent/60"
+                )}
+              >
+                <OrgIconBadge org={org} size={5} />
+                <span className="flex-1 truncate font-medium">{org.name}</span>
+                {isActive ? (
+                  <Check
+                    aria-hidden="true"
+                    data-testid={`org-active-check-${org._id}`}
+                    className="size-3.5 shrink-0 text-muted-foreground"
+                  />
+                ) : null}
+              </div>
+            );
+
+            if (!isSeatPending) return row;
+            return (
+              <Tooltip key={org._id}>
+                <TooltipTrigger asChild>{row}</TooltipTrigger>
+                <TooltipContent side="right">Seat not paid yet</TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+        {newOrganizationRow ? (
+          <div className="mt-0.5">{newOrganizationRow}</div>
         ) : null}
       </div>
-      <ChevronsUpDown className="ml-auto size-4 group-data-[collapsible=icon]:hidden" />
-    </SidebarMenuButton>
+    </>
   );
 
   return (
@@ -306,257 +529,7 @@ export function SidebarContextSwitcher({
               align="start"
               sideOffset={4}
             >
-              {/* Projects section — the frequent operation owns the body */}
-              <div className="px-1.5 pt-2 pb-1">
-                <div className="flex items-center justify-between px-2 pb-1.5">
-                  <span className={SECTION_LABEL_CLASS}>Projects</span>
-                  {isCreateDisabled && createDisabledReason ? (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <span className="flex">
-                          <button
-                            type="button"
-                            disabled
-                            aria-disabled="true"
-                            aria-label="Add project"
-                            title={createDisabledReason}
-                            className="p-0.5 rounded text-muted-foreground/40 cursor-not-allowed"
-                          >
-                            <Plus className="size-3.5" />
-                          </button>
-                        </span>
-                      </TooltipTrigger>
-                      <TooltipContent side="right">
-                        {createDisabledReason}
-                      </TooltipContent>
-                    </Tooltip>
-                  ) : (
-                    <button
-                      type="button"
-                      aria-label="Add project"
-                      title="Add project"
-                      onClick={openCreateProjectDialog}
-                      className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
-                    >
-                      <Plus className="size-3.5" />
-                    </button>
-                  )}
-                </div>
-                <div className="max-h-64 overflow-y-auto">
-                  {activeOrgProjects.length === 0 ? (
-                    <div className="px-2 py-3 text-xs text-muted-foreground">
-                      No projects in this organization
-                    </div>
-                  ) : (
-                    activeOrgProjects.map((project) => (
-                      <ProjectRow
-                        key={project.id}
-                        project={project}
-                        isActive={project.id === activeProjectId}
-                        isAuthenticated={isAuthenticated}
-                        onClick={() => {
-                          onSwitchProject(project.id);
-                          setMenuOpen(false);
-                        }}
-                        onOpenSettings={
-                          onNavigateToSettings
-                            ? () => {
-                                setMenuOpen(false);
-                                // ONE navigation, to that project's settings
-                                // URL. No pre-switch: the URL is the switch,
-                                // and the route coordinator performs it. The
-                                // old switch-then-navigate pair is what the
-                                // snap-to-Servers effect used to race.
-                                onNavigateToSettings(project.id);
-                              }
-                            : undefined
-                        }
-                        onRequestDelete={setPendingDeleteProject}
-                      />
-                    ))
-                  )}
-                </div>
-              </div>
-
-              {/* Inset hairline divider */}
-              <div className="mx-3 my-0.5 h-px bg-border/70" />
-
-              {/* Org footer — ambient context, not a destination */}
-              <div className="px-1.5 pt-1 pb-1.5">
-                {showSignInChip ? (
-                  <button
-                    type="button"
-                    data-testid="org-sign-in-button"
-                    onClick={() => {
-                      captureAppSignInReturnPath();
-                      signIn(permalinkSignInOptions());
-                      setMenuOpen(false);
-                    }}
-                    className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-accent transition-colors"
-                  >
-                    <div className="flex items-center justify-center size-6 rounded-md bg-primary/10 text-primary shrink-0">
-                      <LogIn className="size-3.5" />
-                    </div>
-                    <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
-                      Sign in
-                    </span>
-                  </button>
-                ) : (
-                  <>
-                    <div
-                      data-testid="org-context-row"
-                      className="group/orgrow flex items-center gap-2.5 rounded-lg px-2 py-1.5"
-                    >
-                      {activeOrg ? (
-                        <div
-                          className={cn(
-                            "flex items-center justify-center size-6 rounded-md text-[11px] font-semibold shrink-0",
-                            activeOrgTint!.bg,
-                            activeOrgTint!.fg
-                          )}
-                        >
-                          {activeOrg.name.charAt(0).toUpperCase()}
-                        </div>
-                      ) : (
-                        <div className="flex items-center justify-center size-6 rounded-md bg-muted text-muted-foreground shrink-0">
-                          <Building2 className="size-3.5" />
-                        </div>
-                      )}
-                      <span className="flex-1 min-w-0 text-[13px] font-medium truncate">
-                        {activeOrg?.name ?? "No organization"}
-                      </span>
-                      {activeOrg && onSwitchOrganization ? (
-                        <button
-                          type="button"
-                          aria-label={`Open ${activeOrg.name} settings`}
-                          title={`Open ${activeOrg.name} settings`}
-                          onClick={() => {
-                            onSwitchOrganization(activeOrg._id, "overview");
-                            setMenuOpen(false);
-                          }}
-                          className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/orgrow:opacity-100 group-focus-within/orgrow:opacity-100"
-                        >
-                          <Settings className="size-3.5" />
-                        </button>
-                      ) : null}
-                    </div>
-
-                    {canSwitchOrganizations ? (
-                      <button
-                        type="button"
-                        data-testid="switch-org-button"
-                        aria-expanded={orgListOpen}
-                        onClick={() => setOrgListOpen((o) => !o)}
-                        className="mt-0.5 flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px] text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-                      >
-                        <div className="flex items-center justify-center size-5 rounded bg-muted shrink-0">
-                          <ArrowLeftRight className="size-3" />
-                        </div>
-                        <span className="flex-1 truncate text-left font-medium">
-                          Switch organization
-                        </span>
-                        <ChevronDown
-                          aria-hidden="true"
-                          className={cn(
-                            "size-3.5 shrink-0 transition-transform",
-                            orgListOpen && "rotate-180"
-                          )}
-                        />
-                      </button>
-                    ) : null}
-
-                    {canSwitchOrganizations && orgListOpen ? (
-                      <div data-testid="org-switch-list" className="mt-0.5">
-                        {sortedOrganizations.map((org) => {
-                          const tint = getOrgTint(org._id);
-                          // Paid-seat invite that hasn't linked yet: the
-                          // backend denies every query for this org, so the
-                          // row is shown but not openable.
-                          const isSeatPending = org.seatPending === true;
-                          const row = (
-                            <div
-                              key={org._id}
-                              role="menuitem"
-                              tabIndex={isSeatPending ? -1 : 0}
-                              aria-disabled={isSeatPending || undefined}
-                              data-testid={`org-row-${org._id}`}
-                              onClick={() => {
-                                if (isSeatPending) return;
-                                if (org._id !== activeOrganizationId) {
-                                  onSwitchActiveOrganization?.(org._id);
-                                }
-                                setMenuOpen(false);
-                              }}
-                              onKeyDown={(e) => {
-                                if (e.key === "Enter" || e.key === " ") {
-                                  e.preventDefault();
-                                  if (isSeatPending) return;
-                                  if (org._id !== activeOrganizationId) {
-                                    onSwitchActiveOrganization?.(org._id);
-                                  }
-                                  setMenuOpen(false);
-                                }
-                              }}
-                              className={cn(
-                                "group/org flex items-center gap-2.5 rounded-md px-2 py-1.5 text-[13px]",
-                                isSeatPending
-                                  ? "cursor-not-allowed opacity-50"
-                                  : "cursor-pointer",
-                                org._id === activeOrganizationId
-                                  ? "bg-accent"
-                                  : !isSeatPending && "hover:bg-accent/60"
-                              )}
-                            >
-                              <div
-                                className={cn(
-                                  "flex items-center justify-center size-5 rounded text-[10px] font-semibold shrink-0",
-                                  tint.bg,
-                                  tint.fg
-                                )}
-                              >
-                                {org.name.charAt(0).toUpperCase()}
-                              </div>
-                              <span className="flex-1 truncate font-medium">
-                                {org.name}
-                              </span>
-                              {onSwitchOrganization && !isSeatPending ? (
-                                <button
-                                  type="button"
-                                  aria-label={`Open ${org.name} settings`}
-                                  title={`Open ${org.name} settings`}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onSwitchOrganization(org._id, "overview");
-                                    setMenuOpen(false);
-                                  }}
-                                  className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors opacity-0 group-hover/org:opacity-100 group-focus-within/org:opacity-100"
-                                >
-                                  <Settings className="size-3.5" />
-                                </button>
-                              ) : null}
-                            </div>
-                          );
-
-                          if (!isSeatPending) return row;
-                          return (
-                            <Tooltip key={org._id}>
-                              <TooltipTrigger asChild>{row}</TooltipTrigger>
-                              <TooltipContent side="right">
-                                Seat not paid yet
-                              </TooltipContent>
-                            </Tooltip>
-                          );
-                        })}
-                        {newOrganizationRow}
-                      </div>
-                    ) : null}
-
-                    {/* No second org to switch to: surface create directly
-                        (only renders for users who don't already own one). */}
-                    {!canSwitchOrganizations ? newOrganizationRow : null}
-                  </>
-                )}
-              </div>
+              {view === "organizations" ? organizationsView : projectsView}
             </DropdownMenuContent>
           </DropdownMenu>
         </SidebarMenuItem>
@@ -641,9 +614,15 @@ function ProjectRow({
       <ProjectIconBadge
         icon={project.icon}
         fallback={project.name.charAt(0).toUpperCase()}
-        size={6}
       />
       <span className="flex-1 truncate font-medium">{project.name}</span>
+      {isActive ? (
+        <Check
+          aria-hidden="true"
+          data-testid={`project-active-check-${project.id}`}
+          className="size-3.5 shrink-0 text-muted-foreground"
+        />
+      ) : null}
       <ProjectRowMembers
         projectId={project.sharedProjectId ?? null}
         isAuthenticated={isAuthenticated}
@@ -655,7 +634,7 @@ function ProjectRow({
           <button
             type="button"
             aria-label={`Open ${project.name} settings`}
-            title={`Open ${project.name} settings`}
+            title="Edit project"
             onClick={(e) => {
               e.stopPropagation();
               onOpenSettings();
@@ -759,28 +738,67 @@ function ProjectDeleteButton({
   );
 }
 
-function ProjectIconBadge({
-  icon,
-  fallback,
+/**
+ * An organization's tinted initial, or a neutral building for the guest /
+ * no-organization case. One component so the trigger, the header row and the
+ * organization list all read as the same object at three sizes.
+ */
+function OrgIconBadge({
+  org,
   size,
 }: {
-  icon?: string;
-  fallback: string;
-  size: 6 | 8;
+  org?: { _id: string; name: string };
+  size: 5 | 6 | 8;
 }) {
-  const IconComponent = icon ? resolveProjectIcon(icon) : null;
-  const sizeClass = size === 8 ? "size-8 rounded-lg" : "size-6 rounded";
-  const iconSize = size === 8 ? "h-4 w-4" : "h-3.5 w-3.5";
+  const sizeClass =
+    size === 8
+      ? "size-8 rounded-lg"
+      : size === 6
+        ? "size-6 rounded-md"
+        : "size-5 rounded";
+  const textClass =
+    size === 8 ? "text-sm" : size === 6 ? "text-[11px]" : "text-[10px]";
+  const iconClass = size === 8 ? "size-4" : "size-3.5";
+  if (!org) {
+    return (
+      <div
+        className={cn(
+          "flex items-center justify-center bg-muted text-muted-foreground shrink-0",
+          sizeClass
+        )}
+      >
+        <Building2 className={iconClass} />
+      </div>
+    );
+  }
+  const tint = getOrgTint(org._id);
   return (
     <div
       className={cn(
-        "flex items-center justify-center bg-primary/10 text-primary font-semibold shrink-0",
+        "flex items-center justify-center font-semibold shrink-0",
         sizeClass,
-        size === 8 ? "text-sm" : "text-[11px]"
+        textClass,
+        tint.bg,
+        tint.fg
       )}
     >
+      {org.name.charAt(0).toUpperCase()}
+    </div>
+  );
+}
+
+function ProjectIconBadge({
+  icon,
+  fallback,
+}: {
+  icon?: string;
+  fallback: string;
+}) {
+  const IconComponent = icon ? resolveProjectIcon(icon) : null;
+  return (
+    <div className="flex size-6 items-center justify-center rounded bg-primary/10 text-[11px] font-semibold text-primary shrink-0">
       {IconComponent ? (
-        <IconComponent className={iconSize} strokeWidth={1.5} />
+        <IconComponent className="h-3.5 w-3.5" strokeWidth={1.5} />
       ) : (
         fallback
       )}

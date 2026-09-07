@@ -73,7 +73,6 @@ import {
   type BillingFeatureName,
 } from "@/hooks/useOrganizationBilling";
 import type { Project } from "@/state/app-types";
-import type { OrganizationRouteSection } from "@/lib/app-navigation";
 
 interface NavItem {
   title: string;
@@ -469,11 +468,13 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
   isLoadingProjects?: boolean;
   activeOrganizationId?: string;
   activeOrganizationName?: string;
-  onSwitchOrganization?: (
-    organizationId: string,
-    section?: OrganizationRouteSection,
-  ) => void;
-  onSwitchActiveOrganization?: (organizationId: string) => void;
+  /**
+   * Switches the active organization. The handler NAVIGATES into that
+   * organization (see `buildOrganizationSwitchTarget`) rather than writing
+   * hidden state, so there is no section to open — the switcher's gears are
+   * gone with the old layout.
+   */
+  onSwitchOrganization?: (organizationId: string) => void;
   onProjectShared?: (sharedProjectId: string, sourceProjectId?: string) => void;
   billingGateDenied?: Partial<Record<BillingFeatureName, boolean>>;
   billingGateEnforcementActive?: boolean;
@@ -496,7 +497,6 @@ export function MCPSidebar({
   activeOrganizationId,
   activeOrganizationName,
   onSwitchOrganization,
-  onSwitchActiveOrganization,
   onProjectShared,
   billingGateDenied = {},
   billingGateEnforcementActive = false,
@@ -757,7 +757,6 @@ export function MCPSidebar({
             }
             activeOrganizationId={activeOrganizationId}
             onSwitchOrganization={onSwitchOrganization}
-            onSwitchActiveOrganization={onSwitchActiveOrganization}
           />
           {showUpdateButton && (
             <div className="px-3 pt-2">

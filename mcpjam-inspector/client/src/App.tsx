@@ -310,7 +310,6 @@ import {
   pathnameToActiveTab,
   routePaths,
   scopeNavigationTarget,
-  type OrganizationRouteSection,
   useCurrentLocationParts,
   useCurrentSearchParam,
   useActiveTab,
@@ -4395,17 +4394,6 @@ export default function App() {
     navigateToTarget(section);
   };
 
-  const handleSidebarSwitchOrganization = useCallback(
-    (
-      organizationId: string,
-      section: OrganizationRouteSection = "overview",
-    ) => {
-      setActiveOrganizationId(organizationId);
-      navigateApp(buildOrganizationPath(organizationId, section));
-    },
-    [setActiveOrganizationId],
-  );
-
   // The URL owns which project this tab is on. This reconciles the two
   // continuously — on cold open, on Back/Forward, and on every in-app
   // navigation — switching organization first when the link crosses one.
@@ -4413,7 +4401,7 @@ export default function App() {
     isAuthenticated,
   });
 
-  const handleSwitchActiveOrganization = useCallback(
+  const handleSidebarSwitchOrganization = useCallback(
     (organizationId: string) => {
       if (organizationId === activeOrganizationId) return;
       // The URL is the switch, exactly as it is for a project row. Navigating
@@ -5123,7 +5111,6 @@ export default function App() {
         activeOrganizationId={activeOrganizationId}
         activeOrganizationName={activeOrganizationName}
         onSwitchOrganization={handleSidebarSwitchOrganization}
-        onSwitchActiveOrganization={handleSwitchActiveOrganization}
         onProjectShared={handleProjectShared}
         billingUiEnabled={billingUiEnabled}
         billingGateDenied={sidebarGateDenied}

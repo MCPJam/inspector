@@ -1230,6 +1230,9 @@ describe("App hosted OAuth callback handling", () => {
   });
 
   it("preserves the newly selected org when navigating away immediately", async () => {
+    // The switch is carried by the URL, not by hidden state set before it:
+    // navigating to Servers in the same tick inherits the project the switch
+    // just put in the pathname, so it stays a project in the new org.
     clearHostedOAuthPendingState();
     clearScenarioSession();
     window.history.replaceState({}, "", "/organizations/org-a");
@@ -1270,6 +1273,19 @@ describe("App hosted OAuth callback handling", () => {
           },
         ];
       }
+      if (name === "projects:getMyProjects") {
+        return [
+          {
+            _id: ORG_B_PROJECT_ID,
+            name: "Org B Project",
+            organizationId: "org-b",
+            ownerId: "user-1",
+            servers: {},
+            createdAt: 1,
+            updatedAt: 1,
+          },
+        ];
+      }
 
       return undefined;
     });
@@ -1295,7 +1311,8 @@ describe("App hosted OAuth callback handling", () => {
     await waitFor(() => {
       expect(setActiveOrganizationIdSpy).toHaveBeenCalledWith("org-b");
       expect(getLastSidebarProps().activeOrganizationId).toBe("org-b");
-      expect(window.location.pathname).toBe("/servers");
+      // Servers, still scoped to the project the switch landed on.
+      expect(window.location.pathname).toBe(`/p/${ORG_B_PROJECT_ID}/servers`);
     });
   });
 
@@ -1405,12 +1422,12 @@ describe("App hosted OAuth callback handling", () => {
         mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
       return lastCall?.[0] as unknown as {
         activeOrganizationId?: string;
-        onSwitchActiveOrganization?: (organizationId: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
       };
     };
 
     act(() => {
-      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
     });
 
     await waitFor(() => {
@@ -1515,12 +1532,12 @@ describe("App hosted OAuth callback handling", () => {
         mockMCPSidebar.mock.calls[mockMCPSidebar.mock.calls.length - 1];
       return lastCall?.[0] as unknown as {
         activeOrganizationId?: string;
-        onSwitchActiveOrganization?: (organizationId: string) => void;
+        onSwitchOrganization?: (organizationId: string) => void;
       };
     };
 
     act(() => {
-      getLastSidebarProps().onSwitchActiveOrganization?.("org-b");
+      getLastSidebarProps().onSwitchOrganization?.("org-b");
     });
 
     // `useAppState` is mocked here, so the route never reaches `ready`; what
