@@ -324,10 +324,39 @@ var HandoffLease = class {
   now;
   defaultTtlMs;
   maxTtlMs;
+  onChange;
+  /**
+   * What the listener was last told.
+   *
+   * Compared by VALUE, not identity: `state()` rebuilds the object on an
+   * expiry, and a heartbeat rewrites it with a new `expiresAt` several times a
+   * minute. A surface told about each of those would hide and show a native
+   * view repeatedly while nothing about who holds the browser had changed.
+   */
+  announced = "free";
   constructor(options = {}) {
     this.now = options.now ?? Date.now;
     this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
     this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+    this.onChange = options.onChange;
+  }
+  /**
+   * Tell the listener, if this is genuinely a different situation.
+   *
+   * Keyed on state + holder + kind, which is exactly what a listener can act
+   * on. `expiresAt` is deliberately absent from the key: a heartbeat moves it
+   * every thirty seconds and changes nothing about who holds the browser.
+   */
+  announce() {
+    if (!this.onChange) return;
+    const state = this.state();
+    const key = state.state === "free" ? "free" : `${state.state}:${state.holder}:${state.holderKind}`;
+    if (key === this.announced) return;
+    this.announced = key;
+    try {
+      this.onChange(state);
+    } catch {
+    }
   }
   /**
    * The lease as of NOW. Expiry is evaluated lazily on every read — there is
@@ -341,6 +370,17 @@ var HandoffLease = class {
         holder: this.current.holder,
         holderKind: this.current.holderKind
       };
+      if (this.onChange) {
+        const key = `parked:${this.current.holder}:${this.current.holderKind}`;
+        if (key !== this.announced) {
+          this.announced = key;
+          const parked = this.current;
+          try {
+            this.onChange(parked);
+          } catch {
+          }
+        }
+      }
     }
     return this.current;
   }
@@ -367,6 +407,7 @@ var HandoffLease = class {
       holderKind: this.holderKind,
       expiresAt: this.now() + ttl
     };
+    this.announce();
     return this.current;
   }
   /** Extend the holder's own lease; a no-op for anyone else. */
@@ -391,6 +432,7 @@ var HandoffLease = class {
       this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = void 0;
+    this.announce();
     return this.current;
   }
   /** `resume` under its user-facing name; identical semantics. */

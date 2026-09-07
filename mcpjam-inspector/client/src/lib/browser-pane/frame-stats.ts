@@ -51,7 +51,12 @@ const RATE_WINDOW_MS = 3_000;
  * comparison between two of them.
  *
  * The first four are the WebMCP inspector's ladder, kept so its report shape is
- * unchanged; the last three are the browser pane's wire formats.
+ * unchanged; the rest are the browser pane's wire formats.
+ *
+ * `native` is the absence of one — an Electron `WebContentsView` parented into
+ * the app's own window, where there is no encode, no socket and no decode.
+ * Recorded anyway, and that is the point of this wave: "the pane feels like a
+ * local window" is only a claim until the report says which transport drew it.
  */
 export type FrameTransportRung =
   | "ws"
@@ -60,7 +65,8 @@ export type FrameTransportRung =
   | "none"
   | "jpeg-json"
   | "jpeg-binary"
-  | "h264";
+  | "h264"
+  | "native";
 
 interface Sample {
   v: number;

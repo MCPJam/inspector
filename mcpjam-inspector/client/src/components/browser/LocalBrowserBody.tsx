@@ -6,6 +6,7 @@ import {
   BrowserPaneSurface,
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
+import { ElectronNativeBody } from "@/components/browser/ElectronNativeBody";
 import type { BrowserInputEvent, PaneFrame } from "@/lib/browser-pane/input";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
 import { createFrameWireReader } from "@/lib/browser-pane/frame-wire";
@@ -135,6 +136,52 @@ export function LocalBrowserBody({
   /** The seq on screen when a gesture goes, for the input→paint sample. */
   const frameSeqRef = useRef(0);
   const holding = lease.state !== "free" && lease.holder === holder;
+  /**
+   * Can THIS build show a real view, rather than a picture of one?
+   *
+   * Asked of the main process, and separately from the server's `surface`:
+   * the server answers "this engine has views to show", and this answers "this
+   * Electron and this preload can show them". A desktop app older than this
+   * wave says `installed` and `runtime: "electron"` exactly as a new one does
+   * and has no channel to ask — so a pane that branched on the server's answer
+   * alone would render a slot nothing ever paints into.
+   *
+   * `null` means not asked yet, which is deliberately NOT native: the frames
+   * path is what has always worked, and no socket opens before there is a
+   * browser anyway.
+   */
+  const [nativeCapable, setNativeCapable] = useState<boolean | null>(null);
+  useEffect(() => {
+    const api = window.electronAPI?.agentBrowser;
+    if (!api) {
+      setNativeCapable(false);
+      return;
+    }
+    let cancelled = false;
+    void api
+      .capability()
+      .then((result) => {
+        if (!cancelled) setNativeCapable(Boolean(result?.available));
+      })
+      .catch(() => {
+        if (!cancelled) setNativeCapable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  /**
+   * Show the page itself rather than a screencast of it.
+   *
+   * THREE conditions, and each rules out a different way this can be wrong:
+   * the engine is Electron, the server built its context with views
+   * (`MCPJAM_BROWSER_NATIVE_SURFACE=false` turns that off without a rebuild),
+   * and this app can actually place one.
+   */
+  const native =
+    status?.runtime === "electron" &&
+    status?.surface === "native" &&
+    nativeCapable === true;
   // Read inside the heartbeat interval, which must not be torn down and
   // rebuilt (and the socket with it) every time the user changes tab.
   const activeRef = useRef(active);
@@ -242,7 +289,10 @@ export function LocalBrowserBody({
   // The frame socket. Re-opened when the browser changes; closed on unmount,
   // which is what tells the server to stop encoding JPEGs nobody is watching.
   useEffect(() => {
-    if (!session || !projectId) return;
+    // NOT ON THE NATIVE SURFACE. There is nothing to watch: the page is a real
+    // view in the app's own window, and opening this socket would make the
+    // engine encode JPEGs at 30 fps that no pane ever draws.
+    if (!session || !projectId || native) return;
     let closed = false;
     let stream: { close(): void } | null = null;
     /**
@@ -305,7 +355,7 @@ export function LocalBrowserBody({
           },
         });
         openedSocket = opened.socket;
-      socketRef.current = opened.socket;
+        socketRef.current = opened.socket;
         socketInputRef.current = false;
         paneFrameStats.noteTransport("jpeg-json");
         opened.socket.onmessage = (event) => {
@@ -434,7 +484,7 @@ export function LocalBrowserBody({
       }
       stream?.close();
     };
-  }, [session, projectId, consentToken, holder, streamAttempt]);
+  }, [session, projectId, consentToken, holder, streamAttempt, native]);
 
   const setLeaseAction = useCallback(
     async (action: "acquire" | "resume") => {
@@ -529,8 +579,12 @@ export function LocalBrowserBody({
   );
 
   // One analytics event per pane, on the way out — see `session-summary`.
-  const engineRef = useRef(status?.runtime ?? "local");
-  engineRef.current = status?.runtime ?? "local";
+  // `local-native` is its OWN engine in the summary, not a flavour of
+  // `electron`: the whole point of the wave is that the two are answerable
+  // apart, and a report that called them the same thing could not say whether
+  // the native surface helped.
+  const engineRef = useRef<string>("local");
+  engineRef.current = native ? "local-native" : (status?.runtime ?? "local");
   useEffect(
     () => () => captureBrowserPaneSessionSummary(engineRef.current),
     [],
@@ -608,6 +662,34 @@ export function LocalBrowserBody({
         : lease.holderKind === "script"
           ? "script"
           : "other";
+
+  // The page ITSELF, in the app's own window — no encoder, no socket, no
+  // decode. Everything above is unchanged and still applies: the same status,
+  // the same lease, the same holder identity, the same take-control bar. What
+  // differs is only that there is no picture to draw.
+  if (native) {
+    return (
+      <ElectronNativeBody
+        session={session}
+        holder={holder}
+        control={control}
+        holding={holding}
+        consentGranted={consentGranted}
+        onTakeControl={
+          session && !holding && lease.state === "free"
+            ? () => void setLeaseAction("acquire")
+            : undefined
+        }
+        onHandBack={
+          session && holding ? () => void setLeaseAction("resume") : undefined
+        }
+        placeholder={placeholder}
+        error={error}
+        active={active}
+        engine="local-native"
+      />
+    );
+  }
 
   return (
     <BrowserPaneSurface

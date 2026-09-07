@@ -74,6 +74,8 @@ const browserState = vi.hoisted(() => ({
   cdpSent: [] as Array<{ method: string }>,
   /** Which Chromium this machine has: a downloaded one, or Electron's own. */
   runtime: "playwright" as "playwright" | "electron",
+  /** Whether the desktop app builds its context with views the pane can show. */
+  surface: "native" as "native" | "frames",
 }));
 vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
   listLocalBrowserSessions: () =>
@@ -87,6 +89,10 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     browserState.sessions.get(bootId),
   touchLocalBrowserSession: () => {},
   resolveLocalBrowserRuntime: () => browserState.runtime,
+  resolveLocalBrowserSurface: (
+    _env: NodeJS.ProcessEnv,
+    runtime: "playwright" | "electron",
+  ) => (runtime === "electron" ? browserState.surface : "frames"),
   ensureLocalBrowserSession: async () => {
     const { buildBrowserdStack } =
       await import("../../../services/browserd/daemon/server.js");
@@ -167,6 +173,7 @@ beforeEach(() => {
   chromiumState.installed = false;
   chromiumState.installs = 0;
   browserState.runtime = "playwright";
+  browserState.surface = "native";
 });
 
 describe("GET /local-browser/status", () => {
@@ -185,6 +192,22 @@ describe("GET /local-browser/status", () => {
 
   it("answers without consent, so the consent screen can describe itself", async () => {
     expect((await status()).status).toBe(200);
+  });
+
+  it("says how the pane will see this browser", async () => {
+    // The pane BRANCHES on this: a native surface has no frame socket to open,
+    // and a pane that opened one anyway would make the engine encode JPEGs at
+    // 30 fps that nobody ever draws. A Playwright browser is a separate
+    // process with no view to place, so it is always frames.
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
+
+    browserState.runtime = "electron";
+    expect(await (await status()).json()).toMatchObject({ surface: "native" });
+
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false` — hidden windows and frames over a
+    // socket, exactly as before this wave.
+    browserState.surface = "frames";
+    expect(await (await status()).json()).toMatchObject({ surface: "frames" });
   });
 
   it("has nothing to install in the desktop app", async () => {

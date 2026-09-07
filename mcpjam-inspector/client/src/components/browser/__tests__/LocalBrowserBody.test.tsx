@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, describe, expect, it, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -379,5 +379,74 @@ describe("the agent browser pane — a hold you can get back", () => {
     );
     expect(await screen.findByText(/has control/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /hand back/i })).toBeNull();
+  });
+});
+
+describe("the agent browser pane — the desktop app's own browser", () => {
+  /** Pretend to be the desktop app, with or without the native channel. */
+  const asDesktopApp = (over: { available?: boolean; api?: boolean } = {}) => {
+    api.status = {
+      installed: true,
+      install: { status: "ready" },
+      running: false,
+      leaseHeld: false,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      ...({ runtime: "electron", surface: "native" } as any),
+    };
+    if (over.api === false) return;
+    (window as unknown as { electronAPI?: unknown }).electronAPI = {
+      agentBrowser: {
+        capability: async () => ({ available: over.available ?? true }),
+        setViewport: async () => ({ shown: true, inputAllowed: false }),
+      },
+    };
+  };
+
+  afterEach(() => {
+    delete (window as unknown as { electronAPI?: unknown }).electronAPI;
+  });
+
+  it("shows the page itself, and opens no frame socket at all", async () => {
+    // THE POINT OF THE WHOLE PATH. The browser is a view in this very process;
+    // a socket here would make the engine encode JPEGs at 30 fps that nobody
+    // ever draws.
+    asDesktopApp();
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    expect(await screen.findByTestId("rail-browser-native-slot")).toBeTruthy();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(api.socket).toBeNull();
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
+  });
+
+  it("falls back to frames when the box turned the native surface off", async () => {
+    // `MCPJAM_BROWSER_NATIVE_SURFACE=false`. The server built its context with
+    // hidden windows, so there is no view to place — and a pane that branched
+    // anyway would render a slot nothing ever paints into.
+    asDesktopApp();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (api.status as any).surface = "frames";
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
+  });
+
+  it("falls back to frames in a desktop app that has no channel to ask", async () => {
+    // A shipped app older than this wave reports `runtime: "electron"` exactly
+    // as a new one does and has no `agentBrowser` at all.
+    asDesktopApp({ api: false });
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
+  });
+
+  it("falls back to frames when this Electron has no WebContentsView", async () => {
+    asDesktopApp({ available: false });
+    renderBody();
+    await userEvent.click(await screen.findByText("Open the browser"));
+    await deliverFrame();
+    expect(screen.queryByTestId("rail-browser-native-slot")).toBeNull();
   });
 });

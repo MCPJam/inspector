@@ -60,6 +60,19 @@ export interface LocalBrowserStatus {
    * so a bug report names it without anyone having to guess.
    */
   runtime?: "playwright" | "electron";
+  /**
+   * How this pane will SEE the browser.
+   *
+   * `native` means a real `WebContentsView` is parented into the app's own
+   * window at this pane's bounds — the page itself, not a picture of it — so
+   * the pane opens NO frame socket and renders no canvas. `frames` is the JPEG
+   * screencast, and the only thing a Playwright browser in another process can
+   * offer.
+   *
+   * Optional because an inspector from before this wave does not send it, and
+   * an absent field must mean the path that has always worked.
+   */
+  surface?: "native" | "frames";
   installed: boolean;
   install: {
     status: "idle" | "installing" | "ready" | "failed";

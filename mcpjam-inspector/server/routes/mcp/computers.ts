@@ -46,6 +46,7 @@ import {
   listLocalBrowserSessions,
   LocalBrowserUnavailableError,
   resolveLocalBrowserRuntime,
+  resolveLocalBrowserSurface,
   touchLocalBrowserSession,
 } from "../../services/browserd/local/local-browser-session.js";
 import type { ViewportInputEvent } from "../../services/browserd/daemon/viewport.js";
@@ -207,6 +208,11 @@ computers.get("/local-browser/status", async (c) => {
   const sessions = listLocalBrowserSessions();
   return c.json({
     runtime,
+    // Whether the pane gets the page itself or a picture of it. The pane
+    // BRANCHES on this — a native surface has no frame socket to open — so it
+    // is answered by the same function the session layer builds the context
+    // with, rather than re-derived from `runtime` here.
+    surface: resolveLocalBrowserSurface(process.env, runtime),
     installed: electron ? true : await isChromiumInstalled(),
     install,
     running: sessions.length > 0,
