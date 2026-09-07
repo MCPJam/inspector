@@ -17,7 +17,9 @@ import {
   extraArgsFor,
   formatReadyLine,
   readBrowserdConfig,
+  readBundleHash,
 } from "./config";
+import { BROWSERD_PROTOCOL_VERSION } from "../protocol";
 
 function log(message: string): void {
   process.stderr.write(`[mcpjam-browserd] ${message}\n`);
@@ -25,6 +27,7 @@ function log(message: string): void {
 
 async function main(): Promise<void> {
   const config = readBrowserdConfig();
+  const bundleHash = readBundleHash();
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -36,7 +39,16 @@ async function main(): Promise<void> {
   // they hand it back loud).
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
-  const stack = buildBrowserdStack(driver, { token: config.token, lease });
+  const stack = buildBrowserdStack(driver, {
+    token: config.token,
+    lease,
+    // Read ONCE, at boot: the file cannot change under a running process in
+    // any way that would make a later read more truthful, and hashing a
+    // multi-megabyte bundle on every status probe would tax a box the agent is
+    // also using.
+    ...(bundleHash ? { bundleHash } : {}),
+    contextMode: config.contextMode,
+  });
 
   let shuttingDown = false;
   const shutdown = async (signal: string): Promise<void> => {
@@ -58,7 +70,12 @@ async function main(): Promise<void> {
   stack.server.listen(config.port, config.host, () => {
     // The boot recipe blocks on this line to learn the daemon is up + its bootId.
     process.stdout.write(
-      `${formatReadyLine(config.host, config.port, stack.bootId)}\n`,
+      `${formatReadyLine(
+        config.host,
+        config.port,
+        stack.bootId,
+        BROWSERD_PROTOCOL_VERSION,
+      )}\n`,
     );
   });
 }

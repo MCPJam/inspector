@@ -35,7 +35,11 @@ import type {
   BrowserdLeaseState,
   BrowserdStatus,
 } from "./browserd-client";
-import { formatBrowserdError, type BrowserCommand } from "./protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  formatBrowserdError,
+  type BrowserCommand,
+} from "./protocol";
 import type {
   BrowserContextMode,
   BrowserRelaunchClaim,
@@ -107,6 +111,8 @@ export interface SessionStore {
     /** Required: see `lookupBrowserSession`. `"any"` is the explicit
      *  opt-out; omission is rejected by the control plane. */
     expectedContextMode: BrowserContextMode | "any";
+    /** The wire this build speaks; see `BROWSERD_PROTOCOL_VERSION`. */
+    expectedProtocolVersion?: number;
     signal?: AbortSignal;
   }): Promise<BrowserSessionLookup>;
   record(args: {
@@ -119,6 +125,7 @@ export interface SessionStore {
     streamPassword: string;
     bundleHash: string;
     contextMode: BrowserContextMode;
+    protocolVersion?: number;
     replacesSessionId?: string;
     signal?: AbortSignal;
   }): Promise<BrowserSessionRecordResult>;
@@ -230,6 +237,16 @@ export interface HostedBrowserSessionHandle {
   contextMode: BrowserContextMode;
   /** True when an existing daemon was verified and reused (no sandbox I/O). */
   reused: boolean;
+  /**
+   * This daemon speaks our wire but is running OLD BYTES.
+   *
+   * Not a problem to solve now. Relaunching mid-session rotates `bootId` and
+   * the stream password, so every open pane and in-flight command breaks — and
+   * during a wave of daemon work that would happen on almost every deploy, to
+   * a person who is quite possibly mid-login. The replacement is scheduled for
+   * the first moment nothing is using the browser.
+   */
+  upgradeAvailable?: boolean;
 }
 
 /**
@@ -354,11 +371,70 @@ async function tryReuse(
   if (!status || status.kind !== "ok" || status.bootId !== session.bootId) {
     return null;
   }
+  // THE WIRE, NOT THE BYTES. A daemon whose protocol number differs (or which
+  // is too old to announce one) cannot be proven compatible, and continuing
+  // would produce wrong answers rather than merely old ones.
+  if (lazyUpgradeEnabled()) {
+    const running = status.protocolVersion ?? session.protocolVersion;
+    if (running !== BROWSERD_PROTOCOL_VERSION) return null;
+  }
   // Best-effort: losing the touch costs an earlier sweep, never this turn.
   void deps.store
     .touch({ sessionId: session.sessionId, kind: "command", signal })
     .catch(() => {});
-  return handleFromRecord(deps, session, client, true);
+  // A hash difference is an UPGRADE, not a refusal.
+  const runningHash = status.bundleHash ?? session.bundleHash;
+  const upgradeAvailable =
+    lazyUpgradeEnabled() && !!runningHash && runningHash !== deps.bundleHash();
+  // Taken NOW only if nothing is using the browser. A relaunch rotates the
+  // bootId and the stream password, so every open pane and in-flight command
+  // breaks; doing that to somebody mid-login to ship a comment change is the
+  // failure this whole mechanism exists to end. Returning null here drops into
+  // the ordinary relaunch path below, fence, claim and all.
+  if (upgradeAvailable && daemonIsIdle(status)) return null;
+  return handleFromRecord(deps, session, client, true, upgradeAvailable);
+}
+
+/**
+ * How long a browser must have gone untouched before an upgrade may take it.
+ *
+ * Generous on purpose: the cost of waiting is running old bytes for another
+ * minute, and the cost of being wrong is a person's session ending mid-form.
+ */
+const UPGRADE_QUIET_MS = 60_000;
+
+/**
+ * Is nobody using this browser?
+ *
+ * EVERY fact must be present and must say idle. A daemon too old to report one
+ * of them answers `undefined`, which is "unknown" — and an upgrade that read
+ * unknown as idle would relaunch a browser somebody is watching, which is
+ * precisely the behaviour V-4a removes.
+ */
+function daemonIsIdle(status: {
+  lease?: "free" | "held" | "parked";
+  watchers?: number;
+  msSinceActivity?: number;
+}): boolean {
+  if (status.lease !== "free") return false;
+  if (status.watchers === undefined || status.watchers > 0) return false;
+  // Never touched at all is idle; touched recently is not.
+  return (
+    status.msSinceActivity === undefined ||
+    status.msSinceActivity >= UPGRADE_QUIET_MS
+  );
+}
+
+/**
+ * Kill switch, read at CALL TIME.
+ *
+ * `false` restores the pre-V-4a behaviour exactly: a bundle hash that differs
+ * relaunches the daemon there and then. Read per call rather than captured at
+ * import so a deployment can flip it without a restart, and so a test can
+ * exercise both paths in one process.
+ */
+function lazyUpgradeEnabled(): boolean {
+  return process.env.MCPJAM_BROWSER_LAZY_UPGRADE !== "false";
 }
 
 /**
@@ -568,6 +644,7 @@ function handleFromRecord(
   session: BrowserSessionRecord,
   client: SessionClient,
   reused: boolean,
+  upgradeAvailable = false,
 ): HostedBrowserSessionHandle {
   return {
     engine: "hosted",
@@ -579,6 +656,7 @@ function handleFromRecord(
     streamPassword: session.streamPassword,
     contextMode: session.contextMode,
     reused,
+    ...(upgradeAvailable ? { upgradeAvailable: true } : {}),
   };
 }
 
@@ -602,6 +680,12 @@ async function ensureOnComputer(
     computerId,
     expectedBundleHash: bundleHash,
     expectedContextMode: contextMode,
+    // Sent only while lazy upgrade is on. With the switch off the backend goes
+    // back to answering `bundle_changed`, which is the pre-V-4a behaviour this
+    // rollback is for.
+    ...(lazyUpgradeEnabled()
+      ? { expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION }
+      : {}),
     ...(args.signal ? { signal: args.signal } : {}),
   };
 
@@ -759,6 +843,9 @@ async function ensureOnComputer(
       streamPassword,
       bundleHash,
       contextMode,
+      ...(handle.protocolVersion !== undefined
+        ? { protocolVersion: handle.protocolVersion }
+        : {}),
       ...(lookup.observedSessionId
         ? { replacesSessionId: lookup.observedSessionId }
         : {}),

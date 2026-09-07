@@ -122,8 +122,37 @@ export interface FrameStreamFrame {
   jpeg: Uint8Array;
 }
 
+/**
+ * Proof of life, and — since V-4a — what the daemon has been throwing away.
+ *
+ * The payload is ADDITIVE by construction: v1's decoder already reads the
+ * heartbeat's `payloadByteLength`, slices exactly that many bytes and discards
+ * them, so an old reader against a new daemon sees the same heartbeat it
+ * always did rather than a framing error. That property is what makes this
+ * safe to ship without a protocol bump, and it is why the field is optional
+ * here rather than required.
+ */
 export interface FrameStreamHeartbeat {
   kind: typeof FRAME_STREAM_KIND.heartbeat;
+  /** UTF-8 JSON. Absent on a heartbeat from a daemon that predates V-4a. */
+  stats?: FrameStreamStats;
+}
+
+/** What the daemon says about its own side of the stream. */
+export interface FrameStreamStats {
+  framesIn?: number;
+  framesOut?: number;
+  bytesOut?: number;
+  dropped?: { dedupe?: number; oversize?: number; pacer?: number };
+  subscribers?: number;
+  /**
+   * The encoder has nothing to send.
+   *
+   * Load-bearing for the adaptive tier: silence from an idle encoder is a
+   * quiet page, and reading it as loss would step the quality down on a page
+   * that is simply not moving.
+   */
+  encoderIdle?: boolean;
 }
 
 export interface FrameStreamEnd {
@@ -148,7 +177,9 @@ export function encodeFrameStreamRecord(record: FrameStreamRecord): Uint8Array {
       ? record.jpeg
       : record.kind === FRAME_STREAM_KIND.end
         ? new TextEncoder().encode(record.reason)
-        : new Uint8Array(0);
+        : record.stats
+          ? new TextEncoder().encode(JSON.stringify(record.stats))
+          : new Uint8Array(0);
 
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
@@ -254,7 +285,15 @@ export function createFrameStreamDecoder(): {
             jpeg: payload,
           });
         } else if (kind === FRAME_STREAM_KIND.heartbeat) {
-          records.push({ kind: FRAME_STREAM_KIND.heartbeat });
+          // A payload that will not parse is DROPPED, not fatal. Unlike an
+          // unknown kind, this cannot desynchronise the reader — the length
+          // field already told us exactly where the record ends — so the
+          // recoverable answer is a heartbeat without stats, which is what
+          // every heartbeat was before V-4a.
+          records.push({
+            kind: FRAME_STREAM_KIND.heartbeat,
+            ...decodeHeartbeatStats(payload),
+          });
         } else {
           records.push({
             kind: FRAME_STREAM_KIND.end,
@@ -266,4 +305,20 @@ export function createFrameStreamDecoder(): {
       return { ok: true, records };
     },
   };
+}
+
+/** `{ stats }` when the payload is readable, `{}` otherwise. */
+function decodeHeartbeatStats(
+  payload: Uint8Array,
+): { stats?: FrameStreamStats } {
+  if (payload.byteLength === 0) return {};
+  try {
+    const parsed: unknown = JSON.parse(new TextDecoder().decode(payload));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return {};
+    }
+    return { stats: parsed as FrameStreamStats };
+  } catch {
+    return {};
+  }
 }

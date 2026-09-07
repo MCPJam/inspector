@@ -98,6 +98,34 @@ const DEFAULT_MAX_FRAME_BYTES = 256 * 1024;
 
 export type ViewportListener = (frame: ViewportFrame) => void;
 
+/**
+ * What this viewport has seen, and what it threw away.
+ *
+ * Three drop paths existed and every one of them was silent: a byte-identical
+ * frame, an oversized one, and the pacer's overwrite one layer up. A pane
+ * showing a stale picture and a pane on a healthy quiet page look identical
+ * from the outside, and without these there was no way to tell them apart from
+ * outside the box.
+ */
+export interface ViewportCounters {
+  /** Screencast frames Chromium handed us. */
+  framesIn: number;
+  /** Frames that reached a subscriber. */
+  framesOut: number;
+  bytesOut: number;
+  dropped: {
+    /** Byte-identical to the last one — the capture-induces-capture loop. */
+    dedupe: number;
+    /** Over `maxFrameBytes`; a frame is transient, so it is not re-encoded. */
+    oversize: number;
+    /**
+     * The transport could not take it. Counted HERE so one number covers the
+     * whole path out of the box; incremented by whoever is shipping frames.
+     */
+    pacer: number;
+  };
+}
+
 export interface TabViewport {
   /**
    * Watch this tab. The screencast starts on the FIRST subscriber and stops
@@ -123,6 +151,10 @@ export interface TabViewport {
     stillPermitted?: () => boolean,
     holder?: string,
   ): Promise<void>;
+  /** A snapshot of the counters. Cheap; safe to call on every heartbeat. */
+  counters(): ViewportCounters;
+  /** A transport dropped a frame this viewport had already published. */
+  noteTransportDrop(): void;
   dispose(): Promise<void>;
 }
 
@@ -163,8 +195,16 @@ export function createTabViewport(
   let inputHolder: string | undefined;
   let lastData: string | undefined;
   let seq = 0;
+  const counters: ViewportCounters = {
+    framesIn: 0,
+    framesOut: 0,
+    bytesOut: 0,
+    dropped: { dedupe: 0, oversize: 0, pacer: 0 },
+  };
 
   const publish = (frame: ViewportFrame) => {
+    counters.framesOut += 1;
+    counters.bytesOut += Math.floor((frame.data.length * 3) / 4);
     for (const listener of listeners) {
       try {
         listener(frame);
@@ -196,14 +236,21 @@ export function createTabViewport(
         .catch(() => {});
     }
     if (!streaming || disposed || !frame.data) return;
+    counters.framesIn += 1;
     // Property 2.
-    if (frame.data === lastData) return;
+    if (frame.data === lastData) {
+      counters.dropped.dedupe += 1;
+      return;
+    }
     lastData = frame.data;
 
     // A frame is transient — the next paint replaces it — so an oversized one
     // is dropped rather than re-encoded in the hot path.
     const bytes = Math.floor((frame.data.length * 3) / 4);
-    if (bytes > maxBytes) return;
+    if (bytes > maxBytes) {
+      counters.dropped.oversize += 1;
+      return;
+    }
 
     const measured = measure(frame.data, options.surface);
     throttle.push({
@@ -267,6 +314,10 @@ export function createTabViewport(
       };
     },
     subscriberCount: () => listeners.size,
+    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    noteTransportDrop() {
+      counters.dropped.pacer += 1;
+    },
     async dispatchInput(events, stillPermitted, holder) {
       const run = inputChain.then(() =>
         dispatchBatch(events, stillPermitted, holder),

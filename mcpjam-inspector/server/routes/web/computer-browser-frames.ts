@@ -54,6 +54,7 @@ import { browserdBundleHash } from "../../services/browserd/live-session-deps.js
 import {
   createFrameRelayStats,
   pongFor,
+  type DaemonFrameCounters,
 } from "./browser-frame-relay-stats.js";
 import {
   createRelayInputForwarder,
@@ -106,6 +107,8 @@ export interface BrowserFramesDeps {
       ts: number;
       seq: number;
     }) => void;
+    /** The daemon's own counters, from the heartbeat. */
+    onStats?: (stats: DaemonFrameCounters) => void;
     onEnd: (reason: string | undefined) => void;
   }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
   /**
@@ -186,6 +189,9 @@ export function createComputerBrowserFramesWsHandler(
             ts: frame.ts,
             seq: frame.seq,
           }),
+        ...(args.onStats
+          ? { onStats: (stats) => args.onStats?.(stats) }
+          : {}),
         onEnd: args.onEnd,
       }));
   const sendInput =
@@ -442,6 +448,12 @@ export function createComputerBrowserFramesWsHandler(
             const stamped = { ...frame, relayTs: Date.now() };
             const payload = JSON.stringify({ type: "frame", frame: stamped });
             stats?.offer(payload.length, () => ws.send(payload));
+          },
+          // The daemon's side of the accounting, merged into the same `stats`
+          // message the relay's own counters go out on. One shape for the pane,
+          // whichever engine it is looking at.
+          onStats: (daemon) => {
+            stats?.mergeDaemon(daemon);
           },
           onEnd: (reason) => {
             if (closed) return;

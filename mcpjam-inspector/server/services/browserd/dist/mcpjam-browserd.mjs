@@ -7,6 +7,7 @@ import { randomUUID } from "node:crypto";
 
 // server/services/browserd/protocol.ts
 var DEFAULT_QUEUE_KEY = "@session";
+var BROWSERD_PROTOCOL_VERSION = 1;
 var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
@@ -451,12 +452,43 @@ var BrowserdRequestHandler = class {
   bootId;
   token;
   lease;
+  features;
+  bundleHash;
+  contextMode;
+  startedBy;
+  /**
+   * How many frame streams are open, asked of the stream host.
+   *
+   * A FUNCTION set after construction, because the stream host is built from
+   * this handler (it borrows `authorize` and `subscribeFrames`) and so cannot
+   * exist yet when the constructor runs. Absent until then, which reads as
+   * "unknown" rather than as zero: an upgrade decision must not conclude
+   * "nobody is watching" from a wire that was never connected.
+   */
+  watchers;
+  /**
+   * When a command or a person's input last touched the page.
+   *
+   * `null` until something does. The number itself is never interpreted here —
+   * it goes out on `/v1/status` and the INSPECTOR decides what counts as
+   * quiet, so changing that threshold does not need a daemon deploy (which is
+   * the very thing this whole compatibility mechanism exists to avoid).
+   */
+  lastActivityAt = null;
   constructor(deps) {
     this.queue = deps.queue;
     this.driver = deps.driver;
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.features = deps.features ?? [];
+    this.bundleHash = deps.bundleHash;
+    this.contextMode = deps.contextMode;
+    this.startedBy = deps.startedBy ?? "inspector";
+  }
+  /** Let the stream host report itself on `/v1/status`. See `watchers`. */
+  attachFrameCounters(watchers) {
+    this.watchers = watchers;
   }
   /**
    * The gate every route but `/healthz` sits behind: `undefined` to proceed, or
@@ -499,9 +531,23 @@ var BrowserdRequestHandler = class {
         return { status: 405, headers: { allow: "GET" } };
       }
       const health = await this.driver.health();
-      return health.ok ? { status: 200, body: { ok: true, bootId: this.bootId } } : {
+      const identity = {
+        bootId: this.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        features: this.features,
+        startedBy: this.startedBy,
+        ...this.bundleHash ? { bundleHash: this.bundleHash } : {},
+        ...this.contextMode ? { contextMode: this.contextMode } : {},
+        // What "nobody is using this browser" is made of. Reported as FACTS,
+        // never as a verdict: the caller applies its own quiet threshold, so
+        // changing that threshold does not need a daemon deploy.
+        lease: this.lease.state().state,
+        ...this.watchers ? { watchers: this.watchers() } : {},
+        ...this.lastActivityAt === null ? {} : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }
+      };
+      return health.ok ? { status: 200, body: { ok: true, ...identity } } : {
         status: 503,
-        body: { ok: false, detail: health.detail, bootId: this.bootId }
+        body: { ok: false, detail: health.detail, ...identity }
       };
     }
     if (req.path === "/v1/lease") {
@@ -547,6 +593,7 @@ var BrowserdRequestHandler = class {
         body: { error: "too_many_events", bootId: this.bootId }
       };
     }
+    this.lastActivityAt = Date.now();
     const outcome = await this.dispatchInput({
       ...typeof tabId === "string" ? { tabId } : {},
       holder,
@@ -571,6 +618,7 @@ var BrowserdRequestHandler = class {
         body: { error: "invalid_command", bootId: this.bootId }
       };
     }
+    this.lastActivityAt = Date.now();
     const leaseState = this.lease.state();
     const refusal = leaseRefusalFor(
       leaseState,
@@ -669,7 +717,19 @@ var BrowserdRequestHandler = class {
         } catch {
           return false;
         }
-      }
+      },
+      /**
+       * What this viewport has seen and thrown away, plus whose it is.
+       *
+       * Rides the heartbeat rather than a route of its own: the numbers are
+       * only interesting to somebody already reading this stream, and a
+       * separate endpoint would need its own auth, its own cadence and its own
+       * way of naming which viewport it meant.
+       */
+      counters: () => viewport.counters(),
+      /** A frame this viewport published that the transport could not take. */
+      noteTransportDrop: () => viewport.noteTransportDrop(),
+      subscriberCount: () => viewport.subscriberCount()
     };
   }
   /**
@@ -828,7 +888,7 @@ var FRAME_STREAM_KIND = {
 };
 var FRAME_STREAM_MAX_PAYLOAD_BYTES = 256 * 1024;
 function encodeFrameStreamRecord(record) {
-  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : new Uint8Array(0);
+  const payload = record.kind === FRAME_STREAM_KIND.frame ? record.jpeg : record.kind === FRAME_STREAM_KIND.end ? new TextEncoder().encode(record.reason) : record.stats ? new TextEncoder().encode(JSON.stringify(record.stats)) : new Uint8Array(0);
   const bytes = new Uint8Array(FRAME_STREAM_HEADER_BYTES + payload.byteLength);
   const view = new DataView(bytes.buffer);
   view.setUint8(0, FRAME_STREAM_VERSION);
@@ -983,6 +1043,7 @@ function createFrameStreamHost(handler, options = {}) {
     let stallTimer;
     let beatTimer;
     let unsubscribe;
+    let subscription;
     const entry = {
       end: (reason) => end(reason)
     };
@@ -1002,23 +1063,29 @@ function createFrameStreamHost(handler, options = {}) {
       } catch {
       }
     };
-    const pacer = createFramePacer({
-      send: (data, cb) => {
-        stallTimer = timers.setTimer(() => {
-          if (ended) return;
-          ended = true;
-          timers.clearTimer(beatTimer);
-          unsubscribe?.();
-          open.delete(entry);
-          pacer.close();
-          res.destroy();
-        }, stallMs);
-        res.write(data, (error) => {
-          timers.clearTimer(stallTimer);
-          cb(error ?? void 0);
-        });
-      }
-    });
+    const pacer = createFramePacer(
+      {
+        send: (data, cb) => {
+          stallTimer = timers.setTimer(() => {
+            if (ended) return;
+            ended = true;
+            timers.clearTimer(beatTimer);
+            unsubscribe?.();
+            open.delete(entry);
+            pacer.close();
+            res.destroy();
+          }, stallMs);
+          res.write(data, (error) => {
+            timers.clearTimer(stallTimer);
+            cb(error ?? void 0);
+          });
+        }
+      },
+      // The pacer's overwrite is the third silent drop path (the viewport owns
+      // the other two). Counting it HERE, on the viewport that produced the
+      // frame, is what makes one number describe the whole way out of the box.
+      () => subscription?.ok && subscription.noteTransportDrop()
+    );
     open.add(entry);
     res.on("close", () => {
       if (ended) return;
@@ -1029,7 +1096,7 @@ function createFrameStreamHost(handler, options = {}) {
       open.delete(entry);
       pacer.close();
     });
-    const subscription = await handler.subscribeFrames({
+    subscription = await handler.subscribeFrames({
       ...tabId ? { tabId } : {},
       ...holder ? { holder } : {},
       listener: (frame) => {
@@ -1059,12 +1126,26 @@ function createFrameStreamHost(handler, options = {}) {
       return;
     }
     unsubscribe = subscription.unsubscribe;
+    const live = subscription;
+    let lastFramesIn;
     const beat = () => {
       if (ended) return;
-      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
-      subscription.revalidate();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          // Additive by construction: a v1 reader slices this payload by its
+          // length and discards it, so an old inspector against a new daemon
+          // sees exactly the heartbeat it always did.
+          stats: (() => {
+            const stats = statsFor(live, lastFramesIn);
+            lastFramesIn = stats.framesIn;
+            return stats;
+          })()
+        })
+      );
+      live.revalidate();
       if (ended) return;
-      void subscription.stillCurrent().then(
+      void live.stillCurrent().then(
         (current) => {
           if (!current && !ended) end("tab_gone");
           else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
@@ -1101,6 +1182,17 @@ function createFrameStreamHost(handler, options = {}) {
       for (const entry of [...open]) entry.end(reason);
     },
     count: () => open.size
+  };
+}
+function statsFor(subscription, previousFramesIn) {
+  const counters = subscription.counters();
+  return {
+    framesIn: counters.framesIn,
+    framesOut: counters.framesOut,
+    bytesOut: counters.bytesOut,
+    dropped: counters.dropped,
+    subscribers: subscription.subscriberCount(),
+    ...previousFramesIn === void 0 ? {} : { encoderIdle: counters.framesIn === previousFramesIn }
   };
 }
 
@@ -1259,12 +1351,17 @@ function buildBrowserdStack(driver, config) {
     driver,
     bootId,
     token: config.token,
-    lease
+    lease,
+    ...config.features ? { features: config.features } : {},
+    ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
+    ...config.contextMode ? { contextMode: config.contextMode } : {},
+    ...config.startedBy ? { startedBy: config.startedBy } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
     ...config.frames ? { frames: config.frames } : {}
   });
+  handler.attachFrameCounters(() => frames.count());
   return {
     server,
     handler,
@@ -2335,7 +2432,15 @@ function createTabViewport(cdp, options) {
   let inputHolder;
   let lastData;
   let seq = 0;
+  const counters = {
+    framesIn: 0,
+    framesOut: 0,
+    bytesOut: 0,
+    dropped: { dedupe: 0, oversize: 0, pacer: 0 }
+  };
   const publish = (frame) => {
+    counters.framesOut += 1;
+    counters.bytesOut += Math.floor(frame.data.length * 3 / 4);
     for (const listener of listeners) {
       try {
         listener(frame);
@@ -2357,10 +2462,17 @@ function createTabViewport(cdp, options) {
       });
     }
     if (!streaming || disposed || !frame.data) return;
-    if (frame.data === lastData) return;
+    counters.framesIn += 1;
+    if (frame.data === lastData) {
+      counters.dropped.dedupe += 1;
+      return;
+    }
     lastData = frame.data;
     const bytes = Math.floor(frame.data.length * 3 / 4);
-    if (bytes > maxBytes) return;
+    if (bytes > maxBytes) {
+      counters.dropped.oversize += 1;
+      return;
+    }
     const measured = measure(frame.data, options.surface);
     throttle.push({
       data: frame.data,
@@ -2406,6 +2518,10 @@ function createTabViewport(cdp, options) {
       };
     },
     subscriberCount: () => listeners.size,
+    counters: () => ({ ...counters, dropped: { ...counters.dropped } }),
+    noteTransportDrop() {
+      counters.dropped.pacer += 1;
+    },
     async dispatchInput(events, stillPermitted, holder) {
       const run = inputChain.then(
         () => dispatchBatch(events, stillPermitted, holder)
@@ -3834,6 +3950,8 @@ function adaptContext(context, options = {}) {
 }
 
 // server/services/browserd/daemon/config.ts
+import { createHash as createHash2 } from "node:crypto";
+import { readFileSync } from "node:fs";
 var DEFAULT_BROWSERD_PORT = 8791;
 var DEFAULT_BROWSERD_HOST = "0.0.0.0";
 var DEFAULT_BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
@@ -3867,8 +3985,26 @@ function readBrowserdConfig(env = process.env) {
 function extraArgsFor(config) {
   return config.windowSize ? [`--window-size=${config.windowSize}`] : [];
 }
-function formatReadyLine(host, port, bootId) {
-  return JSON.stringify({ event: "listening", host, port, bootId });
+function formatReadyLine(host, port, bootId, protocolVersion) {
+  return JSON.stringify({
+    event: "listening",
+    host,
+    port,
+    bootId,
+    ...protocolVersion === void 0 ? {} : { protocolVersion }
+  });
+}
+function readBundleHash(argv = process.argv, hashFile = defaultHashFile) {
+  const entry = argv[1];
+  if (!entry) return void 0;
+  try {
+    return hashFile(entry);
+  } catch {
+    return void 0;
+  }
+}
+function defaultHashFile(path) {
+  return createHash2("sha256").update(readFileSync(path)).digest("hex");
 }
 
 // server/services/browserd/daemon/main.ts
@@ -3878,6 +4014,7 @@ function log(message) {
 }
 async function main() {
   const config = readBrowserdConfig();
+  const bundleHash = readBundleHash();
   const context = await launchBrowserdContext({
     userDataDir: config.userDataDir,
     headless: config.headless,
@@ -3886,7 +4023,16 @@ async function main() {
   });
   const lease = new HandoffLease();
   const driver = new ChromiumDriver(context, { lease });
-  const stack = buildBrowserdStack(driver, { token: config.token, lease });
+  const stack = buildBrowserdStack(driver, {
+    token: config.token,
+    lease,
+    // Read ONCE, at boot: the file cannot change under a running process in
+    // any way that would make a later read more truthful, and hashing a
+    // multi-megabyte bundle on every status probe would tax a box the agent is
+    // also using.
+    ...bundleHash ? { bundleHash } : {},
+    contextMode: config.contextMode
+  });
   let shuttingDown = false;
   const shutdown = async (signal) => {
     if (shuttingDown) return;
@@ -3902,7 +4048,12 @@ async function main() {
   process.on("SIGINT", () => void shutdown("SIGINT"));
   stack.server.listen(config.port, config.host, () => {
     process.stdout.write(
-      `${formatReadyLine(config.host, config.port, stack.bootId)}
+      `${formatReadyLine(
+        config.host,
+        config.port,
+        stack.bootId,
+        BROWSERD_PROTOCOL_VERSION
+      )}
 `
     );
   });

@@ -74,6 +74,14 @@ export interface BrowserdHandle {
   port: number;
   /** `https://<getHost(port)>` — where the inspector reaches browserd. */
   publicOrigin: string;
+  /**
+   * The wire compatibility number this daemon announced, if it announced one.
+   *
+   * Absent from a daemon predating V-4a. Recorded with the session so a later
+   * lookup can answer "can I talk to it?" without a probe — and so a hash-only
+   * difference can be told from an incompatible one.
+   */
+  protocolVersion?: number;
   /** Reap the daemon. Idempotent and never throws. */
   stop: () => Promise<void>;
 }
@@ -165,6 +173,16 @@ export async function ensureDisplay(
 interface BrowserdReadyLine {
   port: number;
   bootId: string;
+  /**
+   * The daemon's wire compatibility number, when it printed one.
+   *
+   * VALIDATED WHEN PRESENT, OPTIONAL WHEN ABSENT. A daemon baked into an older
+   * image prints the pre-V-4a line, and refusing that would turn a boot into a
+   * hard failure over a field nothing needs to boot. Absent means "unknown",
+   * which the reuse ladder treats as "cannot prove compatibility" — a relaunch
+   * — rather than as a match.
+   */
+  protocolVersion?: number;
 }
 
 function parseReadyLine(line: string): BrowserdReadyLine | null {
@@ -182,7 +200,23 @@ function parseReadyLine(line: string): BrowserdReadyLine | null {
   if (typeof record.port !== "number") return null;
   if (typeof record.bootId !== "string" || record.bootId.length === 0)
     return null;
-  return { port: record.port, bootId: record.bootId };
+  const protocolVersion = record.protocolVersion;
+  if (
+    protocolVersion !== undefined &&
+    (typeof protocolVersion !== "number" ||
+      !Number.isInteger(protocolVersion) ||
+      protocolVersion < 1)
+  ) {
+    // A field that IS there and is nonsense is a daemon we do not understand.
+    // Refusing the line is the loud failure; treating it as absent would let a
+    // garbled build be adopted as a compatible one.
+    return null;
+  }
+  return {
+    port: record.port,
+    bootId: record.bootId,
+    ...(typeof protocolVersion === "number" ? { protocolVersion } : {}),
+  };
 }
 
 function buildEnv(
@@ -252,6 +286,9 @@ export function bootBrowserd(
         bootId: outcome.bootId,
         port: outcome.port,
         publicOrigin: `https://${sandbox.getHost(outcome.port)}`,
+        ...(outcome.protocolVersion !== undefined
+          ? { protocolVersion: outcome.protocolVersion }
+          : {}),
         stop: kill,
       });
     };

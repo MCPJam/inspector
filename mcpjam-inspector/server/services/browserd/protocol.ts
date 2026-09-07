@@ -35,6 +35,28 @@ export type BrowserCommandSource = "manual" | "chat" | "inspector" | "eval";
 export const DEFAULT_QUEUE_KEY = "@session";
 
 /**
+ * The daemon's WIRE compatibility number, and the only thing a reuse decision
+ * may key off.
+ *
+ * Not the bundle hash. Every edit anywhere in the daemon's import graph rotates
+ * that hash, and a hash mismatch used to mean "relaunch now" — so a deploy
+ * carrying a one-line comment change killed every live hosted browser
+ * mid-session, including one somebody was typing a password into. During a wave
+ * of daemon work that is most deploys.
+ *
+ * This number answers the question that actually matters: can the inspector
+ * talk to the daemon that is already running? Bump it ONLY when the wire or a
+ * command's semantics change incompatibly — a new endpoint, a new optional
+ * field, a new frame kind negotiated per stream are all ADDITIVE and must not
+ * bump it. A hash that differs while this matches is an upgrade that can wait
+ * for the session to be idle (`browser-session.ts`, `upgradeAvailable`).
+ *
+ * History:
+ *   1 — the wire as of the viewport-fidelity wave (V-4a).
+ */
+export const BROWSERD_PROTOCOL_VERSION = 1;
+
+/**
  * The canonical model-facing coordinate space (L5), and part of the WIRE
  * CONTRACT rather than a launch detail — which is why it lives here and not
  * beside the Chromium switches that happen to configure it.

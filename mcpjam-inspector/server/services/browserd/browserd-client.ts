@@ -35,6 +35,7 @@ import {
   createFrameStreamDecoder,
   FRAME_STREAM_KIND,
   type FrameStreamFrame,
+  type FrameStreamStats,
 } from "./frame-stream.js";
 import type { ViewportInputEvent } from "./daemon/viewport.js";
 
@@ -256,6 +257,14 @@ export class BrowserdClient {
     signal: AbortSignal;
     onFrame: (frame: FrameStreamFrame) => void;
     /**
+     * The daemon's own counters, as they ride the heartbeat.
+     *
+     * OPTIONAL on both sides: a daemon predating V-4a sends a bare heartbeat,
+     * and a caller that does not care simply omits this. Never inferred — an
+     * absent number is unknown, not zero.
+     */
+    onStats?: (stats: FrameStreamStats) => void;
+    /**
      * How the stream ended. `undefined` means it stopped without saying —
      * a drop, which a caller should retry, as opposed to a refusal it should
      * respect.
@@ -332,6 +341,7 @@ export class BrowserdClient {
     args: {
       signal: AbortSignal;
       onFrame: (frame: FrameStreamFrame) => void;
+      onStats?: (stats: FrameStreamStats) => void;
       onEnd: (reason: string | undefined) => void;
       idleMs?: number;
     },
@@ -365,7 +375,9 @@ export class BrowserdClient {
         }
         for (const record of decoded.records) {
           if (record.kind === FRAME_STREAM_KIND.frame) args.onFrame(record);
-          else if (record.kind === FRAME_STREAM_KIND.end)
+          else if (record.kind === FRAME_STREAM_KIND.heartbeat) {
+            if (record.stats) args.onStats?.(record.stats);
+          } else if (record.kind === FRAME_STREAM_KIND.end)
             reason = record.reason;
         }
         if (reason !== undefined) break;

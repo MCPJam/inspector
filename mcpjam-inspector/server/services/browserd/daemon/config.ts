@@ -4,6 +4,11 @@
  * side-effectful entrypoint so the parsing — including the fail-closed rules —
  * is unit-testable.
  */
+// `node:*` builtins are the one import class the bundler allows here; the
+// artifact runs on a box with nothing but its own bytes.
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+
 
 export interface BrowserdConfig {
   token: string;
@@ -82,6 +87,46 @@ export function formatReadyLine(
   host: string,
   port: number,
   bootId: string,
+  /**
+   * The wire compatibility number the boot recipe records with the session.
+   *
+   * Optional in the SIGNATURE, not in practice: a caller that omits it prints
+   * the line a pre-V-4a daemon printed, which is exactly what a test asserting
+   * backwards compatibility needs to build.
+   */
+  protocolVersion?: number,
 ): string {
-  return JSON.stringify({ event: "listening", host, port, bootId });
+  return JSON.stringify({
+    event: "listening",
+    host,
+    port,
+    bootId,
+    ...(protocolVersion === undefined ? {} : { protocolVersion }),
+  });
+}
+
+/**
+ * The sha256 of the running bundle, read once at boot.
+ *
+ * Of `process.argv[1]` — the artifact this process was started from — because
+ * the daemon is a single bundled file and nothing else about it identifies the
+ * bytes. Best-effort: a daemon that cannot read its own file still runs, it
+ * simply cannot offer an upgrade decision, and the caller treats a missing
+ * hash exactly as it treats a backend too old to store one.
+ */
+export function readBundleHash(
+  argv: readonly string[] = process.argv,
+  hashFile: (path: string) => string | undefined = defaultHashFile,
+): string | undefined {
+  const entry = argv[1];
+  if (!entry) return undefined;
+  try {
+    return hashFile(entry);
+  } catch {
+    return undefined;
+  }
+}
+
+function defaultHashFile(path: string): string {
+  return createHash("sha256").update(readFileSync(path)).digest("hex");
 }

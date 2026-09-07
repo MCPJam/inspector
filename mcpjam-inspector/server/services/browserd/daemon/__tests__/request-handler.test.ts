@@ -4,7 +4,11 @@ import {
   type DaemonRequest,
 } from "../request-handler";
 import { HandoffLease } from "../lease";
-import type { BrowserCommand, BrowserCommandOutcome } from "../../protocol";
+import {
+  BROWSERD_PROTOCOL_VERSION,
+  type BrowserCommand,
+  type BrowserCommandOutcome,
+} from "../../protocol";
 
 const TOKEN = "s3cr3t-per-boot-token";
 const BOOT = "boot-abc";
@@ -227,7 +231,14 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
     const { handler } = makeHandler();
     const res = await handler.handle(statusReq());
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ ok: true, bootId: BOOT });
+    expect(res.body).toMatchObject({ ok: true, bootId: BOOT });
+    // The compatibility fields ride along: what the reuse ladder keys off is
+    // the WIRE, and it has to be readable from the same probe that proves the
+    // daemon is alive.
+    expect(res.body).toMatchObject({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      lease: "free",
+    });
   });
 
   it("keeps the bootId out of the unauthenticated healthz, but 401s status without the bearer", async () => {
@@ -245,7 +256,7 @@ describe("BrowserdRequestHandler — authenticated /v1/status (W2)", () => {
     });
     const res = await handler.handle(statusReq());
     expect(res.status).toBe(503);
-    expect(res.body).toEqual({
+    expect(res.body).toMatchObject({
       ok: false,
       detail: "chromium exited",
       bootId: BOOT,

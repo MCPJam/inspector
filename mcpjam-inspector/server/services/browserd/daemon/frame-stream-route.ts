@@ -31,6 +31,7 @@ import {
   encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
   type FrameStreamEndReason,
+  type FrameStreamStats,
 } from "../frame-stream";
 import { createFramePacer } from "../../webmcp-inspector/frame-pacer";
 import type { BrowserdRequestHandler, DaemonRequest } from "./request-handler";
@@ -241,6 +242,17 @@ export function createFrameStreamHost(
     let stallTimer: unknown;
     let beatTimer: unknown;
     let unsubscribe: (() => void) | undefined;
+    /**
+     * The subscription, declared before the pacer that reports drops to it.
+     *
+     * The pacer is built first because `subscribeFrames` needs somewhere to
+     * push, so the drop callback closes over this rather than over a value:
+     * a drop before the subscription resolves has no viewport to attribute
+     * itself to, and is skipped rather than guessed at.
+     */
+    let subscription:
+      | Awaited<ReturnType<typeof handler.subscribeFrames>>
+      | undefined;
 
     const entry = {
       end: (reason: FrameStreamEndReason) => end(reason),
@@ -269,7 +281,8 @@ export function createFrameStreamHost(
       }
     };
 
-    const pacer = createFramePacer({
+    const pacer = createFramePacer(
+      {
       send: (data, cb) => {
         // Armed per write and cleared by the acknowledgement: a peer that stops
         // reading never acknowledges, and without this the in-flight slot — and
@@ -295,7 +308,12 @@ export function createFrameStreamHost(
           cb(error ?? undefined);
         });
       },
-    });
+      },
+      // The pacer's overwrite is the third silent drop path (the viewport owns
+      // the other two). Counting it HERE, on the viewport that produced the
+      // frame, is what makes one number describe the whole way out of the box.
+      () => subscription?.ok && subscription.noteTransportDrop(),
+    );
 
     // Registered BEFORE the await: a client that hangs up while we are still
     // resolving a viewport must still be cleaned up.
@@ -310,7 +328,7 @@ export function createFrameStreamHost(
       pacer.close();
     });
 
-    const subscription = await handler.subscribeFrames({
+    subscription = await handler.subscribeFrames({
       ...(tabId ? { tabId } : {}),
       ...(holder ? { holder } : {}),
       listener: (frame) => {
@@ -342,16 +360,39 @@ export function createFrameStreamHost(
       return;
     }
     unsubscribe = subscription.unsubscribe;
+    // Narrowed once, so the tick below reads a value TypeScript can see is
+    // subscribed rather than re-narrowing a mutable binding on every beat.
+    const live = subscription;
+    /**
+     * `framesIn` at the previous beat.
+     *
+     * How "the encoder has nothing to send" is told from "the stream broke".
+     * Undefined on the first beat, where there is no previous count to compare
+     * against and claiming either answer would be a guess.
+     */
+    let lastFramesIn: number | undefined;
 
     const beat = () => {
       if (ended) return;
       // Order matters: prove liveness first, so a reader distinguishes a slow
       // check from a dead stream, then ask the two questions a one-way stream
       // cannot answer by itself.
-      pacer.push(encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }));
-      subscription.revalidate();
+      pacer.push(
+        encodeFrameStreamRecord({
+          kind: FRAME_STREAM_KIND.heartbeat,
+          // Additive by construction: a v1 reader slices this payload by its
+          // length and discards it, so an old inspector against a new daemon
+          // sees exactly the heartbeat it always did.
+          stats: (() => {
+            const stats = statsFor(live, lastFramesIn);
+            lastFramesIn = stats.framesIn;
+            return stats;
+          })(),
+        }),
+      );
+      live.revalidate();
       if (ended) return; // revalidate may have revoked us
-      void subscription.stillCurrent().then(
+      void live.stillCurrent().then(
         (current) => {
           if (!current && !ended) end("tab_gone");
           else if (!ended) beatTimer = timers.setTimer(beat, heartbeatMs);
@@ -390,5 +431,40 @@ export function createFrameStreamHost(
       for (const entry of [...open]) entry.end(reason);
     },
     count: () => open.size,
+  };
+}
+
+/**
+ * The daemon's own numbers, as the heartbeat carries them.
+ *
+ * `encoderIdle` is derived rather than reported: this transport's encoder is
+ * Chromium's screencast, and "nothing came in since the last beat" is exactly
+ * what a quiet page looks like. Saying so is what stops an adaptive client
+ * reading silence as loss and stepping the quality down on a page that is
+ * simply not moving.
+ */
+function statsFor(
+  subscription: {
+    counters: () => {
+      framesIn: number;
+      framesOut: number;
+      bytesOut: number;
+      dropped: { dedupe: number; oversize: number; pacer: number };
+    };
+    subscriberCount: () => number;
+  },
+  /** `framesIn` at the previous beat, or undefined on the first one. */
+  previousFramesIn: number | undefined,
+): FrameStreamStats {
+  const counters = subscription.counters();
+  return {
+    framesIn: counters.framesIn,
+    framesOut: counters.framesOut,
+    bytesOut: counters.bytesOut,
+    dropped: counters.dropped,
+    subscribers: subscription.subscriberCount(),
+    ...(previousFramesIn === undefined
+      ? {}
+      : { encoderIdle: counters.framesIn === previousFramesIn }),
   };
 }

@@ -180,3 +180,43 @@ describe("bootBrowserd", () => {
     expect(fake.state.kills).toBe(1);
   });
 });
+
+
+/**
+ * V-4a. The ready line is where the inspector first learns which wire it is
+ * talking to. An older baked daemon prints the pre-V-4a line, and refusing
+ * that would turn a boot into a hard failure over a field nothing needs in
+ * order to boot.
+ */
+describe("the ready line's wire version", () => {
+  it("carries it through to the handle when the daemon says one", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY({ protocolVersion: 7 }));
+    expect((await p).protocolVersion).toBe(7);
+  });
+
+  it("boots a daemon that predates the field", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY());
+    // Absent, not zero: the reuse ladder reads this as "cannot prove
+    // compatibility", which relaunches.
+    const handle = await p;
+    expect(handle.protocolVersion).toBeUndefined();
+    expect(handle.bootId).toBe("boot-1");
+  });
+
+  it("does not accept a line whose version is nonsense", async () => {
+    // A field that IS there and is garbage is a daemon we do not understand.
+    // Treating it as absent would let a garbled build be adopted as a
+    // compatible one, so the line is not a ready line at all.
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, readyTimeoutMs: 40 });
+    await tick();
+    fake.emit(READY({ protocolVersion: "one" }));
+    await expect(p).rejects.toThrow();
+  });
+});

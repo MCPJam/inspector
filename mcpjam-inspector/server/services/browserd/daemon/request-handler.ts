@@ -17,13 +17,18 @@
  * adapter that reads the body and writes the response lives in `server.ts`.
  */
 import {
+  BROWSERD_PROTOCOL_VERSION,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
 } from "../protocol";
 import type { CommandQueue } from "./command-queue";
 import type { BrowserDriver } from "./browser-driver";
-import type { ViewportFrame, ViewportInputEvent } from "./viewport";
+import type {
+  ViewportCounters,
+  ViewportFrame,
+  ViewportInputEvent,
+} from "./viewport";
 import { constantTimeEquals, presentedBearer } from "./auth";
 import {
   HandoffLease,
@@ -97,6 +102,27 @@ export interface BrowserdHandlerDeps {
    * hold the screenshot of someone's password field.
    */
   lease?: HandoffLease;
+  /**
+   * What this daemon can do beyond the baseline protocol.
+   *
+   * Additive capabilities are ANNOUNCED, never assumed: a relay that asked for
+   * `codec=h264` from a daemon too old to encode it would get an error stream
+   * instead of a picture, and the reader has no way to tell that apart from a
+   * dead browser. Empty here; `"h264"` arrives with the video encoder.
+   */
+  features?: readonly string[];
+  /**
+   * The sha256 of the running bundle, for OBSERVABILITY and the lazy-upgrade
+   * decision — never for admission. See `BROWSERD_PROTOCOL_VERSION`.
+   */
+  bundleHash?: string;
+  /** Which profile mode this daemon launched with. */
+  contextMode?: "persistent" | "ephemeral";
+  /**
+   * Did the box start this daemon itself (baked into the image), or did an
+   * inspector replica boot it? Only `"prelaunch"` is adoptable without a boot.
+   */
+  startedBy?: "prelaunch" | "inspector";
 }
 
 export class BrowserdRequestHandler {
@@ -105,6 +131,29 @@ export class BrowserdRequestHandler {
   private readonly bootId: string;
   private readonly token: string;
   private readonly lease: HandoffLease;
+  private readonly features: readonly string[];
+  private readonly bundleHash: string | undefined;
+  private readonly contextMode: "persistent" | "ephemeral" | undefined;
+  private readonly startedBy: "prelaunch" | "inspector";
+  /**
+   * How many frame streams are open, asked of the stream host.
+   *
+   * A FUNCTION set after construction, because the stream host is built from
+   * this handler (it borrows `authorize` and `subscribeFrames`) and so cannot
+   * exist yet when the constructor runs. Absent until then, which reads as
+   * "unknown" rather than as zero: an upgrade decision must not conclude
+   * "nobody is watching" from a wire that was never connected.
+   */
+  private watchers: (() => number) | undefined;
+  /**
+   * When a command or a person's input last touched the page.
+   *
+   * `null` until something does. The number itself is never interpreted here —
+   * it goes out on `/v1/status` and the INSPECTOR decides what counts as
+   * quiet, so changing that threshold does not need a daemon deploy (which is
+   * the very thing this whole compatibility mechanism exists to avoid).
+   */
+  private lastActivityAt: number | null = null;
 
   constructor(deps: BrowserdHandlerDeps) {
     this.queue = deps.queue;
@@ -112,6 +161,15 @@ export class BrowserdRequestHandler {
     this.bootId = deps.bootId;
     this.token = deps.token;
     this.lease = deps.lease ?? new HandoffLease();
+    this.features = deps.features ?? [];
+    this.bundleHash = deps.bundleHash;
+    this.contextMode = deps.contextMode;
+    this.startedBy = deps.startedBy ?? "inspector";
+  }
+
+  /** Let the stream host report itself on `/v1/status`. See `watchers`. */
+  attachFrameCounters(watchers: () => number): void {
+    this.watchers = watchers;
   }
 
   /**
@@ -175,11 +233,31 @@ export class BrowserdRequestHandler {
         return { status: 405, headers: { allow: "GET" } };
       }
       const health = await this.driver.health();
+      // The compatibility fields ride on BOTH answers. An unhealthy daemon is
+      // still a daemon of a particular protocol, and the caller's next decision
+      // — reuse, upgrade when idle, or relaunch now — needs the number whether
+      // or not Chromium is currently answering.
+      const identity = {
+        bootId: this.bootId,
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+        features: this.features,
+        startedBy: this.startedBy,
+        ...(this.bundleHash ? { bundleHash: this.bundleHash } : {}),
+        ...(this.contextMode ? { contextMode: this.contextMode } : {}),
+        // What "nobody is using this browser" is made of. Reported as FACTS,
+        // never as a verdict: the caller applies its own quiet threshold, so
+        // changing that threshold does not need a daemon deploy.
+        lease: this.lease.state().state,
+        ...(this.watchers ? { watchers: this.watchers() } : {}),
+        ...(this.lastActivityAt === null
+          ? {}
+          : { msSinceActivity: Math.max(0, Date.now() - this.lastActivityAt) }),
+      };
       return health.ok
-        ? { status: 200, body: { ok: true, bootId: this.bootId } }
+        ? { status: 200, body: { ok: true, ...identity } }
         : {
             status: 503,
-            body: { ok: false, detail: health.detail, bootId: this.bootId },
+            body: { ok: false, detail: health.detail, ...identity },
           };
     }
 
@@ -245,6 +323,7 @@ export class BrowserdRequestHandler {
         body: { error: "too_many_events", bootId: this.bootId },
       };
     }
+    this.lastActivityAt = Date.now();
     const outcome = await this.dispatchInput({
       ...(typeof tabId === "string" ? { tabId } : {}),
       holder,
@@ -270,6 +349,11 @@ export class BrowserdRequestHandler {
         body: { error: "invalid_command", bootId: this.bootId },
       };
     }
+    // Recorded BEFORE the lease gate, on purpose. A command the lease refuses
+    // is still evidence that somebody is trying to use this browser right now,
+    // and an upgrade that relaunched the daemon between an agent's refusal and
+    // its retry would be exactly as disruptive as one taken mid-turn.
+    this.lastActivityAt = Date.now();
 
     // HANDOFF GATE. A person holds (or has parked) the browser, so nothing
     // model-driven runs and — just as importantly — nothing OBSERVES: this
@@ -371,6 +455,10 @@ export class BrowserdRequestHandler {
          * ends the stream when the answer turns false.
          */
         stillCurrent: () => Promise<boolean>;
+        /** This viewport's own drop accounting; see below. */
+        counters: () => ViewportCounters;
+        noteTransportDrop: () => void;
+        subscriberCount: () => number;
       }
     | { ok: false; error: string }
   > {
@@ -440,6 +528,18 @@ export class BrowserdRequestHandler {
           return false;
         }
       },
+      /**
+       * What this viewport has seen and thrown away, plus whose it is.
+       *
+       * Rides the heartbeat rather than a route of its own: the numbers are
+       * only interesting to somebody already reading this stream, and a
+       * separate endpoint would need its own auth, its own cadence and its own
+       * way of naming which viewport it meant.
+       */
+      counters: () => viewport.counters(),
+      /** A frame this viewport published that the transport could not take. */
+      noteTransportDrop: () => viewport.noteTransportDrop(),
+      subscriberCount: () => viewport.subscriberCount(),
     };
   }
 

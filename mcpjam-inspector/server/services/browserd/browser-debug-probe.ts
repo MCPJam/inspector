@@ -16,7 +16,10 @@ import type {
   BrowserdHandle,
   BrowserdSandbox,
 } from "./boot-browserd";
-import type { BrowserdCommandResponse } from "./browserd-client";
+import type {
+  BrowserdCommandResponse,
+  BrowserdStatus,
+} from "./browserd-client";
 import type { BrowserCommand } from "./protocol";
 
 /** The sandbox pieces the probe needs, once connected. */
@@ -35,6 +38,11 @@ export interface ProbeClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
+  /**
+   * Optional, so an older fake need not grow a method to keep compiling.
+   * Absent simply means the probe reports no compatibility fields.
+   */
+  status?(): Promise<BrowserdStatus>;
 }
 
 export interface BrowserProbeDeps {
@@ -71,6 +79,17 @@ export interface BrowserProbeResult {
   settled: boolean;
   /** Size of the returned screenshot (base64 chars) — proof a frame came back. */
   screenshotBytes: number;
+  /**
+   * What the daemon says about itself.
+   *
+   * The reuse ladder's whole decision now rests on these, and they cross a
+   * sandbox boundary, a bundler and a control plane before anything reads
+   * them. A staging probe that could not show them would leave "why did that
+   * session relaunch?" answerable only by reasoning.
+   */
+  protocolVersion?: number;
+  bundleHash?: string;
+  features?: readonly string[];
 }
 
 const DEFAULT_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -135,12 +154,24 @@ export async function runBrowserProbe(
 
     const screenshot =
       (shot.result.output as { screenshot?: string })?.screenshot ?? "";
+    // Best-effort and LAST: the probe's verdict is the screenshot, and a
+    // status read that fails must not turn a working pipeline into a failure.
+    const status = (await client.status?.().catch(() => null)) ?? null;
     return {
       computerId,
       bootId: handle.bootId,
       url: input.url,
       settled: nav.result.settled ?? false,
       screenshotBytes: screenshot.length,
+      ...(status && status.kind !== "unauthorized"
+        ? {
+            ...(status.protocolVersion !== undefined
+              ? { protocolVersion: status.protocolVersion }
+              : {}),
+            ...(status.bundleHash ? { bundleHash: status.bundleHash } : {}),
+            ...(status.features ? { features: status.features } : {}),
+          }
+        : {}),
     };
   } finally {
     // Never leave a daemon running in a durable computer; never kill the box.

@@ -261,3 +261,83 @@ describe("frame-stream — a reader that has lost its place says so", () => {
     });
   });
 });
+
+
+/**
+ * V-4a. The heartbeat carries the daemon's own drop accounting. This is safe
+ * without a protocol bump for exactly one reason, and it is worth pinning: a
+ * v1 reader already slices the heartbeat's payload by its length field and
+ * discards it, so an old inspector against a new daemon sees the heartbeat it
+ * always did rather than a framing error.
+ */
+describe("heartbeat stats", () => {
+  it("round-trips the counters", () => {
+    const stats = {
+      framesIn: 12,
+      framesOut: 9,
+      bytesOut: 4_000,
+      dropped: { dedupe: 2, oversize: 1, pacer: 0 },
+      subscribers: 1,
+      encoderIdle: false,
+    };
+    const decoder = createFrameStreamDecoder();
+    const decoded = decoder.push(
+      encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat, stats }),
+    );
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat, stats }],
+    });
+  });
+
+  it("is still a plain heartbeat without one", () => {
+    const decoder = createFrameStreamDecoder();
+    const decoded = decoder.push(
+      encodeFrameStreamRecord({ kind: FRAME_STREAM_KIND.heartbeat }),
+    );
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat }],
+    });
+  });
+
+  it("survives a payload it cannot parse", () => {
+    // Unlike an unknown KIND, this cannot desynchronise the reader — the length
+    // field already said where the record ends — so the recoverable answer is
+    // a heartbeat without stats rather than a dead connection.
+    const bytes = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.heartbeat,
+      stats: { framesIn: 1 },
+    });
+    // Corrupt the JSON in place, keeping the length honest.
+    bytes[FRAME_STREAM_HEADER_BYTES] = 0x7b; // '{' with no closing brace
+    bytes[FRAME_STREAM_HEADER_BYTES + 1] = 0x7b;
+    const decoded = createFrameStreamDecoder().push(bytes);
+    expect(decoded).toEqual({
+      ok: true,
+      records: [{ kind: FRAME_STREAM_KIND.heartbeat }],
+    });
+  });
+
+  it("still delimits the records that follow it", () => {
+    // The whole reason this is additive: a reader that mis-measured the
+    // heartbeat would lose its place in the stream forever.
+    const decoder = createFrameStreamDecoder();
+    const merged = new Uint8Array([
+      ...encodeFrameStreamRecord({
+        kind: FRAME_STREAM_KIND.heartbeat,
+        stats: { framesIn: 3, encoderIdle: true },
+      }),
+      ...encodeFrameStreamRecord({
+        kind: FRAME_STREAM_KIND.end,
+        reason: "shutting_down",
+      }),
+    ]);
+    const decoded = decoder.push(merged);
+    expect(decoded.ok && decoded.records).toHaveLength(2);
+    expect(decoded.ok && decoded.records[1]).toEqual({
+      kind: FRAME_STREAM_KIND.end,
+      reason: "shutting_down",
+    });
+  });
+});
