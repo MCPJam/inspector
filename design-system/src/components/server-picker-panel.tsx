@@ -91,14 +91,14 @@ export type ServerPickerPanelProps = {
    */
   canDeleteSelected?: boolean;
   /**
-   * Chips shown before the rest collapse into `+N`.
+   * How much room the chips get, in characters of server name.
    *
    * A COUNT, while the design's own overflow looks driven by the width of the
    * names it happens to hold. Width is not observable in jsdom, so a count is
    * the part that can be pinned by a test; the visual pass in a browser owns
    * the rest.
    */
-  chipLimit?: number;
+  chipBudget?: number;
 };
 
 const ROW = "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left";
@@ -149,7 +149,7 @@ export function ServerPickerPanel({
   busy = false,
   onDeleteGroup,
   canDeleteSelected = true,
-  chipLimit = 3,
+  chipBudget = 24,
 }: ServerPickerPanelProps) {
   // The draft is transient UI, not app state, so it lives here. The SELECTION
   // stays controlled by the caller — that is the part that persists.
@@ -202,6 +202,10 @@ export function ServerPickerPanel({
       className="gap-1"
     >
       <TabsList className="grid h-auto w-full grid-cols-2 gap-1 bg-transparent p-0">
+        {/* `submitting` only — NOT `busy`. `busy` also means "still loading",
+            and freezing navigation while data arrives is a worse answer than
+            the overlap it would prevent: every row is already `disabled={busy}`,
+            so nothing can be started from the other tab anyway. */}
         <TabsTrigger value="servers" className={TAB} disabled={submitting}>
           Servers
         </TabsTrigger>
@@ -383,7 +387,20 @@ export function ServerPickerPanel({
         ) : null}
         {showForm ? null : groups.map((group) => {
           const selected = group.id === selectedGroupId;
-          const shown = group.serverNames.slice(0, chipLimit);
+          // As many as FIT, which is what the design does: `Group 1` shows two
+          // `excalidraw` chips and `+4`, while a group of three short names
+          // shows all three. A fixed count rendered three wide names and wrapped
+          // the row. Characters stand in for width — no measuring, no
+          // ResizeObserver, and the row is one line either way.
+          // ponytail: character budget, measure for real if a name's glyph
+          // width ever diverges enough to wrap.
+          const shown: string[] = [];
+          let budgetLeft = chipBudget;
+          for (const name of group.serverNames) {
+            if (shown.length > 0 && name.length > budgetLeft) break;
+            shown.push(name);
+            budgetLeft -= name.length;
+          }
           const hidden = group.serverNames.length - shown.length;
           return (
             <div

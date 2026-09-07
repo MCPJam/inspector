@@ -204,25 +204,71 @@ describe("ServerPickerPanel — Server Groups tab", () => {
     expect(screen.getAllByText("excalidraw")).toHaveLength(2);
   });
 
-  it("collapses the overflow into +N past the chip limit", () => {
+  it("fits chips to the room they take, not to a count", () => {
+    // Straight from the design: `Group 1` holds six servers and shows TWO
+    // `excalidraw` chips plus `+4`, while a group of three shorter names shows
+    // all three. A fixed count showed three wide names and wrapped the row.
     render(
       <ServerPickerPanel
         {...onGroups({
           groups: [
             {
-              id: "g_big",
+              id: "g_wide",
               name: "Group 1",
-              serverNames: ["a", "b", "c", "d", "e", "f"],
+              serverNames: [
+                "excalidraw",
+                "excalidraw",
+                "excalidraw",
+                "excalidraw",
+                "excalidraw",
+                "excalidraw",
+              ],
             },
           ],
-          chipLimit: 2,
         })}
       />,
     );
-    expect(screen.getByText("a")).toBeInTheDocument();
-    expect(screen.getByText("b")).toBeInTheDocument();
+    expect(screen.getAllByText("excalidraw")).toHaveLength(2);
     expect(screen.getByText("+4")).toBeInTheDocument();
-    expect(screen.queryByText("c")).toBeNull();
+  });
+
+  it("shows all three when the names are short enough to fit", () => {
+    render(
+      <ServerPickerPanel
+        {...onGroups({
+          groups: [
+            {
+              id: "g_narrow",
+              name: "Group 2",
+              serverNames: ["excalidraw", "sample", "sample"],
+            },
+          ],
+        })}
+      />,
+    );
+    expect(screen.getByText("excalidraw")).toBeInTheDocument();
+    expect(screen.getAllByText("sample")).toHaveLength(2);
+    expect(screen.queryByText(/^\+/)).toBeNull();
+  });
+
+  it("always shows one chip, even for a name wider than the budget", () => {
+    render(
+      <ServerPickerPanel
+        {...onGroups({
+          groups: [
+            {
+              id: "g_huge",
+              name: "Group 3",
+              serverNames: ["a-server-name-longer-than-the-whole-budget", "b"],
+            },
+          ],
+        })}
+      />,
+    );
+    expect(
+      screen.getByText("a-server-name-longer-than-the-whole-budget"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("+1")).toBeInTheDocument();
   });
 
   it("shows every chip when the group fits the limit", () => {
@@ -230,7 +276,7 @@ describe("ServerPickerPanel — Server Groups tab", () => {
       <ServerPickerPanel
         {...onGroups({
           groups: [{ id: "g", name: "G", serverNames: ["a", "b", "c"] }],
-          chipLimit: 3,
+          chipBudget: 40,
         })}
       />,
     );

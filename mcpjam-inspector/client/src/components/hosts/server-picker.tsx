@@ -191,6 +191,18 @@ export function ServerPicker({
     // filters a list that no longer holds it, which is a no-op.
     setConnecting([]);
   }, [project]);
+  // Unmount is a project change too, as far as a write in flight is concerned:
+  // without this, a handshake completing after the user navigated away still
+  // toasted and still wrote state. Its own effect, because a cleanup on the
+  // one above would also fire on every project change — where the body has
+  // already done the bump.
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
+
   const sinceNow = () => {
     const started = generation.current;
     return () => generation.current === started;
