@@ -30,22 +30,6 @@ vi.mock("@/hooks/useOrganizations", () => ({
     mockUseOrganizationQueries(...args),
 }));
 
-vi.mock("@/components/sidebar/sidebar-credit-usage", () => ({
-  SidebarCreditUsage: ({
-    organizationId,
-    variant,
-  }: {
-    organizationId?: string | null;
-    variant?: string;
-  }) => (
-    <div
-      data-testid="sidebar-credit-usage"
-      data-org={organizationId ?? ""}
-      data-variant={variant}
-    />
-  ),
-}));
-
 vi.mock("@/components/ui/sidebar", () => ({
   SidebarMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   SidebarMenuItem: ({ children }: { children: ReactNode }) => (
@@ -303,23 +287,6 @@ describe("SidebarContextSwitcher", () => {
     ).toBeInTheDocument();
     // The org switch list is collapsed by default
     expect(screen.queryByTestId("org-switch-list")).not.toBeInTheDocument();
-  });
-
-  it("shows the active org's credit usage right below the org", () => {
-    render(
-      <SidebarContextSwitcher
-        activeProjectId="p1"
-        activeOrganizationId="org_a"
-        projects={projects}
-        onSwitchProject={vi.fn()}
-        onCreateProject={vi.fn(async () => "")}
-        onDeleteProject={vi.fn()}
-      />
-    );
-    openMainDropdown();
-    const creditUsage = screen.getByTestId("sidebar-credit-usage");
-    expect(creditUsage).toHaveAttribute("data-org", "org_a");
-    expect(creditUsage).toHaveAttribute("data-variant", "full");
   });
 
   it("expands the org switch list when 'Switch organization' is clicked, listing all organizations", () => {

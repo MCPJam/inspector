@@ -41,7 +41,6 @@ import { useConvexAuth } from "convex/react";
 import type { Project } from "@/state/app-types";
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
-import { SidebarCreditUsage } from "@/components/sidebar/sidebar-credit-usage";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -414,27 +413,6 @@ export function SidebarContextSwitcher({
                         </button>
                       ) : null}
                     </div>
-
-                    {/* Active org's shared credit usage, right below the org name */}
-                    {activeOrganizationId ? (
-                      <div className="px-0.5 pt-1">
-                        <SidebarCreditUsage
-                          variant="full"
-                          organizationId={activeOrganizationId}
-                          onClick={
-                            activeOrg && onSwitchOrganization
-                              ? () => {
-                                  onSwitchOrganization(
-                                    activeOrg._id,
-                                    "billing"
-                                  );
-                                  setMenuOpen(false);
-                                }
-                              : undefined
-                          }
-                        />
-                      </div>
-                    ) : null}
 
                     {canSwitchOrganizations ? (
                       <button

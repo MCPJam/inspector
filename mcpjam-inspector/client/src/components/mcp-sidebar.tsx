@@ -49,6 +49,7 @@ import { MCPIcon } from "@/components/ui/mcp-icon";
 import { SidebarUser } from "@/components/sidebar/sidebar-user";
 import { SidebarContextSwitcher } from "@/components/sidebar/sidebar-context-switcher";
 import { SidebarTrialCountdown } from "@/components/sidebar/sidebar-trial-countdown";
+import { SidebarCredits } from "@/components/sidebar/sidebar-credits";
 import { ShareProjectDialog } from "@/components/project/ShareProjectDialog";
 import { useUpdateNotification } from "@/hooks/useUpdateNotification";
 import { Button } from "@mcpjam/design-system/button";
@@ -63,7 +64,7 @@ import {
   isHostedTabBlocked,
   normalizeHostedHashTab,
 } from "@/lib/hosted-tab-policy";
-import { useAppNavigate } from "@/lib/app-navigation";
+import { buildOrganizationPath, useAppNavigate } from "@/lib/app-navigation";
 import { useLearnMore } from "@/hooks/use-learn-more";
 import { WEBMCP_INSPECTOR_FEATURE_FLAG } from "@/hooks/useWebmcpInspectorEnabled";
 import { LearnMoreExpandedPanel } from "@/components/learn-more/LearnMoreExpandedPanel";
@@ -849,6 +850,17 @@ export function MCPSidebar({
               trialStartedAt={trialBilling.trialStartedAt}
               onUpgradeClick={handleTrialUpgradeClick}
               className="mt-1"
+            />
+          ) : null}
+          {isAuthenticated && user && activeOrganizationId ? (
+            <SidebarCredits
+              organizationId={activeOrganizationId}
+              billingUiEnabled={billingUiEnabled}
+              onExplorePlans={() =>
+                appNavigate(
+                  buildOrganizationPath(activeOrganizationId, "billing"),
+                )
+              }
             />
           ) : null}
           <SidebarUser onBeforeSignOut={onBeforeSignOut} />
