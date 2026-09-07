@@ -151,11 +151,21 @@ async function displayIsUp(
 export async function ensureDisplay(
   sandbox: BrowserdSandbox,
   display: string = BROWSERD_DISPLAY,
+  /**
+   * Device pixels per CSS pixel, when this boot is asking for a sharper one.
+   *
+   * The display and the page are the SAME rectangle: a browser rendering at
+   * 1.5× on a 1024×768 screen paints past the edge of what is captured, and the
+   * missing strip is on the right-hand side where nothing looks obviously
+   * wrong. Only used on the fallback path — a box whose template already
+   * brought X up keeps the geometry the template chose.
+   */
+  deviceScaleFactor = 1,
 ): Promise<void> {
   if (await displayIsUp(sandbox, display)) return;
 
   await sandbox.runBackground(
-    `Xvfb ${display} -ac -screen 0 ${DISPLAY_GEOMETRY} -retro -dpi 96 -nolisten tcp -nolisten unix`,
+    `Xvfb ${display} -ac -screen 0 ${geometryFor({ deviceScaleFactor })} -retro -dpi 96 -nolisten tcp -nolisten unix`,
     { envs: {}, onStdout: () => {} },
   );
 
@@ -178,6 +188,23 @@ export async function ensureDisplay(
       (DISPLAY_READY_ATTEMPTS * DISPLAY_POLL_MS) / 1000
     }s`,
   );
+}
+
+/**
+ * The X screen geometry for a boot.
+ *
+ * Scaled by the device scale factor, because the display and the page are the
+ * SAME rectangle: a browser rendering at 1.5× on a 1024×768 screen paints past
+ * the edge of what is captured, and the missing strip is on the right-hand side
+ * where nothing looks obviously wrong.
+ */
+function geometryFor(options: { deviceScaleFactor?: number }): string {
+  const dpr = options.deviceScaleFactor ?? 1;
+  if (dpr === 1) return DISPLAY_GEOMETRY;
+  const [width, height, depth] = DISPLAY_GEOMETRY.split("x").map(Number);
+  return `${Math.round((width ?? 1024) * dpr)}x${Math.round(
+    (height ?? 768) * dpr,
+  )}x${depth ?? 24}`;
 }
 
 interface BrowserdReadyLine {
@@ -241,6 +268,16 @@ function buildEnv(
     // variable alone: E2B command shells do not inherit the image's Dockerfile
     // `ENV`, so an image-level `DISPLAY` would not reach the daemon.
     DISPLAY: options.display ?? BROWSERD_DISPLAY,
+    // Kiosk is what makes "the display IS the page" true for the video
+    // encoder, and it is the static half of the daemon's own h264 gate.
+    ...(options.kiosk ? { MCPJAM_BROWSERD_KIOSK: "1" } : {}),
+    // Sent only when a deployment is trying a candidate: the shipped default
+    // is 1, and a value the daemon does not receive is one it cannot
+    // misinterpret.
+    ...(options.deviceScaleFactor !== undefined &&
+    options.deviceScaleFactor !== 1
+      ? { MCPJAM_BROWSERD_DPR: String(options.deviceScaleFactor) }
+      : {}),
   };
   if (options.windowSize) env.MCPJAM_BROWSERD_WINDOW_SIZE = options.windowSize;
   if (options.headless) env.MCPJAM_BROWSERD_HEADLESS = "true";
@@ -306,7 +343,7 @@ export function bootBrowserd(
     // Chained rather than awaited before this promise is built: the boot's
     // ready-line choreography (and its timeout) must own every failure path,
     // including "the box never got an X server".
-    void ensureDisplay(sandbox, options.display)
+    void ensureDisplay(sandbox, options.display, options.deviceScaleFactor)
       .then(() =>
         sandbox.runBackground(`node ${JSON.stringify(options.scriptPath)}`, {
           envs: env,

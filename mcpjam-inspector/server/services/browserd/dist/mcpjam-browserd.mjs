@@ -12,6 +12,11 @@ var BROWSERD_OBSERVATION_VIEWPORT = {
   width: 1024,
   height: 768
 };
+var HOSTED_DISPLAY = {
+  dpr: 1,
+  width: BROWSERD_OBSERVATION_VIEWPORT.width,
+  height: BROWSERD_OBSERVATION_VIEWPORT.height
+};
 function isPointInViewport(x, y) {
   return Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 && x <= BROWSERD_OBSERVATION_VIEWPORT.width - 1 && y <= BROWSERD_OBSERVATION_VIEWPORT.height - 1;
 }

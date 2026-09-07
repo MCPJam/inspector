@@ -90,6 +90,21 @@ export interface BrowserProbeResult {
   protocolVersion?: number;
   bundleHash?: string;
   features?: readonly string[];
+  /**
+   * Did the BOX start this daemon, or did the probe?
+   *
+   * The prelaunch exit criterion. A `true` here on a fresh desktop is the
+   * difference between a warm start and a cold one, and it is not otherwise
+   * observable from outside the sandbox.
+   */
+  startedBy?: "prelaunch" | "inspector";
+  /**
+   * How long the boot took, in ms.
+   *
+   * The number prelaunch exists to move. Measured around the boot alone, not
+   * the reserve or the connect, because those are the same either way.
+   */
+  msToBoot?: number;
 }
 
 const DEFAULT_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
@@ -116,11 +131,13 @@ export async function runBrowserProbe(
   try {
     const scriptPath = input.scriptPath ?? DEFAULT_SCRIPT_PATH;
     await sandbox.writeBundle(scriptPath, input.bundle);
+    const bootStartedAt = Date.now();
     handle = await deps.boot(sandbox.browserd, {
       scriptPath,
       port: input.port ?? DEFAULT_PORT,
       userDataDir: input.userDataDir ?? DEFAULT_USER_DATA_DIR,
     });
+    const msToBoot = Date.now() - bootStartedAt;
 
     const client = deps.createClient(handle.publicOrigin, handle.bearer);
     const nav = await client.sendCommand(
@@ -170,8 +187,10 @@ export async function runBrowserProbe(
               : {}),
             ...(status.bundleHash ? { bundleHash: status.bundleHash } : {}),
             ...(status.features ? { features: status.features } : {}),
+            ...(status.startedBy ? { startedBy: status.startedBy } : {}),
           }
         : {}),
+      msToBoot,
     };
   } finally {
     // Never leave a daemon running in a durable computer; never kill the box.

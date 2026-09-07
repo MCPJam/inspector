@@ -1408,3 +1408,127 @@ describe("ensureBrowserSession — compatibility and the lazy upgrade", () => {
     }
   });
 });
+
+
+/**
+ * V-8. The desktop image starts browserd itself, so on a fresh box there is a
+ * healthy daemon listening before any inspector has done anything — and the
+ * whole relaunch (kill, upload, boot Chromium) would replace it with an
+ * identical one several seconds later.
+ *
+ * Every refusal below costs one round trip and saves a relaunch; every one of
+ * them exists because adopting a daemon that cannot prove what it is would be
+ * worse than a cold start.
+ */
+describe("ensureBrowserSession — adopting a daemon the box started", () => {
+  const PRELAUNCHED = {
+    kind: "ok" as const,
+    bootId: "boot-baked",
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    bundleHash: HASH,
+    contextMode: "persistent" as const,
+    startedBy: "prelaunch" as const,
+  };
+
+  function withPrelaunched(over: Record<string, unknown> = {}) {
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      status: async () => ({ ...PRELAUNCHED, ...over }),
+    });
+    f.sandbox.readTextFile = vi.fn(async () => "baked-token");
+    return f;
+  }
+
+  it("adopts one, without killing or booting anything", async () => {
+    const f = withPrelaunched();
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+
+    expect(handle.reused).toBe(true);
+    expect(handle.bootId).toBe("boot-baked");
+    expect(f.sandbox.killBrowserd).not.toHaveBeenCalled();
+    expect(f.boot).not.toHaveBeenCalled();
+    // And it is RECORDED, or no other replica could ever find it.
+    expect(f.record).toHaveBeenCalledWith(
+      expect.objectContaining({
+        bootId: "boot-baked",
+        browserdToken: "baked-token",
+        protocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
+    );
+  });
+
+  it("refuses a daemon an INSPECTOR booted", async () => {
+    // One an inspector booted has a row of its own; adopting it here would
+    // write a second row for the same process under a token the first does
+    // not know.
+    const f = withPrelaunched({ startedBy: "inspector" });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses one that speaks a different wire", async () => {
+    const f = withPrelaunched({
+      protocolVersion: BROWSERD_PROTOCOL_VERSION + 1,
+    });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("refuses one running the other profile mode", async () => {
+    // Its browser state is the wrong kind: a persistent profile's cookies for
+    // an eval, or an ephemeral one's blank slate for a signed-in user.
+    const f = withPrelaunched({ contextMode: "ephemeral" });
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("boots when there is no token file to read", async () => {
+    // An image that predates prelaunch. Every ensure on it takes this path.
+    const f = makeFakes({ lookups: [{ reachable: true, session: null }] });
+    f.sandbox.readTextFile = vi.fn(async () => undefined);
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("boots when the token does not open the daemon", async () => {
+    // A stale file next to a daemon that has since restarted.
+    const f = makeFakes({
+      lookups: [{ reachable: true, session: null }],
+      status: async () => ({ kind: "unauthorized" as const }),
+    });
+    f.sandbox.readTextFile = vi.fn(async () => "stale-token");
+    await ensureBrowserSession(f.deps, ARGS);
+    expect(f.boot).toHaveBeenCalled();
+  });
+
+  it("marks a baked daemon running old bytes as upgradeable", async () => {
+    // Baked bytes ARE old bytes by design: the image pins a commit. The lazy
+    // upgrade replaces it the first moment nobody is looking, rather than
+    // spending a relaunch on a fresh box that is working perfectly.
+    const f = withPrelaunched({ bundleHash: "hash-from-the-image" });
+    const handle = await ensureBrowserSession(f.deps, ARGS);
+    expect(handle.upgradeAvailable).toBe(true);
+    expect(f.boot).not.toHaveBeenCalled();
+  });
+
+  it("the kill switch skips adoption entirely", async () => {
+    process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT = "false";
+    try {
+      const f = withPrelaunched();
+      await ensureBrowserSession(f.deps, ARGS);
+      expect(f.boot).toHaveBeenCalled();
+      expect(f.sandbox.readTextFile).not.toHaveBeenCalled();
+    } finally {
+      delete process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT;
+    }
+  });
+
+  it("falls through when another replica recorded first", async () => {
+    // Their row describes this same daemon or a newer one; re-reading and
+    // verifying is a better answer than guessing here.
+    const f = withPrelaunched();
+    f.record.mockResolvedValue({ status: "conflict" } as never);
+    await ensureBrowserSession(f.deps, ARGS).catch(() => {});
+    expect(f.boot).toHaveBeenCalled();
+  });
+});

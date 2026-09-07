@@ -38,6 +38,7 @@ import type {
 import {
   BROWSERD_PROTOCOL_VERSION,
   formatBrowserdError,
+  HOSTED_DISPLAY,
   type BrowserCommand,
 } from "./protocol";
 import type {
@@ -56,6 +57,18 @@ import { shouldTouchActivity } from "../../utils/computers/activity-touch.js";
 export const BROWSERD_SCRIPT_PATH = "/opt/mcpjam/mcpjam-browserd.mjs";
 export const BROWSERD_PORT = 8791;
 export const BROWSERD_USER_DATA_DIR = "/home/user/.mcpjam-browserd";
+/**
+ * Where a PRELAUNCHED daemon leaves the bearer it minted for itself.
+ *
+ * A daemon baked into the desktop image starts before any inspector exists, so
+ * nobody can hand it a secret. It mints 32 random bytes into this file at 0600
+ * and the inspector reads them back over the E2B files API — the same
+ * API-key-authenticated channel that already writes the daemon's own bytes, so
+ * adopting one creates no trust relationship that did not already exist. The
+ * agent's shell runs on a different box (`runtimeKind`), so nothing the model
+ * drives can read it.
+ */
+export const BROWSERD_TOKEN_FILE = "/home/user/.mcpjam-browserd.token";
 
 /**
  * A `BrowserdClient`, narrowed to what sessions need (fakeable in tests).
@@ -85,6 +98,14 @@ export interface SessionClient {
 export interface SessionSandbox {
   /** Write the daemon bundle into the sandbox filesystem. */
   writeBundle(path: string, content: Uint8Array): Promise<void>;
+  /**
+   * Read a small text file, for the prelaunched daemon's token.
+   *
+   * OPTIONAL: an older adapter, or a test fake with no filesystem in mind,
+   * simply has none — and every way of failing to read means the same thing,
+   * which is "boot a daemon yourself".
+   */
+  readTextFile?(path: string): Promise<string | undefined>;
   /** The daemon runner `bootBrowserd` drives. */
   browserd: BrowserdSandbox;
   /** Reap any daemon from a previous boot (idempotent; never throws for
@@ -660,6 +681,111 @@ function handleFromRecord(
   };
 }
 
+/**
+ * Adopt a daemon the BOX started, if it can prove it is ours to use.
+ *
+ * Every step here is a refusal that costs one round trip and saves a relaunch;
+ * failing any of them falls through to the ordinary path, which is what a box
+ * whose image predates prelaunch does on every ensure.
+ */
+async function tryAdoptPrelaunched(
+  deps: BrowserSessionDeps,
+  sandbox: SessionSandbox,
+  target: {
+    computerId: string;
+    contextMode: BrowserContextMode;
+    observedSessionId?: string;
+  },
+  signal?: AbortSignal,
+): Promise<HostedBrowserSessionHandle | null> {
+  if (process.env.MCPJAM_BROWSER_PRELAUNCH_ADOPT === "false") return null;
+  const token = await sandbox
+    .readTextFile?.(BROWSERD_TOKEN_FILE)
+    .catch(() => undefined);
+  // No file: an image that predates prelaunch, or a daemon this inspector
+  // booted itself (which is handed its token rather than minting one).
+  if (!token) return null;
+
+  const publicOrigin = `https://${sandbox.browserd.getHost(BROWSERD_PORT)}`;
+  const client = deps.createClient(publicOrigin, token);
+  const status = await client.status().catch(() => null);
+  if (!status || status.kind !== "ok") return null;
+  // THE BOX STARTED IT, not an inspector. A daemon an inspector booted has a
+  // row of its own, and adopting it here would write a second row for the same
+  // process under a token the first row does not know.
+  if (status.startedBy !== "prelaunch") return null;
+  if (status.protocolVersion !== BROWSERD_PROTOCOL_VERSION) return null;
+  // A daemon in the wrong profile mode is never adoptable: its browser state
+  // is the wrong kind (a persistent profile's cookies for an eval, or an
+  // ephemeral one's blank slate for a signed-in user).
+  if (status.contextMode !== target.contextMode) return null;
+
+  const { streamUrl, streamPassword } = await sandbox.ensureStream();
+  const recorded = await deps.store.record({
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    streamUrl,
+    streamPassword,
+    // The hash of the bundle WE would have uploaded, so a later lookup can see
+    // the drift: a baked daemon is old bytes by design, and the lazy upgrade is
+    // what replaces it once nobody is looking.
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+    ...(target.observedSessionId
+      ? { replacesSessionId: target.observedSessionId }
+      : {}),
+    ...(signal ? { signal } : {}),
+  });
+  // A lost compare-and-swap means another replica recorded first. Their row
+  // describes this same daemon or a newer one; either way the ordinary path
+  // below re-reads and verifies, which is a better answer than guessing here.
+  if (recorded.status !== "recorded") return null;
+
+  const session: BrowserSessionRecord = {
+    sessionId: recorded.sessionId,
+    computerId: target.computerId,
+    bootId: status.bootId,
+    browserdToken: token,
+    browserdPort: BROWSERD_PORT,
+    publicOrigin,
+    streamUrl,
+    streamPassword,
+    bundleHash: deps.bundleHash(),
+    protocolVersion: BROWSERD_PROTOCOL_VERSION,
+    contextMode: target.contextMode,
+  };
+  // Baked bytes are old bytes by design: `upgradeAvailable` when the image's
+  // daemon is not the one this build ships, replaced the first moment nobody
+  // is holding the lease, watching, or driving it.
+  const stale = !!status.bundleHash && status.bundleHash !== deps.bundleHash();
+  return handleFromRecord(deps, session, client, true, stale);
+}
+
+/**
+ * The display settings a hosted daemon boots with.
+ *
+ * `MCPJAM_HOSTED_BROWSER_DPR` is how a deployment tries a sharper display
+ * without shipping one — the gate is x264 under 60% of one core at 20fps on a
+ * 2 vCPU box, and until a measurement passes it the answer is 1.
+ *
+ * NEVER for an ephemeral context. That is an eval or a swarm iteration, where a
+ * screenshot on one host has to match a screenshot on another (L5); the daemon
+ * pins its scale factor at 1 there too, and this is the belt to that braces.
+ */
+function hostedDisplayEnv(
+  contextMode: BrowserContextMode,
+): { deviceScaleFactor?: number; kiosk?: boolean } {
+  const kiosk = process.env.MCPJAM_BROWSER_VIDEO !== "false";
+  if (contextMode !== "persistent") return { kiosk };
+  const raw = Number(process.env.MCPJAM_HOSTED_BROWSER_DPR);
+  const dpr = Number.isFinite(raw) && raw >= 1 && raw <= 3 ? raw : HOSTED_DISPLAY.dpr;
+  return { kiosk, ...(dpr !== 1 ? { deviceScaleFactor: dpr } : {}) };
+}
+
 /** Refuse to continue once the caller has gone away. */
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
@@ -777,6 +903,30 @@ async function ensureOnComputer(
       args.signal,
     );
 
+    // IS ONE ALREADY RUNNING THAT WE CAN SIMPLY USE?
+    //
+    // The desktop image starts browserd itself, so on a fresh box there is a
+    // healthy daemon listening before any inspector has done anything — and
+    // the whole relaunch below (kill, upload, boot Chromium) would replace it
+    // with an identical one, several seconds later. Adoption is what turns a
+    // cold start into a warm one.
+    //
+    // Refused unless it can PROVE it is ours to use: it must have minted a
+    // token into the file only `user` can read, answer `/v1/status` with that
+    // bearer, speak this build's wire, and be running the profile mode this
+    // caller asked for. Anything short of that and it is killed and replaced,
+    // exactly as before.
+    const adopted = await tryAdoptPrelaunched(
+      deps,
+      sandbox,
+      { computerId, contextMode, observedSessionId: lookup.observedSessionId },
+      args.signal,
+    );
+    if (adopted) {
+      await fence?.release();
+      return adopted;
+    }
+
     // A WINNER MAY HAVE APPEARED WHILE WE WERE CONNECTING.
     //
     // Resuming a paused sandbox takes seconds, and another replica that lost
@@ -816,6 +966,7 @@ async function ensureOnComputer(
         port: BROWSERD_PORT,
         userDataDir: BROWSERD_USER_DATA_DIR,
         contextMode,
+        ...hostedDisplayEnv(contextMode),
       });
     } catch (bootError) {
       // Another replica may have won the boot race for this computer (the

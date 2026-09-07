@@ -4,6 +4,7 @@ import {
   DISPLAY_GEOMETRY,
   type BrowserdSandbox,
 } from "../boot-browserd";
+import { HOSTED_DISPLAY } from "../protocol";
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 const READY = (over: Record<string, unknown> = {}) =>
@@ -252,5 +253,57 @@ describe("the X geometry", () => {
       command.startsWith("Xvfb"),
     );
     expect(xvfb).toContain(DISPLAY_GEOMETRY);
+  });
+});
+
+
+/**
+ * V-6. Raising the display's sharpness is a MEASUREMENT, not a promise: the
+ * encoder's cost is quadratic in it and the desktop box has 2 vCPU. What these
+ * pin is that the plumbing is honest either way — the display and the page are
+ * the same rectangle, so they scale together or the picture loses its
+ * right-hand edge with nothing to say so.
+ */
+describe("a sharper display", () => {
+  it("scales the fallback Xvfb with the browser", async () => {
+    const fake = fakeSandbox({ displayUp: false });
+    const p = bootBrowserd(fake.sandbox, { ...OPTS, deviceScaleFactor: 1.5 });
+    await vi.waitFor(() =>
+      expect(
+        fake.state.background.some((command) => command.startsWith("Xvfb")),
+      ).toBe(true),
+    );
+    fake.emit(READY());
+    await p;
+    const xvfb = fake.state.background.find((command) =>
+      command.startsWith("Xvfb"),
+    );
+    expect(xvfb).toContain("1536x1152x24");
+  });
+
+  it("tells the daemon, so its own launch matches the screen", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, {
+      ...OPTS,
+      deviceScaleFactor: 1.5,
+      kiosk: true,
+    });
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_DPR).toBe("1.5");
+    // Kiosk is what makes "the display IS the page" true for the encoder.
+    expect(fake.state.envs.MCPJAM_BROWSERD_KIOSK).toBe("1");
+  });
+
+  it("says nothing at all at DPR 1, which is the shipped default", async () => {
+    const fake = fakeSandbox();
+    const p = bootBrowserd(fake.sandbox, OPTS);
+    await tick();
+    fake.emit(READY());
+    await p;
+    expect(fake.state.envs.MCPJAM_BROWSERD_DPR).toBeUndefined();
+    expect(HOSTED_DISPLAY.dpr).toBe(1);
+    expect(HOSTED_DISPLAY.width).toBe(1024);
   });
 });
