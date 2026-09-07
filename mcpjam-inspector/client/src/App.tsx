@@ -4633,6 +4633,27 @@ export default function App() {
   );
 
   /**
+   * Creating from the switcher always lands you in the new project, and the
+   * URL is what performs that switch — same contract as picking an existing
+   * row. A project created in ANOTHER organization resolves through the route
+   * coordinator: the URL names a project the active org's filtered list does
+   * not contain, so the coordinator switches organization first and then the
+   * project, once the subscription delivers the new row.
+   */
+  const handleSidebarCreateProject = useCallback(
+    async (name: string, organizationId?: string) => {
+      const projectId = await handleCreateProject(name, true, {
+        organizationId,
+      });
+      if (projectId) {
+        navigateToTarget(buildProjectSwitchTarget(projectId));
+      }
+      return projectId;
+    },
+    [handleCreateProject, navigateToTarget],
+  );
+
+  /**
    * Deleting the project you are looking at has to move the URL, because the
    * URL is what names it. Left alone, the address bar would keep pointing at
    * a project that no longer exists and the route boundary would render the
@@ -5096,7 +5117,7 @@ export default function App() {
         activeProjectId={activeProjectId}
         onSwitchProject={handleSidebarSwitchProject}
         onOpenProjectSettings={handleSidebarOpenProjectSettings}
-        onCreateProject={handleCreateProject}
+        onCreateProject={handleSidebarCreateProject}
         onDeleteProject={handleDeleteProjectAndLeave}
         isLoadingProjects={isLoadingRemoteProjects}
         activeOrganizationId={activeOrganizationId}

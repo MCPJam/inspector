@@ -447,6 +447,78 @@ describe("useProjectState automatic project creation", () => {
     });
   });
 
+  it("creates in the organization the caller names, not the active one", async () => {
+    // The create dialog lets the user pick where the project lands, so the
+    // target is no longer always whichever organization is active.
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Existing project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-active",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-active",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateProject("Project Two", false, {
+        organizationId: "org-other",
+      });
+    });
+
+    expect(createProjectMock).toHaveBeenCalledWith({
+      organizationId: "org-other",
+      name: "Project Two",
+      clientConfig: undefined,
+      servers: {},
+    });
+  });
+
+  it("falls back to the active organization when the caller names none", async () => {
+    projectQueryState.allProjects = [
+      {
+        _id: "remote-1",
+        name: "Existing project",
+        servers: {},
+        ownerId: "user-1",
+        organizationId: "org-active",
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    projectQueryState.projects = [];
+
+    const appState = createAppState({
+      default: createSyntheticDefaultProject(),
+    });
+    const { result } = renderUseProjectState({
+      appState,
+      activeOrganizationId: "org-active",
+    });
+
+    await act(async () => {
+      await result.current.handleCreateProject("Project Two", false, {});
+    });
+
+    expect(createProjectMock).toHaveBeenCalledWith({
+      organizationId: "org-active",
+      name: "Project Two",
+      clientConfig: undefined,
+      servers: {},
+    });
+  });
+
   it("does not ensure a default project until organization selection resolves", async () => {
     projectQueryState.allProjects = [];
     projectQueryState.projects = [];

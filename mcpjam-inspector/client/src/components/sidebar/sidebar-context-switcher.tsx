@@ -40,7 +40,18 @@ import { useOrganizationQueries } from "@/hooks/useOrganizations";
 import { useConvexAuth } from "convex/react";
 import type { Project } from "@/state/app-types";
 import { resolveProjectIcon } from "@/components/project/ProjectEmojiPicker";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@mcpjam/design-system/alert-dialog";
 import { CreateOrganizationDialog } from "@/components/organization/CreateOrganizationDialog";
+import { CreateProjectDialog } from "@/components/project/CreateProjectDialog";
 import type { OrganizationRouteSection } from "@/lib/app-navigation";
 import { captureAppSignInReturnPath } from "@/lib/app-signin-return-path";
 
@@ -48,7 +59,7 @@ interface SidebarContextSwitcherProps {
   activeProjectId: string;
   projects: Record<string, Project>;
   onSwitchProject: (projectId: string) => void;
-  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  onCreateProject: (name: string, organizationId?: string) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoading?: boolean;
   /** Opens one project's settings directly. See `onOpenProjectSettings`. */
@@ -142,6 +153,12 @@ export function SidebarContextSwitcher({
   const [menuOpen, setMenuOpen] = useState(false);
   const [orgListOpen, setOrgListOpen] = useState(false);
   const [showCreateOrgDialog, setShowCreateOrgDialog] = useState(false);
+  const [showCreateProjectDialog, setShowCreateProjectDialog] = useState(false);
+  // Deleting a project takes everything in it. The switcher used to do that
+  // on a single click of a button revealed by hover — the easiest possible
+  // gesture for the least reversible action here.
+  const [pendingDeleteProject, setPendingDeleteProject] =
+    useState<Project | null>(null);
 
   // Switching orgs is rare; start every menu open on the common case (projects).
   useEffect(() => {
@@ -188,9 +205,10 @@ export function SidebarContextSwitcher({
   // switching meaningful; with a single org we render context only.
   const canSwitchOrganizations = sortedOrganizations.length > 1;
 
-  const handleCreateProject = () => {
-    if (isCreateDisabled) return;
-    const baseName = "New project";
+  // "Project", "Project 2", "Project 3" — the first name not already taken.
+  // The dialog prefills it and the user is free to replace it.
+  const defaultProjectName = (() => {
+    const baseName = "Project";
     let name = baseName;
     let counter = 1;
     const projectNames = projectsList.map((p) => p.name.toLowerCase());
@@ -198,7 +216,19 @@ export function SidebarContextSwitcher({
       counter++;
       name = `${baseName} ${counter}`;
     }
-    onCreateProject(name, true);
+    return name;
+  })();
+
+  // A seat-pending org is denied every server-side query, so a project created
+  // in one could not then be opened.
+  const creatableOrganizations = sortedOrganizations.filter(
+    (org) => org.seatPending !== true
+  );
+
+  const openCreateProjectDialog = () => {
+    if (isCreateDisabled) return;
+    setShowCreateProjectDialog(true);
+    setMenuOpen(false);
   };
 
   const openCreateOrgDialog = () => {
@@ -305,10 +335,7 @@ export function SidebarContextSwitcher({
                       type="button"
                       aria-label="Add project"
                       title="Add project"
-                      onClick={() => {
-                        handleCreateProject();
-                        setMenuOpen(false);
-                      }}
+                      onClick={openCreateProjectDialog}
                       className="p-0.5 rounded text-muted-foreground/70 hover:text-foreground hover:bg-muted transition-colors"
                     >
                       <Plus className="size-3.5" />
@@ -344,7 +371,7 @@ export function SidebarContextSwitcher({
                               }
                             : undefined
                         }
-                        onDeleteProject={onDeleteProject}
+                        onRequestDelete={setPendingDeleteProject}
                       />
                     ))
                   )}
@@ -538,6 +565,44 @@ export function SidebarContextSwitcher({
         open={showCreateOrgDialog}
         onOpenChange={setShowCreateOrgDialog}
       />
+      <CreateProjectDialog
+        open={showCreateProjectDialog}
+        onOpenChange={setShowCreateProjectDialog}
+        organizations={creatableOrganizations}
+        defaultOrganizationId={activeOrganizationId}
+        defaultName={defaultProjectName}
+        onCreate={onCreateProject}
+      />
+      <AlertDialog
+        open={pendingDeleteProject !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingDeleteProject(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete project?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete &ldquo;{pendingDeleteProject?.name}
+              &rdquo; and all its servers. This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (pendingDeleteProject) {
+                  onDeleteProject(pendingDeleteProject.id);
+                }
+                setPendingDeleteProject(null);
+              }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }
@@ -548,14 +613,14 @@ function ProjectRow({
   isAuthenticated,
   onClick,
   onOpenSettings,
-  onDeleteProject,
+  onRequestDelete,
 }: {
   project: Project;
   isActive: boolean;
   isAuthenticated: boolean;
   onClick: () => void;
   onOpenSettings?: () => void;
-  onDeleteProject: (projectId: string) => void;
+  onRequestDelete: (project: Project) => void;
 }) {
   return (
     <div
@@ -604,7 +669,7 @@ function ProjectRow({
           <ProjectDeleteButton
             project={project}
             deleteState={getProjectDeleteState({ project, isAuthenticated })}
-            onDeleteProject={onDeleteProject}
+            onRequestDelete={onRequestDelete}
           />
         ) : null}
       </div>
@@ -651,11 +716,11 @@ function ProjectRowMembers({
 function ProjectDeleteButton({
   project,
   deleteState,
-  onDeleteProject,
+  onRequestDelete,
 }: {
   project: Project;
   deleteState: ProjectDeleteState;
-  onDeleteProject: (projectId: string) => void;
+  onRequestDelete: (project: Project) => void;
 }) {
   return (
     <Tooltip>
@@ -676,7 +741,7 @@ function ProjectDeleteButton({
               e.stopPropagation();
               e.preventDefault();
               if (!deleteState.canDelete) return;
-              onDeleteProject(project.id);
+              onRequestDelete(project);
             }}
             className={cn(
               "p-0.5 rounded transition-colors",

@@ -140,6 +140,16 @@ vi.mock("@/components/organization/CreateOrganizationDialog", () => ({
   },
 }));
 
+const mockCreateProjectDialog = vi.fn();
+vi.mock("@/components/project/CreateProjectDialog", () => ({
+  CreateProjectDialog: (props: { open: boolean; defaultName: string }) => {
+    mockCreateProjectDialog(props);
+    return props.open ? (
+      <div data-testid="create-project-dialog">{props.defaultName}</div>
+    ) : null;
+  },
+}));
+
 import { SidebarContextSwitcher } from "../sidebar-context-switcher";
 
 const orgs = [
@@ -720,7 +730,9 @@ describe("SidebarContextSwitcher", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clicking the 'Add project' header button calls onCreateProject with a unique name", () => {
+  it("clicking 'Add project' opens the dialog prefilled with a free name and the active org", () => {
+    // The button used to create a project outright, naming it for you in
+    // whichever org happened to be active. It now asks.
     const onCreateProject = vi.fn(async () => "");
     render(
       <SidebarContextSwitcher
@@ -734,7 +746,126 @@ describe("SidebarContextSwitcher", () => {
     );
     openMainDropdown();
     fireEvent.click(screen.getByRole("button", { name: "Add project" }));
-    expect(onCreateProject).toHaveBeenCalledWith("New project", true);
+
+    expect(onCreateProject).not.toHaveBeenCalled();
+    expect(screen.getByTestId("create-project-dialog")).toHaveTextContent(
+      "Project"
+    );
+    const props = mockCreateProjectDialog.mock.calls.at(-1)?.[0];
+    expect(props).toMatchObject({
+      open: true,
+      defaultName: "Project",
+      defaultOrganizationId: "org_a",
+    });
+    expect(props.organizations.map((o: { _id: string }) => o._id)).toEqual([
+      "org_a",
+      "org_b",
+    ]);
+  });
+
+  it("skips a taken project name when prefilling the dialog", () => {
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={{
+          ...projects,
+          taken: { ...projects.p1, id: "taken", name: "Project" },
+        }}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+
+    expect(mockCreateProjectDialog.mock.calls.at(-1)?.[0]).toMatchObject({
+      defaultName: "Project 2",
+    });
+  });
+
+  it("keeps a seat-pending organization out of the create dialog's choices", () => {
+    // Every server-side query for a seat-pending org is denied, so a project
+    // created in one could not then be opened.
+    mockUseOrganizationQueries.mockReturnValue({
+      sortedOrganizations: [orgs[0], { ...orgs[1], seatPending: true }],
+      isLoading: false,
+      createdCount: 0,
+      canCreateOrganization: true,
+    });
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={vi.fn()}
+      />
+    );
+    openMainDropdown();
+    fireEvent.click(screen.getByRole("button", { name: "Add project" }));
+
+    expect(
+      mockCreateProjectDialog.mock.calls
+        .at(-1)?.[0]
+        .organizations.map((o: { _id: string }) => o._id)
+    ).toEqual(["org_a"]);
+  });
+
+  it("confirms before deleting a project from the switcher", async () => {
+    // Deleting takes every server in the project. It used to happen on one
+    // click of a button that only appears on hover.
+    const onDeleteProject = vi.fn();
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={onDeleteProject}
+      />
+    );
+    openMainDropdown();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete project Sandbox" })
+    );
+
+    expect(onDeleteProject).not.toHaveBeenCalled();
+    const dialog = await screen.findByRole("alertdialog");
+    expect(dialog).toHaveTextContent("Delete project?");
+    expect(dialog).toHaveTextContent("Sandbox");
+
+    fireEvent.click(within(dialog).getByRole("button", { name: "Delete" }));
+    expect(onDeleteProject).toHaveBeenCalledWith("p2");
+  });
+
+  it("cancelling the delete confirmation leaves the project alone", async () => {
+    const onDeleteProject = vi.fn();
+    render(
+      <SidebarContextSwitcher
+        activeProjectId="p1"
+        activeOrganizationId="org_a"
+        projects={projects}
+        onSwitchProject={vi.fn()}
+        onCreateProject={vi.fn(async () => "")}
+        onDeleteProject={onDeleteProject}
+      />
+    );
+    openMainDropdown();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Delete project Sandbox" })
+    );
+
+    const dialog = await screen.findByRole("alertdialog");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    });
+    expect(onDeleteProject).not.toHaveBeenCalled();
   });
 
   it("disables the Add project button when isCreateDisabled is true", () => {

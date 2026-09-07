@@ -460,7 +460,11 @@ interface MCPSidebarProps extends React.ComponentProps<typeof Sidebar> {
    * whatever the settings route resolves to afterwards.
    */
   onOpenProjectSettings?: (projectId: string) => void;
-  onCreateProject: (name: string, switchTo?: boolean) => Promise<string>;
+  /**
+   * Creates a project and lands the user in it. The optional organization is
+   * the one chosen in the create dialog; omitted means the active one.
+   */
+  onCreateProject: (name: string, organizationId?: string) => Promise<string>;
   onDeleteProject: (projectId: string) => void;
   isLoadingProjects?: boolean;
   activeOrganizationId?: string;
