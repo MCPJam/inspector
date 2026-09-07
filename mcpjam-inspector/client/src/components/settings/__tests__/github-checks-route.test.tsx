@@ -29,6 +29,7 @@ const {
   mockRedirectToGithub,
   mockOrgsLoading,
   mockAuthLoading,
+  mockMyRole,
 } = vi.hoisted(() => ({
   mockAvailability: {
     value: undefined as { state: "enabled" | "disabled" } | undefined,
@@ -76,6 +77,9 @@ const {
   mockRedirectToGithub: vi.fn(),
   mockOrgsLoading: { value: false },
   mockAuthLoading: { value: false },
+  // The viewer's org role. Admin by default: every case below that is not
+  // about the permission gate is written from an admin's seat.
+  mockMyRole: { value: "admin" as string | undefined },
 }));
 
 // The availability gate is the unit under test; the data layer is stubbed.
@@ -117,7 +121,14 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/useOrganizations", () => ({
-  useOrganizationQueries: () => ({ isLoading: mockOrgsLoading.value }),
+  useOrganizationQueries: () => ({
+    isLoading: mockOrgsLoading.value,
+    sortedOrganizations: [{ _id: "org-1", myRole: mockMyRole.value }],
+  }),
+  // The real predicate, not a stub: what is under test here is that the page
+  // asks it and honours the answer.
+  canManageGithubChecks: (org?: { myRole?: string } | null) =>
+    org?.myRole === "owner" || org?.myRole === "admin",
 }));
 
 // The nav resolves availability itself now; it is not what this file tests.
@@ -264,6 +275,7 @@ describe("GithubChecksRoute availability gate", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     vi.clearAllMocks();
   });
@@ -453,6 +465,7 @@ describe("GithubChecksRoute connect flow", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([
@@ -666,6 +679,7 @@ describe("GithubChecksRoute row outage policy", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -807,6 +821,7 @@ describe("GithubChecksRoute pull-request comments", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -995,6 +1010,7 @@ describe("GithubChecksRoute repository visibility", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockRepos.value = [ROW];
     mockListInstallationRepos.mockReset();
@@ -1078,6 +1094,7 @@ describe("GithubChecksRoute organization switching", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockConnectVerifiedRepo.mockReset();
@@ -1182,6 +1199,7 @@ describe("GithubChecksRoute binding changes", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [];
     mockListInstallationRepos.mockReset();
     mockConnectVerifiedRepo.mockReset();
@@ -1374,6 +1392,7 @@ describe("GithubChecksRoute installations", () => {
     mockSuites.value = [];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -1569,6 +1588,7 @@ describe("GithubChecksRoute connection status", () => {
     ];
     mockOrgsLoading.value = false;
     mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
     mockBindings.value = [binding("mcpjam")];
     mockListInstallationRepos.mockReset();
     mockListInstallationRepos.mockResolvedValue([]);
@@ -1683,5 +1703,101 @@ describe("GithubChecksRoute connection status", () => {
     >;
     expect(sent).not.toHaveProperty("installationRef");
     expect(sent.repositoryId).toBe(repositoryIds.get("mcpjam/pinned-repo"));
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// WHO MAY CHANGE ANY OF THIS
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// Every write on this page is org-ADMIN-only server-side, while the
+// availability query it renders behind needs only MEMBER — deliberately, so a
+// member is told the integration exists rather than that the org does not.
+// A member therefore reaches this page legitimately, and used to find every
+// control live: clicking one produced `OrgAccessDeniedError`, which Convex
+// masks to `Server Error` on a production deployment. The member got a crash
+// where a refusal belonged, and the error tracker got paged for it (Sentry
+// CONVEX-24N / CONVEX-24P).
+//
+// The gate is a RENDER concern only. It is not a substitute for the backend
+// check, which stays exactly where it was.
+
+describe("GithubChecksRoute permissions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockAvailability.value = { state: "enabled" };
+    mockRepos.value = [ROW];
+    mockSuites.value = [
+      { _id: "suite-1", name: "Fixture suite", projectId: "proj-1" },
+    ];
+    mockOrgsLoading.value = false;
+    mockAuthLoading.value = false;
+    mockMyRole.value = "admin";
+    mockBindings.value = [binding("mcpjam")];
+    mockListInstallationRepos.mockReset();
+    mockListInstallationRepos.mockResolvedValue([]);
+  });
+
+  it("leaves every write control dead for a member, and says why", async () => {
+    mockMyRole.value = "member";
+    renderRoute();
+
+    expect(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Claim an existing installation/ })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: /Disconnect mcpjam$/ })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("switch", {
+        name: /Enable checks for mcpjam\/mcp-check-fixture/,
+      })
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", {
+        name: /Disconnect mcpjam\/mcp-check-fixture/,
+      })
+    ).toBeDisabled();
+
+    // The greyed page has to explain itself, or it reads as broken.
+    expect(
+      screen.getByText(/only an organization owner or admin can change it/i)
+    ).toBeInTheDocument();
+  });
+
+  it.each(["admin", "owner"])("leaves them live for an %s", async (role) => {
+    mockMyRole.value = role;
+    renderRoute();
+
+    expect(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("switch", {
+        name: /Enable checks for mcpjam\/mcp-check-fixture/,
+      })
+    ).toBeEnabled();
+    expect(
+      screen.queryByText(/only an organization owner or admin can change it/i)
+    ).not.toBeInTheDocument();
+  });
+
+  // Unresolved is not "allowed". The org list settling after the page mounts
+  // would otherwise flash live controls at somebody about to be refused — and
+  // the notice must not flash either, since we do not yet know it applies.
+  it("stays closed, and silent, while the org list is still loading", async () => {
+    mockMyRole.value = "admin";
+    mockOrgsLoading.value = true;
+    renderRoute();
+
+    expect(
+      await screen.findByRole("button", { name: /Install on a GitHub account/ })
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/only an organization owner or admin can change it/i)
+    ).not.toBeInTheDocument();
   });
 });
