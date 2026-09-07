@@ -9,7 +9,7 @@
  * picture nobody is looking at.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 const api = vi.hoisted(() => ({
@@ -80,6 +80,12 @@ vi.mock("@/lib/hosted-browser/client", async () => {
     },
   };
 });
+
+// The desktop view is a Convex-backed component of its own, tested where it
+// lives. What matters here is that picking VNC hands the pane over to it.
+vi.mock("@/components/computer/BrowserPanel", () => ({
+  BrowserPanel: () => <div data-testid="vnc-panel" />,
+}));
 
 import { HostedBrowserBody } from "../HostedBrowserBody";
 import {
@@ -758,5 +764,63 @@ describe("the hosted pane — which tab is on screen", () => {
     expect((await screen.findByTestId("pane-notice")).textContent).toContain(
       "https://other.test/",
     );
+  });
+});
+
+
+/**
+ * V-7. The tier menu. What it changes depends on which tier: a bitrate change
+ * is a message on the open socket, and a change of TRANSPORT is a reconnect —
+ * reconnecting for a bitrate change would drop the picture to buy nothing.
+ */
+describe("the hosted pane — quality tiers", () => {
+  async function openMenu() {
+    const trigger = await screen.findByTestId("pane-settings");
+    fireEvent.pointerDown(
+      trigger,
+      new MouseEvent("pointerdown", { bubbles: true }) as never,
+    );
+    fireEvent.click(trigger);
+  }
+
+  it("sends a bitrate change on the socket it already has", async () => {
+    renderBody();
+    await deliverFrame();
+    const before = api.sockets.length;
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-saver"));
+    await waitFor(() =>
+      expect(
+        socket()
+          .sent.map((raw) => JSON.parse(raw))
+          .some((m) => m.type === "quality" && m.tier === "saver"),
+      ).toBe(true),
+    );
+    // No reconnect: the picture stays up.
+    expect(api.sockets).toHaveLength(before);
+  });
+
+  it("reconnects when the TRANSPORT changes", async () => {
+    // `mjpeg` is the JPEG path forced, which is a different stream — the pane
+    // has to ask for it, not merely stop decoding.
+    renderBody();
+    await deliverFrame();
+    const before = api.sockets.length;
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-mjpeg"));
+    await waitFor(() =>
+      expect(api.sockets.length).toBeGreaterThan(before),
+    );
+  });
+
+  it("offers the desktop view as the last resort it is", async () => {
+    // The existing noVNC panel: the honest answer to "the new viewer is not
+    // working for me", and only a hosted box has one.
+    renderBody();
+    await deliverFrame();
+    await openMenu();
+    fireEvent.click(await screen.findByTestId("pane-tier-vnc"));
+    expect(await screen.findByTestId("vnc-panel")).toBeTruthy();
+    expect(screen.queryByTestId("rail-browser-frame")).toBeNull();
   });
 });

@@ -14,6 +14,7 @@ import {
 import { StatsOverlay } from "@/components/browser/StatsOverlay";
 import { paneFrameStats } from "@/lib/browser-pane/frame-stats";
 import { paintFrame } from "@/lib/browser-pane/frame-wire";
+import type { QualityTier } from "@/lib/browser-pane/tier";
 import {
   modifiersOf,
   toPageCoordinates,
@@ -99,6 +100,10 @@ export interface BrowserPaneSurfaceProps {
    * would read as one.
    */
   notice?: string | null;
+  /** The quality menu, when this engine has tiers to offer. */
+  tier?: QualityTier;
+  onTier?: (next: QualityTier) => void;
+  tiers?: readonly QualityTier[];
 }
 
 /** The DOM's button numbering, in the daemon's names. */
@@ -121,6 +126,9 @@ export function BrowserPaneSurface({
   engine = "unknown",
   controls,
   notice,
+  tier,
+  onTier,
+  tiers,
 }: BrowserPaneSurfaceProps) {
   /**
    * Is the overlay up?
@@ -381,6 +389,9 @@ export function BrowserPaneSurface({
         onTakeControl={onTakeControl}
         onHandBack={onHandBack}
         {...(controls ? { extra: controls } : {})}
+        {...(tier ? { tier } : {})}
+        {...(onTier ? { onTier } : {})}
+        {...(tiers ? { tiers } : {})}
         statsOpen={statsOpen}
         onToggleStats={(next) => {
           // The menu is the flag: turning the overlay on from here is what a

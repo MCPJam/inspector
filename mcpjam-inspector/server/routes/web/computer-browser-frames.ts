@@ -150,6 +150,11 @@ export interface BrowserFramesDeps {
     tabId?: string;
     events: readonly ViewportInputEvent[];
   }) => Promise<{ ok: true } | { ok: false; status: number; error: string }>;
+  /** Forward a quality tier to the daemon's encoder. */
+  setQuality?: (args: {
+    session: BrowserSessionRecord;
+    tier: "auto" | "sharp" | "saver";
+  }) => Promise<unknown>;
 }
 
 const liveSockets = new Set<{ close(): void }>();
@@ -229,6 +234,16 @@ export function createComputerBrowserFramesWsHandler(
           : {}),
         onEnd: args.onEnd,
       }));
+  const setQuality =
+    deps.setQuality ??
+    ((args: {
+      session: BrowserSessionRecord;
+      tier: "auto" | "sharp" | "saver";
+    }) =>
+      new BrowserdClient({
+        baseUrl: args.session.publicOrigin,
+        bearer: args.session.browserdToken,
+      }).setQuality({ tier: args.tier }));
   const daemonStatus =
     deps.daemonStatus ??
     ((session: BrowserSessionRecord) =>
@@ -656,6 +671,18 @@ export function createComputerBrowserFramesWsHandler(
               return;
             }
             input?.submit(message);
+            return;
+          }
+          if (parsed?.type === "quality") {
+            const tier = (parsed as { tier?: unknown }).tier;
+            if (tier === "auto" || tier === "sharp" || tier === "saver") {
+              // Fire and forget: a tier that does not land leaves the picture
+              // exactly as it was, which is a worse picture rather than a
+              // broken one — and nothing about it is worth a banner.
+              if (session) {
+                void setQuality({ session, tier }).catch(() => {});
+              }
+            }
             return;
           }
           if (parsed?.type !== "ping") return;

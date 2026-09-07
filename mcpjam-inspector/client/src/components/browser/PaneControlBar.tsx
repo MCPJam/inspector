@@ -5,8 +5,27 @@ import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@mcpjam/design-system/dropdown-menu";
+import type { QualityTier } from "@/lib/browser-pane/tier";
+
+/**
+ * What each tier is called, in the words a person can act on.
+ *
+ * "Auto" says what it FOLLOWS rather than what it does, because the only
+ * question somebody opening this menu has is "why does it look like that?".
+ */
+const TIER_LABELS: Record<QualityTier, string> = {
+  auto: "Auto (follows your connection)",
+  sharp: "Sharp",
+  saver: "Data saver",
+  mjpeg: "Still images",
+  vnc: "Full desktop (the old viewer)",
+};
 
 /** Who is driving, in the words the header says. */
 export type PaneControl = "agent" | "you" | "script" | "other";
@@ -41,6 +60,9 @@ export function PaneControlBar({
   onHandBack,
   statsOpen,
   onToggleStats,
+  tier,
+  onTier,
+  tiers,
   extra,
 }: {
   control: PaneControl;
@@ -50,6 +72,17 @@ export function PaneControlBar({
   onHandBack?: (() => void) | undefined;
   statsOpen: boolean;
   onToggleStats: (next: boolean) => void;
+  /** What the person has chosen. `"auto"` lets the stream decide. */
+  tier?: QualityTier;
+  onTier?: (next: QualityTier) => void;
+  /**
+   * Which tiers this engine can actually offer.
+   *
+   * Listed rather than assumed: VNC is a hosted desktop view and does not exist
+   * for a local browser, and offering a menu entry that cannot work is worse
+   * than not offering it.
+   */
+  tiers?: readonly QualityTier[];
   /** Engine-specific controls (the hosted tab strip, from V-5). */
   extra?: React.ReactNode;
 }) {
@@ -72,6 +105,26 @@ export function PaneControlBar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
+            {onTier && (tiers?.length ?? 0) > 0 ? (
+              <>
+                <DropdownMenuLabel>Quality</DropdownMenuLabel>
+                <DropdownMenuRadioGroup
+                  value={tier ?? "auto"}
+                  onValueChange={(next) => onTier(next as QualityTier)}
+                >
+                  {(tiers ?? []).map((entry) => (
+                    <DropdownMenuRadioItem
+                      key={entry}
+                      value={entry}
+                      data-testid={`pane-tier-${entry}`}
+                    >
+                      {TIER_LABELS[entry]}
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+                <DropdownMenuSeparator />
+              </>
+            ) : null}
             <DropdownMenuCheckboxItem
               checked={statsOpen}
               onCheckedChange={(next) => onToggleStats(Boolean(next))}

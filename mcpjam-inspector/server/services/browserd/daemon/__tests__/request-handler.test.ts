@@ -18,6 +18,7 @@ function makeHandler(over: {
   submit?: (c: BrowserCommand) => Promise<BrowserCommandOutcome>;
   health?: () => Promise<{ ok: boolean; detail?: string }>;
   lease?: HandoffLease;
+  setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
 } = {}) {
   const submit: (c: BrowserCommand) => Promise<BrowserCommandOutcome> =
     over.submit ??
@@ -33,6 +34,7 @@ function makeHandler(over: {
     bootId: BOOT,
     token: TOKEN,
     lease,
+    ...(over.setVideoTier ? { setVideoTier: over.setVideoTier } : {}),
   });
   return { handler, submit, lease };
 }
@@ -800,5 +802,59 @@ describe("BrowserdRequestHandler — the lease moves mid-stream", () => {
     expect(result).toEqual({ ok: true });
     // Two, not four: the tail belongs to whoever holds the browser now.
     expect(delivered).toHaveLength(2);
+  });
+});
+
+
+/**
+ * V-7. The tier endpoint. Not lease-gated on purpose — it changes how the
+ * picture is encoded, not what it shows.
+ */
+describe("BrowserdRequestHandler — POST /v1/policy", () => {
+  function policyReq(body: unknown) {
+    return {
+      method: "POST",
+      path: "/v1/policy",
+      origin: undefined,
+      authorization: `Bearer ${TOKEN}`,
+      body: JSON.stringify(body),
+    };
+  }
+
+  it("passes a valid tier to the encoder", async () => {
+    const tiers: string[] = [];
+    const { handler } = makeHandler({
+      setVideoTier: (tier: string) => tiers.push(tier),
+    });
+    const res = await handler.handle(policyReq({ tier: "saver" }));
+    expect(res.status).toBe(200);
+    expect(tiers).toEqual(["saver"]);
+  });
+
+  it("refuses a tier the encoder has no preset for", async () => {
+    const tiers: string[] = [];
+    const { handler } = makeHandler({
+      setVideoTier: (tier: string) => tiers.push(tier),
+    });
+    expect((await handler.handle(policyReq({ tier: "mjpeg" }))).status).toBe(400);
+    expect((await handler.handle(policyReq({}))).status).toBe(400);
+    expect(tiers).toEqual([]);
+  });
+
+  it("answers 200 on a box with no encoder", async () => {
+    // The caller's picture is a JPEG, whose quality this endpoint does not
+    // govern; reporting a failure would send a pane looking for a problem it
+    // does not have.
+    const { handler } = makeHandler();
+    expect((await handler.handle(policyReq({ tier: "sharp" }))).status).toBe(200);
+  });
+
+  it("still needs the bearer", async () => {
+    const { handler } = makeHandler();
+    const res = await handler.handle({
+      ...policyReq({ tier: "sharp" }),
+      authorization: undefined,
+    });
+    expect(res.status).toBe(401);
   });
 });

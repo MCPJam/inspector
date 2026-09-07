@@ -73,6 +73,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
   let releaseInput: (() => void) | null = null;
   const touchSession = vi.fn(async () => ({ counted }));
   let daemonFeatures: readonly string[] = [];
+  const qualityCalls: string[] = [];
   const touchActivity = vi.fn(async () => {});
 
   // Captures the handlers the route hands back, so a test can drive the socket
@@ -111,6 +112,10 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
       upstreamCalls.push(args);
       return { ok: true };
     }) as Upstream,
+    setQuality: (async (args: { tier: string }) => {
+      qualityCalls.push(args.tier);
+      return { ok: true as const };
+    }) as BrowserFramesDeps["setQuality"],
     daemonStatus: (async () => ({
       kind: "ok" as const,
       bootId: SESSION.bootId,
@@ -165,6 +170,7 @@ function build(over: Partial<BrowserFramesDeps> & { counted?: boolean } = {}) {
     setInputOutcome(next: typeof inputOutcome) {
       inputOutcome = next;
     },
+    qualityCalls,
     /** What the daemon says it can do. Empty unless a test grants it. */
     setDaemonFeatures(next: readonly string[]) {
       daemonFeatures = next;
@@ -867,5 +873,53 @@ describe("browser frames socket — negotiating h264", () => {
     await f.connect("tok", "wire=binary&tabId=tab-2");
     expect(f.upstreamCalls[0]?.tabId).toBe("tab-2");
     expect(f.upstreamCalls[0]?.codec).toBeUndefined();
+  });
+});
+
+
+/**
+ * V-7. A tier is not a lease-gated action: it changes how the picture is
+ * ENCODED, not what it shows, and somebody watching on a bad link needs to be
+ * able to turn the bitrate down without taking the browser away from the agent.
+ */
+describe("browser frames socket — quality", () => {
+  function say(
+    events: Record<string, (...args: never[]) => unknown>,
+    ws: unknown,
+    message: unknown,
+  ) {
+    (events.onMessage as unknown as (e: unknown, w: unknown) => void)(
+      { data: JSON.stringify(message) },
+      ws,
+    );
+  }
+
+  it("forwards a tier to the daemon", async () => {
+    const f = build();
+    const { ws, events } = await f.connect();
+    say(events, ws, { type: "quality", tier: "saver" });
+    await vi.waitFor(() => expect(f.qualityCalls).toEqual(["saver"]));
+  });
+
+  it("ignores a tier the encoder has no preset for", async () => {
+    // The client's own `mjpeg` and `vnc` are choices about which transport to
+    // use at all; sending them here would ask an encoder for a mode it does
+    // not have.
+    const f = build();
+    const { ws, events } = await f.connect();
+    say(events, ws, { type: "quality", tier: "mjpeg" });
+    say(events, ws, { type: "quality", tier: 7 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(f.qualityCalls).toEqual([]);
+    expect(ws.closed).toBeUndefined();
+  });
+
+  it("does not need the lease", async () => {
+    // Turning the bitrate down must not require taking the browser away from
+    // the agent.
+    const f = build();
+    const { ws, events } = await f.connect();
+    say(events, ws, { type: "quality", tier: "sharp" });
+    await vi.waitFor(() => expect(f.qualityCalls).toEqual(["sharp"]));
   });
 });

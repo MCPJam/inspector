@@ -458,6 +458,7 @@ var BrowserdRequestHandler = class {
   bundleHash;
   contextMode;
   startedBy;
+  setVideoTier;
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -487,6 +488,7 @@ var BrowserdRequestHandler = class {
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
+    this.setVideoTier = deps.setVideoTier;
   }
   /**
    * What is open and which tab is on screen, for a stream's heartbeat.
@@ -567,6 +569,12 @@ var BrowserdRequestHandler = class {
       }
       return this.handleLease(req);
     }
+    if (req.path === "/v1/policy") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePolicy(req);
+    }
     if (req.path === "/v1/input") {
       if (req.method !== "POST") {
         return { status: 405, headers: { allow: "POST" } };
@@ -574,6 +582,20 @@ var BrowserdRequestHandler = class {
       return this.handleInput(req);
     }
     return { status: 404 };
+  }
+  handlePolicy(req) {
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const tier = parsed.tier;
+    if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
+      return { status: 400, body: { error: "invalid_tier", bootId: this.bootId } };
+    }
+    this.setVideoTier?.(tier);
+    return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
   }
   async handleInput(req) {
     let parsed;
@@ -1561,7 +1583,8 @@ function buildBrowserdStack(driver, config) {
     ...config.features ? { features: config.features } : {},
     ...config.bundleHash ? { bundleHash: config.bundleHash } : {},
     ...config.contextMode ? { contextMode: config.contextMode } : {},
-    ...config.startedBy ? { startedBy: config.startedBy } : {}
+    ...config.startedBy ? { startedBy: config.startedBy } : {},
+    ...config.video ? { setVideoTier: (tier) => config.video?.setTier(tier) } : {}
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,

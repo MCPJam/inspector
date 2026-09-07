@@ -133,6 +133,14 @@ export interface BrowserdHandlerDeps {
    * inspector replica boot it? Only `"prelaunch"` is adoptable without a boot.
    */
   startedBy?: "prelaunch" | "inspector";
+  /**
+   * Re-encode at a different tier.
+   *
+   * Absent on a box with no encoder, where `/v1/policy` is a no-op that still
+   * answers 200 — the caller's picture is a JPEG, whose quality this endpoint
+   * does not govern.
+   */
+  setVideoTier?: (tier: "auto" | "sharp" | "saver") => void;
 }
 
 export class BrowserdRequestHandler {
@@ -148,6 +156,7 @@ export class BrowserdRequestHandler {
   private readonly bundleHash: string | undefined;
   private readonly contextMode: "persistent" | "ephemeral" | undefined;
   private readonly startedBy: "prelaunch" | "inspector";
+  private readonly setVideoTier: BrowserdHandlerDeps["setVideoTier"];
   /**
    * How many frame streams are open, asked of the stream host.
    *
@@ -178,6 +187,7 @@ export class BrowserdRequestHandler {
     this.bundleHash = deps.bundleHash;
     this.contextMode = deps.contextMode;
     this.startedBy = deps.startedBy ?? "inspector";
+    this.setVideoTier = deps.setVideoTier;
   }
 
   /**
@@ -296,6 +306,20 @@ export class BrowserdRequestHandler {
       return this.handleLease(req);
     }
 
+    // The quality tier a watcher asked for.
+    //
+    // NOT a lease-gated path: it changes how the picture is ENCODED, not what
+    // it shows, and a person watching over somebody else's shoulder on a bad
+    // link needs to be able to turn the bitrate down. Last writer wins across
+    // the (at most four) subscribers, which is the honest shape of one shared
+    // encoder — a per-subscriber tier would need a per-subscriber encoder.
+    if (req.path === "/v1/policy") {
+      if (req.method !== "POST") {
+        return { status: 405, headers: { allow: "POST" } };
+      }
+      return this.handlePolicy(req);
+    }
+
     // Human input, which does NOT travel with the frames.
     //
     // One direction each: frames stream out over `/v1/frames`, input comes back
@@ -310,6 +334,24 @@ export class BrowserdRequestHandler {
     }
 
     return { status: 404 };
+  }
+
+  private handlePolicy(req: DaemonRequest): DaemonResponse {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return { status: 400, body: { error: "invalid_json", bootId: this.bootId } };
+    }
+    const tier = (parsed as { tier?: unknown }).tier;
+    if (tier !== "auto" && tier !== "sharp" && tier !== "saver") {
+      return { status: 400, body: { error: "invalid_tier", bootId: this.bootId } };
+    }
+    // A box with no encoder answers 200 and does nothing: the caller's picture
+    // is a JPEG, whose quality this endpoint does not govern, and reporting a
+    // failure would send a pane looking for a problem it does not have.
+    this.setVideoTier?.(tier);
+    return { status: 200, body: { ok: true, tier, bootId: this.bootId } };
   }
 
   private async handleInput(req: DaemonRequest): Promise<DaemonResponse> {

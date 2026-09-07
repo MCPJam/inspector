@@ -6,7 +6,16 @@ import {
   BrowserPaneSurface,
   type PaneControl,
 } from "@/components/browser/BrowserPaneSurface";
-import { PaneTabStrip } from "@/components/browser/PaneControlBar";
+import {
+  PaneControlBar,
+  PaneTabStrip,
+} from "@/components/browser/PaneControlBar";
+import { BrowserPanel } from "@/components/computer/BrowserPanel";
+import {
+  createTierController,
+  encoderTierFor,
+  type QualityTier,
+} from "@/lib/browser-pane/tier";
 import {
   createInputForwarder,
   type BrowserInputEvent,
@@ -71,6 +80,15 @@ interface Session {
   bootId: string;
   contextMode: "persistent" | "ephemeral";
 }
+
+/**
+ * The tiers the hosted pane can actually offer.
+ *
+ * VNC is here and not on the local pane because it is the DESKTOP view — the
+ * existing noVNC panel — which only a hosted box has. Offering a menu entry
+ * that cannot work is worse than not offering it.
+ */
+const HOSTED_TIERS = ["auto", "sharp", "saver", "mjpeg", "vnc"] as const;
 
 export function HostedBrowserBody({
   projectId,
@@ -160,6 +178,25 @@ export function HostedBrowserBody({
   } | null>(null);
   const activeTabRef = useRef<string | undefined>(undefined);
   const [tabNotice, setTabNotice] = useState<string | null>(null);
+  /**
+   * Quality, and who decided it.
+   *
+   * The CONTROLLER lives in a ref because it is fed from the socket handler on
+   * every `stats` message, and rebuilding it per render would erase the
+   * hysteresis that stops the tier oscillating.
+   */
+  const tierController = useRef(createTierController());
+  const [tier, setTier] = useState<QualityTier>("auto");
+  const [tierPreference, setTierPreference] = useState<QualityTier>("auto");
+  /**
+   * The tier, readable from the socket effect without re-running it.
+   *
+   * The effect owns a live connection; re-running it on a tier change would
+   * drop the picture. Only the two tiers that change the TRANSPORT need a
+   * reconnect, and those bump `streamAttempt` explicitly.
+   */
+  const tierRef = useRef<QualityTier>(tier);
+  tierRef.current = tier;
 
   const activeRef = useRef(active);
   activeRef.current = active;
@@ -375,7 +412,12 @@ export function HostedBrowserBody({
       // The daemon's own bytes, and video when this browser can decode it. A
       // relay too old to negotiate either ignores the parameters and keeps
       // sending JSON, which the handler below still reads.
-      const wantsVideo = videoDecodeSupported() && !videoRefusedRef.current;
+      // `mjpeg` is the JPEG path FORCED: what somebody picks when video looks
+      // wrong to them and they want the transport they can reason about.
+      const wantsVideo =
+        videoDecodeSupported() &&
+        !videoRefusedRef.current &&
+        tierRef.current !== "mjpeg";
       const opened = openHostedBrowserFrameStream({
         token,
         wire: "binary",
@@ -536,6 +578,26 @@ export function HostedBrowserBody({
             return;
           }
           if (parsed.type === "stats") {
+            // The tier decision is made from what the RELAY saw, not from what
+            // this pane painted: a pane that dropped a frame because a tab was
+            // hidden is not a link that cannot carry the stream.
+            const next = tierController.current.observe({
+              ...(parsed.framesIn !== undefined
+                ? { framesIn: parsed.framesIn }
+                : {}),
+              ...(parsed.dropped !== undefined
+                ? { dropped: parsed.dropped }
+                : {}),
+              ...(typeof (parsed.daemon as { encoderIdle?: boolean })
+                ?.encoderIdle === "boolean"
+                ? {
+                    encoderIdle: (parsed.daemon as { encoderIdle: boolean })
+                      .encoderIdle,
+                  }
+                : {}),
+            });
+            setTier(next);
+            paneFrameStats.noteTier(next);
             paneFrameStats.noteRelayStats({
               framesIn: parsed.framesIn ?? 0,
               ...(parsed.framesOut !== undefined
@@ -832,6 +894,33 @@ export function HostedBrowserBody({
         ? "script"
         : "other";
 
+  // The DESKTOP view, not the page: `BrowserPanel` proxies RFB and shows the
+  // window manager, dialogs and popups. It is the honest answer to "the new
+  // viewer is not working for me", and it only exists for a hosted box.
+  if (tier === "vnc" && projectId) {
+    return (
+      <>
+        <PaneControlBar
+          control={control}
+          statsOpen={false}
+          onToggleStats={() => {}}
+          tier={tierPreference}
+          tiers={HOSTED_TIERS}
+          onTier={(next) => {
+            setTierPreference(next);
+            const resolved = tierController.current.setPreference(next);
+            setTier(resolved);
+            tierRef.current = resolved;
+            setStreamAttempt((n) => n + 1);
+          }}
+        />
+        <div className="min-h-0 flex-1 px-3 pb-3">
+          <BrowserPanel projectId={projectId} />
+        </div>
+      </>
+    );
+  }
+
   return (
     <BrowserPaneSurface
       frame={frame}
@@ -851,6 +940,34 @@ export function HostedBrowserBody({
       error={notice ?? error}
       notice={tabNotice}
       controls={<PaneTabStrip tabs={tabs} />}
+      tier={tierPreference}
+      tiers={HOSTED_TIERS}
+      onTier={(next) => {
+        setTierPreference(next);
+        const resolved = tierController.current.setPreference(next);
+        const wasVideo = tierRef.current !== "mjpeg" && tierRef.current !== "vnc";
+        const isVideo = resolved !== "mjpeg" && resolved !== "vnc";
+        setTier(resolved);
+        tierRef.current = resolved;
+        paneFrameStats.noteTier(resolved);
+        // Only a change of TRANSPORT needs a new socket. Reconnecting for a
+        // bitrate change would drop the picture to buy nothing.
+        if (wasVideo !== isVideo) setStreamAttempt((n) => n + 1);
+        const socket = socketRef.current;
+        if (socket?.readyState === WebSocket.OPEN) {
+          // The daemon re-encodes at the new tier, which restarts ffmpeg and
+          // produces the fresh keyframe every watcher needs. A relay too old
+          // to understand this ignores it, and the tier stays a client-side
+          // preference — which is still the right picture, just not a cheaper
+          // one.
+          socket.send(
+            JSON.stringify({
+              type: "quality",
+              tier: encoderTierFor(resolved),
+            }),
+          );
+        }
+      }}
       active={active}
       engine="hosted"
     />

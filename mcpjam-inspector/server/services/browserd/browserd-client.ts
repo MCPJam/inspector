@@ -232,6 +232,34 @@ export class BrowserdClient {
   }
 
   /**
+   * Ask the daemon to re-encode at a different tier.
+   *
+   * A RESULT rather than a throw, like `sendInput`: a box with no encoder is a
+   * normal answer, and a pane that surfaced it as a failure would be reporting
+   * a browser working exactly as designed.
+   */
+  async setQuality(args: {
+    tier: "auto" | "sharp" | "saver";
+  }): Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+    const res = await this.request(
+      "/v1/policy",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tier: args.tier }),
+      },
+      true,
+    );
+    if (res.ok) return { ok: true };
+    const body = await this.json(res);
+    return {
+      ok: false,
+      status: res.status,
+      error: typeof body.error === "string" ? body.error : `http_${res.status}`,
+    };
+  }
+
+  /**
    * Read `GET /v1/frames` until it ends.
    *
    * Resolves when the CONNECTION is established (or refused); frames then

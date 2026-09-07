@@ -227,6 +227,9 @@ export function buildBrowserdStack(
     ...(config.bundleHash ? { bundleHash: config.bundleHash } : {}),
     ...(config.contextMode ? { contextMode: config.contextMode } : {}),
     ...(config.startedBy ? { startedBy: config.startedBy } : {}),
+    ...(config.video
+      ? { setVideoTier: (tier) => config.video?.setTier(tier) }
+      : {}),
   });
   const { server, frames } = createDaemonServer(handler, {
     bodyLimitBytes: config.bodyLimitBytes,
