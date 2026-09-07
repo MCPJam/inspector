@@ -162,7 +162,12 @@ describe("useEvalQueries", () => {
     );
   });
 
-  it("preserves direct-guest overview access while the user row is not ready", () => {
+  // Replaces "preserves direct-guest overview access while the user row is not
+  // ready", which asserted the opposite. That test passed a projectId, but
+  // `useIsDirectGuest` returns false as soon as one exists — so the case it
+  // locked in was unreachable. The reachable shape is a guest with no project
+  // and no Convex identity, and there the overview query can only throw.
+  it("skips the overview query for a direct guest", () => {
     mocks.isUserReady = false;
 
     const { result } = renderHook(() =>
@@ -170,16 +175,16 @@ describe("useEvalQueries", () => {
         isAuthenticated: false,
         selectedSuiteId: null,
         deletingSuiteId: null,
-        projectId: "guest-project",
+        projectId: null,
         organizationId: null,
         isDirectGuest: true,
       }),
     );
 
-    expect(result.current.enableOverviewQuery).toBe(true);
+    expect(result.current.enableOverviewQuery).toBe(false);
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "testSuites:getTestSuitesOverview",
-      { projectId: "guest-project" }
+      "skip"
     );
   });
 });
