@@ -303,7 +303,7 @@ function terminalForOutcome(
  * disagree on `mcpjam_rate_limit`. A parity test pins the overlap so a code
  * added there is not silently missed here. Exported for that test. */
 export const ACCOUNT_LIMIT_CODE =
-  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|wallet_locked|billing_feature_not_included)\b/i;
+  /\b(?:user_rate_limit|org_rate_limit|mcpjam_rate_limit|billing_limit_reached|spend_budget_reached|wallet_locked|billing_feature_not_included)\b/i;
 
 /**
  * Distinguish an ORG spend-cap breach from a PROVIDER rate-limit — across the
