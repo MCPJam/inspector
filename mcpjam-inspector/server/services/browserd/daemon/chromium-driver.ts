@@ -683,12 +683,17 @@ export class ChromiumDriver implements BrowserDriver {
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
         onStarted: (id) => {
-          // Fire-and-forget when a cancellation was already waiting: awaiting
-          // it here would hold the invocation open on the very thing meant to
-          // end it, and a failure to cancel is not the invocation's failure.
-          if (this.rememberInvocation(commandId, id)) {
-            void bridge.cancel(id).catch(() => undefined);
-          }
+          if (!this.rememberInvocation(commandId, id)) return;
+          // THE SAME GATE THE NAMED-ID PATH ASKS. Cancelling reaches into the
+          // page, and this delivery can span the whole accept window — longer
+          // than the await that made the other path re-ask. A handoff landing
+          // in it would otherwise let this touch a browser somebody else now
+          // has their hands on.
+          if (!permit()) return;
+          // Fire-and-forget: awaiting here would hold the invocation open on
+          // the very thing meant to end it, and a failure to cancel is not the
+          // invocation's failure.
+          void bridge.cancel(id).catch(() => undefined);
         },
       });
       const { output: capped, omitted } = capToolOutput(
@@ -714,6 +719,13 @@ export class ChromiumDriver implements BrowserDriver {
             ? `${error.failure}: ${error.message}`
             : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`,
       };
+    } finally {
+      // THE COMMAND IS OVER, so any cancellation still waiting on it is moot.
+      // Without this an invocation that threw, timed out, or never reached
+      // `onStarted` would leave its entry behind for the life of the daemon —
+      // and once the set hit its ceiling every later race-window Stop would be
+      // dropped in silence, which is the failure this set exists to prevent.
+      this.pendingCancels.delete(commandId);
     }
   }
 
@@ -744,10 +756,15 @@ export class ChromiumDriver implements BrowserDriver {
       //
       // So the intent is remembered against the COMMAND, and the id, when it
       // arrives, is cancelled on sight.
-      if (
-        action.commandId &&
-        this.pendingCancels.size < MAX_TRACKED_INVOCATIONS
-      ) {
+      if (action.commandId) {
+        // Oldest-first, like the map beside it. The `finally` on the invoke
+        // clears these in the ordinary case; this is the backstop for a
+        // command that never ran at all, so the ceiling can never turn into a
+        // silently ignored Stop.
+        if (this.pendingCancels.size >= MAX_TRACKED_INVOCATIONS) {
+          const oldest = this.pendingCancels.values().next().value;
+          if (oldest !== undefined) this.pendingCancels.delete(oldest);
+        }
         this.pendingCancels.add(action.commandId);
       }
       return { ok: true, output: { cancelled: false, known: false } };

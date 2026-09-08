@@ -2180,6 +2180,96 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     await invoking;
   });
 
+  it("FORGETS a remembered cancel once its command is over", async () => {
+    // Only `onStarted` cleared these. An invocation that threw, timed out, or
+    // never got that far left its entry behind for the life of the daemon —
+    // and once the set filled, every later race-window Stop was dropped in
+    // silence, which is the failure the set exists to prevent.
+    const cancelled: string[] = [];
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async () => {
+        throw new Error("the page threw before reporting an id");
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const failed = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "boom", input: {} }),
+      commandId: "cmd-dead",
+    });
+    expect(failed.ok).toBe(false);
+    // A Stop for a command that is already over finds nothing and leaves
+    // nothing: re-answering it must not re-arm anything either.
+    await driver.execute(cmd({ kind: "webmcp_cancel", commandId: "cmd-dead" }));
+    expect(cancelled).toEqual([]);
+  });
+
+  it("does NOT deliver a remembered cancel under a handoff", async () => {
+    // The named-id path re-asks the lease after its await because cancelling
+    // reaches into the page. This delivery can span the whole accept window,
+    // which is longer — so it asks too, or a person who took the browser mid
+    // invocation has it touched under their hands.
+    const cancelled: string[] = [];
+    let startInvocation: (() => void) | undefined;
+    let releaseInvoke: (() => void) | undefined;
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        await new Promise<void>((resolve) => {
+          startInvocation = resolve;
+        });
+        (args.onStarted as ((id: string) => void) | undefined)?.("inv-held");
+        await new Promise<void>((resolve) => {
+          releaseInvoke = resolve;
+        });
+        return { invocationId: "inv-held", output: { ok: true } };
+      },
+      cancel: async (invocationId: string) => {
+        cancelled.push(invocationId);
+        return true;
+      },
+    } as never;
+    const lease = new HandoffLease();
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const invoking = driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "slow", input: {} }),
+      commandId: "cmd-handoff",
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await driver.execute(
+      cmd({ kind: "webmcp_cancel", commandId: "cmd-handoff" }),
+    );
+
+    // A person takes the browser while the invocation is still nameless.
+    lease.acquire("rail-1", 60_000);
+    startInvocation?.();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(cancelled).toEqual([]);
+
+    releaseInvoke?.();
+    await invoking;
+  });
+
   it("still cancels by invocationId for a caller that knows one", async () => {
     const cancelled: string[] = [];
     const bridge = {

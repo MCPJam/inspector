@@ -3913,9 +3913,9 @@ var ChromiumDriver = class {
         // Recorded BEFORE the tool settles, which is the only window in which
         // a cancel can still reach the page.
         onStarted: (id) => {
-          if (this.rememberInvocation(commandId, id)) {
-            void bridge.cancel(id).catch(() => void 0);
-          }
+          if (!this.rememberInvocation(commandId, id)) return;
+          if (!permit()) return;
+          void bridge.cancel(id).catch(() => void 0);
         }
       });
       const { output: capped, omitted } = capToolOutput(
@@ -3938,6 +3938,8 @@ var ChromiumDriver = class {
         ok: false,
         error: error instanceof WebMcpBridgeError ? `${error.failure}: ${error.message}` : `webmcp_error: ${error instanceof Error ? error.message : String(error)}`
       };
+    } finally {
+      this.pendingCancels.delete(commandId);
     }
   }
   async webmcpCancel(tabId, action, permit) {
@@ -3947,7 +3949,11 @@ var ChromiumDriver = class {
     }
     const invocationId = action.invocationId ?? this.invocationsByCommand.get(action.commandId ?? "");
     if (!invocationId) {
-      if (action.commandId && this.pendingCancels.size < MAX_TRACKED_INVOCATIONS) {
+      if (action.commandId) {
+        if (this.pendingCancels.size >= MAX_TRACKED_INVOCATIONS) {
+          const oldest = this.pendingCancels.values().next().value;
+          if (oldest !== void 0) this.pendingCancels.delete(oldest);
+        }
         this.pendingCancels.add(action.commandId);
       }
       return { ok: true, output: { cancelled: false, known: false } };
