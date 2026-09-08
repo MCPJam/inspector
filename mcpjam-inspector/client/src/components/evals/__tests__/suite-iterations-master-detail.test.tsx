@@ -36,16 +36,22 @@ vi.mock("convex/react", () => ({
 // pre-capabilities behaviour, which is what every assertion in this file was
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
+// Overridable per test: the CI-owned lock reads BOTH the suite row and this,
+// and the case they disagree is the one worth pinning.
+const capabilitiesResult = vi.hoisted(() => ({
+  current: { state: "unavailable", capabilities: null } as {
+    state: string;
+    capabilities: unknown;
+  },
+}));
+
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
   const actual = await importOriginal<
     typeof import("@/hooks/use-suite-capabilities")
   >();
   return {
     ...actual,
-    useSuiteCapabilities: () => ({
-      state: "unavailable",
-      capabilities: null,
-    }),
+    useSuiteCapabilities: () => capabilitiesResult.current,
   };
 });
 
@@ -619,6 +625,48 @@ describe("SuiteIterationsView suiteDetailOverview", () => {
     const props = mocks.suiteHeader.mock.calls.at(-1)?.[0];
     expect(props.onCreateTestCase).toBe(onCreateTestCase);
     expect(props.onGenerateTestCases).toBe(onGenerateTestCases);
+  });
+
+  it("locks on the BACKEND's answer when the cached row still says otherwise", () => {
+    // The row and the capability can disagree: the row is a cached document,
+    // the capability is the predicate that will actually refuse the write. When
+    // only the capability says CI owns this, everything has to move together —
+    // an earlier revision locked the settings column off the combined answer
+    // while the case callbacks and the CI-owned notice still read the row, so a
+    // suite the backend calls CI's greyed out its settings, offered Add case
+    // anyway, and explained nothing.
+    capabilitiesResult.current = {
+      state: "ready",
+      capabilities: {
+        suiteId: "suite-1",
+        organizationId: "org-1",
+        permissions: {},
+        features: { computers: { enabled: true, reason: null } },
+        verdictPolicyV2: {
+          deploymentMode: "enforce",
+          suiteMode: null,
+          canUpgrade: false,
+        },
+        ownership: { ciOwned: true },
+      },
+    };
+    try {
+      renderOverview({
+        configLocked: false,
+        onCreateTestCase: vi.fn(),
+        onGenerateTestCases: vi.fn(),
+      });
+
+      const props = mocks.suiteHeader.mock.calls.at(-1)?.[0];
+      expect(props.configLocked).toBe(true);
+      expect(props.onCreateTestCase).toBeUndefined();
+      expect(props.onGenerateTestCases).toBeUndefined();
+    } finally {
+      capabilitiesResult.current = {
+        state: "unavailable",
+        capabilities: null,
+      };
+    }
   });
 
   it("withholds case authoring on the legacy dashboard when CI owns the suite", () => {

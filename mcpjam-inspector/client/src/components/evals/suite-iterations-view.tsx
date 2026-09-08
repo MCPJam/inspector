@@ -384,7 +384,7 @@ export function SuiteIterationsView({
   canDeleteRuns = true,
   canDeleteRun,
   readOnlyConfig = false,
-  configLocked = false,
+  configLocked: configLockedProp = false,
   onDuplicateSuite,
   hideRunActions = false,
   casesSidebarHidden,
@@ -566,10 +566,9 @@ export function SuiteIterationsView({
   // had none.
   const capabilitiesReady = capabilitiesState === "ready" && capabilities;
 
-  // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
-  // read-only in exactly the same way, but keeps its Run controls.
+  // IS THIS SUITE CI'S? — asked of two sources, and answered once.
   //
-  // TWO SOURCES, OR-ed, because they fail in opposite directions. The SUITE ROW
+  // OR-ed, because they fail in opposite directions. The SUITE ROW
   // (`isCiOwnedSuite`, resolved by the caller) is complete — `declaredSuiteId`
   // and `source` both live on it — and answers before any query resolves, which
   // is why it cannot simply be replaced. `getSuiteCapabilities.ownership` is the
@@ -578,12 +577,22 @@ export function SuiteIterationsView({
   // alone; a lock that disagrees with the server is the bug this whole change
   // exists to remove.
   //
+  // It SHADOWS the prop rather than sitting beside it, so there is exactly one
+  // answer in this component. Beside it, the two disagreed in a way nobody
+  // would have predicted from reading either line: the settings column locked
+  // on the combined answer while the case callbacks, the pass-downs and the
+  // CI-owned notice all still read the row — a suite the backend calls CI's
+  // would grey out its settings, offer Add case anyway, and explain nothing.
+  //
   // No cycle: `isEditMode` above is derived from the route and `readOnlyConfig`
   // only, so it never reads this.
-  const editingDisabled =
-    readOnlyConfig ||
-    configLocked ||
+  const configLocked =
+    configLockedProp ||
     (capabilitiesReady && capabilities.ownership?.ciOwned === true);
+
+  // Every EDITING gate reads this, not `readOnlyConfig`: a CI-owned suite is
+  // read-only in exactly the same way, but keeps its Run controls.
+  const editingDisabled = readOnlyConfig || configLocked;
 
   // ── CASE AUTHORING, WITHHELD RATHER THAN GATED ────────────────────────────
   //
