@@ -17,6 +17,7 @@ import { launchBrowserdContext } from "./chromium-launch";
 import { HandoffLease } from "./lease";
 import { mkdirSync } from "node:fs";
 import {
+  announcedFeatures,
   extraArgsFor,
   formatReadyLine,
   readBrowserdConfig,
@@ -49,40 +50,6 @@ function displayHeight(config: { deviceScaleFactor: number }): number {
   );
 }
 
-/**
- * What this daemon can do with the display, ANNOUNCED rather than assumed.
- *
- * A relay that asked a daemon too old to encode would get an error stream
- * instead of a picture, and a reader cannot tell that apart from a dead
- * browser. `MCPJAM_BROWSER_VIDEO=false` is the operator's switch over both.
- *
- * `h264` needs KIOSK, which is what makes the live encoder's premise true: it
- * grabs the WHOLE X display, so "the display IS the page" only holds when the
- * window covers it with no chrome — without kiosk the grab would be a desktop
- * with a browser somewhere on it, and every click the pane mapped would be off
- * by the window's origin.
- *
- * `record` does NOT, and the difference is what the picture is for: a pane
- * maps clicks onto what it shows, while a recording is watched afterwards and
- * never clicked. A desktop with a browser on it is still honest evidence of
- * the run.
- *
- * ffmpeg's presence is checked for NEITHER, and deliberately: probing for a
- * binary at boot costs a process on every start, and the honest answer arrives
- * anyway — the spawn fails and the stream ends `video_unavailable` or the
- * start answers `record_unavailable`.
- */
-function videoFeatures(config: {
-  kiosk: boolean;
-  recordingEnabled: boolean;
-}): readonly string[] {
-  if (process.env.MCPJAM_BROWSER_VIDEO === "false") return [];
-  const features: string[] = [];
-  if (config.kiosk) features.push("h264");
-  if (config.recordingEnabled) features.push("record");
-  return features;
-}
-
 async function main(): Promise<void> {
   const config = readBrowserdConfig();
   const bundleHash = readBundleHash();
@@ -102,7 +69,9 @@ async function main(): Promise<void> {
   // watcher asks — `subscribe` spawns ffmpeg, `unsubscribe` of the last
   // watcher stops it. An encoder running for nobody is CPU the agent is also
   // trying to use.
-  const features = videoFeatures(config);
+  // Announced, never assumed: see `announcedFeatures` for the two switches and
+  // why they are independent of each other.
+  const features = announcedFeatures(config);
   const video = features.includes("h264")
     ? createVideoEncoder({
         display: process.env.DISPLAY || ":0",

@@ -26,9 +26,10 @@
 import { createHash } from "node:crypto";
 import { logger } from "../../utils/logger.js";
 import type { BrowserdRecordResult } from "./browserd-client";
-import type {
-  SandboxHostedBrowserSessionHandle,
-  SessionSandbox,
+import {
+  BROWSERD_USER_DATA_DIR,
+  type SandboxHostedBrowserSessionHandle,
+  type SessionSandbox,
 } from "./browser-session";
 
 /**
@@ -124,6 +125,42 @@ const active = new Map<string, ActiveRecording>();
 /** The operator's switch, read at CALL time so a redeploy is not needed. */
 function recordingEnabled(): boolean {
   return process.env.MCPJAM_HOSTED_BROWSER_RECORDING !== "0";
+}
+
+/**
+ * Where the daemon writes recordings, as the INSPECTOR knows it.
+ *
+ * The daemon derives its dir from `MCPJAM_BROWSERD_USER_DATA_DIR` — which the
+ * boot recipe sets to `BROWSERD_USER_DATA_DIR` — and the inspector never sets
+ * `MCPJAM_BROWSERD_RECORD_DIR`, so the two agree by construction. If a boot
+ * ever passes a different dir, this constant is the one place to follow it.
+ */
+export const HOSTED_RECORDING_DIR = `${BROWSERD_USER_DATA_DIR}/recordings`;
+
+/**
+ * A take's basename as the daemon names it: `<id>-<bootNonce>-<seq>.mp4`, where
+ * the id is `[A-Za-z0-9_-]`, the nonce hex and the seq digits. One character
+ * class covers all three, and a `.` or `/` anywhere before the extension fails
+ * it — which is the point.
+ */
+const RECORDING_BASENAME = /^[A-Za-z0-9_-]+\.mp4$/;
+
+/**
+ * May the collector read this path off the box?
+ *
+ * The path comes from the daemon's `stop` answer, and the collector reads it
+ * with the sandbox files API under the team's key — a channel that can reach
+ * any file `user` can. The daemon is our own bundle, but the collector must
+ * not be the thing that turns "a daemon answered something odd" into "the
+ * token file, or a cookie database, uploaded as a run's video". So the answer
+ * is an allowlist over exactly what a recording can be named, not a check for
+ * the obvious `..`: a file directly under the recordings dir, named like a
+ * take, ending in `.mp4`.
+ */
+export function isCollectableRecordingPath(path: string): boolean {
+  const prefix = `${HOSTED_RECORDING_DIR}/`;
+  if (!path.startsWith(prefix)) return false;
+  return RECORDING_BASENAME.test(path.slice(prefix.length));
 }
 
 /**
@@ -329,6 +366,68 @@ export async function collectHostedRecordingBeforeRelease(
   }
 }
 
+/**
+ * Outer bound on the collect when it stands between a run and its release.
+ *
+ * `collectHostedRecordingBeforeRelease` bounds itself at 45 s, and this sits
+ * above that on purpose: the release path must not rely on a promise the
+ * collector makes about itself. Whatever collector is handed in — the real one,
+ * a future one, a test double that hangs — the box is released by here.
+ */
+export const HOSTED_RECORDING_RELEASE_BOUND_MS = 60_000;
+
+/**
+ * Collect the take, THEN release the box — in that order, and always both.
+ *
+ * The two facts a release site needs to be true, written once so every site
+ * gets them the same way:
+ *
+ *   - the collect runs FIRST, because the file only ever exists on the box and
+ *     after the release there is nothing left to read;
+ *   - the release runs REGARDLESS — a collector that throws, rejects, or hangs
+ *     past the bound yields no video, and the box is released on the same
+ *     schedule it would have been. A box that outlives its run costs money
+ *     until the GC cron reaps it, and no video is worth that.
+ *
+ * Never throws: a failing release is logged at warn (a leaked box is worth a
+ * line) and swallowed, since the caller is a `finally` with nothing left to do
+ * about it.
+ */
+export async function collectHostedRecordingThenRelease(args: {
+  sandboxRowId: string;
+  release: () => Promise<unknown>;
+  /** The collector; the real one unless a test says otherwise. */
+  collect?: (sandboxRowId: string) => Promise<HostedRecording | null>;
+  timeoutMs?: number;
+}): Promise<HostedRecording | null> {
+  const collect = args.collect ?? collectHostedRecordingBeforeRelease;
+  let recording: HostedRecording | null = null;
+  try {
+    // `Promise.resolve().then(...)` so a collector that throws SYNCHRONOUSLY
+    // still lands in the catch below rather than escaping past the release.
+    recording = await withDeadline(
+      Promise.resolve().then(() => collect(args.sandboxRowId)),
+      args.timeoutMs ?? HOSTED_RECORDING_RELEASE_BOUND_MS,
+    );
+  } catch (err) {
+    logger.info("[browser-session] browser.sandbox_recording_collected", {
+      sandboxRowId: args.sandboxRowId,
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    recording = null;
+  }
+  try {
+    await args.release();
+  } catch (err) {
+    logger.warn("[browser-session] browser.sandbox_release_failed", {
+      sandboxRowId: args.sandboxRowId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+  return recording;
+}
+
 async function collect(entry: ActiveRecording): Promise<HostedRecording | null> {
   const startedAt = Date.now();
   const stopped = await entry.stop();
@@ -342,6 +441,15 @@ async function collect(entry: ActiveRecording): Promise<HostedRecording | null> 
   // the trace viewer is a broken player, which reads as a bug in the product
   // rather than as a run that produced no picture.
   if (bytes <= 0) return null;
+  // BEFORE connecting: a refused path costs no network, and a daemon that names
+  // a file outside its recordings dir is something to say loudly, not read.
+  if (!isCollectableRecordingPath(path)) {
+    logger.warn("[browser-session] browser.sandbox_recording_refused", {
+      path,
+      reason: "recording path is not a take under the recordings dir",
+    });
+    return null;
+  }
 
   const sandbox = await entry.connect();
   let raw: Uint8Array;

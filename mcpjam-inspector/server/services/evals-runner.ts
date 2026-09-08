@@ -59,7 +59,7 @@ import {
 } from "../utils/computers/control-plane-client.js";
 import { hostedBrowserAdvertisable } from "../utils/computers/runtime-config.js";
 import {
-  collectHostedRecordingBeforeRelease,
+  collectHostedRecordingThenRelease,
   forgetHostedRecording,
   type HostedRecording,
 } from "./browserd/hosted-recording.js";
@@ -4907,17 +4907,17 @@ const runHostedIterationWithBrowser = async (
     if (evalSandbox?.ok) {
       const { sandboxRowId } = evalSandbox.value;
       evalSandbox = null;
-      // BEFORE the release, and bounded by its own deadline: after the
-      // release there is nothing left to read. The collector promises never to
-      // throw and the `catch` is here anyway — the release must not DEPEND on
-      // that promise, because a box that outlives its iteration costs money
+      // Collect BEFORE the release — after it there is nothing left to read —
+      // and release REGARDLESS of how the collect went. Both facts live in the
+      // helper, which is where they are tested: a collector that throws or
+      // hangs past its bound yields no video and the box is released on the
+      // same schedule, because a box that outlives its iteration costs money
       // until the GC cron reaps it and no video is worth that.
-      hostedRecording =
-        hostedRecording ??
-        (await collectHostedRecordingBeforeRelease(sandboxRowId).catch(
-          () => null,
-        ));
-      await releaseEvalSandbox({ sandboxRowId }).catch(() => {});
+      const collected = await collectHostedRecordingThenRelease({
+        sandboxRowId,
+        release: () => releaseEvalSandbox({ sandboxRowId }),
+      });
+      hostedRecording = hostedRecording ?? collected;
     }
   };
   let prepared: PrepareChatV2Result;
