@@ -76,7 +76,7 @@ describe("TrialHeader", () => {
         onSelectIteration={vi.fn()}
       />,
     );
-    expect(screen.getByText("1 trial complete")).toBeInTheDocument();
+    expect(screen.getByText("1 iteration complete")).toBeInTheDocument();
   });
 
   it("opens History and reports the pick", async () => {
