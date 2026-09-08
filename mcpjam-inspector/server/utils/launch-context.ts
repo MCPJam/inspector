@@ -167,7 +167,7 @@ export function parseCiHeader(
     ...pick("provider", parsed.provider),
     ...pick("pipelineId", parsed.pipelineId ?? parsed.runId),
     ...pick("jobId", parsed.jobId ?? parsed.job),
-    ...pick("runUrl", parsed.runUrl),
+    ...pick("runUrl", httpUrlOnly(parsed.runUrl)),
     ...pick("branch", parsed.branch),
     ...pick("commitSha", parsed.commitSha),
   };
@@ -177,6 +177,34 @@ export function parseCiHeader(
 function pick(key: keyof RunCiMetadata, value: unknown): RunCiMetadata {
   const cleaned = cappedString(value, MAX_CI_FIELD_CHARS);
   return cleaned ? ({ [key]: cleaned } as RunCiMetadata) : {};
+}
+
+/**
+ * `runUrl` is the one declared field the UI turns into an `href`.
+ *
+ * Every other field in this envelope is rendered as text, so the worst a
+ * caller can do with them is write a misleading branch name. A URL is
+ * different: `javascript:` and `data:` in an anchor are code the reader runs
+ * by clicking, and this value is attacker-chosen for anyone holding an API
+ * key. Absolute `http(s)` only — a relative path is dropped too, since it
+ * would resolve against the app's own origin and could not name a pipeline
+ * anywhere.
+ *
+ * Dropped, not refused, like everything else here: a launch never fails
+ * because a label was wrong.
+ */
+function httpUrlOnly(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  try {
+    const url = new URL(trimmed);
+    return url.protocol === "http:" || url.protocol === "https:"
+      ? trimmed
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /**

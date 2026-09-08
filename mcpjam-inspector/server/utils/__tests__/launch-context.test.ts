@@ -151,4 +151,27 @@ describe("parseCiHeader", () => {
     });
     expect(parseCiHeader(oversized)).toBeUndefined();
   });
+
+  it.each([
+    "javascript:alert(document.cookie)",
+    "data:text/html,<script>alert(1)</script>",
+    "vbscript:msgbox(1)",
+    "/pipelines/99",
+    "github.test/run/99",
+  ])("refuses %s as a pipeline URL", (runUrl) => {
+    // The client renders `runUrl` as the Pipeline anchor's href. Every other
+    // field here is text; this one would be a script the reader runs by
+    // clicking the provenance of their own run.
+    const parsed = parseCiHeader(
+      JSON.stringify({ provider: "github_actions", runUrl }),
+    );
+    expect(parsed).toEqual({ provider: "github_actions" });
+  });
+
+  it.each([
+    "https://github.com/acme/widgets/actions/runs/99",
+    "http://buildkite.internal/builds/12",
+  ])("keeps %s", (runUrl) => {
+    expect(parseCiHeader(JSON.stringify({ runUrl }))).toEqual({ runUrl });
+  });
 });
