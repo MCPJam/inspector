@@ -56,9 +56,11 @@ export function RunSourceBadge({
     <Badge
       variant="outline"
       title={qualifier ? `${meta.title}. ${qualifier}` : meta.title}
+      // Role tokens only. Per-origin hues would be a package-local accent
+      // palette that never follows `tokens.css` — see the note on
+      // `RUN_ORIGIN_META`. The label is what distinguishes an origin.
       className={cn(
-        "shrink-0 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide",
-        meta.className,
+        "shrink-0 border-border/60 bg-muted/50 px-1.5 py-0 text-[10px] font-normal uppercase tracking-wide text-muted-foreground",
         className,
       )}
     >

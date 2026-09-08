@@ -70,70 +70,57 @@ export type RunOriginMeta = {
    * chips use this sentence as-is because a chip matches every tier at once.
    */
   title: string;
-  className: string;
 };
 
 /**
  * ONE table. `run-source-badge`, the chip row and `runPlatformLabel` all read
  * it, so a label can only be wrong in one place instead of three.
  *
- * Muted-outline styling throughout: these are labels on a dense row, not
- * statuses. Tints stay on backgrounds and borders at /50 so the foreground
- * keeps its contrast ratio in both themes.
+ * NO per-origin colour. An earlier version gave each origin its own Tailwind
+ * hue, which `AGENTS.md` names for what it is: a package-local accent palette
+ * outside the role system, one that will not follow `tokens.css` and that
+ * nothing checks. Adding a second one is allowed but is "a real decision, not
+ * a shortcut around the rule" — nine origin roles in the design system is a
+ * change of its own, not a thing to smuggle in behind a badge. The label is
+ * what carries the meaning here; the badge is a label on a dense row, not a
+ * status, so it renders in the same muted outline as every other origin.
  */
 export const RUN_ORIGIN_META: Record<RunOrigin, RunOriginMeta> = {
   ui: {
     label: "UI",
     title: "Launched from the MCPJam app",
-    className: "border-border/60 bg-muted/50 text-muted-foreground",
   },
   sdk: {
     label: "SDK",
     title: "Reported by the MCPJam SDK (CI or local test run)",
-    className:
-      "border-primary/50 bg-primary/10 text-foreground dark:bg-primary/15",
   },
   api: {
     label: "API",
     title: "Launched via the public /v1 API",
-    className:
-      "border-sky-500/50 bg-sky-500/10 text-foreground dark:bg-sky-500/15",
   },
   schedule: {
     label: "Scheduled",
     title: "Launched by a schedule",
-    className:
-      "border-amber-500/50 bg-amber-500/10 text-foreground dark:bg-amber-500/15",
   },
   github: {
     label: "GitHub",
     title: "Launched from GitHub — a pull-request check or an Action",
-    className:
-      "border-violet-500/50 bg-violet-500/10 text-foreground dark:bg-violet-500/15",
   },
   cli: {
     label: "CLI",
     title: "Launched by the mcpjam CLI",
-    className:
-      "border-teal-500/50 bg-teal-500/10 text-foreground dark:bg-teal-500/15",
   },
   mcp: {
     label: "MCP",
     title: "Launched by an MCP agent",
-    className:
-      "border-fuchsia-500/50 bg-fuchsia-500/10 text-foreground dark:bg-fuchsia-500/15",
   },
   slack: {
     label: "Slack",
     title: "Launched through the MCPJam Slack app",
-    className:
-      "border-emerald-500/50 bg-emerald-500/10 text-foreground dark:bg-emerald-500/15",
   },
   discord: {
     label: "Discord",
     title: "Launched through the MCPJam Discord app",
-    className:
-      "border-indigo-500/50 bg-indigo-500/10 text-foreground dark:bg-indigo-500/15",
   },
 };
 

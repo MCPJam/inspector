@@ -39,6 +39,33 @@ type IterationStatus = ContractIterationStatus;
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
 
 /**
+ * Did the platform refuse the launch because it does not KNOW `launcher` /
+ * `ciMetadata` yet?
+ *
+ * The two repos deploy independently, so an inspector can meet a backend that
+ * predates the provenance columns. Convex argument validators are exact, and
+ * their rejection names the offending field, so this is narrow on purpose: it
+ * must not swallow a rejection about `suiteId` or a genuine validation bug in
+ * one of the fields it does understand.
+ */
+function isUnknownProvenanceArgumentError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (!message) return false;
+  if (!/launcher|ciMetadata/.test(message)) return false;
+  // Convex phrases this as "Object contains extra field `launcher` that is not
+  // in the validator." Matching the shape rather than the sentence, so a
+  // reworded message still lands here.
+  return /extra field|not in the validator|ArgumentValidationError/i.test(
+    message,
+  );
+}
+
+/**
  * When a Convex mutation rejects because a billing/entitlement cap was hit
  * (e.g. `maxEvalIterationsPerMonth`), the structured payload lives on
  * `ConvexError.data`. Re-emit it as a 402 `WebRouteError` carrying that exact
@@ -558,57 +585,78 @@ export const startSuiteRunWithRecorder = async ({
 }) => {
   let response: any;
   try {
-    response = await convexClient.mutation(
-      "testSuites:startTestSuiteRun" as any,
-      {
-        suiteId,
-        notes,
-        passCriteria,
-        replayedFromRunId,
-        useCurrentSuiteConfig,
-        environmentOverride,
-        toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-        toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-        iterationOverride,
-        ...(caseIds && caseIds.length ? { caseIds } : {}),
-        matchOptionsOverride,
-        ...(namedHostId ? { namedHostId } : {}),
-        ...(runGroupId ? { runGroupId } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(expectedEnvironmentRevision !== undefined
-          ? { expectedEnvironmentRevision }
-          : {}),
-        ...(expectedEnvironmentHostConfigId !== undefined
-          ? { expectedEnvironmentHostConfigId }
-          : {}),
-        ...(expectedEnvironmentServerIds !== undefined
-          ? { expectedEnvironmentServerIds }
-          : {}),
-        ...(source ? { source } : {}),
-        // The capability behind a hidden source. `startTestSuiteRun` refuses
-        // `source: 'benchmark'` without it, so dropping it here would fail
-        // every benchmark child at the mutation — after the claim was already
-        // leased and the MCP session already opened.
-        ...(benchmarkRunId ? { benchmarkRunId } : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        ...(sourceHash ? { sourceHash } : {}),
-        ...(skillsOverride ? { skillsOverride } : {}),
-        ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
-        ...(ephemeralEnvironment === true
-          ? { ephemeralEnvironment: true }
-          : {}),
-        ...(importApprovals && importApprovals.length
-          ? { importApprovals }
-          : {}),
-        // Forwarded ONLY when present. `startTestSuiteRun`'s validator is
-        // exact, so sending `launcher: undefined` to a backend that predates
-        // the field would fail the launch over a cosmetic label — the same
-        // deploy-skew rule the header transport was chosen for.
-        ...(launcher ? { launcher } : {}),
-        ...(ciMetadata ? { ciMetadata } : {}),
-        runnerCapabilities: RUNNER_CAPABILITIES,
-      },
-    );
+    const launchArgs: Record<string, unknown> = {
+      suiteId,
+      notes,
+      passCriteria,
+      replayedFromRunId,
+      useCurrentSuiteConfig,
+      environmentOverride,
+      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
+      ...(caseIds && caseIds.length ? { caseIds } : {}),
+      matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
+      ...(environmentId ? { environmentId } : {}),
+      ...(expectedEnvironmentRevision !== undefined
+        ? { expectedEnvironmentRevision }
+        : {}),
+      ...(expectedEnvironmentHostConfigId !== undefined
+        ? { expectedEnvironmentHostConfigId }
+        : {}),
+      ...(expectedEnvironmentServerIds !== undefined
+        ? { expectedEnvironmentServerIds }
+        : {}),
+      ...(source ? { source } : {}),
+      // The capability behind a hidden source. `startTestSuiteRun` refuses
+      // `source: 'benchmark'` without it, so dropping it here would fail
+      // every benchmark child at the mutation — after the claim was already
+      // leased and the MCP session already opened.
+      ...(benchmarkRunId ? { benchmarkRunId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(sourceHash ? { sourceHash } : {}),
+      ...(skillsOverride ? { skillsOverride } : {}),
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+      ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+      ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      // Forwarded only when present — which is NOT deploy-skew safety, and
+      // was wrong to describe as such: a CLI or MCP launch always declares,
+      // so on a backend that predates these fields the present ones are
+      // exactly what an exact validator refuses. The retry below is what
+      // makes the skew survivable; this spread only keeps the args tidy.
+      ...(launcher ? { launcher } : {}),
+      ...(ciMetadata ? { ciMetadata } : {}),
+      runnerCapabilities: RUNNER_CAPABILITIES,
+    };
+    try {
+      response = await convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        launchArgs,
+      );
+    } catch (error) {
+      if (!isUnknownProvenanceArgumentError(error)) throw error;
+      // A backend that predates the provenance columns. Its validator is
+      // EXACT, so it refuses the whole launch over two display fields — and a
+      // cosmetic label failing somebody's CI job is the one outcome the header
+      // transport was chosen to prevent. Omitting `undefined` was never enough
+      // for this: the fields are absent only when nothing declared them, and a
+      // CLI or MCP launch always declares.
+      //
+      // Retried ONCE, and only on a rejection that names one of the two
+      // fields. `startTestSuiteRun` creates nothing before validating its
+      // args, so the first attempt left no run row behind.
+      const {
+        launcher: _launcher,
+        ciMetadata: _ciMetadata,
+        ...rest
+      } = launchArgs;
+      response = await convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        rest,
+      );
+    }
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
