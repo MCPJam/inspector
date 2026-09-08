@@ -121,6 +121,7 @@ import {
 import {
   matchOptionsSchema,
   casePredicatesSchema,
+  type CasePredicates,
 } from "@/shared/eval-matching";
 import {
   stepsSchema,

@@ -13124,7 +13124,7 @@
           },
           "assertion": {
             "type": "object",
-            "description": "Predicate or widget assertion (`kind: assert`).",
+            "description": "The rule an `assert` step checks (`kind: assert`). NOT a narrower spelling of a case's `checks`: this is `WidgetAssertion | Predicate`, and that union is why the field is called an assertion rather than a check. A `Predicate` is evaluated against the PERSISTED transcript, so a stored run can be re-graded against it months later; a `WidgetAssertion` is evaluated against a LIVE DOM and can never be replayed. Calling this a check would promise the replayability only one half of it has.",
             "additionalProperties": true
           }
         },
@@ -13193,7 +13193,8 @@
           },
           "predicates": {
             "type": "object",
-            "description": "Per-case check gate. `checks` is the public alias for this field.",
+            "deprecated": true,
+            "description": "DEPRECATED spelling of `checks`, which means exactly this. It was accepted here all along and never written down, passing only because this schema allowed unknown properties; documented rather than removed so no caller already sending it breaks. Send one or the other, never both.",
             "properties": {
               "mode": {
                 "type": "string",
@@ -13219,7 +13220,7 @@
           },
           "checks": {
             "type": "object",
-            "description": "Alias for `predicates`. Send one or the other, never both.",
+            "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
             "properties": {
               "mode": {
                 "type": "string",
@@ -13398,7 +13399,8 @@
                 },
                 "predicates": {
                   "type": "object",
-                  "description": "Per-case check gate. `checks` is the public alias for this field.",
+                  "deprecated": true,
+                  "description": "DEPRECATED spelling of `checks`, which means exactly this. It was accepted here all along and never written down, passing only because this schema allowed unknown properties; documented rather than removed so no caller already sending it breaks. Send one or the other, never both.",
                   "properties": {
                     "mode": {
                       "type": "string",
@@ -13424,7 +13426,7 @@
                 },
                 "checks": {
                   "type": "object",
-                  "description": "Alias for `predicates`. Send one or the other, never both.",
+                  "description": "Per-case CHECK gate \u2014 the grading rules this case is scored against. `mode` says how they combine with the suite's own: `inherit` uses the suite's, `replace` uses only `list`, `extend` appends `list` to the suite's. Same field, same shape and same name as `checks` on the eval-case routes, so authoring a suite and then editing one of its cases is one word for one concept. Send this or the deprecated `predicates`, never both.",
                   "properties": {
                     "mode": {
                       "type": "string",

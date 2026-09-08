@@ -2583,6 +2583,27 @@ const SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION =
 const RUN_PROJECT_DESCRIPTION =
   "Project the run belongs to (name or ID), as returned by run_eval_suite or list_eval_suite_runs.";
 
+// ── client / host, one selector ─────────────────────────────────────────────
+//
+// CLIENT is the product noun. `mcpjam-inspector/server/routes/v1/clients.ts`
+// declares it, the API registers `/clients` canonically with `/hosts` as a
+// deprecated alias, and `list_clients` below already uses it. The eval LAUNCH
+// inputs kept `host` from before that rename, so an agent reads `client` on
+// every CRUD operation and then has to type `host` to run the thing it just
+// made. Both spellings are accepted here and folded to one field.
+//
+// NOT renamed, because they are different concepts: `hostStyle`,
+// `/host-catalog` and the `clientCapabilities`/`clientInfo` inside a config
+// (the MCP protocol's client, whose name is the spec's).
+const EVAL_CLIENT_SELECTOR_DESCRIPTION =
+  "One client ATTACHED to the suite (name or ID) to run against. The run is stamped with that client's configuration; without it a suite with several attached clients cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`. `host` is the deprecated spelling of this field.";
+const EVAL_CLIENTS_SELECTOR_DESCRIPTION =
+  "Several attached clients to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `client` for exactly one; passing both is an error. `hosts` is the deprecated spelling of this field.";
+const DEPRECATED_HOST_SELECTOR_SUFFIX =
+  " DEPRECATED: use `client`, which means exactly this.";
+const DEPRECATED_HOSTS_SELECTOR_SUFFIX =
+  " DEPRECATED: use `clients`, which means exactly this.";
+
 /**
  * A caller-input problem the SDK can see without a round trip. Carries the same
  * `VALIDATION_ERROR` code the API would return, so surfaces render it
@@ -2592,6 +2613,82 @@ const RUN_PROJECT_DESCRIPTION =
  */
 function operationInputError(message: string): PlatformApiError {
   return new PlatformApiError(message, "VALIDATION_ERROR", { status: 0 });
+}
+
+/**
+ * Fold a `client` / `clients` selector onto the `host` / `hosts` field every
+ * read below already uses.
+ *
+ * Passing both spellings of ONE selector is a refusal, never a precedence
+ * rule — the same call `clients.ts` makes for `--client` / `--host` and this
+ * file already makes for `repetitions` / `iterations`. A precedence rule is
+ * invisible: a script that passes both because someone half-finished a
+ * migration keeps running, silently launching against whichever of two
+ * possibly-different clients this function happened to prefer, and spends on
+ * it. In `execute` rather than `.refine()` for the reason
+ * {@link operationInputError} gives: the CLI calls `execute` directly.
+ */
+function foldClientSelectors<
+  T extends {
+    host?: string;
+    hosts?: string[];
+    client?: string;
+    clients?: string[];
+  },
+>(input: T): T {
+  if (input.client !== undefined && input.host !== undefined) {
+    throw operationInputError(
+      "Pass either client or its deprecated host alias, not both."
+    );
+  }
+  if (input.clients !== undefined && input.hosts !== undefined) {
+    throw operationInputError(
+      "Pass either clients or its deprecated hosts alias, not both."
+    );
+  }
+  // BEFORE the fold, so the message names what the caller typed. Folded first,
+  // singular-with-plural is caught downstream by the `host`/`hosts` guard,
+  // which would answer a caller who wrote `client` and `clients` by telling
+  // them about two fields they never used.
+  if (input.client !== undefined && input.clients !== undefined) {
+    throw operationInputError(
+      "Pass either client (one) or clients (several), not both."
+    );
+  }
+  if (input.client === undefined && input.clients === undefined) return input;
+  return {
+    ...input,
+    ...(input.client !== undefined ? { host: input.client } : {}),
+    ...(input.clients !== undefined ? { hosts: input.clients } : {}),
+  };
+}
+
+/**
+ * The same fold for `compose`, whose stack names the client it runs as.
+ *
+ * `compose.host` was REQUIRED before `compose.client` existed, so the pair is
+ * "exactly one" rather than "at most one" — a composed stack with no client
+ * has nothing to stamp the run with, and the schema can no longer say so on
+ * its own now that either spelling satisfies it.
+ */
+function foldComposeClientSelector<
+  C extends { host?: string; client?: string },
+  T extends { compose?: C },
+>(input: T): T & { compose?: C & { host: string } } {
+  const compose = input.compose;
+  if (!compose) return input as T & { compose?: C & { host: string } };
+  if (compose.client !== undefined && compose.host !== undefined) {
+    throw operationInputError(
+      "Pass either compose.client or its deprecated compose.host alias, not both."
+    );
+  }
+  const host = compose.client ?? compose.host;
+  if (host === undefined) {
+    throw operationInputError(
+      "compose.client is required — a composed stack runs AS a client, and the run is stamped with that client's configuration."
+    );
+  }
+  return { ...input, compose: { ...compose, host } };
 }
 
 /**
@@ -2614,6 +2711,43 @@ function assertNoServerOverrideWithEnvironment(input: {
 }
 
 /**
+ * The nouns a refusal uses for the target selector, taken from what the CALLER
+ * typed rather than from the field the fold lands on.
+ *
+ * `foldClientSelectors` copies `client`/`clients` onto `host`/`hosts` before
+ * any combination guard runs, so without this a caller who wrote `client` and
+ * `environment` was answered with "Pass environments or hosts, not both" —
+ * about a field they never used, in the vocabulary this change exists to
+ * retire.
+ *
+ * `singular` and `plural` name each side INDEPENDENTLY, so a mixed
+ * `client` + `hosts` names both as typed. `axis*` is one vocabulary choice for
+ * the messages that talk about the target axis as a category rather than about
+ * a specific field.
+ *
+ * Omitted — the disclosure operation, which has no `client` alias — every noun
+ * is `host`/`hosts` and each message is byte-for-byte what it has always been.
+ */
+function runTargetSelectorNouns(spelling?: {
+  client?: string;
+  clients?: string[];
+}): {
+  singular: string;
+  plural: string;
+  axisSingular: string;
+  axisPlural: string;
+} {
+  const usedClientVocabulary =
+    spelling?.client !== undefined || spelling?.clients !== undefined;
+  return {
+    singular: spelling?.client !== undefined ? "client" : "host",
+    plural: spelling?.clients !== undefined ? "clients" : "hosts",
+    axisSingular: usedClientVocabulary ? "client" : "host",
+    axisPlural: usedClientVocabulary ? "clients" : "hosts",
+  };
+}
+
+/**
  * Reject every ambiguous COMBINATION of target selectors before anything
  * resolves.
  *
@@ -2622,16 +2756,23 @@ function assertNoServerOverrideWithEnvironment(input: {
  * spend on a run the caller did not ask for. `servers` × a target axis is the
  * same rejection the platform makes (an environment or host supplies its own
  * closed server set), raised here so it costs no round trip.
+ *
+ * `spelling` is the RAW input, before `foldClientSelectors` ran, and only
+ * decides the nouns the refusals use — see {@link runTargetSelectorNouns}.
  */
-function assertRunTargetSelectorsCoherent(input: {
-  servers?: string[];
-  environment?: string;
-  environments?: string[];
-  host?: string;
-  hosts?: string[];
-  allAttached?: boolean;
-  compose?: unknown;
-}): void {
+function assertRunTargetSelectorsCoherent(
+  input: {
+    servers?: string[];
+    environment?: string;
+    environments?: string[];
+    host?: string;
+    hosts?: string[];
+    allAttached?: boolean;
+    compose?: unknown;
+  },
+  spelling?: { client?: string; clients?: string[] }
+): void {
+  const noun = runTargetSelectorNouns(spelling);
   const hasEnvironmentAxis =
     Boolean(input.environment) || (input.environments?.length ?? 0) > 0;
   const hasHostAxis = Boolean(input.host) || (input.hosts?.length ?? 0) > 0;
@@ -2649,7 +2790,7 @@ function assertRunTargetSelectorsCoherent(input: {
       input.allAttached)
   ) {
     throw operationInputError(
-      "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs."
+      `Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, ${noun.axisSingular}, server override or allAttached alongside it describes two different runs.`
     );
   }
 
@@ -2660,12 +2801,12 @@ function assertRunTargetSelectorsCoherent(input: {
   }
   if (input.host && (input.hosts?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either host (one) or hosts (several), not both."
+      `Pass either ${noun.singular} (one) or ${noun.plural} (several), not both.`
     );
   }
   if (hasEnvironmentAxis && hasHostAxis) {
     throw operationInputError(
-      "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had."
+      `Pass environments or ${noun.axisPlural}, not both — a run targets ONE axis, and an environment already resolves a ${noun.axisSingular}, so combining them would describe a configuration the suite never had.`
     );
   }
   if (hasEnvironmentAxis && (input.servers?.length ?? 0) > 0) {
@@ -2683,7 +2824,7 @@ function assertRunTargetSelectorsCoherent(input: {
   }
   if (hasHostAxis && (input.servers?.length ?? 0) > 0) {
     throw operationInputError(
-      "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override."
+      `Pass either a ${noun.axisSingular} or servers, not both — running an attached ${noun.axisSingular} uses that ${noun.axisSingular}'s own configured server set, which servers cannot override.`
     );
   }
   if (input.allAttached && (hasEnvironmentAxis || hasHostAxis)) {
@@ -3582,12 +3723,22 @@ const secretSelectionInput = z
  */
 const composeRunTargetInput = z
   .object({
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "Client (name or ID) the composed stack runs as — whose configuration the run is stamped with. Required unless the deprecated `host` spelling is given instead."
+      ),
     host: z
       .string()
       .trim()
       .min(1)
+      .optional()
       .describe(
-        "Host (name or ID) the composed stack runs as — the client whose configuration the run is stamped with."
+        "Client (name or ID) the composed stack runs as." +
+          DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     serverGroup: z
       .string()
@@ -3798,20 +3949,31 @@ const runEvalSuiteInput = z
       .describe(
         "Several attached environments to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `environment` for exactly one; passing both is an error."
       ),
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(EVAL_CLIENT_SELECTOR_DESCRIPTION),
+    clients: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .optional()
+      .describe(EVAL_CLIENTS_SELECTOR_DESCRIPTION),
     host: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "One host ATTACHED to the suite (name or ID) to run against. The run is stamped with that host's configuration; without it a suite with several attached hosts cannot be run at all, and one with exactly one runs against it automatically. Mutually exclusive with the environment selectors and with `servers`."
+        EVAL_CLIENT_SELECTOR_DESCRIPTION + DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     hosts: z
       .array(z.string().trim().min(1))
       .min(1)
       .optional()
       .describe(
-        "Several attached hosts to run, one PAID RUN EACH, grouped. Every name or ID must be attached to the suite. Use `host` for exactly one; passing both is an error."
+        EVAL_CLIENTS_SELECTOR_DESCRIPTION + DEPRECATED_HOSTS_SELECTOR_SUFFIX
       ),
     allAttached: z
       .boolean()
@@ -3973,14 +4135,21 @@ export const runEvalSuiteOperation: PlatformOperation<
   }),
   inputSchema: runEvalSuiteInput,
   async execute(
-    input,
+    rawInput,
     { client, signal, onScopeResolved, onDisclosure, onDisclosureUnavailable }
   ) {
+    // One selector before anything reads one: `client`/`clients` fold onto
+    // `host`/`hosts`, and both spellings of one selector is a refusal.
+    const input = foldComposeClientSelector(foldClientSelectors(rawInput));
+
     // ── Guards first: reject every ambiguous combination BEFORE resolving
     // anything, so a caller who meant two different things is told so without
     // spending a round trip — let alone a run.
+    //
+    // `rawInput` goes in beside the folded input purely so the refusals name
+    // the spelling the caller used; the fold has already erased it.
     assertNoServerOverrideWithEnvironment(input);
-    assertRunTargetSelectorsCoherent(input);
+    assertRunTargetSelectorsCoherent(input, rawInput);
 
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
@@ -4436,13 +4605,22 @@ const runEvalCaseInput = z
       .min(1)
       .optional()
       .describe(SUITE_ENVIRONMENT_SELECTOR_DESCRIPTION),
+    client: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(
+        "One client ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that client's configuration. Mutually exclusive with `environment` and `servers`. `host` is the deprecated spelling of this field."
+      ),
     host: z
       .string()
       .trim()
       .min(1)
       .optional()
       .describe(
-        "One host ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that host's configuration. Mutually exclusive with `environment` and `servers`."
+        "One client ATTACHED to the suite (name or ID) to run this case against, so the run is stamped with that client's configuration. Mutually exclusive with `environment` and `servers`." +
+          DEPRECATED_HOST_SELECTOR_SUFFIX
       ),
     compose: composeRunTargetInput.optional(),
     repetitions: RUN_KNOB_FIELDS.repetitions,
@@ -4514,9 +4692,11 @@ export const runEvalCaseOperation: PlatformOperation<
     evalRunRef(result.runId, result.suite.id, result.project?.id),
   ]),
   inputSchema: runEvalCaseInput,
-  async execute(input, { client, signal, onScopeResolved }) {
+  async execute(rawInput, { client, signal, onScopeResolved }) {
+    const input = foldComposeClientSelector(foldClientSelectors(rawInput));
     assertNoServerOverrideWithEnvironment(input);
-    assertRunTargetSelectorsCoherent(input);
+    // `rawInput` names the spelling the caller used; see run_eval_suite.
+    assertRunTargetSelectorsCoherent(input, rawInput);
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -4767,10 +4947,23 @@ const evalCaseInput = z.object({
     .record(z.string(), z.any())
     .optional()
     .describe("Per-case matcher options (advanced)."),
+  // CHECK is the user-facing word for this rule: the API field name, the UI
+  // section, and the SDK's own `CheckPolicy` / `checkRole` / `checkSeverity`
+  // prefix. An agent that authors a suite here and then edits one of its own
+  // cases through `create_eval_case` should not have to switch words halfway.
+  checks: z
+    .record(z.string(), z.any())
+    .optional()
+    .describe(
+      "Per-case check gate (advanced): `{ mode: inherit | replace | extend, list: [...] }`. `predicates` is the deprecated spelling of this field; passing both is an error."
+    ),
+  /** @deprecated Use `checks`. */
   predicates: z
     .record(z.string(), z.any())
     .optional()
-    .describe("Per-case success-predicate gate (advanced)."),
+    .describe(
+      "DEPRECATED spelling of `checks`, which means exactly this. Per-case check gate (advanced)."
+    ),
   model: z
     .string()
     .trim()
@@ -4842,6 +5035,29 @@ const createEvalSuiteInput = z.strictObject({
 
 export type CreateEvalSuiteInput = z.infer<typeof createEvalSuiteInput>;
 
+/**
+ * Fold a case's `checks` onto the wire's `predicates`.
+ *
+ * One rule, three names a customer types: the suite file called it
+ * `assertions`, this operation called it `predicates`, and the API, the UI and
+ * `create_eval_case` all call it `checks`. `check` is the surviving word — it
+ * is already the API field, the UI section and this SDK's own `CheckPolicy` /
+ * `checkRole` / `checkSeverity` prefix. Both spellings at once is a refusal:
+ * two gates are two different gradings of one case.
+ */
+function foldCaseCheckAlias(
+  authored: z.infer<typeof evalCaseInput>
+): z.infer<typeof evalCaseInput> {
+  if (authored.checks === undefined) return authored;
+  if (authored.predicates !== undefined) {
+    throw operationInputError(
+      `Case "${authored.title}" sets both checks and its deprecated predicates alias — set one.`
+    );
+  }
+  const { checks, ...rest } = authored;
+  return { ...rest, predicates: checks };
+}
+
 export type CreateEvalSuiteResult = {
   project: SelectedProjectInfo;
   suite: { id: string; name: string | null };
@@ -4895,7 +5111,10 @@ export const createEvalSuiteOperation: PlatformOperation<
           ...(input.provider ? { provider: input.provider } : {}),
           // Ergonomic case shape; the backend normalizes per-case defaults
           // (runs, model/provider fill, tool-call mapping) into the run schema.
-          tests: input.cases,
+          // `checks` folds onto the wire's `predicates` here, so an older
+          // deployment that has never heard the canonical word still gets a
+          // body it understands.
+          tests: input.cases.map(foldCaseCheckAlias),
         },
       },
       { signal }
@@ -5331,15 +5550,28 @@ const updateEvalSuiteInput = z.strictObject({
     })
     .optional()
     .describe("Suite execution config; unspecified fields are preserved."),
-  hosts: z
+  clients: z
     .array(
       z.object({
-        host: z.string().trim().min(1).describe("Host name or ID."),
+        client: z.string().trim().min(1).describe("Client name or ID."),
         servers: z.array(z.string().trim().min(1)).optional(),
       })
     )
     .optional()
-    .describe("Host attachments (replace-all)."),
+    .describe(
+      "Client attachments (replace-all). `hosts` is the deprecated spelling of this field."
+    ),
+  hosts: z
+    .array(
+      z.object({
+        host: z.string().trim().min(1).describe("Client name or ID."),
+        servers: z.array(z.string().trim().min(1)).optional(),
+      })
+    )
+    .optional()
+    .describe(
+      "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
+    ),
   settings: z
     .object({
       minimumAccuracy: z.number().min(0).max(100).optional(),
@@ -5510,7 +5742,25 @@ export const updateEvalSuiteOperation: PlatformOperation<
     { type: "eval_suite", id: result.id, ...projectIdOf(result) },
   ]),
   inputSchema: updateEvalSuiteInput,
-  async execute(input, { client, signal, onScopeResolved }) {
+  async execute(rawInput, { client, signal, onScopeResolved }) {
+    // `clients` folds onto the `hosts` the wire body still names, entry by
+    // entry, for the reason {@link foldClientSelectors} gives. Both at once is
+    // a refusal: two replace-all attachment lists are two different suites.
+    if (rawInput.clients !== undefined && rawInput.hosts !== undefined) {
+      throw operationInputError(
+        "Pass either clients or its deprecated hosts alias, not both."
+      );
+    }
+    const input =
+      rawInput.clients !== undefined
+        ? {
+            ...rawInput,
+            hosts: rawInput.clients.map(({ client: name, servers }) => ({
+              host: name,
+              ...(servers !== undefined ? { servers } : {}),
+            })),
+          }
+        : rawInput;
     const { project } = await resolveProjectOrThrow(
       { client, signal, onScopeResolved },
       input.project
@@ -7636,6 +7886,19 @@ function checkRepoOrganizationOrThrow(project: PlatformProject): string {
 // them here would let a caller retarget a repository away from the suite it is
 // standing on.
 
+// The two GitHub-check operations' descriptions, declared once: the canonical
+// pair below reads them as-is, and the deprecated pair prefixes a line saying
+// which name replaced it. One body, so the two spellings cannot describe the
+// same behaviour differently.
+const EVAL_GITHUB_REPOS_LIST_DESCRIPTION =
+  'List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.';
+const EVAL_GITHUB_REPO_CONNECT_DESCRIPTION =
+  "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.";
+const DEPRECATED_EVAL_CHECK_REPOS_PREFIX =
+  "Deprecated spelling of list_eval_github_repos, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+const DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX =
+  "Deprecated spelling of connect_eval_github_repo, which does exactly this — `check` here means a GITHUB check, never a case's grading check. ";
+
 const listEvalCheckReposInput = z.object({
   project: z
     .string()
@@ -7660,7 +7923,7 @@ export const listEvalCheckReposOperation: PlatformOperation<
   name: "list_eval_check_repos",
   title: "List MCPJam GitHub Checks repositories",
   description:
-    "List the repositories in this organization whose pull requests run an eval suite, and the repositories the MCPJam GitHub App can reach (the choices a connect has). `available: false` means GitHub Checks is not enabled for the organization at all — connecting a repository will not help. `connectable: null` means the lookup failed, so the choices are unknown; an EMPTY connectable list means the App was asked and reaches nothing, which also covers a deployment with no App installed — check that before assuming a permissions problem.",
+    DEPRECATED_EVAL_CHECK_REPOS_PREFIX + EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
   readOnly: true,
   permalink: noPermalink(
     "external-resource",
@@ -7717,7 +7980,8 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
   name: "connect_eval_check_repo",
   title: "Run an MCPJam eval suite on a repository's pull requests",
   description:
-    "Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. Affects everyone who opens a pull request on that repository, and can block merges depending on outagePolicy. Retargeting, pausing and disconnecting are not on this surface — they live in the app's Settings → Integrations, where every connected repository is visible at once.",
+    DEPRECATED_EVAL_CHECK_REPO_CONNECT_PREFIX +
+    EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
   readOnly: false,
   // Not `spend`: it costs an eval run per pull request, but the hazard a
   // surface needs to warn about here is REACH — it changes what happens in a
@@ -7750,6 +8014,44 @@ export const connectEvalCheckRepoOperation: PlatformOperation<
     );
     return { project: toSelectedProjectInfo(project), check };
   },
+};
+
+// ── GitHub, under the name of the thing it manages ──────────────────────────
+//
+// `list_eval_check_repos` / `connect_eval_check_repo` manage GITHUB CHECKS, and
+// sat as siblings to `checks` meaning a case's GRADING RULES under the same
+// `eval` noun — a `cloud eval checks list` that returns repositories, beside a
+// suite's `checks` that holds predicates. The app already calls its section
+// "GitHub checks", which is the disambiguated form.
+//
+// ADDITIVE, deliberately. The old names STAY in `ALL_OPERATIONS`, so an agent
+// already calling one keeps the tool it has; their descriptions simply say
+// which name is canonical now. Each new operation spreads its old sibling, so
+// the two names share one implementation and cannot diverge.
+
+// The spread carries `execute`, the schema, the risk and the permalink — one
+// implementation for both names. `description` is NOT inherited: its sibling's
+// says "deprecated spelling of THIS operation", which spread onto the
+// canonical one would have it introduce itself to an agent as the deprecated
+// spelling of itself.
+export const listEvalGithubReposOperation: PlatformOperation<
+  ListEvalCheckReposInput,
+  ListEvalCheckReposResult
+> = {
+  ...listEvalCheckReposOperation,
+  name: "list_eval_github_repos",
+  title: "List MCPJam GitHub check repositories",
+  description: EVAL_GITHUB_REPOS_LIST_DESCRIPTION,
+};
+
+export const connectEvalGithubRepoOperation: PlatformOperation<
+  ConnectEvalCheckRepoInput,
+  ConnectEvalCheckRepoResult
+> = {
+  ...connectEvalCheckRepoOperation,
+  name: "connect_eval_github_repo",
+  title: "Run an MCPJam eval suite on a GitHub repository's pull requests",
+  description: EVAL_GITHUB_REPO_CONNECT_DESCRIPTION,
 };
 
 const evalRunStepsInput = evalRunScopedInput.extend({
@@ -15566,6 +15868,8 @@ export const ALL_OPERATIONS: readonly AnyPlatformOperation[] = [
   getEvalGateWaiverOperation,
   revokeEvalGateWaiverOperation,
   requestEvalRunJudgeOperation,
+  listEvalGithubReposOperation,
+  connectEvalGithubRepoOperation,
   listEvalCheckReposOperation,
   connectEvalCheckRepoOperation,
   getEvalRunStepsOperation,

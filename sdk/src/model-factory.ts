@@ -62,6 +62,30 @@ const BUILT_IN_PROVIDERS: LLMProvider[] = [
 ];
 
 /**
+ * Canonical (OpenRouter-style) hosted-catalog id prefixes whose MCPJam provider
+ * key differs from the prefix. Mirrors `HOSTED_PROVIDER_ALIASES` in
+ * `mcpjam-inspector/shared/types.ts`: the picker has always known these
+ * prefixes are vendor names rather than provider keys, and this parser did not.
+ *
+ * `meta-llama` maps to `meta`, which is not a built-in provider — that entry
+ * exists so the two tables stay recognisably the same, and the id resolves
+ * through the hosted-vendor fallback below like any other vendor path.
+ */
+const HOSTED_PROVIDER_ALIASES: Record<string, string> = {
+  "x-ai": "xai",
+  spacexai: "xai",
+  "meta-llama": "meta",
+  mistralai: "mistral",
+};
+
+/**
+ * The provider every MCPJam-hosted model that is not a direct built-in is
+ * served through. A catalog id like `qwen/qwen3-max` is an OpenRouter vendor
+ * path, not a `provider/model` pair.
+ */
+const HOSTED_CATALOG_PROVIDER: LLMProvider = "openrouter";
+
+/**
  * Result of parsing an LLM string
  */
 export type ParsedLLMString =
@@ -70,9 +94,17 @@ export type ParsedLLMString =
 
 /**
  * Parse an LLM string into provider and model components.
- * Supports both built-in providers and custom provider names.
+ * Supports built-in providers, custom provider names, and the MCPJam-hosted
+ * catalog's canonical ids.
  *
- * @param llmString - String in format "provider/model" (e.g., "openai/gpt-4o" or "my-litellm/gpt-4")
+ * A hosted catalog id is a VENDOR path, not a provider key: `list_models` and
+ * the model picker hand out `anthropic/claude-haiku-4.5` but also
+ * `qwen/qwen3-max` and `z-ai/glm-4.6`. Ids whose leading segment is not a
+ * built-in provider (directly or through `HOSTED_PROVIDER_ALIASES`) and not a
+ * registered custom provider resolve to OpenRouter with the whole id as the
+ * model, which is how MCPJam serves them.
+ *
+ * @param llmString - String in format "provider/model" (e.g., "openai/gpt-4o" or "my-litellm/gpt-4"), or a hosted catalog id (e.g., "qwen/qwen3-max")
  * @param customProviderNames - Optional set of registered custom provider names for validation
  * @returns Parsed result with type discriminator
  */
@@ -82,8 +114,15 @@ export function parseLLMString(
 ): ParsedLLMString {
   const parts = llmString.split("/");
   if (parts.length < 2) {
+    const allProviders = customProviderNames
+      ? [...BUILT_IN_PROVIDERS, ...customProviderNames]
+      : BUILT_IN_PROVIDERS;
     throw new Error(
-      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o")`
+      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o"). ` +
+        `Supported providers: ${allProviders.join(", ")}. ` +
+        `An MCPJam-hosted catalog id already carries its vendor as the first segment ` +
+        `(e.g. "anthropic/claude-haiku-4.5", "qwen/qwen3-max") and is accepted as-is — ` +
+        `vendors that are not providers above are routed through ${HOSTED_CATALOG_PROVIDER}.`
     );
   }
 
@@ -99,7 +138,12 @@ export function parseLLMString(
     };
   }
 
-  // Check if it's a registered custom provider
+  // Check if it's a registered custom provider.
+  //
+  // Deliberately BEFORE the alias table, not after: a caller may already have
+  // registered a custom provider literally named `mistralai` or `x-ai`, and an
+  // alias that shadowed it would change the meaning of a string that parses
+  // today. The alias only ever fires where this function used to throw.
   if (customProviderNames?.has(providerName)) {
     return {
       type: "custom",
@@ -108,14 +152,53 @@ export function parseLLMString(
     };
   }
 
-  // Unknown provider
-  const allProviders = customProviderNames
-    ? [...BUILT_IN_PROVIDERS, ...customProviderNames]
-    : BUILT_IN_PROVIDERS;
+  // An EMPTY segment is not a vendor path. `"/gpt-4o"`, `"vendor/"` and
+  // `"qwen//qwen3-max"` all reach here with `parts.length >= 2` and would
+  // otherwise be resolved by one of the two paths below, turning a local,
+  // obvious mistake into a remote API error (or, through the alias table, into
+  // a built-in provider with an empty model name).
+  //
+  // Placed after the built-in and custom-provider checks and before the alias
+  // table: those two are the paths that existed before this parser learned the
+  // hosted catalog, and `"openai/"` parses today, so tightening them would
+  // change the meaning of a string that already works. Everything below this
+  // line used to throw, so it can be strict.
+  //
+  // Tested on the raw SEGMENTS, not on `providerName` and the re-joined
+  // `model`: a doubled slash in the middle leaves both of those non-empty, so
+  // checking them would let exactly the case this guard names slip through.
+  if (parts.some((part) => part === "")) {
+    throw new Error(
+      `Invalid LLM string format: "${llmString}". Expected format: "provider/model" (e.g., "openai/gpt-4o") — no segment may be empty.`
+    );
+  }
 
-  throw new Error(
-    `Unknown LLM provider: "${providerName}". Supported providers: ${allProviders.join(", ")}`
-  );
+  // A hosted-catalog prefix that is a built-in provider under another name.
+  const aliased = HOSTED_PROVIDER_ALIASES[providerName.toLowerCase()];
+  if (aliased && BUILT_IN_PROVIDERS.includes(aliased as LLMProvider)) {
+    return {
+      type: "builtin",
+      provider: aliased as LLMProvider,
+      model,
+    };
+  }
+
+  // Anything else with a leading segment is a hosted-catalog vendor path
+  // (`qwen/qwen3-max`, `meta-llama/llama-3.3-70b-instruct`, `z-ai/glm-4.6`).
+  // The catalog MCPJam hands out through `list_models` and the model picker is
+  // majority vendor paths, and every one of them threw here before, so this
+  // widens what parses without changing any string that already parsed.
+  //
+  // The cost is that a MISTYPED custom-provider name (`litelm/gpt-4` for a
+  // provider registered as `litellm`) no longer fails here; it is routed to
+  // OpenRouter and fails at the API call instead. A parser that could tell the
+  // two apart would need the hosted catalog itself, which the SDK does not
+  // ship and which grows without it.
+  return {
+    type: "builtin",
+    provider: HOSTED_CATALOG_PROVIDER,
+    model: llmString,
+  };
 }
 
 /**

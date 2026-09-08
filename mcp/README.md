@@ -94,8 +94,10 @@ so results respect the caller's project access.
 | `propose_eval_description_rewrite` | Draft a rewritten description for one tool from a finished run's failed trials. SPENDS a small model budget; the developer applies the diff in their own server, MCPJam never edits it. | — |
 | `start_eval_description_experiment` | Replay the affected cases twice, original description versus the proposed rewrite, with the model, host and grader held still. SPENDS eval-iteration credits up to the stated cap; read the report from `get_eval_description_experiment`. | — |
 | `get_eval_description_experiment` | Read a description experiment: its proposal diff, the two arm runs, and the report-only result — pass rates per arm, the interval on the difference, regressions on untouched cases, and whether the evidence was controlled or only reproducible. | — |
-| `list_eval_check_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
-| `connect_eval_check_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `list_eval_github_repos` | List the repositories whose pull requests run an eval suite, plus the repositories the MCPJam GitHub App can reach. | — |
+| `connect_eval_github_repo` | Connect a repository so every pull request to it runs one eval suite and reports a GitHub check. | — |
+| `list_eval_check_repos` | Deprecated spelling of `list_eval_github_repos` — a `check` here is a GITHUB check, never a case's grading check. | — |
+| `connect_eval_check_repo` | Deprecated spelling of `connect_eval_github_repo`. | — |
 | `list_project_environments` | List the project environments in an MCPJam project. | — |
 | `get_project_environment` | Show one project environment: its host, optional standalone server group, pinned skill selection, pinned plugin versions, and its current `revision` (which you pass as `expectedRevision` when updating it). | — |
 | `resolve_project_environment` | Resolve a project environment to the exact execution inputs a run would use right now: the host's current config, the closed server set (including servers contributed by pinned plugin versions), and the resolved plugin versions. | — |
