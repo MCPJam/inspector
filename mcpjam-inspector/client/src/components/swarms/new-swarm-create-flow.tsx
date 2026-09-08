@@ -1802,6 +1802,29 @@ export function NewSwarmCreateFlow({
               </div>
             </div>
 
+            {/* Above the description: the target grounds the goals it generates. */}
+            <div className="space-y-2">
+              <SwarmTargetComposer
+                projectId={projectId}
+                environments={envList}
+                environmentsLoading={environments === undefined}
+                value={targetState}
+                onChange={setTargetState}
+                draftNameHint={swarmName.trim() || undefined}
+                disabled={generating || materializing}
+                serverBlock={serverBlock}
+                required
+              />
+              {groundingEnvironmentId ? (
+                <ErrorBoundary fallback={null}>
+                  <EnvironmentGroundingHint
+                    projectId={projectId}
+                    environmentId={groundingEnvironmentId}
+                  />
+                </ErrorBoundary>
+              ) : null}
+            </div>
+
             <div className="space-y-2">
               <div className="space-y-1">
                 <Label htmlFor="new-swarm-describe">
@@ -1893,28 +1916,6 @@ export function NewSwarmCreateFlow({
                       ),
                   }}
                 />
-              ) : null}
-            </div>
-
-            <div className="space-y-2">
-              <SwarmTargetComposer
-                projectId={projectId}
-                environments={envList}
-                environmentsLoading={environments === undefined}
-                value={targetState}
-                onChange={setTargetState}
-                draftNameHint={swarmName.trim() || undefined}
-                disabled={generating || materializing}
-                serverBlock={serverBlock}
-                required
-              />
-              {groundingEnvironmentId ? (
-                <ErrorBoundary fallback={null}>
-                  <EnvironmentGroundingHint
-                    projectId={projectId}
-                    environmentId={groundingEnvironmentId}
-                  />
-                </ErrorBoundary>
               ) : null}
             </div>
 
