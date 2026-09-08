@@ -24,11 +24,13 @@ import {
   releaseAttemptSandbox,
   sandboxIntentFor,
   targetWantsBash,
+  targetWantsBrowser,
   targetWantsHarnessBox,
   type ProvisionedAttemptSandbox,
   type SandboxIntent,
 } from "./swarm-sandbox.js";
 import { checkHarnessRuntimeAvailable } from "../../utils/harness/harness-availability.js";
+import { hostedBrowserAdvertisable } from "../../utils/computers/runtime-config.js";
 import { hasSelectedMcpServersForAdmission } from "../evals/harness-admission.js";
 import { readXaaEnterprisePolicy } from "@mcpjam/sdk";
 import { resolvePinnedSkillCached } from "./pinned-skill-cache.js";
@@ -348,6 +350,53 @@ function bindSessionEmit(
   };
 }
 
+/**
+ * WHAT this target needs the box FOR, in operator-facing words plus the
+ * `toolId` the UI keys its notice on.
+ *
+ * Until phase 6 the answer was always `bash`, so the copy could hardcode
+ * "shell". A harness-only target reached the same branches next, and a
+ * BROWSER-only target after that — which the two-branch version described as
+ * "the undefined harness", because it fell through to the harness arm with no
+ * harness to name.
+ *
+ * Built from what the target ACTUALLY declares rather than from a first
+ * matching branch, because the combinations are not exclusive: `bash` and
+ * `browser` conflict on a host config only while a deployment has NOT accepted
+ * the co-tenancy boundary (`allowComputerToolCoTenancy`), and a harness can
+ * accompany either. A target that lost its box lost every one of them, so the
+ * sentence names every one of them.
+ *
+ * The `toolId` is the capability that DECIDED the image, because that is the
+ * one the failure is about: a browser forces the desktop image, and the
+ * refusals that reach here (`desktop_pin_conflict`, desktop capacity) are
+ * desktop refusals. Without a browser it stays what it has always been.
+ */
+function describeSandboxConsumer(
+  target: PinnedHostExecutionSpec,
+  hostedBrowserAvailable: boolean,
+): {
+  label: string;
+  toolId: string;
+} {
+  const wantsBash = targetWantsBash(target);
+  const wantsBrowser = targetWantsBrowser(target, hostedBrowserAvailable);
+  const parts: string[] = [];
+  if (wantsBash) parts.push("the shell");
+  if (wantsBrowser) parts.push("the browser");
+  if (target.harness) parts.push(`the ${target.harness} harness`);
+  const label =
+    parts.length === 0
+      ? "the disposable computer"
+      : parts.length === 1
+        ? parts[0]!
+        : `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)!}`;
+  return {
+    label,
+    toolId: wantsBrowser ? "browser" : wantsBash ? "bash" : "harness",
+  };
+}
+
 async function runJourneyFanOut(
   opts: StartJourneyRunOptions & { hub: JourneyRunStreamHub }
 ): Promise<void> {
@@ -518,7 +567,7 @@ async function runJourneyFanOut(
         // box — no computer attached, or the environment pins no usable image. That
         // is knowable before the first attempt, so say it once, precisely.
         harnessTargetIntent = harnessNeedsBox
-          ? sandboxIntentFor(target)
+          ? sandboxIntentFor(target, hostedBrowserAdvertisable())
           : undefined;
         //
         // AND the same preflight interactive chat runs. Until phase 6 the swarm
@@ -782,20 +831,20 @@ async function runJourneyFanOut(
         // operator to look at a tool they never configured sends them the wrong
         // way. `toolId` matters too — the UI keys the notice on it, and
         // "bash was suppressed" is not what happened.
-        const sandboxConsumer = targetWantsBash(target)
-          ? target.harness
-            ? {
-                label: `the shell and the ${target.harness} harness`,
-                toolId: "bash",
-              }
-            : { label: "the shell", toolId: "bash" }
-          : { label: `the ${target.harness} harness`, toolId: "harness" };
+        // Resolved ONCE and shared with `sandboxIntentFor` below: the two
+        // must agree about whether a browser is in play, or the notice
+        // describes a consumer the intent never provisioned for.
+        const hostedBrowserAvailable = hostedBrowserAdvertisable();
+        const sandboxConsumer = describeSandboxConsumer(
+          target,
+          hostedBrowserAvailable,
+        );
         // A target already known to be unrunnable (harness, no box possible)
         // gets refused by the shared core before any tool runs, so provisioning
         // would boot a paid box purely to release it unused — once per
         // configured session.
         if (!harnessTargetBlockedReason) {
-          const intent = sandboxIntentFor(target);
+          const intent = sandboxIntentFor(target, hostedBrowserAvailable);
           if (intent.kind === "skip" && intent.reason) {
             // The target ASKED for a shell and the environment can't give it
             // one. Hand the launch-time reason to the shared core, which emits
@@ -871,6 +920,12 @@ async function runJourneyFanOut(
               runId,
               targetId: targetId ?? hostId,
               sessionIdx,
+              // WHICH IMAGE this attempt needs — a browser target boots the
+              // stock desktop one. Absent for everything else, so a terminal
+              // request stays byte-identical on the wire.
+              ...(intent.runtimeKind === "desktop-browser"
+                ? { runtimeKind: "desktop-browser" as const }
+                : {}),
               signal: sessionSignal,
             });
             if (provisioned.ok) {
@@ -999,6 +1054,11 @@ async function runJourneyFanOut(
               respectToolVisibility: target.respectToolVisibility,
               progressiveToolDiscovery: target.progressiveToolDiscovery,
               builtInToolIds: target.builtInToolIds,
+              // The unattended browser's only authorization. Threading it is
+              // what makes `browser` reachable on a swarm target at all: the
+              // runner parses it into an approval delivery, and without one
+              // `buildBrowserTools` advertises nothing.
+              browserToolPolicy: target.browserToolPolicy,
               modelVisibleMcpToolResults: target.modelVisibleMcpToolResults,
               mcpToolResultImageRendering: target.mcpToolResultImageRendering,
               computer: target.computer,
