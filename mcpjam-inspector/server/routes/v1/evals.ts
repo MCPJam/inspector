@@ -2349,8 +2349,8 @@ const publicCaseBodyShape = {
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
 
 /**
- * The suite-file sync marker, on every write route a `mcpjam eval run --file`
- * sync makes.
+ * The suite-file sync marker, on every write route a `mcpjam cloud eval run
+ * --file` sync makes.
  *
  * A CI-owned suite (one with a `declaredSuiteId`, or created by SDK ingest) is
  * read-only from the app AND from this API — the platform refuses the write.
@@ -2361,6 +2361,28 @@ const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
  * NOT A CAPABILITY, and no route-level check. Naming an id you do not own gets
  * you nothing, and the guard is Convex's — a second copy of the ownership rule
  * here would be a copy that can disagree with the one that decides.
+ *
+ * ============================================================================
+ * IT RIDES THE QUERY STRING, NOT THE BODY
+ * ============================================================================
+ *
+ * Every body on these routes is `.strict()`, here and on every Inspector that
+ * predates this change. A strict object REFUSES an unknown key, so a body field
+ * is a 400 against an older deployment — the same reason the launcher rides a
+ * header rather than the run-launch body.
+ *
+ * That matters far more here than it does for the launcher. A dropped launcher
+ * costs a badge; a rejected `--file` sync costs the CLI's whole CI command,
+ * against any self-hosted Inspector the user has not upgraded in lockstep with
+ * their `@mcpjam/cli`. And the CLI sends this on EVERY file-sync write, so the
+ * break would not be occasional. A query parameter is read by the deployments
+ * that know it and ignored by the ones that do not, which is exactly the
+ * degradation this needs: an Inspector with no lock has nothing to make an
+ * exception to.
+ *
+ * The body shape below is kept so this server accepts either spelling. Nothing
+ * has shipped sending the body form, but a route that refuses a marker it
+ * understands would be its own compatibility break.
  */
 const fileSyncBodyShape = {
   declaredSuiteId: z.string().min(1).max(128).optional(),
@@ -7095,7 +7117,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           ...revision,
           note: body.revisionNote,
         },
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7112,7 +7134,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("testSuites:updateTestSuite" as any, {
         ...updateArgs,
         revision,
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7138,7 +7160,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           body.hosts,
         ),
         revision,
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         ...takePrecondition(),
       });
     } catch (error) {
@@ -7195,7 +7217,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7215,7 +7237,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7403,7 +7425,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
-      ...fileSyncArg(body.declaredSuiteId),
+      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7511,7 +7533,7 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
-      ...fileSyncArg(body.declaredSuiteId),
+      ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7631,7 +7653,7 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
-        ...fileSyncArg(body.declaredSuiteId),
+        ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7706,7 +7728,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
-          ...fileSyncArg(body.declaredSuiteId),
+          ...fileSyncArg(c.req.query("declaredSuiteId") ?? body.declaredSuiteId),
         },
       );
     } catch (error) {

@@ -369,6 +369,39 @@ function trimmedOrUndefined(
   return maxChars === undefined ? trimmed : trimmed.slice(0, maxChars);
 }
 
+/**
+ * Lift the suite-file sync marker out of a write body and onto the query.
+ *
+ * `declaredSuiteId` says "this write IS the suite file syncing itself", which
+ * is what lets a CI-owned suite be written at all. Callers pass it inside the
+ * body object because that is where it reads naturally beside the fields it
+ * accompanies; it must not GO there.
+ *
+ * Every one of these `/v1` bodies is `.strict()`, on this Inspector and on
+ * every Inspector that predates the CI-owned lock, and a strict object refuses
+ * an unknown key with a 400. This package is versioned independently of the
+ * deployment it talks to — a user upgrades `@mcpjam/cli` without touching their
+ * self-hosted Inspector — so a body field here would turn `eval run --file`
+ * from "syncs, and the lock lets it through" into "400, every time" against
+ * anything older. The same reasoning that puts the launcher in a header,
+ * applied to the field that actually decides whether a write lands.
+ *
+ * A query parameter is read by deployments that know it and ignored by those
+ * that do not, which is the right degradation: an Inspector with no lock has no
+ * exception to make.
+ */
+function withFileSyncMarker(body: Record<string, unknown>): {
+  body: Record<string, unknown>;
+  query?: QueryParams;
+} {
+  const { declaredSuiteId, ...rest } = body;
+  const marker =
+    typeof declaredSuiteId === "string" ? declaredSuiteId.trim() : "";
+  return marker.length > 0
+    ? { body: rest, query: { declaredSuiteId: marker } }
+    : { body };
+}
+
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 type QueryParams = Record<string, string | number | undefined>;
@@ -2975,7 +3008,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -3012,7 +3045,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/schedule`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -3060,7 +3093,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -3083,7 +3116,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/cases/batch`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }
@@ -3104,7 +3137,7 @@ export class PlatformApiClient {
       )}/eval-suites/${encodeURIComponent(
         params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      { body: params.body },
+      withFileSyncMarker(params.body),
       options
     );
   }

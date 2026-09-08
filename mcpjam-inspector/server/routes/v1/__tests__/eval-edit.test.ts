@@ -4116,6 +4116,70 @@ describe("v1 eval-edit — CI-owned suites", () => {
     }
   );
 
+  it.each([
+    [
+      "PATCH suite",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1",
+      { name: "renamed" },
+      "testSuites:updateTestSuite",
+    ],
+    [
+      "PATCH schedule",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/schedule",
+      { enabled: true, intervalMinutes: 60 },
+      "testSuites:setSuiteSchedule",
+    ],
+    [
+      "POST case",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases",
+      { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+      "testSuites:createTestCases",
+    ],
+    [
+      "POST case batch",
+      "POST",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/batch",
+      {
+        cases: [
+          { title: "added", steps: [{ id: "s1", kind: "prompt", prompt: "hi" }] },
+        ],
+      },
+      "testSuites:createTestCases",
+    ],
+    [
+      "PATCH case",
+      "PATCH",
+      "/api/v1/projects/p1/eval-suites/suite_1/cases/case_1",
+      { title: "renamed" },
+      "testSuites:updateTestCase",
+    ],
+  ] as const)(
+    "takes the marker from the QUERY STRING on %s — the spelling the SDK sends",
+    async (_label, method, path, body, mutation) => {
+      // The wire contract that matters. Every body here is `.strict()`, on this
+      // Inspector and on every Inspector that predates the lock, so a body
+      // field is a 400 against an older deployment — which would break
+      // `eval run --file` for anyone whose CLI is newer than their Inspector.
+      // The SDK therefore puts it on the query string, and this is the half
+      // that has to read it.
+      const res = await request(
+        method,
+        `${path}?declaredSuiteId=s_from_file`,
+        { ...body }
+      );
+      expect(res.status).toBeLessThan(300);
+      const call = convexMutationMock.mock.calls.find(
+        ([name]: [string]) => name === mutation
+      );
+      expect(call?.[1]).toMatchObject({
+        fileSync: { declaredSuiteId: "s_from_file" },
+      });
+    }
+  );
+
   it("takes the marker as a query parameter on the deletes", async () => {
     const suite = await request(
       "DELETE",

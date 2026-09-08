@@ -2605,6 +2605,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3729,6 +3732,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -3977,6 +3983,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4070,6 +4079,9 @@
               "type": "string",
               "maxLength": 256
             }
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -4312,6 +4324,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "requestBody": {
@@ -11647,7 +11662,7 @@
         "name": "declaredSuiteId",
         "in": "query",
         "required": false,
-        "description": "The suite file's own `suite.id`, when this DELETE is a suite-file sync. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses deletes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file is allowed through. A query parameter rather than a body, because these deletes read no body at all.",
+        "description": "The suite file's own `suite.id`, when this request is that file syncing itself. A CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`; naming the suite's own declared id is how the file writing itself is allowed through. Naming any other id refuses exactly as loudly as naming none, so it is not a capability — omit it for an ordinary edit.\n\nA QUERY PARAMETER on every route that takes it, never a body field. These request bodies are strict, here and on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment — which would break `mcpjam cloud eval run --file` for anyone whose CLI is newer than their Inspector. A query parameter is read by the deployments that know it and ignored by those that do not, which is the right degradation: an Inspector with no lock has no exception to make.",
         "schema": {
           "type": "string",
           "maxLength": 128
@@ -12183,7 +12198,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -12303,7 +12318,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "cases": {
             "type": "array",
@@ -12564,7 +12579,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "title": {
             "type": "string",
@@ -17238,7 +17253,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "enabled": {
             "type": "boolean"
@@ -17264,7 +17279,7 @@
           "declaredSuiteId": {
             "type": "string",
             "maxLength": 128,
-            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits."
+            "description": "The suite file's own `suite.id`, when THIS request is a suite-file sync.\n\nA CI-owned suite (see `EvalSuiteDetail.managedBy`) refuses configuration writes with `409` and `details.reason: \"CI_OWNED_SUITE_READ_ONLY\"`. Naming the suite's own declared id is how the file writing itself is allowed through — the platform permits the write only when the id matches, so naming any other id refuses exactly as loudly as naming none. Omit it for ordinary edits.\n\nPREFER THE `declaredSuiteId` QUERY PARAMETER on this route. This body field still works here, but these request bodies are strict on every Inspector that predates the CI-owned lock, so a body field is a `400` against an older deployment while an unknown query parameter is simply ignored. The MCPJam SDK and CLI send the query parameter."
           },
           "name": {
             "type": "string",
