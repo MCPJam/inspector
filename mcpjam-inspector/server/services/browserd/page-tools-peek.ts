@@ -250,6 +250,13 @@ async function lookupProjectComputerSession(
     // `"any"`: this is about whatever browser the box is running, not about a
     // profile mode. Pinning one reported "no browser" for a box that had one.
     expectedContextMode: "any",
+    // AS THE SANDBOX PEEK AND `tryReuse` DO. Without it the backend answers
+    // `bundle_changed` for a live session whose wire this build can still talk
+    // to, so a deploy that only rotated the bundle hash made every hosted
+    // Playground browser read as absent — and the turn silently advertised no
+    // page tools at all. This is the main hosted path; the one call site that
+    // omitted it was the one that mattered most.
+    expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
     signal,
   });
 }

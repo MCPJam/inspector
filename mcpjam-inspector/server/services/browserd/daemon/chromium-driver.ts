@@ -1068,20 +1068,6 @@ export class ChromiumDriver implements BrowserDriver {
     const started = action.commandId
       ? this.invocationsByCommand.get(action.commandId)
       : undefined;
-    // THE TAB THE INVOCATION RAN ON, not the tab the cancellation names.
-    //
-    // An invocation id is meaningful only to the bridge that issued it, and
-    // these two tabs need not agree: `webmcp_cancel {commandId}` is a valid
-    // shape with no tab at all, which resolves to the default one. Resolving
-    // the bridge from the CANCEL's tab and then handing it an id minted by
-    // another sends a stop to a page that never started the thing — the
-    // invocation runs on, and an id that happened to collide would stop
-    // something unrelated.
-    const invocationTabId = started?.tabId ?? tabId;
-    const entry = this.tabs.get(invocationTabId);
-    if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
-    }
     const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
       // NOT an error, and NOT forgotten either.
@@ -1104,8 +1090,30 @@ export class ChromiumDriver implements BrowserDriver {
       // resolved. A cancel for a command that already failed early, or never
       // existed, is what the latch's ceiling and TTL are for; a latch for a
       // live invocation is never the one evicted.
+      //
+      // AND NO TAB IS RESOLVED FIRST. The latch is keyed by COMMAND, not by
+      // page, so it needs no live tab — and the command it names may be queued
+      // behind a `navigate {newTab: true}` whose tab does not exist yet.
+      // Resolving one here answered `unknown_tab` and dropped the Stop on the
+      // floor, and the page tool then ran a moment later under a cancellation
+      // the user had already made. A tab is required only to reach a BRIDGE,
+      // which is required only when there is an id to hand it — below.
       if (action.commandId) this.latchCancel(action.commandId);
       return { ok: true, output: { cancelled: false, known: false } };
+    }
+    // THE TAB THE INVOCATION RAN ON, not the tab the cancellation names.
+    //
+    // An invocation id is meaningful only to the bridge that issued it, and
+    // these two tabs need not agree: `webmcp_cancel {commandId}` is a valid
+    // shape with no tab at all, which resolves to the default one. Resolving
+    // the bridge from the CANCEL's tab and then handing it an id minted by
+    // another sends a stop to a page that never started the thing — the
+    // invocation runs on, and an id that happened to collide would stop
+    // something unrelated.
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {

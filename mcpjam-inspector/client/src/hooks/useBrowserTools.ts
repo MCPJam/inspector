@@ -206,10 +206,21 @@ export function useBrowserTools(args: {
     const controller = new AbortController();
     const serial = (latestRead.current += 1);
     const projectId = args.projectId;
+    // THE TAB THE SIGNAL CAME FROM. The heartbeat measures the ACTIVE tab, so
+    // a read sent without one observes `@session` — a literal key, not
+    // "whichever tab is active" — and the pane would show the default tab's
+    // definitions, labelled live, beside a view of the tab the person is
+    // actually in. Absent (an older daemon, a beat with no `tabs`) the read
+    // falls back to today's behaviour rather than guessing.
+    const signalTabId = live?.tabId;
     const read =
       engine === "hosted" && cache
-        ? fetchHostedPageTools(cache, controller.signal)
-        : fetchLocalPageTools({ projectId }, consentToken, controller.signal);
+        ? fetchHostedPageTools(cache, controller.signal, signalTabId)
+        : fetchLocalPageTools(
+            { projectId, ...(signalTabId ? { tabId: signalTabId } : {}) },
+            consentToken,
+            controller.signal,
+          );
     read
       .then((answer) => {
         if (latestRead.current === serial) setPage(answer);
@@ -238,6 +249,13 @@ export function useBrowserTools(args: {
     // moment it matters. It is not a poll: an unchanged page never moves this,
     // and re-reading the page on a timer would be an observation with side
     // effects on the thing it observes.
+    //
+    // AND IT COVERS `live.tabId`, which the read above uses. `live` itself is
+    // deliberately NOT a dependency: it moves on a URL-only beat too, and a
+    // client-side route change leaves every registration in place — depending
+    // on it would refetch definitions the pane already has, on every such
+    // change. The store folds the tab into the equality that bumps this
+    // epoch, so a tab that moves moves this and a URL that moves does not.
     webmcpEpoch,
   ]);
 

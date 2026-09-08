@@ -115,3 +115,40 @@ describe("a replacement browser is not the same browser", () => {
     expect(epoch()).toBe(1);
   });
 });
+
+describe("the signal names the tab it measured", () => {
+  it("carries the beat's active tab, so the read that follows can aim at it", () => {
+    // The daemon computes `{revision, hash, count}` from the ACTIVE tab, and
+    // the page-tools read is a separate request: sent without a tab it
+    // observes `@session`, which is a literal key rather than "whichever tab
+    // is active". Without this the pane refreshed to the DEFAULT tab's
+    // definitions and labelled them live beside a view of another tab.
+    noteWebmcpStats(
+      KEY,
+      { webmcp: { revision: 3, hash: "h", count: 2 }, tabs: { active: "t2" } },
+      "boot-1",
+    );
+    expect(useBrowserPageToolsStore.getState().live[KEY]?.tabId).toBe("t2");
+  });
+
+  it("moves the epoch when the ACTIVE TAB changes under an identical signal", () => {
+    // Two tabs each showing a page that declares no tools report the same
+    // numbers. A different tab is a different page, and the read that follows
+    // has to be aimed at the new one — so the equality that decides "nothing
+    // happened" has to include the tab.
+    const beat = { webmcp: { revision: 0, hash: "empty", count: 0 } };
+    noteWebmcpStats(KEY, { ...beat, tabs: { active: "t1" } }, "boot-1");
+    expect(epoch()).toBe(1);
+    noteWebmcpStats(KEY, { ...beat, tabs: { active: "t1" } }, "boot-1");
+    expect(epoch()).toBe(1);
+    noteWebmcpStats(KEY, { ...beat, tabs: { active: "t2" } }, "boot-1");
+    expect(epoch()).toBe(2);
+  });
+
+  it("leaves the tab absent on a daemon whose beat carries no tabs block", () => {
+    // Silence is "no news": the read falls back to the behaviour it has always
+    // had rather than guessing a tab.
+    noteWebmcpStats(KEY, { webmcp: { revision: 1, hash: "a", count: 1 } });
+    expect(useBrowserPageToolsStore.getState().live[KEY]?.tabId).toBeUndefined();
+  });
+});

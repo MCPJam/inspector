@@ -2766,6 +2766,64 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     expect(refresh?.retire).toContain("webmcp_add_topping");
   });
 
+  it("does NOT follow the model onto a tab it just closed", async () => {
+    // `close_tab` produces no observation of its own tab — there is nothing
+    // left to observe — so the tracker fell through to the `tabId` the command
+    // named, which is precisely the tab that no longer exists. Every later
+    // refresh then probed a dead tab, read no revision, and kept advertising
+    // the closed page's tools; on a refreshing engine, where the generic
+    // invoke verb is retired, calling one of them fails with `unknown_tab`
+    // and the model has no way back to the page it IS on.
+    const reads: Array<string | undefined> = [];
+    const send = async (command: any) => {
+      const action = command.action;
+      if (action.kind === "observe" && action.mode === "webmcp_revision") {
+        reads.push(command.tabId);
+        return {
+          status: "ok",
+          result: {
+            ok: true,
+            output: { revision: 5, hash: "h1", count: 1, supported: true },
+          } as never,
+        };
+      }
+      // A close: ok, and deliberately WITHOUT a stateToken, exactly as the
+      // daemon answers it.
+      return {
+        status: "ok",
+        result: { ok: true, output: { closed: "tab-2" } } as never,
+      };
+    };
+    const { ensureSession } = fakeSession(send);
+    const built = withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+          revision: 5,
+          hash: "h1",
+        },
+      }),
+    )!;
+
+    await (built.tools.browser_tabs as any).execute(
+      { action: "close", tabId: "tab-2" },
+      {},
+    );
+    await built.refreshPageTools!({});
+
+    // The refresher stayed where it was. Reading `tab-2` here is the bug: the
+    // tab is gone, and the daemon has already picked another active one.
+    expect(reads.at(-1)).not.toBe("tab-2");
+  });
+
   it("an unchanged revision fetches no definitions and changes nothing", async () => {
     const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
     const built = build(fake);

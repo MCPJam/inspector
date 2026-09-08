@@ -1131,8 +1131,22 @@ export function buildBrowserTools(
         // The MODEL's own commands move the target the refresher follows. A
         // command that resolved a tab tells us which one it is working in,
         // and that is the page whose tools it should be offered next step.
+        //
+        // EXCEPT A CLOSE, which names the one tab the model is now NOT in.
+        // `close_tab` produces no observation of its own tab — there is
+        // nothing left to observe — so the `args.tabId` fallback below was
+        // the branch it took, and it pinned the tracker to a tab that no
+        // longer exists. Every later refresh then probed a dead tab, got no
+        // revision, and kept advertising the closed page's tools; with the
+        // generic invoke verb retired on a refreshing engine, calls to them
+        // fail with `unknown_tab` until some other command happens to move
+        // the tracker. The daemon picks the next active tab itself, and the
+        // model's next command reports it — so the honest thing here is to
+        // leave the tracker where it was rather than guess.
+        const closedThisTab =
+          action.kind === "act" && action.verb === "close_tab";
         if (outcome.stateToken?.tabId) modelTabId = outcome.stateToken.tabId;
-        else if (args.tabId) modelTabId = args.tabId;
+        else if (args.tabId && !closedThisTab) modelTabId = args.tabId;
       }
       return { ...outcome, tabId };
     } finally {

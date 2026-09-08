@@ -4524,15 +4524,15 @@ var ChromiumDriver = class {
   }
   async webmcpCancel(tabId, action, permit) {
     const started = action.commandId ? this.invocationsByCommand.get(action.commandId) : void 0;
-    const invocationTabId = started?.tabId ?? tabId;
-    const entry = this.tabs.get(invocationTabId);
-    if (!entry || entry.page.isClosed()) {
-      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
-    }
     const invocationId = action.invocationId ?? started?.invocationId;
     if (!invocationId) {
       if (action.commandId) this.latchCancel(action.commandId);
       return { ok: true, output: { cancelled: false, known: false } };
+    }
+    const invocationTabId = started?.tabId ?? tabId;
+    const entry = this.tabs.get(invocationTabId);
+    if (!entry || entry.page.isClosed()) {
+      return { ok: false, error: `unknown_tab: ${invocationTabId}` };
     }
     const bridge = await entry.page.webmcp();
     if (!bridge) {

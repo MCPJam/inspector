@@ -40,6 +40,18 @@ export interface LiveWebmcpSignal {
    * leave the pane showing the old one's tools.
    */
   bootId?: string;
+  /**
+   * WHICH TAB the daemon measured, taken from the same heartbeat's `tabs`.
+   *
+   * Also not on the wire: the beat computes its `{revision, hash, count}` from
+   * the ACTIVE tab, and the `tabs` block beside it already names that tab. The
+   * reader needs it because the page-tools read is a separate request, and one
+   * sent without a tab observes `@session` — a literal key, not "whichever tab
+   * is active". So a person working in a second tab saw the signal from theirs
+   * and the DEFINITIONS from the first, labelled live beside a view of the
+   * page they were actually on.
+   */
+  tabId?: string;
 }
 
 /** `projectId:engine` — the two things that decide WHICH browser this is. */
@@ -87,7 +99,11 @@ export const useBrowserPageToolsStore = create<BrowserPageToolsState>(
         previous.revision === signal.revision &&
         previous.hash === signal.hash &&
         previous.count === signal.count &&
-        previous.bootId === signal.bootId;
+        previous.bootId === signal.bootId &&
+        // A DIFFERENT TAB IS A DIFFERENT PAGE, even when the numbers agree —
+        // two tabs each showing a page with no tools report an identical
+        // signal, and the read that follows has to be aimed at the new one.
+        previous.tabId === signal.tabId;
       if (sameToolSet && previous.url === signal.url) return;
       if (sameToolSet) {
         // THE URL IS NOT THE TOOL SET. A client-side route change moves the
@@ -139,7 +155,10 @@ export function useWebmcpEpoch(key: BrowserPageToolsKey): number {
 /** Record a heartbeat's page-tool signal, if it carried one. */
 export function noteWebmcpStats(
   key: BrowserPageToolsKey,
-  stats: { webmcp?: LiveWebmcpSignal } | null | undefined,
+  stats:
+    | { webmcp?: LiveWebmcpSignal; tabs?: { active?: string } }
+    | null
+    | undefined,
   /** The session this beat came from; see `LiveWebmcpSignal.bootId`. */
   bootId?: string,
 ): void {
@@ -155,7 +174,13 @@ export function noteWebmcpStats(
     // blanking a list that is still correct.
     return;
   }
-  useBrowserPageToolsStore
-    .getState()
-    .noteLive(key, bootId ? { ...webmcp, bootId } : webmcp);
+  // The tab the daemon measured, from the SAME beat — see `tabId` above. Read
+  // here rather than asked of the caller so the two can never disagree.
+  const tabId =
+    typeof stats?.tabs?.active === "string" ? stats.tabs.active : undefined;
+  useBrowserPageToolsStore.getState().noteLive(key, {
+    ...webmcp,
+    ...(bootId ? { bootId } : {}),
+    ...(tabId ? { tabId } : {}),
+  });
 }

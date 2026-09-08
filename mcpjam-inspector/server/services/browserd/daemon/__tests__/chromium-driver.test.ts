@@ -3524,6 +3524,53 @@ describe("ChromiumDriver — cancelling by commandId", () => {
     expect(invoked).toEqual(["submit_order"]);
   });
 
+  it("latches a queued Stop even when the invoke's tab does not exist yet", async () => {
+    // The same queued Stop, one step harder: the invoke is queued behind a
+    // `navigate {newTab: true}`, so the tab it names has not been created. The
+    // cancel carries that tab id (the arming copies the invoke's), and
+    // resolving a tab BEFORE latching answered `unknown_tab` and dropped the
+    // Stop — the tool then ran on the tab the navigate went on to open, after
+    // the user had already cancelled it.
+    //
+    // The latch is keyed by COMMAND. It never needed a page.
+    const invoked: string[] = [];
+    const bridge = {
+      isSupported: () => true,
+      list: () => [],
+      async probeSettled() {},
+      subscribe: () => () => {},
+      registrationSeqFor: () => undefined,
+      invoke: async (args: Record<string, unknown>) => {
+        invoked.push(String(args.toolName));
+        return { invocationId: "inv-should-not-run", output: { ok: true } };
+      },
+      cancel: async () => true,
+    } as never;
+    const page = fakePage({ url: "https://x.test/", webmcp: bridge });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+
+    // NO navigate first: nothing has created a tab, which is the whole point.
+    const cancel = await driver.execute({
+      ...cmd({ kind: "webmcp_cancel", commandId: "cmd-newtab" }),
+      tabId: "not-open-yet",
+    });
+    // Answered as "nothing to stop yet", NOT as a tab error — an `unknown_tab`
+    // here is the regression: it means the latch was skipped.
+    expect(cancel).toMatchObject({ ok: true, output: { known: false } });
+
+    // The tab now exists and the invoke is dequeued onto it.
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+    const result = await driver.execute({
+      ...cmd({ kind: "webmcp_invoke", toolKey: "submit_order", input: {} }),
+      commandId: "cmd-newtab",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.error).toContain("webmcp_cancelled");
+    expect(invoked, "the page ran a tool the user had cancelled").toEqual([]);
+  });
+
   it("does NOT deliver a remembered cancel under a handoff", async () => {
     // The named-id path re-asks the lease after its await because cancelling
     // reaches into the page. This delivery can span the whole accept window,

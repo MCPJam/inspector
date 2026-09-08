@@ -9,6 +9,7 @@
  * browser-capable turn, and most of those turns have no browser at all.
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { BROWSERD_PROTOCOL_VERSION } from "../protocol.js";
 
 const convexGetDesktopComputerStatus = vi.fn();
 const lookupBrowserSession = vi.fn();
@@ -200,6 +201,22 @@ describe("peekPageTools — hosted", () => {
     expect(convexGetDesktopComputerStatus).not.toHaveBeenCalled();
     expect(lookupBrowserSession).toHaveBeenCalledWith(
       expect.objectContaining({ sandboxRowId: "row-1" }),
+    );
+  });
+
+  it("names the protocol version on BOTH lookups, not just the sandbox one", async () => {
+    // Omitted, the backend answers `bundle_changed` for a live session whose
+    // wire this build can still talk to — so a deploy that only rotated the
+    // bundle hash reads as "no browser", and the turn advertises no page tools
+    // at all. The project-computer path is the hosted Playground, which is the
+    // one that mattered most and the one that was missing it.
+    liveHostedSession();
+    await peekPageTools({ engine: "hosted", projectId: "p1", bearer: "t" });
+    expect(lookupBrowserSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        computerId: expect.anything(),
+        expectedProtocolVersion: BROWSERD_PROTOCOL_VERSION,
+      }),
     );
   });
 });
