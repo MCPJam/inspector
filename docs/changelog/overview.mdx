@@ -9,6 +9,16 @@ This changelog tracks all notable changes to MCPJam Inspector. We follow [Semant
 
 ## Latest Releases
 
+### 2026-09-08
+
+#### Improved
+
+- **Session transcripts show readable tool results, not raw JSON** — recorded sessions in User Testing (study → Sessions), Swarms (run → session), and `/sessions` now render tool results as prose or structured text rather than a raw payload dump. The Chat tab of a session detail reads as a conversation; the raw bytes remain available under the Raw and Trace tabs for anyone who needs them.
+
+- **Large tool inputs and outputs fold** — a tool block whose input or output exceeds roughly 12 lines or 800 characters starts collapsed, labelled with its size (for example, "Output 847 lines") so you can tell at a glance whether it is worth opening. Small payloads stay open with no extra control. Errors are never folded. Clicking the label expands the full content.
+
+- **Recorded ratings are now static, not disabled controls** — a tester's star or thumbs rating on a recorded session is now displayed as a read-only icon group with an accessible label ("Tester rated 4 of 5") rather than as disabled radio buttons that looked identical to the live rating widget. The Send button on the rating comment row is also width-capped so it stays beside the input rather than drifting to the far edge of a wide transcript.
+
 ### 2026-09-02
 
 #### Added
