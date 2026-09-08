@@ -21,6 +21,7 @@
  * screenshot out of a trace while someone types their password.
  */
 import type { BrowserdStack } from "./daemon/server";
+import type { BrowserLedgerEntry } from "./daemon/command-ledger";
 import type { BrowserCommand } from "./protocol";
 import {
   asRecord,
@@ -50,6 +51,21 @@ export interface InProcessBrowserdClient {
     command: BrowserCommand,
     expectedBootId?: string,
   ): Promise<BrowserdCommandResponse>;
+  /** Read the command ledger forward from a cursor. */
+  readTrace(args?: {
+    afterSeq?: number;
+    commandId?: string;
+    limit?: number;
+  }): Promise<{ entries: BrowserLedgerEntry[]; headSeq: number }>;
+  /**
+   * Record a command the INSPECTOR refused, so the daemon's ring stays the one
+   * ordered ledger with one seq minter. Nothing is sent to the browser.
+   */
+  recordRefusal(args: {
+    command: BrowserCommand;
+    errorCode: string;
+    durationMs?: number;
+  }): Promise<{ seq: number }>;
 }
 
 export function createInProcessBrowserdClient(
@@ -61,9 +77,20 @@ export function createInProcessBrowserdClient(
     path: string,
     body?: unknown,
   ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    // Split the query the way the http adapter's `new URL(...)` does. The
+    // handler matches `req.path` EXACTLY and reads arguments from `req.query`,
+    // so passing "/v1/trace?afterSeq=3" whole would 404 a route that exists —
+    // and a caller has no way to tell that apart from a daemon too old to
+    // serve it.
+    const queryStart = path.indexOf("?");
+    const pathname = queryStart === -1 ? path : path.slice(0, queryStart);
+    const query =
+      queryStart === -1
+        ? undefined
+        : new URLSearchParams(path.slice(queryStart + 1));
     const response = await stack.handler.handle({
       method,
-      path,
+      path: pathname,
       // No Origin, ever. The handler rejects any request that carries one as a
       // DNS-rebinding attempt, and an in-process caller genuinely has none —
       // sending a synthetic value to "look like a browser" would be inventing
@@ -71,6 +98,7 @@ export function createInProcessBrowserdClient(
       origin: undefined,
       authorization: `Bearer ${token}`,
       body: body === undefined ? "" : JSON.stringify(body),
+      ...(query ? { query } : {}),
     });
     return { status: response.status, body: asRecord(response.body) };
   };
@@ -92,6 +120,26 @@ export function createInProcessBrowserdClient(
       return decodeCommandResponse(
         await call("POST", "/v1/commands", { command, expectedBootId }),
       );
+    },
+    async readTrace(args = {}) {
+      const query = new URLSearchParams();
+      if (args.afterSeq !== undefined) query.set("afterSeq", String(args.afterSeq));
+      if (args.commandId !== undefined) query.set("commandId", args.commandId);
+      if (args.limit !== undefined) query.set("limit", String(args.limit));
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      const response = await call("GET", `/v1/trace${suffix}`);
+      const entries = response.body.entries;
+      return {
+        entries: Array.isArray(entries) ? (entries as BrowserLedgerEntry[]) : [],
+        headSeq:
+          typeof response.body.headSeq === "number" ? response.body.headSeq : 0,
+      };
+    },
+    async recordRefusal(args) {
+      const response = await call("POST", "/v1/trace", args);
+      return {
+        seq: typeof response.body.seq === "number" ? response.body.seq : 0,
+      };
     },
   };
 }

@@ -958,8 +958,9 @@ var BrowserdRequestHandler = class {
       return this.handleInput(req);
     }
     if (req.path === "/v1/trace") {
+      if (req.method === "POST") return this.handleTraceRecord(req);
       if (req.method !== "GET") {
-        return { status: 405, headers: { allow: "GET" } };
+        return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleTrace(req);
     }
@@ -991,6 +992,44 @@ var BrowserdRequestHandler = class {
       status: 200,
       body: { entries, headSeq, bootId: this.bootId }
     };
+  }
+  handleTraceRecord(req) {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId }
+      };
+    }
+    let parsed;
+    try {
+      parsed = JSON.parse(req.body || "{}");
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId }
+      };
+    }
+    if (!isValidCommand(parsed?.command)) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId }
+      };
+    }
+    const row = this.ledger.record({
+      command: parsed.command,
+      actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
+      ...parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {},
+      ...parsed.command.correlation ? { correlation: parsed.command.correlation } : {},
+      ts: Date.now(),
+      durationMs: typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+      // Record-only means exactly one thing: NOTHING RAN. The inspector refused
+      // it, so there is no page and no artifact to attach, and `capturePage`
+      // stays off.
+      outcome: "refused",
+      ...typeof parsed.errorCode === "string" ? { errorCode: parsed.errorCode } : {},
+      ...this.captureTypedText ? { captureTypedText: true } : {}
+    });
+    return { status: 200, body: { seq: row.seq, bootId: this.bootId } };
   }
   handleArtifact(req) {
     if (!this.ledger) {

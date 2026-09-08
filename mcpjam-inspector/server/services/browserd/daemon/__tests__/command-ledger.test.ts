@@ -4,6 +4,7 @@ import {
   redactAction,
   sanitizeLedgerUrl,
   type BrowserLedgerActor,
+  type CommandLedgerOptions,
 } from "../command-ledger";
 import type { BrowserAction, BrowserCommand } from "../../protocol";
 
@@ -17,12 +18,12 @@ function cmd(
   return { commandId, source: "agent", action, ...overrides };
 }
 
-function ledger(options: Parameters<typeof CommandLedger>[0] | object = {}) {
+function ledger(options: Partial<CommandLedgerOptions> = {}) {
   let n = 0;
   return new CommandLedger({
     bootId: "boot-a",
     mintId: () => `art-${++n}`,
-    ...(options as object),
+    ...options,
   });
 }
 

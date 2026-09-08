@@ -105,7 +105,7 @@ describe("BrowserdRequestHandler — the ledger", () => {
 
   it("records a LEASE REFUSAL — the row the whole trace exists for", async () => {
     const lease = new HandoffLease();
-    lease.acquire("alice", { kind: "human" });
+    lease.acquire("alice");
     const { handler, ledger, submit } = makeHandler({ lease });
     const res = await handler.handle(commandReq());
     expect(res.status).toBe(423);
@@ -122,7 +122,7 @@ describe("BrowserdRequestHandler — the ledger", () => {
 
   it("captures nothing about the page on a lease refusal", async () => {
     const lease = new HandoffLease();
-    lease.acquire("alice", { kind: "human" });
+    lease.acquire("alice");
     const { handler, ledger } = makeHandler({ lease });
     await handler.handle(
       commandReq({ action: { kind: "observe", mode: "screenshot" } }),

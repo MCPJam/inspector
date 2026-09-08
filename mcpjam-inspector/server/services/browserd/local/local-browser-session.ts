@@ -50,7 +50,10 @@ import {
   registerContextSurface,
   type ContextSurface,
 } from "../electron/agent-surface.js";
-import { createInProcessBrowserdClient } from "../in-process-client.js";
+import {
+  createInProcessBrowserdClient,
+  type InProcessBrowserdClient,
+} from "../in-process-client.js";
 import { withKeyedLock } from "../probe-lock.js";
 import { formatBrowserdError } from "../protocol.js";
 import type { LocalBrowserSessionHandle } from "../browser-session.js";
@@ -192,6 +195,16 @@ export interface EnsureLocalBrowserArgs {
    * browser, and without this they would collide on the project key alone.
    */
   ownerKey?: string;
+  /**
+   * Let this browser's ledger keep `type` values verbatim.
+   *
+   * A property of the DAEMON rather than of a command, so no envelope a caller
+   * controls can ask for it. The door only ever passes it for an EPHEMERAL
+   * profile — a persistent profile is somebody's real logged-in browser, and a
+   * ledger that recorded what they typed into it would be the wrong default in
+   * the one place it matters most.
+   */
+  captureTypedText?: boolean;
 }
 
 interface LocalSession {
@@ -204,6 +217,16 @@ interface LocalSession {
    */
   projectKey: string;
   stack: BrowserdStack;
+  /**
+   * The in-process client, kept alongside the handle's own.
+   *
+   * `handle.client` is the engine-agnostic `SessionClient` every surface talks
+   * to; this is the same object at its real type. The agent door needs the
+   * methods only this engine's client has — the ledger read and the record-only
+   * refusal — and narrowing a union at each call site would be a cast asserting
+   * something this module already knows.
+   */
+  inProcessClient: InProcessBrowserdClient;
   driver: ChromiumDriver;
   lease: HandoffLease;
   handle: LocalBrowserSessionHandle;
@@ -462,7 +485,12 @@ async function startSession(
   // and a stack whose auth is disabled on one engine is a stack whose auth is
   // untested on that engine.
   const token = randomBytes(32).toString("hex");
-  const stack = buildBrowserdStack(driver, { token, lease });
+  const stack = buildBrowserdStack(driver, {
+    token,
+    lease,
+    contextMode,
+    ...(args.captureTypedText ? { captureTypedText: true } : {}),
+  });
   const client = createInProcessBrowserdClient(stack, token);
   // BY BOOT ID, which is what the renderer knows and the only thing it may
   // name: a renderer that could address a surface by index could reach another
@@ -483,6 +511,7 @@ async function startSession(
     key,
     projectKey: validateLocalProjectKey(args.projectId),
     stack,
+    inProcessClient: client,
     driver,
     lease,
     handle,
@@ -521,9 +550,20 @@ export function touchLocalBrowserSession(
  */
 export function findLocalBrowserSession(bootId: string):
   | {
-      client: LocalBrowserSessionHandle["client"];
+      client: InProcessBrowserdClient;
       handler: BrowserdStack["handler"];
       handle: LocalBrowserSessionHandle;
+      /**
+       * This boot's command ledger.
+       *
+       * Handed over directly rather than read back through `/v1/trace`, because
+       * on this engine the daemon is in THIS process: the mirror would
+       * otherwise serialize every row to JSON and parse it again to copy it
+       * into a file a few lines away. The ledger is a read-and-drain buffer,
+       * not a rule to be enforced, so there is nothing here for the handler to
+       * gate — unlike a command, which must go through the client.
+       */
+      ledger: BrowserdStack["ledger"];
       /** For callers that must prove the session is the one they may reach. */
       projectKey: string;
     }
@@ -531,9 +571,10 @@ export function findLocalBrowserSession(bootId: string):
   for (const session of sessions.values()) {
     if (session.stack.bootId === bootId) {
       return {
-        client: session.handle.client,
+        client: session.inProcessClient,
         handler: session.stack.handler,
         handle: session.handle,
+        ledger: session.stack.ledger,
         projectKey: session.projectKey,
       };
     }
@@ -556,8 +597,9 @@ export function findLocalBrowserSession(bootId: string):
  */
 export function findLocalBrowserSessionForProject(projectId: string):
   | {
-      client: LocalBrowserSessionHandle["client"];
+      client: InProcessBrowserdClient;
       handle: LocalBrowserSessionHandle;
+      ledger: BrowserdStack["ledger"];
       projectKey: string;
     }
   | undefined {
@@ -565,8 +607,9 @@ export function findLocalBrowserSessionForProject(projectId: string):
   const session = sessions.get(`${project}:persistent`);
   if (!session) return undefined;
   return {
-    client: session.handle.client,
+    client: session.inProcessClient,
     handle: session.handle,
+    ledger: session.stack.ledger,
     projectKey: session.projectKey,
   };
 }
@@ -709,6 +752,29 @@ function disposeSession(session: LocalSession): Promise<void> {
 }
 
 /** Close every local browser. Non-latching: the app may start another. */
+/**
+ * Close ONE local browser, by the boot the caller is looking at.
+ *
+ * `killLocalBrowserSessions` closes every browser on the machine, which is the
+ * right answer for a shutdown and the wrong one for "this agent is finished
+ * with its session": another project's browser has nothing to do with it.
+ *
+ * Answers whether it found one, so a caller can tell "closed it" apart from
+ * "there was nothing there" — which for a non-idempotent terminate is a
+ * distinction the caller asked for.
+ */
+export async function closeLocalBrowserSession(
+  bootId: string,
+): Promise<boolean> {
+  for (const session of sessions.values()) {
+    if (session.stack.bootId !== bootId) continue;
+    session.stack.closeStreams();
+    await disposeSession(session);
+    return true;
+  }
+  return false;
+}
+
 export async function killLocalBrowserSessions(): Promise<void> {
   killGeneration += 1;
   await Promise.all(

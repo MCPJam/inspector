@@ -70,7 +70,13 @@ export interface BrowserLedgerCorrelation {
  * make "share this session" mean "share my credentials". See `redactAction`.
  */
 export type BrowserLedgerCommandRecord = {
-  kind: BrowserAction["kind"];
+  /**
+   * `note` is not a browser action. It is the marker `note_browser_session`
+   * writes — one row, nothing sent to the page — and it is in this union rather
+   * than smuggled in as an `observe` so a reader never has to wonder which
+   * observations were real.
+   */
+  kind: BrowserAction["kind"] | "note";
   verb?: string;
   mode?: string;
   target?: { selector?: string; a11yRef?: string; coordinates?: [number, number] };

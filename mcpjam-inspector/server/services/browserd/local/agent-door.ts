@@ -1,0 +1,511 @@
+/**
+ * The DOOR: a command path into the browser that is not a model's tool loop.
+ *
+ * Until now a command reached browserd exactly one way — a model called a
+ * `browser_*` tool and the harness dispatched it. That is the whole reason an
+ * outside coding agent could not drive: there was no path in that did not
+ * require being the model. This is that path.
+ *
+ * It is NOT a way around the daemon's rules. Every command still goes through
+ * the in-process client, so the auth check, the lease gate, the bootId check
+ * and the idempotent queue all apply exactly as they do for a model. What the
+ * door adds is what a non-model caller needs and a model does not: a session
+ * that outlives a boot, a policy stated up front instead of a person to ask,
+ * an actor stamped by the route that authenticated the caller, and a durable
+ * record the caller can read back.
+ *
+ * WHY POLICY IS ENFORCED HERE AND NOT IN `buildBrowserTools`. That function
+ * fails closed without an `approvalDelivery`, and its two deliveries mean
+ * precise things: `attested` threads gated calls into a person's approval
+ * prompt; `unattended` substitutes a declared policy because nobody is
+ * watching. An agent-driven session is neither — there is no engine tool loop
+ * to pause, and "a person granted consent and could be watching" is a weaker
+ * guarantee than either. So M1 enforces the SAME policy type directly on agent
+ * commands and leaves the registry seam alone; the `session-policy` delivery
+ * lands with M1.5, when model turns need it too.
+ */
+import { randomUUID } from "node:crypto";
+import type { BrowserUnattendedPolicy } from "@/shared/client-fulfilled-tools";
+import { parseBrowserToolPolicy } from "../../evals/browser-tool-policy.js";
+import { logger } from "../../../utils/logger.js";
+import {
+  executedResult,
+  refusedResult,
+  toAgentPage,
+  toDaemonAction,
+  unknownResult,
+  type ContractRefusal,
+} from "../agent-contract-mapper.js";
+import type { BrowserCommand, BrowserCommandSource } from "../protocol.js";
+import type { InProcessBrowserdClient } from "../in-process-client.js";
+import type { BrowserdCommandResponse } from "../browserd-codec.js";
+import type { BrowserLedgerActor } from "../daemon/command-ledger.js";
+import {
+  LedgerSinkError,
+  mirrorLedger,
+  type AgentSessionRecord,
+} from "./agent-session-store.js";
+import type {
+  BrowserAgentCommand,
+  BrowserAgentResult,
+  BrowserAgentSessionPolicy,
+} from "../../../../shared/browser-agent-contract.js";
+
+/**
+ * The source this door stamps, always, and never reads from a caller.
+ *
+ * `manual` is the one source the handoff lease does not block, so a body that
+ * could choose its own source would let anything reaching this route drive and
+ * observe a browser a person is signing into. The lease gate defends that for
+ * `manual` at the daemon; this defends it at the door by never asking.
+ */
+const AGENT_SOURCE: BrowserCommandSource = "agent";
+
+/** Client kinds the door will attribute to. Anything else is `agent`. */
+const CLIENT_KINDS = new Set(["cli", "mcp", "sdk"]);
+
+/**
+ * Compose the actor for a command that came through this door.
+ *
+ * `kind` is fixed by the route — reaching here means an agent, not a model, a
+ * pane or a person — and the authenticated identity goes in `label` so a trace
+ * shows WHO authorized the session. The client half of `id` is declared by the
+ * caller, and on this route that is honest for the same reason the pane's
+ * `holder` is: consent, the session token and a verified sign-in already prove
+ * whose machine this is, and the client id only has to tell two of that
+ * person's agents apart. It is not an identity claim and nothing downstream
+ * treats it as one.
+ *
+ * `anonymous` on a self-hosted inspector with no AuthKit, deliberately shown
+ * rather than smoothed over: a trace that invented a plausible id would be
+ * claiming an attribution the deployment cannot make.
+ */
+export function resolveAgentActor(args: {
+  userId?: string;
+  clientKind?: unknown;
+  clientId?: unknown;
+}): BrowserLedgerActor {
+  const kind =
+    typeof args.clientKind === "string" && CLIENT_KINDS.has(args.clientKind)
+      ? args.clientKind
+      : "agent";
+  const declared =
+    typeof args.clientId === "string"
+      ? args.clientId.replace(/[^A-Za-z0-9_.:-]/g, "").slice(0, 64)
+      : "";
+  return {
+    kind: "agent",
+    id: `${kind}:${declared || "unnamed"}`,
+    label: args.userId || "anonymous",
+  };
+}
+
+/**
+ * Read a declared session policy, or refuse.
+ *
+ * Reuses `BrowserUnattendedPolicy` rather than inventing a second shape. A
+ * second policy type would mean two enforcement paths and two backend
+ * validators kept in step by hand, for a distinction — "someone can watch and
+ * revoke" — that changes who may stop the session, not what it may do.
+ *
+ * Parsing is strict and NEVER widens: `parseBrowserToolPolicy` answers
+ * `undefined` for an unrecognized mode, a malformed allowlist, or an
+ * `allowlist` with nothing in it. The door treats that as a refusal rather
+ * than as a default, because the one thing worse than a session that cannot
+ * use the browser is a session using it under a policy nobody wrote.
+ */
+export function parseSessionPolicy(
+  input: unknown,
+): BrowserAgentSessionPolicy | undefined {
+  const parsed: BrowserUnattendedPolicy | undefined = parseBrowserToolPolicy(
+    input,
+    { source: "agent-browser-session" },
+  );
+  return parsed;
+}
+
+/** Which ops only LOOK at the page. Everything else changes it. */
+const OBSERVATION_OPS = new Set<BrowserAgentCommand["op"]>(["observe"]);
+
+/**
+ * Does this session's policy admit this command?
+ *
+ * Mirrors `classifyBrowserToolApprovals`' rule and its reasoning: `read_only`
+ * frees observation and nothing else, because a policy cannot make clicking a
+ * button on a live logged-in page safe.
+ */
+export function policyRefusalFor(
+  policy: BrowserAgentSessionPolicy,
+  command: BrowserAgentCommand,
+): ContractRefusal | undefined {
+  if (policy.mode === "read_only" && !OBSERVATION_OPS.has(command.op)) {
+    return {
+      code: "tool_not_allowed",
+      message:
+        `this session's policy is read_only, which admits observation only; ` +
+        `\`${command.op}\` changes the page`,
+    };
+  }
+  if (policy.mode === "allowlist") {
+    const tools = policy.toolAllowlist;
+    if (tools?.length && !tools.includes(command.op)) {
+      return {
+        code: "tool_not_allowed",
+        message: `this session's policy does not admit \`${command.op}\``,
+      };
+    }
+  }
+  if (command.op === "navigate") {
+    const refusal = originRefusalFor(policy, command.url);
+    if (refusal) return refusal;
+  }
+  return undefined;
+}
+
+/**
+ * Is this URL inside the session's origin allowlist?
+ *
+ * Checked on the way IN (a navigate's target) and on the way OUT (the URL a
+ * result reports), because a page can redirect: a navigate to an allowed origin
+ * that lands somewhere else would otherwise return a screenshot of the place
+ * the policy excluded.
+ */
+export function originRefusalFor(
+  policy: BrowserAgentSessionPolicy,
+  url: string | undefined,
+): ContractRefusal | undefined {
+  const allowlist = policy.originAllowlist;
+  if (!allowlist?.length) return undefined;
+  if (!url) return undefined;
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    // An unparseable URL cannot be shown to be inside the allowlist, and an
+    // allowlist that fails open is not an allowlist.
+    return {
+      code: "origin_not_allowed",
+      message: `\`${url}\` is not a URL this session's origin allowlist can admit`,
+    };
+  }
+  if (allowlist.includes(origin)) return undefined;
+  return {
+    code: "origin_not_allowed",
+    message: `\`${origin}\` is outside this session's origin allowlist`,
+  };
+}
+
+export interface RunAgentCommandArgs {
+  session: AgentSessionRecord;
+  client: Pick<
+    InProcessBrowserdClient,
+    "sendCommand" | "recordRefusal" | "readTrace"
+  >;
+  ledger: Parameters<typeof mirrorLedger>[0]["ledger"];
+  bootId: string;
+  actor: BrowserLedgerActor;
+  command: BrowserAgentCommand;
+  commandId?: string;
+  tabId?: string;
+  correlation?: Record<string, string>;
+}
+
+export interface RunAgentCommandOutput {
+  result: BrowserAgentResult;
+  session: AgentSessionRecord;
+  /** HTTP status the route should answer with. */
+  status: number;
+}
+
+/**
+ * One agent command, end to end.
+ *
+ * The shape of this function is the contract's three outcomes: every path below
+ * produces exactly one of `executed`, `refused` or `unknown`, and the mapping
+ * from the daemon's own vocabulary is where the care is. `command_expired` and
+ * `command_unknown_boot` become `unknown` — not `refused` — because the command
+ * may already have run and telling a caller otherwise is how a payment gets
+ * submitted twice.
+ */
+export async function runAgentCommand(
+  args: RunAgentCommandArgs,
+): Promise<RunAgentCommandOutput> {
+  const { session, actor } = args;
+  const commandId = args.commandId || randomUUID();
+
+  const envelope = (): BrowserCommand => ({
+    commandId,
+    source: AGENT_SOURCE,
+    ...(args.tabId ? { tabId: args.tabId } : {}),
+    action: { kind: "reload" },
+    actor,
+    sessionId: session.sessionId,
+    ...(args.correlation && Object.keys(args.correlation).length
+      ? { correlation: args.correlation }
+      : {}),
+  });
+
+  // 1. POLICY, before anything is sent. A refusal here still gets a row — the
+  //    daemon mints its seq so the one ordered ledger stays one ordered ledger
+  //    — but nothing reaches the browser.
+  const policyRefusal = policyRefusalFor(session.policy, args.command);
+  if (policyRefusal) {
+    return recordOnlyRefusal(args, commandId, envelope(), policyRefusal);
+  }
+
+  // 2. TRANSLATION. The mapper refuses what the contract will not carry (an
+  //    out-of-viewport coordinate, chiefly), also without touching the browser.
+  const mapped = toDaemonAction(args.command);
+  if (!mapped.ok) {
+    return recordOnlyRefusal(args, commandId, envelope(), mapped.refusal);
+  }
+
+  const command: BrowserCommand = { ...envelope(), action: mapped.action };
+
+  // 3. THE DAEMON. Its handler writes the row for whatever happens next.
+  let response: BrowserdCommandResponse;
+  try {
+    response = await args.client.sendCommand(command, args.bootId);
+  } catch (error) {
+    // The command may or may not have run — the failure is in the transport,
+    // not in an answer. `unknown` is the only honest outcome.
+    logger.warn("[browser-agent] command transport failed", {
+      detail: error instanceof Error ? error.message : String(error),
+    });
+    const mirrored = await mirror(args);
+    return {
+      status: 502,
+      session: mirrored.session,
+      result: unknownResult({
+        commandId,
+        reason: "transport",
+        ...(mirrored.historyWarning
+          ? { historyWarning: mirrored.historyWarning }
+          : {}),
+      }),
+    };
+  }
+
+  // 4. MIRROR, so the durable trace already contains this command by the time
+  //    the caller is told about it. A caller that read the trace immediately
+  //    and did not find its own command would reasonably conclude it had not
+  //    run.
+  const mirrored = await mirror(args);
+  const warning = mirrored.historyWarning;
+  const ledgerRef = await findLedgerRef(args, commandId, session.sessionId);
+
+  return {
+    ...toContractResult({
+      response,
+      commandId,
+      policy: session.policy,
+      ...(ledgerRef ? { ledger: ledgerRef } : {}),
+      ...(warning ? { historyWarning: warning } : {}),
+    }),
+    session: mirrored.session,
+  };
+}
+
+/** Map one daemon response onto the contract's three outcomes. */
+function toContractResult(args: {
+  response: BrowserdCommandResponse;
+  commandId: string;
+  policy: BrowserAgentSessionPolicy;
+  ledger?: { sessionId: string; seq: number };
+  historyWarning?: string;
+}): { result: BrowserAgentResult; status: number } {
+  const { response, commandId } = args;
+  const common = {
+    commandId,
+    ...(args.ledger ? { ledger: args.ledger } : {}),
+    ...(args.historyWarning ? { historyWarning: args.historyWarning } : {}),
+  };
+  switch (response.status) {
+    case "ok": {
+      // THE RESULT-URL CHECK. A navigate to an allowed origin can redirect to
+      // one that is not; without this the observation of the excluded page
+      // comes back anyway. Enforced on the way out as well as the way in.
+      const outOfBounds = originRefusalFor(
+        args.policy,
+        readUrl(response.result.output),
+      );
+      if (outOfBounds) {
+        return {
+          status: 403,
+          result: refusedResult({
+            ...common,
+            code: "origin_not_allowed",
+            message: outOfBounds.message,
+          }),
+        };
+      }
+      return {
+        status: 200,
+        result: executedResult({ ...common, result: response.result }),
+      };
+    }
+    case "stale_observation":
+      return {
+        status: 409,
+        result: refusedResult({
+          ...common,
+          code: "stale_observation",
+          message:
+            "the page changed after the observation this act was decided " +
+            "from; re-decide from the observation below",
+          // The FRESH page rides along so the caller can re-decide in one round
+          // trip rather than being told to go and look again.
+          ...(response.result ? { page: toAgentPage(response.result) } : {}),
+        }),
+      };
+    case "lease_blocked":
+      return {
+        status: 423,
+        result: refusedResult({
+          ...common,
+          code: response.lease === "parked" ? "lease_parked" : "lease_held",
+          message:
+            response.lease === "parked"
+              ? "a person's control of this browser has lapsed but not been " +
+                "handed back; nothing ran and nothing was observed"
+              : "a person has taken control of this browser; nothing ran and " +
+                "nothing was observed",
+        }),
+      };
+    case "busy":
+      return {
+        status: 429,
+        result: refusedResult({
+          ...common,
+          code: "busy",
+          message: "this tab's command queue is full; retry shortly",
+        }),
+      };
+    case "at_capacity":
+      return {
+        status: 503,
+        result: refusedResult({
+          ...common,
+          code: "daemon_at_capacity",
+          message:
+            "this browser has tracked its per-boot ceiling of commands and " +
+            "should be rotated",
+        }),
+      };
+    case "expired":
+      return {
+        status: 409,
+        result: unknownResult({ ...common, reason: "expired" }),
+      };
+    case "unknown_boot":
+      return {
+        status: 409,
+        result: unknownResult({ ...common, reason: "unknown_boot" }),
+      };
+    default: {
+      // Exhaustive: a new daemon outcome must be given one of the three
+      // contract statuses deliberately, not fall into whichever arm is last.
+      const exhaustive: never = response;
+      void exhaustive;
+      return {
+        status: 502,
+        result: unknownResult({ ...common, reason: "transport" }),
+      };
+    }
+  }
+}
+
+/**
+ * A refusal the INSPECTOR made, recorded through the daemon.
+ *
+ * Through the daemon, not into a second log, because the ring is the single
+ * ordered ledger with one seq minter — and "the agent was refused, then the
+ * person clicked" is precisely the ordering a trace exists to show.
+ */
+async function recordOnlyRefusal(
+  args: RunAgentCommandArgs,
+  commandId: string,
+  command: BrowserCommand,
+  refusal: ContractRefusal,
+): Promise<RunAgentCommandOutput> {
+  await args.client
+    .recordRefusal({ command, errorCode: refusal.code })
+    .catch((error) => {
+      logger.warn("[browser-agent] refusal could not be recorded", {
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    });
+  const mirrored = await mirror(args);
+  const ledgerRef = await findLedgerRef(args, commandId, args.session.sessionId);
+  return {
+    // 400 for a command the contract could not carry at all; 403 for one the
+    // session's policy excludes. Different problems, different fixes.
+    status: refusal.code === "invalid_command" ? 400 : 403,
+    session: mirrored.session,
+    result: refusedResult({
+      commandId,
+      code: refusal.code === "invalid_command" ? "tool_not_allowed" : refusal.code,
+      message: refusal.message,
+      ...(ledgerRef ? { ledger: ledgerRef } : {}),
+      ...(mirrored.historyWarning
+        ? { historyWarning: mirrored.historyWarning }
+        : {}),
+    }),
+  };
+}
+
+/**
+ * Copy the ring into the durable sink, turning a failure into a WARNING.
+ *
+ * Never silent. A caller that ran a command and got no history is told so on
+ * the command itself, rather than discovering later that the trace has a hole
+ * exactly where it was looking.
+ */
+async function mirror(
+  args: Pick<RunAgentCommandArgs, "session" | "ledger" | "bootId">,
+): Promise<{ session: AgentSessionRecord; historyWarning?: string }> {
+  try {
+    const { session } = await mirrorLedger({
+      session: args.session,
+      ledger: args.ledger,
+      bootId: args.bootId,
+      ...(args.session.captureScreenshots === false
+        ? { captureScreenshots: false }
+        : {}),
+    });
+    return { session };
+  } catch (error) {
+    const detail =
+      error instanceof LedgerSinkError
+        ? error.detail
+        : error instanceof Error
+          ? error.message
+          : String(error);
+    logger.warn("[browser-agent] ledger sink unavailable", { detail });
+    return {
+      session: args.session,
+      historyWarning:
+        "this command ran, but the session's durable history could not be " +
+        `written (${detail}); the trace will show a gap here`,
+    };
+  }
+}
+
+/** Where this command landed, for the result's `ledger` link. */
+async function findLedgerRef(
+  args: Pick<RunAgentCommandArgs, "client">,
+  commandId: string,
+  sessionId: string,
+): Promise<{ sessionId: string; seq: number } | undefined> {
+  const found = await args.client
+    .readTrace({ commandId, limit: 1 })
+    .catch(() => undefined);
+  const entry = found?.entries[0];
+  return entry ? { sessionId, seq: entry.seq } : undefined;
+}
+
+function readUrl(output: unknown): string | undefined {
+  if (typeof output !== "object" || output === null) return undefined;
+  const url = (output as { url?: unknown }).url;
+  return typeof url === "string" ? url : undefined;
+}

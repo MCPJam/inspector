@@ -386,8 +386,20 @@ export class BrowserdRequestHandler {
     // able to see what the agent was doing before they took it. The one thing
     // this endpoint could leak is a URL, which is already stripped of its query.
     if (req.path === "/v1/trace") {
+      // POST records an INSPECTOR-SIDE refusal — a command the inspector's own
+      // policy stopped before it ever reached the daemon (an origin outside the
+      // allowlist, an op the session's toolAllowlist excludes).
+      //
+      // It goes through the daemon rather than into a second log because the
+      // ring is the single ordered ledger with ONE seq minter. Two minters
+      // produce two internally-consistent orders and no way to interleave them,
+      // and "the agent was refused, then the person clicked" is exactly the
+      // ordering a trace exists to show. When policy enforcement moves into the
+      // daemon (I-11a, `POST /v1/policy`) the handler will see these natively
+      // and this path goes away.
+      if (req.method === "POST") return this.handleTraceRecord(req);
       if (req.method !== "GET") {
-        return { status: 405, headers: { allow: "GET" } };
+        return { status: 405, headers: { allow: "GET, POST" } };
       }
       return this.handleTrace(req);
     }
@@ -430,6 +442,50 @@ export class BrowserdRequestHandler {
       status: 200,
       body: { entries, headSeq, bootId: this.bootId },
     };
+  }
+
+  private handleTraceRecord(req: DaemonRequest): DaemonResponse {
+    if (!this.ledger) {
+      return {
+        status: 501,
+        body: { error: "ledger_unavailable", bootId: this.bootId },
+      };
+    }
+    let parsed: { command?: unknown; errorCode?: unknown; durationMs?: unknown };
+    try {
+      parsed = JSON.parse(req.body || "{}") as typeof parsed;
+    } catch {
+      return {
+        status: 400,
+        body: { error: "invalid_json", bootId: this.bootId },
+      };
+    }
+    if (!isValidCommand(parsed?.command)) {
+      return {
+        status: 400,
+        body: { error: "invalid_command", bootId: this.bootId },
+      };
+    }
+    const row = this.ledger.record({
+      command: parsed.command,
+      actor: parsed.command.actor ?? UNATTRIBUTED_ACTOR,
+      ...(parsed.command.sessionId ? { sessionId: parsed.command.sessionId } : {}),
+      ...(parsed.command.correlation
+        ? { correlation: parsed.command.correlation }
+        : {}),
+      ts: Date.now(),
+      durationMs:
+        typeof parsed.durationMs === "number" ? Math.max(0, parsed.durationMs) : 0,
+      // Record-only means exactly one thing: NOTHING RAN. The inspector refused
+      // it, so there is no page and no artifact to attach, and `capturePage`
+      // stays off.
+      outcome: "refused",
+      ...(typeof parsed.errorCode === "string"
+        ? { errorCode: parsed.errorCode }
+        : {}),
+      ...(this.captureTypedText ? { captureTypedText: true } : {}),
+    });
+    return { status: 200, body: { seq: row.seq, bootId: this.bootId } };
   }
 
   private handleArtifact(req: DaemonRequest): DaemonResponse {
