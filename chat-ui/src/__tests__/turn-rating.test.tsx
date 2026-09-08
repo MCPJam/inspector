@@ -307,6 +307,21 @@ describe("TurnRating — thumbs variant", () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it("does not narrate a thumb for a value from the other variant", () => {
+    // The icon row matches on equality, so a stars value under a thumbs
+    // variant renders NOTHING — and the label used to state "thumbs down"
+    // beside that empty group, telling a screen reader about a rating no one
+    // left and no one can see.
+    render(
+      <TurnRating readOnly variant="thumbs" value={4} status="submitted" />
+    );
+
+    expect(
+      screen.getByRole("img", { name: "No rating left" })
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /thumbs/i })).toBeNull();
+  });
+
   it("renders read-only as a record of the thumb that was left", () => {
     const onSubmit = vi.fn();
     render(

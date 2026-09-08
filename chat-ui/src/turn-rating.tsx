@@ -31,8 +31,14 @@ function readOnlyRatingLabel(
 ): string {
   if (value === undefined) return "No rating left";
   if (variant === "thumbs") {
+    // Only 0 and 1 are thumbs. Anything else is a value from the other
+    // variant, and the icon row — which matches on equality — renders nothing
+    // for it, so claiming a thumb here would narrate a rating that is not on
+    // screen and was never left.
+    if (value !== 0 && value !== 1) return "No rating left";
     return value === 1 ? "Tester rated thumbs up" : "Tester rated thumbs down";
   }
+  if (!STARS.includes(value as (typeof STARS)[number])) return "No rating left";
   return `Tester rated ${value} of 5`;
 }
 
