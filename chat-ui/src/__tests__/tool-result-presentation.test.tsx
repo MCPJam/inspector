@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 
-import { ReadOnlyTranscript } from "../read-only-transcript";
+import { ReadOnlyTranscript, Transcript } from "../read-only-transcript";
+import type { ToolRenderContext } from "../types";
 import { assistantParts, toolPart } from "./factories";
 import {
   FOLD_CHAR_LIMIT,
@@ -128,6 +129,41 @@ describe("tool result presentation", () => {
     ).toHaveAttribute("aria-expanded", "false");
   });
 
+  it("hides a collapsed payload from assistive technology", () => {
+    // The collapse is a `max-h` clip, so the hidden remainder stays in the
+    // DOM. Unmarked, a screen reader reads the whole payload while the button
+    // beside it reports `aria-expanded="false"` — the toggle and the content
+    // disagree, and the reader is handed the dump the fold exists to spare
+    // them. `inert` rides along as the right primitive for a clipped subtree;
+    // no payload renderer emits a focusable node today, so it guards the next
+    // one rather than a live leak.
+    const lines = Array.from(
+      { length: FOLD_LINE_LIMIT + 10 },
+      (_, i) => `line ${i}`,
+    );
+    const messages = [
+      assistantParts([
+        toolPart({ toolName: "report", traceDisplayText: lines.join("\n") }),
+      ]),
+    ];
+    render(<ReadOnlyTranscript messages={messages} />);
+
+    const preview = screen.getByTestId("folded-block-preview");
+    expect(preview).toHaveAttribute("aria-hidden", "true");
+    expect(preview).toHaveAttribute("inert");
+    // The payload really is inside the hidden wrapper, not a sibling of it —
+    // otherwise the attributes above would be decoration.
+    expect(preview.textContent).toContain("line 0");
+
+    // Expanding drops the wrapper entirely, so nothing has to be un-hidden.
+    fireEvent.click(screen.getByRole("button", { name: /Result/ }));
+    expect(screen.queryByTestId("folded-block-preview")).toBeNull();
+    expect(
+      screen.getByRole("button", { name: /Result/ }).closest("div")
+        ?.textContent,
+    ).toContain("line 0");
+  });
+
   it("keeps the error visible rather than folding it", () => {
     // An error is the reason you opened the session; it is not evidence to be
     // put away behind a disclosure.
@@ -144,6 +180,62 @@ describe("tool result presentation", () => {
 
     expect(container.textContent).toContain("boom: it failed");
     expect(container.querySelector(".mcpjam-chat-fold-toggle")).toBeNull();
+  });
+});
+
+/**
+ * A host that supplies `renderTool` replaces the package's tool block
+ * entirely, so anything the package reads off the part has to reach the
+ * override through `ToolRenderContext` or it is lost. `resultText` is the one
+ * BB-198 added, and it is the whole point of the change — an override left
+ * without it shows the raw payload for exactly the sessions this fixes.
+ */
+describe("renderTool override", () => {
+  it("receives the adapter's readable result in its context", () => {
+    const seen: ToolRenderContext[] = [];
+    const messages = [
+      assistantParts([
+        toolPart({
+          toolName: "find_invoices",
+          output: { rows: [{ id: "inv_1" }] },
+          traceDisplayText: "Found 1 unpaid invoice totalling $42.00.",
+        }),
+      ]),
+    ];
+
+    const { container } = render(
+      <Transcript
+        messages={messages}
+        renderTool={(ctx) => {
+          seen.push(ctx);
+          return <div>host block: {ctx.resultText}</div>;
+        }}
+      />,
+    );
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.resultText).toBe(
+      "Found 1 unpaid invoice totalling $42.00.",
+    );
+    // And it is usable, not just present.
+    expect(container.textContent).toContain(
+      "host block: Found 1 unpaid invoice totalling $42.00.",
+    );
+  });
+
+  it("leaves it undefined for a part the adapter never touched", () => {
+    const seen: ToolRenderContext[] = [];
+    render(
+      <Transcript
+        messages={[assistantParts([toolPart({ toolName: "search" })])]}
+        renderTool={(ctx) => {
+          seen.push(ctx);
+          return null;
+        }}
+      />,
+    );
+
+    expect(seen[0]!.resultText).toBeUndefined();
   });
 });
 

@@ -46,7 +46,10 @@ export function countLines(text: string): number {
  * code fence, or a JSON dump, and re-serialising a truncated version of any of
  * those produces something that is not valid in its own syntax — a half-open
  * fence swallows the rest of the transcript. A `max-h` window with the real
- * content inside it is honest about being partial and costs no parsing.
+ * content inside it is honest about being partial and costs no parsing. The
+ * cost is that the hidden remainder is still in the DOM, so the clipped
+ * wrapper is `aria-hidden` and `inert` — a visual-only collapse would read the
+ * whole payload to a screen reader while the toggle beside it says collapsed.
  *
  * The toggle is the LABEL, so the whole header row is the target rather than a
  * chevron a few pixels wide. A block small enough not to fold renders no
@@ -111,6 +114,18 @@ export function FoldedBlock({
         <div
           className="relative max-h-24 overflow-hidden"
           data-testid="folded-block-preview"
+          // The clip is VISUAL only, so unmarked this subtree is still in the
+          // a11y tree: a screen reader reads four hundred lines while the
+          // button beside it reports `aria-expanded="false"`, which is both a
+          // contradiction and the dump the fold exists to spare them.
+          //
+          // `aria-hidden` is the part that fixes a reachable problem. `inert`
+          // is the correct primitive for a clipped subtree and costs nothing,
+          // but no payload renderer emits a focusable node today — it guards
+          // the next one (a readable result that renders real markdown links)
+          // rather than a live tab-order leak.
+          aria-hidden
+          inert
         >
           {children}
           {/* Fades the cut rather than ending it on a hard edge, which reads

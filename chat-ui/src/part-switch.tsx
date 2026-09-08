@@ -115,6 +115,14 @@ export function PartSwitch({
       ? renderOverride?.toolOutput
       : info.output ?? info.rawOutput;
 
+    // The readable result the trace adapter attached to the part under
+    // `attached-to-tool`. Read here rather than at the `ToolCallPart` call
+    // below because BOTH branches need it: a host that supplies `renderTool`
+    // replaces our tool block, and forwarding this only to ours would leave
+    // the override showing the raw payload for exactly the sessions this
+    // exists to make readable (BB-198).
+    const resultText = traceResultText(toolPart);
+
     const ctx: ToolRenderContext = {
       toolName: info.toolName,
       toolCallId: info.toolCallId,
@@ -123,6 +131,7 @@ export function PartSwitch({
       output: resolvedOutput,
       rawOutput: info.rawOutput,
       errorText: info.errorText,
+      resultText,
       uiType,
       isWidget,
       serverId: serverId ?? undefined,
@@ -142,12 +151,11 @@ export function PartSwitch({
         input={info.input}
         output={resolvedOutput}
         errorText={info.errorText}
-        // The readable result the trace adapter attached to the part under
-        // `attached-to-tool`. Forwarded here because nothing did (BB-198):
-        // the adapter computed it, wrote it onto the part, and every renderer
-        // ignored it — so those sessions showed the raw payload and nothing
-        // else, while the modes that emit a sibling text part read fine.
-        resultText={traceResultText(toolPart)}
+        // Forwarded because nothing did (BB-198): the adapter computed it,
+        // wrote it onto the part, and every renderer ignored it — so those
+        // sessions showed the raw payload and nothing else, while the modes
+        // that emit a sibling text part read fine.
+        resultText={resultText}
       />
     );
 
