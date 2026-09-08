@@ -285,17 +285,20 @@ test("a REFUSED command is a structured result, not a thrown error", async () =>
   const { isContractResultForTests } = await import(
     "../src/commands/browser.js"
   );
-  // A contract outcome is claimed by its SHAPE, whatever the status code.
+  // THE SHAPE THE DOOR ACTUALLY SENDS. `/local-browser/command` answers
+  // `c.json(ran.result, ran.status)`, so the contract result is the whole body
+  // — not nested under `result`. Asserting the nested shape is what let this
+  // predicate ship inert: it agreed with itself and never with the server.
   assert.equal(
-    isContractResultForTests({ result: { status: "refused" } }),
+    isContractResultForTests({ status: "refused", commandId: "c1" }),
     true,
   );
   assert.equal(
-    isContractResultForTests({ result: { status: "unknown" } }),
+    isContractResultForTests({ status: "unknown", commandId: "c1" }),
     true,
   );
   assert.equal(
-    isContractResultForTests({ result: { status: "executed", ok: false } }),
+    isContractResultForTests({ status: "executed", ok: false }),
     true,
   );
   // …and a genuine failure is NOT, so it still throws and stays loud.
@@ -303,7 +306,12 @@ test("a REFUSED command is a structured result, not a thrown error", async () =>
     isContractResultForTests({ error: "Local computer consent is required" }),
     false,
   );
-  assert.equal(isContractResultForTests({ result: { status: "wat" } }), false);
+  assert.equal(isContractResultForTests({ status: "wat" }), false);
+  // The old nested shape is not a contract result either — nothing sends it.
+  assert.equal(
+    isContractResultForTests({ result: { status: "refused" } }),
+    false,
+  );
   assert.equal(isContractResultForTests(null), false);
   assert.equal(isContractResultForTests("refused"), false);
 });

@@ -200,9 +200,15 @@ async function post(
  */
 function isContractResult(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) return false;
-  const result = (payload as { result?: unknown }).result;
-  if (typeof result !== "object" || result === null) return false;
-  const status = (result as { status?: unknown }).status;
+  // AT THE TOP LEVEL, because that is what the door sends: the command route
+  // answers `c.json(ran.result, ran.status)`, so the body IS the result.
+  //
+  // This looked for a nested `result` at first — a shape no route produces —
+  // which quietly made this predicate never true and the whole pass-through
+  // inert: every refusal and unknown went on being thrown as a transport
+  // error. The test agreed with the bug because it fed the predicate the same
+  // invented shape instead of the one the server sends.
+  const status = (payload as { status?: unknown }).status;
   return status === "executed" || status === "refused" || status === "unknown";
 }
 
