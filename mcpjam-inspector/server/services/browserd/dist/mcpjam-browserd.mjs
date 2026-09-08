@@ -3576,7 +3576,7 @@ var ChromiumDriver = class {
         }
         for (const [index, field] of fields.entries()) {
           stillOurs();
-          await this.fillOneField(page, field, index);
+          await this.fillOneField(page, field, index, stillOurs);
         }
         if (action.submit) {
           stillOurs();
@@ -3649,7 +3649,7 @@ var ChromiumDriver = class {
    * is in and the model cannot see, so the error names the field that failed
    * AND the ones that went in before it.
    */
-  async fillOneField(page, field, index) {
+  async fillOneField(page, field, index, stillOurs) {
     try {
       await page.fillSelector(field.selector, field.value);
       return;
@@ -3661,6 +3661,7 @@ var ChromiumDriver = class {
           `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
         );
       }
+      stillOurs();
       try {
         await page.selectOption(field.selector, field.value);
       } catch (selectError) {

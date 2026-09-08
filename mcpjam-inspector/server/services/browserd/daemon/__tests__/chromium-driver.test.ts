@@ -1294,6 +1294,44 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(res.error).toContain("partway through");
   });
 
+  it("does not run the <select> FALLBACK into a browser taken mid-fill", async () => {
+    // The fallback is a page write on the far side of an await that can run
+    // for the whole act timeout — the longest window in a composite, and the
+    // one a per-field check at the top of the loop does not cover.
+    const lease = new HandoffLease();
+    const page = fakePage({
+      url: "https://x.test/",
+      // The person takes the browser while this field's fill is in flight; the
+      // fill then refuses the way a `<select>` does.
+      actErrorFor: (entry) => {
+        if (entry !== "fill:#size:L") return undefined;
+        lease.acquire("rail-1", 60_000);
+        return new Error(
+          "page.fill: Error: Element is not an <input>, <textarea> or [contenteditable] element",
+        );
+      },
+    });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context, { lease });
+    await driver.execute(cmd({ kind: "navigate", url: "https://x.test/" }));
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "fill_form",
+        fields: [{ selector: "#size", value: "L" }],
+      }),
+    );
+
+    expect(res.leaseBlocked).toBe(true);
+    // The refusal keeps its own shape rather than being relabelled a field
+    // failure — that flag is what the handler maps to 423.
+    expect(res.error).toMatch(/^lease_held:/);
+    expect(res.error).not.toContain("fill_form_failed");
+    // And the dropdown was never touched.
+    expect(page.calls.acts).toEqual(["fill:#size:L"]);
+  });
+
   it("does not press Enter into a browser taken between the text and the submit", async () => {
     const lease = new HandoffLease();
     const page = fakePage({ url: "https://x.test/" });

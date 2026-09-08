@@ -647,7 +647,7 @@ export class ChromiumDriver implements BrowserDriver {
         }
         for (const [index, field] of fields.entries()) {
           stillOurs();
-          await this.fillOneField(page, field, index);
+          await this.fillOneField(page, field, index, stillOurs);
         }
         if (action.submit) {
           stillOurs();
@@ -742,6 +742,7 @@ export class ChromiumDriver implements BrowserDriver {
     page: DriverPage,
     field: { selector: string; value: string },
     index: number,
+    stillOurs: () => void,
   ): Promise<void> {
     try {
       await page.fillSelector(field.selector, field.value);
@@ -755,6 +756,13 @@ export class ChromiumDriver implements BrowserDriver {
             (index > 0 ? `; fields 1..${index} were filled` : ""),
         );
       }
+      // OUTSIDE the try below, and re-asked at all because the fill we just
+      // waited on can take the whole act timeout — long enough for someone to
+      // take the browser, after which `selectOption` is a page write into
+      // their hands. Outside, because the catch turns everything it sees into
+      // `fill_form_failed`, and a handoff relabelled as a field failure loses
+      // the flag that makes it a 423 and drops the turn's cached tokens.
+      stillOurs();
       try {
         await page.selectOption(field.selector, field.value);
       } catch (selectError) {
