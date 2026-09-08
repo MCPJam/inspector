@@ -51,6 +51,16 @@ import { createWebTestApp } from "./helpers/test-app.js";
  */
 
 const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE"]);
+const BODYLESS_METHODS = new Set(["GET", "HEAD", "DELETE"]);
+/** What an `.all()` route accepts, so every branch of one gets probed. */
+const ALL_ROUTE_METHODS = [
+  "POST",
+  "GET",
+  "HEAD",
+  "PUT",
+  "PATCH",
+  "DELETE",
+];
 
 /**
  * Routes that correctly return a SUCCESS to a caller with no `Authorization`
@@ -95,20 +105,17 @@ function concretePath(path: string): string {
  * question the sweep actually cares about — "can an anonymous caller get a
  * response here" — and it is why `harnessMcp.all("/:serverId")` is now covered.
  */
-const UNROUTED = "__probe_unrouted__";
+const UNROUTED_HEADER = "x-probe-unrouted";
 
 function withSentinel(app: Hono): Hono {
-  app.notFound((c) => c.json({ [UNROUTED]: true }, 404));
+  // On a HEADER, not in the body: `HEAD` responses carry no body, and reading
+  // the marker out of JSON would make every unrouted HEAD look like an answer.
+  app.notFound((c) => c.body(null, 404, { [UNROUTED_HEADER]: "1" }));
   return app;
 }
 
-async function isUnrouted(response: Response): Promise<boolean> {
-  if (response.status !== 404) return false;
-  try {
-    return (await response.clone().json())?.[UNROUTED] === true;
-  } catch {
-    return false;
-  }
+function isUnrouted(response: Response): boolean {
+  return response.headers.get(UNROUTED_HEADER) === "1";
 }
 
 type Probe = {
@@ -135,7 +142,7 @@ function probes(): Probe[] {
     seen.add(key);
     out.push({
       key,
-      methods: isConcreteVerb ? [method] : ["POST", "GET"],
+      methods: isConcreteVerb ? [method] : ALL_ROUTE_METHODS,
       path: `/api/web${concretePath(route.path)}`,
       isConcreteVerb,
     });
@@ -143,22 +150,31 @@ function probes(): Probe[] {
   return out;
 }
 
-/** The first response from any method that something actually answered. */
-async function probeResponse(
+/**
+ * EVERY method that answered, not the first.
+ *
+ * An `.all()` handler is free to branch on the verb, and one of those branches
+ * answering 2xx to an anonymous caller is exactly the hole this suite hunts.
+ * `harnessMcp.all("/:serverId")` is that shape today: POST speaks JSON-RPC
+ * while GET/HEAD return a 200 event-stream. Stopping at the first answer would
+ * check POST, see a refusal, and never look at the branch that returns 200.
+ */
+async function probeResponses(
   app: Hono,
   probe: Probe
-): Promise<{ method: string; response: Response } | null> {
+): Promise<Array<{ method: string; response: Response }>> {
+  const answered: Array<{ method: string; response: Response }> = [];
   for (const method of probe.methods) {
     const response = await app.request(probe.path, {
       method,
       headers: { "Content-Type": "application/json" },
       // A body for the verbs that take one, so a route cannot appear to refuse
       // merely because its parse failed.
-      ...(method === "GET" || method === "DELETE" ? {} : { body: "{}" }),
+      ...(BODYLESS_METHODS.has(method) ? {} : { body: "{}" }),
     });
-    if (!(await isUnrouted(response))) return { method, response };
+    if (!isUnrouted(response)) answered.push({ method, response });
   }
-  return null;
+  return answered;
 }
 
 describe("/api/web — credential-less requests", () => {
@@ -183,7 +199,8 @@ describe("/api/web — credential-less requests", () => {
 
     for (const probe of probes()) {
       if (!probe.isConcreteVerb) continue;
-      if (!(await probeResponse(app, probe))) unreachable.push(probe.key);
+      const answered = await probeResponses(app, probe);
+      if (answered.length === 0) unreachable.push(probe.key);
     }
 
     expect(unreachable).toEqual([]);
@@ -196,14 +213,13 @@ describe("/api/web — credential-less requests", () => {
     for (const probe of probes()) {
       if (PUBLIC_SUCCESS_ROUTES.has(probe.key)) continue;
 
-      const answered = await probeResponse(app, probe);
-      // Nothing answered: a middleware-only mount, not an endpoint. The
-      // verb-registered routes are held to reachability in the test above.
-      if (!answered) continue;
-      const { response } = answered;
-
-      if (response.status >= 200 && response.status < 300) {
-        succeeded.push(`${probe.key} -> ${response.status}`);
+      // Every method that answered is checked. An empty list is a
+      // middleware-only mount, not an endpoint; the verb-registered routes are
+      // held to reachability in the test above.
+      for (const { method, response } of await probeResponses(app, probe)) {
+        if (response.status >= 200 && response.status < 300) {
+          succeeded.push(`${probe.key} [${method}] -> ${response.status}`);
+        }
       }
     }
 
