@@ -8,9 +8,9 @@
  *   POST /lease              → take control / keep it / hand it back
  *   POST /input              → the held browser gets this person's pointer/keys
  *   POST /keepalive          → "this panel is still open"
- *   GET  /page-tools         → the WebMCP tools the current page offers, read
+ *   GET  /page-tools         → the WebMCP tools the current page declares, read
  *                              with the same observation the model's
- *                              `browser_webmcp_tools` sends (Tools pane)
+ *                              the chat turn's page-tool peek sends (Tools pane)
  *
  * Auth mirrors `computer-upload.ts`: the browser mints a ~60s Convex browser
  * token (`projectComputers.mintBrowserToken`) and sends it as
@@ -541,7 +541,7 @@ export function createComputerBrowserPanelRoutes(
    * beside the MCP servers' tools.
    *
    * READ-ONLY, and sent as the same `observe {mode:"webmcp_tools"}` the model's
-   * `browser_webmcp_tools` tool sends, so the pane shows exactly the list the
+   * chat turn's own page-tool peek sends, so the pane shows exactly the list the
    * model would be told. Goes through the daemon's ordinary command queue (an
    * observation is admitted between the agent's own commands) and is refused
    * under a held lease like any other observation — UNLESS the lease is this

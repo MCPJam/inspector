@@ -7,6 +7,7 @@ import {
   type ToolPolicySnapshot,
   type ToolSafetyClassification,
 } from "@mcpjam/sdk/contract";
+import { isWebmcpPageToolName } from "@/shared/declared-tools";
 import type { BenchmarkArtifactLedger } from "./artifact-ledger.js";
 import {
   BENCHMARK_ARTIFACT_PREFIX,
@@ -405,6 +406,61 @@ export function createToolPolicyGate(args: {
             : undefined;
         const isExplicitlyDenied =
           args.policy.deny?.includes(toolName) === true;
+        // A PAGE TOOL IS NEVER READ-ONLY, whatever the page says.
+        //
+        // It has no `_serverId` (it is not an MCP tool) so it would otherwise
+        // fall straight through this gate — and a suite that declared
+        // `readOnly` would silently run third-party code on a live browser.
+        // The classifier that normally decides this reads MCP annotations, and
+        // a page's are worthless for the purpose: they are claims by the party
+        // whose code would run, and Chromium does not carry them through for
+        // imperative registrations at all.
+        if (isWebmcpPageToolName(toolName)) {
+          // `allow` is the author's explicit override and is honoured here as
+          // everywhere else; `deny` and `readOnly` mode both refuse.
+          const allowed =
+            args.policy.allow?.includes(toolName) === true ||
+            (args.policy.mode !== "readOnly" && !isExplicitlyDenied);
+          if (allowed) continue;
+          const reason = isExplicitlyDenied
+            ? ("denyList" as const)
+            : ("readOnlyModeUnclassified" as const);
+          wrapped[toolName] = {
+            ...tool,
+            execute: async (
+              _input: unknown,
+              options?: { toolCallId?: string },
+            ) => {
+              recordBlock({
+                toolName,
+                reason,
+                // UNKNOWN, not `destructive`. Honest: nothing on this side has
+                // any idea what a page's tool does, and claiming otherwise
+                // would put a classification in the record that no evidence
+                // supports.
+                classification: "unknown",
+                ...(options?.toolCallId
+                  ? { toolCallId: options.toolCallId }
+                  : {}),
+                detail:
+                  "a tool the open web page declared; its safety cannot be " +
+                  "classified from the page's own annotations",
+              });
+              return {
+                content: [
+                  {
+                    type: "text",
+                    text:
+                      `Call blocked by tool policy: ${toolName} is a tool the ` +
+                      "open page declared, and this run does not permit one.",
+                  },
+                ],
+                [TOOL_POLICY_BLOCK_MARKER]: true,
+              };
+            },
+          };
+          continue;
+        }
         if (!serverId && !isExplicitlyDenied) continue;
         const decision = decideToolPolicy({
           toolName,

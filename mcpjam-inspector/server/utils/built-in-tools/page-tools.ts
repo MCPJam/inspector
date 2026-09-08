@@ -3,12 +3,15 @@
  *
  * The model used to reach a page's tools through two generic verbs: list them
  * with `browser_webmcp_tools`, then call one by name through
- * `browser_webmcp_invoke` with an untyped `input` blob. That is two wasted
- * round trips per page and an argument nobody checks — `input` is
+ * `browser_webmcp_invoke` with an untyped `input` blob. That was two wasted
+ * round trips per page and an argument nobody checks — `input` was
  * `z.unknown()`, Chrome does not validate an invocation against the registered
  * `inputSchema` (WebMCP spec issue #92), and the page's `execute` is handed
  * whatever arrived. On the pizza-maker demo the model's invoke failed twice
  * and it fell back to clicking.
+ *
+ * The list verb is gone entirely (every observation now reports what the page
+ * has); the invoke verb survives only where a turn cannot grow its tool set.
  *
  * Here each page tool is its own tool: real name, the page's own schema
  * advertised verbatim, arguments validated before any command leaves this

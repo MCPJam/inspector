@@ -363,7 +363,9 @@ export function pageToolsSnapshotFrom(peek: PageToolsPeek | undefined):
   return {
     tools: peek.tools,
     ...peek.binding,
-    ...(peek.revision ? { revision: peek.revision.revision, hash: peek.revision.hash } : {}),
+    ...(peek.revision
+      ? { revision: peek.revision.revision, hash: peek.revision.hash }
+      : {}),
     ...(peek.url ? { url: peek.url } : {}),
   };
 }

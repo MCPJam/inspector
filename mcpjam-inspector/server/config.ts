@@ -182,18 +182,19 @@ export function hostedBrowserEnabled(
 /**
  * How a page's WebMCP tools reach the model.
  *
- *   - `verbs` (default) — today's behaviour, byte for byte: the model lists a
- *     page's tools with `browser_webmcp_tools` and calls one by name through
- *     `browser_webmcp_invoke` with an untyped `input`.
- *   - `first_class` — each page tool becomes its own server-executed
- *     `webmcp_*` model tool, with the page's schema advertised verbatim,
- *     arguments validated before any command leaves this process, and an
- *     ordinary approval pill.
+ *   - `first_class` (default) — each page tool is its own server-executed
+ *     `webmcp_*` model tool: the page's schema advertised verbatim, arguments
+ *     validated before any command leaves this process, an ordinary approval
+ *     pill, and a binding that names the exact registration on the exact
+ *     document generation it was listed from.
+ *   - `verbs` — the pre-first-class behaviour, for a deployment that needs to
+ *     go back: the model calls `browser_webmcp_invoke` by name with an untyped
+ *     `input`, and nothing validates it (Chrome does not check an invocation
+ *     against the registered `inputSchema` either).
  *
- * A MODE rather than a boolean because the rollback has to be exact. "Flag off
- * restores today's behaviour" is a claim somebody will rely on at 3am, and it
- * only holds if the off position leaves the six verbs and their descriptions
- * untouched — which a boolean that also gated half a refactor would not.
+ * A MODE rather than a boolean because the rollback has to be exact, and
+ * because the two positions are no longer "new thing on/off" — `verbs` is a
+ * named behaviour somebody may deliberately choose, not merely an absence.
  *
  * READ AT CALL TIME, like `hostedBrowserEnabled` beside it: flipped
  * per-process in staging and per-test, and a module constant would freeze
@@ -204,9 +205,11 @@ export type WebmcpPageToolsMode = "verbs" | "first_class";
 export function webmcpPageToolsMode(
   env: NodeJS.ProcessEnv = process.env,
 ): WebmcpPageToolsMode {
-  return env.MCPJAM_WEBMCP_PAGE_TOOLS === "first_class"
-    ? "first_class"
-    : "verbs";
+  // DEFAULTS ON. The dark period is over: a page's tools reach the model as
+  // real tools unless a deployment says otherwise, and `verbs` is the rollback
+  // — one environment variable, no deploy, and the six `browser_*` tools come
+  // back exactly as they were.
+  return env.MCPJAM_WEBMCP_PAGE_TOOLS === "verbs" ? "verbs" : "first_class";
 }
 
 /**

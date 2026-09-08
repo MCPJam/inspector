@@ -1,3 +1,7 @@
+import {
+  browserPageToolsKey,
+  noteWebmcpStats,
+} from "@/stores/browser-page-tools-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -367,6 +371,10 @@ export function LocalBrowserBody({
           },
           onHeartbeat: (daemon) => {
             if (daemon) paneFrameStats.noteDaemonStats(daemon as never);
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "local"),
+              daemon as never,
+            );
           },
           onFatal: () => {
             // A reader that has lost its place in a byte stream can never find
@@ -438,6 +446,13 @@ export function LocalBrowserBody({
               return;
             }
             if (parsed.type === "stats") {
+              // The page's tools, as a change signal. Synthesized by the local
+              // relay (there is no heartbeat in-process to ride), so the Tools
+              // pane is live on the engine a developer debugs against too.
+              noteWebmcpStats(
+                browserPageToolsKey(projectId, "local"),
+                parsed.daemon as never,
+              );
               paneFrameStats.noteRelayStats({
                 framesIn: parsed.framesIn ?? 0,
                 ...(parsed.framesOut !== undefined

@@ -261,13 +261,22 @@ export const BROWSER_BUILT_IN_TOOL_ID = "browser";
  */
 export const BROWSER_OBSERVATION_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_observe",
-  "browser_webmcp_tools",
 ]);
 
 export const BROWSER_INTERACTIVE_TOOL_NAMES: ReadonlySet<string> = new Set([
   "browser_navigate",
   "browser_act",
   "browser_tabs",
+  /**
+   * Kept ONLY for engines that cannot grow their tool set inside a turn (BYOK,
+   * the harness). Where they can, a page's tools are advertised as real
+   * `webmcp_*` tools instead — typed, validated and bound to a document
+   * generation — and this untyped by-name call is not built at all.
+   *
+   * Its sibling `browser_webmcp_tools` is gone entirely: a whole model step
+   * spent asking "does this page have tools?" answered a question the previous
+   * step's own result now carries.
+   */
   "browser_webmcp_invoke",
 ]);
 

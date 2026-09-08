@@ -221,6 +221,25 @@ export interface FrameStreamStats {
    * the picture would say so.
    */
   tabs?: { active?: string; list?: Array<{ id: string; url: string }> };
+  /**
+   * The page's WebMCP tools, as a CHANGE SIGNAL rather than a list.
+   *
+   * `{revision, hash, count}` and nothing else: the definitions are big
+   * (a declarative `<select>` becomes an `anyOf` branch per option) and this
+   * rides an 8 KiB heartbeat several times a second. The pane fetches the real
+   * list once, when the revision moves — which turns a poll into an event and
+   * is the only reason the Tools pane can be live at all without a second
+   * stream.
+   *
+   * Additive, like `tabs` beside it: an older reader slices this payload by its
+   * length and discards what it does not know.
+   */
+  webmcp?: {
+    revision: number;
+    hash: string;
+    count: number;
+    url?: string;
+  };
 }
 
 export interface FrameStreamEnd {

@@ -180,3 +180,78 @@ describe("createToolPolicyGate", () => {
     ]);
   });
 });
+
+describe("createToolPolicyGate — a page's own tools", () => {
+  /**
+   * A `webmcp_*` tool has no `_serverId` — it is not an MCP tool — so it falls
+   * straight through the gate's ordinary path. Under a `readOnly` suite that
+   * would mean third-party code running on a live browser in a run that
+   * declared it only looks.
+   *
+   * It cannot be classified the usual way either: the classifier reads MCP
+   * annotations, and a page's are claims by the party whose code would run —
+   * which Chromium does not carry through for imperative registrations at all.
+   */
+  function pageTool() {
+    const execute = vi.fn().mockResolvedValue({ ok: true });
+    return { execute, tools: { webmcp_pay: { execute } } as never };
+  }
+
+  it("refuses a page tool under a readOnly suite", async () => {
+    const { execute, tools } = pageTool();
+    const gate = createToolPolicyGate({
+      policy: { mode: "readOnly" },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap(tools);
+    const result = await wrapped.webmcp_pay.execute!({}, {} as never);
+    expect(execute).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ mcpjamPolicyBlock: true });
+    expect(gate.blocks[0]).toMatchObject({
+      toolName: "webmcp_pay",
+      reason: "readOnlyModeUnclassified",
+      // UNKNOWN, not `destructive`. Nothing on this side has any idea what a
+      // page's tool does, and a classification no evidence supports is worse
+      // in the record than an honest "unknown".
+      classification: "unknown",
+    });
+  });
+
+  it("refuses a page tool a suite denied by name", async () => {
+    const { execute, tools } = pageTool();
+    const gate = createToolPolicyGate({
+      policy: { mode: "default", deny: ["webmcp_pay"] },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap(tools);
+    await wrapped.webmcp_pay.execute!({}, {} as never);
+    expect(execute).not.toHaveBeenCalled();
+    expect(gate.blocks[0]).toMatchObject({ reason: "denyList" });
+  });
+
+  it("leaves a page tool alone under `default` mode", async () => {
+    // `default` denies only what an annotation marks destructive. A page tool
+    // is unclassified, and unclassified is allowed there — the same answer any
+    // other unannotated tool gets.
+    const { execute, tools } = pageTool();
+    const gate = createToolPolicyGate({
+      policy: { mode: "default" },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap(tools);
+    await wrapped.webmcp_pay.execute!({}, {} as never);
+    expect(execute).toHaveBeenCalled();
+    expect(gate.blocks).toHaveLength(0);
+  });
+
+  it("honours an explicit allow override", async () => {
+    const { execute, tools } = pageTool();
+    const gate = createToolPolicyGate({
+      policy: { mode: "readOnly", allow: ["webmcp_pay"] },
+      annotations: new Map(),
+    });
+    const wrapped = gate.wrap(tools);
+    await wrapped.webmcp_pay.execute!({}, {} as never);
+    expect(execute).toHaveBeenCalled();
+  });
+});

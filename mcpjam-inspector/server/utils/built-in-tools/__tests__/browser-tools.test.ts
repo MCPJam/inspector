@@ -122,15 +122,17 @@ describe("buildBrowserTools — fail-closed advertisement", () => {
     expect(suppressed[0].reason).toContain("approval");
   });
 
-  it("advertises the six verbs on an attested surface, all gated", () => {
+  it("advertises the verbs on an attested surface, all gated", () => {
     const { result } = build();
+    // FIVE, not six: `browser_webmcp_tools` is gone. A whole model step spent
+    // asking "does this page have tools?" answered a question every
+    // observation's own result now carries.
     expect(Object.keys(result!.tools).sort()).toEqual([
       "browser_act",
       "browser_navigate",
       "browser_observe",
       "browser_tabs",
       "browser_webmcp_invoke",
-      "browser_webmcp_tools",
     ]);
     // Everything gates by default: a page is third-party code and the browser
     // is signed into things, so there is nothing trustworthy to relax on.
@@ -159,15 +161,11 @@ describe("buildBrowserTools — unattended policy", () => {
         policy: { mode: "read_only" },
       },
     });
-    expect(Object.keys(result!.tools).sort()).toEqual([
-      "browser_observe",
-      "browser_webmcp_tools",
-    ]);
+    expect(Object.keys(result!.tools).sort()).toEqual(["browser_observe"]);
     // Refusing to BUILD the interactive tools is stronger than gating them:
     // with nobody to ask, a gated tool in an unattended run would just run.
     expect([...result!.approvals.freeNames].sort()).toEqual([
       "browser_observe",
-      "browser_webmcp_tools",
     ]);
     expect(result!.approvals.requiredNames.size).toBe(0);
   });
@@ -176,8 +174,10 @@ describe("buildBrowserTools — unattended policy", () => {
     const { result } = build({
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(6);
-    expect(result!.approvals.requiredNames.size).toBe(6);
+    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(result!.approvals.requiredNames.size).toBe(
+      BROWSER_TOOL_NAMES.length,
+    );
   });
 
   it("an allowlist policy builds only the named tools", () => {
@@ -1009,12 +1009,12 @@ describe("buildBrowserTools — an unattended hosted run has no box of its own",
       engine: "local",
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(6);
+    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
   });
 
   it("leaves an INTERACTIVE hosted turn alone — one member, one computer", () => {
     const { result } = build({ engine: "hosted" });
-    expect(Object.keys(result!.tools)).toHaveLength(6);
+    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
   });
 
   it("BUILDS them when the run brought a box of its own", () => {
@@ -1023,7 +1023,7 @@ describe("buildBrowserTools — an unattended hosted run has no box of its own",
       approvalDelivery: { kind: "unattended", policy: { mode: "allow_all" } },
       sandboxTarget: { sandboxRowId: "row_1", sandboxId: "sbx_1" },
     });
-    expect(Object.keys(result!.tools)).toHaveLength(6);
+    expect(Object.keys(result!.tools)).toHaveLength(BROWSER_TOOL_NAMES.length);
   });
 
   it("ensureSession receives the sandbox target, and the run still names itself", () => {
@@ -1162,9 +1162,13 @@ describe("buildBrowserTools — an unattended run must name itself", () => {
 describe("the toolset's context footprint is pinned", () => {
   /**
    * Every byte of these definitions is sent on EVERY turn of every chat that
-   * has a browser attached, before the model has read a single page. Six tools
-   * each growing "one clarifying sentence" is how a toolset quietly doubles,
-   * and nothing else in this suite would notice.
+   * has a browser attached, before the model has read a single page. Five
+   * tools each growing "one clarifying sentence" is how a toolset quietly
+   * doubles, and nothing else in this suite would notice.
+   *
+   * This pin covers the VERBS only. A page's own `webmcp_*` tools are not in
+   * it and could not be: their size is the page's decision, which is what
+   * `WEBMCP_MAX_PAGE_TOOLS` and the per-schema byte cap bound instead.
    *
    * Raising a ceiling here is a deliberate review decision: say what the added
    * bytes buy the model, then move the number.
@@ -1180,21 +1184,25 @@ describe("the toolset's context footprint is pinned", () => {
     return new TextEncoder().encode(JSON.stringify(wire)).byteLength;
   }
 
-  it("keeps the six-tool advertisement under its ceiling", () => {
+  it("keeps the verb advertisement under its ceiling", () => {
     const { result } = build();
     const bytes = footprintBytes(result!.tools as any);
     expect(bytes).toBeGreaterThan(1_000); // the pin is measuring something real
-    // ~4.2 KB today. The headroom is deliberately thin: a ceiling with room
+    // ~4.0 KB today. The headroom is deliberately thin: a ceiling with room
     // for another whole tool in it is not a pin, it is a comment.
     //
     // Raised once, from 4_200, when observations started naming elements: the
     // ~400 bytes bought `filter`, `rootRef`, and the sentence that tells the
     // model refs are fresh on every observation. Without that sentence a model
     // holds a ref across an act and clicks whatever inherited the number.
+    //
+    // LOWERED to 4_100 when `browser_webmcp_tools` was deleted. Re-pinned
+    // rather than left where it was: a ceiling with a whole retired tool's
+    // worth of slack in it would let the next four sentences through unnoticed.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(4_600);
+    ).toBeLessThanOrEqual(4_100);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {
@@ -1299,11 +1307,12 @@ describe("buildBrowserTools — first-class page tools", () => {
     }
   }
 
-  it("FLAG OFF: page tools are ignored and the six verbs are untouched", () => {
-    // The rollback claim, pinned. "Unset the variable and you are back to
-    // yesterday" is something somebody will rely on at 3am.
+  it("MODE=verbs: page tools are ignored and the verbs are untouched", () => {
+    // The rollback claim, pinned. One environment variable, no deploy, and the
+    // model is back to calling `browser_webmcp_invoke` by name — which is
+    // something somebody will rely on at 3am.
     const { ensureSession } = fakeSession(async () => OK);
-    const built = withFlag(undefined, () =>
+    const built = withFlag("verbs", () =>
       buildBrowserTools({
         authHeader: "Bearer t",
         projectId: "p1",
@@ -1348,7 +1357,6 @@ describe("buildBrowserTools — first-class page tools", () => {
         dynamicPageTools: true,
       }),
     )!;
-    expect(Object.keys(dynamic.tools)).not.toContain("browser_webmcp_tools");
     expect(Object.keys(dynamic.tools)).not.toContain("browser_webmcp_invoke");
 
     // An engine that CANNOT discover a page's tools mid-turn keeps them:

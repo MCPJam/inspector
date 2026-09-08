@@ -558,6 +558,17 @@ var BrowserdRequestHandler = class {
   tabsSnapshot() {
     return this.driver.tabsSnapshot?.();
   }
+  /**
+   * The driven tab's page-tool set as a CHANGE SIGNAL, for a heartbeat.
+   *
+   * A cache read: it touches no page, which is the property that makes it safe
+   * on a beat that fires several times a second. `undefined` from a driver with
+   * no WebMCP, which the pane reads as "this engine cannot tell you" rather
+   * than as "no tools".
+   */
+  webmcpSnapshot() {
+    return this.driver.webmcpToolsSnapshot?.();
+  }
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */
   attachFrameCounters(watchers) {
     this.watchers = watchers;
@@ -1134,6 +1145,14 @@ var WRITE_STALL_MS = 15e3;
 var MAX_CONCURRENT_STREAMS = 4;
 var PROBE_BEATS = 3;
 var PROBE_INTERVAL_MS = 1e3;
+function statsWebmcp(revision) {
+  return {
+    revision: revision.revision,
+    hash: revision.hash,
+    count: revision.count,
+    ...revision.url ? { url: revision.url } : {}
+  };
+}
 function createFrameStreamHost(handler, options = {}) {
   const heartbeatMs = options.heartbeatMs ?? HEARTBEAT_MS;
   const stallMs = options.stallMs ?? WRITE_STALL_MS;
@@ -1287,6 +1306,7 @@ function createFrameStreamHost(handler, options = {}) {
     const beat = () => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
+      const webmcp = handler.webmcpSnapshot?.();
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -1300,6 +1320,7 @@ function createFrameStreamHost(handler, options = {}) {
             // under them — and kiosk hides Chromium's own tab strip, so nothing
             // else here would say so.
             ...tabs ? { tabs } : {},
+            ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {},
             // `mpdecimate` means an idle page produces NO frames at all, so
             // silence here is a quiet page rather than a stall. Saying which
             // is what stops an adaptive client stepping the quality down on a
@@ -1477,7 +1498,12 @@ function createFrameStreamHost(handler, options = {}) {
             const stats = statsFor(live, lastFramesIn);
             lastFramesIn = stats.framesIn;
             const tabs = handler.tabsSnapshot?.();
-            return tabs ? { ...stats, tabs } : stats;
+            const webmcp = handler.webmcpSnapshot?.();
+            return {
+              ...stats,
+              ...tabs ? { tabs } : {},
+              ...webmcp ? { webmcp: statsWebmcp(webmcp) } : {}
+            };
           })()
         })
       );

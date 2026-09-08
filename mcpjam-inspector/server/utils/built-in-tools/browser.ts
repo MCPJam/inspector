@@ -179,9 +179,9 @@ export interface BrowserToolsOptions {
    * harness takes its toolset as a constructor argument.
    *
    * It decides whether the LEGACY verbs stay: an engine that can discover a
-   * page's tools mid-turn does not need `browser_webmcp_tools`, while one that
-   * cannot must keep `browser_webmcp_invoke` for a page it navigated to after
-   * the turn started — otherwise turning this on would REMOVE a capability.
+   * page's tools mid-turn advertises them as tools, while one that cannot must
+   * keep `browser_webmcp_invoke` for a page it navigated to after the turn
+   * started — otherwise turning this on would REMOVE a capability.
    */
   dynamicPageTools?: boolean;
   /** Which provider's tool-schema subset to report page schemas against. */
@@ -211,15 +211,18 @@ export interface BrowserPageToolsSnapshot {
 export type BrowserEngine = "hosted" | "local";
 
 /**
- * The two verbs first-class page tools replace.
+ * The verb first-class page tools replace.
  *
- * `browser_webmcp_tools` becomes redundant the moment a page's tools are
- * advertised as tools — the model no longer has to ask what the page offers —
- * and `browser_webmcp_invoke` becomes a strictly worse way to call one:
- * untyped, unvalidated, and resolved by name against whatever carries it now.
+ * `browser_webmcp_invoke` is a strictly worse way to call a page tool once the
+ * page's own tools are advertised as tools: untyped, unvalidated, and resolved
+ * by name against whatever carries that name now. It survives only on engines
+ * that cannot grow their tool set inside a turn, where it is the only way to
+ * reach a page the model navigated to after the turn started.
+ *
+ * `browser_webmcp_tools` is not here because it is gone from every engine — see
+ * `BROWSER_INTERACTIVE_TOOL_NAMES`.
  */
 const LEGACY_WEBMCP_TOOL_NAMES: ReadonlySet<string> = new Set([
-  "browser_webmcp_tools",
   "browser_webmcp_invoke",
 ]);
 
@@ -743,12 +746,13 @@ export function buildBrowserTools(
     return { ...outcome, tabId };
   };
 
-  // Whether this turn actually advertises the page's tools, so an observation
-  // can say so. Computed once: it is a property of the turn, not of a call.
-  const pageToolsAdvertised =
-    firstClassPageTools && (opts.pageTools?.tools.length ?? 0) > 0;
+  // What an observation says about the page's tools. Computed once: it is a
+  // property of the TURN (which engine, which mode), not of a call.
   const presented = (outcome: CommandOutcome & { tabId: string }) =>
-    present(outcome, { pageToolsAdvertised });
+    present(outcome, {
+      firstClass: firstClassPageTools,
+      dynamic: opts.dynamicPageTools === true,
+    });
 
   const tools: ToolSet = {};
   const built: string[] = [];
@@ -988,24 +992,6 @@ export function buildBrowserTools(
   );
 
   add(
-    "browser_webmcp_tools",
-    tool({
-      description:
-        "List the WebMCP tools the current page offers, if any. Pages that expose tools " +
-        "let you act through their own API instead of clicking; most pages offer none.",
-      inputSchema: z.object({ tabId: z.string().optional() }),
-      needsApproval: needsApproval && !readOnly,
-      execute: async ({ tabId }, { abortSignal }) =>
-        presented(
-          await send(
-            { kind: "observe", mode: "webmcp_tools" },
-            { tabId, signal: abortSignal },
-          ),
-        ),
-    }),
-  );
-
-  add(
     "browser_webmcp_invoke",
     tool({
       description: firstClassPageTools
@@ -1018,7 +1004,8 @@ export function buildBrowserTools(
           "navigated to during this turn: a page's tools are otherwise available to you " +
           "directly as `webmcp_*` tools, which are typed and validated — prefer one of " +
           "those whenever it exists."
-        : "Call one of the WebMCP tools the current page offers (see browser_webmcp_tools).",
+        : "Call one of the WebMCP tools the current page offers. Every observation " +
+          "reports what the page has.",
       inputSchema: z.object({
         toolName: z.string(),
         input: z.unknown().optional(),
@@ -1160,10 +1147,7 @@ function createPageToolRefresher(args: {
       // mode, leaves the set exactly as it was. Advertising nothing because a
       // read failed would silently take a capability away mid-turn.
       if (!revision) return undefined;
-      if (
-        revision.revision === lastRevision &&
-        revision.hash === lastHash
-      ) {
+      if (revision.revision === lastRevision && revision.hash === lastHash) {
         return undefined;
       }
       lastRevision = revision.revision;
@@ -1520,7 +1504,7 @@ function resultUrl(output: unknown): string | undefined {
 }
 
 function isObservational(name: string): boolean {
-  return name === "browser_observe" || name === "browser_webmcp_tools";
+  return name === "browser_observe";
 }
 
 /**
@@ -1753,7 +1737,7 @@ function takeScreenshot(rest: Record<string, unknown>): string | undefined {
 
 function present(
   outcome: CommandOutcome & { tabId: string },
-  options: { pageToolsAdvertised?: boolean } = {},
+  options: { firstClass?: boolean; dynamic?: boolean } = {},
 ): Record<string, unknown> {
   if (!outcome.ok) {
     return {
@@ -1771,31 +1755,74 @@ function present(
           note: "the page was still loading when this was captured; observe again if it looks incomplete",
         }
       : {}),
-    ...pageToolsNote(outcome, options.pageToolsAdvertised === true),
+    ...pageToolsNote(outcome, {
+      firstClass: options.firstClass === true,
+      dynamic: options.dynamic === true,
+    }),
   };
 }
 
 /**
- * Tell the model, once per observation, that this page's tools are already
- * tools it can call.
+ * WHAT THE PAGE OFFERS, on every observation.
  *
- * Without it a model that just navigated has no way to know: the tools appear
- * on the NEXT step, and nothing in the result it is reading now says so — so
- * it reasons about the page it can see using only the six verbs, and clicks.
+ * This is what replaced `browser_webmcp_tools`. A round trip whose only job is
+ * to answer "does this page have tools?" was a whole model step spent on a
+ * question the result of the PREVIOUS step could have answered for free — so
+ * the answer now rides every observation instead.
  *
- * The count and names go INSIDE the fence (a page chooses its own names); the
- * sentence is ours and sits outside it.
+ * It has to say different things to two kinds of engine, which is why the
+ * sentence is computed rather than fixed:
+ *
+ *   - an engine that can grow its tool set inside a turn advertises these as
+ *     real `webmcp_*` tools on its next step, so the model is told to call one
+ *     by name and NOT to click;
+ *   - one that cannot (BYOK, the harness) only has them from the NEXT turn, so
+ *     for a page reached mid-turn the names are the discovery it would
+ *     otherwise have lost with the list tool, and `browser_webmcp_invoke` is
+ *     the way to use them.
+ *
+ * The count and the NAMES go inside the page-content fence — a page chooses
+ * its own tool names, and a name is a perfectly good place to write a sentence
+ * addressed to a model. The instruction is ours and sits outside it.
  */
 function pageToolsNote(
   outcome: CommandOutcome,
-  advertised: boolean,
+  options: { firstClass: boolean; dynamic: boolean },
 ): Record<string, unknown> {
   const revision = outcome.webmcpTools;
-  if (!advertised || !revision || revision.count === 0) return {};
+  if (!options.firstClass || !revision || revision.count === 0) return {};
+  const names = pageToolNamesFrom(outcome.output);
   return {
-    webmcpTools: { count: revision.count },
-    pageToolsNote:
-      "This page's tools are available to you directly as `webmcp_*` tools; " +
-      "call one rather than clicking. They change when you navigate.",
+    webmcpTools: {
+      count: revision.count,
+      ...(names.length > 0 ? { names } : {}),
+    },
+    pageToolsNote: options.dynamic
+      ? "This page's tools are available to you directly as `webmcp_*` tools — " +
+        "call one by name rather than clicking. They change when you navigate."
+      : "This page offers WebMCP tools. Call one with `browser_webmcp_invoke`, " +
+        "using the name listed above.",
   };
+}
+
+/**
+ * The tool names an observation happened to carry.
+ *
+ * Only `observe {mode:"webmcp_tools"}` has them; every other observation
+ * reports a count and no list, which is the right trade — a name list on every
+ * screenshot would be a page's words repeated into a context that did not ask
+ * for them.
+ */
+function pageToolNamesFrom(output: unknown): string[] {
+  if (typeof output !== "object" || output === null) return [];
+  const tools = (output as { tools?: unknown }).tools;
+  if (!Array.isArray(tools)) return [];
+  return tools
+    .map((tool) =>
+      typeof tool === "object" && tool !== null
+        ? (tool as { name?: unknown }).name
+        : undefined,
+    )
+    .filter((name): name is string => typeof name === "string")
+    .slice(0, 64);
 }

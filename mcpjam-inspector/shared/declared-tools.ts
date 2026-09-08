@@ -139,9 +139,7 @@ const SEP = "\u0000";
 // ---------------------------------------------------------------------------
 
 export type DeclaredToolRegistrationKind =
-  | "declarative"
-  | "imperative"
-  | "unknown";
+  "declarative" | "imperative" | "unknown";
 
 export interface DeclaredToolAnnotations {
   readOnly?: boolean;
@@ -267,7 +265,8 @@ function fnv1a(input: string, seed: number): number {
   for (let index = 0; index < input.length; index += 1) {
     hash ^= input.charCodeAt(index);
     // The classic FNV prime, as the shift-and-add form that stays in 32 bits.
-    hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    hash +=
+      (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
     hash >>>= 0;
   }
   return hash >>> 0;
@@ -301,7 +300,8 @@ function canonicalJson(value: unknown, depth = 0): string {
   return `{${Object.keys(record)
     .sort()
     .map(
-      (key) => `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`,
+      (key) =>
+        `${JSON.stringify(key)}:${canonicalJson(record[key], depth + 1)}`,
     )
     .join(",")}}`;
 }
@@ -504,7 +504,9 @@ export function mintDeclaredToolNames(
   // Sorted so two reads of one page produce an identically-ORDERED set, not
   // merely an identical one: the tool list is serialized into the request, and a
   // reordering is a cache miss on every provider that keys on the prompt.
-  return minted.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  return minted.sort((a, b) =>
+    a.name < b.name ? -1 : a.name > b.name ? 1 : 0,
+  );
 }
 
 /** Is this a name this module minted for an agent-browser page tool? */
@@ -606,7 +608,9 @@ export function declaredToolsFromWebmcp(
   return tools.map((tool) => ({
     rawName: tool.name,
     description: tool.description ?? "",
-    ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+    ...(tool.inputSchema !== undefined
+      ? { inputSchema: tool.inputSchema }
+      : {}),
     ...(tool.origin !== undefined ? { origin: tool.origin } : {}),
     ...(tool.frameId !== undefined ? { frameId: tool.frameId } : {}),
     isMainFrame: tool.isMainFrame === true,
@@ -614,7 +618,9 @@ export function declaredToolsFromWebmcp(
       ? { registrationSeq: tool.registrationSeq }
       : {}),
     registrationKind: tool.registrationKind ?? "unknown",
-    ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+    ...(tool.annotations !== undefined
+      ? { annotations: tool.annotations }
+      : {}),
   }));
 }
 
@@ -684,7 +690,9 @@ export function toSerializedModelRequestTools(
   return minted.map((tool) => ({
     name: tool.name,
     description: tool.description,
-    ...(tool.inputSchema !== undefined ? { inputSchema: tool.inputSchema } : {}),
+    ...(tool.inputSchema !== undefined
+      ? { inputSchema: tool.inputSchema }
+      : {}),
   }));
 }
 
@@ -1025,7 +1033,10 @@ function checkConstAndEnum(
     );
   }
   const options = schema.enum;
-  if (Array.isArray(options) && !options.some((option) => jsonEqual(option, value))) {
+  if (
+    Array.isArray(options) &&
+    !options.some((option) => jsonEqual(option, value))
+  ) {
     // The allowed values are LISTED. A model that guessed an enum member wrong
     // and is told only "invalid" guesses again; told the members, it fixes the
     // call on the next step.
@@ -1033,7 +1044,9 @@ function checkConstAndEnum(
       `${at(path)} must be one of ${options
         .slice(0, 24)
         .map((option) => JSON.stringify(option))
-        .join(", ")}${options.length > 24 ? ", …" : ""}, but got ${describeValue(value)}.`,
+        .join(
+          ", ",
+        )}${options.length > 24 ? ", …" : ""}, but got ${describeValue(value)}.`,
     );
   }
 }
@@ -1045,10 +1058,14 @@ function checkString(
   state: ValidationState,
 ): void {
   if (typeof schema.minLength === "number" && value.length < schema.minLength) {
-    state.errors.push(`${at(path)} must be at least ${schema.minLength} characters.`);
+    state.errors.push(
+      `${at(path)} must be at least ${schema.minLength} characters.`,
+    );
   }
   if (typeof schema.maxLength === "number" && value.length > schema.maxLength) {
-    state.errors.push(`${at(path)} must be at most ${schema.maxLength} characters.`);
+    state.errors.push(
+      `${at(path)} must be at most ${schema.maxLength} characters.`,
+    );
   }
   if (typeof schema.pattern === "string") {
     let pattern: RegExp | null = null;
@@ -1086,18 +1103,24 @@ function checkNumber(
     typeof schema.exclusiveMinimum === "number" &&
     value <= schema.exclusiveMinimum
   ) {
-    state.errors.push(`${at(path)} must be greater than ${schema.exclusiveMinimum}.`);
+    state.errors.push(
+      `${at(path)} must be greater than ${schema.exclusiveMinimum}.`,
+    );
   }
   if (
     typeof schema.exclusiveMaximum === "number" &&
     value >= schema.exclusiveMaximum
   ) {
-    state.errors.push(`${at(path)} must be less than ${schema.exclusiveMaximum}.`);
+    state.errors.push(
+      `${at(path)} must be less than ${schema.exclusiveMaximum}.`,
+    );
   }
   if (typeof schema.multipleOf === "number" && schema.multipleOf > 0) {
     const quotient = value / schema.multipleOf;
     if (Math.abs(quotient - Math.round(quotient)) > 1e-9) {
-      state.errors.push(`${at(path)} must be a multiple of ${schema.multipleOf}.`);
+      state.errors.push(
+        `${at(path)} must be a multiple of ${schema.multipleOf}.`,
+      );
     }
   }
 }
@@ -1110,10 +1133,14 @@ function checkArray(
   depth: number,
 ): void {
   if (typeof schema.minItems === "number" && value.length < schema.minItems) {
-    state.errors.push(`${at(path)} must have at least ${schema.minItems} items.`);
+    state.errors.push(
+      `${at(path)} must have at least ${schema.minItems} items.`,
+    );
   }
   if (typeof schema.maxItems === "number" && value.length > schema.maxItems) {
-    state.errors.push(`${at(path)} must have at most ${schema.maxItems} items.`);
+    state.errors.push(
+      `${at(path)} must have at most ${schema.maxItems} items.`,
+    );
   }
   if (schema.uniqueItems === true) {
     const seen = new Set(value.map((item) => canonicalJson(item)));
@@ -1121,7 +1148,9 @@ function checkArray(
       state.errors.push(`${at(path)} must not contain duplicate items.`);
     }
   }
-  const prefixItems = Array.isArray(schema.prefixItems) ? schema.prefixItems : null;
+  const prefixItems = Array.isArray(schema.prefixItems)
+    ? schema.prefixItems
+    : null;
   if (prefixItems) {
     prefixItems.forEach((entry, index) => {
       if (isSchemaObject(entry) && index < value.length) {
@@ -1164,19 +1193,29 @@ function checkObject(
     typeof schema.minProperties === "number" &&
     Object.keys(value).length < schema.minProperties
   ) {
-    state.errors.push(`${at(path)} must have at least ${schema.minProperties} properties.`);
+    state.errors.push(
+      `${at(path)} must have at least ${schema.minProperties} properties.`,
+    );
   }
   if (
     typeof schema.maxProperties === "number" &&
     Object.keys(value).length > schema.maxProperties
   ) {
-    state.errors.push(`${at(path)} must have at most ${schema.maxProperties} properties.`);
+    state.errors.push(
+      `${at(path)} must have at most ${schema.maxProperties} properties.`,
+    );
   }
   const properties = isSchemaObject(schema.properties) ? schema.properties : {};
   for (const [key, child] of Object.entries(value)) {
     const childSchema = (properties as Record<string, unknown>)[key];
     if (isSchemaObject(childSchema)) {
-      checkSchema(childSchema, child, path ? `${path}.${key}` : key, state, depth + 1);
+      checkSchema(
+        childSchema,
+        child,
+        path ? `${path}.${key}` : key,
+        state,
+        depth + 1,
+      );
       continue;
     }
     const additional = schema.additionalProperties;
@@ -1187,7 +1226,13 @@ function checkObject(
         }.`,
       );
     } else if (isSchemaObject(additional)) {
-      checkSchema(additional, child, path ? `${path}.${key}` : key, state, depth + 1);
+      checkSchema(
+        additional,
+        child,
+        path ? `${path}.${key}` : key,
+        state,
+        depth + 1,
+      );
     }
   }
 }
@@ -1208,13 +1253,16 @@ function checkCombinators(
   depth: number,
 ): void {
   const branchOf = (entry: unknown) =>
-    isSchemaObject(entry) ? branchResult(entry, value, path, state, depth) : null;
+    isSchemaObject(entry)
+      ? branchResult(entry, value, path, state, depth)
+      : null;
 
   for (const keyword of ["oneOf", "anyOf"] as const) {
     const branches = schema[keyword];
     if (!Array.isArray(branches) || branches.length === 0) continue;
     const results = branches.map(branchOf);
-    if (results.some((result) => result === null || result.indeterminate)) continue;
+    if (results.some((result) => result === null || result.indeterminate))
+      continue;
     const matched = results.filter((result) => result!.ok).length;
     if (matched === 0) {
       // The branch errors themselves are the useful part: for Chrome's `oneOf`
@@ -1277,10 +1325,7 @@ function branchResult(
 // ---------------------------------------------------------------------------
 
 export type DeclaredToolProvider =
-  | "anthropic"
-  | "openai"
-  | "google"
-  | "generic";
+  "anthropic" | "openai" | "google" | "generic";
 
 /**
  * Keywords a provider's tool-schema subset is known not to accept.
@@ -1291,10 +1336,19 @@ export type DeclaredToolProvider =
  * for, and the failure surfaces inside page code with nothing to trace it back
  * to. A diagnostic surfaces the same fact where a person can act on it.
  */
-const PROVIDER_UNSUPPORTED: Record<DeclaredToolProvider, ReadonlySet<string>> = {
+const PROVIDER_UNSUPPORTED: Record<
+  DeclaredToolProvider,
+  ReadonlySet<string>
+> = {
   // Anthropic takes ordinary JSON Schema for `input_schema`.
   anthropic: new Set<string>(),
-  openai: new Set(["if", "then", "else", "dependentSchemas", "unevaluatedProperties"]),
+  openai: new Set([
+    "if",
+    "then",
+    "else",
+    "dependentSchemas",
+    "unevaluatedProperties",
+  ]),
   // Gemini's `FunctionDeclaration` takes an OpenAPI-flavoured subset.
   google: new Set([
     "oneOf",

@@ -3,15 +3,15 @@
  * Playground's Tools pane reads them.
  *
  * One shape for BOTH engines. The hosted panel route and the local route each
- * send the daemon the same `observe {mode:"webmcp_tools"}` the model's
- * `browser_webmcp_tools` tool sends, and hand the answer back through this
- * module — so the pane, the model and the two engines can never disagree about
- * what a page offers.
+ * send the daemon the same `observe {mode:"webmcp_tools"}` the turn-start peek
+ * sends, and hand the answer back through this module — so the pane, the model
+ * and the two engines can never disagree about what a page offers.
  *
  * Kept apart from `webmcp-inspector-protocol.ts` on purpose: that is the V1
  * WebMCP Inspector's own session protocol (origin-keyed `toolKey`s, SSE
  * registry deltas). This is a read of the browser the MODEL drives, whose
- * tools are invoked BY NAME through `browser_webmcp_invoke`.
+ * tools become first-class `webmcp_*` model tools — see
+ * `built-in-tools/page-tools.ts` for how these rows are minted into them.
  */
 
 /** One page tool, as the daemon's WebMCP bridge reports it. */

@@ -5,9 +5,10 @@
  * Two things it must keep straight, because getting either wrong is a lie the
  * user acts on:
  *
- *   1. OURS vs THE PAGE'S. `browser_*` are tools the model calls by name; the
- *      page's WebMCP tools are reached through `browser_webmcp_invoke`. Shown
- *      as one list, a person would try to make the model call `bookSlot`.
+ *   1. OURS vs THE PAGE'S, and — for a page tool — BOTH ITS NAMES. The model
+ *      calls `webmcp_bookSlot`; the page calls it `bookSlot`. A pane showing
+ *      only one of them makes the transcript unreadable in one direction, and
+ *      the names must be the ones the SERVER minted, not a second guess.
  *   2. WHOSE BROWSER. "this machine" and "your computer" are different
  *      promises about what a click can reach.
  */
@@ -34,10 +35,21 @@ const PAGE_OK = {
   url: "https://webmcp.dev/",
   webmcpSupported: true,
   tools: [
-    { name: "bookSlot", description: "Reserve a 30-minute consultation" },
+    {
+      name: "bookSlot",
+      description: "Reserve a 30-minute consultation",
+      origin: "https://webmcp.dev",
+      isMainFrame: true,
+      frameId: "frame-main",
+      registrationSeq: 1,
+    },
     {
       name: "getAvailability",
       description: "List bookable times",
+      origin: "https://webmcp.dev",
+      isMainFrame: true,
+      frameId: "frame-main",
+      registrationSeq: 1,
       annotations: { readOnly: true },
     },
   ],
@@ -68,13 +80,61 @@ describe("BrowserToolsSection", () => {
     expect(screen.getByText("Open a URL in the browser.")).toBeInTheDocument();
   });
 
-  it("lists the page's tools separately, and says how they are called", () => {
+  it("shows a page tool under the name the MODEL calls, with the page's own beneath", () => {
     renderSection();
-    expect(screen.getByText("Page tools")).toBeInTheDocument();
-    expect(screen.getByText("bookSlot")).toBeInTheDocument();
-    expect(screen.getByText("getAvailability")).toBeInTheDocument();
-    // The distinction that stops someone asking the model to call `bookSlot`.
-    expect(screen.getByText(/browser_webmcp_invoke/)).toBeInTheDocument();
+    expect(screen.getByText("Declared by the page")).toBeInTheDocument();
+    // The name in the transcript.
+    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
+    expect(screen.getByText("webmcp_getAvailability")).toBeInTheDocument();
+    // And the name on the page, with where it came from.
+    expect(screen.getByText(/bookSlot · webmcp\.dev/)).toBeInTheDocument();
+  });
+
+  it("says the model calls them by name, not through a generic verb", () => {
+    renderSection();
+    expect(
+      screen.getByText(/Available to the model on its next step, by these names/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/browser_webmcp_invoke/)).toBeNull();
+  });
+
+  it("marks the list live only when the browser is reporting changes", () => {
+    renderSection({ live: { revision: 4, hash: "abc", count: 2 } });
+    expect(screen.getByText("live")).toBeInTheDocument();
+  });
+
+  it("does not claim to be live with no stream open", () => {
+    // Absent means "no news" — a daemon too old to send it, or no pane open —
+    // never "no tools", and never a promise the list is following the page.
+    renderSection();
+    expect(screen.queryByText("live")).toBeNull();
+  });
+
+  it("shows the page's read-only claim AS a claim", () => {
+    // The approval classifier ignores page annotations entirely (an imperative
+    // registration cannot carry them at all), so the badge must not read as a
+    // statement of fact about what the tool does.
+    renderSection();
+    expect(screen.getByText("page says read-only")).toBeInTheDocument();
+  });
+
+  it("says when a tool was not offered to the model, and why", () => {
+    renderSection({
+      page: {
+        ok: true,
+        url: "https://webmcp.dev/",
+        webmcpSupported: true,
+        tools: [
+          {
+            name: "weird",
+            description: "",
+            // A schema no provider can express as tool arguments.
+            inputSchema: { type: "string" },
+          },
+        ],
+      },
+    });
+    expect(screen.getByText(/Not offered to the model/)).toBeInTheDocument();
   });
 
   it("says whose browser this is", () => {
@@ -151,17 +211,17 @@ describe("BrowserToolsSection", () => {
 
   it("filters both groups with the panel's search box", () => {
     renderSection({ searchQuery: "bookslot" });
-    expect(screen.getByText("bookSlot")).toBeInTheDocument();
+    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
     expect(screen.queryByText("browser_navigate")).toBeNull();
-    expect(screen.queryByText("getAvailability")).toBeNull();
+    expect(screen.queryByText("webmcp_getAvailability")).toBeNull();
   });
 
   it("searches descriptions too, not just names", () => {
     // A person looking for what a page can DO types the verb, not the
     // camelCase identifier the page happened to register.
     renderSection({ searchQuery: "consultation" });
-    expect(screen.getByText("bookSlot")).toBeInTheDocument();
-    expect(screen.queryByText("getAvailability")).toBeNull();
+    expect(screen.getByText("webmcp_bookSlot")).toBeInTheDocument();
+    expect(screen.queryByText("webmcp_getAvailability")).toBeNull();
   });
 
   it("hides the whole section when a search matches nothing in it", () => {

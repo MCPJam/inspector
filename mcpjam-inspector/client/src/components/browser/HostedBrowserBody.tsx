@@ -1,3 +1,7 @@
+import {
+  browserPageToolsKey,
+  noteWebmcpStats,
+} from "@/stores/browser-page-tools-store";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@mcpjam/design-system/button";
@@ -634,6 +638,13 @@ export function HostedBrowserBody({
             noteTabs(
               (daemon as { tabs?: { active?: string } } | undefined)?.tabs,
             );
+            // The page's tools, as a CHANGE SIGNAL. It rides a beat that is
+            // already flowing, so the Tools pane becomes live without a second
+            // stream and without polling a page-touching observation.
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "hosted"),
+              daemon as never,
+            );
           },
           onFatal: () => {
             // A reader that has lost its place in a byte stream can never find
@@ -721,6 +732,14 @@ export function HostedBrowserBody({
             return;
           }
           if (parsed.type === "stats") {
+            // ALSO HERE, not only on the frame wire: this engine's relay
+            // consumes the daemon's heartbeat itself and re-emits its own
+            // `stats`, so on a stream with no video the frame-wire handler
+            // above never fires at all.
+            noteWebmcpStats(
+              browserPageToolsKey(projectId, "hosted"),
+              parsed.daemon as never,
+            );
             // The tier decision is made from what the RELAY saw, not from what
             // this pane painted: a pane that dropped a frame because a tab was
             // hidden is not a link that cannot carry the stream.

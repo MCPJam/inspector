@@ -579,7 +579,7 @@ describe("resolveHostTools — browser", () => {
     });
   });
 
-  it("builds the six verbs when enabled, attested and computer-backed", () => {
+  it("builds the browser verbs when enabled, attested and computer-backed", () => {
     withFlag("1", () => {
       const tools = resolveHostTools(
         { builtInToolIds: ["browser"], computer },
@@ -591,7 +591,6 @@ describe("resolveHostTools — browser", () => {
         "browser_observe",
         "browser_tabs",
         "browser_webmcp_invoke",
-        "browser_webmcp_tools",
       ]);
     });
   });
@@ -858,7 +857,6 @@ describe("resolveHostTools — browser engines", () => {
         "browser_observe",
         "browser_tabs",
         "browser_webmcp_invoke",
-        "browser_webmcp_tools",
       ]);
     });
   });

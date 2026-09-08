@@ -19,6 +19,7 @@
 import {
   BROWSERD_PROTOCOL_VERSION,
   BROWSERD_WEBMCP_FEATURES,
+  type WebMcpToolsRevision,
   parseBrowserdErrorCode,
   type BrowserCommand,
   type BrowserCommandOutcome,
@@ -100,7 +101,10 @@ interface CommandRequestBody {
 
 export interface BrowserdHandlerDeps {
   queue: Pick<CommandQueue, "submit">;
-  driver: Pick<BrowserDriver, "health" | "viewport" | "tabsSnapshot">;
+  driver: Pick<
+    BrowserDriver,
+    "health" | "viewport" | "tabsSnapshot" | "webmcpToolsSnapshot"
+  >;
   /** Minted once per daemon process start; echoed on every response. */
   bootId: string;
   /** The shared secret every non-`/healthz` request must present. */
@@ -148,7 +152,7 @@ export class BrowserdRequestHandler {
   private readonly queue: Pick<CommandQueue, "submit">;
   private readonly driver: Pick<
     BrowserDriver,
-    "health" | "viewport" | "tabsSnapshot"
+    "health" | "viewport" | "tabsSnapshot" | "webmcpToolsSnapshot"
   >;
   private readonly bootId: string;
   private readonly token: string;
@@ -208,6 +212,18 @@ export class BrowserdRequestHandler {
   tabsSnapshot():
     { active?: string; list?: Array<{ id: string; url: string }> } | undefined {
     return this.driver.tabsSnapshot?.();
+  }
+
+  /**
+   * The driven tab's page-tool set as a CHANGE SIGNAL, for a heartbeat.
+   *
+   * A cache read: it touches no page, which is the property that makes it safe
+   * on a beat that fires several times a second. `undefined` from a driver with
+   * no WebMCP, which the pane reads as "this engine cannot tell you" rather
+   * than as "no tools".
+   */
+  webmcpSnapshot(): WebMcpToolsRevision | undefined {
+    return this.driver.webmcpToolsSnapshot?.();
   }
 
   /** Let the stream host report itself on `/v1/status`. See `watchers`. */

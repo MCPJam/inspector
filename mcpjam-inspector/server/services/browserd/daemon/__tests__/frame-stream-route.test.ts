@@ -20,6 +20,7 @@ import type { TabViewport, ViewportFrame, ViewportListener } from "../viewport";
 import { HandoffLease } from "../lease";
 import {
   createFrameStreamDecoder,
+  encodeFrameStreamRecord,
   FRAME_STREAM_KIND,
   type FrameStreamRecord,
 } from "../../frame-stream";
@@ -958,5 +959,65 @@ describe("GET /v1/frames?codec=h264", () => {
     let record = await cursor.next();
     while (record.kind !== FRAME_STREAM_KIND.end) record = await cursor.next();
     expect(record.reason).toBe("video_unavailable");
+  });
+});
+
+describe("frame stream heartbeat — the WebMCP change signal", () => {
+  /**
+   * The heartbeat's payload cap is a FATAL reader check (8 KiB, see
+   * `FRAME_STREAM_MAX_PAYLOAD_BY_KIND`): a record over it takes the stream
+   * down rather than being truncated. So the question for any new field is not
+   * "is it small" but "is it small on the WORST heartbeat this daemon can
+   * produce" — sixteen tabs with long URLs, plus this.
+   */
+  it("fits the heartbeat budget alongside sixteen long-URL tabs", () => {
+    const tabs = {
+      active: "tab-15",
+      list: Array.from({ length: 16 }, (_, index) => ({
+        id: `tab-${index}`,
+        url: `https://example.test/${"segment/".repeat(20)}${index}?q=${"x".repeat(80)}`,
+      })),
+    };
+    const stats = {
+      framesIn: 1000,
+      framesOut: 999,
+      bytesOut: 12_345_678,
+      dropped: { dedupe: 1, oversize: 2, pacer: 3 },
+      subscribers: 4,
+      encoderIdle: false,
+      tabs,
+      webmcp: {
+        revision: 4_294_967_295,
+        hash: "deadbeef",
+        count: 64,
+        url: `https://example.test/${"segment/".repeat(20)}`,
+      },
+    };
+    const payload = new TextEncoder().encode(JSON.stringify(stats));
+    expect(payload.byteLength).toBeLessThan(8 * 1024);
+  });
+
+  it("is ignored by a reader that has never heard of it", () => {
+    // ADDITIVE ON THE WIRE. An older reader slices this payload by its declared
+    // length and reads the keys it knows; an unknown key is not a framing
+    // error, which is what makes this safe without a protocol bump.
+    const record = encodeFrameStreamRecord({
+      kind: FRAME_STREAM_KIND.heartbeat,
+      stats: {
+        subscribers: 1,
+        webmcp: { revision: 2, hash: "abc", count: 3 },
+      },
+    });
+    const decoded = createFrameStreamDecoder().push(record);
+    expect(decoded.ok).toBe(true);
+    const beat = decoded.ok ? decoded.records[0] : undefined;
+    expect(beat?.kind).toBe(FRAME_STREAM_KIND.heartbeat);
+    // An old reader would simply not look at `webmcp`; a new one finds it.
+    expect(
+      (beat as { stats?: { subscribers?: number } }).stats?.subscribers,
+    ).toBe(1);
+    expect(
+      (beat as { stats?: { webmcp?: { count?: number } } }).stats?.webmcp?.count,
+    ).toBe(3);
   });
 });

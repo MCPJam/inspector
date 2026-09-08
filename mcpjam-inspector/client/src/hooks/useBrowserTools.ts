@@ -34,6 +34,11 @@ import {
 import type { BrowserPageToolsResponse } from "@/shared/browser-page-tools";
 import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
+import {
+  browserPageToolsKey,
+  useLiveWebmcpSignal,
+  useWebmcpEpoch,
+} from "@/stores/browser-page-tools-store";
 
 /**
  * Definitions are static per engine, so one fetch serves every mount for the
@@ -56,6 +61,11 @@ export interface BrowserToolsState {
    * flashing "no browser running" at a browser that is starting.
    */
   page: BrowserPageToolsResponse | null;
+  /**
+   * The daemon's own change signal for this page's tools, when a browser
+   * stream is open. Absent means "no news", never "no tools".
+   */
+  live?: { revision: number; hash: string; count: number; url?: string };
   /** Re-read the page. The definitions never change; only this does. */
   refreshPage: () => void;
 }
@@ -107,6 +117,9 @@ export function useBrowserTools(args: {
     () => DEFINITIONS_CACHE.get(engine) ?? [],
   );
   const [page, setPage] = useState<BrowserPageToolsResponse | null>(null);
+  const liveKey = browserPageToolsKey(args.projectId, engine);
+  const webmcpEpoch = useWebmcpEpoch(liveKey);
+  const live = useLiveWebmcpSignal(liveKey);
   const [pageNonce, setPageNonce] = useState(0);
   const refreshPage = useCallback(() => setPageNonce((n) => n + 1), []);
 
@@ -219,7 +232,14 @@ export function useBrowserTools(args: {
     consentToken,
     hostedReadable,
     pageNonce,
+    // LIVE. The daemon's heartbeat carries a `{revision, hash, count}` change
+    // signal, and this epoch moves exactly when the page's tool set does — so
+    // the list follows the model's navigation instead of going stale the
+    // moment it matters. It is not a poll: an unchanged page never moves this,
+    // and re-reading the page on a timer would be an observation with side
+    // effects on the thing it observes.
+    webmcpEpoch,
   ]);
 
-  return { attached, engine, tools, page, refreshPage };
+  return { attached, engine, tools, page, live, refreshPage };
 }
