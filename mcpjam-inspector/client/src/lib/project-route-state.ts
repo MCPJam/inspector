@@ -103,9 +103,37 @@ export function resolveProjectRouteState(
   // `/p/none/servers` and `/p/<typo>/servers` are answered immediately.
   if (!isProjectIdShape(requestedProjectId)) return inaccessible("malformed");
 
-  // The URL already matches the app's state. Checked before any loading gate
-  // so a refresh on the project you are already in renders without a spinner.
-  if (activeProjectId === requestedProjectId) {
+  // 1. Auth first. While it is changing, the persisted active project may
+  //    belong to the previous actor and cannot prove this route is ready.
+  if (isAuthLoading) {
+    return hasExceededResolveBudget ? inaccessible("timed-out") : resolving;
+  }
+
+  // Local/self-hosted projects have no remote membership response. Preserve
+  // their active-project fast path after auth has settled.
+  if (!isAuthenticated) {
+    if (activeProjectId === requestedProjectId) {
+      return {
+        state: { status: "ready", projectId: requestedProjectId },
+        effect: { kind: "none" },
+      };
+    }
+    return hasExceededResolveBudget ? inaccessible("timed-out") : resolving;
+  }
+
+  if (isLoadingRemoteProjects || allProjects === undefined) {
+    return hasExceededResolveBudget ? inaccessible("timed-out") : resolving;
+  }
+
+  // The unfiltered response is the authority for this actor. Do not let a
+  // cached active id make a stale sign-in return look ready for one render:
+  // recovery would consume its one-shot intent before membership catches up.
+  const match = allProjects.find(
+    (project) => project._id === requestedProjectId,
+  );
+
+  // The URL and active state agree, and the loaded membership confirms it.
+  if (match && activeProjectId === requestedProjectId) {
     return {
       state: { status: "ready", projectId: requestedProjectId },
       effect: { kind: "none" },
@@ -113,12 +141,7 @@ export function resolveProjectRouteState(
   }
 
   if (hasExceededResolveBudget) return inaccessible("timed-out");
-
-  // 1. Auth first: membership is the only thing that can answer this URL, and
-  //    it does not exist yet.
-  if (isAuthLoading) return resolving;
-  if (!isAuthenticated) return resolving;
-  if (isLoadingRemoteProjects) return resolving;
+  if (!match) return inaccessible("not-a-member");
 
   // 2. Visible under the active organization — switch straight to it.
   if (activeOrgProjectIds.has(requestedProjectId)) {
@@ -128,15 +151,7 @@ export function resolveProjectRouteState(
     };
   }
 
-  // 3. Not in this organization's list. The unfiltered membership decides
-  //    whether that means "another organization" or "not yours".
-  if (allProjects === undefined) return resolving;
-
-  const match = allProjects.find(
-    (project) => project._id === requestedProjectId,
-  );
-  if (!match) return inaccessible("not-a-member");
-
+  // 3. The unfiltered membership says this belongs to another organization.
   if (!match.organizationId) {
     // An organization-less project can never enter an organization-filtered
     // set, so waiting for one would hang forever. With no organization filter

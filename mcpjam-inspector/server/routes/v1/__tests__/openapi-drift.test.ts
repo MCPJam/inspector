@@ -106,6 +106,14 @@ const KNOWN_UNDOCUMENTED = new Set([
   // the Inspector's KNOWN_UNDOCUMENTED baseline"). Document it there when the
   // flag comes off.
   "get /harness/{harnessId}/capabilities",
+  // The `browser_*` definitions the Tools pane and the Raw preview render. The
+  // hosted browser itself is still enforced per deployment
+  // (`HOSTED_BROWSER_TOOLS_ENABLED` plus the backend's exposure verdict), and
+  // `docs/README.md` is explicit that a feature enforced that way must not be
+  // documented until the flag comes off — publishing the schemas would publish
+  // the gated capability. Same posture as the harness capability probe above.
+  // Document it when the browser exposure gate opens.
+  "get /built-in-tools/{builtInToolId}/definitions",
   // Unified share control plane — REST ships in I2; OpenAPI + SDK in I5.
   "get /projects/{projectId}/shares/{resourceType}/{resourceId}",
   "patch /projects/{projectId}/shares/{resourceType}/{resourceId}",

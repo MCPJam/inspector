@@ -38,7 +38,7 @@ import {
 } from "@/components/environment-composer/environment-stack";
 import { useComposerResolver } from "@/components/environment-composer/use-composer-resolver";
 import { MAX_SUITE_ENVIRONMENTS } from "@/components/project-environments/environment-picker";
-import { useProjectEnvironmentsEnabled } from "@/hooks/useProjectEnvironmentsEnabled";
+import { useEvalComposeCapable } from "@/components/environment-composer/use-eval-compose-capable";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
 import { RequiredMark } from "@/components/shared/required-mark";
 import { toast } from "@/lib/toast";
@@ -113,13 +113,19 @@ export function CreateSuitePage({
     emptyComposerState,
   );
 
-  const environmentsEnabled = useProjectEnvironmentsEnabled();
   /**
    * Born in environment mode. A suite created legacy can be converted from the
-   * header later, but starting there means the axes the page offers are the
-   * ones its runs will actually read.
+   * header later, but starting there means the axes the page offers are the ones
+   * its runs will actually read.
+   *
+   * Keyed on the CAPABILITY, not the named-environments flag: composing cells
+   * is ungated launch-path substrate (see `useEvalComposeCapable`). While the
+   * probe is in flight the composer renders disabled rather than the legacy
+   * form, so the form does not change shape after mount.
    */
-  const composeMode = Boolean(projectId) && environmentsEnabled;
+  const { capable: composeCapable, pending: composePending } =
+    useEvalComposeCapable(projectId);
+  const composeMode = composeCapable || composePending;
   const resolveTargets = useComposerResolver(projectId ?? "");
   const composerEnvironments = useProjectEnvironments(
     composeMode ? projectId : null,

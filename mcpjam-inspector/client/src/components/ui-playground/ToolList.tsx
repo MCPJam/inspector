@@ -20,7 +20,9 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@mcpjam/design-system/tooltip";
 import { useAppToolsRegistry } from "@/components/chat-v2/thread/mcp-apps/app-tools-registry";
 import { HarnessBuiltinToolsSection } from "@/components/playground/HarnessBuiltinToolsSection";
+import { BrowserToolsSection } from "@/components/playground/BrowserToolsSection";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 
 interface AppEntry {
   alias: string;
@@ -44,8 +46,16 @@ interface ToolListProps {
   builtinTools?: HarnessBuiltinToolInfo[];
   /** Currently-selected built-in tool key (so its row highlights). */
   selectedBuiltinKey?: string | null;
+  /** True when the previewed host runs its harness on THIS machine. */
+  builtinToolsRunLocally?: boolean;
   /** Select a built-in tool (drives the same detail+Run flow as server tools). */
   onSelectBuiltin?: (key: string) => void;
+  /**
+   * The agent browser's tools (the six `browser_*` plus the current page's
+   * WebMCP ones), when the previewed host attaches a browser. Display-only —
+   * see `BrowserToolsSection` for why there is no Run here.
+   */
+  browserTools?: BrowserToolsState;
   /**
    * Whether at least one MCP server is connected. When false, the empty state
    * says so and offers a way out instead of blaming a server that isn't there.
@@ -71,7 +81,9 @@ export function ToolList({
   onCollapseList,
   builtinTools = [],
   selectedBuiltinKey = null,
+  builtinToolsRunLocally = false,
   onSelectBuiltin,
+  browserTools,
   hasConnectedServer = true,
   onAddServerRequested,
 }: ToolListProps) {
@@ -133,17 +145,36 @@ export function ToolList({
     ).length;
   }, [builtinTools, searchQuery]);
 
+  // Same job for the browser's own tools: the section filters itself, this is
+  // only for the empty state. Its PAGE tools are deliberately not counted — a
+  // page's tools come and go as the browser navigates, and a list that emptied
+  // itself into "no server connected" the moment somebody browsed away would be
+  // reporting the wrong thing about a browser that is working.
+  const filteredBrowserCount = useMemo(() => {
+    const tools = browserTools?.tools ?? [];
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return tools.length;
+    return tools.filter((t) =>
+      `${t.name} ${t.description ?? ""}`.toLowerCase().includes(q),
+    ).length;
+  }, [browserTools, searchQuery]);
+
   const totalShown =
-    filteredToolNames.length + filteredAppEntries.length + filteredBuiltinCount;
-  // Mirrors every source `totalShown` counts, unfiltered — built-ins included.
-  // Omitting them let a search that hides a harness's built-ins fall through to
-  // the no-server copy, which would be reporting the wrong reason for an empty
-  // list (the rail's zero-server fallback passes built-ins and
-  // `hasConnectedServer={false}` together, so that pairing is reachable).
+    filteredToolNames.length +
+    filteredAppEntries.length +
+    filteredBuiltinCount +
+    filteredBrowserCount;
+  // Mirrors every source `totalShown` counts, unfiltered — built-ins and the
+  // browser included. Omitting them let a search that hides a harness's
+  // built-ins fall through to the no-server copy, which would be reporting the
+  // wrong reason for an empty list (the rail's zero-server fallback passes
+  // built-ins and `hasConnectedServer={false}` together, so that pairing is
+  // reachable — and a browser-only host is exactly that pairing).
   const hasNoTools =
     toolNames.length === 0 &&
     appEntries.length === 0 &&
-    builtinTools.length === 0;
+    builtinTools.length === 0 &&
+    (browserTools?.tools.length ?? 0) === 0;
 
   return (
     <div className="h-full flex flex-col">
@@ -327,8 +358,18 @@ export function ToolList({
                 searchQuery={searchQuery}
                 selectedKey={selectedBuiltinKey}
                 onSelect={onSelectBuiltin}
+                localExecution={builtinToolsRunLocally}
               />
             )}
+            {browserTools ? (
+              <BrowserToolsSection
+                tools={browserTools.tools}
+                page={browserTools.page}
+                engine={browserTools.engine}
+                searchQuery={searchQuery}
+                onRefreshPage={browserTools.refreshPage}
+              />
+            ) : null}
           </div>
         )}
       </div>

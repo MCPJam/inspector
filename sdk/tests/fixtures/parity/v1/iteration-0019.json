@@ -88,6 +88,6 @@
         "reason": "noEvidenceCaptured"
       }
     ],
-    "stageAnalyzerVersion": 8
+    "stageAnalyzerVersion": 10
   }
 }

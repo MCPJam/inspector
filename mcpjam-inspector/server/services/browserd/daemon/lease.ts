@@ -50,6 +50,26 @@ export interface LeaseOptions {
   defaultTtlMs?: number;
   /** Ceiling on any requested TTL. */
   maxTtlMs?: number;
+  /**
+   * Told whenever the lease MOVES, so something outside this module can act
+   * on it.
+   *
+   * The Electron native surface is why: a real `WebContentsView` parented into
+   * the user's window is a browser somebody can click into, and while another
+   * holder has the lease it must be HIDDEN — a visible native view showing a
+   * page while somebody types a password into it is an observation, and one
+   * this module's whole purpose is to prevent. A client-side gate would not be
+   * one; the authority has to be here, where the refusal already lives.
+   *
+   * Called on transitions only, and never for a read that merely observed an
+   * expiry into `parked`… except that one IS a transition, and the surface has
+   * to hear about it: a parked lease still belongs to its holder.
+   *
+   * The class stays PURE — this is the only outward call, it takes the new
+   * state and returns nothing, and a listener that throws is swallowed so a
+   * misbehaving surface cannot break the gate itself.
+   */
+  onChange?: (state: LeaseState) => void;
 }
 
 const DEFAULT_TTL_MS = 5 * 60 * 1000;
@@ -90,11 +110,45 @@ export class HandoffLease {
   private readonly now: () => number;
   private readonly defaultTtlMs: number;
   private readonly maxTtlMs: number;
+  private readonly onChange: ((state: LeaseState) => void) | undefined;
+  /**
+   * What the listener was last told.
+   *
+   * Compared by VALUE, not identity: `state()` rebuilds the object on an
+   * expiry, and a heartbeat rewrites it with a new `expiresAt` several times a
+   * minute. A surface told about each of those would hide and show a native
+   * view repeatedly while nothing about who holds the browser had changed.
+   */
+  private announced = "free";
 
   constructor(options: LeaseOptions = {}) {
     this.now = options.now ?? Date.now;
     this.defaultTtlMs = options.defaultTtlMs ?? DEFAULT_TTL_MS;
     this.maxTtlMs = options.maxTtlMs ?? MAX_TTL_MS;
+    this.onChange = options.onChange;
+  }
+
+  /**
+   * Tell the listener, if this is genuinely a different situation.
+   *
+   * Keyed on state + holder + kind, which is exactly what a listener can act
+   * on. `expiresAt` is deliberately absent from the key: a heartbeat moves it
+   * every thirty seconds and changes nothing about who holds the browser.
+   */
+  private announce(): void {
+    if (!this.onChange) return;
+    const state = this.state();
+    const key =
+      state.state === "free"
+        ? "free"
+        : `${state.state}:${state.holder}:${state.holderKind}`;
+    if (key === this.announced) return;
+    this.announced = key;
+    try {
+      this.onChange(state);
+    } catch {
+      // A misbehaving surface must not break the gate itself.
+    }
   }
 
   /**
@@ -110,6 +164,22 @@ export class HandoffLease {
         holder: this.current.holder,
         holderKind: this.current.holderKind,
       };
+      // A transition, and one a listener has to hear: a parked lease still
+      // belongs to its holder, so a native surface must stay hidden across it.
+      // Announced INLINE rather than through `announce()`, which reads
+      // `state()` and would recurse.
+      if (this.onChange) {
+        const key = `parked:${this.current.holder}:${this.current.holderKind}`;
+        if (key !== this.announced) {
+          this.announced = key;
+          const parked = this.current;
+          try {
+            this.onChange(parked);
+          } catch {
+            // A misbehaving surface must not break the gate itself.
+          }
+        }
+      }
     }
     return this.current;
   }
@@ -145,6 +215,7 @@ export class HandoffLease {
       holderKind: this.holderKind,
       expiresAt: this.now() + ttl,
     };
+    this.announce();
     return this.current;
   }
 
@@ -176,6 +247,7 @@ export class HandoffLease {
       this.resumedHolderKind = this.holderKind;
     }
     this.heldSince = undefined;
+    this.announce();
     return this.current;
   }
 
