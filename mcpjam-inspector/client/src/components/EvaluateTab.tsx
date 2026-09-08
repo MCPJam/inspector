@@ -51,6 +51,7 @@ import { usePreviewedHostId } from "@/hooks/use-previewed-client-id";
 import { useEvaluateRouteFromUrl } from "@/lib/eval-route-url";
 import { useEvalTabContext } from "@/hooks/use-eval-tab-context";
 import { useEvaluateEnabled } from "@/hooks/useEvaluateEnabled";
+import { useObserveFirstEnabled } from "@/hooks/useObserveFirstEnabled";
 import { useEvalIterationQuota } from "@/hooks/use-eval-iteration-quota";
 import { useIsDirectGuest } from "@/hooks/use-is-direct-guest";
 import {
@@ -179,6 +180,7 @@ function EvaluateTabContent({
   // is off by default, so a flag-off render issues zero summary requests even
   // though those components are shared with `/evals`.
   const decisionSummaryEnabled = useEvaluateEnabled();
+  const observeFirstEnabled = useObserveFirstEnabled();
   const route = useEvaluateRouteFromUrl();
   const isDirectGuest = useIsDirectGuest({ projectId });
   const [previewedHostId] = usePreviewedHostId(projectId ?? null);
@@ -1202,6 +1204,7 @@ function EvaluateTabContent({
           suiteDetailOverview
           evaluateDecisionSummary={decisionSummaryEnabled}
           evaluateCaseEditor
+          evaluateObserveFirst={observeFirstEnabled}
           evalRunsDisabledReason={evalRunsDisabledReason}
           onDeleteTestCasesBatch={handleDeleteTestCasesBatch}
           onRunTestCase={(testCase, opts) => {

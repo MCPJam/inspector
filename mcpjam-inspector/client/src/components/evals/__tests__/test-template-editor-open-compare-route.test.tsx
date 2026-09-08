@@ -961,6 +961,32 @@ describe("TestTemplateEditor run view from route", () => {
       />,
     );
 
+  it("mounts the FORM by default — observe-first is opt-in", async () => {
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase();
+    await waitFor(() => {
+      expect(screen.getByTestId("simple-case-form")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("case-spine")).not.toBeInTheDocument();
+  });
+
+  it("mounts the SPINE when the surface passes observeFirst", async () => {
+    // The prop is threaded from `EvaluateTab` through `SuiteIterationsView`;
+    // this pins the last hop. Without it the spine is unreachable dead code —
+    // which is exactly what shipped until a screenshot showed the old page.
+    activeCaseDoc = goldenCaseDoc;
+    renderGoldenCase({ observeFirst: true });
+    await waitFor(() => {
+      expect(screen.getByTestId("case-spine")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("simple-case-form")).not.toBeInTheDocument();
+    // And the surfaces it replaces are gone with it.
+    expect(
+      screen.queryByTestId("case-pass-criteria-toggle"),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByTestId("spine-action-row").length).toBeGreaterThan(0);
+  });
+
   it("shows a step-authored case in the workspace and leaves its flag alone", async () => {
     activeCaseDoc = goldenCaseDoc;
     renderGoldenCase();

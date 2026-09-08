@@ -359,6 +359,7 @@ export function SuiteIterationsView({
   suiteDetailOverview = false,
   evaluateDecisionSummary = false,
   evaluateCaseEditor = false,
+  evaluateObserveFirst = false,
   alwaysShowEditIterationRows = false,
   onEditTestCase,
   onDeleteTestCasesBatch,
@@ -460,6 +461,8 @@ export function SuiteIterationsView({
    * today. Only `EvaluateTab` passes it.
    */
   evaluateCaseEditor?: boolean;
+  /** Observe-first authoring: the spine, Run test, and run-derived checks. */
+  evaluateObserveFirst?: boolean;
   /** Playground run detail: show edit affordance on every row that has a test case id. */
   alwaysShowEditIterationRows?: boolean;
   /** Override default test edit navigation (e.g. playground hash navigation). */
@@ -1716,6 +1719,7 @@ export function SuiteIterationsView({
                     evaluateDecisionSummary && projectId,
                   )}
                   simpleCaseEditor={evaluateCaseEditor}
+                  observeFirst={evaluateObserveFirst}
                   onRunCase={onRunCase}
                   isDirectGuest={isDirectGuest}
                   ensureServersReady={ensureServersReady}
