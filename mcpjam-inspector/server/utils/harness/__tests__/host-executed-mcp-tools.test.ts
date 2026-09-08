@@ -13,10 +13,7 @@ import {
   harnessMcpToolName,
   projectSelectedMcpServersAsHostTools,
 } from "../host-executed-mcp-tools";
-import {
-  buildHarnessProxyMcpJson,
-  parseHarnessToolName,
-} from "../mcp-config";
+import { buildHarnessProxyMcpJson, parseHarnessToolName } from "../mcp-config";
 import { getHarnessAdapter } from "../registry";
 
 type FakeTool = {
@@ -34,7 +31,9 @@ function fakeManager(servers: Record<string, Record<string, FakeTool>>) {
   });
   return {
     getServerConfig: vi.fn((id: string) =>
-      Object.prototype.hasOwnProperty.call(servers, id) ? { url: "x" } : undefined
+      Object.prototype.hasOwnProperty.call(servers, id)
+        ? { url: "x" }
+        : undefined,
     ),
     getToolsForAiSdk,
   } as never as Parameters<
@@ -64,14 +63,14 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     const claudeKey = Object.keys(
       buildHarnessProxyMcpJson([
         { name: "weather-api", proxyUrl: "https://example.com/mcp" },
-      ]).mcpServers
+      ]).mcpServers,
     )[0]!;
     expect(Object.keys(projected.tools)).toEqual([
       `mcp__${claudeKey}__get_forecast`,
     ]);
     // `sanitizeServerName` keeps hyphens, so this id survives unchanged.
     expect(Object.keys(projected.tools)[0]).toBe(
-      "mcp__weather-api__get_forecast"
+      "mcp__weather-api__get_forecast",
     );
   });
 
@@ -95,20 +94,20 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       expect(name).toBe(
         harnessMcpToolName(
           Object.entries(projected.keyToServerId).find(
-            ([, serverId]) => serverId === attribution.serverId
+            ([, serverId]) => serverId === attribution.serverId,
           )![0],
-          attribution.toolName
-        )
+          attribution.toolName,
+        ),
       );
     }
     expect(
       codex.parseToolName(
         "mcp__weather-api__get_forecast",
-        projected.keyToServerId
-      )
+        projected.keyToServerId,
+      ),
     ).toEqual({ serverId: "weather-api", toolName: "get_forecast" });
     expect(
-      codex.parseToolName("mcp__docs_server__search", projected.keyToServerId)
+      codex.parseToolName("mcp__docs_server__search", projected.keyToServerId),
     ).toEqual({ serverId: "docs.server", toolName: "search" });
   });
 
@@ -143,7 +142,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
     });
     expect(Object.keys(projected.tools)).toHaveLength(2);
     expect(new Set(Object.values(projected.keyToServerId))).toEqual(
-      new Set(["a.b", "a-b"])
+      new Set(["a.b", "a-b"]),
     );
   });
 
@@ -175,7 +174,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       projectSelectedMcpServersAsHostTools({
         manager,
         selectedServerIds: [],
-      })
+      }),
     ).resolves.toEqual({ tools: {}, keyToServerId: {} });
     expect(manager.getToolsForAiSdk).not.toHaveBeenCalled();
   });
@@ -234,7 +233,9 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         _meta: Record<string, { reason: string }>;
       };
       expect(late.execute).not.toHaveBeenCalled();
-      expect(result._meta["mcpjam/policyBlock"]!.reason).toBe("unknownAtLaunch");
+      expect(result._meta["mcpjam/policyBlock"]!.reason).toBe(
+        "unknownAtLaunch",
+      );
     });
   });
 
@@ -256,7 +257,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
           manager,
           selectedServerIds: ["live", "from-plugin"],
           pluginOrigins: { "from-plugin": plugin },
-        })
+        }),
       ).rejects.toThrow(/Calendar Pack/);
     });
 
@@ -273,7 +274,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         projectSelectedMcpServersAsHostTools({
           manager,
           selectedServerIds: ["ok", "broken"],
-        })
+        }),
       ).rejects.toThrow(/server went away mid-enumeration/);
     });
   });
@@ -297,9 +298,9 @@ describe("projectSelectedMcpServersAsHostTools", () => {
           (opts: { toolCallId: string; input: unknown; output: unknown }) => ({
             type: "json" as const,
             value: scrubMetaAndStructuredContentFromToolResult(
-              opts.output as CallToolResult
+              opts.output as CallToolResult,
             ),
-          })
+          }),
         ),
       };
     }
@@ -339,7 +340,9 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       // the trace and the transcript would all show the scrubbed copy — a
       // divergence from every other engine.
       const seen: Array<{ toolCallId: string; raw: unknown }> = [];
-      const manager = fakeManager({ gh: { list_issues: appTool(rawAppResult) } });
+      const manager = fakeManager({
+        gh: { list_issues: appTool(rawAppResult) },
+      });
       const projected = await projectSelectedMcpServersAsHostTools({
         manager,
         selectedServerIds: ["gh"],
@@ -347,7 +350,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       });
       await (projected.tools["mcp__gh__list_issues"] as FakeTool).execute(
         {},
-        { toolCallId: "call-7" }
+        { toolCallId: "call-7" },
       );
       expect(seen).toEqual([{ toolCallId: "call-7", raw: rawAppResult }]);
     });
@@ -363,7 +366,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       });
       expect(projected.tools["mcp__srv__ping"]).toBe(inner);
       await expect(
-        (projected.tools["mcp__srv__ping"] as FakeTool).execute({}, {})
+        (projected.tools["mcp__srv__ping"] as FakeTool).execute({}, {}),
       ).resolves.toEqual({ content: [{ type: "text", text: "hi" }] });
     });
 
@@ -385,7 +388,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         selectedServerIds: ["srv"],
       });
       await expect(
-        (projected.tools["mcp__srv__shot"] as FakeTool).execute({}, {})
+        (projected.tools["mcp__srv__shot"] as FakeTool).execute({}, {}),
       ).resolves.toEqual(contentOutput);
     });
 
@@ -436,8 +439,8 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       await expect(
         (projected.tools["mcp__gh__create_issue"] as FakeTool).execute(
           {},
-          { toolCallId: "call-2" }
-        )
+          { toolCallId: "call-2" },
+        ),
       ).rejects.toBe(error);
       expect(seen).toHaveLength(1);
       expect(inner.toModelOutput).not.toHaveBeenCalled();
@@ -453,7 +456,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       return Object.assign(error, {
         requiredScope: "calendar.write",
         resourceMetadataUrl: new URL(
-          "https://cal.example/.well-known/oauth-protected-resource"
+          "https://cal.example/.well-known/oauth-protected-resource",
         ),
       });
     }
@@ -480,7 +483,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
       const t = projected.tools["mcp__cal__create_event"] as FakeTool;
       // The error still reaches the caller — this observes, never swallows.
       await expect(
-        t.execute({ title: "x" }, { toolCallId: "call-1" })
+        t.execute({ title: "x" }, { toolCallId: "call-1" }),
       ).rejects.toBe(error);
 
       // `runHarnessTurn` matches a challenge to its observed tool call on
@@ -511,7 +514,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         onScopeStepUpChallenge: (event) => seen.push(event),
       });
       await expect(
-        (projected.tools["mcp__srv__t"] as FakeTool).execute({}, {})
+        (projected.tools["mcp__srv__t"] as FakeTool).execute({}, {}),
       ).rejects.toThrow("upstream 500");
       expect(seen).toEqual([]);
     });
@@ -544,7 +547,7 @@ describe("projectSelectedMcpServersAsHostTools", () => {
         onScopeStepUpChallenge: (event) => seen.push(event),
       });
       await expect(
-        (projected.tools["mcp__srv__read_thing"] as FakeTool).execute({}, {})
+        (projected.tools["mcp__srv__read_thing"] as FakeTool).execute({}, {}),
       ).rejects.toBe(error);
       expect(seen).toHaveLength(1);
     });
@@ -605,7 +608,7 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
     servers: Record<
       string,
       Record<string, { appOnly?: boolean; result: unknown }>
-    >
+    >,
   ) {
     const getToolsForAiSdk = vi.fn(
       async (
@@ -617,7 +620,7 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
           };
           tasks?: unknown;
           needsApproval?: boolean;
-        }
+        },
       ) => {
         const id = ids[0]!;
         const out: Record<string, unknown> = {};
@@ -641,7 +644,7 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
                 type: "json" as const,
                 value: {
                   content: (raw.content ?? []).filter(
-                    (block) => allowImages || block.type !== "image"
+                    (block) => allowImages || block.type !== "image",
                   ),
                 },
               };
@@ -649,13 +652,13 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
           };
         }
         return out;
-      }
+      },
     );
     return {
       getServerConfig: vi.fn((id: string) =>
         Object.prototype.hasOwnProperty.call(servers, id)
           ? { url: "x" }
-          : undefined
+          : undefined,
       ),
       getToolsForAiSdk,
     } as never as Parameters<
@@ -759,26 +762,37 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
     });
   });
 
-  it("never sets needsApproval — host-executed approval is the agent's own gate", async () => {
-    // Deliberately absent, not forgotten: `HarnessAgent`'s `toolApproval` map
-    // is what gates a host-executed call, and the AI SDK flag is read by the
-    // EMULATED loop, which never runs on this path. A second, inert approval
-    // declaration would read like enforcement.
+  it("carries needsApproval through — the toolApproval map is derived from it", async () => {
+    // It used to be excluded here as an inert second declaration. It is the
+    // FIRST one now: `runHarnessTurn` reads each projection's `needsApproval`
+    // to decide which names go into `HarnessAgent`'s `toolApproval` map, so a
+    // projection built without it is a tool the harness will not pause on.
     const manager = policyHonoringManager({ srv: { t: { result: {} } } });
     await projectSelectedMcpServersAsHostTools({
       manager,
       selectedServerIds: ["srv"],
       toolOptions: {
+        needsApproval: true,
         modelVisibleMcpToolResults: {
           directContent: { image: true },
         } as never,
       },
     });
-    const passed = manager.getToolsForAiSdk.mock.calls[0]![1];
-    // An options object IS built (the host set a policy) — it just never
-    // carries the approval flag.
-    expect(passed).toBeDefined();
-    expect(passed).not.toHaveProperty("needsApproval");
+    expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toMatchObject({
+      needsApproval: true,
+    });
+  });
+
+  it("still takes the no-options overload for a switch-OFF turn", async () => {
+    // `mcpToolOptionsFor` drops a falsy approval flag, so forwarding the
+    // host's `false` does not push a default turn off the byte-identical path.
+    const manager = policyHonoringManager({ srv: { t: { result: {} } } });
+    await projectSelectedMcpServersAsHostTools({
+      manager,
+      selectedServerIds: ["srv"],
+      toolOptions: { needsApproval: false },
+    });
+    expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toBeUndefined();
   });
 
   it("takes the NO-OPTIONS overload when no host input applies", async () => {
@@ -813,7 +827,7 @@ describe("host-derived tool-construction options reach the SDK conversion", () =
     });
     expect(manager.getToolsForAiSdk).toHaveBeenCalledTimes(2);
     expect(manager.getToolsForAiSdk.mock.calls[0]![1]).toBe(
-      manager.getToolsForAiSdk.mock.calls[1]![1]
+      manager.getToolsForAiSdk.mock.calls[1]![1],
     );
   });
 });
