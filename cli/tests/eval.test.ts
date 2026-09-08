@@ -6093,6 +6093,152 @@ test("eval run --host resolves an attached host by name", async () => {
   }
 });
 
+/**
+ * `--client` is the canonical spelling under `cloud eval`; `--host` is the
+ * alias it replaced. Both reach the same wire field, and both at once is a
+ * refusal rather than a precedence rule — a script that passes two possibly
+ * different clients must not silently PAY for whichever one wins.
+ */
+test("eval run --client resolves an attached client by name", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: {
+      hosts: [
+        { id: "host-claude", name: "Claude" },
+        { id: "host-chatgpt", name: "ChatGPT" },
+      ],
+    },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1",
+            "--client",
+            "Claude"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 0);
+    assert.deepEqual(fixture.runBodies.at(-1), {
+      suiteId: "suite-1",
+      namedHostId: "host-claude",
+    });
+    assert.equal(fixture.groupBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run refuses --client and --host together", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-claude", name: "Claude" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--client",
+          "Claude",
+          "--host",
+          "ChatGPT"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.equal(run.result.exitCode, 2);
+    assert.match(run.stderr, /--client or its deprecated --host alias/);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * The `--host` collision, converted from a dead end into an instruction.
+ *
+ * `mcpjam tools --host claude` takes a host-compat CATALOG id; `cloud eval run
+ * --host` takes a SAVED PROJECT ROW. A reader who came from the compatibility
+ * docs and typed the first here used to get a bare not-found naming neither
+ * fact.
+ */
+test("eval run names --client when --host is given a host-compat catalog id", async () => {
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-1", name: "My Client" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--host",
+          "claude"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.match(run.stderr, /host-compat catalog id/);
+    assert.match(run.stderr, /--client/);
+    assert.equal(fixture.runBodies.length, 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("eval run leaves an ordinary not-found alone", async () => {
+  // The hint fires ONLY for a catalog id. A plain typo still gets the
+  // resolver's own message, with no advice that does not apply to it.
+  const fixture = await startEvalFixture({
+    suiteDetail: { hosts: [{ id: "host-1", name: "My Client" }] },
+  });
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        evalArgv(
+          fixture.baseUrl,
+          "run",
+          "--project",
+          "proj-alpha",
+          "--suite",
+          "suite-1",
+          "--client",
+          "My Cleint"
+        ),
+        { telemetry: telemetryDisabled }
+      )
+    );
+
+    assert.notEqual(run.result.exitCode, 0);
+    assert.doesNotMatch(run.stderr, /host-compat catalog id/);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("eval run --host with two values fans out through the group endpoint", async () => {
   const fixture = await startEvalFixture({
     suiteDetail: {
@@ -6274,10 +6420,10 @@ test("eval run --compose-secret grants a credential to the composed cell", async
   }
 });
 
-test("eval run --compose-secret still needs --compose-host", async () => {
-  // Same rule as every other refinement: the host is what makes it a composed
-  // run, so a lone credential flag is a usage error rather than a silently
-  // ignored one.
+test("eval run --compose-secret still needs --compose-client", async () => {
+  // Same rule as every other refinement: the client is what makes it a
+  // composed run, so a lone credential flag is a usage error rather than a
+  // silently ignored one.
   const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
@@ -6297,7 +6443,7 @@ test("eval run --compose-secret still needs --compose-host", async () => {
     );
 
     assert.notEqual(run.result.exitCode, 0);
-    assert.match(run.stderr, /--compose-\* flags need --compose-host/);
+    assert.match(run.stderr, /--compose-\* flags need --compose-client/);
     assert.equal(fixture.composeBodies.length, 0);
   } finally {
     await fixture.close();
@@ -6676,9 +6822,9 @@ test("eval run --save-targets attaches the composed cell", async () => {
   }
 });
 
-test("eval run rejects a --compose-* refinement with no --compose-host", async () => {
-  // The host is what MAKES it a composed run; the others only refine a stack
-  // that already has one, so a silently-ignored flag would be worse.
+test("eval run rejects a --compose-* refinement with no --compose-client", async () => {
+  // The client is what MAKES it a composed run; the others only refine a
+  // stack that already has one, so a silently-ignored flag would be worse.
   const fixture = await startEvalFixture();
   try {
     const run = await captureProcessOutput(() =>
@@ -6697,7 +6843,7 @@ test("eval run rejects a --compose-* refinement with no --compose-host", async (
       )
     );
     assert.notEqual(run.result.exitCode, 0);
-    assert.match(run.stderr, /--compose-\* flags need --compose-host/);
+    assert.match(run.stderr, /--compose-\* flags need --compose-client/);
     assert.equal(fixture.composeBodies.length, 0);
   } finally {
     await fixture.close();

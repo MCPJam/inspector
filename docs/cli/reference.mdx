@@ -1159,7 +1159,8 @@ Create a runnable eval suite from authored test cases (does not run it).
 | `--model <model>` | No | Suite-level default model (overrides the file) |
 | `--provider <provider>` | No | Suite-level default provider (overrides the file) |
 | `--server <id-or-name...>` | No | Project HTTP server names or IDs (overrides the file) |
-| `--host <id-or-name...>` | No | Clients (hosts) to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --host` has nothing to select |
+| `--client <id-or-name...>` | No | Clients to attach the suite to (overrides the file). Without one the suite lists no client, and `eval run --client` has nothing to select |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 
 ### `cloud eval list`
 
@@ -1197,7 +1198,8 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved server selection (HTTP servers only) |
 | `--environment <id-or-name...>` | No | Attached project environment(s) to run. Several values start one **paid run each**. |
-| `--host <id-or-name...>` | No | Attached host(s) to run, so the run is stamped with that host's config. Several values start one **paid run each**. |
+| `--client <id-or-name...>` | No | Attached client(s) to run, so the run is stamped with that client's config. Several values start one **paid run each**. |
+| `--host <id-or-name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. Not the host-compat catalog id `mcpjam compat --host` / `mcpjam tools --host` take — see [Two different `--host` flags](#two-different---host-flags). |
 | `--all-targets` | No | Run **every** attached environment (or, if none, every attached host) — one **paid run per target** |
 | `--repetitions <n>` | No | Run each case this many times (1-10), for this run only |
 | `--iterations <n>` | No | **Deprecated** alias for `--repetitions`. Passing both is an error. |
@@ -1212,7 +1214,8 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 | `--wait-timeout <ms>` | No | Maximum wait time (default 600000); requires `--wait` |
 | `--reporter <json-summary\|junit-xml\|html>` | No | Write the completed structured report to stdout; requires `--wait`. `html` is a self-contained decision summary + failures page — traces/parity/history are not included. |
 | `--out <path>` | No | Atomically write the completed report to a file; defaults to `json-summary`, or uses `--reporter` when present; requires `--wait` |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment (see below). **Appends** the composed environment to the suite. |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |
@@ -1221,11 +1224,12 @@ This six-code contract is new and deliberately **different** from `eval gate`'s 
 
 #### Composing a target instead of naming one
 
-`--compose-host <id-or-name>` builds an execution stack for this run instead of
+`--compose-client <id-or-name>` builds an execution stack for this run instead of
 naming a saved environment, refined by `--compose-computer`, `--compose-model`,
 `--compose-server-group`, `--compose-skill` and `--compose-secret`. The stack becomes an unnamed,
 content-addressed environment (the same one `environments ensure-adhoc`
 produces), so composing the same stack twice reuses one environment.
+`--compose-host` is the deprecated spelling of the same flag.
 
 `--compose-model` and `--compose-secret` carry the deployment requirement
 described under [Deployment support for model overrides and secret
@@ -1241,9 +1245,25 @@ publish the capability.
   when the launch itself fails, so you always know what changed.
 </Warning>
 
-Any `--compose-*` flag alongside `--environment`, `--host`, `--server` or
+Any `--compose-*` flag alongside `--environment`, `--client`, `--server` or
 `--all-targets` is a usage error: compose builds the stack the run uses, so
 naming a target alongside it describes two different runs.
+
+#### Two different `--host` flags
+
+`--host` means two unrelated things in this CLI, and only one of them lives
+under `cloud eval`.
+
+| Command | `--host` names |
+|---------|----------------|
+| `mcpjam tools` / `resources` / `prompts` / `probe` / `compat` | A **host-compat catalog id** — which AI host to emulate. `claude`, `chatgpt`, `cursor`, `copilot`, `codex`, `goose`, and the rest of the catalog. |
+| `mcpjam cloud eval run` / `cases run` / `update` / `create` | A **client saved in your project** (`mcpjam cloud clients list`). |
+
+The catalog sense keeps `--host`: it genuinely means "which AI host am I
+emulating". Under `cloud eval`, **`--client` is canonical** and `--host` is a
+deprecated alias for it — so `mcpjam cloud eval run --host claude` looks for a
+saved client named `claude` and fails if you do not have one. When the value
+you pass is a catalog id, the error says so and points at `--client`.
 
 #### Which target runs
 
@@ -1959,7 +1979,8 @@ Edit an eval suite's settings (only the flags you pass change).
 | `--description <text>` | No | Suite description |
 | `--server <id-or-name...>` | No | Replace the suite's server selection (project server names) |
 | `--computer-image <id-or-name\|off>` | No | Sandbox image eval runs boot a fresh computer from (list them with `mcpjam cloud images list`). `off` uses the provider's default base image |
-| `--host <name...>` | No | Replace host attachments (by name/ID) |
+| `--client <name...>` | No | Replace client attachments (by name/ID) |
+| `--host <name...>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
 | `--model <id>` | No | Execution model ID |
 | `--system-prompt <text>` | No | Execution system prompt |
 | `--temperature <n>` | No | Execution temperature |
@@ -2124,8 +2145,10 @@ Run a single case as a persisted, fully-queryable run — inspect it with `eval 
 | `--project <id-or-name>` | No | Project name or ID (defaults to the most recently updated project) |
 | `--server <id-or-name...>` | No | Override the suite's saved servers for this run |
 | `--environment <id-or-name>` | No | Project environment to run against (must be attached to the suite) |
-| `--host <id-or-name>` | No | Attached host to run against, so the run is stamped with that host's config |
-| `--compose-host <id-or-name>` | No | Compose a stack to run instead of naming a saved environment; appends the composed environment to the suite |
+| `--client <id-or-name>` | No | Attached client to run against, so the run is stamped with that client's config |
+| `--host <id-or-name>` | No | **Deprecated** alias for `--client`. Passing both is an error. |
+| `--compose-client <id-or-name>` | No | Compose a stack to run instead of naming a saved environment; appends the composed environment to the suite |
+| `--compose-host <id-or-name>` | No | **Deprecated** alias for `--compose-client` |
 | `--compose-computer <id-or-name>` | No | Sandbox image to pin on the composed stack |
 | `--compose-model <id>` | No | Model to run on the composed stack, instead of the host's |
 | `--compose-server-group <id>` | No | Standalone server group to pin on the composed stack |

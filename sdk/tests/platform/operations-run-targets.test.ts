@@ -672,6 +672,106 @@ describe("run_eval_suite target selection", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  /**
+   * CLIENT is the product noun, and these launch inputs kept `host` from
+   * before that rename. Both spellings reach one field; both spellings of ONE
+   * selector at once is a refusal, because guessing which of two possibly
+   * different clients was meant would spend on a run nobody asked for.
+   */
+  describe("client / host, one selector", () => {
+    it("resolves `client` exactly as `host`", async () => {
+      const { client, fetchMock } = makeClient({
+        detail: suiteDetail({
+          hosts: [
+            { id: "host-claude", name: "Claude" },
+            { id: "host-chatgpt", name: "ChatGPT" },
+          ],
+        }),
+      });
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke", client: "Claude" },
+        { client },
+      );
+      expect(bodiesTo(fetchMock, "/eval-runs")).toEqual([
+        { suiteId: "suite-1", namedHostId: "host-claude" },
+      ]);
+      expect(result.targets[0]).toMatchObject({
+        status: "started",
+        host: { id: "host-claude", name: "Claude" },
+      });
+    });
+
+    it("fans out on `clients` exactly as on `hosts`", async () => {
+      const { client, fetchMock } = makeClient({
+        detail: suiteDetail({
+          hosts: [
+            { id: "host-claude", name: "Claude" },
+            { id: "host-chatgpt", name: "ChatGPT" },
+          ],
+        }),
+      });
+      const result = await runEvalSuiteOperation.execute(
+        { suite: "Smoke", clients: ["Claude", "ChatGPT"] },
+        { client },
+      );
+      expect(result.startedCount).toBe(2);
+      expect(bodiesTo(fetchMock, "/eval-run-groups").length).toBe(1);
+    });
+
+    it("refuses both spellings of one selector, before any request", async () => {
+      const { client, fetchMock } = makeClient();
+      for (const input of [
+        { suite: "Smoke", client: "Claude", host: "ChatGPT" },
+        { suite: "Smoke", clients: ["Claude"], hosts: ["ChatGPT"] },
+      ]) {
+        const error = await runEvalSuiteOperation
+          .execute(input, { client })
+          .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(PlatformApiError);
+        expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+        expect((error as PlatformApiError).message).toContain("not both");
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("carries `client` through every guard the `host` spelling hits", async () => {
+      const { client } = makeClient();
+      for (const input of [
+        { suite: "Smoke", environment: "Staging", client: "Claude" },
+        { suite: "Smoke", client: "Claude", clients: ["ChatGPT"] },
+        { suite: "Smoke", client: "Claude", servers: ["echo"] },
+      ]) {
+        const error = await runEvalSuiteOperation
+          .execute(input, { client })
+          .catch((caught: unknown) => caught);
+        expect(error).toBeInstanceOf(PlatformApiError);
+        expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+      }
+    });
+
+    it("resolves `client` on run_eval_case too", async () => {
+      const { client, fetchMock } = makeClient({
+        detail: suiteDetail({
+          hosts: [
+            { id: "host-claude", name: "Claude" },
+            { id: "host-chatgpt", name: "ChatGPT" },
+          ],
+        }),
+      });
+      await runEvalCaseOperation.execute(
+        { suite: "Smoke", case: "echo works", client: "Claude" },
+        { client },
+      );
+      expect(bodiesTo(fetchMock, "/eval-runs")).toEqual([
+        {
+          suiteId: "suite-1",
+          caseIds: ["case-1"],
+          namedHostId: "host-claude",
+        },
+      ]);
+    });
+  });
+
   it("rejects the environment and host axes together, and singular with plural", async () => {
     const { client } = makeClient();
     for (const input of [

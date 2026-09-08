@@ -101,7 +101,8 @@ import type {
   SuiteGateComposedOutcome,
   SuiteGateReportV1,
 } from "@mcpjam/sdk/contract";
-import { isPlatformApiError } from "@mcpjam/sdk/platform";
+import { isPlatformApiError, PlatformApiError } from "@mcpjam/sdk/platform";
+import { HOST_TEMPLATE_IDS } from "@mcpjam/sdk/host-config/templates";
 import type {
   PlatformApiClient,
   PlatformEnvironmentResolved,
@@ -212,8 +213,77 @@ type CreateOptions = PlatformOptions & {
   model?: string;
   provider?: string;
   server?: string[];
+  client?: string[];
   host?: string[];
 };
+
+/**
+ * The client selector, from `--client` or the deprecated `--host`.
+ *
+ * Both-at-once is a usage ERROR, not a precedence rule — the same call
+ * `clients.ts` makes for its own pair and the one `--repetitions` /
+ * `--iterations` makes here. A precedence rule is invisible: a script that
+ * passes both because someone half-finished a migration keeps running,
+ * launching against whichever of two possibly-different clients this happened
+ * to prefer, and PAYING for the run.
+ */
+function clientSelectorOf<T>(options: { client?: T; host?: T }): T | undefined {
+  if (options.client !== undefined && options.host !== undefined) {
+    throw usageError(
+      "Use either --client or its deprecated --host alias, not both."
+    );
+  }
+  return options.client ?? options.host;
+}
+
+/**
+ * `--host` means TWO unrelated things in this CLI, and only one of them lives
+ * under `cloud eval`.
+ *
+ * `mcpjam tools|resources|prompts|probe --host claude` names a HOST-COMPAT
+ * CATALOG id — which AI host to emulate — and the compatibility docs enumerate
+ * them. `mcpjam cloud eval run --host` names a SAVED PROJECT ROW. A reader who
+ * arrives from those docs and types `--host claude` here gets a bare not-found
+ * on a project row and no hint that the two flags are unrelated.
+ *
+ * The catalog sense KEEPS `--host`; it genuinely means "which host am I
+ * emulating". This sense is `--client`, and the dead end now says so.
+ */
+function annotateCatalogHostConfusion(
+  error: unknown,
+  selectors: readonly string[] | undefined
+): unknown {
+  const isNotFound =
+    (isPlatformApiError(error) || error instanceof CliError) &&
+    error.code === "NOT_FOUND";
+  if (!isNotFound) return error;
+  const catalogIds = (selectors ?? []).filter((selector) =>
+    (HOST_TEMPLATE_IDS as readonly string[]).includes(selector.trim())
+  );
+  if (catalogIds.length === 0) return error;
+  const named = catalogIds.map((id) => `"${id}"`).join(", ");
+  const message = `${error.message} ${named} names a host-compat catalog id — what \`mcpjam tools --host\` takes to emulate an AI host — not a client saved in this project. Under \`cloud eval\`, \`--client\` (and its deprecated \`--host\` alias) selects a saved client; list them with \`mcpjam cloud clients list\`.`;
+  if (error instanceof CliError) {
+    return new CliError(error.code, message, error.exitCode, error.details);
+  }
+  return new PlatformApiError(message, error.code, {
+    status: error.status,
+    ...(error.details !== undefined ? { details: error.details } : {}),
+    ...(error.endpoint !== undefined ? { endpoint: error.endpoint } : {}),
+  });
+}
+
+/** Run `body`, adding the catalog-id hint to a not-found on a client selector. */
+async function withCatalogHostHint<T>(
+  selectors: readonly string[] | undefined,
+  body: () => Promise<T>
+): Promise<T> {
+  try {
+    return await body();
+  } catch (error) {
+    throw annotateCatalogHostConfusion(error, selectors);
+  }
+}
 
 /**
  * A variadic selector maps to the SINGULAR op field for one value and the
@@ -241,6 +311,7 @@ function selectorField(
  * which owns that rule for every surface.
  */
 function composeField(options: {
+  composeClient?: string;
   composeHost?: string;
   composeComputer?: string;
   composeModel?: string | string[];
@@ -266,6 +337,21 @@ function composeField(options: {
     secrets?: { mode: "explicit"; secretIds: string[] };
   };
 } {
+  // The composed stack runs AS a client; `--compose-host` is the same flag
+  // under its pre-rename name. Both at once is a refusal, like every other
+  // pair here.
+  if (
+    options.composeClient !== undefined &&
+    options.composeHost !== undefined
+  ) {
+    throw usageError(
+      "Use either --compose-client or its deprecated --compose-host alias, not both."
+    );
+  }
+  const composeClient = options.composeClient ?? options.composeHost;
+  // Name the flag the caller actually typed in every refusal below.
+  const clientFlag =
+    options.composeHost !== undefined ? "--compose-host" : "--compose-client";
   const models = Array.isArray(options.composeModel)
     ? options.composeModel
     : options.composeModel
@@ -281,10 +367,10 @@ function composeField(options: {
     (options.composeSecret?.length ?? 0) > 0 ||
     options.withClientDefault === true ||
     options.saveTargets === true;
-  if (!options.composeHost) {
+  if (!composeClient) {
     if (refinements) {
       throw usageError(
-        "--compose-* flags need --compose-host: the host is what the composed stack runs as, and the others only refine it."
+        "--compose-* flags need --compose-client: the client is what the composed stack runs as, and the others only refine it."
       );
     }
     return {};
@@ -304,20 +390,20 @@ function composeField(options: {
     (options.composeServer?.length ?? 0) > 0;
   if (options.composeHostServers === true && pinsServers) {
     throw usageError(
-      "--compose-host-servers runs against the host's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
+      "--compose-host-servers runs against the client's current list, so it cannot be combined with --compose-server / --compose-server-group, which pin one."
     );
   }
   // The server is what the suite is testing, so a composed run has to name it.
-  // Left implicit, the run reads the host's list at execution time and a later
-  // edit to that shared host silently repoints the eval.
+  // Left implicit, the run reads the client's list at execution time and a
+  // later edit to that shared client silently repoints the eval.
   if (!pinsServers && options.composeHostServers !== true) {
     throw usageError(
-      "--compose-host needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the host points at right now — which changes when the host is edited — pass --compose-host-servers."
+      `${clientFlag} needs to know which servers to test: add --compose-server <name>. To deliberately use whatever servers the client points at right now — which changes when the client is edited — pass --compose-host-servers.`
     );
   }
   return {
     compose: {
-      host: options.composeHost,
+      host: composeClient,
       ...(options.composeServerGroup !== undefined
         ? { serverGroup: options.composeServerGroup }
         : {}),
@@ -774,6 +860,7 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     );
   }
 
+  const clientAttachments = clientSelectorOf<string[]>(options);
   const merged = {
     ...(base as Record<string, unknown>),
     ...(options.project !== undefined ? { project: options.project } : {}),
@@ -781,7 +868,9 @@ function loadSuiteDefinition(options: CreateOptions): CreateEvalSuiteInput {
     ...(options.model !== undefined ? { model: options.model } : {}),
     ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.server !== undefined ? { servers: options.server } : {}),
-    ...(options.host !== undefined ? { hosts: options.host } : {}),
+    // `create_eval_suite` still names the field `hosts`; the FLAG is the
+    // product noun either way.
+    ...(clientAttachments !== undefined ? { hosts: clientAttachments } : {}),
   };
 
   const parsed = createEvalSuiteOperation.inputSchema.safeParse(merged);
@@ -921,8 +1010,9 @@ function buildSuiteUpdateInput(
         options.computerImage === "off" ? null : options.computerImage,
     };
   }
-  if (options.host !== undefined)
-    input.hosts = options.host.map((host: string) => ({ host }));
+  const clientAttachments = clientSelectorOf<string[]>(options);
+  if (clientAttachments !== undefined)
+    input.clients = clientAttachments.map((client: string) => ({ client }));
 
   const exec = { ...(input.executionConfig ?? {}) };
   if (options.model !== undefined) exec.model = options.model;
@@ -3057,9 +3147,10 @@ export function registerEvalCommands(program: Command): void {
       "Project HTTP server names or IDs (overrides the file)"
     )
     .option(
-      "--host <id-or-name...>",
-      "Clients (hosts) to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --host` has nothing to select"
+      "--client <id-or-name...>",
+      "Clients to attach the suite to, by name or ID (overrides the file). Without one the suite lists no client and `eval run --client` has nothing to select"
     )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .action(async (options: CreateOptions, command) => {
       const globalOptions = getGlobalOptions(command);
       const input = loadSuiteDefinition(options);
@@ -3199,8 +3290,12 @@ export function registerEvalCommands(program: Command): void {
       "Attached project environment(s) to run. Several values start one PAID RUN each."
     )
     .option(
+      "--client <id-or-name...>",
+      "Attached client(s) to run, so the run is stamped with that client's config. Several values start one PAID RUN each."
+    )
+    .option(
       "--host <id-or-name...>",
-      "Attached host(s) to run, so the run is stamped with that host's config. Several values start one PAID RUN each."
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--all-targets",
@@ -3252,8 +3347,12 @@ export function registerEvalCommands(program: Command): void {
       "Atomically write the completed report selected by --reporter (default: json-summary)"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run instead of naming a saved environment: the client it runs as. Default is EPHEMERAL (does not attach to the suite)."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run instead of naming a saved environment: the host it runs as. Default is EPHEMERAL (does not attach to the suite)."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -3304,6 +3403,7 @@ export function registerEvalCommands(program: Command): void {
         options: PlatformOptions & {
           allowApproximated?: string[];
           approvalReason?: string;
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string[];
@@ -3319,6 +3419,7 @@ export function registerEvalCommands(program: Command): void {
           file?: string;
           server?: string[];
           environment?: string[];
+          client?: string[];
           host?: string[];
           allTargets?: boolean;
           repetitions?: number;
@@ -3351,6 +3452,10 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
+        // One selector from here down: `--client` is canonical under
+        // `cloud eval`, `--host` is its deprecated alias, and both at once is
+        // a refusal rather than a precedence rule.
+        const clientSelectors = clientSelectorOf<string[]>(options);
         if (
           (options.reporter !== undefined || options.out !== undefined) &&
           !options.wait
@@ -3450,7 +3555,7 @@ export function registerEvalCommands(program: Command): void {
                       ...(options.environment
                         ? { environment: options.environment }
                         : {}),
-                      ...(options.host ? { host: options.host } : {}),
+                      ...(clientSelectors ? { host: clientSelectors } : {}),
                       ...(options.allTargets ? { allTargets: true } : {}),
                       ...(options.repetitions !== undefined ||
                       options.iterations !== undefined
@@ -3486,53 +3591,57 @@ export function registerEvalCommands(program: Command): void {
                   }
                 );
               }
-              return runEvalSuiteOperation.execute(
-                {
-                  project: resolved.project ?? options.project,
-                  suite: options.suite!,
-                  ...(options.server ? { servers: options.server } : {}),
-                  // ONE value maps to the singular field, several to the plural:
-                  // the op rejects sending both, and the singular carries the
-                  // long-standing description a caller may already rely on.
-                  ...selectorField(
-                    "environment",
-                    "environments",
-                    options.environment
-                  ),
-                  ...selectorField("host", "hosts", options.host),
-                  ...(options.allTargets ? { allAttached: true } : {}),
-                  ...(options.repetitions !== undefined
-                    ? { repetitions: options.repetitions }
-                    : options.iterations !== undefined
-                    ? { iterations: options.iterations }
-                    : {}),
-                  ...(options.case?.length ? { cases: options.case } : {}),
-                  ...(options.excludeSkills ? { excludeSkills: true } : {}),
-                  ...(options.refreshSnapshot ? { refreshSnapshot: true } : {}),
-                  ...(options.notes !== undefined
-                    ? { notes: options.notes }
-                    : {}),
-                  ...(options.minPassRate !== undefined
-                    ? { minPassRate: options.minPassRate }
-                    : {}),
-                  ...(options.matchOptions
-                    ? {
-                        matchOptions: parseMatchOptionsOption(
-                          options.matchOptions
-                        ),
-                      }
-                    : {}),
-                  ...(options.idempotencyKey
-                    ? { idempotencyKey: options.idempotencyKey }
-                    : {}),
-                  ...composeField(options),
-                },
-                {
-                  client: context.client,
-                  signal: context.signal,
-                  onDisclosure,
-                  onDisclosureUnavailable,
-                }
+              return withCatalogHostHint(clientSelectors, () =>
+                runEvalSuiteOperation.execute(
+                  {
+                    project: resolved.project ?? options.project,
+                    suite: options.suite!,
+                    ...(options.server ? { servers: options.server } : {}),
+                    // ONE value maps to the singular field, several to the plural:
+                    // the op rejects sending both, and the singular carries the
+                    // long-standing description a caller may already rely on.
+                    ...selectorField(
+                      "environment",
+                      "environments",
+                      options.environment
+                    ),
+                    ...selectorField("client", "clients", clientSelectors),
+                    ...(options.allTargets ? { allAttached: true } : {}),
+                    ...(options.repetitions !== undefined
+                      ? { repetitions: options.repetitions }
+                      : options.iterations !== undefined
+                      ? { iterations: options.iterations }
+                      : {}),
+                    ...(options.case?.length ? { cases: options.case } : {}),
+                    ...(options.excludeSkills ? { excludeSkills: true } : {}),
+                    ...(options.refreshSnapshot
+                      ? { refreshSnapshot: true }
+                      : {}),
+                    ...(options.notes !== undefined
+                      ? { notes: options.notes }
+                      : {}),
+                    ...(options.minPassRate !== undefined
+                      ? { minPassRate: options.minPassRate }
+                      : {}),
+                    ...(options.matchOptions
+                      ? {
+                          matchOptions: parseMatchOptionsOption(
+                            options.matchOptions
+                          ),
+                        }
+                      : {}),
+                    ...(options.idempotencyKey
+                      ? { idempotencyKey: options.idempotencyKey }
+                      : {}),
+                    ...composeField(options),
+                  },
+                  {
+                    client: context.client,
+                    signal: context.signal,
+                    onDisclosure,
+                    onDisclosureUnavailable,
+                  }
+                )
               );
             },
             { projectScope: resolved.projectScope }
@@ -5148,9 +5257,10 @@ export function registerEvalCommands(program: Command): void {
       "Sandbox image eval runs boot from (see `mcpjam cloud images list`); off uses the default base image"
     )
     .option(
-      "--host <id-or-name...>",
-      "Replace host attachments (by name or ID)"
+      "--client <id-or-name...>",
+      "Replace client attachments (by name or ID)"
     )
+    .option("--host <id-or-name...>", "Deprecated alias for --client")
     .option("--model <id>", "Execution model id")
     .option("--system-prompt <text>", "Execution system prompt")
     .option("--temperature <n>", "Execution temperature")
@@ -5372,8 +5482,12 @@ export function registerEvalCommands(program: Command): void {
       "Project environment to run against (must be attached to the suite)"
     )
     .option(
+      "--client <id-or-name>",
+      "Attached client to run against, so the run is stamped with that client's config"
+    )
+    .option(
       "--host <id-or-name>",
-      "Attached host to run against, so the run is stamped with that host's config"
+      "Deprecated alias for --client. NOT the host-compat catalog id `mcpjam tools --host` takes."
     )
     .option(
       "--repetitions <n>",
@@ -5388,8 +5502,12 @@ export function registerEvalCommands(program: Command): void {
       "Retry-safety key: repeating the call returns the run it already started"
     )
     .option(
+      "--compose-client <id-or-name>",
+      "Compose a stack to run this case instead of naming a saved environment: the client it runs as. Default is EPHEMERAL."
+    )
+    .option(
       "--compose-host <id-or-name>",
-      "Compose a stack to run this case instead of naming a saved environment. Default is EPHEMERAL."
+      "Deprecated alias for --compose-client"
     )
     .option(
       "--compose-computer <id-or-name>",
@@ -5422,6 +5540,7 @@ export function registerEvalCommands(program: Command): void {
     .action(
       async (
         options: PlatformOptions & {
+          composeClient?: string;
           composeHost?: string;
           composeComputer?: string;
           composeModel?: string;
@@ -5435,6 +5554,7 @@ export function registerEvalCommands(program: Command): void {
           case: string;
           server?: string[];
           environment?: string;
+          client?: string;
           host?: string;
           repetitions?: number;
           iterations?: number;
@@ -5450,29 +5570,34 @@ export function registerEvalCommands(program: Command): void {
             "Use either --repetitions or its deprecated --iterations alias, not both."
           );
         }
-        await executeOp(
-          runEvalCaseOperation,
-          {
-            project: options.project,
-            suite: options.suite,
-            case: options.case,
-            ...(options.server?.length ? { servers: options.server } : {}),
-            ...(options.environment
-              ? { environment: options.environment }
-              : {}),
-            ...(options.host ? { host: options.host } : {}),
-            ...(options.repetitions !== undefined
-              ? { repetitions: options.repetitions }
-              : options.iterations !== undefined
-              ? { iterations: options.iterations }
-              : {}),
-            ...(options.idempotencyKey
-              ? { idempotencyKey: options.idempotencyKey }
-              : {}),
-            ...composeField(options),
-          },
-          options,
-          command
+        const clientSelector = clientSelectorOf<string>(options);
+        await withCatalogHostHint(
+          clientSelector === undefined ? undefined : [clientSelector],
+          () =>
+            executeOp(
+              runEvalCaseOperation,
+              {
+                project: options.project,
+                suite: options.suite,
+                case: options.case,
+                ...(options.server?.length ? { servers: options.server } : {}),
+                ...(options.environment
+                  ? { environment: options.environment }
+                  : {}),
+                ...(clientSelector ? { client: clientSelector } : {}),
+                ...(options.repetitions !== undefined
+                  ? { repetitions: options.repetitions }
+                  : options.iterations !== undefined
+                  ? { iterations: options.iterations }
+                  : {}),
+                ...(options.idempotencyKey
+                  ? { idempotencyKey: options.idempotencyKey }
+                  : {}),
+                ...composeField(options),
+              },
+              options,
+              command
+            )
         );
       }
     );

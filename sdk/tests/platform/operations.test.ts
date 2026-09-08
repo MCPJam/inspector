@@ -902,6 +902,46 @@ describe("updateEvalSuiteOperation", () => {
     ]);
   });
 
+  /**
+   * The suite's attachment list is CLIENTS. The wire body still names it
+   * `hosts`, so `clients` folds onto it entry by entry — and both at once is a
+   * refusal, because two replace-all lists describe two different suites.
+   */
+  it("folds `clients` onto the wire's `hosts`", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    await updateEvalSuiteOperation.execute(
+      {
+        suite: "smoke",
+        clients: [{ client: "Claude" }, { client: "ChatGPT", servers: ["a"] }],
+      },
+      { client },
+    );
+
+    expect(patchBodies).toEqual([
+      { hosts: [{ host: "Claude" }, { host: "ChatGPT", servers: ["a"] }] },
+    ]);
+  });
+
+  it("refuses `clients` and `hosts` together", async () => {
+    const { client, patchBodies } = makePatchClient();
+
+    const error = await updateEvalSuiteOperation
+      .execute(
+        {
+          suite: "smoke",
+          clients: [{ client: "Claude" }],
+          hosts: [{ host: "ChatGPT" }],
+        },
+        { client },
+      )
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlatformApiError).code).toBe("VALIDATION_ERROR");
+    expect((error as PlatformApiError).message).toContain("not both");
+    expect(patchBodies).toEqual([]);
+  });
+
   it("omits expectedRevisionNumber when the caller did not supply one", async () => {
     const { client, patchBodies } = makePatchClient();
 
