@@ -1327,7 +1327,7 @@ function createFrameStreamHost(handler, options = {}) {
     const beat = () => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
-      const webmcp = handler.webmcpSnapshot?.();
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;
@@ -3141,7 +3141,9 @@ function canonicalJson(value, depth = 0, budget = { left: CANONICAL_JSON_BUDGET_
       parts.push('"[budget]":0');
       break;
     }
-    const encodedKey = JSON.stringify(key);
+    const encodedKey = JSON.stringify(
+      key.length > budget.left ? `${key.slice(0, budget.left)}\u2026` : key
+    );
     budget.left -= encodedKey.length + 1;
     parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
   }

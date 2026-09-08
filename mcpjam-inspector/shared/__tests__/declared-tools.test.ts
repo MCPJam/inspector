@@ -579,6 +579,17 @@ describe("hashing a hostile schema", () => {
     expect(declaredSchemaHash(a)).toMatch(/^[0-9a-f]{8}$/);
   });
 
+  it("cuts a huge property NAME before serializing it", () => {
+    // A page names properties as freely as it fills them, and
+    // `JSON.stringify` on a multi-megabyte key allocates the whole escaped copy
+    // before any budget could be decremented — the exact work the budget is
+    // there to refuse. Hashing the two alike is the proof the key was cut.
+    const tail = 3_000_000;
+    const a = { type: "object", properties: { [`${"k".repeat(tail)}a`]: {} } };
+    const b = { type: "object", properties: { [`${"k".repeat(tail)}b`]: {} } };
+    expect(declaredSchemaHash(a)).toBe(declaredSchemaHash(b));
+  });
+
   it("stops walking a schema with a huge NUMBER of nodes too", () => {
     // Depth is already bounded; breadth was not, and a page can register a
     // hundred thousand tiny properties as easily as one enormous string.

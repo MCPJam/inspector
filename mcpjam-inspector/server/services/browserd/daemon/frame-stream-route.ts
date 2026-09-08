@@ -350,11 +350,14 @@ export function createFrameStreamHost(
     const beat = (): void => {
       if (ended) return;
       const tabs = handler.tabsSnapshot?.();
-      // NO `tabId` HERE, on purpose: this is the video stream, which grabs the
-      // X display and therefore always shows the ACTIVE tab. Reporting some
-      // other tab's tool revision beside a picture of this one is the mismatch
-      // the JPEG path below threads a tabId to avoid.
-      const webmcp = handler.webmcpSnapshot?.();
+      // THE ACTIVE TAB, named explicitly. This is the video stream, which grabs
+      // the X display and therefore always shows whichever tab is active — but
+      // an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`, and after an
+      // `activate_tab` those are two different pages. Reporting one tab's tool
+      // revision beside a picture of another is the mismatch the JPEG path
+      // threads its own tabId to avoid; this is the same bug wearing the
+      // opposite mistake.
+      const webmcp = handler.webmcpSnapshot?.(tabs?.active);
       const emitted = encoder.emitted();
       const idle = emitted === lastEmitted;
       lastEmitted = emitted;

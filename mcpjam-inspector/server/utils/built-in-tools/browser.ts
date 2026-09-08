@@ -1157,8 +1157,17 @@ export function buildBrowserTools(
     : EMPTY_PAGE_TOOLS;
   Object.assign(tools, page.tools);
 
+  // `canBindPageTools` HERE TOO, matching the initial build. Gating only the
+  // first set left the refresher free to rebuild and install first-class tools
+  // on the next revision change — against a daemon that does not enforce
+  // `expectedBinding`, which is the one case the initial gate exists to refuse.
+  // A hole that opens on the second read is worse than one that never closed:
+  // it looks fixed.
   const refresher =
-    firstClassPageTools && opts.dynamicPageTools && opts.pageTools
+    firstClassPageTools &&
+    canBindPageTools &&
+    opts.dynamicPageTools &&
+    opts.pageTools
       ? createPageToolRefresher({
           opts,
           unattended,

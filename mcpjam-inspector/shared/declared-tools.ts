@@ -326,7 +326,14 @@ function canonicalJson(
       parts.push('"[budget]":0');
       break;
     }
-    const encodedKey = JSON.stringify(key);
+    // THE KEY IS CUT BEFORE IT IS SERIALIZED, for the same reason the scalar
+    // above is: a page can name a property as freely as it can fill one, and
+    // `JSON.stringify` on a multi-megabyte key allocates the whole escaped copy
+    // before any budget could be decremented — which is precisely the work this
+    // budget exists to refuse.
+    const encodedKey = JSON.stringify(
+      key.length > budget.left ? `${key.slice(0, budget.left)}…` : key,
+    );
     budget.left -= encodedKey.length + 1;
     parts.push(`${encodedKey}:${canonicalJson(record[key], depth + 1, budget)}`);
   }

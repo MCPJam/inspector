@@ -819,10 +819,12 @@ describe("GET /v1/frames?codec=h264", () => {
     return new Uint8Array(bytes);
   }
 
-  async function listen(over: { video?: boolean } = {}) {
+  async function listen(
+    over: { video?: boolean; driver?: BrowserDriver } = {},
+  ) {
     lease = new HandoffLease();
     ffmpeg = fakeEncoderProcess();
-    stack = buildBrowserdStack(stubDriver(fakeViewport().viewport), {
+    stack = buildBrowserdStack(over.driver ?? stubDriver(fakeViewport().viewport), {
       token: TOKEN,
       lease,
       frames: { heartbeatMs: 30 },
@@ -948,6 +950,39 @@ describe("GET /v1/frames?codec=h264", () => {
       if (record.stats?.encoderIdle === true) sawIdle = true;
     }
     expect(sawIdle).toBe(true);
+    await cursor.cancel();
+  });
+
+  it("reports the ACTIVE tab's WebMCP revision, not the default tab's", async () => {
+    // The video stream grabs the X display, so it shows whichever tab is
+    // active — but an unargued `webmcpSnapshot()` answers for `DEFAULT_TAB`,
+    // and after an `activate_tab` those are two different pages. Reporting one
+    // tab's tool revision beside a picture of another is the same mismatch the
+    // JPEG path threads its own tabId to avoid.
+    const driver: BrowserDriver = {
+      ...stubDriver(fakeViewport().viewport),
+      tabsSnapshot: () => ({
+        active: "tab-2",
+        list: [
+          { id: "@session", url: "https://first.test/" },
+          { id: "tab-2", url: "https://second.test/" },
+        ],
+      }),
+      webmcpToolsSnapshot: (tabId?: string) =>
+        tabId === "tab-2"
+          ? { revision: 9, hash: "second", count: 3, supported: true }
+          : { revision: 1, hash: "first", count: 1, supported: true },
+    };
+    await listen({ driver });
+    const cursor = openCursor(await openVideo(), { video: true });
+    await cursor.next();
+    let seen: { hash?: string } | undefined;
+    for (let beats = 0; beats < 4 && !seen; beats += 1) {
+      const record = await cursor.next();
+      if (record.kind !== FRAME_STREAM_KIND.heartbeat) continue;
+      seen = (record.stats as { webmcp?: { hash?: string } })?.webmcp;
+    }
+    expect(seen?.hash).toBe("second");
     await cursor.cancel();
   });
 

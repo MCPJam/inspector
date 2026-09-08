@@ -1989,6 +1989,37 @@ describe("buildBrowserTools — the mid-turn refresh", () => {
     expect(built.currentPageTools!()[0].registrationSeq).toBe(11);
   });
 
+  it("builds NO refresher when the daemon cannot enforce a binding", async () => {
+    // Gating only the initial build would leave this free to rebuild and
+    // install first-class tools on the next revision change — against exactly
+    // the daemon the initial gate refuses. A hole that opens on the second read
+    // is worse than one that never closed: it looks fixed.
+    const fake = daemon({ revision: 5, hash: "h1", tools: [PAGE] });
+    const { ensureSession } = fakeSession(fake.send);
+    const built = withFlagOn(() =>
+      buildBrowserTools({
+        authHeader: "Bearer t",
+        projectId: "p1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession,
+        dynamicPageTools: true,
+        pageTools: {
+          tools: [PAGE],
+          bootId: "boot-1",
+          tabId: "@session",
+          navCounter: 1,
+          revision: 5,
+          hash: "h1",
+          canBind: false,
+        },
+      }),
+    )!;
+    expect(built.refreshPageTools).toBeUndefined();
+    expect(built.pageTools).toBeUndefined();
+    // And the generic verbs are still there to reach the page with.
+    expect(Object.keys(built.tools)).toContain("browser_webmcp_invoke");
+  });
+
   it("moves the BINDING with the tools, not just the tools", async () => {
     // The record a turn persists pairs each tool's frame and registration with
     // the tab and generation it was bound to. Refreshing the first while
