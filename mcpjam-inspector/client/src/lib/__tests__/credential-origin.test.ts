@@ -111,3 +111,69 @@ describe("pendingCredentialClearForUrlEdit", () => {
     ).toBeNull();
   });
 });
+
+/**
+ * The review found `holdsStoredCredential` under-reporting in two ways, both of
+ * which meant a save silently destroyed credentials with no warning. The
+ * predicate now reads the ROW, so these pin the shapes it has to recognise.
+ */
+describe("which rows count as holding a stored credential", () => {
+  // Mirrors the OR chain in `use-server-form.ts`. Kept here rather than
+  // exported from the hook because the hook needs React; the shapes are the
+  // contract worth pinning.
+  function rowHoldsStoredCredential(server: {
+    hasEnv?: boolean;
+    hasHeaders?: boolean;
+    hasBearerToken?: boolean;
+    hasClientSecret?: boolean;
+    oauthTokens?: unknown;
+    config?: { requestInit?: { headers?: Record<string, string> } };
+  }): boolean {
+    const headers = server.config?.requestInit?.headers;
+    return Boolean(
+      server.hasEnv === true ||
+        server.hasHeaders === true ||
+        server.hasBearerToken === true ||
+        server.hasClientSecret === true ||
+        server.oauthTokens != null ||
+        (headers &&
+          Object.values(headers).some(
+            (v) => typeof v === "string" && v.length > 0
+          ))
+    );
+  }
+
+  it.each([
+    ["hasEnv", { hasEnv: true }],
+    ["hasHeaders", { hasHeaders: true }],
+    ["hasBearerToken", { hasBearerToken: true }],
+    ["hasClientSecret", { hasClientSecret: true }],
+    // The backend clears every hostedOAuthCredentials row on an origin change,
+    // and an OAuth-connected server may hold nothing else. There is no
+    // `hasOAuthTokens` redaction flag, so the tokens themselves are the signal.
+    ["stored OAuth tokens", { oauthTokens: { access_token: "x" } }],
+    // Visible plaintext headers, the local path where nothing is redacted.
+    // `hasHeaders` is false for these BY DESIGN — it means "stored and hidden"
+    // — so keying the warning off it missed a row that genuinely holds
+    // credentials the backend will wipe.
+    [
+      "plaintext headers on the row",
+      { config: { requestInit: { headers: { "X-Api-Key": "value" } } } },
+    ],
+  ])("%s alone counts", (_label, server) => {
+    expect(rowHoldsStoredCredential(server)).toBe(true);
+  });
+
+  it.each([
+    ["nothing stored", {}],
+    ["flags explicitly false", { hasEnv: false, hasHeaders: false }],
+    ["an empty header record", { config: { requestInit: { headers: {} } } }],
+    [
+      "a header present but empty",
+      { config: { requestInit: { headers: { "X-Api-Key": "" } } } },
+    ],
+    ["oauthTokens null", { oauthTokens: null }],
+  ])("%s does not count", (_label, server) => {
+    expect(rowHoldsStoredCredential(server)).toBe(false);
+  });
+});

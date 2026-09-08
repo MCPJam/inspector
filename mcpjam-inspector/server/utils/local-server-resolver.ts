@@ -1281,6 +1281,34 @@ export async function resolveLocalServerForConnect(
     );
   }
   const useOAuth = effectiveAuth === "oauth";
+
+  // MJ-003, the OAuth half of the gate. The check further up fires on
+  // `hasHeaders`, which is false for a row whose only credential is an OAuth
+  // token — and this resolver then hands that token to `toMCPServerConfig`,
+  // which puts it straight into `Authorization`. So an OAuth-only row bypassed
+  // the binding entirely on the desktop and `/api/mcp` surfaces.
+  //
+  // Before the refresh below, not after: a refresh spends the row's stored
+  // refresh material against whatever authorization server the CURRENT url
+  // advertises, so a repointed row must not reach it.
+  //
+  // `useOAuth` and not just "a token came back", because a row configured for
+  // OAuth with an expired token refreshes into one — both are row-derived.
+  // XAA is excluded: it mints per connect with `resource` set to the row's
+  // current url, so it is bound by construction, and a stale binding left over
+  // from a converted OAuth server must not block it.
+  if (
+    result.serverConfig.transportType === "http" &&
+    effectiveAuth !== "xaa" &&
+    (useOAuth || result.oauthAccessToken != null)
+  ) {
+    assertSecretsOriginMatches({
+      boundOrigin: result.serverConfig.secretsBoundOrigin,
+      targetUrl: result.serverConfig.url,
+      serverName: options?.serverDisplayName ?? result.serverConfig.name,
+    });
+  }
+
   // Track the access token we'll hand to `toMCPServerConfig`. Starts from
   // whatever `authorize-batch-local` returned, but for hosted-OAuth servers
   // we fall back to a server-side refresh — same `force-refresh` endpoint

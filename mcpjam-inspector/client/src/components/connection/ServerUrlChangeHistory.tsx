@@ -28,6 +28,21 @@ interface ServerUrlChangeEvent {
   } | null;
 }
 
+/**
+ * Backend category names, in words. Unknown keys fall through unchanged rather
+ * than being dropped: a kind added on the backend should still be visible here
+ * before anyone remembers to update this map.
+ */
+const CLEARED_KIND_LABELS: Record<string, string> = {
+  env: "environment variables",
+  headers: "request headers",
+  legacy_env: "environment variables",
+  legacy_headers: "request headers",
+  client_secret: "OAuth client secret",
+  xaa_dcr: "cross-app client registration",
+  oauth_tokens: "OAuth tokens",
+};
+
 interface ServerUrlChangeHistoryProps {
   /** The canonical server document id, or null when it is not resolved yet. */
   serverId: string | null;
@@ -58,9 +73,13 @@ export function ServerUrlChangeHistory({
   // A read from outside gets checked, not assumed.
   if (!Array.isArray(events) || events.length === 0) return null;
 
-  // The clear is recorded as its own action beside the url change. Both are
-  // useful, but showing two rows for one edit reads as two edits, so the url
-  // change is the row and the clear is a note on it.
+  // One row per edit. The backend also records the credential clear as its own
+  // action, because the destruction is a fact in its own right — but rendering
+  // both would read as two edits, and the url-change event already carries
+  // `clearedOnOriginChange` AND `clearedKinds`, so nothing is lost by showing
+  // only this one. That is deliberate on the backend side: putting the kinds on
+  // the event that describes the change means nothing here has to correlate two
+  // audit rows by timestamp to say what went.
   const urlChanges = events.filter((e) => e.action === "server.url.changed");
   if (urlChanges.length === 0) return null;
 
@@ -72,6 +91,11 @@ export function ServerUrlChangeHistory({
           const previous = event.metadata?.previousOrigin ?? null;
           const next = event.metadata?.nextOrigin ?? null;
           const cleared = event.metadata?.clearedOnOriginChange === true;
+          const clearedKindLabels = Array.isArray(event.metadata?.clearedKinds)
+            ? event.metadata.clearedKinds
+                .map((kind) => CLEARED_KIND_LABELS[kind] ?? kind)
+                .filter((label, index, all) => all.indexOf(label) === index)
+            : [];
           return (
             <li
               key={event.id}
@@ -97,7 +121,11 @@ export function ServerUrlChangeHistory({
               </div>
               {cleared && (
                 <div className="mt-1 text-amber-600 dark:text-amber-500">
-                  Saved credentials were cleared and need re-entering.
+                  Saved credentials were cleared and need re-entering
+                  {clearedKindLabels.length > 0
+                    ? `: ${clearedKindLabels.join(", ")}`
+                    : ""}
+                  .
                 </div>
               )}
             </li>

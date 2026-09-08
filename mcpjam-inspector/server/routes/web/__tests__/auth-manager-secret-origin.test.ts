@@ -291,3 +291,91 @@ describe("MJ-003 secret origin binding at connect time", () => {
     expect(outboundHeadersForServer1()).toEqual({});
   });
 });
+
+describe("MJ-003 gate scope — what it must NOT refuse", () => {
+  const originalFetch = global.fetch;
+  const originalConvexHttpUrl = process.env.CONVEX_HTTP_URL;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    global.fetch = originalFetch;
+    if (originalConvexHttpUrl === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = originalConvexHttpUrl;
+    }
+  });
+
+  it("allows a caller-supplied token against a repointed row", async () => {
+    mockBackend({
+      url: "https://moved.example.com/mcp",
+      secretsBoundOrigin: "https://owner.example.com",
+      hasHeaders: false,
+      oauthAccessToken: null,
+    });
+
+    // The caller's own token, passed in for this request. It was never stored
+    // against this row, so no saved credential is at risk and refusing would
+    // block a connection for nothing. Gating this was a real bug in the first
+    // cut of the check, caught by the existing auth-manager suite.
+    const result = await createAuthorizedManager(
+      callerContextFromHono(mockContext),
+      "bearer-token",
+      "project-1",
+      ["server-1"],
+      10_000,
+      { "server-1": "callers-own-token" }
+    );
+
+    expect(result).toBeTruthy();
+    expect(outboundHeadersForServer1()).toEqual({
+      Authorization: "Bearer callers-own-token",
+    });
+  });
+
+  it("does not let a stale binding block an XAA server", async () => {
+    const revealCalls: string[] = [];
+    global.fetch = vi.fn(async (input: any) => {
+      const target = input instanceof Request ? input.url : String(input);
+      revealCalls.push(target);
+      return new Response(
+        JSON.stringify({
+          results: {
+            "server-1": {
+              ok: true,
+              role: "member",
+              accessLevel: "project_member",
+              permissions: { chatOnly: false },
+              // Converted from OAuth: the stored token is still on the row.
+              oauthAccessToken: "stale-oauth-token",
+              serverConfig: {
+                transportType: "http",
+                url: "https://moved.example.com/mcp",
+                headers: {},
+                authMethod: "xaa",
+                useXaa: true,
+                secretsBoundOrigin: "https://owner.example.com",
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } }
+      );
+    }) as typeof fetch;
+
+    // An XAA token is minted per connect with `resource` set to the row's
+    // CURRENT url, so it is bound by construction and the stale OAuth binding
+    // is irrelevant — the stored token is overridden and never sent. Refusing
+    // here would break every server converted from OAuth to XAA.
+    //
+    // The mint itself needs an issuer this test does not thread, so the
+    // assertion is narrow: whatever happens next, it is NOT the origin refusal.
+    await expect(connect()).rejects.not.toMatchObject({
+      details: expect.objectContaining({ secretOriginMismatch: true }),
+    });
+  });
+});

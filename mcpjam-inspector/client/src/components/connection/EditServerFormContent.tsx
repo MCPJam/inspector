@@ -278,13 +278,15 @@ export function EditServerFormContent({
             <span className="font-mono">
               {formState.pendingCredentialClear.previousOrigin}
             </span>
-            , and its saved headers, environment variables and authorization are
-            stored for that host. Moving it to{" "}
+            , and everything saved against that host goes: request headers,
+            environment variables, the bearer token, any OAuth access and
+            refresh tokens, and the OAuth client secret. Moving it to{" "}
             <span className="font-mono">
               {formState.pendingCredentialClear.nextOrigin}
             </span>{" "}
-            removes them, and they will need re-entering. This affects
-            credentials other project members may have added.
+            removes all of them, and they will need re-entering. This affects
+            credentials other project members may have added, and which you may
+            not be able to see.
           </p>
           <label className="flex items-start gap-2">
             <input

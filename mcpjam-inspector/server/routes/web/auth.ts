@@ -1754,15 +1754,23 @@ export async function createAuthorizedManager(
       const oauthTokenIsRowDerived =
         recoveredOAuthTokens[serverId] != null ||
         auth.oauthAccessToken != null;
-      if (oauthToken && oauthTokenIsRowDerived) {
+      // XAA EXCLUDED, and the exclusion has to be here rather than implied by
+      // the branch order below. A server converted from OAuth to XAA keeps its
+      // stored OAuth token (the comment on `connectToken` says so), so
+      // `oauthTokenIsRowDerived` is true for it — and the XAA branch then
+      // overrides that token with a freshly minted one whose `resource` is the
+      // row's CURRENT url. Refusing here would block a connection that was
+      // never going to send the stale credential.
+      const willMintXaa =
+        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      if (oauthToken && oauthTokenIsRowDerived && !willMintXaa) {
         assertSecretsOriginMatches({
           boundOrigin: auth.serverConfig.secretsBoundOrigin,
           targetUrl: auth.serverConfig.url,
           serverName: displayServerName,
         });
       }
-      const useXaa =
-        auth.serverConfig.transportType === "http" && effectiveAuth === "xaa";
+      const useXaa = willMintXaa;
       if (useXaa) {
         // (`xaaIdentityError` is validated batch-wide in PASS 1 — before any
         // sibling server can mint.)

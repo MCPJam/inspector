@@ -57,6 +57,8 @@ const httpHostedOAuthAuth = {
   serverConfig: {
     transportType: "http" as const,
     url: "https://hosted-oauth.example.com/mcp",
+    // MJ-003: bound to its own origin, as a post-backfill row is.
+    secretsBoundOrigin: "https://hosted-oauth.example.com",
     headers: { "X-Convex-Stored": "yes" },
     useOAuth: true,
   },
@@ -71,6 +73,8 @@ const httpHeaderOnlyAuth = {
   serverConfig: {
     transportType: "http" as const,
     url: "https://header-only.example.com/mcp",
+    // MJ-003: bound to its own origin, as a post-backfill row is.
+    secretsBoundOrigin: "https://header-only.example.com",
     headers: { Authorization: "Bearer static-token" },
     useOAuth: false,
   },
@@ -354,6 +358,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -399,6 +405,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "http://localhost:8001/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "http://localhost:8001",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -477,6 +485,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: "fresh-token",
@@ -509,6 +519,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://open.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://open.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: null,
@@ -551,6 +563,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://open.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://open.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: null,
@@ -584,6 +598,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://hosted.example.com",
             authMethod: "auto",
           },
           oauthAccessToken: "stored-token",
@@ -773,6 +789,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -820,6 +838,8 @@ describe("resolveLocalServerForConnect — refresh on missing access token", () 
           serverConfig: {
             transportType: "http",
             url: "https://hosted.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://hosted.example.com",
             useOAuth: true,
           },
           oauthAccessToken: null,
@@ -1185,6 +1205,8 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
           return authorizeResponse({
             transportType: "http",
             url: "https://plain.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://plain.example.com",
             authMethod: "auto",
           });
         }
@@ -1223,6 +1245,8 @@ describe("enterprise-managed authorization policy (xaaPolicy)", () => {
           return authorizeResponse({
             transportType: "http",
             url: "https://oauth.example.com/mcp",
+            // MJ-003: bound to its own origin, as a post-backfill row is.
+            secretsBoundOrigin: "https://oauth.example.com",
             authMethod: "oauth",
             useOAuth: true,
           });

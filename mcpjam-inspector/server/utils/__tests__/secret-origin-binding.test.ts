@@ -257,3 +257,142 @@ describe("local resolver — MJ-003 gate (desktop and /api/mcp)", () => {
     ).resolves.toBeTruthy();
   });
 });
+
+describe("assertSecretsOriginMatches — malformed bindings", () => {
+  it("reports a malformed binding as unrecorded, and does not echo it", () => {
+    const stored = "not-a-url-at-all";
+    try {
+      assertSecretsOriginMatches({
+        boundOrigin: stored,
+        targetUrl: "https://owner.example.com/mcp",
+      });
+      throw new Error("expected a refusal");
+    } catch (error: any) {
+      // Still fails closed — but "saved for not-a-url-at-all" sends an operator
+      // looking for a host that cannot exist, and puts an unvalidated stored
+      // value into an error message on the way out.
+      expect(error.message).toMatch(/not recorded against any origin/);
+      expect(error.message).not.toContain(stored);
+      expect(error.details.boundOrigin).toBeNull();
+    }
+  });
+});
+
+describe("local resolver — the OAuth half of the gate", () => {
+  const ORIGINAL_CONVEX_HTTP_URL = process.env.CONVEX_HTTP_URL;
+  const fakeContext = { set: () => {}, get: () => undefined } as any;
+
+  beforeEach(() => {
+    process.env.CONVEX_HTTP_URL = "https://example.convex.site";
+  });
+
+  afterEach(() => {
+    if (ORIGINAL_CONVEX_HTTP_URL === undefined) {
+      delete process.env.CONVEX_HTTP_URL;
+    } else {
+      process.env.CONVEX_HTTP_URL = ORIGINAL_CONVEX_HTTP_URL;
+    }
+    vi.unstubAllGlobals();
+  });
+
+  function authorizeOnly(serverConfig: Record<string, unknown>, token: unknown) {
+    return vi.fn(async (input: any) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.endsWith("/web/authorize-batch-local")) {
+        return new Response(
+          JSON.stringify({
+            results: {
+              "srv-1": {
+                ok: true,
+                role: "owner",
+                accessLevel: "project_member",
+                permissions: { chatOnly: false },
+                serverConfig,
+                oauthAccessToken: token,
+              },
+            },
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        );
+      }
+      throw new Error(`Unexpected fetch ${url}`);
+    });
+  }
+
+  it("refuses a repointed OAuth row that carries no secret headers", async () => {
+    // The gap the review found: `hasHeaders` is false for an OAuth-only row, so
+    // the header check never fired and the resolver went on to put the
+    // row-derived bearer into Authorization for the new host.
+    const fetchMock = authorizeOnly(
+      {
+        transportType: "http",
+        url: "https://collector.attacker.example/mcp",
+        headers: {},
+        useOAuth: true,
+        secretsBoundOrigin: "https://owner.example.com",
+        name: "oauth-only",
+      },
+      "victim-oauth-token"
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer", "proj-1", "srv-1", {
+        serverDisplayName: "oauth-only",
+      })
+    ).rejects.toMatchObject({ status: 403 });
+
+    // Refused before any refresh: only the authorize call went out. A refresh
+    // would have spent the row's stored refresh material against whatever
+    // authorization server the attacker's host advertises.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("attaches the OAuth bearer when the binding matches", async () => {
+    const fetchMock = authorizeOnly(
+      {
+        transportType: "http",
+        url: "https://owner.example.com/mcp",
+        headers: {},
+        useOAuth: true,
+        secretsBoundOrigin: "https://owner.example.com",
+        name: "oauth-only",
+      },
+      "valid-oauth-token"
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const { config }: any = await resolveLocalServerForConnect(
+      fakeContext,
+      "bearer",
+      "proj-1",
+      "srv-1",
+      { serverDisplayName: "oauth-only" }
+    );
+    expect(config.requestInit.headers).toMatchObject({
+      Authorization: "Bearer valid-oauth-token",
+    });
+  });
+
+  it("leaves an unauthenticated row alone, bound or not", async () => {
+    // No credential of any kind, so nothing is at risk and the gate must not
+    // fire — this is the case that would break every public MCP server if the
+    // check were keyed on a missing binding rather than on holding a credential.
+    const fetchMock = authorizeOnly(
+      {
+        transportType: "http",
+        url: "https://public.example.com/mcp",
+        headers: {},
+        name: "public",
+      },
+      null
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      resolveLocalServerForConnect(fakeContext, "bearer", "proj-1", "srv-1", {
+        serverDisplayName: "public",
+      })
+    ).resolves.toBeTruthy();
+  });
+});

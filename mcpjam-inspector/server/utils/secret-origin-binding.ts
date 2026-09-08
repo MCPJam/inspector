@@ -101,8 +101,14 @@ export function assertSecretsOriginMatches(
 
   const targetOrigin = originForCredentialBinding(check.targetUrl);
   const named = check.serverName ? ` "${check.serverName}"` : "";
-  const boundTo = check.boundOrigin
-    ? `saved for ${check.boundOrigin}`
+  // Classified, not echoed. A non-empty but unparseable binding is not "saved
+  // for <that string>" — it is a binding nobody can act on, which is the same
+  // situation as an unrecorded one and needs the same instruction. Reporting it
+  // as a valid origin sends an operator looking for a host that does not exist,
+  // and puts an unvalidated stored value into an error message on the way.
+  const boundOrigin = originForCredentialBinding(check.boundOrigin);
+  const boundTo = boundOrigin
+    ? `saved for ${boundOrigin}`
     : "not recorded against any origin";
 
   throw new WebRouteError(
@@ -114,7 +120,7 @@ export function assertSecretsOriginMatches(
       `They were not sent. Re-enter this server's credentials for the new URL.`,
     {
       secretOriginMismatch: true,
-      boundOrigin: check.boundOrigin ?? null,
+      boundOrigin,
       targetOrigin,
     }
   );

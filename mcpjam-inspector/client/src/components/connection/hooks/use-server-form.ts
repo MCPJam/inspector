@@ -108,6 +108,23 @@ function getAuthorizationHeaderValue(
   return undefined;
 }
 
+/**
+ * Does this config carry at least one header VALUE?
+ *
+ * Used to decide whether a row holds credentials a repoint would destroy
+ * (MJ-003). A redacted config has the names stripped and a `has*` flag instead,
+ * so this only ever answers true for the plaintext case — which is exactly the
+ * case the redaction flags miss.
+ */
+function hasNonEmptyHeaderRecord(headers: unknown): boolean {
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
+    return false;
+  }
+  return Object.values(headers as Record<string, unknown>).some(
+    (value) => typeof value === "string" && value.length > 0
+  );
+}
+
 function getRedactedConfigFlag(
   config: unknown,
   flag: "hasEnv" | "hasHeaders" | "hasBearerToken"
@@ -1138,14 +1155,34 @@ export function useServerForm(
   // `hasStoredBearerToken` counts because it mirrors a stored Authorization
   // header; a bearer typed into the form this session is not stored yet and is
   // not at risk.
+  //
+  // Read off the ROW, not off the form's `hasStored*` flags. Those mean
+  // "stored AND HIDDEN from me" — `hasStoredHeaders` is computed with a
+  // trailing `headersArray.length === 0`, so a row whose headers arrive as
+  // plaintext (the local path, where nothing is redacted) reports `false`
+  // while genuinely holding stored headers the backend will wipe. The
+  // question here is "does the row hold a credential", and `server.has*` are
+  // the backend's own answers to exactly that.
+  //
+  // `oauthTokens` is in the list because the backend clears every
+  // `hostedOAuthCredentials` row for the server on an origin change, and an
+  // OAuth-connected server may hold nothing else. `server.oauthTokens != null`
+  // is the app's established test for "this row has tokens" (see
+  // `ServerInfoContent`); there is no `hasOAuthTokens` redaction flag.
+  const rowHoldsStoredCredential = Boolean(
+    server?.hasEnv === true ||
+      server?.hasHeaders === true ||
+      server?.hasBearerToken === true ||
+      server?.hasClientSecret === true ||
+      server?.oauthTokens != null ||
+      // Visible plaintext headers on the row are still stored credentials —
+      // the reason `hasHeaders` is false for them is redaction, not absence.
+      hasNonEmptyHeaderRecord(server?.config?.requestInit?.headers)
+  );
   const pendingCredentialClear: PendingCredentialClear | null =
     type === "http"
       ? pendingCredentialClearForUrlEdit({
-          holdsStoredCredential:
-            hasStoredEnv ||
-            hasStoredHeaders ||
-            hasStoredBearerToken ||
-            hasStoredClientSecret,
+          holdsStoredCredential: rowHoldsStoredCredential,
           savedUrl,
           nextUrl: url,
         })
