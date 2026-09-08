@@ -516,17 +516,19 @@ Your LLM provider rejected the API key for this request.
 
 `provider/quota`
 
-Your LLM provider rejected the request because you hit a rate limit or quota.
+Your LLM provider rejected the request because you hit a rate limit or quota. This is a limit on your own provider key — no MCPJam purchase lifts it.
 
 **Likely causes**
-- Daily/monthly quota exhausted.
 - Per-minute rate limit exceeded.
+- Daily or monthly quota exhausted.
 - Free tier limits hit.
 
 **Next steps**
-- Wait for the limit window to reset.
-- Upgrade your provider plan.
-- Switch to a different provider in Settings.
+- Wait for the limit window to reset, then retry.
+- Switch the host to a different model or provider.
+- Upgrade your plan on the provider's own dashboard.
+
+> **MCPJam account limit vs. provider throttle** — If the session pane shows a billing or credit message instead of this card, the limit is on your MCPJam account, not your provider key. Adding credits or switching to BYOK resolves that case; the steps above do not apply.
 
 ---
 
