@@ -11,6 +11,7 @@ import {
   probeIdentityKey,
   shouldSkipExecution,
   assertTestCaseRunWithinCap,
+  authorEvalSuite,
   buildManagerKeyToDisplayNameMap,
   fetchRunPinnedSkillsWithRetry,
   filterAndRemapReplayConfigs,
@@ -985,5 +986,111 @@ describe("shouldSkipExecution", () => {
     // "replayed" — and unknown must never start refusing to run work.
     expect(shouldSkipExecution({})).toBe(false);
     expect(shouldSkipExecution({ status: "completed" })).toBe(false);
+  });
+});
+
+/**
+ * A plain rerun must not WRITE the suite.
+ *
+ * `authorEvalSuite` used to call `testSuites:updateTestSuite` on every launch
+ * that had a suite id. On a bare rerun that call carried nothing — no name, no
+ * description, and (by the snapshot rule above it) no environment — so it was a
+ * mutation whose entire argument list was `undefined`.
+ *
+ * Harmless while every suite was writable. Not harmless once a suite managed by
+ * CI refuses suite edits: it would make EVERY rerun of such a suite fail on a
+ * write it never needed to make, and running a CI-owned suite is precisely what
+ * the read-only lock is meant to keep working.
+ */
+describe("authorEvalSuite — the suite write a rerun does not need", () => {
+  function fakeConvex(overrides: Record<string, unknown> = {}) {
+    const mutations: Array<{ fn: string; args: any }> = [];
+    const client = {
+      mutation: async (fn: string, args: any) => {
+        mutations.push({ fn, args });
+        return { _id: "suite_1" };
+      },
+      query: async (fn: string) => {
+        if (fn === "testSuites:listTestCases") return [];
+        return null;
+      },
+      ...overrides,
+    };
+    return { client, mutations };
+  }
+
+  const BASE = {
+    tests: [] as never[],
+    resolvedServerIds: ["s1"],
+    persistedServerRefs: ["s1"],
+    serverNames: ["alpha"],
+    projectId: "p1",
+    suiteId: "suite_1",
+    suiteName: undefined,
+    suiteDescription: undefined,
+    passCriteria: undefined,
+  };
+
+  it("issues no updateTestSuite for a plain rerun", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    expect(mutations.map((m) => m.fn)).not.toContain(
+      "testSuites:updateTestSuite"
+    );
+  });
+
+  it("still writes the suite when the caller asked to refresh the snapshot", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: true,
+      refreshSnapshot: true,
+    });
+    // This one really does rewrite the suite's persisted configuration, which
+    // is the drift a CI-owned suite is right to refuse.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toMatchObject({
+      suiteId: "suite_1",
+      refreshHostConfigFromEnvironment: true,
+    });
+  });
+
+  it("still writes the suite on a non-rerun launch", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteRerun: false,
+      refreshSnapshot: undefined,
+    });
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args?.environment).toBeDefined();
+  });
+
+  it("carries a name or description through even on a rerun", async () => {
+    const { client, mutations } = fakeConvex();
+    await authorEvalSuite({
+      ...BASE,
+      convexClient: client as never,
+      suiteName: "Renamed",
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+    });
+    // The skip is "nothing to write", not "reruns never write". A caller that
+    // actually sent a name still means it.
+    const write = mutations.find(
+      (m) => m.fn === "testSuites:updateTestSuite"
+    );
+    expect(write?.args).toEqual({ suiteId: "suite_1", name: "Renamed" });
   });
 });
