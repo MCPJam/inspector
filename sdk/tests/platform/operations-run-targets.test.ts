@@ -767,6 +767,118 @@ describe("run_eval_suite target selection", () => {
       }
     });
 
+    it("names CLIENT in every combination refusal, never the folded `host`", async () => {
+      // The fold copies `client`/`clients` onto `host`/`hosts` before the
+      // combination guards run, so without the spelling travelling alongside
+      // it a caller who wrote `client` was answered about a field they never
+      // typed — in the vocabulary this change exists to retire.
+      const { client, fetchMock } = makeClient();
+      const cases: Array<{
+        input: Record<string, unknown>;
+        expected: RegExp;
+        absent: RegExp;
+      }> = [
+        {
+          input: { suite: "Smoke", client: "Claude", environment: "Staging" },
+          expected:
+            /Pass environments or clients, not both[\s\S]*resolves a client/,
+          absent: /host/,
+        },
+        {
+          input: {
+            suite: "Smoke",
+            clients: ["Claude"],
+            environment: "Staging",
+          },
+          expected: /Pass environments or clients, not both/,
+          absent: /host/,
+        },
+        {
+          input: { suite: "Smoke", client: "Claude", servers: ["echo"] },
+          expected: /Pass either a client or servers, not both/,
+          absent: /host/,
+        },
+        {
+          input: { suite: "Smoke", client: "Claude", allAttached: true },
+          expected: /allAttached or name targets explicitly/,
+          absent: /host/,
+        },
+        {
+          input: {
+            suite: "Smoke",
+            client: "Claude",
+            compose: { client: "Claude", servers: ["echo"] },
+          },
+          expected: /naming an environment, client, server override/,
+          absent: /host/,
+        },
+        // MIXED spellings name each side as it was typed rather than picking
+        // one vocabulary for both — the caller can act on either half.
+        {
+          input: { suite: "Smoke", client: "Claude", hosts: ["ChatGPT"] },
+          expected:
+            /Pass either client \(one\) or hosts \(several\), not both\./,
+          absent: /^$/,
+        },
+        {
+          input: { suite: "Smoke", clients: ["Claude"], host: "ChatGPT" },
+          expected:
+            /Pass either host \(one\) or clients \(several\), not both\./,
+          absent: /^$/,
+        },
+      ];
+
+      for (const { input, expected, absent } of cases) {
+        const error = await runEvalSuiteOperation
+          .execute(input as never, { client })
+          .catch((caught: unknown) => caught);
+        expect(error, JSON.stringify(input)).toBeInstanceOf(PlatformApiError);
+        const message = (error as PlatformApiError).message;
+        expect(message, JSON.stringify(input)).toMatch(expected);
+        if (absent.source !== "^$") {
+          expect(message, JSON.stringify(input)).not.toMatch(absent);
+        }
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("leaves the `host` spelling's refusals BYTE-for-byte as they were", async () => {
+      // The additive half of the same guarantee: nothing a caller can already
+      // be reading changes wording because a new alias exists beside it.
+      const { client } = makeClient();
+      const cases: Array<[Record<string, unknown>, string]> = [
+        [
+          { suite: "Smoke", host: "Claude", environment: "Staging" },
+          "Pass environments or hosts, not both — a run targets ONE axis, and an environment already resolves a host, so combining them would describe a configuration the suite never had.",
+        ],
+        [
+          { suite: "Smoke", host: "Claude", servers: ["echo"] },
+          "Pass either a host or servers, not both — running an attached host uses that host's own configured server set, which servers cannot override.",
+        ],
+        [
+          { suite: "Smoke", host: "Claude", hosts: ["ChatGPT"] },
+          "Pass either host (one) or hosts (several), not both.",
+        ],
+        [
+          {
+            suite: "Smoke",
+            host: "Claude",
+            compose: { host: "Claude", servers: ["echo"] },
+          },
+          "Pass compose OR a target selector, not both — compose builds the execution stack the run uses, so naming an environment, host, server override or allAttached alongside it describes two different runs.",
+        ],
+      ];
+
+      for (const [input, message] of cases) {
+        const error = await runEvalSuiteOperation
+          .execute(input as never, { client })
+          .catch((caught: unknown) => caught);
+        expect((error as PlatformApiError).message, JSON.stringify(input)).toBe(
+          message
+        );
+      }
+    });
+
     it("resolves `client` on run_eval_case too", async () => {
       const { client, fetchMock } = makeClient({
         detail: suiteDetail({
