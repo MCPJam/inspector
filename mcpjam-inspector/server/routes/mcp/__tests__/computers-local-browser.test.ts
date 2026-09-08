@@ -89,6 +89,13 @@ vi.mock("../../../services/browserd/local/local-browser-session.js", () => ({
     })),
   findLocalBrowserSession: (bootId: string) =>
     browserState.sessions.get(bootId),
+  // The read-only lookup the Tools pane uses. Deliberately NOT the ensure
+  // path: it answers `undefined` when nothing is running rather than launching
+  // a Chromium, and this fake models exactly that.
+  findLocalBrowserSessionForProject: (projectId: string) => {
+    if (projectId === "bad/project") throw new Error("invalid project key");
+    return [...browserState.sessions.values()][0];
+  },
   touchLocalBrowserSession: (handle: { bootId: string }) => {
     browserState.touched.push(handle.bootId);
   },
@@ -546,5 +553,125 @@ describe("POST /local-browser/install", () => {
     const res = await install({ [LOCAL_CONSENT_HEADER]: "not-the-capability" });
     expect(res.status).toBe(403);
     expect(chromiumState.installs).toBe(0);
+  });
+});
+
+/**
+ * The Tools pane's read of the local browser's page.
+ *
+ * The gate that matters beyond the usual four: this route must NEVER start a
+ * browser. A tool list appearing in a side panel is not consent to open a
+ * Chromium window on somebody's desk, so a project with nothing running gets a
+ * `no_browser_session` answer rather than a launch.
+ */
+describe("POST /local-browser/page-tools", () => {
+  const pageTools = (body: unknown, token: string | null) =>
+    createApp().request("/api/mcp/computers/local-browser/page-tools", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { [LOCAL_CONSENT_HEADER]: token } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+
+  async function startBrowser(token: string): Promise<void> {
+    await createApp().request("/api/mcp/computers/local-browser/ensure", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        [LOCAL_CONSENT_HEADER]: token,
+      },
+      body: JSON.stringify({ projectId: "proj" }),
+    });
+  }
+
+  /**
+   * Drive the browser to a page, the way a chat turn's `browser_navigate`
+   * does. Sent straight to the daemon rather than through a route, because
+   * navigation is a MODEL action — there is no human route for it, which is
+   * exactly why the pane's read has to cope with there being no page yet.
+   */
+  async function openAPage(): Promise<void> {
+    const session = [...browserState.sessions.values()][0];
+    await session.client.sendCommand(
+      {
+        commandId: "open-a-page",
+        source: "chat",
+        action: { kind: "navigate", url: "https://webmcp.dev/" },
+      },
+      session.handle.bootId,
+    );
+  }
+
+  it("requires consent", async () => {
+    const res = await pageTools({ projectId: "proj" }, null);
+    expect(res.status).toBe(403);
+  });
+
+  it("reads the page against a running browser", async () => {
+    const token = await grantConsent();
+    await startBrowser(token);
+    await openAPage();
+
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      tools: unknown[];
+      webmcpSupported: boolean;
+    };
+    expect(body.ok).toBe(true);
+    // The fake page has no WebMCP bridge, which is the ordinary case for most
+    // real pages too — and it must read as an ANSWER, not an error.
+    expect(body.webmcpSupported).toBe(false);
+    expect(body.tools).toEqual([]);
+  });
+
+  it("says a running browser has no page yet, rather than failing", async () => {
+    // The state between a session starting and the model's first navigation.
+    // The driver will not conjure an `about:blank` tab to observe, so the pane
+    // has to be able to say "nothing loaded yet" about a browser that is up.
+    const token = await grantConsent();
+    await startBrowser(token);
+
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ ok: false, error: "no_page" });
+  });
+
+  it("does not start a browser to answer", async () => {
+    const token = await grantConsent();
+    // Nothing running for this project.
+    const res = await pageTools({ projectId: "proj" }, token);
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: "no_browser_session",
+    });
+    expect(browserState.sessions.size).toBe(0);
+  });
+
+  it("400s a malformed project key rather than reporting no browser", async () => {
+    // The two are different things for the caller to do about, and collapsing
+    // an invalid id into "nothing is running" hides a bug in the caller.
+    const token = await grantConsent();
+    const res = await pageTools({ projectId: "bad/project" }, token);
+    expect(res.status).toBe(400);
+  });
+
+  it("does not count the read as use of the machine", async () => {
+    // A pane polling a tool list is not somebody using the browser; counting it
+    // would keep the idle reap from ever closing an abandoned one.
+    const token = await grantConsent();
+    await startBrowser(token);
+    browserState.touched.length = 0;
+
+    await pageTools({ projectId: "proj" }, token);
+
+    expect(browserState.touched).toEqual([]);
   });
 });
