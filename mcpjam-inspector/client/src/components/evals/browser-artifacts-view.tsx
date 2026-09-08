@@ -38,10 +38,10 @@ type Tone = "success" | "warning" | "danger" | "neutral";
 
 const TONE_CLASS: Record<Tone, string> = {
   success:
-    "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    "border-success/30 bg-success/10 text-success",
   warning:
-    "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-  danger: "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400",
+    "border-warning/30 bg-warning/10 text-warning",
+  danger: "border-destructive/30 bg-destructive/10 text-destructive",
   neutral: "border-border/50 bg-muted/40 text-muted-foreground",
 };
 
@@ -205,7 +205,7 @@ export function RenderObservationCard({
 
       {observation.consoleErrors && observation.consoleErrors.length > 0 ? (
         <details className="text-[11px]">
-          <summary className="cursor-pointer text-red-500">
+          <summary className="cursor-pointer text-destructive">
             {observation.consoleErrors.length} console error
             {observation.consoleErrors.length === 1 ? "" : "s"}
           </summary>

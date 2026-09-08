@@ -192,7 +192,10 @@ import {
   extractHostTheme,
   type ProjectHostContextDraft,
 } from "@/lib/client-config";
-import { PostConnectGuide } from "@/components/ui-playground/PostConnectGuide";
+import {
+  POST_CONNECT_GUIDE_COPY,
+  PostConnectGuide,
+} from "@/components/ui-playground/PostConnectGuide";
 import {
   ScenarioChatUiOverrideProvider,
   ScenarioHostStyleProvider,
@@ -408,7 +411,15 @@ interface PlaygroundMainProps {
   /** When true, Send / Enter are blocked until the playground server is connected. */
   blockSubmitUntilServerConnected?: boolean;
   pulseSubmit?: boolean;
+  /** Legacy #1689 NUX branch, pinned `false` in production — see below. */
   showPostConnectGuide?: boolean;
+  /**
+   * Swaps the welcome hero's heading for the post-connect guide copy, so the
+   * first-run user sees the MCPJam logo and the Excalidraw nudge at once.
+   * Unlike `showPostConnectGuide` this keeps the rest of the composer NUX
+   * (typewriter, send hint, model/host selectors) intact.
+   */
+  showPostConnectGuideCopy?: boolean;
   onFirstMessageSent?: () => void;
   /**
    * When set, Playground consumes the handoff once `isSessionBootstrapComplete`
@@ -560,6 +571,7 @@ export function PlaygroundMain({
   blockSubmitUntilServerConnected = false,
   pulseSubmit = false,
   showPostConnectGuide = false,
+  showPostConnectGuideCopy = false,
   onFirstMessageSent,
   evalChatHandoff = null,
   onEvalChatHandoffConsumed,
@@ -4932,15 +4944,33 @@ export function PlaygroundMain({
                 ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
+                      {/*
+                        BB-106: render both theme variants and toggle with CSS
+                        rather than swapping `src`. During NUX `effectiveThreadTheme`
+                        flips once `hostContext` resolves asynchronously; swapping the
+                        `src` forced a fresh fetch of the other PNG and left a blank
+                        frame (the logo "disappearing"). Both files download once, so
+                        the theme flip is now instant with no refetch.
+                      */}
                       <img
-                        src={
-                          effectiveThreadTheme === "dark"
-                            ? "/mcp_jam_dark.png"
-                            : "/mcp_jam_light.png"
-                        }
+                        src="/mcp_jam_light.png"
                         alt="MCPJam"
                         draggable={false}
-                        className="h-10 w-auto mx-auto mb-4"
+                        aria-hidden={effectiveThreadTheme === "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme === "dark" && "hidden"
+                        )}
+                      />
+                      <img
+                        src="/mcp_jam_dark.png"
+                        alt="MCPJam"
+                        draggable={false}
+                        aria-hidden={effectiveThreadTheme !== "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme !== "dark" && "hidden"
+                        )}
                       />
                       <div className="space-y-3">
                         <h3
@@ -4955,7 +4985,9 @@ export function PlaygroundMain({
                                 : "text-[rgba(61,57,41,1)]",
                           )}
                         >
-                          This is your playground for MCP.
+                          {showPostConnectGuideCopy
+                            ? POST_CONNECT_GUIDE_COPY
+                            : "This is your playground for MCP."}
                         </h3>
                       </div>
                     </div>

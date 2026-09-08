@@ -28,9 +28,8 @@ vi.mock("convex/react", () => ({
 }));
 
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -95,6 +94,9 @@ vi.mock("../suite-header", () => ({
     </div>
   ),
 }));
+vi.mock("@/components/evals/suite-clients-settings", () => ({
+  SuiteClientsSettings: () => <div data-testid="suite-clients-table">Client table</div>,
+}));
 vi.mock("@/components/evals/suite-environment-composer-bar", () => ({
   SuiteEnvironmentComposerBar: () => (
     <div data-testid="suite-environment-bar">composer</div>
@@ -129,18 +131,17 @@ describe("suite settings ledger", () => {
 
   it("shows the header name editor and every row for the active tab", () => {
     const { container } = renderSettingsSheet();
-    expect(
-      container.querySelector('[data-setting-key="name"]'),
-    ).toBeTruthy();
-    expect(
-      container.querySelector('[data-setting-key="policy"]'),
-    ).toBeTruthy();
+    expect(container.querySelector('[data-setting-key="name"]')).toBeTruthy();
+    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).not.toContain("Delete suite");
+    expect(container.querySelector('[data-setting-key="deleteSuite"]')).toBeNull();
+    expect(container.querySelector('nav[aria-label="Settings sections"]')?.textContent).toBe("GradingWhere it runs");
+    expect(container.querySelector('[data-setting-key="schedule"]')).toBeNull();
+    expect(container.querySelector('[data-setting-key="githubChecks"]')).toBeNull();
+    expect(container.querySelector('[data-setting-key="policy"]')).toBeTruthy();
     expect(
       container.querySelector('[data-stage-group="selection"]'),
     ).toBeTruthy();
-    expect(
-      container.querySelector('[data-setting-key="checks"]'),
-    ).toBeTruthy();
+    expect(container.querySelector('[data-setting-key="checks"]')).toBeTruthy();
     expect(
       container.querySelector('[data-setting-key="environments"]'),
     ).toBeNull();
@@ -148,7 +149,6 @@ describe("suite settings ledger", () => {
 
   it("shows the user-value chain under Grading without not measured copy", () => {
     const { container } = renderSettingsSheet({ suite: v2Suite });
-    openSettingsRow(container, "judge");
     expect(
       container.querySelector('[data-stage-group="userValue"]'),
     ).toBeTruthy();
@@ -162,12 +162,14 @@ describe("suite settings ledger", () => {
     expect(policy?.textContent?.toLowerCase()).not.toContain("every case uses");
   });
 
-  it("marks environments, schedule, github, and delete as immediate writers", () => {
+  it("omits the immediate-save badge for environments", () => {
     const { container } = renderSettingsSheet();
-    for (const key of ["environments", "schedule", "githubChecks", "deleteSuite"]) {
+    for (const key of [
+      "environments",
+    ]) {
       openSettingsRow(container, key);
       const row = container.querySelector(`[data-setting-key="${key}"]`);
-      expect(row?.textContent, key).toContain("Applies immediately");
+      expect(row?.textContent, key).not.toContain("Applies immediately");
     }
   });
 
@@ -177,59 +179,35 @@ describe("suite settings ledger", () => {
     expect(screen.getByRole("textbox", { name: "Suite name" })).toBeTruthy();
   });
 
-  it("renders Railway-style section tabs and subsection rail under Grading", () => {
-    renderSettingsSheet({ suite: v2Suite });
-    const tabs = screen.getByRole("navigation", { name: "Settings sections" });
-    expect(within(tabs).queryByRole("button", { name: "Name" })).toBeNull();
-    expect(within(tabs).getByRole("button", { name: "Grading" })).toBeTruthy();
-    const subsections = screen.getByRole("navigation", {
-      name: "Settings subsections",
-    });
+  it("shows a stage-first table without a duplicate flow or grading rail", () => {
+    const { container } = renderSettingsSheet({ suite: v2Suite });
     expect(
-      within(subsections).getByRole("button", { name: "Quality gate" }),
+      screen.getByRole("heading", { name: "Checks by stage" }),
     ).toBeTruthy();
     expect(
-      within(subsections).getByRole("button", { name: "Scorers" }),
+      screen.getByRole("columnheader", { name: "Stage of user value chain" }),
     ).toBeTruthy();
+    expect(container.querySelectorAll("[data-stage-group]")).toHaveLength(6);
     expect(
-      within(subsections).getByRole("button", { name: "Judges" }),
-    ).toBeTruthy();
-    expect(
-      within(subsections).queryByRole("button", { name: /User value/ }),
+      screen.queryByRole("navigation", { name: "Settings subsections" }),
     ).toBeNull();
     expect(
       screen.queryByRole("tablist", { name: "User value chain" }),
     ).toBeNull();
-  });
-
-  it("keeps every grading stage in the scrollable column and scrolls on rail click", () => {
-    const { container } = renderSettingsSheet({ suite: v2Suite });
-    expect(
-      container.querySelector('[data-stage-group="selection"]'),
-    ).toBeTruthy();
-    expect(
-      container.querySelector('[data-stage-group="response"]'),
-    ).toBeTruthy();
-    const subsections = screen.getByRole("navigation", {
-      name: "Settings subsections",
-    });
-    const scrollIntoView = vi.fn();
-    const checksAnchor = container.querySelector('[data-setting-key="checks"]');
-    expect(checksAnchor).toBeTruthy();
-    checksAnchor!.scrollIntoView = scrollIntoView;
-    fireEvent.click(
-      within(subsections).getByRole("button", { name: "Scorers" }),
-    );
-    expect(scrollIntoView).toHaveBeenCalled();
-    for (const button of within(subsections).getAllByRole("button")) {
-      expect(button).not.toHaveAttribute("aria-current");
+    for (const key of [
+      "judge",
+      "judgeRubric",
+      "judgeGroundedness",
+      "matchOptions",
+      "validity",
+    ]) {
+      expect(container.querySelector(`[data-setting-key="${key}"]`)).toBeNull();
     }
   });
 
   it("titles the Where-it-runs row for the axes it can edit", () => {
-    // Capable: cells, so the row is Environments. Not capable: the legacy
-    // client axis, and calling that "Environments" names something the person
-    // can neither see nor use.
+    // Capable and legacy both title the row Clients — the axes differ,
+    // the word on screen does not.
     const capable = renderSettingsSheet();
     fireEvent.click(
       within(
@@ -239,7 +217,7 @@ describe("suite settings ledger", () => {
     expect(
       capable.container.querySelector('[data-setting-key="environments"]')
         ?.textContent,
-    ).toContain("Environments");
+    ).toContain("Clients");
     capable.unmount();
 
     composeCapability.value = false;
@@ -255,23 +233,22 @@ describe("suite settings ledger", () => {
     ).toContain("Clients");
   });
 
-  it("shows both Where-it-runs rows together, environments first, with no rail", () => {
+  it("shows the client table without a computer row or rail", () => {
     const { container } = renderSettingsSheet();
     const tabs = screen.getByRole("navigation", { name: "Settings sections" });
-    fireEvent.click(within(tabs).getByRole("button", { name: "Where it runs" }));
+    fireEvent.click(
+      within(tabs).getByRole("button", { name: "Where it runs" }),
+    );
     const keys = [...container.querySelectorAll("[data-setting-key]")].map(
       (node) => node.getAttribute("data-setting-key"),
     );
     expect(keys.indexOf("environments")).toBeGreaterThanOrEqual(0);
-    expect(keys.indexOf("computerEnvironment")).toBeGreaterThan(
-      keys.indexOf("environments"),
-    );
+    expect(keys).not.toContain("computerEnvironment");
     expect(
-      container.querySelector('[data-testid="suite-environment-bar"]'),
+      container.querySelector('[data-testid="suite-clients-table"]'),
     ).toBeTruthy();
     expect(
       screen.queryByRole("navigation", { name: "Settings subsections" }),
     ).toBeNull();
   });
-
 });

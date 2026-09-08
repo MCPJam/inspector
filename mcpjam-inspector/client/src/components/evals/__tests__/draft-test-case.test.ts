@@ -9,8 +9,10 @@ describe("draft-test-case", () => {
   it("round-trips prompt and record sentinels", () => {
     expect(draftTestCaseId("prompt")).toBe("draft:prompt");
     expect(draftTestCaseId("record")).toBe("draft:record");
+    expect(draftTestCaseId("describe")).toBe("draft:describe");
     expect(parseDraftTestCaseId("draft:prompt")).toBe("prompt");
     expect(parseDraftTestCaseId("draft:record")).toBe("record");
+    expect(parseDraftTestCaseId("draft:describe")).toBe("describe");
     expect(isDraftTestCaseId("draft:record")).toBe(true);
   });
 

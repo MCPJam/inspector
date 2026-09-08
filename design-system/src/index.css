@@ -481,4 +481,5 @@
   --shadow-xl: var(--shadow-xl);
   --shadow-2xl: var(--shadow-2xl);
   --shadow-chrome-panel: var(--shadow-chrome-panel);
+  --shadow-chrome-tab: var(--shadow-chrome-tab);
 }
