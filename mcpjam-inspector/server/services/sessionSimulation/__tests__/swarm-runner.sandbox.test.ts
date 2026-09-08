@@ -1427,7 +1427,22 @@ describe("swarm runner — the attempt's recording comes off before the box does
     // flush sits inside the `finally` that must reach `releaseAttemptSandbox`.
     // Unbounded, a hung attach holds a paid box open for as long as it hangs.
     collectHostedRecordingMock.mockResolvedValue(RECORDING);
-    outboxFlushMock.mockImplementation(() => new Promise(() => {}));
+    // Releasable, so the cleanup below can let the run finish. A flush that
+    // can only ever hang would strand the run in the FAILING case, which is
+    // exactly the case this test is written to report clearly.
+    let flushReleased = false;
+    const waiting: Array<() => void> = [];
+    outboxFlushMock.mockImplementation(() =>
+      flushReleased
+        ? Promise.resolve()
+        : new Promise<void>((resolve) => {
+            waiting.push(resolve);
+          }),
+    );
+    const releaseFlush = () => {
+      flushReleased = true;
+      for (const resolve of waiting.splice(0)) resolve();
+    };
 
     // CAPTURED BEFORE THE CLOCK IS FAKED. `vi.useFakeTimers()` replaces the
     // global, so a `setTimeout` called below would be a FAKE timer — and in
@@ -1436,8 +1451,10 @@ describe("swarm runner — the attempt's recording comes off before the box does
     // test would hang to vitest's own timeout with no useful message.
     const realSetTimeout = setTimeout;
     vi.useFakeTimers();
+    // Declared out here so the `finally` can await it.
+    let run: Promise<unknown> = Promise.resolve();
     try {
-      const run = startJourneyRun(baseOpts());
+      run = startJourneyRun(baseOpts());
       // ADVANCED BY A BOUNDED AMOUNT, not drained. `runAllTimersAsync()` walks
       // the timer chain until it is empty, and an unbounded flush keeps that
       // chain alive — so it aborts on its own 10k-timer heuristic before the
@@ -1464,6 +1481,19 @@ describe("swarm runner — the attempt's recording comes off before the box does
       ]);
     } finally {
       vi.useRealTimers();
+      // LET THE RUN END EVEN WHEN THE GUARD WON. `startJourneyRun` drops its
+      // entry from the runner's module-level `runningJourneyRuns` only in its
+      // own `finally`, which an unreleased flush never reaches — so a failing
+      // test would leave a live run behind for every test after it, turning
+      // one clear regression report into a cascade of confusing ones. Bounded
+      // on the real clock so cleanup itself can never hang the suite.
+      releaseFlush();
+      await Promise.race([
+        run.catch(() => {}),
+        new Promise((resolve) => {
+          realSetTimeout(resolve, 1_000).unref?.();
+        }),
+      ]);
     }
 
     expect(releaseSandboxMock).toHaveBeenCalledWith(
