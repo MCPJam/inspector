@@ -10,6 +10,7 @@ import { useMutation, useConvexAuth, useQuery } from "convex/react";
 import { useFeatureFlagEnabled } from "posthog-js/react";
 import { useHostList } from "@/hooks/useClients";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useScheduledEvalsEnabled } from "@/hooks/useScheduledEvalsEnabled";
 import { useSandboxImages } from "@/hooks/useSandboxImages";
 import { useEphemeralCloudAvailable } from "@/hooks/useProjectComputer";
 import { useProjectEnvironments } from "@/hooks/useProjectEnvironments";
@@ -778,8 +779,7 @@ export function SuiteIterationsView({
   // WITHOUT changing the suite's revision — the acknowledgement is stored on
   // the suite but is not a settings edit, so nothing else would re-ask.
   const isVerdictPolicyV2 = draft.current.verdictPolicyVersion === 2;
-  const syntheticMonitorsEnabled =
-    useFeatureFlagEnabled("synthetic-monitors") === true;
+  const scheduledEvalsEnabled = useScheduledEvalsEnabled();
   const { capable: composeCapable } = useEvalComposeCapable(projectId);
   const settingsScrollRef = useRef<HTMLDivElement>(null);
   const [activeGroupId, setActiveGroupId] = useState<SuiteSettingsTabId>(
@@ -1362,13 +1362,13 @@ export function SuiteIterationsView({
     () => ({
       isVerdictPolicyV2,
       showComputerEnvironment: computerEnvironmentRowVisible,
-      showSchedule: syntheticMonitorsEnabled,
+      showSchedule: scheduledEvalsEnabled,
       showDelete: canDeleteSuite,
     }),
     [
       isVerdictPolicyV2,
       computerEnvironmentRowVisible,
-      syntheticMonitorsEnabled,
+      scheduledEvalsEnabled,
       canDeleteSuite,
     ],
   );
@@ -2626,7 +2626,7 @@ export function SuiteIterationsView({
                 {activeGroupId === "triggers" ? (
                   <section data-step-id="triggers">
                     <SuiteSettingsSectionChain>
-                      {syntheticMonitorsEnabled ? (
+                      {scheduledEvalsEnabled ? (
                         <SuiteSettingsRow
                           settingKey="schedule"
                           data-subsection-id="schedule"
