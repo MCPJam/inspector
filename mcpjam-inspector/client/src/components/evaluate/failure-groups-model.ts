@@ -306,7 +306,7 @@ export function failureGroupsHeader(row: SuiteFailureGroupsRow | null): {
   const reasons = reasonCount(row);
   const dropped = droppedMemberCount(row);
   const summary =
-    `${row.failedTrials} failed trial${row.failedTrials === 1 ? "" : "s"}, ` +
+    `${row.failedTrials} failed iteration${row.failedTrials === 1 ? "" : "s"}, ` +
     `${reasons} reason${reasons === 1 ? "" : "s"}` +
     (dropped > 0 ? ` · ${dropped} more not drawn` : "");
   if (row.novelty !== "measured") {

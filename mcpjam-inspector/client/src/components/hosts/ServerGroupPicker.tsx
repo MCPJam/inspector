@@ -53,7 +53,11 @@ type ServerGroupPickerProps = {
     attachment: EvalServerAttachment,
   ) => void;
   disabled?: boolean;
-  /** Trigger label when no attachment is selected. */
+  /**
+   * Trigger label when no attachment is selected. Defaults off
+   * `variant`: the chip copy reads as an instruction next to other
+   * chips and as a broken placeholder inside a labelled form column.
+   */
   emptyTriggerLabel?: string;
   /** Info-tooltip copy explaining what an attachment is in this context. */
   infoText?: string;
@@ -76,6 +80,23 @@ type ServerGroupPickerProps = {
   inModal?: boolean;
   /** `data-testid` on the trigger, for composer/lego-strip surfaces. */
   triggerTestId?: string;
+  /**
+   * `id` for the trigger, so a sibling `<Label htmlFor>` names the control.
+   * Without it the accessible name is only the selected group — "Stripe",
+   * never "Server".
+   */
+  triggerId?: string;
+  /**
+   * Trigger shape. `pill` (default) is the compact chip the bars and
+   * lego-strips use. `field` renders a full-width, `h-9` form control that
+   * lines up with an `<Input>`/`<Select>` in a labelled form column — used by
+   * the promote-to-test-case modal, where Client and Server sit side by side
+   * and a chip next to a select reads as a different kind of control.
+   *
+   * Shape only: the popover, inline create, and delete affordances are
+   * identical in both variants.
+   */
+  variant?: "pill" | "field";
 };
 
 export function ServerGroupPicker({
@@ -83,12 +104,14 @@ export function ServerGroupPicker({
   value,
   onChange,
   disabled = false,
-  emptyTriggerLabel = "No server group · pick one",
+  emptyTriggerLabel,
   infoText = "A server group is a named set of MCP servers that every client in the suite runs against.",
   selectedDeleteHint = "In use by this suite — pick another first",
   onClearSelection,
   inModal = false,
   triggerTestId,
+  triggerId,
+  variant = "pill",
 }: ServerGroupPickerProps) {
   const { isAuthenticated } = useConvexAuth();
   const { serverAttachments, isLoading } = useProjectServerAttachments({
@@ -281,7 +304,10 @@ export function ServerGroupPicker({
 
   const triggerLabel = selectedAttachment
     ? selectedAttachment.name
-    : emptyTriggerLabel;
+    : (emptyTriggerLabel ??
+      (variant === "field"
+        ? "Select a server group"
+        : "No server group · pick one"));
   const triggerCount = selectedAttachment
     ? `${selectedAttachment.serverIds.length} server${selectedAttachment.serverIds.length === 1 ? "" : "s"}`
     : null;
@@ -306,22 +332,48 @@ export function ServerGroupPicker({
         <button
           type="button"
           disabled={disabled}
+          id={triggerId}
           data-testid={triggerTestId}
           className={cn(
-            "flex h-8 max-w-[260px] shrink-0 items-center gap-1 rounded-full border px-2 text-foreground",
+            "flex items-center gap-1 border text-foreground",
             "outline-none transition-colors",
-            !value && !justCreated
-              ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
-              : "border-border/60 bg-muted/40 hover:bg-muted/60",
+            variant === "field"
+              ? "h-9 w-full rounded-md px-3 text-sm shadow-xs focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              : "h-8 max-w-[260px] shrink-0 rounded-full px-2",
+            variant === "field"
+              ? "border-input bg-transparent hover:bg-muted/30"
+              : !value && !justCreated
+                ? "border-dashed border-border/60 bg-muted/30 hover:bg-muted/45"
+                : "border-border/60 bg-muted/40 hover:bg-muted/60",
             disabled && "cursor-not-allowed opacity-50"
           )}
         >
-          <Server className="size-3.5 shrink-0 text-muted-foreground" />
-          <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          <Server
+            className={cn(
+              "shrink-0 text-muted-foreground",
+              variant === "field" ? "size-4" : "size-3.5"
+            )}
+          />
+          <span
+            className={cn(
+              "min-w-0 flex-1 truncate",
+              variant === "field"
+                ? cn(
+                    "text-left text-sm",
+                    !value && !justCreated && "text-muted-foreground"
+                  )
+                : "text-xs font-medium"
+            )}
+          >
             {triggerLabel}
           </span>
           {triggerCount ? (
-            <span className="text-[10px] text-muted-foreground">
+            <span
+              className={cn(
+                "text-muted-foreground",
+                variant === "field" ? "text-xs" : "text-[10px]"
+              )}
+            >
               · {triggerCount}
             </span>
           ) : null}

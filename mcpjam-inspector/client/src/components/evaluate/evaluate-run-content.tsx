@@ -60,6 +60,7 @@ import {
 import { FailureGroupsCard } from "./failure-groups-card";
 import { RunAdvisorySection } from "./run-advisory-section";
 import { RunCaseRowBody } from "./run-case-row-body";
+import { RunResultsMatrix } from "./run-results-matrix";
 import { RunCaseRows } from "./run-case-rows";
 import { RunDescriptionExperimentCard } from "./run-description-experiment-card";
 import { useEvalDescriptionExperiment } from "./use-eval-description-experiment";
@@ -70,8 +71,6 @@ import {
 } from "./route-facts-model";
 import { RunStageStrip } from "./run-stage-strip";
 import { buildStageStrip } from "./run-stage-strip-model";
-import { RunGradingPeek } from "./run-grading-peek";
-import { RunVerdictCaveats } from "./run-verdict-caveats";
 import {
   buildEvaluateImprovePrompt,
   buildStageFixPrompt,
@@ -79,13 +78,29 @@ import {
 import { remedyForDiagnostic } from "./stage-remedy";
 import { RunVerdictHero } from "./run-verdict-hero";
 import { buildRunVerdictHero } from "./run-verdict-hero-model";
+import { CombinedRunContent } from "./combined-run-content";
+import { launchRuns } from "./run-results-matrix-model";
+
+export function EvaluateRunContent(
+  props: Parameters<typeof SingleRunContent>[0],
+) {
+  const targets = launchRuns(props.run, props.siblingRuns ?? []);
+  return targets.length > 1 ? (
+    <CombinedRunContent {...props} runs={targets} />
+  ) : (
+    <SingleRunContent {...props} />
+  );
+}
+
 import { useEvaluateRunPageHeaderActions } from "./evaluate-run-page";
 
-export function EvaluateRunContent({
+export function SingleRunContent({
   projectId,
   run,
   iterations,
   allIterations,
+  siblingRuns = [],
+  hostNamesById,
   previousRunId,
   decisionSummaryEnabled,
   onOpenIteration,
@@ -97,6 +112,8 @@ export function EvaluateRunContent({
   iterations: readonly EvalIteration[];
   /** Every iteration in the suite, so the previous run's fractions are known. */
   allIterations?: readonly EvalIteration[];
+  siblingRuns?: readonly EvalSuiteRun[];
+  hostNamesById?: ReadonlyMap<string, string | null>;
   previousRunId?: string | null;
   decisionSummaryEnabled: boolean;
   /** Focus one iteration's evidence through the app's own routing. */
@@ -413,7 +430,7 @@ export function EvaluateRunContent({
   const copyImprovePrompt = useCallback(async () => {
     const ok = await copyToClipboard(improvePrompt);
     if (ok) {
-      toast.success("Prompt copied — paste it into your coding agent");
+      toast.success("Prompt copied. Paste it into your coding agent");
     } else {
       toast.error("Copy failed");
     }
@@ -480,90 +497,109 @@ export function EvaluateRunContent({
         </p>
       ) : null}
 
-      <div className="flex flex-col gap-3 px-5 pb-4">
-        {view.sentence.kind === "brokeAt" ? (
-          <RunGradingPeek
-            expected={view.sentence.expected}
-            observed={view.sentence.observed}
+      <div className="border-t border-border/40">
+        <RunResultsMatrix
+          key={run._id}
+          run={run}
+          runs={siblingRuns}
+          diagnostics={detail.diagnostics}
+          chains={chains.chains}
+          iterations={
+            allIterations
+              ? [
+                  ...allIterations.filter(
+                    (item) => item.suiteRunId !== run._id,
+                  ),
+                  ...iterations,
+                ]
+              : iterations
+          }
+          hostNamesById={hostNamesById}
+          onOpenIteration={onOpenIteration}
+        />
+      </div>
+
+      <details
+        className="border-t border-border/40"
+        open={stageFilter !== null || undefined}
+      >
+        <summary className="cursor-pointer px-5 py-4 text-sm font-semibold">
+          Case diagnostics{" "}
+          <span className="ml-2 text-xs font-normal text-muted-foreground">
+            Selected run · stages, grading, and remedies
+          </span>
+        </summary>
+        <div className="border-t border-border/40">
+          <RunStageStrip
+            view={stripView}
+            activeStage={stageFilter}
+            onSelectStage={setStageFilter}
+          />
+        </div>
+
+        {/*
+          Directly under the strip, because it answers the two cells the strip
+          could only say "observed by the runner" about. Rendered ONLY on a real
+          document: an unreadable or missing one shows nothing rather than an
+          empty shell, and the failure kinds stay apart below.
+        */}
+        {serverFacts.status === "ready" && serverFacts.document ? (
+          <ServerFactsCard
+            document={serverFacts.document}
+            stageFilter={stageFilter}
           />
         ) : null}
-        <RunVerdictCaveats
-          summary={detail.summary}
-          shownDiagnostics={detail.diagnostics.length}
-          scannedIterations={detail.scannedIterations}
-          serverComplete={detail.serverComplete}
-          walkExhausted={detail.walkExhausted}
-        />
-      </div>
+        {serverFacts.status === "error" &&
+        serverFacts.error?.kind === "invalidContract" ? (
+          <p
+            className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+            data-testid="server-facts-error"
+          >
+            server facts not shown — the document did not match the contract
+          </p>
+        ) : null}
 
-      <div className="border-t border-border/40">
-        <RunStageStrip
-          view={stripView}
-          activeStage={stageFilter}
-          onSelectStage={setStageFilter}
-        />
-      </div>
+        {routeFactsContractError ? (
+          <p
+            className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
+            data-testid="route-facts-error"
+          >
+            routes not shown. The run&apos;s route facts did not match the
+            contract
+          </p>
+        ) : null}
 
-      {/*
-        Directly under the strip, because it answers the two cells the strip
-        could only say "observed by the runner" about. Rendered ONLY on a real
-        document: an unreadable or missing one shows nothing rather than an
-        empty shell, and the failure kinds stay apart below.
-      */}
-      {serverFacts.status === "ready" && serverFacts.document ? (
-        <ServerFactsCard
-          document={serverFacts.document}
-          stageFilter={stageFilter}
-        />
-      ) : null}
-      {serverFacts.status === "error" &&
-      serverFacts.error?.kind === "invalidContract" ? (
-        <p
-          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
-          data-testid="server-facts-error"
-        >
-          server facts not shown — the document did not match the contract
-        </p>
-      ) : null}
-
-      {routeFactsContractError ? (
-        <p
-          className="border-t border-border/40 px-5 py-2 text-[12px] text-destructive"
-          data-testid="route-facts-error"
-        >
-          routes not shown — the run&apos;s route facts did not match the
-          contract
-        </p>
-      ) : null}
-
-      <div className="border-t border-border/40">
-        <RunCaseRows
-          rows={visibleRows}
-          defaultOpenKey={openRowKey}
-          pills={rowPills}
-          {...(routeLines ? { routeLines } : {})}
-          renderBody={(row) => (
-            <RunCaseRowBody
-              row={row}
-              iterations={iterations}
-              {...(routeFactsDoc
-                ? {
-                    routeFacts: routeFactsForRow(
-                      routeFactsDoc,
-                      row,
-                      iterations,
-                    ),
-                    catalogState: routeFactsDoc.catalogState,
-                    ...(routeFactsComputedHere ? { computedHere: true } : {}),
-                  }
-                : {})}
-              {...(onOpenIteration ? { onOpenIteration } : {})}
-              {...(onEditCase ? { onEditCase } : {})}
-              {...(proposeProps ? { descriptionExperiment: proposeProps } : {})}
-            />
-          )}
-        />
-      </div>
+        <div className="border-t border-border/40">
+          <RunCaseRows
+            rows={visibleRows}
+            defaultOpenKey={openRowKey}
+            pills={rowPills}
+            {...(routeLines ? { routeLines } : {})}
+            renderBody={(row) => (
+              <RunCaseRowBody
+                row={row}
+                iterations={iterations}
+                {...(routeFactsDoc
+                  ? {
+                      routeFacts: routeFactsForRow(
+                        routeFactsDoc,
+                        row,
+                        iterations,
+                      ),
+                      catalogState: routeFactsDoc.catalogState,
+                      ...(routeFactsComputedHere ? { computedHere: true } : {}),
+                    }
+                  : {})}
+                {...(onOpenIteration ? { onOpenIteration } : {})}
+                {...(onEditCase ? { onEditCase } : {})}
+                {...(proposeProps
+                  ? { descriptionExperiment: proposeProps }
+                  : {})}
+              />
+            )}
+          />
+        </div>
+      </details>
 
       {descriptionExperimentEnabled && descriptionExperiment.experiment ? (
         <RunDescriptionExperimentCard
@@ -589,9 +625,15 @@ export function EvaluateRunContent({
       ) : null}
 
       {fallbackBody ? (
-        <div className="flex min-h-0 flex-1 flex-col border-t border-border/40">
-          {fallbackBody}
-        </div>
+        <details className="border-t border-border/40">
+          <summary className="cursor-pointer px-5 py-4 text-sm font-medium">
+            Full run report{" "}
+            <span className="ml-2 text-xs font-normal text-muted-foreground">
+              Traces, configuration, and advanced metrics
+            </span>
+          </summary>
+          <div className="flex min-h-[480px] flex-col">{fallbackBody}</div>
+        </details>
       ) : null}
     </div>
   );

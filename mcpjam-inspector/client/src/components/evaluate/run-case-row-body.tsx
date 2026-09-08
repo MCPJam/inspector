@@ -49,7 +49,7 @@ function groupHeading(group: CaseFailureGroup, count: number): string {
 async function copyPrompt(text: string) {
   const ok = await copyToClipboard(text);
   if (ok) {
-    toast.success("Fix prompt copied — paste it into your coding agent");
+    toast.success("Fix prompt copied. Paste it into your coding agent");
   } else {
     toast.error("Copy failed");
   }

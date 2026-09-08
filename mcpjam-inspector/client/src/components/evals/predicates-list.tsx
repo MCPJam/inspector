@@ -205,7 +205,7 @@ function PredicateRow({
       className={`rounded border ${
         row.passed
           ? "border-border/40 bg-background/40"
-          : "border-red-500/40 bg-red-500/5"
+          : "border-destructive/40 bg-destructive/5"
       }`}
     >
       <details className="group" open={!row.passed}>
@@ -247,7 +247,7 @@ function PredicateRow({
         <div className="space-y-1.5 px-2 pb-2 pl-[26px]">
           <div
             className={`whitespace-pre-wrap break-words text-[11px] leading-tight ${
-              row.passed ? "text-muted-foreground" : "text-red-600 dark:text-red-400"
+              row.passed ? "text-muted-foreground" : "text-destructive"
             }`}
           >
             {row.reason}

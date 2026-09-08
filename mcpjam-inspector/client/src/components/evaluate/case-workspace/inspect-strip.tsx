@@ -30,8 +30,8 @@ function IterationIdChip({ id }: { id: string }) {
         setTimeout(() => setCopied(false), 1200);
       }}
       className="inline-flex shrink-0 items-center gap-1 rounded-sm font-mono text-[10px] text-muted-foreground/70 transition-colors hover:text-foreground"
-      title={`Trial ${id} — click to copy`}
-      aria-label={`Copy trial id ${id}`}
+      title={`Iteration ${id}. Click to copy`}
+      aria-label={`Copy iteration id ${id}`}
     >
       {copied ? (
         <Check className="h-2.5 w-2.5 text-success" aria-hidden />
