@@ -14,25 +14,32 @@ what it measured.
 
 <Note>
 GitHub Checks is configured in the hosted app, at **Settings → Integrations →
-GitHub**. Every write on this page — installing, claiming, connecting,
-disconnecting, and changing per-repository settings — requires an organization
-owner or admin. Members can open the page to see the current setup, but all
-controls are disabled and a note explains why.
+GitHub**. Every write on this page — connecting, installing, disconnecting, and
+changing per-repository settings — requires an organization owner or admin.
+Members can open the page to see the current setup, but all controls are
+disabled and a note explains why.
 
-Two buttons live there, and which one you need depends on whether the MCPJam
-app is already installed on the GitHub account:
+**Connect a GitHub account** starts it. You sign in to GitHub so we can confirm
+which accounts you administer, then pick one from the list that comes back —
+an organization, or your own account. Installing the app is not on its own
+proof that an installation is yours to connect, which is why the sign-in step
+is there and not skippable.
 
-- **Install on a GitHub account** — for a fresh install. GitHub sends you back
-  and the account is connected automatically.
-- **Claim an existing installation** — if somebody already installed the app.
-  GitHub skips the return trip for an account it has already installed on, so
-  the first button quietly leaves you on GitHub's settings page.
+Accounts that already have the app appear in that list ready to connect.
+
+**Install on another account**, in that same list, is **not generally available
+yet.** During the beta the MCPJam app can only be installed on the MCPJam
+organization, so there is no other account for it to reach — following it sends
+you to the existing installation rather than offering a choice. Even once that
+opens up, GitHub sends an administrator who already has the app somewhere to
+that installation instead of asking which account to use. So for now, connect
+an account that already appears in the list.
 
 A GitHub account connects to **one MCPJam organization at a time**, for the
 whole account rather than per repository. Two organizations cannot split the
 repositories of one GitHub account between them. If the account is already
 connected elsewhere, connecting it again is refused — free it up in the
-organization holding it, or install the app on a different account.
+organization holding it, or use a different account.
 
 Which organization is holding it is **rolling out**: until it reaches your
 deployment the refusal names nothing, so ask an owner of the GitHub account,

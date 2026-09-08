@@ -22,6 +22,7 @@ import { SavedRequestItem } from "../tools/SavedRequestItem";
 import type { FormField } from "@/lib/tool-form";
 import type { SavedRequest } from "@/lib/types/request-types";
 import type { HarnessBuiltinToolInfo } from "@/hooks/useHarnessBuiltinTools";
+import type { BrowserToolsState } from "@/hooks/useBrowserTools";
 import { LoggerView } from "../logger-view";
 import { SchemaViewer } from "@/components/ui/schema-viewer";
 import {
@@ -68,6 +69,12 @@ interface PlaygroundLeftProps {
   builtinTools?: HarnessBuiltinToolInfo[];
   /** True when the previewed host runs its harness on THIS machine. */
   builtinToolsRunLocally?: boolean;
+  /**
+   * The agent browser's tools, when the previewed host attaches one. This is
+   * the pane a browser-only host lands in — no MCP servers, so without it the
+   * panel says "No server connected yet" about a host driving a real Chromium.
+   */
+  browserTools?: BrowserToolsState;
   /** Whether any MCP server is connected — drives the tool list's empty state. */
   hasConnectedServer?: boolean;
   /** Connect a server from the empty state without leaving the surface. */
@@ -96,6 +103,7 @@ export function PlaygroundLeft({
   showLogger = true,
   builtinTools = [],
   builtinToolsRunLocally = false,
+  browserTools,
   hasConnectedServer = true,
   onAddServerRequested,
 }: PlaygroundLeftProps) {
@@ -216,6 +224,7 @@ export function PlaygroundLeft({
           onCollapseList={() => setIsListExpanded(false)}
           builtinTools={builtinTools}
           builtinToolsRunLocally={builtinToolsRunLocally}
+          {...(browserTools ? { browserTools } : {})}
           selectedBuiltinKey={isListExpanded ? null : builtin.selectedKey}
           onSelectBuiltin={handleSelectBuiltin}
           hasConnectedServer={hasConnectedServer}

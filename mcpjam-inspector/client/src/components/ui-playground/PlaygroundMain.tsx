@@ -152,6 +152,7 @@ import {
 } from "@/lib/conversation-execution-target";
 import { useHarnessBuiltinTools } from "@/hooks/useHarnessBuiltinTools";
 import { useComputersEnabled } from "@/hooks/useComputersEnabled";
+import { useBrowserTools } from "@/hooks/useBrowserTools";
 import { useComputerAttachmentUpload } from "@/hooks/useComputerAttachmentUpload";
 import {
   buildComputerAttachmentNote,
@@ -899,6 +900,14 @@ export function PlaygroundMain({
   // editing back as soon as their config resolves.
   const previewedHostConfigUnresolved =
     previewedHostId !== null && previewedHost?.hostId !== previewedHostId;
+  // The agent browser's tool definitions, for the Raw request preview. The
+  // Tools rail resolves the same thing for its own list; both are reads of one
+  // static per-session cache, and sharing a single hook instance across two
+  // distant trees would mean threading it through the whole playground.
+  const playgroundBrowserTools = useBrowserTools({
+    projectId: convexProjectId,
+    hostId: previewedHostId,
+  });
   const effectiveMcpToolResultImageRendering = useMemo(
     () =>
       gateMcpToolResultImageRenderingByModelVisibility(
@@ -1159,6 +1168,11 @@ export function PlaygroundMain({
     // execution-context helper, so this also flows through scenario sessions
     // (where the persisted host config wins via the runtime-config fetch).
     builtInToolIds: previewedHost?.config?.builtInToolIds,
+    // For the RAW view of a reopened session only. Live turns stream the real
+    // advertised set; a rehydrated one has nothing to show, and the browser is
+    // the capability most likely to be a host's ONLY one — so without this Raw
+    // reads `"tools": {}` beside a conversation that drove a browser.
+    builtInToolDefinitions: playgroundBrowserTools.tools,
     personalComputerEngine: personalComputerEngineOption,
     localHarnessExecution: localHarnessExecutionOption,
     onReset: (reason?: ChatSessionResetReason) => {
@@ -4918,15 +4932,33 @@ export function PlaygroundMain({
                 ) : hideWelcomeHero ? null : (
                   <div className="flex w-full flex-col items-center gap-8 [-webkit-user-drag:none]">
                     <div className="text-center max-w-md">
+                      {/*
+                        BB-106: render both theme variants and toggle with CSS
+                        rather than swapping `src`. During NUX `effectiveThreadTheme`
+                        flips once `hostContext` resolves asynchronously; swapping the
+                        `src` forced a fresh fetch of the other PNG and left a blank
+                        frame (the logo "disappearing"). Both files download once, so
+                        the theme flip is now instant with no refetch.
+                      */}
                       <img
-                        src={
-                          effectiveThreadTheme === "dark"
-                            ? "/mcp_jam_dark.png"
-                            : "/mcp_jam_light.png"
-                        }
+                        src="/mcp_jam_light.png"
                         alt="MCPJam"
                         draggable={false}
-                        className="h-10 w-auto mx-auto mb-4"
+                        aria-hidden={effectiveThreadTheme === "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme === "dark" && "hidden"
+                        )}
+                      />
+                      <img
+                        src="/mcp_jam_dark.png"
+                        alt="MCPJam"
+                        draggable={false}
+                        aria-hidden={effectiveThreadTheme !== "dark"}
+                        className={cn(
+                          "h-10 w-auto mx-auto mb-4",
+                          effectiveThreadTheme !== "dark" && "hidden"
+                        )}
                       />
                       <div className="space-y-3">
                         <h3

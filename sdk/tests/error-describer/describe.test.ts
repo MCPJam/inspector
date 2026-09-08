@@ -5,6 +5,7 @@ import {
   ERROR_CATALOG,
   extractNodeErrno,
   isNormalizedError,
+  originOf,
   type NormalizedError,
 } from "../../src/error-describer/index.js";
 import { MCPAuthError, MCPError } from "../../src/mcp-client-manager/errors.js";
@@ -712,5 +713,41 @@ describe("protocol version pin", () => {
     expect(new ProtocolVersionPinUnsupported("srv", "2026-07-28").message).toContain(
       "which this client is pinned to",
     );
+  });
+});
+
+describe("a 429 is attributed to the boundary it crossed", () => {
+  // The status arrives identically from an LLM provider and from the MCP
+  // server under test (`StreamableHTTPError` puts it on `.code`), so the
+  // classifier alone cannot tell them apart. Only the caller knows.
+  it("still reads an unqualified 429 as provider quota", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }));
+    expect(d.slug).toBe("provider/quota");
+    expect(originOf(d)).toBe("user_config");
+  });
+
+  it("reads an MCP server's 429 as the SERVER's rate limit", () => {
+    const d = describeError(makeError("Too Many Requests", { statusCode: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+    // The user's provider settings are not at fault, so the advice must not
+    // send them to a provider dashboard.
+    expect(originOf(d)).toBe("user_server");
+    expect(JSON.stringify(d.nextSteps)).not.toMatch(/provider/i);
+  });
+
+  it("covers the numeric-code shape too — that is how a transport reports it", () => {
+    const d = describeError(makeError("Rate limited", { code: 429 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("server/rate_limited");
+  });
+
+  it("leaves every other slug alone under the same surface", () => {
+    const d = describeError(makeError("Unauthorized", { statusCode: 401 }), {
+      surface: "mcpServer",
+    });
+    expect(d.slug).toBe("auth/http_401");
   });
 });

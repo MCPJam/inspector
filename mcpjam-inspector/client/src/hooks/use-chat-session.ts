@@ -78,7 +78,10 @@ import { useDetectedOllamaModels } from "@/hooks/use-detected-ollama-models";
 import { useHostedModelCatalog } from "@/hooks/use-hosted-model-catalog";
 import { DEFAULT_SYSTEM_PROMPT } from "@/components/chat-v2/shared/chat-helpers";
 import { getToolsMetadata, ToolServerMap } from "@/lib/apis/mcp-tools-api";
-import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
+import {
+  withBuiltInToolDefinitions,
+  type SerializedModelRequestTool,
+} from "@/shared/model-request-payload";
 import { countTextTokens } from "@/lib/apis/mcp-tokenizer-api";
 import { authFetch } from "@/lib/session-token";
 import {
@@ -422,6 +425,19 @@ export interface UseChatSessionOptions {
    * `executionConfig.builtInToolIds` when this top-level option is omitted.
    */
   builtInToolIds?: string[];
+  /**
+   * Definitions for those built-in tools, as the model is shown them — used by
+   * the RAW view of a reopened session and nowhere else.
+   *
+   * A live turn streams a `request_payload` carrying the real advertised set,
+   * so this is never consulted then. A rehydrated session replays no such
+   * event, so Raw synthesizes one from the currently-resolved tool schemas —
+   * and those come from connected MCP servers only. A host whose whole
+   * capability is the browser therefore rendered `"tools": {}` next to a
+   * conversation in which the model had just driven one. These are merged into
+   * the synthesized entry so it says what would actually be sent next.
+   */
+  builtInToolDefinitions?: SerializedModelRequestTool[];
   /**
    * Offer this turn the WebMCP tools of the page the inspector currently has
    * open. Off unless the caller opts in: a chat that silently gained tools from
@@ -3822,6 +3838,14 @@ export function useChatSession(
     if (!traceTranscriptFromUi || traceTranscriptFromUi.length === 0) {
       return live;
     }
+    // Host-executed built-ins (today: the six `browser_*` tools) are advertised
+    // by the SERVER from the host's config, so they never appear in the
+    // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
+    // an MCP tool of the same name still wins here.
+    const tools = withBuiltInToolDefinitions(
+      serializedTools,
+      options.builtInToolDefinitions,
+    );
     return [
       {
         turnId: "rehydrated",
@@ -3829,7 +3853,7 @@ export function useChatSession(
         stepIndex: 0,
         payload: {
           system: systemPrompt ?? "",
-          tools: serializedTools,
+          tools,
           messages: traceTranscriptFromUi,
         },
       },
@@ -3839,6 +3863,7 @@ export function useChatSession(
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,
+    options.builtInToolDefinitions,
   ]);
 
   // useLayoutEffect (not useEffect) so the trace state is swapped out
