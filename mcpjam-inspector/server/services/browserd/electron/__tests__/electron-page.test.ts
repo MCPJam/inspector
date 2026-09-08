@@ -206,6 +206,70 @@ describe("electron page — the keyboard", () => {
     expect(mouseEvents(dbg)).toHaveLength(0);
   });
 
+  it("will not click a BUTTON however editable the page claims it is", async () => {
+    // `<button>` is not an `<input>`, so the input-type list does not cover it
+    // — and it used to reach the contenteditable probe, where a page that lied
+    // about `isContentEditable` got the button pressed. Tags whose click
+    // activates something are refused before anything page-controlled runs.
+    const contents = new FakeBrowserWebContents({
+      evaluate: () => true,
+    });
+    for (const [method, reply] of elementAt(5, 5, 10, { nodeName: "BUTTON" })) {
+      contents.debugger.replies.set(method, reply);
+    }
+    // The page also answers the CDP probe with "yes, editable".
+    contents.debugger.replies.set("DOM.resolveNode", { object: { objectId: "1" } });
+    contents.debugger.replies.set("Runtime.callFunctionOn", {
+      result: { value: true },
+    });
+    const { page, dbg } = makePage(contents);
+
+    await expect(page.fillSelector("#pay", "x")).rejects.toThrow(/<select>/);
+    expect(mouseEvents(dbg)).toHaveLength(0);
+  });
+
+  it("fills an inherited-contenteditable element, and releases the handle", async () => {
+    // The one case that genuinely needs the page: `contenteditable` inherits,
+    // so a span inside an editable div carries no attribute of its own.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, { nodeName: "SPAN" })) {
+      contents.debugger.replies.set(method, reply);
+    }
+    contents.debugger.replies.set("DOM.resolveNode", {
+      object: { objectId: "obj-1" },
+    });
+    contents.debugger.replies.set("Runtime.callFunctionOn", {
+      result: { value: true },
+    });
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#editor", "hello");
+
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(true);
+    // A resolved node pins the JS object; a tab that fills all day would hold
+    // one handle per fill.
+    expect(
+      dbg.calls.find((c) => c.method === "Runtime.releaseObject")?.params,
+    ).toMatchObject({ objectId: "obj-1" });
+  });
+
+  it("takes the contenteditable ATTRIBUTE from CDP without asking the page", async () => {
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5, 10, {
+      nodeName: "DIV",
+      attributes: ["contenteditable", ""],
+    })) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#editor", "hello");
+
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(true);
+    // The common case never reaches the page at all.
+    expect(dbg.calls.some((c) => c.method === "DOM.resolveNode")).toBe(false);
+  });
+
   it("cannot be talked out of the refusal by a page that breaks its own DOM", async () => {
     // The classification used to run as page JS through
     // `document.querySelector`, and a thrown classifier was read as "carry on"

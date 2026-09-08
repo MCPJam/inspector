@@ -203,6 +203,41 @@ const UNFILLABLE_INPUT_TYPES = [
   "submit",
 ] as const;
 
+/**
+ * Tags whose click ACTIVATES something, and which are therefore never filled.
+ *
+ * A `<button>` or an `<a>` is as bad to click as an `<input type="submit">`,
+ * and neither is an `INPUT`, so the input-type list above does not cover them.
+ * Filling any of these is nonsense in the first place, which is why they are
+ * refused outright rather than only when they decline to be editable.
+ */
+const INTERACTIVE_TAGS = [
+  "A",
+  "AREA",
+  "AUDIO",
+  "BUTTON",
+  "DETAILS",
+  "EMBED",
+  "IFRAME",
+  "LABEL",
+  "OBJECT",
+  "OPTION",
+  "SUMMARY",
+  "VIDEO",
+] as const;
+
+/** One attribute out of CDP's flat `[name, value, name, value]` list. */
+function attributeOf(
+  attributes: string[] | undefined,
+  name: string,
+): string | undefined {
+  const list = attributes ?? [];
+  for (let index = 0; index + 1 < list.length; index += 2) {
+    if (list[index]!.toLowerCase() === name) return list[index + 1];
+  }
+  return undefined;
+}
+
 export function createElectronPage(
   wc: PageWebContents,
   deps: ElectronPageDeps,
@@ -418,12 +453,23 @@ export function createElectronPage(
    *
    * `contenteditable` is the one property that has to be COMPUTED (it
    * inherits, so a span inside an editable div is editable and carries no
-   * attribute of its own), and there is no protocol-side answer for it. That
-   * probe runs over a node CDP resolved — never a selector the page could
-   * re-answer — and it FAILS CLOSED. The asymmetry is deliberate: the refusals
-   * that matter, a checkbox toggled or a submit sent, are decided from
-   * `nodeName` and the `type` attribute where nothing can lie, and the worst a
-   * spoofed `isContentEditable` can buy is a click on an ordinary element.
+   * attribute of its own), and there is no protocol-side answer for it. Three
+   * things keep that page-computed answer from being a way back in:
+   *
+   *   - EVERY TAG WHOSE CLICK DOES SOMETHING is refused before the probe runs.
+   *     Not just the form controls: a `<button>` and an `<a>` are as bad to
+   *     click as a submit input, and they are not `INPUT`, so without this
+   *     they reached the probe and a page that lied about `isContentEditable`
+   *     got them pressed. Filling one is nonsense in any case, so they are
+   *     refused whether or not they claim to be editable.
+   *   - the `contenteditable` ATTRIBUTE is read from CDP first, so the common
+   *     case never asks the page at all.
+   *   - the probe runs over a node CDP resolved — never a selector the page
+   *     could re-answer — and it FAILS CLOSED.
+   *
+   * What a lie can still buy, then, is a click on an inert element: a `<div>`
+   * or a `<span>`. Which is nothing, because a page wanting that click can
+   * simply BE contenteditable and get it honestly.
    */
   async function classifyFillTarget(
     nodeId: number,
@@ -438,33 +484,46 @@ export function createElectronPage(
     if (tag === "TEXTAREA") return "FILLABLE";
     if (tag === "SELECT") return "SELECT";
     if (tag === "INPUT") {
-      // `attributes` is a flat [name, value, name, value] list.
-      const attributes = described?.node?.attributes ?? [];
-      const at = attributes.findIndex(
-        (entry, index) => index % 2 === 0 && entry.toLowerCase() === "type",
-      );
-      const type = (at >= 0 ? (attributes[at + 1] ?? "text") : "text")
-        .toLowerCase();
+      const type = (
+        attributeOf(described?.node?.attributes, "type") ?? "text"
+      ).toLowerCase();
       return (UNFILLABLE_INPUT_TYPES as readonly string[]).includes(type)
         ? (`TYPE:${type}` as const)
         : "FILLABLE";
     }
-    // Everything else is fillable only if it is editable, which only the page
-    // can compute. Resolved BY NODE so the lookup cannot be re-pointed, and
-    // anything short of a definite `true` refuses.
+    // A tag whose click activates something is refused here, before anything
+    // the page controls is consulted.
+    if (tag && (INTERACTIVE_TAGS as readonly string[]).includes(tag)) {
+      return "OTHER";
+    }
+    // The attribute, from the protocol, answers the common case without
+    // asking the page anything. `contenteditable=""` and `="true"` are both
+    // editable; only `="false"` turns it off.
+    const own = attributeOf(described?.node?.attributes, "contenteditable");
+    if (own !== undefined && own.toLowerCase() !== "false") return "FILLABLE";
+    // Only INHERITED editability is left, and only the page can compute it.
+    // Resolved BY NODE so the lookup cannot be re-pointed, and anything short
+    // of a definite `true` refuses.
     const resolved = (await cdp
       .send("DOM.resolveNode", { nodeId })
       .catch(() => undefined)) as { object?: { objectId?: string } } | undefined;
     const objectId = resolved?.object?.objectId;
     if (!objectId) return "OTHER";
-    const editable = (await cdp
-      .send("Runtime.callFunctionOn", {
-        objectId,
-        functionDeclaration: "function () { return this.isContentEditable === true; }",
-        returnByValue: true,
-      })
-      .catch(() => undefined)) as { result?: { value?: unknown } } | undefined;
-    return editable?.result?.value === true ? "FILLABLE" : "OTHER";
+    try {
+      const editable = (await cdp
+        .send("Runtime.callFunctionOn", {
+          objectId,
+          functionDeclaration:
+            "function () { return this.isContentEditable === true; }",
+          returnByValue: true,
+        })
+        .catch(() => undefined)) as { result?: { value?: unknown } } | undefined;
+      return editable?.result?.value === true ? "FILLABLE" : "OTHER";
+    } finally {
+      // A resolved node PINS the JS object until it is released, so a tab
+      // that fills all day would hold one handle per fill.
+      await cdp.send("Runtime.releaseObject", { objectId }).catch(() => {});
+    }
   }
 
   async function mouse(
