@@ -12,13 +12,15 @@ import {
   __resetHostedRecordings,
   collectHostedRecordingBeforeRelease,
   forgetHostedRecording,
+  HOSTED_RECORDING_DIR,
+  isCollectableRecordingPath,
   recordingIdFor,
   startHostedRecording,
 } from "../hosted-recording";
 import type { SandboxHostedBrowserSessionHandle } from "../browser-session";
 
 const RECORDING = {
-  path: "/rec/sess-1.mp4",
+  path: "/home/user/.mcpjam-browserd/recordings/sess-1-0badf00d-1.mp4",
   bytes: 4_096,
   durationMs: 9_000,
   distinctFrames: 42,
@@ -367,7 +369,7 @@ describe("hosted recording — collecting before release", () => {
     const collected = await collectHostedRecordingBeforeRelease("row-1");
 
     expect(calls[1]).toEqual({ action: "stop" });
-    expect(sandbox.readBinaryFile).toHaveBeenCalledWith("/rec/sess-1.mp4");
+    expect(sandbox.readBinaryFile).toHaveBeenCalledWith(RECORDING.path);
     expect(sandbox.disconnect).toHaveBeenCalledTimes(1);
     expect(collected).toMatchObject({
       mime: "video/mp4",
@@ -473,6 +475,42 @@ describe("hosted recording — collecting before release", () => {
     expect(sandbox.disconnect).toHaveBeenCalledTimes(1);
   });
 
+  it("refuses a path outside the recordings dir, without connecting", async () => {
+    // The daemon names the file and the collector reads it with the team's
+    // key. A daemon that answered with the token file must not have it
+    // uploaded as a run's video — and must not even be connected to for it.
+    const { handle } = fakeHandle({
+      stopResult: {
+        ok: true,
+        recording: { ...RECORDING, path: "/home/user/.mcpjam-browserd.token" },
+      },
+    });
+    const connect = vi.fn(async () => fakeSandbox().sandbox);
+    await startHostedRecording(handle, { connect });
+    connect.mockClear();
+
+    expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
+  it("refuses a traversal that starts inside the recordings dir", async () => {
+    const { handle } = fakeHandle({
+      stopResult: {
+        ok: true,
+        recording: {
+          ...RECORDING,
+          path: `${HOSTED_RECORDING_DIR}/../.mcpjam-browserd.token`,
+        },
+      },
+    });
+    const connect = vi.fn(async () => fakeSandbox().sandbox);
+    await startHostedRecording(handle, { connect });
+    connect.mockClear();
+
+    expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
+    expect(connect).not.toHaveBeenCalled();
+  });
+
   it("gives up at the deadline rather than holding a paid box open", async () => {
     // THE RULE. A read that hangs hangs — the E2B files API takes no signal on
     // this path — so what has to be bounded is the CALLER's waiting. The
@@ -503,5 +541,37 @@ describe("hosted recording — collecting before release", () => {
 
     expect(await collectHostedRecordingBeforeRelease("row-1")).toBeNull();
     expect(record).not.toHaveBeenCalled();
+  });
+});
+
+
+describe("isCollectableRecordingPath", () => {
+  it("accepts exactly a take under the recordings dir", () => {
+    expect(
+      isCollectableRecordingPath(
+        `${HOSTED_RECORDING_DIR}/sess-1-0badf00d-1.mp4`,
+      ),
+    ).toBe(true);
+    expect(
+      isCollectableRecordingPath(
+        `${HOSTED_RECORDING_DIR}/a_b-C9-deadbeef-12.mp4`,
+      ),
+    ).toBe(true);
+  });
+
+  it("refuses everything that is not one", () => {
+    for (const path of [
+      "/home/user/.mcpjam-browserd.token",
+      `${HOSTED_RECORDING_DIR}/../.mcpjam-browserd.token`,
+      `${HOSTED_RECORDING_DIR}/nested/take.mp4`,
+      `${HOSTED_RECORDING_DIR}/take.txt`,
+      `${HOSTED_RECORDING_DIR}/take.mp4.txt`,
+      `${HOSTED_RECORDING_DIR}/`,
+      `${HOSTED_RECORDING_DIR}`,
+      `/home/user/.mcpjam-browserd/recordingsX/take.mp4`,
+      "",
+    ]) {
+      expect(isCollectableRecordingPath(path), path).toBe(false);
+    }
   });
 });
