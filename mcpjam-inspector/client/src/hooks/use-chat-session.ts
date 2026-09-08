@@ -21,6 +21,10 @@ import {
   useLayoutEffect,
   useSyncExternalStore,
 } from "react";
+import {
+  pageToolRowsFromRecords,
+  type MintedPageToolRecord,
+} from "@/shared/declared-tools";
 import { useChat, type UIMessage } from "@ai-sdk/react";
 import { toast } from "sonner";
 import {
@@ -698,6 +702,7 @@ export interface UseChatSessionReturn {
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>;
     },
     options?: {
@@ -802,6 +807,14 @@ interface LiveTraceTurnState {
    * when the spans blob fails to load or is genuinely empty.
    */
   endedAtMs?: number;
+  /**
+   * The page tools this turn advertised (rehydration only).
+   *
+   * Kept on the TURN rather than in a store keyed by browser: a store answers
+   * for the browser as it is now, and this has to answer for the turn as it
+   * was.
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
   /** Persisted finish reason (rehydration only). */
   finishReason?: string;
   /** Persisted model id (rehydration only). */
@@ -867,6 +880,19 @@ export interface HydratedTurnTrace {
   usage?: LiveChatTraceUsage;
   spans: EvalTraceSpan[];
   modelId?: string;
+  /**
+   * The page's own WebMCP tools this turn advertised, as it advertised them.
+   *
+   * The reason it is persisted rather than re-read: the live browser describes
+   * the page it is on NOW. Reopened tomorrow, a card for `webmcp_bookSlot`
+   * would be attributed to whatever tool happens to carry that name then, and
+   * the Raw view would show a request that was never sent.
+   *
+   * Absent means "we do not know" — every historical turn, and every turn
+   * whose claim the backend could not parse. It is NOT the same as an empty
+   * array, which means "this turn advertised none".
+   */
+  pageToolsAtTurn?: MintedPageToolRecord[];
 }
 
 interface PersistedWidgetSnapshot {
@@ -895,6 +921,7 @@ async function resolveHydratedTurnTraces(
         usage?: LiveChatTraceUsage;
         spansBlobUrl?: string | null;
         modelId?: string;
+        pageToolsAtTurn?: MintedPageToolRecord[];
       }>
     | undefined,
 ): Promise<HydratedTurnTrace[] | undefined> {
@@ -950,6 +977,9 @@ async function resolveHydratedTurnTraces(
         usage: trace.usage,
         spans,
         modelId: trace.modelId,
+        ...(trace.pageToolsAtTurn !== undefined
+          ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+          : {}),
       };
     }),
   );
@@ -1017,6 +1047,9 @@ function buildLiveTraceStateFromTurnTraces(
       endedAtMs: trace.endedAt,
       finishReason: trace.finishReason,
       modelId: trace.modelId,
+      ...(trace.pageToolsAtTurn !== undefined
+        ? { pageToolsAtTurn: trace.pageToolsAtTurn }
+        : {}),
     };
   }
 
@@ -3842,8 +3875,30 @@ export function useChatSession(
     // by the SERVER from the host's config, so they never appear in the
     // client's server-derived schemas. See `withBuiltInToolDefinitions` for why
     // an MCP tool of the same name still wins here.
+    // The page's own tools, from the turn that actually advertised them.
+    //
+    // PERSISTED, not re-read. Asking the live browser would answer for the page
+    // it is on now, which is a confident answer to a question about the past —
+    // and for a closed session there is no browser to ask at all. The rows
+    // carry identity and origin but no schema, because the turn record stores a
+    // digest rather than the schema itself; see `pageToolRowsFromRecords`.
+    const lastTurnPageTools = [...Object.values(liveTraceState.turns)]
+      .sort((left, right) => left.promptIndex - right.promptIndex)
+      .map((turn) => turn.pageToolsAtTurn)
+      .filter((records): records is MintedPageToolRecord[] => records !== undefined)
+      .at(-1);
     const tools = withBuiltInToolDefinitions(
-      serializedTools,
+      {
+        ...(lastTurnPageTools
+          ? Object.fromEntries(
+              pageToolRowsFromRecords(lastTurnPageTools).map((row) => [
+                row.name,
+                row,
+              ]),
+            )
+          : {}),
+        ...serializedTools,
+      },
       options.builtInToolDefinitions,
     );
     return [
@@ -3860,6 +3915,7 @@ export function useChatSession(
     ];
   }, [
     liveTraceState.requestPayloadHistory,
+    liveTraceState.turns,
     traceTranscriptFromUi,
     systemPrompt,
     serializedTools,

@@ -653,6 +653,30 @@ export function toMintedPageToolRecords(
   }));
 }
 
+/**
+ * Persisted turn records, as rows the Raw view can list.
+ *
+ * NO `inputSchema`, and that omission is deliberate rather than a gap. The turn
+ * record stores a schema DIGEST, not the schema — a page's `anyOf` of two
+ * hundred `<option>` branches copied into every persisted turn would dwarf the
+ * trace it annotates. So the honest thing to render for a reopened session is
+ * the tool's identity and where it came from, with the digest, and NOT a schema
+ * re-read from a browser that has long since navigated elsewhere. A schema
+ * synthesized from the live page would be a confident answer to a question
+ * about the past.
+ */
+export function pageToolRowsFromRecords(
+  records: readonly MintedPageToolRecord[],
+): SerializedModelRequestTool[] {
+  return records.map((record) => ({
+    name: record.name,
+    description:
+      `[WebMCP page tool — ${safeDeclaredOrigin(record.origin)}] ` +
+      `${record.rawName}. Advertised on this turn; its schema is not replayed ` +
+      `here (digest ${record.schemaHash}).`,
+  }));
+}
+
 /** Model-request rows for a minted set, for the Tools pane and the Raw view. */
 export function toSerializedModelRequestTools(
   minted: readonly MintedDeclaredTool[],
