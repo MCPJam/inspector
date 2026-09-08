@@ -413,6 +413,67 @@ describe("electron page — the keyboard", () => {
     );
   });
 
+  it("does not write where an onfocus handler sent the caret", async () => {
+    // `DOM.focus` resolving is not the same as the element being focused when
+    // the next command runs: the node's own focus handler can move focus
+    // elsewhere, synchronously, and nothing rejects. `Control+a` and
+    // `insertText` both target "whatever is focused", so the fill would
+    // select and replace the contents of an element nobody classified.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      // The handler ran: something else holds the caret now.
+      if (method === "DOM.querySelector" && params?.selector === ":focus") {
+        await send(method, params);
+        return { nodeId: 43 };
+      }
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(
+      /focus left the element/,
+    );
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+    expect(keyEvents(dbg)).toHaveLength(0);
+  });
+
+  it("asks the protocol what has focus, not the page", async () => {
+    // A page can redefine `Document.prototype.activeElement` and lie to page
+    // JS about focus. It cannot change what `:focus` matches, because
+    // selector matching runs in Blink — the same reason the classification
+    // moved to `DOM.describeNode`.
+    const contents = new FakeBrowserWebContents({
+      evaluate: () => {
+        throw new Error("document.activeElement is a trap");
+      },
+    });
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#name", "Ada");
+
+    const focusQuery = dbg.calls.find(
+      (c) =>
+        c.method === "DOM.querySelector" &&
+        (c.params as Record<string, unknown>)?.selector === ":focus",
+    );
+    expect(focusQuery).toBeDefined();
+    // Against the root `pointFor` already read: a second `DOM.getDocument`
+    // renumbers the nodes, and a comparison across a renumbering reads as a
+    // match when nothing was matched.
+    expect(focusQuery?.params).toMatchObject({ nodeId: 1 });
+    expect(dbg.calls.filter((c) => c.method === "DOM.getDocument")).toHaveLength(
+      1,
+    );
+  });
+
   it("does not type into the old focus when the element cannot take it", async () => {
     // Fails closed: if focus is refused, select-all and insert would land in
     // whatever was focused before — the same wrong-target write by a longer

@@ -388,10 +388,15 @@ export function createElectronPage(
    * Centre of the element a selector names, in CSS pixels — and the CDP node
    * id it resolved to, so a caller can ask the PROTOCOL what the element is
    * rather than asking the page.
+   *
+   * The document root comes back too, so a caller can run a second query
+   * against the SAME node id space. Calling `DOM.getDocument` again would
+   * renumber it, and a comparison across a renumbering is worse than no
+   * comparison at all — it reads as a match when nothing was matched.
    */
   async function pointFor(
     selector: string,
-  ): Promise<{ point: ActPoint; nodeId: number }> {
+  ): Promise<{ point: ActPoint; nodeId: number; rootNodeId: number }> {
     const cdp = await needCdp();
     const doc = (await cdp.send("DOM.getDocument", { depth: 0 })) as {
       root?: { nodeId?: number };
@@ -439,6 +444,7 @@ export function createElectronPage(
         y: Math.round(ys.reduce((a, b) => a + b, 0) / 4),
       },
       nodeId: found.nodeId,
+      rootNodeId,
     };
   }
 
@@ -724,7 +730,7 @@ export function createElectronPage(
           // Classifying before touching the element is the point of the whole
           // thing: on a checkbox a click IS the toggle, on a submit it IS the
           // submission.
-          const { nodeId } = await pointFor(selector);
+          const { nodeId, rootNodeId } = await pointFor(selector);
           const kind = await classifyFillTarget(nodeId);
           if (kind === "SELECT") {
             throw new Error(
@@ -771,6 +777,32 @@ export function createElectronPage(
               `${selector}: element could not be focused to fill it`,
             );
           });
+          // AND THEN CHECK THAT THE FOCUS STAYED PUT.
+          //
+          // `DOM.focus` resolving is not the same as the element being
+          // focused when the next command runs. A node's own `onfocus`
+          // handler can move focus somewhere else, synchronously, and nothing
+          // rejects — so the branch above never fires, `Control+a` selects
+          // that other element's contents and `insertText` replaces them.
+          // Both of those commands target "whatever is focused", which is the
+          // same class of mistake as targeting "whatever is at this point".
+          //
+          // Asked as `:focus` through `DOM.querySelector`, because selector
+          // matching runs in Blink: a page can redefine
+          // `Document.prototype.activeElement` and lie about focus to page
+          // JS, but it cannot change what `:focus` matches. Against the root
+          // `pointFor` already read, so the ids are from one numbering.
+          const focused = (await cdp
+            .send("DOM.querySelector", {
+              nodeId: rootNodeId,
+              selector: ":focus",
+            })
+            .catch(() => undefined)) as { nodeId?: number } | undefined;
+          if (focused?.nodeId !== nodeId) {
+            throw new Error(
+              `${selector}: focus left the element before it could be filled`,
+            );
+          }
           await pressKey(
             process.platform === "darwin" ? "Meta+a" : "Control+a",
           );
