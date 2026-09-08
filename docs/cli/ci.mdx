@@ -566,14 +566,14 @@ Evidence is scoped to the claim it supports: for a measured failure the span ids
 **The human block leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line naming the earliest stage at which a readable trial stopped, why, and how many trials stopped there:
 
 ```text
-  First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured trials)
+  First break: Tool call — the call arguments did not match what the case expects (2 of 3 measured iterations)
 ```
 
-"First" means earliest in chain order — `connection → discovery → selection → call → response → userValue` — never "most common", so the count beside it is what tells you whether the run had one problem or several. When the breaks are spread the line says so (`earliest of 3 stages that broke`), and when some chains could not be read it says that too (`1 more had no readable chain`), because otherwise the denominator quietly shrinks to the trials that happened to validate. A run that reached no stage at all — a setup abort, an evaluator error — names its bucket instead of inventing a location.
+"First" means earliest in chain order — `connection → discovery → selection → call → response → userValue` — never "most common", so the count beside it is what tells you whether the run had one problem or several. When the breaks are spread the line says so (`earliest of 3 stages that broke`), and when some chains could not be read it says that too (`1 more had no readable chain`), because otherwise the denominator quietly shrinks to the iterations that happened to validate. A run that reached no stage at all — a setup abort, an evaluator error — names its bucket instead of inventing a location.
 
 The line is **not** a diagnosis. A first failed stage is a location and a failure category is a bucket; neither on its own says what to change.
 
-`eval status --stages` expands each failing trial to all six chain rows with their states and reasons. It is off by default: six rows per trial is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
+`eval status --stages` expands each failing iteration to all six chain rows with their states and reasons. It is off by default: six rows per iteration is a lot of terminal on a run with twenty failures, and the first-break line above already carries the answer. Human output is not a stable contract — script against `--format json`, where the enums travel as enums.
 
 Hosted runs execute LLM iterations on the platform and consume your organization's credits or configured provider keys. See the [`cloud eval` command reference](/cli/reference#cloud-eval-commands) for the full surface, including `cloud eval judge` (request LLM-as-judge grading on a finished run), `cloud eval validate` (offline suite-file validation), `cloud eval export` (write a hosted suite to a local file), `cloud eval github list/connect` (GitHub checks integration), and more.
 
