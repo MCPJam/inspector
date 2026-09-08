@@ -385,12 +385,55 @@ describe("electron page — the keyboard", () => {
 
     await page.fillSelector("#name", "Ada");
 
-    // Click to focus, select-all, then insert. Without the select-all this
-    // appends, and `fill`'s contract is REPLACE.
+    // Focus, select-all, then insert. Without the select-all this appends, and
+    // `fill`'s contract is REPLACE.
     const keys = keyEvents(dbg);
     expect(keys.some((e) => e.code === "KeyA")).toBe(true);
     const inserted = dbg.calls.filter((c) => c.method === "Input.insertText");
     expect(inserted.at(-1)?.params).toMatchObject({ text: "Ada" });
+  });
+
+  it("reaches the node it classified, not the coordinate it measured", async () => {
+    // `pointFor` measures a box, and the classification that follows spends
+    // CDP round trips before anything is written. A page that reflows in that
+    // window puts a different control under the measured point — so a click
+    // there presses something nobody classified, and every check above it
+    // passes on the way. Focusing the NODE has no such window.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await page.fillSelector("#name", "Ada");
+
+    expect(mouseEvents(dbg)).toHaveLength(0);
+    expect(dbg.calls.find((c) => c.method === "DOM.focus")?.params).toMatchObject(
+      { nodeId: 42 },
+    );
+  });
+
+  it("does not type into the old focus when the element cannot take it", async () => {
+    // Fails closed: if focus is refused, select-all and insert would land in
+    // whatever was focused before — the same wrong-target write by a longer
+    // route.
+    const contents = new FakeBrowserWebContents();
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const dbg = contents.debugger;
+    const send = dbg.sendCommand.bind(dbg);
+    dbg.sendCommand = async (method: string, params?: Record<string, unknown>) => {
+      if (method === "DOM.focus") throw new Error("Element is not focusable");
+      return send(method, params);
+    };
+    const { page } = makePage(contents);
+
+    await expect(page.fillSelector("#name", "Ada")).rejects.toThrow(
+      /could not be focused/,
+    );
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+    expect(keyEvents(dbg)).toHaveLength(0);
   });
 });
 

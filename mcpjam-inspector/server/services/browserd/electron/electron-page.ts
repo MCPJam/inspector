@@ -710,7 +710,7 @@ export function createElectronPage(
       await deadline(
         (async () => {
           const cdp = await needCdp();
-          // RESOLVE FIRST, THEN CLASSIFY, THEN CLICK.
+          // RESOLVE FIRST, THEN CLASSIFY, THEN FOCUS.
           //
           // Resolving first is what keeps a malformed selector failing the way
           // it always has: `pointFor` normalizes that to "no element", which
@@ -721,10 +721,10 @@ export function createElectronPage(
           // element again — a lookup the page could answer differently, or
           // refuse, to get the click it wants.
           //
-          // Classifying before the click is the point of the whole thing: this
-          // engine fills by clicking and then typing, and on a checkbox the
-          // click IS the toggle, on a submit it IS the submission.
-          const { point, nodeId } = await pointFor(selector);
+          // Classifying before touching the element is the point of the whole
+          // thing: on a checkbox a click IS the toggle, on a submit it IS the
+          // submission.
+          const { nodeId } = await pointFor(selector);
           const kind = await classifyFillTarget(nodeId);
           if (kind === "SELECT") {
             throw new Error(
@@ -746,7 +746,31 @@ export function createElectronPage(
                 `or [contenteditable] element`,
             );
           }
-          await clickPoint(point);
+          // FOCUS THE NODE, DO NOT CLICK THE COORDINATE.
+          //
+          // `pointFor` measured a point, and the classification above then
+          // spends up to four CDP round trips deciding whether this node may
+          // be filled at all. A page that reflows inside that window — an
+          // overlay opening, an image loading, a carousel advancing — puts
+          // something else under that point, and the click lands on a control
+          // nobody classified. That is the very thing the classification
+          // exists to prevent, arriving through the back door: the checks all
+          // pass, and the click still presses a button.
+          //
+          // `DOM.focus` names the NODE, so there is no window to lose — it
+          // reaches the element that was classified or it reaches nothing.
+          // It is also what Playwright's `fill` does, which stops the two
+          // engines disagreeing about whether filling a field can press it.
+          //
+          // AND IT FAILS CLOSED. A rejection must not fall through to
+          // select-all and insert: focus would still be wherever it already
+          // was, and the text would land in an element this call never looked
+          // at — the same wrong-target write by a longer route.
+          await cdp.send("DOM.focus", { nodeId }).catch(() => {
+            throw new Error(
+              `${selector}: element could not be focused to fill it`,
+            );
+          });
           await pressKey(
             process.platform === "darwin" ? "Meta+a" : "Control+a",
           );
