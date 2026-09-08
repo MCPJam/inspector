@@ -34,6 +34,8 @@ interface UseOnboardingOptions {
 interface UseOnboardingReturn {
   phase: OnboardingPhase;
   isGuidedPostConnect: boolean;
+  /** The run is this device's to finish — see the derivation for why it is wider. */
+  isFirstRunUnfinished: boolean;
   isResolvingRemoteCompletion: boolean;
   /** True before the Excalidraw server row exists (auto-connect not yet dispatched). */
   isBootstrappingFirstRunConnection: boolean;
@@ -334,12 +336,18 @@ export function useOnboarding({
   const isGuidedPostConnect =
     phase === "connected_guided" || isTransitioningToGuided;
 
+  // Wider than `isGuidedPostConnect` on purpose: a sent first message finishes
+  // the run from ANY unfinished phase. An unfinished run now resumes across
+  // reloads (BB-112), so one whose Excalidraw never connects has no other exit.
+  const isFirstRunUnfinished = phase !== "completed" && phase !== "dismissed";
+
   const isBootstrappingFirstRunConnection =
     phase === "connecting_excalidraw" && !servers[EXCALIDRAW_SERVER_NAME];
 
   return {
     phase,
     isGuidedPostConnect,
+    isFirstRunUnfinished,
     isResolvingRemoteCompletion,
     isBootstrappingFirstRunConnection,
     connectExcalidraw,

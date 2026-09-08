@@ -48,6 +48,7 @@ export function PlaygroundCenter({
 }: PlaygroundCenterProps) {
   const state = usePlaygroundStateContext();
   const isGuidedPostConnect = state.onboarding.isGuidedPostConnect;
+  const isFirstRunUnfinished = state.onboarding.isFirstRunUnfinished;
 
   if (state.loadingState.kind === "skeleton") {
     return (
@@ -101,8 +102,11 @@ export function PlaygroundCenter({
         pulseSubmit={state.firstRunComposerSeed}
         showPostConnectGuide={false}
         showPostConnectGuideCopy={isGuidedPostConnect}
+        // The copy needs the server up; retiring the run does not. A message
+        // sent while Excalidraw is still connecting — or failed to — finishes
+        // the run all the same, and is its only exit now that a run resumes.
         onFirstMessageSent={
-          isGuidedPostConnect
+          isFirstRunUnfinished
             ? () => {
                 state.onboarding.completeOnboarding();
               }

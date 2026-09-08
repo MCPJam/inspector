@@ -343,6 +343,63 @@ describe("useOnboarding", () => {
 
     expect(result.current.phase).toBe("completed");
     expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(false);
+  });
+
+  it("keeps a resumed run unfinished when the guided server fails to connect", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const failedServers = {
+      [EXCALIDRAW_SERVER_NAME]: {
+        ...createServer(EXCALIDRAW_SERVER_NAME, "failed"),
+        lastError: "Failed to connect to Excalidraw",
+      },
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: failedServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    // The guided copy stays withheld — the server never came up — but the run
+    // is still this device's to finish, and only a sent message retires it.
+    expect(result.current.phase).toBe("connect_error");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(true);
+  });
+
+  it("keeps a resumed run unfinished while the guided connect is still hanging", () => {
+    localStorage.setItem(
+      "mcp-onboarding-state",
+      JSON.stringify({ status: "seen", shownAt: Date.now() })
+    );
+    const connectingServers = {
+      [EXCALIDRAW_SERVER_NAME]: createServer(
+        EXCALIDRAW_SERVER_NAME,
+        "connecting"
+      ),
+    };
+
+    const { result } = renderHook(() =>
+      useOnboarding({
+        servers: connectingServers,
+        onConnect: vi.fn(),
+        isSignedInWithWorkOs: false,
+        isWorkOsAuthLoading: false,
+      })
+    );
+
+    // A connect that hangs never reaches connect_error, so this phase is where
+    // a resumed run sits indefinitely. It is unfinished all the same.
+    expect(result.current.phase).toBe("connecting_excalidraw");
+    expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(true);
   });
 
   it("resumes guided mode when the remote row is seen but this device never finished", () => {
@@ -393,6 +450,7 @@ describe("useOnboarding", () => {
 
     expect(result.current.phase).toBe("dismissed");
     expect(result.current.isGuidedPostConnect).toBe(false);
+    expect(result.current.isFirstRunUnfinished).toBe(false);
   });
 
   it("uses the guest user row over localStorage when deciding first-run eligibility", async () => {
