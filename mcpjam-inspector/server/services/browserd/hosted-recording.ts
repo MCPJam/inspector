@@ -256,6 +256,14 @@ export async function startHostedRecording(
         }
         // Checked immediately before the write, and after every await above:
         // by now the caller may have moved on to release the box.
+        //
+        // The take itself is deliberately LEFT RUNNING rather than stopped.
+        // `id` is a pure function of the session, so the next turn's start
+        // meets its own take as a 409, matches the id, and adopts it below —
+        // which yields MORE video than restarting would, since the take has
+        // been recording since here. Stopping it would throw that away, and on
+        // a run whose last browser turn this was, the box is released moments
+        // later and ffmpeg goes with it.
         if (abandoned) return;
         active.set(sandboxRowId, {
           sandboxId,

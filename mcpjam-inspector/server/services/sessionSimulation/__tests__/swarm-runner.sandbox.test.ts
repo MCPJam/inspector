@@ -128,7 +128,12 @@ vi.mock("../../browser-artifact-outbox.js", async () => {
         ...real,
         stageVideo: (...a: unknown[]) => stageVideoMock(...a),
         flush: (...a: unknown[]) => {
-          outboxFlushMock(...a);
+          // THE SPY'S ANSWER WINS when a test gives it one. Returning the real
+          // flush unconditionally would discard a `mockImplementation`, and a
+          // test that stubs a never-settling flush would silently exercise the
+          // real one instead — passing while testing nothing.
+          const stubbed = outboxFlushMock(...a);
+          if (stubbed !== undefined) return stubbed;
           return (real.flush as (...b: unknown[]) => unknown)(...a);
         },
       };
@@ -1424,19 +1429,29 @@ describe("swarm runner — the attempt's recording comes off before the box does
     collectHostedRecordingMock.mockResolvedValue(RECORDING);
     outboxFlushMock.mockImplementation(() => new Promise(() => {}));
 
+    // CAPTURED BEFORE THE CLOCK IS FAKED. `vi.useFakeTimers()` replaces the
+    // global, so a `setTimeout` called below would be a FAKE timer — and in
+    // the one case this guard exists for (the run never settles) nothing is
+    // left to advance the fake clock, so the guard would never fire and the
+    // test would hang to vitest's own timeout with no useful message.
+    const realSetTimeout = setTimeout;
     vi.useFakeTimers();
     try {
       const run = startJourneyRun(baseOpts());
-      await vi.runAllTimersAsync();
+      // ADVANCED BY A BOUNDED AMOUNT, not drained. `runAllTimersAsync()` walks
+      // the timer chain until it is empty, and an unbounded flush keeps that
+      // chain alive — so it aborts on its own 10k-timer heuristic before the
+      // guard below ever runs, reporting "infinite loop" instead of naming
+      // what broke. This is simply long enough to clear the runner's own
+      // flush deadline.
+      await vi.advanceTimersByTimeAsync(120_000);
       // RACED, not simply awaited. Without the deadline in the runner, `run`
       // never settles — and a test that hangs stalls CI with no failure
-      // signal, which is a worse regression report than none. The guard is on
-      // the REAL clock (fake timers are already drained above), so it can only
-      // fire when the run genuinely never finished.
+      // signal, which is a worse regression report than none.
       await Promise.race([
         run,
-        new Promise((_resolve, reject) =>
-          setTimeout(
+        new Promise((_resolve, reject) => {
+          realSetTimeout(
             () =>
               reject(
                 new Error(
@@ -1444,8 +1459,8 @@ describe("swarm runner — the attempt's recording comes off before the box does
                 ),
               ),
             2_000,
-          ).unref?.(),
-        ),
+          ).unref?.();
+        }),
       ]);
     } finally {
       vi.useRealTimers();
