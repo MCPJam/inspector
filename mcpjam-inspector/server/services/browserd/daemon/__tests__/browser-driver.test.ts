@@ -135,7 +135,16 @@ describe("guardStaleness", () => {
     // refusal too; handing it a screenshot instead is a different answer to
     // the question it asked.
     const fresh = token({ domHash: "moved" });
-    const observeForRefusal = vi.fn(async () => ({ ok: true, stateToken: fresh }));
+    const wants: Array<{ a11y: boolean; screenshot: boolean }> = [];
+    const observeForRefusal = vi.fn(
+      async (
+        _command: BrowserCommand,
+        asked: { a11y: boolean; screenshot: boolean },
+      ) => {
+        wants.push(asked);
+        return { ok: true, stateToken: fresh };
+      },
+    );
     const driver = fakeDriver({
       currentStateToken: vi.fn(async () => fresh),
       observeForRefusal,
@@ -152,10 +161,7 @@ describe("guardStaleness", () => {
       }),
     );
 
-    expect(observeForRefusal.mock.calls[0]![1]).toEqual({
-      a11y: true,
-      screenshot: false,
-    });
+    expect(wants).toEqual([{ a11y: true, screenshot: false }]);
   });
 
   it("returns a leaseBlocked recovery read AS IS, rather than calling it stale", async () => {

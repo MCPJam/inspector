@@ -1011,6 +1011,72 @@ describe("an act says what it changed", () => {
   });
 });
 
+describe("the two composites", () => {
+  it("forwards fields and submit to the daemon", async () => {
+    const { result, sendCommand } = build();
+    await run(result!.tools as any, "browser_act", {
+      verb: "fill_form",
+      fields: [
+        { selector: "#email", value: "a@b.c" },
+        { selector: "#password", value: "hunter2" },
+      ],
+      submit: true,
+    });
+    expect(sendCommand.mock.calls[0][0].action).toMatchObject({
+      kind: "act",
+      verb: "fill_form",
+      fields: [
+        { selector: "#email", value: "a@b.c" },
+        { selector: "#password", value: "hunter2" },
+      ],
+      submit: true,
+    });
+  });
+
+  it("forwards submit on a plain type too", async () => {
+    const { result, sendCommand } = build();
+    await run(result!.tools as any, "browser_act", {
+      verb: "type",
+      selector: "#q",
+      value: "hello",
+      submit: true,
+    });
+    expect(sendCommand.mock.calls[0][0].action).toMatchObject({
+      verb: "type",
+      value: "hello",
+      submit: true,
+    });
+  });
+
+  it("sends neither field when the model named neither", async () => {
+    // `fields: undefined` and an absent key are not the same to a daemon that
+    // checks `Array.isArray(action.fields)`, and `submit: undefined` would
+    // press Enter on nothing if a future check read it as present.
+    const { result, sendCommand } = build();
+    await run(result!.tools as any, "browser_act", { verb: "click", x: 1, y: 2 });
+    const action = sendCommand.mock.calls[0][0].action;
+    expect(action).not.toHaveProperty("fields");
+    expect(action).not.toHaveProperty("submit");
+  });
+
+  it("accepts fill_form in the schema the model is shown", () => {
+    const schema = (build().result!.tools as any).browser_act.inputSchema;
+    expect(
+      schema.safeParse({
+        verb: "fill_form",
+        fields: [{ selector: "#a", value: "1" }],
+        submit: true,
+      }).success,
+    ).toBe(true);
+    // A field without a value is not a field: the daemon would fill it with
+    // `undefined`, which is the string "undefined" on a real page.
+    expect(
+      schema.safeParse({ verb: "fill_form", fields: [{ selector: "#a" }] })
+        .success,
+    ).toBe(false);
+  });
+});
+
 describe("two acts in one step", () => {
   /** A daemon whose replies are released by hand, so order is observable. */
   function deferredDaemon() {
@@ -1554,7 +1620,7 @@ describe("the toolset's context footprint is pinned", () => {
     const { result } = build();
     const bytes = footprintBytes(result!.tools as any);
     expect(bytes).toBeGreaterThan(1_000); // the pin is measuring something real
-    // 4342 bytes today. The headroom is deliberately thin: a ceiling with room
+    // 4695 bytes today. The headroom is deliberately thin: a ceiling with room
     // for another whole tool in it is not a pin, it is a comment.
     //
     // Raised once, from 4_200, when observations started naming elements: the
@@ -1566,10 +1632,16 @@ describe("the toolset's context footprint is pinned", () => {
     // buys the a11y tree back from every act, which is the `browser_observe`
     // call the model used to make between two acts. Fewer bytes on the wire
     // per step, not more.
+    //
+    // Raised again to 4_900 for the two composites (+353 bytes, 4342 → 4695):
+    // `fill_form`, `fields` and `submit`. A login or a search that was three
+    // gated calls — type, type, press — is now ONE. That is two fewer
+    // approvals for the person watching and two fewer observations for the
+    // model, on the single most common thing a browser agent does.
     expect(
       bytes,
       "browser toolset grew; say what the extra bytes buy before raising this",
-    ).toBeLessThanOrEqual(4_600);
+    ).toBeLessThanOrEqual(4_900);
   });
 
   it("keeps a read-only advertisement smaller than the full one", () => {

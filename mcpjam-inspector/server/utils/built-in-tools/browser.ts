@@ -798,6 +798,7 @@ export function buildBrowserTools(
     tool({
       description:
         "Interact with the page: click, type, press a key, scroll, hover, drag or select. " +
+        "fill_form fills several fields in one call. " +
         "Target by coordinates from the last screenshot, or by CSS selector. Returns the " +
         "page after the action: URL, what you can act on (a11y with refs), and a " +
         "screenshot. Coordinates are CSS pixels in a " +
@@ -813,6 +814,7 @@ export function buildBrowserTools(
           "hover",
           "drag",
           "select",
+          "fill_form",
         ]),
         selector: z.string().optional().describe("CSS selector to target."),
         x: z
@@ -839,6 +841,14 @@ export function buildBrowserTools(
               'drag destination ("x,y" in the same viewport coordinates), or option ' +
               "value to select.",
           ),
+        fields: z
+          .array(z.object({ selector: z.string(), value: z.string() }))
+          .optional()
+          .describe("For fill_form: fields to fill, in order."),
+        submit: z
+          .boolean()
+          .optional()
+          .describe("Press Enter afterwards (type, fill_form)."),
         observe: z
           .enum(["a11y", "screenshot", "both", "none"])
           .optional()
@@ -847,7 +857,7 @@ export function buildBrowserTools(
       }),
       needsApproval,
       execute: async (
-        { verb, selector, x, y, value, observe, tabId },
+        { verb, selector, x, y, value, fields, submit, observe, tabId },
         { abortSignal },
       ) => {
         if (x !== undefined && y !== undefined && !isPointInViewport(x, y)) {
@@ -876,6 +886,8 @@ export function buildBrowserTools(
               verb,
               ...(target ? { target } : {}),
               ...(value !== undefined ? { value } : {}),
+              ...(fields ? { fields } : {}),
+              ...(submit !== undefined ? { submit } : {}),
               // BOTH, for now. Until an act can target by ref the model can
               // only aim by coordinate or CSS selector, and the a11y tree
               // carries neither — dropping the screenshot would force a

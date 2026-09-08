@@ -23,6 +23,7 @@ import {
   type BrowserAction,
   type BrowserCommand,
   type BrowserCommandResult,
+  type BrowserdErrorCode,
 } from "../protocol";
 import type { BrowserDriver, DriverHealth } from "./browser-driver";
 import type { ActPoint, DriverContext, DriverPage } from "./browser-page";
@@ -68,6 +69,26 @@ import {
  * separate FIFO and race the tab-less commands (P1).
  */
 const DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+
+/**
+ * A failure the driver already knows the CODE for.
+ *
+ * The `act` catch classifies an unknown throw by matching Playwright's prose,
+ * which is the right answer for a page primitive that timed out. It is the
+ * wrong one for a failure this file raised itself: a `fill_form_failed: …
+ * Timeout …` message matches the regex and would come back re-labelled
+ * `target_not_found: fill_form_failed: …` — two codes in one string, and the
+ * outer one wrong.
+ */
+class ActError extends Error {
+  constructor(
+    readonly code: BrowserdErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ActError";
+  }
+}
 
 interface TabEntry {
   page: DriverPage;
@@ -407,9 +428,14 @@ export class ChromiumDriver implements BrowserDriver {
       // able to act on ("the button isn't there"), not a daemon fault — and
       // Playwright's own timeout prose would just confuse it.
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message)
-        ? "target_not_found"
-        : "act_failed";
+      // A failure THIS FILE raised already carries its code; only an unknown
+      // throw from a page primitive is classified by matching prose.
+      const kind =
+        error instanceof ActError
+          ? error.code
+          : /timeout|not found|no element|strict mode/i.test(message)
+            ? "target_not_found"
+            : "act_failed";
       // Same rule as the success path: the act may have failed, but the page
       // it failed on can still be someone's now. `afterAct` asks `permit()`
       // before it reads anything, and `observation` asks again on the way out,
@@ -496,8 +522,40 @@ export class ChromiumDriver implements BrowserDriver {
         const text = action.value ?? "";
         // With a selector, REPLACE the field's value; without one, type into
         // whatever has focus (the model's previous click).
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        // ONE settle and ONE observation for what was two commands. The submit
+        // is also the half a model most often cannot pin: it acts on the page
+        // its own typing produced, which nothing has observed yet.
+        if (action.submit) await page.press("Enter");
+        return;
+      }
+      case "fill_form": {
+        // Validated HERE because the handler does not: `isValidCommand` checks
+        // the envelope and passes the action through untouched, so a
+        // `fill_form` with no fields would otherwise reach `for (const field
+        // of undefined)`.
+        const fields = action.fields;
+        if (
+          !Array.isArray(fields) ||
+          fields.length === 0 ||
+          fields.some(
+            (field) =>
+              typeof field?.selector !== "string" ||
+              !field.selector ||
+              typeof field?.value !== "string",
+          )
+        ) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]",
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          await this.fillOneField(page, field, index);
+        }
+        if (action.submit) await page.press("Enter");
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
@@ -537,6 +595,53 @@ export class ChromiumDriver implements BrowserDriver {
       case "activate_tab":
         // Handled by the caller before dispatch.
         return;
+    }
+  }
+
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it. Playwright's
+   * `fill` refuses a `<select>` with a message naming `<input>`, which is the
+   * one reliable signal that this field wanted `selectOption` instead — so the
+   * fallback is driven by that refusal rather than by a per-field hint the
+   * model would have to get right.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  private async fillOneField(
+    page: DriverPage,
+    field: { selector: string; value: string },
+    index: number,
+  ): Promise<void> {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not an <input>/i.test(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` +
+            (index > 0 ? `; fields 1..${index} were filled` : ""),
+        );
+      }
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail =
+          selectError instanceof Error
+            ? selectError.message
+            : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` +
+            (index > 0 ? `; fields 1..${index} were filled` : ""),
+        );
+      }
     }
   }
 

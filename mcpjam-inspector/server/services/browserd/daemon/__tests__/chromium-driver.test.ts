@@ -990,6 +990,134 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(res.output).toMatchObject({ url: "https://x.test/" });
   });
 
+  it("presses Enter after the text when `submit` is set, once", async () => {
+    // A search or a login was two gated calls — type, then press — which is
+    // two approvals for a person and two observations for the model.
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "type",
+      target: { selector: "#q" },
+      value: "hello",
+      submit: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toEqual(["fill:#q:hello", "press:Enter"]);
+    // ONE settle and ONE observation, not two.
+    expect(page.calls.shots).toBe(1);
+  });
+
+  it("does not press Enter when `submit` is absent", async () => {
+    const { page } = await acted({
+      kind: "act",
+      verb: "type",
+      target: { selector: "#q" },
+      value: "hello",
+    });
+    expect(page.calls.acts).toEqual(["fill:#q:hello"]);
+  });
+
+  it("fills each fill_form field in order, then submits", async () => {
+    const { res, page } = await acted({
+      kind: "act",
+      verb: "fill_form",
+      fields: [
+        { selector: "#email", value: "a@b.c" },
+        { selector: "#password", value: "hunter2" },
+      ],
+      submit: true,
+    });
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toEqual([
+      "fill:#email:a@b.c",
+      "fill:#password:hunter2",
+      "press:Enter",
+    ]);
+    expect(page.calls.shots).toBe(1);
+  });
+
+  it("falls back to selectOption when the field turns out to be a <select>", async () => {
+    // The model read "Size" off a tree and wants "L" in it. Making it work out
+    // first what KIND of control it is looking at is work the driver can do
+    // from the refusal `fillSelector` already gives.
+    const { res, page } = await acted(
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [
+          { selector: "#name", value: "Ada" },
+          { selector: "#size", value: "L" },
+        ],
+      },
+      {
+        actErrorFor: (entry) =>
+          entry === "fill:#size:L"
+            ? new Error("Error: Element is not an <input>, <textarea> or [contenteditable]")
+            : undefined,
+      },
+    );
+    expect(res.ok).toBe(true);
+    expect(page.calls.acts).toEqual([
+      "fill:#name:Ada",
+      "fill:#size:L",
+      "select:#size:L",
+    ]);
+  });
+
+  it("stops at the first real failure and says which fields went in", async () => {
+    // Half a filled form is a state the page is in and the model cannot see.
+    const { res, page } = await acted(
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [
+          { selector: "#a", value: "1" },
+          { selector: "#b", value: "2" },
+          { selector: "#c", value: "3" },
+        ],
+      },
+      {
+        actErrorFor: (entry) =>
+          entry === "fill:#b:2"
+            ? new Error("Timeout 15000ms exceeded waiting for locator\nmore prose")
+            : undefined,
+      },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error!.startsWith("fill_form_failed: field 2 (#b):")).toBe(true);
+    expect(res.error!.endsWith("fields 1..1 were filled")).toBe(true);
+    // The regex that classifies an unknown throw would have re-labelled this
+    // `target_not_found: fill_form_failed: …` — two codes, the outer one wrong.
+    expect(res.error).not.toContain("target_not_found");
+    // Only the fields up to the failure were touched: #c was never attempted.
+    expect(page.calls.acts).toEqual(["fill:#a:1", "fill:#b:2"]);
+  });
+
+  it("refuses malformed fill_form fields without touching the page", async () => {
+    // The handler validates the ENVELOPE and passes the action through
+    // untouched, so this is the only layer that can refuse it.
+    const malformed: Array<Parameters<typeof acted>[0]> = [
+      { kind: "act", verb: "fill_form" },
+      { kind: "act", verb: "fill_form", fields: [] },
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [{ selector: "", value: "x" }],
+      },
+      {
+        kind: "act",
+        verb: "fill_form",
+        fields: [{ selector: "#a" } as never],
+      },
+    ];
+    for (const action of malformed) {
+      const { res, page } = await acted(action);
+      expect(res.ok, JSON.stringify(action)).toBe(false);
+      expect(res.error).toContain("act_failed");
+      expect(res.error).toContain("fill_form needs fields");
+      expect(page.calls.acts).toHaveLength(0);
+    }
+  });
+
   it("refuses a11yRef targeting explicitly rather than silently mis-clicking", async () => {
     const { res } = await acted({
       kind: "act",

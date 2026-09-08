@@ -52,7 +52,18 @@ export interface DriverPage {
   hoverSelector(selector: string): Promise<void>;
   /** Type into the focused element (a click usually precedes this). */
   typeText(text: string): Promise<void>;
-  /** Type into a specific element, replacing its current value. */
+  /**
+   * Type into a specific element, replacing its current value.
+   *
+   * CONTRACT: a selector naming a `<select>` must REJECT, with a message
+   * containing "not an <input>". Playwright says exactly that of its own
+   * accord; an engine that fills by synthesising keystrokes must check,
+   * because those keystrokes land on a `<select>` and change nothing at all.
+   * The driver's `fill_form` reads that refusal as "this field wanted
+   * `selectOption`" — the model should not have to know what kind of control
+   * it is filling — so an engine that fails silently instead makes the
+   * fallback unreachable on that engine only.
+   */
   fillSelector(selector: string, text: string): Promise<void>;
   /** Press one key or chord ("Enter", "Control+A"). */
   press(key: string): Promise<void>;

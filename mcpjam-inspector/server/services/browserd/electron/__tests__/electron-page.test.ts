@@ -139,6 +139,27 @@ describe("electron page — the keyboard", () => {
     );
   });
 
+  it("rejects a <select> so the driver can fall back to selectOption", async () => {
+    // This engine fills by clicking, selecting all and inserting text, and on
+    // a `<select>` that sequence silently does NOTHING — no error, no change.
+    // `fill_form` falls back to `selectOption` on the refusal that names
+    // `<input>`, so without this check the fallback fires on Playwright and
+    // never here, and the model's form is quietly half-filled.
+    const contents = new FakeBrowserWebContents({
+      evaluate: (code) => (code.includes("tagName") ? "SELECT" : undefined),
+    });
+    for (const [method, reply] of elementAt(5, 5)) {
+      contents.debugger.replies.set(method, reply);
+    }
+    const { page, dbg } = makePage(contents);
+
+    await expect(page.fillSelector("#size", "L")).rejects.toThrow(
+      /not an <input>/i,
+    );
+    // And nothing was typed at it: a half-applied fill is worse than a refusal.
+    expect(dbg.calls.some((c) => c.method === "Input.insertText")).toBe(false);
+  });
+
   it("replaces a field's value rather than appending to it", async () => {
     const contents = new FakeBrowserWebContents();
     for (const [method, reply] of elementAt(5, 5)) {

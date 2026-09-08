@@ -58,6 +58,8 @@ var BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
@@ -3266,6 +3268,13 @@ async function settlePage(steps, options = DEFAULT_SETTLE_OPTIONS) {
 
 // server/services/browserd/daemon/chromium-driver.ts
 var DEFAULT_TAB = DEFAULT_QUEUE_KEY;
+var ActError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "ActError";
+  }
+};
 var DEFAULT_WEBMCP_OUTPUT_BYTES = 16e3;
 function parsePoint(value) {
   if (!value) return null;
@@ -3463,7 +3472,7 @@ var ChromiumDriver = class {
       await this.dispatchVerb(page, action);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      const kind = /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
+      const kind = error instanceof ActError ? error.code : /timeout|not found|no element|strict mode/i.test(message) ? "target_not_found" : "act_failed";
       const fresh = await this.afterAct(tabId, entry, permit, wants, before);
       return {
         ok: false,
@@ -3516,8 +3525,26 @@ var ChromiumDriver = class {
         throw new Error("no element: hover needs coordinates or a selector");
       case "type": {
         const text = action.value ?? "";
-        if (selector) return page.fillSelector(selector, text);
-        return page.typeText(text);
+        if (selector) await page.fillSelector(selector, text);
+        else await page.typeText(text);
+        if (action.submit) await page.press("Enter");
+        return;
+      }
+      case "fill_form": {
+        const fields = action.fields;
+        if (!Array.isArray(fields) || fields.length === 0 || fields.some(
+          (field) => typeof field?.selector !== "string" || !field.selector || typeof field?.value !== "string"
+        )) {
+          throw new ActError(
+            "act_failed",
+            "fill_form needs fields: [{selector, value}]"
+          );
+        }
+        for (const [index, field] of fields.entries()) {
+          await this.fillOneField(page, field, index);
+        }
+        if (action.submit) await page.press("Enter");
+        return;
       }
       case "press":
         if (!action.value) throw new Error("press needs a key in `value`");
@@ -3550,6 +3577,43 @@ var ChromiumDriver = class {
       case "close_tab":
       case "activate_tab":
         return;
+    }
+  }
+  /**
+   * One field of a `fill_form`, with the `<select>` fallback.
+   *
+   * A model should not have to know what KIND of control it is filling: it
+   * read "Size" off a tree or a screenshot and wants "L" in it. Playwright's
+   * `fill` refuses a `<select>` with a message naming `<input>`, which is the
+   * one reliable signal that this field wanted `selectOption` instead — so the
+   * fallback is driven by that refusal rather than by a per-field hint the
+   * model would have to get right.
+   *
+   * Any OTHER failure stops the form. Half a filled form is a state the page
+   * is in and the model cannot see, so the error names the field that failed
+   * AND the ones that went in before it.
+   */
+  async fillOneField(page, field, index) {
+    try {
+      await page.fillSelector(field.selector, field.value);
+      return;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/not an <input>/i.test(message)) {
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${message.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
+      try {
+        await page.selectOption(field.selector, field.value);
+      } catch (selectError) {
+        const detail = selectError instanceof Error ? selectError.message : String(selectError);
+        throw new ActError(
+          "fill_form_failed",
+          `field ${index + 1} (${field.selector}): ${detail.split("\n")[0]}` + (index > 0 ? `; fields 1..${index} were filled` : "")
+        );
+      }
     }
   }
   async webmcpInvoke(tabId, action, permit) {

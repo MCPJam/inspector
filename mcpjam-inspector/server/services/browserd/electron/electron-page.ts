@@ -527,6 +527,24 @@ export function createElectronPage(
       await deadline(
         (async () => {
           const cdp = await needCdp();
+          // BEFORE the click. This engine fills by clicking, selecting all and
+          // inserting text, and on a `<select>` that sequence silently does
+          // NOTHING — no error, no change, and a caller looking for the
+          // refusal that says "this is not a text field" never sees one. The
+          // driver's `fill_form` falls back to `selectOption` on exactly that
+          // refusal, so without this check the fallback would never fire here
+          // while firing correctly on Playwright.
+          const tagName = await wc.executeJavaScript(
+            `(() => {
+              const el = document.querySelector(${JSON.stringify(selector)});
+              return el ? el.tagName : null;
+            })()`,
+          );
+          if (typeof tagName === "string" && tagName.toUpperCase() === "SELECT") {
+            throw new Error(
+              `${selector} is not an <input> or <textarea>; use select instead`,
+            );
+          }
           const point = await pointFor(selector);
           // Click to focus, select what is there, then replace it. `fill`'s
           // contract is REPLACE, and an insert into a field with a value would

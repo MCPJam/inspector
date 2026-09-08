@@ -181,10 +181,31 @@ export type BrowserAction =
         | "hover"
         | "drag"
         | "select"
+        | "fill_form"
         | "close_tab"
         | "activate_tab";
       target?: BrowserActTarget;
       value?: string;
+      /**
+       * `fill_form` only: the fields to fill, IN ORDER.
+       *
+       * A login or a search was three gated calls — type, type, press — and so
+       * three approvals for a person and three observations for the model.
+       * This is the same work as one, which is the shape Playwright MCP
+       * settled on and the reason there is no generic multi-step verb here:
+       * a small composite is orderable and reviewable, a sequence verb is
+       * neither.
+       */
+      fields?: Array<{ selector: string; value: string }>;
+      /**
+       * Press Enter once the text is in (`type` and `fill_form`).
+       *
+       * One settle and one observation for what is otherwise two commands,
+       * and the submit is the half a model most often forgets to pin: it acts
+       * on the page the typing produced, which is by definition a page nothing
+       * has observed yet.
+       */
+      submit?: boolean;
       /**
        * The observation token this act was decided from (L3). When present, the
        * daemon refuses the act if the tab's current state token no longer matches
@@ -436,6 +457,8 @@ export const BROWSERD_ERROR_CODES = [
   "unknown_selector",
   "target_not_found",
   "act_failed",
+  /** A `fill_form` stopped partway; the detail names which field and why. */
+  "fill_form_failed",
   "out_of_viewport",
   "unsupported_target",
   /** An `a11yRef` whose node has left the page — distinct from not found. */
