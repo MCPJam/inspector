@@ -4,10 +4,20 @@
   "rationale": "The `missing-required` classification.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "create_ticket", "arguments": { "body": "Login is broken." } }
+      {
+        "toolCallId": "c1",
+        "toolName": "create_ticket",
+        "arguments": {
+          "body": "Login is broken."
+        }
+      }
     ],
     "toolErrors": [
-      { "toolName": "create_ticket", "kind": "content-error", "message": "Missing required field: title" }
+      {
+        "toolName": "create_ticket",
+        "kind": "content-error",
+        "message": "Missing required field: title"
+      }
     ],
     "finalAssistantMessage": "I could not file the ticket.",
     "turnCount": 1,
@@ -17,23 +27,76 @@
         "description": "File a ticket.",
         "inputSchema": {
           "type": "object",
-          "properties": { "title": { "type": "string" }, "body": { "type": "string" } },
-          "required": ["title", "body"]
+          "properties": {
+            "title": {
+              "type": "string"
+            },
+            "body": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "body"
+          ]
         },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "create_ticket", "text": "Missing required field: title", "isError": true, "size": { "bytes": 29, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "create_ticket",
+        "text": "Missing required field: title",
+        "isError": true,
+        "size": {
+          "bytes": 29,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "create_ticket", "durationMs": 70, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "create_ticket",
+        "durationMs": 70,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "fail", "relevance": "useful", "note": "classified missing-required" },
-    { "predicate": { "type": "noToolErrors" }, "observation": "fail", "relevance": "useful" },
-    { "predicate": { "type": "toolErrorNamesInput" }, "observation": "pass", "relevance": "neutral", "note": "the error names `title`, an input key of the tool" }
+    {
+      "predicate": {
+        "type": "argumentsMatchToolSchema"
+      },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "classified missing-required"
+    },
+    {
+      "predicate": {
+        "type": "noToolErrors"
+      },
+      "observation": "fail",
+      "relevance": "useful"
+    },
+    {
+      "predicate": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "the error names `title`, an input key of the tool"
+    }
   ]
 }

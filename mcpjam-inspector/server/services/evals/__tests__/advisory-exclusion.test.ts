@@ -330,7 +330,7 @@ describe("hostedCriterionId is stable across check policy", () => {
     }
   });
 
-  it("pins today's ids for fixture predicates", async () => {
+  it("pins today's ids for fixture predicates", () => {
     // Literals computed 2026-09-06 against the then-current hasher.
     // Changing one means hostedCriterionId's inputs moved.
     const pinned: Record<string, string> = {};
@@ -346,7 +346,6 @@ describe("hostedCriterionId is stable across check policy", () => {
     for (const row of accept) {
       pinned[row.label] = hostedCriterionId(row.value as Predicate);
     }
-    (await import('node:fs')).writeFileSync('/tmp/claude-0/-home-user/8912323e-f1b1-5d4a-950f-948b4f0dab4c/scratchpad/computed-ids.json', JSON.stringify(pinned, null, 1));
     expect(pinned).toEqual(PINNED_HOSTED_CRITERION_IDS);
   });
 });

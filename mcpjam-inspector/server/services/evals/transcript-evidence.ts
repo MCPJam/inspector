@@ -241,6 +241,14 @@ export type ToolAnnotationSource = {
  */
 export function collectToolAnnotations(
   manager: Partial<ToolAnnotationSource> | undefined,
+  /**
+   * The servers this run actually selected. Annotations are keyed by BARE tool
+   * name — the same key `allTools` uses — so a server the run never selected
+   * could otherwise supply a `destructiveHint` for a name it happens to share
+   * with a selected tool. Omitted means every registered server, which is only
+   * right when the caller has no narrower answer.
+   */
+  serverIds?: readonly string[],
 ): Record<string, Record<string, unknown>> | undefined {
   // Reading evidence must never be able to fail a run. A manager that does
   // not implement this surface (an older path, a test double) contributes
@@ -255,7 +263,9 @@ export function collectToolAnnotations(
   const merged: Record<string, Record<string, unknown>> = {};
   let read = false;
   try {
+    const scope = new Set(serverIds ?? []);
     for (const serverId of manager.listServers()) {
+      if (scope.size > 0 && !scope.has(serverId)) continue;
       if (!manager.hasCachedToolAnnotations(serverId)) continue;
       read = true;
       for (const [name, annotations] of Object.entries(

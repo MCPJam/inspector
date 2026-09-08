@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { evaluatePredicate } from "../src/predicates/evaluate.js";
+import { predicateSchema } from "../src/predicates/types.js";
 import type {
   IterationTranscript,
   Predicate,
@@ -65,6 +66,20 @@ export function loadUvcCorpus(): CorpusItem[] {
         throw new Error(
           `uvc-corpus: ${name} declares id "${item.id}"; the id must equal the filename stem`,
         );
+      }
+      // Every expectation is parsed through the REAL schema, not cast into
+      // shape. The corpus is the acceptance gate for these kinds, and a
+      // fixture authoring a predicate the validator would refuse — an
+      // observation without `role: "advisory"`, say — would report coverage
+      // for a check nobody could actually save.
+      for (const expectation of item.expect) {
+        const parsed = predicateSchema.safeParse(expectation.predicate);
+        if (!parsed.success) {
+          throw new Error(
+            `uvc-corpus: ${name} authors a predicate the validator refuses: ` +
+              `${parsed.error.issues[0]?.message ?? "invalid"}`,
+          );
+        }
       }
       return item;
     });

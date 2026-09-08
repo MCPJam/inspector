@@ -1139,6 +1139,11 @@ export function evaluatePredicate(
           // it in half. Reporting a shape violation there would blame the
           // server for our own cap.
           if (result.truncated === true) {
+            // A violation already SEEN is proof, and the one-sided rule keeps
+            // it: stop reading and report it. Only with nothing confirmed is
+            // the row unscorable — otherwise a later truncated result would
+            // erase a shape violation the evaluator had already established.
+            if (failures.length > 0) break;
             return evidenceError(
               predicate,
               `"${result.toolName}" result was truncated for storage, so its ` +

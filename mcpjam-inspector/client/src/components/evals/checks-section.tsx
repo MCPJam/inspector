@@ -1845,6 +1845,27 @@ function ToolResultSchemaFields({
     JSON.stringify(predicate.schema ?? {}, null, 2),
   );
   const [error, setError] = useState<string | null>(null);
+  // Resync when `predicate` changes from OUTSIDE this instance. Rows are keyed
+  // by array index, so removing or reordering a row above reuses this same
+  // component with a different predicate — and without this the textarea keeps
+  // showing the previous check's schema, which the next keystroke then writes
+  // onto the current one. Compared against our own draft so a mid-edit value is
+  // left alone; `RawArgsJsonEditor` documents the identical hazard.
+  useEffect(() => {
+    let drift = true;
+    try {
+      drift =
+        JSON.stringify(JSON.parse(draft)) !==
+        JSON.stringify(predicate.schema ?? {});
+    } catch {
+      drift = true;
+    }
+    if (drift) {
+      setDraft(JSON.stringify(predicate.schema ?? {}, null, 2));
+      setError(null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [predicate.schema]);
   return (
     <div className="space-y-2">
       <div className="space-y-1">

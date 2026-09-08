@@ -46,7 +46,7 @@ misleadingly on a newly added item leaves the seed.
   "transcript": { /* IterationTranscript */ },
   "expect": [
     {
-      "predicate": { "type": "noEndingQuestion" },
+      "predicate": { "type": "noEndingQuestion", "role": "advisory" },
       "observation": "fail",
       "relevance": "misleading",
       "note": "the question is an offer, not a request for missing input"

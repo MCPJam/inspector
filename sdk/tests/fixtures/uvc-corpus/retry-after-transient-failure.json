@@ -4,11 +4,27 @@
   "rationale": "Counterexample for `noRepeatedIdenticalCall`. Retrying a transient failure with identical arguments is the right thing to do; the detector sees only the shape.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "fetch_report", "arguments": { "reportId": "R-19" } },
-      { "toolCallId": "c2", "toolName": "fetch_report", "arguments": { "reportId": "R-19" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "fetch_report",
+        "arguments": {
+          "reportId": "R-19"
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "fetch_report",
+        "arguments": {
+          "reportId": "R-19"
+        }
+      }
     ],
     "toolErrors": [
-      { "toolName": "fetch_report", "kind": "content-error", "message": "Upstream unavailable (503). Please retry." }
+      {
+        "toolName": "fetch_report",
+        "kind": "content-error",
+        "message": "Upstream unavailable (503). Please retry."
+      }
     ],
     "finalAssistantMessage": "Report R-19 is ready: 412 rows, generated at 09:14 UTC.",
     "turnCount": 1,
@@ -16,24 +32,100 @@
       {
         "name": "fetch_report",
         "description": "Fetch a generated report by id.",
-        "inputSchema": { "type": "object", "properties": { "reportId": { "type": "string" } }, "required": ["reportId"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "reportId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "reportId"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "fetch_report", "text": "Upstream unavailable (503). Please retry.", "isError": true, "size": { "bytes": 40, "basis": "model_visible_output", "complete": true } },
-      { "toolCallId": "c2", "toolName": "fetch_report", "text": "{\"rows\":412,\"generatedAt\":\"09:14Z\"}", "isError": false, "size": { "bytes": 35, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "fetch_report",
+        "text": "Upstream unavailable (503). Please retry.",
+        "isError": true,
+        "size": {
+          "bytes": 40,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "fetch_report",
+        "text": "{\"rows\":412,\"generatedAt\":\"09:14Z\"}",
+        "isError": false,
+        "size": {
+          "bytes": 35,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "fetch_report", "durationMs": 1400, "provenance": "span" },
-      { "toolCallId": "c2", "toolName": "fetch_report", "durationMs": 620, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "fetch_report",
+        "durationMs": 1400,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "fetch_report",
+        "durationMs": 620,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "noRepeatedIdenticalCall" }, "observation": "fail", "relevance": "misleading", "note": "an identical retry after a 503 is correct; the detector cannot tell it from waste, which is why this kind is Report-only" },
-    { "predicate": { "type": "noToolErrors" }, "observation": "fail", "relevance": "useful", "note": "the server did return an error, and saying so is honest even though the trial recovered" },
-    { "predicate": { "type": "toolErrorNamesInput" }, "observation": "fail", "relevance": "misleading", "note": "\"Upstream unavailable (503). Please retry.\" is good guidance and names no input" },
-    { "predicate": { "type": "noEndingQuestion" }, "observation": "pass", "relevance": "neutral" }
+    {
+      "predicate": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "misleading",
+      "note": "an identical retry after a 503 is correct; the detector cannot tell it from waste, which is why this kind is Report-only"
+    },
+    {
+      "predicate": {
+        "type": "noToolErrors"
+      },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "the server did return an error, and saying so is honest even though the trial recovered"
+    },
+    {
+      "predicate": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "misleading",
+      "note": "\"Upstream unavailable (503). Please retry.\" is good guidance and names no input"
+    },
+    {
+      "predicate": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    }
   ]
 }

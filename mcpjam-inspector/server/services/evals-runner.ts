@@ -4091,7 +4091,10 @@ const runLocalIteration = async ({
     // only mutates `scriptedCheckFailures`, which no earlier gate reads, so
     // doing it here is equivalent to the former post-finalize position.)
     browser.flushActiveWidgetChecks();
-    const toolAnnotations = collectToolAnnotations(mcpClientManager);
+    const toolAnnotations = collectToolAnnotations(
+      mcpClientManager,
+      selectedServers,
+    );
     // Single verdict boundary — matcher + case predicates + ordering + all gates.
     const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
       promptTurns,
@@ -5465,7 +5468,10 @@ const runHostedIterationWithBrowser = async (
       : undefined;
   // Flush before the shared verdict reads scripted-check failures (see local path).
   browser.flushActiveWidgetChecks();
-  const stepToolAnnotations = collectToolAnnotations(mcpClientManager);
+  const stepToolAnnotations = collectToolAnnotations(
+    mcpClientManager,
+    selectedServers,
+  );
   const { evaluation, passed, predicateResults } = buildEvalIterationVerdict({
     promptTurns,
     toolsCalledByPrompt: toolsCalledByPromptWithWidgets,

@@ -4,10 +4,34 @@
   "rationale": "Second counterexample for `noRepeatedIdenticalCall`: a poll loop is identical calls by design, and the result changes underneath them.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "start_export", "arguments": { "dataset": "orders" } },
-      { "toolCallId": "c2", "toolName": "get_job", "arguments": { "jobId": "J-7" } },
-      { "toolCallId": "c3", "toolName": "get_job", "arguments": { "jobId": "J-7" } },
-      { "toolCallId": "c4", "toolName": "get_job", "arguments": { "jobId": "J-7" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "start_export",
+        "arguments": {
+          "dataset": "orders"
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "get_job",
+        "arguments": {
+          "jobId": "J-7"
+        }
+      },
+      {
+        "toolCallId": "c3",
+        "toolName": "get_job",
+        "arguments": {
+          "jobId": "J-7"
+        }
+      },
+      {
+        "toolCallId": "c4",
+        "toolName": "get_job",
+        "arguments": {
+          "jobId": "J-7"
+        }
+      }
     ],
     "toolErrors": [],
     "finalAssistantMessage": "The orders export finished; the file is at s3://exports/orders-2026-09-08.csv.",
@@ -16,34 +40,153 @@
       {
         "name": "start_export",
         "description": "Kick off an export job. Returns a job id.",
-        "inputSchema": { "type": "object", "properties": { "dataset": { "type": "string" } }, "required": ["dataset"] },
-        "annotations": { "readOnlyHint": false, "destructiveHint": false }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "dataset": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "dataset"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": false,
+          "destructiveHint": false
+        }
       },
       {
         "name": "get_job",
         "description": "Read the current state of a job. Poll until `state` is `done`.",
-        "inputSchema": { "type": "object", "properties": { "jobId": { "type": "string" } }, "required": ["jobId"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "jobId": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "jobId"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "start_export", "text": "{\"jobId\":\"J-7\"}", "isError": false, "size": { "bytes": 15, "basis": "model_visible_output", "complete": true } },
-      { "toolCallId": "c2", "toolName": "get_job", "text": "{\"state\":\"running\"}", "isError": false, "size": { "bytes": 19, "basis": "model_visible_output", "complete": true } },
-      { "toolCallId": "c3", "toolName": "get_job", "text": "{\"state\":\"running\"}", "isError": false, "size": { "bytes": 19, "basis": "model_visible_output", "complete": true } },
-      { "toolCallId": "c4", "toolName": "get_job", "text": "{\"state\":\"done\",\"url\":\"s3://exports/orders-2026-09-08.csv\"}", "isError": false, "size": { "bytes": 58, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "start_export",
+        "text": "{\"jobId\":\"J-7\"}",
+        "isError": false,
+        "size": {
+          "bytes": 15,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "get_job",
+        "text": "{\"state\":\"running\"}",
+        "isError": false,
+        "size": {
+          "bytes": 19,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c3",
+        "toolName": "get_job",
+        "text": "{\"state\":\"running\"}",
+        "isError": false,
+        "size": {
+          "bytes": 19,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c4",
+        "toolName": "get_job",
+        "text": "{\"state\":\"done\",\"url\":\"s3://exports/orders-2026-09-08.csv\"}",
+        "isError": false,
+        "size": {
+          "bytes": 58,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "start_export", "durationMs": 210, "provenance": "span" },
-      { "toolCallId": "c2", "toolName": "get_job", "durationMs": 80, "provenance": "span" },
-      { "toolCallId": "c3", "toolName": "get_job", "durationMs": 78, "provenance": "span" },
-      { "toolCallId": "c4", "toolName": "get_job", "durationMs": 81, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "start_export",
+        "durationMs": 210,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "get_job",
+        "durationMs": 80,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c3",
+        "toolName": "get_job",
+        "durationMs": 78,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c4",
+        "toolName": "get_job",
+        "durationMs": 81,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "noRepeatedIdenticalCall" }, "observation": "fail", "relevance": "misleading", "note": "the tool's own description says to poll; identical arguments are the contract" },
-    { "predicate": { "type": "noDestructiveToolCalled" }, "observation": "pass", "relevance": "neutral", "note": "start_export declares destructiveHint: false" },
-    { "predicate": { "type": "toolCalledBefore", "toolName": "start_export", "beforeToolName": "get_job" }, "observation": "pass", "relevance": "neutral" },
-    { "predicate": { "type": "noEndingQuestion" }, "observation": "pass", "relevance": "neutral" }
+    {
+      "predicate": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "misleading",
+      "note": "the tool's own description says to poll; identical arguments are the contract"
+    },
+    {
+      "predicate": {
+        "type": "noDestructiveToolCalled"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "start_export declares destructiveHint: false"
+    },
+    {
+      "predicate": {
+        "type": "toolCalledBefore",
+        "toolName": "start_export",
+        "beforeToolName": "get_job"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    },
+    {
+      "predicate": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    }
   ]
 }

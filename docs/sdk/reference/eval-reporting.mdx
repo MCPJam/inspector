@@ -461,7 +461,7 @@ Advanced replay override. Most users should not construct this manually.
 
 Predicates add a deterministic, state-based assertion layer on top of tool-call matching. Each predicate is a pure function of the iteration transcript — same transcript, same verdict — which makes it suitable as a CI release gate.
 
-Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff **all** predicates pass. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
+Predicates can be authored two ways: on a hosted suite or case (in the corpus JSON, or through the Inspector's per-case **Checks** editor), or **code-first** from SDK 3.0 onward by passing `predicates` to [`EvalTest`](/sdk/reference/eval-test) or [`EvalSuite`](/sdk/reference/eval-suite). Either way the runner evaluates them and persists per-predicate verdicts under [`metadata.predicates`](#predicate-results-in-metadata). A case passes the predicate gate iff every **gating** predicate passes. A predicate authored `role: "advisory"` — which every observation kind must be — is recorded and surfaced, and never fails the case; so is one whose `status` is `"error"`, a check that could not be scored at all. An absent or empty list means no predicate gate (the case is judged solely by tool-call matching and `failOnToolError`).
 
 <Note>
   Before SDK 3.0 the predicate engine was hosted-only: `EvalResultInput` had no predicate field, and a code-first run could not evaluate them. Code-first predicates now gate the iteration locally **and** report the same verdicts, so a suite reads identically whether it ran from your test file or from the platform.
@@ -551,7 +551,7 @@ const predicates: Predicate[] = [
 
 // Pass predicates via the per-run override in the Inspector corpus,
 // or use evaluatePredicates() directly in custom pipelines:
-import { evaluatePredicates, buildIterationTranscript } from "@mcpjam/sdk/predicates";
+import { evaluatePredicates, allPredicatesPassed, buildIterationTranscript } from "@mcpjam/sdk/predicates";
 
 const transcript = buildIterationTranscript({
   trace: myTrace,
@@ -560,7 +560,10 @@ const transcript = buildIterationTranscript({
 });
 
 const results = evaluatePredicates(transcript, predicates);
-const allPassed = results.every((r) => r.passed);
+// `allPredicatesPassed`, not `results.every(...)`: the results array keeps
+// failed ADVISORY rows so a reader can see them, and counting those as
+// failures rejects a run over a finding that was never meant to gate.
+const allPassed = allPredicatesPassed(results);
 ```
 
 #### Predicate results in metadata

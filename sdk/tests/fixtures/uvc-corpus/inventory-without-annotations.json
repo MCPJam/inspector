@@ -4,7 +4,13 @@
   "rationale": "`noDestructiveToolCalled` reads a declaration. When the server declared nothing, the honest answer is that we could not measure it — not that nothing destructive happened.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "delete_branch", "arguments": { "name": "feature/old" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "delete_branch",
+        "arguments": {
+          "name": "feature/old"
+        }
+      }
     ],
     "toolErrors": [],
     "finalAssistantMessage": "Deleted feature/old.",
@@ -13,19 +19,63 @@
       {
         "name": "delete_branch",
         "description": "Delete a branch.",
-        "inputSchema": { "type": "object", "properties": { "name": { "type": "string" } }, "required": ["name"] }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "name": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "name"
+          ]
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "delete_branch", "text": "{\"ok\":true}", "isError": false, "size": { "bytes": 11, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "delete_branch",
+        "text": "{\"ok\":true}",
+        "isError": false,
+        "size": {
+          "bytes": 11,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "delete_branch", "durationMs": 300, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "delete_branch",
+        "durationMs": 300,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "noDestructiveToolCalled" }, "observation": "error", "relevance": "neutral", "note": "no tool in the inventory carries annotations; a pass here would read as \"nothing destructive was called\"" },
-    { "predicate": { "type": "noDeprecatedToolCalled" }, "observation": "pass", "relevance": "neutral", "note": "descriptions were captured, so this one is measurable" }
+    {
+      "predicate": {
+        "type": "noDestructiveToolCalled"
+      },
+      "observation": "error",
+      "relevance": "neutral",
+      "note": "no tool in the inventory carries annotations; a pass here would read as \"nothing destructive was called\""
+    },
+    {
+      "predicate": {
+        "type": "noDeprecatedToolCalled",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "descriptions were captured, so this one is measurable"
+    }
   ]
 }

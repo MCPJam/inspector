@@ -4,7 +4,13 @@
   "rationale": "Counterexample for `noEndingQuestion`. The detector is right that the message ends with a question. The question is an offer, and the user already got what they asked for.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "get_revenue", "arguments": { "month": "2026-08" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_revenue",
+        "arguments": {
+          "month": "2026-08"
+        }
+      }
     ],
     "toolErrors": [],
     "finalAssistantMessage": "August revenue was $412,900, up 6.1% on July. Would you like a breakdown by region?",
@@ -13,20 +19,65 @@
       {
         "name": "get_revenue",
         "description": "Revenue for one month.",
-        "inputSchema": { "type": "object", "properties": { "month": { "type": "string" } }, "required": ["month"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "month": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "month"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "get_revenue", "text": "{\"total\":412900,\"deltaPct\":6.1}", "isError": false, "size": { "bytes": 31, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_revenue",
+        "text": "{\"total\":412900,\"deltaPct\":6.1}",
+        "isError": false,
+        "size": {
+          "bytes": 31,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "get_revenue", "durationMs": 150, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_revenue",
+        "durationMs": 150,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "noEndingQuestion" }, "observation": "fail", "relevance": "misleading", "note": "the answer is complete; the trailing question is an offer, so this firing is not a finding a server developer should act on" },
-    { "predicate": { "type": "finalAssistantMessageNonEmpty" }, "observation": "pass", "relevance": "neutral" }
+    {
+      "predicate": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      },
+      "observation": "fail",
+      "relevance": "misleading",
+      "note": "the answer is complete; the trailing question is an offer, so this firing is not a finding a server developer should act on"
+    },
+    {
+      "predicate": {
+        "type": "finalAssistantMessageNonEmpty"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    }
   ]
 }

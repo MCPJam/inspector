@@ -551,8 +551,15 @@ function ThresholdCell({
           aria-label={label}
           className="h-7 w-24 text-xs"
           onChange={(event) => {
-            const next = Number(event.target.value);
-            if (!Number.isFinite(next)) return;
+            // An empty field is `Number("") === 0`, and a budget of 0 is a
+            // check nothing can pass — the same reason the backend now
+            // refuses a non-positive `tokens` or `minCount` at the write
+            // boundary. Leave the predicate alone until the field holds a
+            // usable number, exactly as the token and turn budgets do.
+            const raw = event.target.value.trim();
+            if (raw === "") return;
+            const next = Number(raw);
+            if (!Number.isFinite(next) || next < 1) return;
             onPredicateChange(row.predicateIndex!, {
               ...predicate,
               [field]: Math.floor(next),

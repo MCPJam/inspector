@@ -4,7 +4,13 @@
   "rationale": "Missing evidence must not manufacture attribution. Every measurement kind over this transcript is `status: \"error\"` — never a pass, and never a fail that blames the server for our own blind spot.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "run_query", "arguments": { "sql": "select count(*) from orders" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "run_query",
+        "arguments": {
+          "sql": "select count(*) from orders"
+        }
+      }
     ],
     "toolErrors": [],
     "finalAssistantMessage": "There are 41,022 orders.",
@@ -13,20 +19,80 @@
       {
         "name": "run_query",
         "description": "Run a read-only SQL query.",
-        "inputSchema": { "type": "object", "properties": { "sql": { "type": "string" } }, "required": ["sql"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "sql": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "sql"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       }
     ],
     "toolResults": [],
     "toolCallTimings": [],
-    "capture": { "toolResults": "partial", "toolCallTimings": "partial", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "partial",
+      "toolCallTimings": "partial",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "toolLatencyUnder", "ms": 500 }, "observation": "error", "relevance": "neutral", "note": "narrated calls carry no timing; an unmeasured budget is not a met budget and not a breach either" },
-    { "predicate": { "type": "toolResultSizeUnder", "maxBytes": 4096 }, "observation": "error", "relevance": "neutral" },
-    { "predicate": { "type": "toolResultContains", "toolName": "run_query", "needle": "41022" }, "observation": "error", "relevance": "neutral" },
-    { "predicate": { "type": "fullPageHasContinuation" }, "observation": "error", "relevance": "neutral" },
-    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral", "note": "arguments and the inventory were both captured, so this one is still scorable" },
-    { "predicate": { "type": "noEndingQuestion" }, "observation": "pass", "relevance": "neutral" }
+    {
+      "predicate": {
+        "type": "toolLatencyUnder",
+        "ms": 500
+      },
+      "observation": "error",
+      "relevance": "neutral",
+      "note": "narrated calls carry no timing; an unmeasured budget is not a met budget and not a breach either"
+    },
+    {
+      "predicate": {
+        "type": "toolResultSizeUnder",
+        "maxBytes": 4096
+      },
+      "observation": "error",
+      "relevance": "neutral"
+    },
+    {
+      "predicate": {
+        "type": "toolResultContains",
+        "toolName": "run_query",
+        "needle": "41022"
+      },
+      "observation": "error",
+      "relevance": "neutral"
+    },
+    {
+      "predicate": {
+        "type": "fullPageHasContinuation",
+        "role": "advisory"
+      },
+      "observation": "error",
+      "relevance": "neutral"
+    },
+    {
+      "predicate": {
+        "type": "argumentsMatchToolSchema"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "arguments and the inventory were both captured, so this one is still scorable"
+    },
+    {
+      "predicate": {
+        "type": "noEndingQuestion",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    }
   ]
 }

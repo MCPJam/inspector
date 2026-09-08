@@ -4,11 +4,27 @@
   "rationale": "The case that decides the seed policy: under `failOnToolError: false` this trial passes today. A seeded GATING `noToolErrors` would flip it to failed without the author choosing that, which is why nothing in the recommended set gates.",
   "transcript": {
     "toolCalls": [
-      { "toolCallId": "c1", "toolName": "get_user", "arguments": { "email": "sam@example.com" } },
-      { "toolCallId": "c2", "toolName": "search_users", "arguments": { "query": "sam@example.com" } }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_user",
+        "arguments": {
+          "email": "sam@example.com"
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_users",
+        "arguments": {
+          "query": "sam@example.com"
+        }
+      }
     ],
     "toolErrors": [
-      { "toolName": "get_user", "kind": "content-error", "message": "No user with email sam@example.com; try search_users." }
+      {
+        "toolName": "get_user",
+        "kind": "content-error",
+        "message": "No user with email sam@example.com; try search_users."
+      }
     ],
     "finalAssistantMessage": "Sam Okafor (user 8812) — joined March 2024, on the Pro plan.",
     "turnCount": 1,
@@ -16,30 +32,117 @@
       {
         "name": "get_user",
         "description": "Fetch a user by exact email.",
-        "inputSchema": { "type": "object", "properties": { "email": { "type": "string" } }, "required": ["email"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "email": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "email"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       },
       {
         "name": "search_users",
         "description": "Fuzzy user search.",
-        "inputSchema": { "type": "object", "properties": { "query": { "type": "string" } }, "required": ["query"] },
-        "annotations": { "readOnlyHint": true }
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "query": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "query"
+          ]
+        },
+        "annotations": {
+          "readOnlyHint": true
+        }
       }
     ],
     "toolResults": [
-      { "toolCallId": "c1", "toolName": "get_user", "text": "No user with email sam@example.com; try search_users.", "isError": true, "size": { "bytes": 52, "basis": "model_visible_output", "complete": true } },
-      { "toolCallId": "c2", "toolName": "search_users", "text": "{\"id\":8812,\"name\":\"Sam Okafor\",\"plan\":\"pro\"}", "isError": false, "size": { "bytes": 43, "basis": "model_visible_output", "complete": true } }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_user",
+        "text": "No user with email sam@example.com; try search_users.",
+        "isError": true,
+        "size": {
+          "bytes": 52,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_users",
+        "text": "{\"id\":8812,\"name\":\"Sam Okafor\",\"plan\":\"pro\"}",
+        "isError": false,
+        "size": {
+          "bytes": 43,
+          "basis": "model_visible_output",
+          "complete": true
+        }
+      }
     ],
     "toolCallTimings": [
-      { "toolCallId": "c1", "toolName": "get_user", "durationMs": 60, "provenance": "span" },
-      { "toolCallId": "c2", "toolName": "search_users", "durationMs": 175, "provenance": "span" }
+      {
+        "toolCallId": "c1",
+        "toolName": "get_user",
+        "durationMs": 60,
+        "provenance": "span"
+      },
+      {
+        "toolCallId": "c2",
+        "toolName": "search_users",
+        "durationMs": 175,
+        "provenance": "span"
+      }
     ],
-    "capture": { "toolResults": "complete", "toolCallTimings": "complete", "toolInventory": "complete" }
+    "capture": {
+      "toolResults": "complete",
+      "toolCallTimings": "complete",
+      "toolInventory": "complete"
+    }
   },
   "expect": [
-    { "predicate": { "type": "noToolErrors" }, "observation": "fail", "relevance": "useful", "note": "an error did happen and the developer should see it — but as Warn, because the case's own `failOnToolError: false` already decided it is not fatal" },
-    { "predicate": { "type": "toolErrorNamesInput" }, "observation": "pass", "relevance": "neutral", "note": "the message quotes the email that was sent" },
-    { "predicate": { "type": "noRepeatedIdenticalCall" }, "observation": "pass", "relevance": "neutral" },
-    { "predicate": { "type": "argumentsMatchToolSchema" }, "observation": "pass", "relevance": "neutral", "note": "the arguments were fine; the record simply did not exist" }
+    {
+      "predicate": {
+        "type": "noToolErrors"
+      },
+      "observation": "fail",
+      "relevance": "useful",
+      "note": "an error did happen and the developer should see it — but as Warn, because the case's own `failOnToolError: false` already decided it is not fatal"
+    },
+    {
+      "predicate": {
+        "type": "toolErrorNamesInput",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "the message quotes the email that was sent"
+    },
+    {
+      "predicate": {
+        "type": "noRepeatedIdenticalCall",
+        "role": "advisory"
+      },
+      "observation": "pass",
+      "relevance": "neutral"
+    },
+    {
+      "predicate": {
+        "type": "argumentsMatchToolSchema"
+      },
+      "observation": "pass",
+      "relevance": "neutral",
+      "note": "the arguments were fine; the record simply did not exist"
+    }
   ]
 }
