@@ -5512,6 +5512,11 @@ const declaredSuiteIdField = z
     "The suite file's `suite.id`, when this write is that file syncing itself. Required to edit a CI-managed suite (one whose configuration lives in a repository); omit it otherwise."
   );
 
+// Every nested object here is STRICT for the same reason the top level is:
+// a non-strict zod object silently DROPS an unknown key, so a typo — or a
+// field this surface does not implement, like `judge.groundedness` — returns
+// 200 having written nothing, and the caller has a receipt for a change that
+// never happened. A refusal that names the key is the honest answer.
 const updateEvalSuiteInput = z.strictObject({
   project: z
     .string()
@@ -5573,7 +5578,7 @@ const updateEvalSuiteInput = z.strictObject({
       "Client attachments (replace-all)." + DEPRECATED_HOSTS_SELECTOR_SUFFIX
     ),
   settings: z
-    .object({
+    .strictObject({
       minimumAccuracy: z.number().min(0).max(100).optional(),
       minimumIterations: z
         .union([z.number().int().min(1).max(10), z.null()])
@@ -5585,7 +5590,7 @@ const updateEvalSuiteInput = z.strictObject({
       matchOptions: publicMatchOptionsSchema.nullable().optional(),
       checks: z.array(publicCheckSchema).nullable().optional(),
       judge: z
-        .object({
+        .strictObject({
           enabled: z
             .boolean()
             .optional()
@@ -5621,10 +5626,10 @@ const updateEvalSuiteInput = z.strictObject({
             ),
           rubric: z
             .union([
-              z.object({
+              z.strictObject({
                 criteria: z
                   .array(
-                    z.object({
+                    z.strictObject({
                       id: z
                         .string()
                         .regex(/^[A-Za-z0-9_-]{1,64}$/)

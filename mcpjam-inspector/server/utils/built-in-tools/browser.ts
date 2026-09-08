@@ -42,13 +42,16 @@ import { tool, type ToolSet } from "ai";
 import { z } from "zod";
 import { randomBytes, randomUUID } from "node:crypto";
 import {
+  BROWSER_BUILT_IN_TOOL_ID,
   BROWSER_TOOL_NAMES,
   classifyBrowserToolApprovals,
   type BrowserUnattendedPolicy,
   type UiToolApprovalClassification,
 } from "@/shared/client-fulfilled-tools";
+import type { SerializedModelRequestTool } from "@/shared/model-request-payload";
 import { logger } from "../logger.js";
 import { type ExecutionScope } from "../execution-scope.js";
+import { buildResolvedModelRequestPayload } from "../model-request-payload.js";
 import {
   BROWSERD_OBSERVATION_VIEWPORT,
   isPointInViewport,
@@ -62,7 +65,10 @@ import type { BrowserContextMode } from "../../services/browserd/browser-session
 import { ensureLiveBrowserSession } from "../../services/browserd/live-session-deps.js";
 import { ensureLocalBrowserSession } from "../../services/browserd/local/local-browser-session.js";
 
-export const BROWSER_BUILT_IN_TOOL_ID = "browser";
+// Re-exported so the server's existing importers keep their one import site;
+// the value itself now lives in `shared/client-fulfilled-tools.ts` beside the
+// six tool names, because the client decides from the same id.
+export { BROWSER_BUILT_IN_TOOL_ID };
 
 /**
  * The coordinate space the model is told about, stated in the tool schema and
@@ -1083,6 +1089,42 @@ export function buildBrowserTools(
     tools,
     approvals: classifyBrowserToolApprovals(built, { readOnly }),
   };
+}
+
+/**
+ * The six tools AS THE MODEL SEES THEM — names, descriptions and JSON input
+ * schemas — for surfaces that show what the browser capability adds to a turn
+ * (the Playground's Tools pane, the Raw request preview of a reopened chat).
+ *
+ * Derived from `buildBrowserTools` rather than kept as a second list, so the
+ * pane can never describe a tool the model does not have or drift from the
+ * wording the model reads. The build here never touches a browser: the
+ * session is resolved lazily on the first `execute()`, which this never calls,
+ * and the ensure function it is handed refuses by construction.
+ */
+export function describeBrowserTools(
+  engine: BrowserEngine,
+): SerializedModelRequestTool[] {
+  const built = buildBrowserTools({
+    authHeader: "",
+    projectId: "describe",
+    engine,
+    approvalDelivery: { kind: "attested" },
+    ensureSession: async () => {
+      throw new Error(
+        "describeBrowserTools builds definitions only; nothing may execute",
+      );
+    },
+  });
+  if (!built) return [];
+  const { tools } = buildResolvedModelRequestPayload({
+    systemPrompt: "",
+    tools: built.tools,
+    messages: [],
+  });
+  return BROWSER_TOOL_NAMES.map((name) => tools[name]).filter(
+    (tool): tool is SerializedModelRequestTool => tool !== undefined,
+  );
 }
 
 /**

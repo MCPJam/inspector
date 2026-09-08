@@ -14,8 +14,10 @@ import { z } from "zod";
 import {
   buildBrowserTools,
   BrowserTokenMemory,
+  describeBrowserTools,
   BROWSER_BUILT_IN_TOOL_ID,
 } from "../browser";
+import { BROWSER_TOOL_NAMES } from "../../../../shared/client-fulfilled-tools";
 import type { BrowserSessionHandle } from "../../../services/browserd/browser-session";
 
 type SendResult = {
@@ -1825,6 +1827,61 @@ describe("the toolset's context footprint is pinned", () => {
     });
     expect(footprintBytes(readOnly!.tools as any)).toBeLessThan(
       footprintBytes(full!.tools as any),
+    );
+  });
+});
+
+/**
+ * `describeBrowserTools` — what the Tools pane and the Raw preview render.
+ *
+ * It exists so those surfaces never keep a hand-written copy of these schemas,
+ * so the property to pin is that it DERIVES from the same builder: same names,
+ * same wording, same schemas the model is actually sent. And that describing
+ * the tools can never drive a browser.
+ */
+describe("describeBrowserTools", () => {
+  it("describes every tool the model is given", () => {
+    const described = describeBrowserTools("hosted");
+    expect(described.map((tool) => tool.name).sort()).toEqual(
+      [...BROWSER_TOOL_NAMES].sort(),
+    );
+  });
+
+  it("carries the same wording and schemas the model is sent", () => {
+    // The point of deriving rather than copying: a pane showing different text
+    // from the model's is a debugging surface that lies about the run.
+    const { result } = build();
+    const described = describeBrowserTools("hosted");
+    for (const tool of described) {
+      const live = (result!.tools as Record<string, { description?: string }>)[
+        tool.name
+      ];
+      expect(live, `${tool.name} is not in the built toolset`).toBeDefined();
+      expect(tool.description).toBe(live.description);
+      expect(tool.inputSchema).toMatchObject({ type: "object" });
+    }
+  });
+
+  it("says whose browser this is", () => {
+    // The one sentence the engine changes, and the one claim about containment
+    // the pane must not get wrong.
+    const local = describeBrowserTools("local")
+      .map((tool) => tool.description ?? "")
+      .join("\n");
+    const hosted = describeBrowserTools("hosted")
+      .map((tool) => tool.description ?? "")
+      .join("\n");
+    expect(local).toContain("this machine");
+    expect(local).not.toBe(hosted);
+  });
+
+  it("never touches a browser", () => {
+    // A description is not a session. If building one ever resolved a handle,
+    // rendering a tool list would provision machines — so the ensure function
+    // it is handed throws, and this proves nothing calls it.
+    expect(() => describeBrowserTools("hosted")).not.toThrow();
+    expect(describeBrowserTools("hosted").length).toBe(
+      BROWSER_TOOL_NAMES.length,
     );
   });
 });
