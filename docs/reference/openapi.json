@@ -12228,14 +12228,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
@@ -12604,14 +12604,14 @@
           "repetitions": {
             "type": "integer",
             "minimum": 1,
-            "maximum": 100,
-            "description": "Per-case repetitions under verdict policy 2; omitted cases inherit the suite default."
+            "maximum": 10,
+            "description": "Per-case repetitions; omitted cases inherit the suite default. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, because the legacy resolver takes the trial count from `iterations` and the suite's `minimumIterations` and would never read this. Capped at 10, the same hosted ceiling as `iterations`; the suite-file contract's larger `MAX_REPETITIONS` is what a file may DECLARE, not what a hosted run accepts."
           },
           "passThreshold": {
             "type": "number",
             "minimum": 0,
             "maximum": 1,
-            "description": "Per-case pass threshold fraction under verdict policy 2."
+            "description": "Per-case pass threshold fraction. VERDICT POLICY 2 ONLY — on a legacy suite this is a VALIDATION_ERROR naming the upgrade, for the same reason as `repetitions`."
           },
           "isNegative": {
             "type": "boolean"
@@ -13132,8 +13132,13 @@
       },
       "EvalTestCase": {
         "type": "object",
-        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model).",
-        "required": ["title", "runs", "model", "provider", "steps"],
+        "description": "Inline eval test case. The case body is an ordered `steps` array (the unified test model). Exactly one of `runs` / `iterations` is required — an inline test on a run has no suite default to inherit. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
+        "required": ["title", "model", "provider", "steps"],
+        "oneOf": [{ "required": ["runs"] }, { "required": ["iterations"] }],
+        "allOf": [
+          { "not": { "required": ["isNegative", "isNegativeTest"] } },
+          { "not": { "required": ["checks", "predicates"] } }
+        ],
         "properties": {
           "title": {
             "type": "string"
@@ -13171,9 +13176,65 @@
             "type": "object",
             "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
             "additionalProperties": true
+          },
+          "scenario": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 64,
+            "description": "Optional authored analytics grouping label."
+          },
+          "matchOptions": {
+            "type": "object",
+            "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+            "additionalProperties": true
+          },
+          "predicates": {
+            "type": "object",
+            "description": "Per-case check gate. `checks` is the public alias for this field.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "isNegative": {
+            "type": "boolean",
+            "description": "Alias for `isNegativeTest` — the public case-authoring spelling this API returns on a read. Send one or the other, never both."
+          },
+          "iterations": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Alias for `runs`. Send one or the other, never both."
+          },
+          "checks": {
+            "type": "object",
+            "description": "Alias for `predicates`. Send one or the other, never both.",
+            "properties": {
+              "mode": {
+                "type": "string",
+                "enum": ["inherit", "replace", "extend"]
+              },
+              "list": {
+                "type": "array",
+                "items": {
+                  "type": "object"
+                }
+              }
+            }
           }
         },
-        "additionalProperties": true
+        "additionalProperties": false
       },
       "EvalSuiteCreateRequest": {
         "type": "object",
@@ -13239,11 +13300,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "tags": {
             "type": "array",
@@ -13256,10 +13334,15 @@
             "type": "array",
             "minItems": 1,
             "maxItems": 100,
-            "description": "Test cases to create in the suite.",
+            "description": "Test cases to create in the suite. The object is CLOSED: an unknown key is a VALIDATION_ERROR, never a silently dropped field. `repetitions`, `passThreshold` and `kind` are per-case policy fields this surface cannot author — set them through `POST /v1/projects/{projectId}/eval-suites/{suiteId}/cases`.",
             "items": {
               "type": "object",
               "required": ["title", "steps"],
+              "allOf": [
+                { "not": { "required": ["runs", "iterations"] } },
+                { "not": { "required": ["isNegative", "isNegativeTest"] } },
+                { "not": { "required": ["checks", "predicates"] } }
+              ],
               "properties": {
                 "title": {
                   "type": "string",
@@ -13301,9 +13384,62 @@
                   "type": "object",
                   "description": "Optional `system`, `temperature`, `toolChoice` overrides.",
                   "additionalProperties": true
+                },
+                "intent": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "description": "Optional authored analytics grouping label."
+                },
+                "matchOptions": {
+                  "type": "object",
+                  "description": "Per-case tool-call matching override, in the INTERNAL vocabulary (`toolCallOrder`, `maxExtraToolCalls`, `argumentMatching`).",
+                  "additionalProperties": true
+                },
+                "predicates": {
+                  "type": "object",
+                  "description": "Per-case check gate. `checks` is the public alias for this field.",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["inherit", "replace", "extend"]
+                    },
+                    "list": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                },
+                "isNegative": {
+                  "type": "boolean",
+                  "description": "Alias for `isNegativeTest` — the public case-authoring spelling this API returns on a read. Send one or the other, never both."
+                },
+                "iterations": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 10,
+                  "description": "Alias for `runs`. Send one or the other, never both."
+                },
+                "checks": {
+                  "type": "object",
+                  "description": "Alias for `predicates`. Send one or the other, never both.",
+                  "properties": {
+                    "mode": {
+                      "type": "string",
+                      "enum": ["inherit", "replace", "extend"]
+                    },
+                    "list": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
                 }
               },
-              "additionalProperties": true
+              "additionalProperties": false
             }
           }
         },
@@ -13534,11 +13670,28 @@
           },
           "defaultPassCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           }
         }
       },
@@ -13786,7 +13939,7 @@
             "properties": {
               "minimumAccuracy": {
                 "type": ["number", "null"],
-                "description": "Minimum pass rate for the suite to count as passing."
+                "description": "The legacy suite-wide floor, as a PERCENT in [0, 100]. ALWAYS `null` when `policy` is `v2`, whatever the suite's storage still holds: a v2 suite is decided by `verdictPolicyDefaults.passThreshold` (a fraction), and the legacy column an upgrade left behind is read by nothing. Reporting the two side by side would leave a reader to guess which one decides."
               },
               "minimumIterations": {
                 "type": ["number", "null"],
@@ -14009,11 +14162,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "iterationOverride": {
             "type": "integer",
@@ -14230,11 +14400,28 @@
           },
           "passCriteria": {
             "type": "object",
+            "description": "The floor a run must clear, as a PERCENT in [0, 100] — 80 means 80%. `minimumPassRatePercent` is the canonical spelling (the unit is in the name); `minimumPassRate` is the deprecated alias for it. Send exactly one. THE NAME DISAMBIGUATES THE UNIT: a value in (0, 1) is accepted on `minimumPassRatePercent`, where it unambiguously means a sub-1% floor the evaluator can act on, and REJECTED on the bare `minimumPassRate`, where `0.8` cannot be told apart from a fraction sent by mistake and would silently make the gate unfailable. Neither field ever reinterprets a value. A per-case `passThreshold` IS a fraction; this suite/run floor is not.",
             "properties": {
+              "minimumPassRatePercent": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "description": "A percent in [0, 100]. The whole range is usable, sub-1 values included — the unit is in the field name, so nothing is ambiguous. Note that the GitHub Checks gate rounds the measured rate to an integer before comparing (to stay in step with the eval UI), so a floor below 0.5 behaves there as if it were 0.5; the platform's own verdict compares unrounded."
+              },
               "minimumPassRate": {
-                "type": "number"
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100,
+                "deprecated": true,
+                "description": "Deprecated alias for `minimumPassRatePercent`, same unit. A value in (0, 1) is REJECTED here — it reads as a fraction sent by mistake — which is what the `not` below expresses. Use `minimumPassRatePercent` for a genuine sub-1% floor.",
+                "not": { "exclusiveMinimum": 0, "exclusiveMaximum": 1 }
               }
-            }
+            },
+            "oneOf": [
+              { "required": ["minimumPassRatePercent"] },
+              { "required": ["minimumPassRate"] }
+            ],
+            "additionalProperties": false
           },
           "idempotencyKey": {
             "type": "string",
