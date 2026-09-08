@@ -109,6 +109,14 @@ export interface SuiteResultsSplitProps {
   /** Render the Monitoring rail item + pane. */
   showMonitoring?: boolean;
   /**
+   * WHICH HALF of the Monitoring pane may render. The pane serves two features
+   * on different flags, and `showMonitoring` is their OR — so it says the pane
+   * is reachable, never which sections are allowed inside it. Passed through
+   * rather than re-derived here: `suite-dashboard.tsx` reads the flags.
+   */
+  showScheduledRuns?: boolean;
+  showProbeLatency?: boolean;
+  /**
    * The run currently in the URL. When set, the right pane shows `runDetailPane`
    * and the rail highlights that run (auto-expanding its group). The URL is the
    * source of truth — the split doesn't own run selection.
@@ -505,6 +513,8 @@ export function SuiteResultsSplit({
   onOpenCaseIteration,
   onRunClick,
   showMonitoring = false,
+  showScheduledRuns = true,
+  showProbeLatency = true,
   selectedRunId,
   runDetailPane,
   onExitRun,
@@ -937,7 +947,12 @@ export function SuiteResultsSplit({
               </div>
             )
           ) : view.kind === "monitoring" ? (
-            <MonitoringTab suiteId={suite._id} onRunClick={onRunClick} />
+            <MonitoringTab
+              suiteId={suite._id}
+              onRunClick={onRunClick}
+              showScheduledRuns={showScheduledRuns}
+              showProbeLatency={showProbeLatency}
+            />
           ) : view.kind === "compare" ? (
             <SuiteGroupCompare
               groups={railGroups.map((g) => ({ key: g.key, label: g.label, runs: g.runs }))}

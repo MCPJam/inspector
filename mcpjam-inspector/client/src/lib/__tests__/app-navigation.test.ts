@@ -5,6 +5,7 @@ import {
   buildConformanceSharePath,
   buildEvalSharePath,
   buildOrganizationPath,
+  buildOrganizationSwitchTarget,
   buildSessionsPath,
   buildSwarmPath,
   buildUserTestingScenarioEditPath,
@@ -269,6 +270,53 @@ describe("project switch targets", () => {
 
   it("does not mint a scoped path for a placeholder project id", () => {
     expect(buildProjectSwitchTarget("none")).toBe("/servers");
+  });
+});
+
+describe("organization switch targets", () => {
+  const ORG_A = "org-a";
+  const ORG_B = "org-b";
+  const PROJECT_B1 = "k57bbbbbbbbbbbbbbbbbbbbbbbb1";
+  const PROJECT_B2 = "k57bbbbbbbbbbbbbbbbbbbbbbbb2";
+  const PROJECT_A1 = "k57aaaaaaaaaaaaaaaaaaaaaaaa1";
+
+  it("aims at the target org's most recently updated project", () => {
+    // The switcher navigates; the route coordinator reads the new project out
+    // of the URL, notices it belongs to another organization and switches
+    // there. Ordering matches the project list's own (`updatedAt` desc), so
+    // the landing project is the one the user would have picked anyway.
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_B1, organizationId: ORG_B, updatedAt: 10 },
+        { _id: PROJECT_B2, organizationId: ORG_B, updatedAt: 99 },
+      ]),
+    ).toBe(`/p/${PROJECT_B2}/servers`);
+  });
+
+  it("ignores projects belonging to another organization", () => {
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_A1, organizationId: ORG_A, updatedAt: 99 },
+        { _id: PROJECT_B1, organizationId: ORG_B, updatedAt: 1 },
+      ]),
+    ).toBe(`/p/${PROJECT_B1}/servers`);
+  });
+
+  it("falls back to the organization overview when it owns no project", () => {
+    // A brand-new organization has nothing to aim at. The overview route is
+    // global scope, so it does not re-inherit the project being left, and
+    // `ensureDefaultProject` provisions one once the page mounts.
+    expect(
+      buildOrganizationSwitchTarget(ORG_B, [
+        { _id: PROJECT_A1, organizationId: ORG_A, updatedAt: 99 },
+      ]),
+    ).toBe(`/organizations/${ORG_B}`);
+  });
+
+  it("falls back to the organization overview while memberships are loading", () => {
+    expect(buildOrganizationSwitchTarget(ORG_B, undefined)).toBe(
+      `/organizations/${ORG_B}`,
+    );
   });
 });
 
