@@ -16,6 +16,7 @@ import type { RunPinnedPluginVersion } from "./run-plugin-snapshot.js";
 import { finalizeEvalIteration } from "./finalize-iteration.js";
 import { forgetShadowMismatchRun } from "./shadow-mismatch.js";
 import { RUNNER_CAPABILITIES } from "./runner-capabilities.js";
+import type { RunCiMetadata, RunLauncher } from "../../utils/launch-context.js";
 import type { IterationStatus as ContractIterationStatus } from "@mcpjam/sdk/contract";
 import { resolveCaseSuccessPredicates } from "@/shared/eval-matching";
 import { ErrorCode, WebRouteError } from "../../routes/web/errors.js";
@@ -36,6 +37,43 @@ type IterationStatus = ContractIterationStatus;
 // Run-level (not per-iteration) terminal stop reason, threaded into the
 // suite-run finalize so the dashboard can show why a run stopped.
 type RunStopReason = "user_cancelled" | "run_timeout" | "iteration_timeout";
+
+/**
+ * The one Convex rejection that means "this deployment does not KNOW
+ * `launcher` / `ciMetadata`", and nothing else.
+ *
+ * Anchored on the EXTRA-FIELD complaint naming one of the two, not on the name
+ * appearing somewhere in the message. Convex echoes the arguments it received
+ * and the whole validator, so every CI launch mentions `ciMetadata` in every
+ * unrelated rejection it ever gets — and once the backend does declare the
+ * columns, a value mismatch inside `ciMetadata` would read as "unsupported"
+ * and be answered by dropping it. `eval gate --baseline-sha` resolves through
+ * that commit, so a false positive here silently loses the exact thing the
+ * field exists for.
+ *
+ * Fails CLOSED, deliberately. An unrecognised message means the launch fails
+ * loudly, which is what it did before this existed and is a bug report rather
+ * than a run that quietly forgot where it came from.
+ */
+const UNKNOWN_PROVENANCE_ARGUMENT =
+  /extra field\s*[`'"\u2018\u2019]?(?:launcher|ciMetadata)[`'"\u2018\u2019]?/i;
+
+function isUnknownProvenanceArgumentError(error: unknown): boolean {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : "";
+  if (!message) return false;
+  // Convex: "Object contains extra field `launcher` that is not in the
+  // validator." Both halves required — the adjacency above is what makes it
+  // this rejection and not a value error that happens to quote the field.
+  return (
+    UNKNOWN_PROVENANCE_ARGUMENT.test(message) &&
+    /not in the validator/i.test(message)
+  );
+}
 
 /**
  * When a Convex mutation rejects because a billing/entitlement cap was hit
@@ -68,7 +106,7 @@ function asBillingRouteError(error: unknown): WebRouteError | null {
     402,
     ErrorCode.BILLING_LIMIT_REACHED,
     message,
-    data as Record<string, unknown>
+    data as Record<string, unknown>,
   );
 }
 
@@ -166,7 +204,7 @@ export type SuiteRunRecorder = {
 };
 
 function isSuiteRunEnvironmentSnapshot(
-  value: unknown
+  value: unknown,
 ): value is SuiteRunEnvironmentSnapshot {
   if (!value || typeof value !== "object") {
     return false;
@@ -205,7 +243,7 @@ export const createSuiteRunRecorder = ({
         // Query all iterations for this run
         const response = await convexClient.query(
           "testSuites:getTestSuiteRunDetails" as any,
-          { runId }
+          { runId },
         );
 
         const iterations = response?.iterations || [];
@@ -238,7 +276,7 @@ export const createSuiteRunRecorder = ({
               testCaseId,
               testCaseSnapshot,
               iterationNumber,
-            }
+            },
           );
           return undefined;
         }
@@ -265,7 +303,7 @@ export const createSuiteRunRecorder = ({
 
         logger.error(
           "[evals] Failed to record iteration start:",
-          new Error(errorMessage)
+          new Error(errorMessage),
         );
         return undefined;
       }
@@ -331,7 +369,7 @@ export const createSuiteRunRecorder = ({
 
           logger.error(
             "[evals] Failed to finalize suite run:",
-            new Error(errorMessage)
+            new Error(errorMessage),
           );
         }
       } finally {
@@ -400,6 +438,8 @@ export const startSuiteRunWithRecorder = async ({
   toolDescriptionOverride,
   ephemeralEnvironment,
   importApprovals,
+  launcher,
+  ciMetadata,
 }: EvalRunProvenance & {
   convexClient: ConvexHttpClient;
   suiteId: string;
@@ -535,54 +575,103 @@ export const startSuiteRunWithRecorder = async ({
    * backend refusing a run they did approve.
    */
   importApprovals?: Array<{ testCaseId: string; reason: string }>;
+  /**
+   * The launching client's DECLARED label, read off `x-mcpjam-launcher` at the
+   * `/v1` boundary. Display only — `source` above is the stamped, unforgeable
+   * half, and nothing downstream branches on this.
+   *
+   * Must be declared here or a reconstruction of the mutation args below would
+   * silently drop it, which is the failure every neighbouring field's comment
+   * warns about.
+   */
+  launcher?: RunLauncher;
+  /**
+   * The CI envelope this launch is running inside, read off `x-mcpjam-ci`.
+   * Forwarded to `startTestSuiteRun.ciMetadata` so a CLI run in Actions is
+   * findable by commit sha through `by_suite_commitSha` — until now only an
+   * SDK-reported run was.
+   */
+  ciMetadata?: RunCiMetadata;
 }) => {
   let response: any;
   try {
-    response = await convexClient.mutation(
-      "testSuites:startTestSuiteRun" as any,
-      {
-        suiteId,
-        notes,
-        passCriteria,
-        replayedFromRunId,
-        useCurrentSuiteConfig,
-        environmentOverride,
-        toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
-        toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
-        iterationOverride,
-        ...(caseIds && caseIds.length ? { caseIds } : {}),
-        matchOptionsOverride,
-        ...(namedHostId ? { namedHostId } : {}),
-        ...(runGroupId ? { runGroupId } : {}),
-        ...(environmentId ? { environmentId } : {}),
-        ...(expectedEnvironmentRevision !== undefined
-          ? { expectedEnvironmentRevision }
-          : {}),
-        ...(expectedEnvironmentHostConfigId !== undefined
-          ? { expectedEnvironmentHostConfigId }
-          : {}),
-        ...(expectedEnvironmentServerIds !== undefined
-          ? { expectedEnvironmentServerIds }
-          : {}),
-        ...(source ? { source } : {}),
-        // The capability behind a hidden source. `startTestSuiteRun` refuses
-        // `source: 'benchmark'` without it, so dropping it here would fail
-        // every benchmark child at the mutation — after the claim was already
-        // leased and the MCP session already opened.
-        ...(benchmarkRunId ? { benchmarkRunId } : {}),
-        ...(idempotencyKey ? { idempotencyKey } : {}),
-        ...(sourceHash ? { sourceHash } : {}),
-        ...(skillsOverride ? { skillsOverride } : {}),
-        ...(toolDescriptionOverride
-          ? { toolDescriptionOverride }
-          : {}),
-        ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
-        ...(importApprovals && importApprovals.length
-          ? { importApprovals }
-          : {}),
-        runnerCapabilities: RUNNER_CAPABILITIES,
-      }
-    );
+    const launchArgs: Record<string, unknown> = {
+      suiteId,
+      notes,
+      passCriteria,
+      replayedFromRunId,
+      useCurrentSuiteConfig,
+      environmentOverride,
+      toolSnapshot: sanitizeForConvexTransport(toolSnapshot),
+      toolSnapshotDebug: sanitizeForConvexTransport(toolSnapshotDebug),
+      iterationOverride,
+      ...(caseIds && caseIds.length ? { caseIds } : {}),
+      matchOptionsOverride,
+      ...(namedHostId ? { namedHostId } : {}),
+      ...(runGroupId ? { runGroupId } : {}),
+      ...(environmentId ? { environmentId } : {}),
+      ...(expectedEnvironmentRevision !== undefined
+        ? { expectedEnvironmentRevision }
+        : {}),
+      ...(expectedEnvironmentHostConfigId !== undefined
+        ? { expectedEnvironmentHostConfigId }
+        : {}),
+      ...(expectedEnvironmentServerIds !== undefined
+        ? { expectedEnvironmentServerIds }
+        : {}),
+      ...(source ? { source } : {}),
+      // The capability behind a hidden source. `startTestSuiteRun` refuses
+      // `source: 'benchmark'` without it, so dropping it here would fail
+      // every benchmark child at the mutation — after the claim was already
+      // leased and the MCP session already opened.
+      ...(benchmarkRunId ? { benchmarkRunId } : {}),
+      ...(idempotencyKey ? { idempotencyKey } : {}),
+      ...(sourceHash ? { sourceHash } : {}),
+      ...(skillsOverride ? { skillsOverride } : {}),
+      ...(toolDescriptionOverride ? { toolDescriptionOverride } : {}),
+      ...(ephemeralEnvironment === true ? { ephemeralEnvironment: true } : {}),
+      ...(importApprovals && importApprovals.length ? { importApprovals } : {}),
+      // Forwarded only when present — which is NOT deploy-skew safety, and
+      // was wrong to describe as such: a CLI or MCP launch always declares,
+      // so on a backend that predates these fields the present ones are
+      // exactly what an exact validator refuses. The retry below is what
+      // makes the skew survivable; this spread only keeps the args tidy.
+      ...(launcher ? { launcher } : {}),
+      ...(ciMetadata ? { ciMetadata } : {}),
+      runnerCapabilities: RUNNER_CAPABILITIES,
+    };
+    try {
+      response = await convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        launchArgs,
+      );
+    } catch (error) {
+      if (!isUnknownProvenanceArgumentError(error)) throw error;
+      // A backend that predates the provenance columns. Its validator is
+      // EXACT, so it refuses the whole launch over two display fields — and a
+      // cosmetic label failing somebody's CI job is the one outcome the header
+      // transport was chosen to prevent. Omitting `undefined` was never enough
+      // for this: the fields are absent only when nothing declared them, and a
+      // CLI or MCP launch always declares.
+      //
+      // Retried ONCE, and only on a rejection that names one of the two
+      // fields as UNKNOWN. `startTestSuiteRun` creates nothing before
+      // validating its args, so the first attempt left no run row behind.
+      //
+      // BOTH are dropped even though Convex names only the first: they are one
+      // feature and arrive on the same deployment, so a backend that refuses
+      // `launcher` refuses `ciMetadata` too, and dropping one at a time would
+      // need a second retry to get anywhere.
+      const {
+        launcher: _launcher,
+        ciMetadata: _ciMetadata,
+        ...rest
+      } = launchArgs;
+      response = await convexClient.mutation(
+        "testSuites:startTestSuiteRun" as any,
+        rest,
+      );
+    }
   } catch (error) {
     // The eval-iteration cap is checked fail-fast inside startTestSuiteRun
     // (before any run row is created), so an out-of-quota launch rejects here
@@ -658,7 +747,7 @@ export const startSuiteRunWithRecorder = async ({
     try {
       await convexClient.mutation(
         "testSuites:markSetupPendingIterationsFailed" as any,
-        { runId, error: cause }
+        { runId, error: cause },
       );
     } catch (cleanupError) {
       logger.warn("[evals] Failed to mark setup iterations failed", {
@@ -687,7 +776,7 @@ export const startSuiteRunWithRecorder = async ({
       500,
       ErrorCode.INTERNAL_ERROR,
       "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
-      { runId, cause }
+      { runId, cause },
     );
   }
 
@@ -698,7 +787,7 @@ export const startSuiteRunWithRecorder = async ({
   // needs before calling getToolsForAiSdk. Falling back to the raw request
   // refs is only for older backend responses without configSnapshot.
   const snapshotEnvironment = isSuiteRunEnvironmentSnapshot(
-    (response?.configSnapshot as any)?.environment
+    (response?.configSnapshot as any)?.environment,
   )
     ? ((response?.configSnapshot as any)
         .environment as SuiteRunEnvironmentSnapshot)
@@ -713,8 +802,7 @@ export const startSuiteRunWithRecorder = async ({
   // cases. Only the absent-or-non-array case falls back to a live query.
   const snapshotDefaults = (response?.configSnapshot as any)?.defaultPredicates;
   let suiteDefaultPredicates:
-    | import("@/shared/eval-matching").Predicate[]
-    | undefined;
+    import("@/shared/eval-matching").Predicate[] | undefined;
   if (Array.isArray(snapshotDefaults)) {
     suiteDefaultPredicates =
       snapshotDefaults.length > 0
@@ -737,16 +825,14 @@ export const startSuiteRunWithRecorder = async ({
   }
 
   const resolvePredicatesForCase = (
-    tc: Record<string, any>
+    tc: Record<string, any>,
   ): import("@/shared/eval-matching").Predicate[] | undefined =>
     resolveCaseSuccessPredicates({
       suiteDefaults: suiteDefaultPredicates,
       envelope: tc.predicates as
-        | import("@/shared/eval-matching").CasePredicates
-        | undefined,
+        import("@/shared/eval-matching").CasePredicates | undefined,
       legacyCase: tc.successPredicates as
-        | import("@/shared/eval-matching").Predicate[]
-        | undefined,
+        import("@/shared/eval-matching").Predicate[] | undefined,
     });
 
   // Build config from test cases for backward compatibility
@@ -840,9 +926,7 @@ export const startSuiteRunWithRecorder = async ({
      *  a finished run, not the `running` a launch would report. */
     status: response?.status as string | undefined,
     hostConfig: response?.hostConfig as
-      | Record<string, unknown>
-      | null
-      | undefined,
+      Record<string, unknown> | null | undefined,
     /**
      * `configSnapshot.environmentPluginVersions` (BE-5) — identity +
      * `bundleHash` of every plugin version this run pinned, in pin order.
@@ -868,8 +952,7 @@ export const startSuiteRunWithRecorder = async ({
      * which mean the same thing here.
      */
     gradingEngine: (response?.configSnapshot as any)?.gradingEngine as
-      | { mode?: unknown }
-      | undefined,
+      { mode?: unknown } | undefined,
     /**
      * The run's FROZEN description-experiment marker, straight off its own
      * snapshot. The runner applies `{ [toolName]: description }` and stamps

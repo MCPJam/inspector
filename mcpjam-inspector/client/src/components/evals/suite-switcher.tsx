@@ -14,6 +14,7 @@ import {
   stripTimestampSuffix,
   SuiteSourceBadge,
 } from "./suite-overview-presentation";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 interface SuiteSwitcherProps {
   suites: EvalSuiteOverviewEntry[];
@@ -53,9 +54,7 @@ export function SuiteSwitcher({
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     if (!q) return suites;
-    return suites.filter((e) =>
-      (e.suite.name || "").toLowerCase().includes(q),
-    );
+    return suites.filter((e) => (e.suite.name || "").toLowerCase().includes(q));
   }, [suites, search]);
 
   return (
@@ -139,7 +138,10 @@ export function SuiteSwitcher({
                         <span className="truncate text-[13px] font-medium text-foreground">
                           {name}
                         </span>
-                        <SuiteSourceBadge source={entry.suite.source} />
+                        <SuiteSourceBadge
+                          source={entry.suite.source}
+                          declaredSuiteId={entry.suite.declaredSuiteId}
+                        />
                       </span>
                       <span className="block truncate text-[11px] text-muted-foreground">
                         {entry.latestRun
@@ -171,10 +173,18 @@ export function SuiteSwitcher({
                   {/* CI-active suites (created by CI, or reported into by
                       CI) can't be deleted from the switcher: their history
                       is CI's record, and the next report would recreate the
-                      suite anyway. */}
+                      suite anyway.
+
+                      `isCiOwnedSuite` SUBSUMES the old `source !== "sdk"`
+                      test — it is true for exactly those suites and also for a
+                      FILE-owned one, which is stamped `source: "ui"` and so
+                      passed the old test while the platform refuses its
+                      delete. The `lastSdkRunAt` clause stays untouched beside
+                      it: that is this row's own rule about CI history,
+                      deliberately broader than the ownership lock. */}
                   {onDeleteSuite &&
                   (canDeleteSuite?.(entry.suite) ?? true) &&
-                  entry.suite.source !== "sdk" &&
+                  !isCiOwnedSuite(entry.suite) &&
                   entry.suite.lastSdkRunAt == null ? (
                     <button
                       type="button"

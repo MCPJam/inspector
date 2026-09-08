@@ -4,6 +4,7 @@ import {
   normalizeConformanceSuites,
 } from "../src/conformance-run-types.js";
 import {
+  detectCiMetadata,
   detectConformanceCiMetadata,
   githubActionExternalRunId,
 } from "../src/conformance-ci.js";
@@ -87,6 +88,40 @@ describe("conformance run bundle", () => {
       })?.runUrl
     ).toBe("https://github.com/acme/widgets/actions/runs/99");
     expect(detectConformanceCiMetadata({})).toBeUndefined();
+  });
+
+  it("projects a RUN row's CI block, with the attempt kept out of the pipeline id", () => {
+    const env = {
+      GITHUB_ACTIONS: "true",
+      GITHUB_REPOSITORY: "acme/widgets",
+      GITHUB_SHA: "abc123def",
+      GITHUB_REF_NAME: "feature",
+      GITHUB_JOB: "check",
+      GITHUB_RUN_ID: "99",
+      GITHUB_RUN_ATTEMPT: "2",
+      GITHUB_SERVER_URL: "https://github.com",
+    } as NodeJS.ProcessEnv;
+    // `runId` above is "99.2" ON PURPOSE — a conformance upload needs each
+    // re-run to be its own external run. A run row wants the opposite: the id
+    // `runUrl` points at, which is what the Actions API answers to. The two
+    // must not drift into naming different numbers for one job.
+    expect(detectCiMetadata(env)).toEqual({
+      provider: "github_actions",
+      pipelineId: "99",
+      jobId: "check",
+      runUrl: "https://github.com/acme/widgets/actions/runs/99",
+      branch: "feature",
+      commitSha: "abc123def",
+    });
+
+    // No repository ⇒ no URL to build, but the pipeline id is still known and
+    // still worth recording.
+    const { GITHUB_REPOSITORY: _dropped, ...noRepo } = env;
+    expect(detectCiMetadata(noRepo)).toMatchObject({ pipelineId: "99" });
+    expect(detectCiMetadata(noRepo)).not.toHaveProperty("runUrl");
+
+    // Outside CI there is no pipeline, and an empty envelope would read as one.
+    expect(detectCiMetadata({})).toBeUndefined();
   });
 
   it("enters the protocol suite from an MCPServerConfig without a protocolVersion", async () => {
@@ -174,9 +209,8 @@ describe("conformance run reporter", () => {
     );
     global.fetch = fetchMock as never;
 
-    const { startConformanceRun } = await import(
-      "../src/report-conformance-run.js"
-    );
+    const { startConformanceRun } =
+      await import("../src/report-conformance-run.js");
     await startConformanceRun(
       { requestedSuites: ["protocol"] },
       {
@@ -273,9 +307,8 @@ describe("conformance run reporter", () => {
       startedAt: Date.now(),
     });
 
-    const { reportConformanceRun } = await import(
-      "../src/report-conformance-run.js"
-    );
+    const { reportConformanceRun } =
+      await import("../src/report-conformance-run.js");
     const uploaded = await reportConformanceRun(report, {
       apiKey: "sk_test",
       baseUrl: "https://app.example",

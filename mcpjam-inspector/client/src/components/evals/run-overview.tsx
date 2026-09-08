@@ -32,6 +32,7 @@ import type { SuiteOverviewView } from "@/lib/eval-route-types";
 import { computeIterationResult } from "./pass-criteria";
 import { EvalIteration, EvalSuiteRun } from "./types";
 import { CiMetadataDisplay } from "./ci-metadata-display";
+import { maskApiKeyId } from "@/lib/evals/run-origin";
 import { SuiteRunsChartGrid } from "./suite-runs-chart-grid";
 import { SuiteInsightsCollapsible } from "./suite-insights-collapsible";
 import {
@@ -67,12 +68,31 @@ type RunResultBadgeKind =
   | "inconclusive"
   | "pending";
 
+/**
+ * Which credential, or which agent, launched this run — or `null` when there
+ * is nothing to add (a session-authenticated run from the app itself).
+ *
+ * Shared shape with the runs table's own second line; kept small and local
+ * rather than exported, because the two render in different places for
+ * different amounts of space and only the RULE is worth sharing.
+ */
+function runCredentialLabel(run: EvalSuiteRun): string | null {
+  if (run.launcher?.kind === "mcp" && run.launcher.client) {
+    return run.launcher.client;
+  }
+  const masked = maskApiKeyId(run.attribution?.apiKeyId);
+  return masked ? `via API key ${masked}` : null;
+}
+
 function runResultBadge(result: RunResultBadgeKind) {
   switch (result) {
     case "passed":
       return { label: "Passed", className: "bg-success/50 text-foreground" };
     case "failed":
-      return { label: "Failed", className: "bg-destructive/50 text-foreground" };
+      return {
+        label: "Failed",
+        className: "bg-destructive/50 text-foreground",
+      };
     case "inconclusive":
       // Amber, never red: the backend refused to call this run either way.
       return {
@@ -80,7 +100,10 @@ function runResultBadge(result: RunResultBadgeKind) {
         className: "bg-warning/50 text-foreground",
       };
     case "cancelled":
-      return { label: "Cancelled", className: "bg-muted text-muted-foreground" };
+      return {
+        label: "Cancelled",
+        className: "bg-muted text-muted-foreground",
+      };
     case "timed_out":
       return { label: "Timed out", className: "bg-warning/50 text-foreground" };
     case "running":
@@ -189,7 +212,7 @@ function getTableColumnCount(input: RunsTableWidthInput): number {
 }
 
 export function estimateRunsTableRequiredWidth(
-  input: RunsTableWidthInput
+  input: RunsTableWidthInput,
 ): number {
   let width =
     (input.includeSelectionColumn === false ? 0 : TABLE_SELECTION_COL_PX) +
@@ -227,7 +250,7 @@ export function resolveRunsTableLayout(input: {
 }): RunsTableLayout {
   const normalizedContainerWidth = Math.max(
     0,
-    Math.floor(input.containerWidth)
+    Math.floor(input.containerWidth),
   );
   const showTokens = input.hasTokenData;
   const showRunBy = true;
@@ -281,7 +304,7 @@ export function RunOverview({
 
   const hasTokenData = useMemo(
     () => allIterations.some((i) => (i.tokensUsed || 0) > 0),
-    [allIterations]
+    [allIterations],
   );
 
   const hasCiMetadata = useMemo(
@@ -290,9 +313,9 @@ export function RunOverview({
         (r) =>
           !!r.ciMetadata?.branch ||
           !!r.ciMetadata?.commitSha ||
-          !!r.ciMetadata?.runUrl
+          !!r.ciMetadata?.runUrl,
       ),
-    [runs]
+    [runs],
   );
 
   useEffect(() => {
@@ -361,7 +384,7 @@ export function RunOverview({
         hasCiMetadata,
         includeSelectionColumn: selectionEnabled,
       }),
-    [tableViewportWidth, hasTokenData, hasCiMetadata, selectionEnabled]
+    [tableViewportWidth, hasTokenData, hasCiMetadata, selectionEnabled],
   );
 
   const rowGridTemplateColumns = useMemo(() => {
@@ -387,7 +410,7 @@ export function RunOverview({
       columns.push(
         responsiveLayout.metadataMode === "chip"
           ? "minmax(72px, 0.7fr)"
-          : "minmax(140px, 1.3fr)"
+          : "minmax(140px, 1.3fr)",
       );
     }
 
@@ -399,7 +422,7 @@ export function RunOverview({
       selectionEnabled
         ? `28px ${rowGridTemplateColumns}`
         : rowGridTemplateColumns,
-    [selectionEnabled, rowGridTemplateColumns]
+    [selectionEnabled, rowGridTemplateColumns],
   );
 
   const toggleRunSelection = useCallback((runId: string) => {
@@ -429,7 +452,7 @@ export function RunOverview({
       runs
         .filter((run) => selectedRunIds.has(run._id))
         .sort(compareRunsBySequence),
-    [runs, selectedRunIds]
+    [runs, selectedRunIds],
   );
 
   /**
@@ -442,10 +465,10 @@ export function RunOverview({
     () =>
       canDeleteRun
         ? runs.filter(
-            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run)
+            (run) => selectedRunIds.has(run._id) && !canDeleteRun(run),
           )
         : [],
-    [canDeleteRun, runs, selectedRunIds]
+    [canDeleteRun, runs, selectedRunIds],
   );
 
   const canCompareSelected =
@@ -632,7 +655,7 @@ export function RunOverview({
                         "px-2 py-0.5 text-xs rounded transition-colors",
                         runsViewMode === value
                           ? "bg-background text-foreground shadow-sm font-medium"
-                          : "text-muted-foreground hover:text-foreground"
+                          : "text-muted-foreground hover:text-foreground",
                       )}
                     >
                       {label}
@@ -696,47 +719,47 @@ export function RunOverview({
               ) : (
                 runs.map((run, runIndex) => {
                   const runIterations = allIterations.filter(
-                    (iter) => iter.suiteRunId === run._id
+                    (iter) => iter.suiteRunId === run._id,
                   );
                   // Only count completed iterations - exclude pending/cancelled
                   const iterationResults = runIterations.map((i) =>
-                    computeIterationResult(i)
+                    computeIterationResult(i),
                   );
                   const realTimePassed = iterationResults.filter(
-                    (r) => r === "passed"
+                    (r) => r === "passed",
                   ).length;
                   const realTimeFailed = iterationResults.filter(
-                    (r) => r === "failed" || r === "timed_out"
+                    (r) => r === "failed" || r === "timed_out",
                   ).length;
                   const realTimeTotal = realTimePassed + realTimeFailed;
                   const totalTokens = runIterations.reduce(
                     (sum, iter) => sum + (iter.tokensUsed || 0),
-                    0
+                    0,
                   );
 
                   const hasRealTimeTotals = realTimeTotal > 0;
                   const passed = hasRealTimeTotals
                     ? realTimePassed
-                    : run.summary?.passed ?? 0;
+                    : (run.summary?.passed ?? 0);
                   const failed = hasRealTimeTotals
                     ? realTimeFailed
-                    : run.summary?.failed ?? 0;
+                    : (run.summary?.failed ?? 0);
                   const total = hasRealTimeTotals
                     ? realTimeTotal
-                    : run.summary?.total ?? 0;
+                    : (run.summary?.total ?? 0);
                   const passRate =
                     total > 0 ? Math.round((passed / total) * 100) : null;
 
                   const timestamp = formatTime(
-                    run.completedAt ?? run.createdAt
+                    run.completedAt ?? run.createdAt,
                   );
 
                   const duration =
                     run.completedAt && run.createdAt
                       ? formatDuration(run.completedAt - run.createdAt)
                       : run.createdAt && run.status === "running"
-                      ? formatDuration(Date.now() - run.createdAt)
-                      : "—";
+                        ? formatDuration(Date.now() - run.createdAt)
+                        : "—";
 
                   // Status FIRST for a held run: its `result` is the truthy
                   // "pending", which would otherwise win the `||` below and
@@ -827,6 +850,50 @@ export function RunOverview({
                                   </TooltipTrigger>
                                   <TooltipContent>
                                     <p className="text-xs">{creator.name}</p>
+                                    {/*
+                                      WHICH CREDENTIAL, under the name.
+
+                                      A delegated API key still runs as its
+                                      holder, so a fan-out launched by
+                                      somebody's CI key and a run they clicked
+                                      themselves are the same avatar — which is
+                                      the first question an audit asks. The key
+                                      id is not the secret, but it is still a
+                                      credential identifier, so only the last
+                                      four are shown. An MCP run names its
+                                      calling agent instead: the more useful
+                                      fact, and the one a key id cannot give.
+                                    */}
+                                    {runCredentialLabel(run) ? (
+                                      <p className="text-[11px] text-muted-foreground">
+                                        {runCredentialLabel(run)}
+                                      </p>
+                                    ) : null}
+                                  </TooltipContent>
+                                </Tooltip>
+                              );
+                            }
+                            // No profile for `createdBy` — a departed member,
+                            // or a row the user map has not loaded. The
+                            // CREDENTIAL is still known, and it is the more
+                            // useful half here: a run with no readable author
+                            // is exactly when "via API key ····1234" answers
+                            // the question the avatar cannot.
+                            const credential = runCredentialLabel(run);
+                            if (credential) {
+                              return (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Avatar className="size-6">
+                                      <AvatarFallback className="text-[10px]">
+                                        ?
+                                      </AvatarFallback>
+                                    </Avatar>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <p className="text-[11px] text-muted-foreground">
+                                      {credential}
+                                    </p>
                                   </TooltipContent>
                                 </Tooltip>
                               );

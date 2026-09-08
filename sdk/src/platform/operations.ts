@@ -4066,13 +4066,13 @@ export const runEvalSuiteOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     const selectedHosts = resolveSuiteHostTargets(
       suite,
       detail,
-      input.host ? [input.host] : (input.hosts ?? [])
+      input.host ? [input.host] : input.hosts ?? []
     );
 
     // Attached environments arrive as bare IDS — the suite detail carries no
@@ -4208,8 +4208,8 @@ export const runEvalSuiteOperation: PlatformOperation<
             ...(disclosureEnvironmentIds.length === 1
               ? { environmentId: disclosureEnvironmentIds[0]! }
               : disclosureEnvironmentIds.length > 1
-                ? { environmentIds: disclosureEnvironmentIds }
-                : {}),
+              ? { environmentIds: disclosureEnvironmentIds }
+              : {}),
             ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
           },
           { signal: disclosureBound.signal }
@@ -5166,7 +5166,7 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
       project,
       suite,
       detail,
-      input.environment ? [input.environment] : (input.environments ?? []),
+      input.environment ? [input.environment] : input.environments ?? [],
       signal
     );
     // SAME plan resolution `run_eval_suite` uses — including its
@@ -5255,8 +5255,8 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
         ...(disclosureEnvironmentIds.length === 1
           ? { environmentId: disclosureEnvironmentIds[0]! }
           : disclosureEnvironmentIds.length > 1
-            ? { environmentIds: disclosureEnvironmentIds }
-            : {}),
+          ? { environmentIds: disclosureEnvironmentIds }
+          : {}),
         ...(disclosureHostId ? { namedHostId: disclosureHostId } : {}),
       },
       { signal }
@@ -5266,207 +5266,233 @@ export const getEvalRunDisclosureOperation: PlatformOperation<
 
 // STRICT: the reported silent no-op (`hostIds` / top-level `servers`)
 // was stripped here before the HTTP body was ever built.
-const updateEvalSuiteInput = z.strictObject({
-  project: z
+/**
+ * The suite-file id a write may claim, on every operation that can reach a
+ * CI-owned suite.
+ *
+ * PROOF, not a permission flag: the platform allows the write only when the id
+ * names the suite's OWN declared id, so an operation that guesses one still
+ * gets the 409, and a suite created by SDK ingest has no declared id for
+ * anything to name.
+ */
+const declaredSuiteIdInput = () =>
+  z
     .string()
     .trim()
     .min(1)
-    .optional()
-    .describe(PROJECT_SELECTOR_DESCRIPTION),
-  suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
-  name: z.string().trim().min(1).optional(),
-  description: z.string().trim().optional(),
-  environment: z
-    .object({
-      servers: z
-        .array(z.string().trim().min(1))
-        .optional()
-        .describe(
-          "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
-        ),
-      computerEnvironment: z
-        .union([z.string().trim().min(1), z.null()])
-        .optional()
-        .describe(
-          "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
-        ),
-    })
+    .max(200)
     .optional()
     .describe(
-      "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
-    ),
-  executionConfig: z
-    .object({
-      model: z.string().trim().min(1).optional(),
-      systemPrompt: z.string().optional(),
-      temperature: z.number().optional(),
-    })
-    .optional()
-    .describe("Suite execution config; unspecified fields are preserved."),
-  hosts: z
-    .array(
-      z.object({
-        host: z.string().trim().min(1).describe("Host name or ID."),
-        servers: z.array(z.string().trim().min(1)).optional(),
+      "The suite-file id that owns this suite (`suite.id` in the file), when you ARE that file's sync. A suite authored by a suite file or by SDK ingest is configured in your repository, and the platform refuses edits to it from anywhere else with a 409 — the file would delete them on its next run anyway. Passing the suite's OWN declared id identifies the write as the file's and is allowed; any other id is not. Leave it off for suites you author here."
+    );
+
+const updateEvalSuiteInput = z
+  .strictObject({
+    project: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .describe(PROJECT_SELECTOR_DESCRIPTION),
+    suite: z.string().trim().min(1).describe(SUITE_SELECTOR_DESCRIPTION),
+    name: z.string().trim().min(1).optional(),
+    description: z.string().trim().optional(),
+    environment: z
+      .object({
+        servers: z
+          .array(z.string().trim().min(1))
+          .optional()
+          .describe(
+            "Server selection by name; replaces the suite's server set. Omit to leave it (and its bindings) alone."
+          ),
+        computerEnvironment: z
+          .union([z.string().trim().min(1), z.null()])
+          .optional()
+          .describe(
+            "Custom sandbox image the suite's eval runs boot from, by name or id (see list_sandbox_images). null uses the provider's default base image."
+          ),
       })
-    )
-    .optional()
-    .describe("Host attachments (replace-all)."),
-  settings: z
-    .object({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional()
-        .describe(
-          "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
-        ),
-      // Nullable to CLEAR suite defaults (vs omit to leave untouched).
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .object({
-          enabled: z
-            .boolean()
-            .optional()
-            .describe(
-              "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
-            ),
-          model: z.string().trim().min(1).optional(),
-          autoRun: z
-            .boolean()
-            .optional()
-            .describe(
-              "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
-            ),
-          threshold: z
-            .number()
-            .min(0)
-            .max(1)
-            .optional()
-            .describe(
-              "Advisory pass threshold, 0–1 (passed = score >= threshold)."
-            ),
-          role: z
-            .enum(["advisory", "gating"])
-            .optional()
-            .describe(
-              "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
-            ),
-          severity: z
-            .literal("warn")
-            .optional()
-            .describe(
-              "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
-            ),
-          rubric: z
-            .union([
-              z.object({
-                criteria: z
-                  .array(
-                    z.object({
-                      id: z
-                        .string()
-                        .regex(/^[A-Za-z0-9_-]{1,64}$/)
-                        .describe(
-                          "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    })
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional()
-            .describe(
-              "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
-            ),
+      .optional()
+      .describe(
+        "Suite environment: server selection and the sandbox image runs boot from. Unspecified fields are preserved."
+      ),
+    executionConfig: z
+      .object({
+        model: z.string().trim().min(1).optional(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
+      })
+      .optional()
+      .describe("Suite execution config; unspecified fields are preserved."),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().trim().min(1).describe("Host name or ID."),
+          servers: z.array(z.string().trim().min(1)).optional(),
         })
-        .optional(),
-      repetitions: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
-        ),
-      passThreshold: z
-        .number()
-        .min(0)
-        .max(1)
-        .optional()
-        .describe(
-          "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
-        ),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
-        })
-        .strict()
-        .optional()
-        .describe(
-          "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
-        ),
-      qualityGate: z
-        .union([suiteGatePolicySchema, z.null()])
-        .optional()
-        .describe(
-          "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
-        ),
-    })
-    .optional(),
-  expectedRevisionNumber: z
-    .number()
-    .int()
-    .min(0)
-    .optional()
-    .describe(
-      "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
-    ),
-  revisionNote: z
-    .string()
-    .max(500)
-    .optional()
-    .describe(
-      "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
-    ),
-}).superRefine((body, ctx) => {
-  if (body.settings?.qualityGate === undefined) return;
-  if (body.expectedRevisionNumber === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expectedRevisionNumber"],
-      message:
-        "expectedRevisionNumber is required when settings.qualityGate is present.",
-    });
-  }
-  const note = body.revisionNote?.trim() ?? "";
-  if (note.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["revisionNote"],
-      message: "revisionNote is required when settings.qualityGate is present.",
-    });
-  }
-  if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
-    if (!parsed.ok) {
+      )
+      .optional()
+      .describe("Host attachments (replace-all)."),
+    settings: z
+      .object({
+        minimumAccuracy: z.number().min(0).max(100).optional(),
+        minimumIterations: z
+          .union([z.number().int().min(1).max(10), z.null()])
+          .optional()
+          .describe(
+            "Floor on per-case iterations, 1–10: every case runs at least this many times. null removes the floor."
+          ),
+        // Nullable to CLEAR suite defaults (vs omit to leave untouched).
+        matchOptions: publicMatchOptionsSchema.nullable().optional(),
+        checks: z.array(publicCheckSchema).nullable().optional(),
+        judge: z
+          .object({
+            enabled: z
+              .boolean()
+              .optional()
+              .describe(
+                "Make the judge available on this suite. On its own this grades nothing — set autoRun (or request grading on a finished run) to make grading happen."
+              ),
+            model: z.string().trim().min(1).optional(),
+            autoRun: z
+              .boolean()
+              .optional()
+              .describe(
+                "Grade every run automatically as it completes. This is the flag that makes LLM-as-judge grading happen; it SPENDS on each run."
+              ),
+            threshold: z
+              .number()
+              .min(0)
+              .max(1)
+              .optional()
+              .describe(
+                "Advisory pass threshold, 0–1 (passed = score >= threshold)."
+              ),
+            role: z
+              .enum(["advisory", "gating"])
+              .optional()
+              .describe(
+                "Whether the judge decides the verdict. `gating` is accepted only on a calibrated judge, and only where the deployment allows it."
+              ),
+            severity: z
+              .literal("warn")
+              .optional()
+              .describe(
+                "Presentation severity for an advisory judge: flag it without failing the run. Legal only with role: advisory."
+              ),
+            rubric: z
+              .union([
+                z.object({
+                  criteria: z
+                    .array(
+                      z.object({
+                        id: z
+                          .string()
+                          .regex(/^[A-Za-z0-9_-]{1,64}$/)
+                          .describe(
+                            "Stable id the judge cites in its reasons. Unique within the rubric; editing it retires the suite's calibration."
+                          ),
+                        label: z.string().trim().min(1).max(200),
+                        description: z.string().max(1000).optional(),
+                        required: z.boolean().optional(),
+                      })
+                    )
+                    .min(1)
+                    .max(25),
+                }),
+                z.null(),
+              ])
+              .optional()
+              .describe(
+                "The suite's own grading criteria, handed to the judge alongside each case's expected output. null CLEARS them; an empty criteria array is refused, because a rubric that asks nothing still changes what the judge was asked. Editing this retires the suite's judge calibration."
+              ),
+          })
+          .optional(),
+        repetitions: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: trials per case unless the case overrides it. On a legacy suite, sending this together with passThreshold UPGRADES the suite to policy v2; neither alone is accepted there."
+          ),
+        passThreshold: z
+          .number()
+          .min(0)
+          .max(1)
+          .optional()
+          .describe(
+            "Verdict policy v2 only: FRACTION of a case's trials that must pass, 0–1 (0.8 is eighty percent). The v2 replacement for minimumAccuracy, which is a percent; sending both is refused."
+          ),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(1).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional()
+          .describe(
+            "Verdict policy v2 only: when a run's measurement is trustworthy enough to decide. Fractions, 0–1. Omitted members keep the contract defaults (minCompletionRate 0.8, maxEvaluatorErrorRate 0.1); supplied members merge over the suite's stored validity rather than replacing it."
+          ),
+        qualityGate: z
+          .union([suiteGatePolicySchema, z.null()])
+          .optional()
+          .describe(
+            "Live quality-gate policy. null CLEARS it. Comparative conditions require a baseline; previous_completed is reserved. Requires expectedRevisionNumber and revisionNote."
+          ),
+      })
+      .optional(),
+    expectedRevisionNumber: z
+      .number()
+      .int()
+      .min(0)
+      .optional()
+      .describe(
+        "The suite's revisionNumber as you last read it. Supplying it makes this edit a compare-and-set: a suite changed since then is refused with 409 having written nothing. Omit for last-write-wins."
+      ),
+    revisionNote: z
+      .string()
+      .max(500)
+      .optional()
+      .describe(
+        "Why this edit is being made. Required (nonblank) whenever settings.qualityGate is present."
+      ),
+    declaredSuiteId: declaredSuiteIdInput(),
+  })
+  .superRefine((body, ctx) => {
+    if (body.settings?.qualityGate === undefined) return;
+    if (body.expectedRevisionNumber === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["settings", "qualityGate"],
-        message: parsed.message,
+        path: ["expectedRevisionNumber"],
+        message:
+          "expectedRevisionNumber is required when settings.qualityGate is present.",
       });
     }
-  }
-});
+    const note = body.revisionNote?.trim() ?? "";
+    if (note.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revisionNote"],
+        message:
+          "revisionNote is required when settings.qualityGate is present.",
+      });
+    }
+    if (body.settings.qualityGate !== null) {
+      const parsed = parseSuiteGatePolicyForAuthoring(
+        body.settings.qualityGate
+      );
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["settings", "qualityGate"],
+          message: parsed.message,
+        });
+      }
+    }
+  });
 export type UpdateEvalSuiteInput = z.infer<typeof updateEvalSuiteInput>;
 
 export const updateEvalSuiteOperation: PlatformOperation<
@@ -5498,6 +5524,10 @@ export const updateEvalSuiteOperation: PlatformOperation<
       "settings",
       "expectedRevisionNumber",
       "revisionNote",
+      // The file-sync marker rides the same body as the edit it authorizes:
+      // one request, one decision, no chance of the marker arriving on a
+      // different call than the write it belongs to.
+      "declaredSuiteId",
     ] as const) {
       if (input[key] !== undefined) body[key] = input[key];
     }
@@ -5639,6 +5669,7 @@ const setEvalSuiteEnvironmentsInput = z.object({
     .describe(
       "Project environment names or IDs to attach, in the order they should appear. Replaces the current attachments outright (this is a set, not an append). Pass null to detach every environment and revert the suite to its saved server selection. An empty array is rejected — use null."
     ),
+  declaredSuiteId: declaredSuiteIdInput(),
 });
 export type SetEvalSuiteEnvironmentsInput = z.infer<
   typeof setEvalSuiteEnvironmentsInput
@@ -5743,7 +5774,12 @@ export const setEvalSuiteEnvironmentsOperation: PlatformOperation<
       {
         projectId: project.id,
         suiteId: suite.id,
-        body: { environmentIds },
+        body: {
+          environmentIds,
+          ...(input.declaredSuiteId
+            ? { declaredSuiteId: input.declaredSuiteId }
+            : {}),
+        },
       },
       { signal }
     );
@@ -10205,7 +10241,7 @@ async function resolveComposeServerGroup(
  * Callers run this once, up front.
  */
 async function materializeComposeServers<
-  T extends { serverGroup?: string; server?: string; servers?: string[] },
+  T extends { serverGroup?: string; server?: string; servers?: string[] }
 >(
   client: PlatformApiClient,
   project: PlatformProject,

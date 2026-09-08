@@ -18,8 +18,8 @@ Best when your server supports OAuth with auto-consent (no interactive login pag
 
 **Secrets needed:**
 
-| Secret | Description |
-|---|---|
+| Secret           | Description         |
+| ---------------- | ------------------- |
 | `MCP_SERVER_URL` | Your MCP server URL |
 
 ```yaml
@@ -66,11 +66,11 @@ Best when you already have a refresh token from a previous `oauth login`. Refres
 
 **Secrets needed:**
 
-| Secret | Description |
-|---|---|
-| `MCP_SERVER_URL` | Your MCP server URL |
-| `MCP_REFRESH_TOKEN` | OAuth refresh token from a previous login |
-| `MCP_CLIENT_ID` | OAuth client ID (required with refresh tokens) |
+| Secret              | Description                                         |
+| ------------------- | --------------------------------------------------- |
+| `MCP_SERVER_URL`    | Your MCP server URL                                 |
+| `MCP_REFRESH_TOKEN` | OAuth refresh token from a previous login           |
+| `MCP_CLIENT_ID`     | OAuth client ID (required with refresh tokens)      |
 | `MCP_CLIENT_SECRET` | OAuth client secret (if the client is confidential) |
 
 ```yaml
@@ -100,7 +100,8 @@ jobs:
 ```
 
 <Tip>
-To get a refresh token, run `mcpjam oauth login` locally with `--format json` and grab `.credentials.refreshToken` from the output.
+  To get a refresh token, run `mcpjam oauth login` locally with `--format json`
+  and grab `.credentials.refreshToken` from the output.
 </Tip>
 
 #### Option 3: Static API key
@@ -109,10 +110,10 @@ Best when your server uses a non-expiring API key instead of OAuth.
 
 **Secrets needed:**
 
-| Secret | Description |
-|---|---|
+| Secret           | Description         |
+| ---------------- | ------------------- |
 | `MCP_SERVER_URL` | Your MCP server URL |
-| `MCP_API_KEY` | Static API key |
+| `MCP_API_KEY`    | Static API key      |
 
 ```yaml
 name: MCP Health Check
@@ -140,8 +141,8 @@ Some servers don't require authentication at all.
 
 **Secrets needed:**
 
-| Secret | Description |
-|---|---|
+| Secret           | Description         |
+| ---------------- | ------------------- |
 | `MCP_SERVER_URL` | Your MCP server URL |
 
 ```yaml
@@ -169,16 +170,16 @@ jobs:
 Snapshot your tool surface before and after a deploy to catch breaking changes (renamed parameters, changed descriptions, removed tools).
 
 ```yaml
-      - name: Snapshot before
-        run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > before.json
+- name: Snapshot before
+  run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > before.json
 
-      # your deploy step here
+# your deploy step here
 
-      - name: Snapshot after
-        run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > after.json
+- name: Snapshot after
+  run: npx -y @mcpjam/cli@latest server export --url ${{ secrets.MCP_SERVER_URL }} --access-token $MCP_TOKEN --format json > after.json
 
-      - name: Diff
-        run: diff <(jq -S . before.json) <(jq -S . after.json)
+- name: Diff
+  run: diff <(jq -S . before.json) <(jq -S . after.json)
 ```
 
 ### OAuth conformance suite
@@ -186,18 +187,18 @@ Snapshot your tool surface before and after a deploy to catch breaking changes (
 Run the full registration x protocol version x auth mode matrix from a config file and output JUnit XML for test reporters.
 
 ```yaml
-      - name: OAuth conformance
-        run: |
-          npx -y @mcpjam/cli@latest oauth conformance-suite \
-            --config ./oauth-matrix.json \
-            --reporter junit-xml > report.xml
+- name: OAuth conformance
+  run: |
+    npx -y @mcpjam/cli@latest oauth conformance-suite \
+      --config ./oauth-matrix.json \
+      --reporter junit-xml > report.xml
 
-      - name: Upload test report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: oauth-conformance
-          path: report.xml
+- name: Upload test report
+  uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: oauth-conformance
+    path: report.xml
 ```
 
 See [OAuth Conformance](/cli/oauth-conformance) for details on the config file format.
@@ -207,18 +208,18 @@ See [OAuth Conformance](/cli/oauth-conformance) for details on the config file f
 Run a repeatable matrix of protocol check selections from a config file and publish JUnit XML.
 
 ```yaml
-      - name: Protocol conformance
-        run: |
-          npx -y @mcpjam/cli@latest protocol conformance-suite \
-            --config ./protocol-conformance.json \
-            --reporter junit-xml > protocol-report.xml
+- name: Protocol conformance
+  run: |
+    npx -y @mcpjam/cli@latest protocol conformance-suite \
+      --config ./protocol-conformance.json \
+      --reporter junit-xml > protocol-report.xml
 
-      - name: Upload protocol report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: protocol-conformance
-          path: protocol-report.xml
+- name: Upload protocol report
+  uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: protocol-conformance
+    path: protocol-report.xml
 ```
 
 ### MCP Apps conformance suite
@@ -226,18 +227,18 @@ Run a repeatable matrix of protocol check selections from a config file and publ
 Run the server-side MCP Apps surface checks from a config file and publish JUnit XML for CI dashboards.
 
 ```yaml
-      - name: MCP Apps conformance
-        run: |
-          npx -y @mcpjam/cli@latest apps conformance-suite \
-            --config ./apps-conformance.json \
-            --reporter junit-xml > apps-report.xml
+- name: MCP Apps conformance
+  run: |
+    npx -y @mcpjam/cli@latest apps conformance-suite \
+      --config ./apps-conformance.json \
+      --reporter junit-xml > apps-report.xml
 
-      - name: Upload apps report
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: apps-conformance
-          path: apps-report.xml
+- name: Upload apps report
+  uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: apps-conformance
+    path: apps-report.xml
 ```
 
 Single-run `protocol conformance`, `oauth conformance`, and `apps conformance` also accept `--reporter junit-xml` when you only need one target/check selection instead of a suite config file.
@@ -366,51 +367,91 @@ There are two ways to wire MCPJam evals into a pipeline: trigger a **hosted eval
 
 **Secrets needed:**
 
-| Secret | Description |
-|---|---|
+| Secret           | Description             |
+| ---------------- | ----------------------- |
 | `MCPJAM_API_KEY` | MCPJam API key (`sk_…`) |
 
 ```yaml
-      - name: Run hosted eval
-        env:
-          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
-        run: |
-          npx -y @mcpjam/cli@latest cloud eval run \
-            --suite "Nightly regression" \
-            --project "My project" \
-            --wait \
-            --out eval-report.json \
-            --format json > eval-result.json
-          echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
+- name: Run hosted eval
+  env:
+    MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+  run: |
+    npx -y @mcpjam/cli@latest cloud eval run \
+      --suite "Nightly regression" \
+      --project "My project" \
+      --wait \
+      --out eval-report.json \
+      --format json > eval-result.json
+    echo "Completed run $(jq -r '.runs[0].id' eval-result.json)"
 
-      - name: Gate and write JUnit
-        # Always run this step, even if the run above exited 1 on a failed
-        # verdict: a default `if:` is `success()`, and skipping this step
-        # would lose the gate's configurable policy and its JUnit report
-        # exactly when the run failed. The job still ends up failed either
-        # way — the run step above already exited nonzero.
-        if: always()
-        env:
-          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
-        run: |
-          RUN_ID=$(jq -r '.runs[0].id' eval-result.json)
-          npx -y @mcpjam/cli@latest cloud eval gate \
-            --run "$RUN_ID" \
-            --project "My project" \
-            --wait \
-            --min-pass-rate-percent 100 \
-            --reporter junit-xml \
-            --out eval-report.xml
+- name: Gate and write JUnit
+  # Always run this step, even if the run above exited 1 on a failed
+  # verdict: a default `if:` is `success()`, and skipping this step
+  # would lose the gate's configurable policy and its JUnit report
+  # exactly when the run failed. The job still ends up failed either
+  # way — the run step above already exited nonzero.
+  if: always()
+  env:
+    MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+  run: |
+    RUN_ID=$(jq -r '.runs[0].id' eval-result.json)
+    npx -y @mcpjam/cli@latest cloud eval gate \
+      --run "$RUN_ID" \
+      --project "My project" \
+      --wait \
+      --min-pass-rate-percent 100 \
+      --reporter junit-xml \
+      --out eval-report.xml
 
-      - name: Upload eval reports
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: hosted-eval
-          path: |
-            eval-report.json
-            eval-report.xml
+- name: Upload eval reports
+  uses: actions/upload-artifact@v4
+  if: always()
+  with:
+    name: hosted-eval
+    path: |
+      eval-report.json
+      eval-report.xml
 ```
+
+#### What a run from CI looks like in the app
+
+A run launched from a pipeline used to be indistinguishable from any other API
+call. Every launch through the CLI reaches the platform at `/api/v1`, where the
+server stamps `source: "api"` — correct, unforgeable, and unable to tell a
+GitHub Action from somebody's laptop.
+
+The CLI now **declares** what it is on every launch, so the Runs table can say:
+
+- **GitHub** when `GITHUB_ACTIONS` is set — the run badges as an Action, not as
+  a generic API call, and the **Source** filter chip finds it.
+- **CLI** otherwise.
+
+Under Actions it also fills the run's CI column from the standard `GITHUB_*`
+environment: commit SHA, branch, workflow run URL, and job. Nothing to
+configure — a run launched by the workflow above carries them.
+
+The commit is the useful half. `eval gate --baseline-sha` resolves a baseline
+through the commit a run recorded, and before this only runs **reported** by
+`@mcpjam/sdk` carried one — so a suite evaluated by `cloud eval run` inside
+Actions had no baseline to compare against. Now it does:
+
+```yaml
+- name: Gate against the base branch
+  env:
+    MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+  run: |
+    npx -y @mcpjam/cli@latest cloud eval gate \
+      --run "$RUN_ID" \
+      --project "My project" \
+      --baseline-sha "${{ github.event.pull_request.base.sha }}"
+```
+
+<Note>
+  The launcher label is **declared by the client**, so treat it as a display
+  hint rather than as audit evidence: `source` remains the field the platform
+  stamps and nobody can set. Where a run was launched with an API key through a
+  verified channel, the app shows that verified channel instead.
+</Note>
 
 In human format, `eval run` prints a `View:` line after the payload so you can open the run directly from the terminal:
 
@@ -427,17 +468,26 @@ Use `--wait-timeout <ms>` to replace the 10-minute default. `--out` defaults to 
 
 Retry guidance: `4` and `5` mean infrastructure, or an absence of observation — nothing here says the server is wrong, so retrying the CI job is reasonable. But a bare re-run is not automatically safe: `eval run --suite` only dedupes against an in-flight or already-completed launch when you pass a **stable** `--idempotency-key`, and exit `5` can mean the run is still running (a wait that hit its deadline) — without that key, a retry can start a second paid run alongside the first rather than resuming it. Pass `--idempotency-key` (or poll/resume the run id already in the receipt) before retrying on `4` or `5`. `3` means fix the credential first; it poisons every other observation in the same launch. Never retry blindly on `1` — that code is reserved for a run the platform actually graded as failed.
 
-Either `eval run --wait` or `eval gate` already fails the job on its own — the `eval gate` step above adds a configurable pass/fail *policy* (thresholds, per-scorer gates) and baseline comparison on top of the same verdict, so keep it when you want more than "did this run's own verdict pass".
+Either `eval run --wait` or `eval gate` already fails the job on its own — the `eval gate` step above adds a configurable pass/fail _policy_ (thresholds, per-scorer gates) and baseline comparison on top of the same verdict, so keep it when you want more than "did this run's own verdict pass".
+
 </Warning>
 
 <Note>
-`eval gate` sets a verdict-based exit code, and writes its report before doing so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3` incomplete or non-gateable. Infrastructure conditions never map to `1`, so retrying on `3` is safe. This is a **different, four-code contract from `eval run --wait`** above — `gate`'s `3` means "incomplete", not the six-code scheme's `3` ("auth failed"), and the two are deliberately not unified (see the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status` also prints a `View:` line in human format, identical to the one `eval run` prints.
+  `eval gate` sets a verdict-based exit code, and writes its report before doing
+  so: `0` passed **or waived**, `1` an eval verdict failed, `2` usage error, `3`
+  incomplete or non-gateable. Infrastructure conditions never map to `1`, so
+  retrying on `3` is safe. This is a **different, four-code contract from `eval
+  run --wait`** above — `gate`'s `3` means "incomplete", not the six-code
+  scheme's `3` ("auth failed"), and the two are deliberately not unified (see
+  the [CLI reference](/cli/reference#cloud-eval-gate) for why). `eval status`
+  also prints a `View:` line in human format, identical to the one `eval run`
+  prints.
 </Note>
 
 #### Gating on cost
 
-Cost is the question people actually have about a change: *did this make the
-suite more expensive?* Gate it relatively rather than absolutely — an absolute
+Cost is the question people actually have about a change: _did this make the
+suite more expensive?_ Gate it relatively rather than absolutely — an absolute
 ceiling goes stale on every prompt and model change, while a percentage
 against the previous run keeps meaning the same thing.
 
@@ -492,21 +542,21 @@ itself rather than trusting the platform's answer. `mcpjam cloud eval gate
 unwaive --run "$RUN_ID"` ends one early.
 
 <Warning>
-The waiver reason is stored **unredacted** and readable by anyone who can see
-the suite, for as long as the suite exists. Never put secrets, tokens, or
-customer data in it.
+  The waiver reason is stored **unredacted** and readable by anyone who can see
+  the suite, for as long as the suite exists. Never put secrets, tokens, or
+  customer data in it.
 </Warning>
 
 #### Decision summary
 
 `eval run --wait`, `eval status`, `eval gate` and `eval compare` all read one versioned object — the **run decision summary** — and every output format restates it. Where each command puts it:
 
-| Command | `--format json` | `--format human` | `--out` / `--reporter` |
-|---|---|---|---|
-| `eval run --wait` | `decisionSummary` on the stdout receipt | block on stdout, after the receipt | `decisionSummary` on the report |
-| `eval status` | `decisionSummary` on the stdout document | block on stdout, above the `View:` line | — |
-| `eval gate` | `decisionSummary` beside `gate` | block on **stderr**, under the gate report | `decisionSummary` on the report |
-| `eval compare` | `decisionSummary` beside `compare` | block on **stderr**, under the gate report | `decisionSummary` on the report |
+| Command           | `--format json`                          | `--format human`                           | `--out` / `--reporter`          |
+| ----------------- | ---------------------------------------- | ------------------------------------------ | ------------------------------- |
+| `eval run --wait` | `decisionSummary` on the stdout receipt  | block on stdout, after the receipt         | `decisionSummary` on the report |
+| `eval status`     | `decisionSummary` on the stdout document | block on stdout, above the `View:` line    | —                               |
+| `eval gate`       | `decisionSummary` beside `gate`          | block on **stderr**, under the gate report | `decisionSummary` on the report |
+| `eval compare`    | `decisionSummary` beside `compare`       | block on **stderr**, under the gate report | `decisionSummary` on the report |
 
 Two scoping rules that are easy to miss. `eval run --wait` attaches a summary only when the invocation launched **one** run: a fan-out has several, and labelling a receipt about N runs with the decision of one would be a false claim rather than a partial one. `eval compare` reports the **compare side's** decision only — the baseline's failures are a different run's diagnostics, and printing them here would read as this run's.
 
@@ -532,17 +582,17 @@ Decision summary: failed (verdict policy v2) — 2/3 case variants passed, 1 fai
 
 Four things about it are worth knowing before you script against it.
 
-**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as *trials inside it* — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
+**The counts carry the population they count.** `measurementUnit` is `caseVariant` under verdict policy v2 — one case under one provider/model, with repetitions as _trials inside it_ — and `trial` on a legacy percent-threshold run. A 3-case suite with 5 repetitions is legitimately "3" under one unit and "15" under the other, so a count quoted without its unit is not a fact.
 
-**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit *underneath* that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
+**The summary explains the verdict; it never re-decides it.** Under policy v2 the run's own decision is the authority for the verdict, the rates, the validity phase and the per-case aggregation, and it is carried through on `decision`. The per-trial diagnostics sit _underneath_ that: a case can pass with a failing trial in it, so tallying the diagnostics gives a different answer than the platform reached.
 
-**`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which *is* a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
+**`notEstablished` is not a failure.** It is a fourth verdict meaning no verdict exists at all — the run is unfinished, it stopped before finishing, or its decision could not be read. `undecided.reason` says which. It is also not `inconclusive`, which _is_ a decision: the validity phase ran and withheld a verdict because the run did not measure the server well enough.
 
 **A page of diagnostics says whether it is the whole story.** `diagnostics.complete` is true only when the listed trials are the run's entire non-passing set, and `scannedIterations` says how many were examined — so an empty list from a complete page ("nothing failed") is distinguishable from an empty list from a partial one ("we did not look").
 
 Evidence is scoped to the claim it supports: for a measured failure the span ids, prompt indexes and reasons come from the first failed stage's row alone, and a setup abort or evaluator error keeps a stage-less pointer rather than naming a stage nothing established.
 
-`eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides *inside* it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
+`eval status` prints the block only when a terminal run did not pass — a clean pass has nothing to diagnose. `--format json` stays exactly one parseable document in every case: the summary rides _inside_ it, never as a second block appended after it. If the summary cannot be fetched, it is omitted rather than failing the command.
 
 **The human block leads with where the chain broke.** Under the diagnostics headline, before any per-trial detail, a non-passing run gets one line naming the earliest stage at which a readable trial stopped, why, and how many trials stopped there:
 
@@ -563,11 +613,11 @@ Hosted runs execute LLM iterations on the platform and consume your organization
 If you instead run evals inside your own CI job with [`@mcpjam/sdk`](/sdk/concepts/running-evals) (`EvalTest` / `EvalSuite`), set `MCPJAM_API_KEY` and results upload automatically to the CI Evals dashboard (pass-rate trends, per-model breakdowns, and a full trace per iteration):
 
 ```yaml
-      - name: Run SDK evals
-        env:
-          MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: npx vitest run evals/
+- name: Run SDK evals
+  env:
+    MCPJAM_API_KEY: ${{ secrets.MCPJAM_API_KEY }}
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  run: npx vitest run evals/
 ```
 
 See [Save Results to MCPJam](/sdk/concepts/saving-results) for auto-save, the manual reporting APIs, CI metadata (branch, commit SHA, run URL), and artifact upload (JUnit XML, Jest/Vitest JSON).

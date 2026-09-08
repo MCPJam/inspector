@@ -50,6 +50,10 @@ import {
   readIdempotencyKey,
 } from "../../utils/idempotency.js";
 import {
+  readLaunchContext,
+  type LaunchContext,
+} from "../../utils/launch-context.js";
+import {
   caseIntentSchema,
   caseIntentUpdateSchema,
   descriptionExperimentReportSchema,
@@ -1197,7 +1201,9 @@ async function assertEphemeralEnvironmentLaunchable(
     throw new WebRouteError(
       400,
       ErrorCode.VALIDATION_ERROR,
-      `Environment ${row.name ?? environmentId} is archived and cannot be launched.`,
+      `Environment ${
+        row.name ?? environmentId
+      } is archived and cannot be launched.`,
       { reason: "ENVIRONMENT_ARCHIVED", environmentId },
     );
   }
@@ -1562,6 +1568,28 @@ function toRunDto(run: RunDoc) {
     result: run.result,
     summary: run.summary ?? null,
     source: run.source ?? "ui",
+    // ORIGIN, in the two layers `source` deliberately does not carry.
+    //
+    // `launcher` is what the launching client DECLARED (`cli`, `mcp`,
+    // `github_action` — the three things the server cannot see for itself);
+    // `attribution` is the VERIFIED channel, minted onto the credential rather
+    // than sent by the caller. Where they disagree the verified one wins, which
+    // is the whole reason both are on the wire instead of one merged field.
+    //
+    // Both OMITTED rather than nulled when the platform has none: a run
+    // predating the fields declared nothing, and `null` would say "we asked and
+    // there was no launcher" about a run nobody ever asked.
+    ...(run.launcher ? { launcher: toRunLauncherDto(run.launcher) } : {}),
+    ...(run.attribution
+      ? { attribution: toRunAttributionDto(run.attribution) }
+      : {}),
+    // The CI job, when there was one. Read back for the same reason it is
+    // written: a launch that arrived with `x-mcpjam-ci` recorded a commit, and
+    // an API that accepts a commit and will not return it makes the record
+    // useless to everyone but the app.
+    ...(run.ciMetadata
+      ? { ciMetadata: toRunCiMetadataDto(run.ciMetadata) }
+      : {}),
     notes: run.notes ?? null,
     environment: toRunEnvironmentDto(run),
     ...(typeof run.runGroupId === "string"
@@ -1623,6 +1651,82 @@ function toRunDto(run: RunDoc) {
     ...toImportEligibilityProjection(run.importEligibility),
     createdAt: run.createdAt,
     completedAt: run.completedAt ?? null,
+  };
+}
+
+/**
+ * The declared launcher, field by field.
+ *
+ * Projected rather than spread: the platform's validator is closed today, but a
+ * future field on it would otherwise appear on this public DTO without anyone
+ * deciding it should — and a published response shape is harder to take back
+ * than it is to add to.
+ */
+function toRunLauncherDto(launcher: {
+  kind?: unknown;
+  client?: unknown;
+  version?: unknown;
+}) {
+  return {
+    kind: String(launcher.kind ?? ""),
+    ...(typeof launcher.client === "string" ? { client: launcher.client } : {}),
+    ...(typeof launcher.version === "string"
+      ? { version: launcher.version }
+      : {}),
+  };
+}
+
+/**
+ * The CI job, field by field.
+ *
+ * Projected rather than spread, for the reason {@link toRunLauncherDto} is:
+ * this is a published shape, and a field added to the platform's envelope
+ * should reach it by decision rather than by leak. Provider-neutral names, so
+ * a GitLab or Buildkite client is not asked to describe itself as GitHub.
+ */
+function toRunCiMetadataDto(ci: {
+  provider?: unknown;
+  pipelineId?: unknown;
+  jobId?: unknown;
+  runUrl?: unknown;
+  branch?: unknown;
+  commitSha?: unknown;
+}) {
+  const str = (value: unknown) =>
+    typeof value === "string" && value.length > 0 ? value : undefined;
+  const provider = str(ci.provider);
+  const pipelineId = str(ci.pipelineId);
+  const jobId = str(ci.jobId);
+  const runUrl = str(ci.runUrl);
+  const branch = str(ci.branch);
+  const commitSha = str(ci.commitSha);
+  return {
+    ...(provider ? { provider } : {}),
+    ...(pipelineId ? { pipelineId } : {}),
+    ...(jobId ? { jobId } : {}),
+    ...(runUrl ? { runUrl } : {}),
+    ...(branch ? { branch } : {}),
+    ...(commitSha ? { commitSha } : {}),
+  };
+}
+
+/**
+ * The verified channel, NARROWED.
+ *
+ * The stored envelope also carries `agentActionId` and `requestId`, which are
+ * audit-correlation keys. They stay behind the audit surface: "which channel"
+ * and "which API key" answer the caller's question about a run, and the join
+ * keys into somebody's Slack approval thread do not.
+ */
+function toRunAttributionDto(attribution: {
+  surface?: unknown;
+  apiKeyId?: unknown;
+}) {
+  return {
+    surface: String(attribution.surface ?? ""),
+    ...(typeof attribution.apiKeyId === "string"
+      ? { apiKeyId: attribution.apiKeyId }
+      : {}),
   };
 }
 
@@ -2042,6 +2146,28 @@ function toCaseDto(testCase: CaseDoc) {
 
 type SuiteDoc = Record<string, any>;
 
+/**
+ * Is this suite configured outside the app?
+ *
+ * Mirrors the platform's `isCiOwnedSuite` (mcpjam-backend
+ * `lib/evalPermissions.ts`) exactly: a declared suite-file id, or
+ * `source: "sdk"`. DELIBERATELY NOT `lastSdkRunAt` — a UI-authored suite that
+ * CI merely reported a run into is still the app's suite, and locking it would
+ * take an editable suite away from its author because a pipeline mentioned it
+ * once.
+ *
+ * This is a DESCRIPTION for the caller, never a gate: the refusal itself is
+ * Convex's, and duplicating the rule as a route-level check would give us two
+ * places to keep it correct.
+ */
+function isCiOwnedSuiteDoc(suite: SuiteDoc): boolean {
+  return (
+    (typeof suite.declaredSuiteId === "string" &&
+      suite.declaredSuiteId.length > 0) ||
+    suite.source === "sdk"
+  );
+}
+
 function toSuiteDetailDto(
   suite: SuiteDoc,
   execConfig: any,
@@ -2056,6 +2182,23 @@ function toSuiteDetailDto(
     name: suite.name ?? null,
     description: suite.description ?? null,
     projectId: suite.projectId ? String(suite.projectId) : null,
+    /**
+     * WHO CONFIGURES THIS SUITE — `"ci"` when its shape comes from a
+     * repository (a suite file declared it, or SDK ingest authored it),
+     * `"app"` otherwise.
+     *
+     * API callers could not see this at all before, which made a 409 on a
+     * perfectly well-formed PATCH look like a bug in the API. Now the state
+     * that produces the refusal is readable BEFORE the write: a client can
+     * disable its own editor, or send `declaredSuiteId` if it is the file that
+     * owns the suite.
+     *
+     * Derived rather than stored, and derived from the same two facts the
+     * platform's own predicate uses — the declared id above and the suite's
+     * `source` — so this cannot drift into disagreeing with the refusal it is
+     * meant to predict.
+     */
+    managedBy: isCiOwnedSuiteDoc(suite) ? "ci" : "app",
     environment: {
       servers: Array.isArray(suite.environment?.servers)
         ? suite.environment.servers.map(String)
@@ -2508,6 +2651,42 @@ const publicCaseBodyShape = {
  */
 const publicCaseImportSchema = evalSuiteFileCaseImportSchema;
 
+/**
+ * The suite-file id a write may claim, on every route that can reach a
+ * CI-owned suite.
+ *
+ * A suite authored by SDK ingest or by a suite file is configured in a
+ * repository, and the CLI's as-code sync hard-deletes any case the file does
+ * not declare on the next `eval run --file`. The platform therefore refuses
+ * configuration writes to those suites — with ONE exemption: the file that owns
+ * the suite, writing through these same public routes.
+ *
+ * So this is a PROOF, not a permission flag. The backend allows the write only
+ * when the id names the suite's OWN `declaredSuiteId`; a caller who guesses one
+ * still gets the 409, and a `source: "sdk"` suite has no declared id at all, so
+ * nothing can name it. There is no route-level refusal here for the same
+ * reason: Convex is the guard, and a second copy of the rule in front of it is a
+ * second thing to keep correct.
+ */
+const declaredSuiteIdField = z
+  .string()
+  .min(1)
+  .max(200)
+  .optional()
+  .describe(
+    "The suite-file id that owns this suite, when the caller is that file's sync. Required to edit a CI-owned suite; ignored for app-owned ones.",
+  );
+
+/** `{ fileSync: { declaredSuiteId } }`, or nothing at all. */
+function fileSyncArgs(
+  declaredSuiteId: string | undefined,
+): { fileSync: { declaredSuiteId: string } } | Record<string, never> {
+  // Omitted rather than sent as `undefined`: the platform's mutation validators
+  // are exact, so an explicit undefined fails the write on any backend that
+  // predates the field.
+  return declaredSuiteId ? { fileSync: { declaredSuiteId } } : {};
+}
+
 const createCaseSchema = z.strictObject({
   ...publicCaseBodyShape,
   /**
@@ -2539,13 +2718,26 @@ const updateCaseSchema = z.strictObject({
    * provenance on every unrelated edit.
    */
   import: z.union([publicCaseImportSchema, z.null()]).optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 /**
  * A case inside a `POST …/cases/batch` body. Same shape as a single create —
  * the batch surface is the single surface repeated, not a second contract.
+ *
+ * Deliberately the bare `createCaseSchema`, WITHOUT the file-sync marker: that
+ * marker describes the request, not a case, and accepting a different one per
+ * entry would invite a batch that claims two owners.
  */
 const batchCaseSchema = createCaseSchema;
+
+/**
+ * The single-create body: one case, plus the request-level file-sync marker.
+ * The batch envelope carries the same marker one level up.
+ */
+const createCaseRequestSchema = createCaseSchema.extend({
+  declaredSuiteId: declaredSuiteIdField,
+});
 
 const createCasesBatchSchema = z.strictObject({
   cases: z
@@ -2564,6 +2756,7 @@ const createCasesBatchSchema = z.strictObject({
    */
   duplicatePolicy: z.string().optional(),
   overrideReason: z.string().optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 /**
@@ -2572,221 +2765,227 @@ const createCasesBatchSchema = z.strictObject({
  * settings-sheet row the shared manifest marks `api:` is genuinely accepted
  * here. Nothing else should import it — the route is the only writer.
  */
-export const updateSuiteSchema = z.strictObject({
-  name: z.string().min(1).optional(),
-  description: z.string().optional(),
-  // The LEGACY server bag (kept as rollback/compat data). Unrelated to
-  // `environmentIds` below, which is the project-environment attachment list.
-  environment: z
-    .object({
-      // Optional so a caller can set the computer image WITHOUT restating the
-      // server list. Omitting it preserves the suite's current servers (and
-      // their bindings) rather than clearing them.
-      servers: z.array(z.string().min(1)).optional(),
-      // Sandbox-image name or id; `null` clears the pin (runs fall back to the
-      // provider's default base image). Enumerate the choices with
-      // `list_sandbox_images`.
-      computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
-    })
-    .optional(),
-  // Project-environment attachments, in attach order: a non-empty array
-  // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
-  // is rejected rather than silently treated as a clear — mirroring the
-  // `testSuites:setSuiteEnvironments` contract exactly, so the API can't grow a
-  // second, subtly different meaning for the same value.
-  environmentIds: z
-    .union([
-      z
-        .array(z.string().min(1))
-        .min(
-          1,
-          "environmentIds must be non-empty — pass null to clear the suite's environments.",
-        ),
-      z.null(),
-    ])
-    .optional(),
-  executionConfig: z
-    .object({
-      model: z.string().min(1).optional(),
-      systemPrompt: z.string().optional(),
-      temperature: z.number().optional(),
-    })
-    .optional(),
-  hosts: z
-    .array(
-      z.object({
-        host: z.string().min(1),
+export const updateSuiteSchema = z
+  .strictObject({
+    name: z.string().min(1).optional(),
+    description: z.string().optional(),
+    // The LEGACY server bag (kept as rollback/compat data). Unrelated to
+    // `environmentIds` below, which is the project-environment attachment list.
+    environment: z
+      .object({
+        // Optional so a caller can set the computer image WITHOUT restating the
+        // server list. Omitting it preserves the suite's current servers (and
+        // their bindings) rather than clearing them.
         servers: z.array(z.string().min(1)).optional(),
-      }),
-    )
-    .optional(),
-  settings: z
-    .object({
-      minimumAccuracy: z.number().min(0).max(100).optional(),
-      // Suite-level FLOOR on per-case iterations: every case runs at least
-      // this many times (`max(case.iterations, minimumIterations)`). `null`
-      // clears it — the platform's `minIterations` has exactly that contract,
-      // so the public field does not invent a second way to say "no floor".
-      minimumIterations: z
-        .union([z.number().int().min(1).max(10), z.null()])
-        .optional(),
-      matchOptions: publicMatchOptionsSchema.nullable().optional(),
-      checks: z.array(publicCheckSchema).nullable().optional(),
-      judge: z
-        .object({
-          enabled: z.boolean().optional(),
-          model: z.string().min(1).optional(),
-          // The flag the grader actually gates on. Without it a suite can be
-          // `enabled` forever and never grade a run.
-          autoRun: z.boolean().optional(),
-          threshold: z.number().min(0).max(1).optional(),
-          /**
-           * Presentation severity on the goal-completion slot. Legal only
-           * with an advisory role; the platform refuses it beside gating.
-           */
-          severity: z.literal("warn").optional(),
-          /**
-           * Reserved C1 slot. Accepted here only so a write is an explicit
-           * 400 rather than a silent strip — groundedness is not authorable
-           * while execution is unwired.
-           */
-          groundedness: z.unknown().optional(),
-          // The suite's own grading criteria, handed to the judge alongside
-          // each case's expected output. `null` CLEARS them; an empty array is
-          // refused because a rubric that asks nothing is not the absence of
-          // one — it still changes what the judge was asked. The limits mirror
-          // the platform's own so a rejection arrives before the write rather
-          // than taking the settings beside it down with it.
-          rubric: z
-            .union([
-              z.object({
-                criteria: z
-                  .array(
-                    z.object({
-                      id: z
-                        .string()
-                        .regex(
-                          /^[A-Za-z0-9_-]{1,64}$/,
-                          "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
-                        ),
-                      label: z.string().trim().min(1).max(200),
-                      description: z.string().max(1000).optional(),
-                      required: z.boolean().optional(),
-                    }),
-                  )
-                  .min(1)
-                  .max(25),
-              }),
-              z.null(),
-            ])
-            .optional(),
-        })
-        .superRefine((judge, ctx) => {
-          if (judge.groundedness !== undefined) {
-            ctx.addIssue({
-              code: z.ZodIssueCode.custom,
-              path: ["groundedness"],
-              message:
-                "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
-            });
-          }
-        })
-        .optional(),
-      // ── The v2 verdict policy ────────────────────────────────────────────
-      //
-      // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
-      // above, and `evalSuiteFileValiditySchema` in the contract), because they
-      // describe the same stored object. A caller that read a suite file and a
-      // caller that read this API must be able to send each other's values.
-      //
-      // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
-      // the legacy `minimumAccuracy: 80` is the same number in the other unit
-      // — which is exactly why the two cannot be sent together (see the
-      // refinement below). Nothing on this path divides by 100.
-      repetitions: z.number().int().min(1).max(100).optional(),
-      passThreshold: z.number().min(0).max(1).optional(),
-      validity: z
-        .object({
-          minEligibleTrials: z.number().int().min(1).optional(),
-          minCompletionRate: z.number().min(0).max(1).optional(),
-          maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
-        })
-        .strict()
-        .optional(),
-      // Live quality-gate policy. `null` CLEARS it. Comparative conditions
-      // require a baseline; `previous_completed` is reserved until a later
-      // capability advertises it. See the top-level refine for the required
-      // revision precondition and reason.
-      qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
-    })
-    .superRefine((settings, ctx) => {
-      // The two policies are alternatives, not layers. A body carrying both a
-      // percent and a fraction is a caller who believes one of them will be
-      // ignored, and whichever one we picked would be wrong for half of them.
-      const v2Fields = [
-        settings.repetitions,
-        settings.passThreshold,
-        settings.validity,
-      ];
-      if (
-        settings.minimumAccuracy !== undefined &&
-        v2Fields.some((value) => value !== undefined)
-      ) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["minimumAccuracy"],
-          message:
-            "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
-        });
-      }
-    })
-    .optional(),
-  /**
-   * The suite revision this edit was composed against.
-   *
-   * Optional, and omitting it means "apply regardless" — the same
-   * last-write-wins this route has always had. Supplying it turns the PATCH
-   * into a compare-and-set: a suite someone else edited in between is refused
-   * with 409 having changed NOTHING, rather than applying half a caller's
-   * intent over a document it no longer describes. Read the current number
-   * from `revisionNumber` on the suite detail.
-   */
-  expectedRevisionNumber: z.number().int().min(0).optional(),
-  /**
-   * Why this edit is being made. Required (nonblank, ≤500) whenever
-   * `settings.qualityGate` is present — the same rule the platform enforces
-   * on `applySuiteSettings`. Omitted for every other field.
-   */
-  revisionNote: z.string().max(500).optional(),
-}).superRefine((body, ctx) => {
-  if (body.settings?.qualityGate === undefined) return;
-  if (body.expectedRevisionNumber === undefined) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["expectedRevisionNumber"],
-      message:
-        "expectedRevisionNumber is required when settings.qualityGate is present.",
-    });
-  }
-  const note = body.revisionNote?.trim() ?? "";
-  if (note.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["revisionNote"],
-      message: "revisionNote is required when settings.qualityGate is present.",
-    });
-  }
-  if (body.settings.qualityGate !== null) {
-    const parsed = parseSuiteGatePolicyForAuthoring(body.settings.qualityGate);
-    if (!parsed.ok) {
+        // Sandbox-image name or id; `null` clears the pin (runs fall back to the
+        // provider's default base image). Enumerate the choices with
+        // `list_sandbox_images`.
+        computerEnvironment: z.union([z.string().min(1), z.null()]).optional(),
+      })
+      .optional(),
+    // Project-environment attachments, in attach order: a non-empty array
+    // sets/replaces, `null` clears (reverts the suite to legacy config), and `[]`
+    // is rejected rather than silently treated as a clear — mirroring the
+    // `testSuites:setSuiteEnvironments` contract exactly, so the API can't grow a
+    // second, subtly different meaning for the same value.
+    environmentIds: z
+      .union([
+        z
+          .array(z.string().min(1))
+          .min(
+            1,
+            "environmentIds must be non-empty — pass null to clear the suite's environments.",
+          ),
+        z.null(),
+      ])
+      .optional(),
+    executionConfig: z
+      .object({
+        model: z.string().min(1).optional(),
+        systemPrompt: z.string().optional(),
+        temperature: z.number().optional(),
+      })
+      .optional(),
+    hosts: z
+      .array(
+        z.object({
+          host: z.string().min(1),
+          servers: z.array(z.string().min(1)).optional(),
+        }),
+      )
+      .optional(),
+    settings: z
+      .object({
+        minimumAccuracy: z.number().min(0).max(100).optional(),
+        // Suite-level FLOOR on per-case iterations: every case runs at least
+        // this many times (`max(case.iterations, minimumIterations)`). `null`
+        // clears it — the platform's `minIterations` has exactly that contract,
+        // so the public field does not invent a second way to say "no floor".
+        minimumIterations: z
+          .union([z.number().int().min(1).max(10), z.null()])
+          .optional(),
+        matchOptions: publicMatchOptionsSchema.nullable().optional(),
+        checks: z.array(publicCheckSchema).nullable().optional(),
+        judge: z
+          .object({
+            enabled: z.boolean().optional(),
+            model: z.string().min(1).optional(),
+            // The flag the grader actually gates on. Without it a suite can be
+            // `enabled` forever and never grade a run.
+            autoRun: z.boolean().optional(),
+            threshold: z.number().min(0).max(1).optional(),
+            /**
+             * Presentation severity on the goal-completion slot. Legal only
+             * with an advisory role; the platform refuses it beside gating.
+             */
+            severity: z.literal("warn").optional(),
+            /**
+             * Reserved C1 slot. Accepted here only so a write is an explicit
+             * 400 rather than a silent strip — groundedness is not authorable
+             * while execution is unwired.
+             */
+            groundedness: z.unknown().optional(),
+            // The suite's own grading criteria, handed to the judge alongside
+            // each case's expected output. `null` CLEARS them; an empty array is
+            // refused because a rubric that asks nothing is not the absence of
+            // one — it still changes what the judge was asked. The limits mirror
+            // the platform's own so a rejection arrives before the write rather
+            // than taking the settings beside it down with it.
+            rubric: z
+              .union([
+                z.object({
+                  criteria: z
+                    .array(
+                      z.object({
+                        id: z
+                          .string()
+                          .regex(
+                            /^[A-Za-z0-9_-]{1,64}$/,
+                            "criterion id must be 1-64 characters of letters, digits, hyphen or underscore",
+                          ),
+                        label: z.string().trim().min(1).max(200),
+                        description: z.string().max(1000).optional(),
+                        required: z.boolean().optional(),
+                      }),
+                    )
+                    .min(1)
+                    .max(25),
+                }),
+                z.null(),
+              ])
+              .optional(),
+          })
+          .superRefine((judge, ctx) => {
+            if (judge.groundedness !== undefined) {
+              ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                path: ["groundedness"],
+                message:
+                  "settings.judge.groundedness cannot be written while groundedness execution is not wired.",
+              });
+            }
+          })
+          .optional(),
+        // ── The v2 verdict policy ────────────────────────────────────────────
+        //
+        // Same shapes the suite FILE declares them in (`syncFileOwnedSuiteSchema`
+        // above, and `evalSuiteFileValiditySchema` in the contract), because they
+        // describe the same stored object. A caller that read a suite file and a
+        // caller that read this API must be able to send each other's values.
+        //
+        // FRACTIONS, not percents. `passThreshold: 0.8` is eighty percent, and
+        // the legacy `minimumAccuracy: 80` is the same number in the other unit
+        // — which is exactly why the two cannot be sent together (see the
+        // refinement below). Nothing on this path divides by 100.
+        repetitions: z.number().int().min(1).max(100).optional(),
+        passThreshold: z.number().min(0).max(1).optional(),
+        validity: z
+          .object({
+            minEligibleTrials: z.number().int().min(1).optional(),
+            minCompletionRate: z.number().min(0).max(1).optional(),
+            maxEvaluatorErrorRate: z.number().min(0).max(1).optional(),
+          })
+          .strict()
+          .optional(),
+        // Live quality-gate policy. `null` CLEARS it. Comparative conditions
+        // require a baseline; `previous_completed` is reserved until a later
+        // capability advertises it. See the top-level refine for the required
+        // revision precondition and reason.
+        qualityGate: z.union([suiteGatePolicySchema, z.null()]).optional(),
+      })
+      .superRefine((settings, ctx) => {
+        // The two policies are alternatives, not layers. A body carrying both a
+        // percent and a fraction is a caller who believes one of them will be
+        // ignored, and whichever one we picked would be wrong for half of them.
+        const v2Fields = [
+          settings.repetitions,
+          settings.passThreshold,
+          settings.validity,
+        ];
+        if (
+          settings.minimumAccuracy !== undefined &&
+          v2Fields.some((value) => value !== undefined)
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["minimumAccuracy"],
+            message:
+              "settings.minimumAccuracy is the legacy policy; send passThreshold instead.",
+          });
+        }
+      })
+      .optional(),
+    /**
+     * The suite revision this edit was composed against.
+     *
+     * Optional, and omitting it means "apply regardless" — the same
+     * last-write-wins this route has always had. Supplying it turns the PATCH
+     * into a compare-and-set: a suite someone else edited in between is refused
+     * with 409 having changed NOTHING, rather than applying half a caller's
+     * intent over a document it no longer describes. Read the current number
+     * from `revisionNumber` on the suite detail.
+     */
+    expectedRevisionNumber: z.number().int().min(0).optional(),
+    /**
+     * Why this edit is being made. Required (nonblank, ≤500) whenever
+     * `settings.qualityGate` is present — the same rule the platform enforces
+     * on `applySuiteSettings`. Omitted for every other field.
+     */
+    revisionNote: z.string().max(500).optional(),
+    declaredSuiteId: declaredSuiteIdField,
+  })
+  .superRefine((body, ctx) => {
+    if (body.settings?.qualityGate === undefined) return;
+    if (body.expectedRevisionNumber === undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["settings", "qualityGate"],
-        message: parsed.message,
+        path: ["expectedRevisionNumber"],
+        message:
+          "expectedRevisionNumber is required when settings.qualityGate is present.",
       });
     }
-  }
-});
+    const note = body.revisionNote?.trim() ?? "";
+    if (note.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["revisionNote"],
+        message:
+          "revisionNote is required when settings.qualityGate is present.",
+      });
+    }
+    if (body.settings.qualityGate !== null) {
+      const parsed = parseSuiteGatePolicyForAuthoring(
+        body.settings.qualityGate,
+      );
+      if (!parsed.ok) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["settings", "qualityGate"],
+          message: parsed.message,
+        });
+      }
+    }
+  });
 
 /**
  * Body for `POST …/eval-runs/:runId/judge`. STRICT: this endpoint spends, so an
@@ -2820,6 +3019,7 @@ const scheduleSchema = z.strictObject({
   // suite means that environment; omitted on a multi-environment suite is a
   // 400. Only meaningful when enabling — see the handler.
   environmentId: z.string().min(1).optional(),
+  declaredSuiteId: declaredSuiteIdField,
 });
 
 const generateCasesSchema = z
@@ -3113,7 +3313,8 @@ function translateConvexWriteError(
       return new WebRouteError(
         403,
         ErrorCode.FORBIDDEN,
-        prose ?? "You do not have permission to change the quality-gate policy.",
+        prose ??
+          "You do not have permission to change the quality-gate policy.",
       );
     }
     if (
@@ -3363,6 +3564,13 @@ async function launchEvalRun(params: {
    * protocol pins, timeouts and advertised capabilities entirely.
    */
   hostConfig?: Record<string, unknown>;
+  /**
+   * The launching client's DECLARED label and CI envelope, read off
+   * `x-mcpjam-launcher` / `x-mcpjam-ci`. Absent for anything that did not send
+   * them, which is every existing caller — a run then badges by `source`
+   * exactly as it does today.
+   */
+  launchContext?: LaunchContext;
   onSettled: () => void;
 }): Promise<LaunchedEvalRun> {
   const {
@@ -3459,7 +3667,16 @@ async function launchEvalRun(params: {
       projectId,
       suiteRerun,
       convexAuthToken,
+      // STAMPED, and untouched by any of this. `source` is the audit field
+      // precisely because a caller cannot set it; the declared label below
+      // sits beside it rather than replacing it.
       source: "api",
+      ...(params.launchContext?.launcher
+        ? { launcher: params.launchContext.launcher }
+        : {}),
+      ...(params.launchContext?.ciMetadata
+        ? { ciMetadata: params.launchContext.ciMetadata }
+        : {}),
       // Reuse this exact resolution (and its revision) rather than letting
       // the shared path resolve again — the run must be pinned to the
       // revision whose servers the manager just connected.
@@ -3798,6 +4015,7 @@ evals.post("/projects/:projectId/eval-runs", async (c) => {
       environmentLaunch,
       serverIds,
       serverNames,
+      launchContext: readLaunchContext(c),
       onSettled: releaseSlotOnce,
     });
 
@@ -4005,7 +4223,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         throw new WebRouteError(
           400,
           ErrorCode.VALIDATION_ERROR,
-          `Environment ${target.environmentId} is not attached to this suite. Attached environments: ${await describeAttachedEnvironments(
+          `Environment ${
+            target.environmentId
+          } is not attached to this suite. Attached environments: ${await describeAttachedEnvironments(
             convexAuthToken,
             projectId,
             attachedEnvironmentIds,
@@ -4028,7 +4248,9 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
           ErrorCode.VALIDATION_ERROR,
           attachedHosts.length === 0
             ? `Host ${target.namedHostId} is not attached to this suite, which has no hosts at all. Attach it first (PATCH the suite with hosts), then retry.`
-            : `Host ${target.namedHostId} is not attached to this suite. Attached hosts: ${attachedHosts
+            : `Host ${
+                target.namedHostId
+              } is not attached to this suite. Attached hosts: ${attachedHosts
                 .map((candidate) => `"${candidate.name}" (${candidate.id})`)
                 .join(", ")}.`,
           {
@@ -4111,6 +4333,7 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
   const runGroupId = deriveRunGroupId(body.suiteId, body.idempotencyKey);
   const callerContext = callerContextFromHono(c);
   const xaaIssuer = resolveXaaIssuer(c, HOSTED_MODE);
+  const launchContext = readLaunchContext(c);
   const matchOptionsOverride = normalizeRunMatchOptionsOverride(
     body.matchOptionsOverride,
   );
@@ -4174,6 +4397,10 @@ evals.post("/projects/:projectId/eval-run-groups", async (c) => {
         environmentLaunch: servers.environmentLaunch,
         serverIds: servers.serverIds,
         serverNames: servers.serverNames,
+        // One header pair, read once outside the loop, stamped on every
+        // sibling: a fan-out is ONE launch by one client, so targets that
+        // disagreed about their launcher would be lying about at least one.
+        launchContext,
         onSettled: () => releaseRunGroupSlotRef(slot),
       });
       startedCount += 1;
@@ -5847,12 +6074,15 @@ evals.get("/projects/:projectId/eval-runs/:runId/gate", async (c) => {
 
   const parsed = suiteGateReportSchema.safeParse(payload);
   if (!parsed.success) {
-    logger.warn("[v1 evals] run quality-gate report failed contract validation", {
-      projectId,
-      runId,
-      issue: parsed.error.issues[0]?.message ?? "unknown",
-      path: parsed.error.issues[0]?.path?.join(".") ?? "",
-    });
+    logger.warn(
+      "[v1 evals] run quality-gate report failed contract validation",
+      {
+        projectId,
+        runId,
+        issue: parsed.error.issues[0]?.message ?? "unknown",
+        path: parsed.error.issues[0]?.path?.join(".") ?? "",
+      },
+    );
     throw new WebRouteError(
       502,
       ErrorCode.SERVER_UNREACHABLE,
@@ -6197,7 +6427,11 @@ function descriptionOverrideAttributionRefusal(
   if (offering.length > 1) {
     return {
       reason: "DESCRIPTION_OVERRIDE_TOOL_AMBIGUOUS",
-      message: `Tool "${toolName}" is served by ${offering.length} of this run's servers (${offering.join(", ")}). A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
+      message: `Tool "${toolName}" is served by ${
+        offering.length
+      } of this run's servers (${offering.join(
+        ", ",
+      )}). A description rewrite applies by tool name, so the experiment could not say which tool it changed.`,
     };
   }
   const failed = new Set<string>(
@@ -7186,12 +7420,10 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
           note: body.revisionNote,
         },
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
-      throw translateConvexWriteError(
-        error,
-        "quality-gate settings writes",
-      );
+      throw translateConvexWriteError(error, "quality-gate settings writes");
     }
   }
 
@@ -7202,6 +7434,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ...updateArgs,
         revision,
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7227,6 +7460,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         ),
         revision,
         ...takePrecondition(),
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7282,6 +7516,12 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
       await convexClient.mutation("hostConfigsV2:setSuiteConfig" as any, {
         suiteId,
         input,
+        // `suite.configure` is in the lock too, so the owning file needs its
+        // marker on THIS mutation as much as on `updateTestSuite`. Accepting
+        // `declaredSuiteId` on the route and then dropping it for one of the
+        // mutations the route dispatches is worse than not accepting it: the
+        // caller does everything right and the write is still refused.
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7301,6 +7541,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId", async (c) => {
         suiteId,
         environmentIds: body.environmentIds,
         revision,
+        ...fileSyncArgs(body.declaredSuiteId),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7333,7 +7574,12 @@ evals.post(
     // Strict over the caller's own body (no synthesized path params), matching
     // the `additionalProperties: false` the spec publishes for it.
     const body = parseWithSchema(
-      z.object({ environmentId: z.string().min(1) }).strict(),
+      z
+        .object({
+          environmentId: z.string().min(1),
+          declaredSuiteId: declaredSuiteIdField,
+        })
+        .strict(),
       await readJsonObjectBody(c),
     );
     const token = await getConvexBearerForRequest(c);
@@ -7347,7 +7593,11 @@ evals.post(
     try {
       result = (await convexClient.mutation(
         "testSuites:attachEnvironment" as any,
-        { suiteId, environmentId: body.environmentId },
+        {
+          suiteId,
+          environmentId: body.environmentId,
+          ...fileSyncArgs(body.declaredSuiteId),
+        },
       )) as { attached?: boolean; environmentIds?: unknown };
     } catch (error) {
       // Deploy skew: a backend without the atomic append. Named explicitly
@@ -7396,6 +7646,9 @@ evals.delete("/projects/:projectId/eval-suites/:suiteId", async (c) => {
   try {
     await convexClient.mutation("testSuites:deleteTestSuite" as any, {
       suiteId,
+      // A DELETE has no body, so the marker rides the query string — the one
+      // place a caller can put it on this verb.
+      ...fileSyncArgs(c.req.query("declaredSuiteId") || undefined),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7486,6 +7739,7 @@ evals.patch("/projects/:projectId/eval-suites/:suiteId/schedule", async (c) => {
       ...(scheduleEnvironmentId
         ? { environmentId: scheduleEnvironmentId }
         : {}),
+      ...fileSyncArgs(body.declaredSuiteId),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7555,7 +7809,10 @@ evals.get(
 evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
   const projectId = c.req.param("projectId");
   const suiteId = c.req.param("suiteId");
-  const body = parseWithSchema(createCaseSchema, await readJsonObjectBody(c));
+  const body = parseWithSchema(
+    createCaseRequestSchema,
+    await readJsonObjectBody(c),
+  );
   const title = assertCreatableCase(body);
   const token = await getConvexBearerForRequest(c);
   const readClient = createConvexReadClient(token);
@@ -7591,6 +7848,9 @@ evals.post("/projects/:projectId/eval-suites/:suiteId/cases", async (c) => {
     result = await createEvalCasesInBatches(convexClient, {
       suiteId,
       cases: [item],
+      ...(body.declaredSuiteId
+        ? { declaredSuiteId: body.declaredSuiteId }
+        : {}),
     });
   } catch (error) {
     throw translateConvexWriteError(error);
@@ -7716,6 +7976,9 @@ evals.post(
           ? { duplicatePolicy: body.duplicatePolicy }
           : {}),
         ...(body.overrideReason ? { overrideReason: body.overrideReason } : {}),
+        ...(body.declaredSuiteId
+          ? { declaredSuiteId: body.declaredSuiteId }
+          : {}),
       });
     } catch (error) {
       throw translateConvexWriteError(error);
@@ -7802,6 +8065,7 @@ evals.patch(
           testCaseId: caseId,
           changeSource: "manual",
           ...args,
+          ...fileSyncArgs(body.declaredSuiteId),
         },
       );
     } catch (error) {
@@ -7839,6 +8103,8 @@ evals.delete(
     try {
       await convexClient.mutation("testSuites:deleteTestCase" as any, {
         testCaseId: caseId,
+        // No body on a DELETE, so the marker rides the query string.
+        ...fileSyncArgs(c.req.query("declaredSuiteId") || undefined),
       });
     } catch (error) {
       throw translateConvexWriteError(error);

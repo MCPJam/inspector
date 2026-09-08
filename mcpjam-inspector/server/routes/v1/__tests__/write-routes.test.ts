@@ -58,7 +58,7 @@ vi.mock("../../../services/workos-key-bindings.js", () => ({
 
 vi.mock("../../shared/evals.js", async () => {
   const actual = await vi.importActual<typeof import("../../shared/evals.js")>(
-    "../../shared/evals.js"
+    "../../shared/evals.js",
   );
   return {
     ...actual,
@@ -68,9 +68,10 @@ vi.mock("../../shared/evals.js", async () => {
 });
 
 vi.mock("../../web/auth.js", async () => {
-  const actual = await vi.importActual<typeof import("../../web/auth.js")>(
-    "../../web/auth.js"
-  );
+  const actual =
+    await vi.importActual<typeof import("../../web/auth.js")>(
+      "../../web/auth.js",
+    );
   return { ...actual, createAuthorizedManager: createAuthorizedManagerMock };
 });
 
@@ -97,7 +98,8 @@ function request(
   method: string,
   path: string,
   body?: Record<string, unknown>,
-  token = "tok"
+  token = "tok",
+  extraHeaders?: Record<string, string>,
 ): Promise<Response> {
   return Promise.resolve(
     app.request(path, {
@@ -105,9 +107,10 @@ function request(
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${token}`,
+        ...extraHeaders,
       },
       ...(body ? { body: JSON.stringify(body) } : {}),
-    })
+    }),
   );
 }
 
@@ -127,7 +130,7 @@ const SUITE_DOC = {
  * Unlisted functions fall back to the legacy suite / `null`.
  */
 function mockConvexQueries(
-  handlers: Record<string, (args: any) => unknown> = {}
+  handlers: Record<string, (args: any) => unknown> = {},
 ): void {
   convexQueryMock.mockImplementation(async (fn: string, args: any) => {
     if (Object.prototype.hasOwnProperty.call(handlers, fn)) {
@@ -182,11 +185,11 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/servers/s1/tools/call",
-        { parameters: {} }
+        { parameters: {} },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
     });
 
@@ -195,11 +198,11 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/servers/s1/prompts/get",
-        {}
+        {},
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
     });
   });
@@ -210,7 +213,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", hostIds: ["h1"] }
+        { suiteId: "suite_1", hostIds: ["h1"] },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -224,7 +227,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { serverIds: ["s1"] }
+        { serverIds: ["s1"] },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -250,7 +253,7 @@ describe("v1 write routes", () => {
               provider: "anthropic",
             },
           ],
-        }
+        },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -294,14 +297,14 @@ describe("v1 write routes", () => {
                 'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
               reason: "approval_required",
             },
-          })
+          }),
         );
 
         const res = await request(
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         // Rethrown raw this reached the application-level handler as a 500,
@@ -331,7 +334,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(202);
@@ -348,7 +351,7 @@ describe("v1 write routes", () => {
         });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
         // The manager connects the derived set, names included.
         expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
@@ -367,7 +370,7 @@ describe("v1 write routes", () => {
           suiteRerun: true,
         });
         await vi.waitFor(() =>
-          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
         );
       });
 
@@ -385,7 +388,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(400);
@@ -412,12 +415,12 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_other" }
+          { suiteId: "suite_other" },
         );
 
         expect(res.status).toBe(404);
         expect(((await res.json()) as { code?: string }).code).toBe(
-          "NOT_FOUND"
+          "NOT_FOUND",
         );
       });
 
@@ -429,12 +432,12 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(404);
         expect(((await res.json()) as { code?: string }).code).toBe(
-          "NOT_FOUND"
+          "NOT_FOUND",
         );
       });
 
@@ -443,7 +446,7 @@ describe("v1 write routes", () => {
         mockConvexQueries({
           "testSuites:getSuiteRunServerSelection": () => {
             throw new Error(
-              "Could not find public function for 'testSuites:getSuiteRunServerSelection'"
+              "Could not find public function for 'testSuites:getSuiteRunServerSelection'",
             );
           },
         });
@@ -452,7 +455,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(400);
@@ -508,7 +511,7 @@ describe("v1 write routes", () => {
             importApprovals: [
               { testCaseId: "case_1", reason: "Reviewed against the rubric." },
             ],
-          }
+          },
         );
         expect(res.status).toBe(202);
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
@@ -517,7 +520,7 @@ describe("v1 write routes", () => {
           ],
         });
         await vi.waitFor(() =>
-          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
         );
       });
 
@@ -527,16 +530,16 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
         expect(res.status).toBe(202);
         // An empty array is a claim ("I approved nothing"); absence is the
         // ordinary case, and the backend reads the two differently.
-        expect(
-          "importApprovals" in prepareEvalRunMock.mock.calls[0][1]
-        ).toBe(false);
+        expect("importApprovals" in prepareEvalRunMock.mock.calls[0][1]).toBe(
+          false,
+        );
         await vi.waitFor(() =>
-          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
         );
       });
 
@@ -556,7 +559,7 @@ describe("v1 write routes", () => {
               importApprovals: [
                 { testCaseId: "case_1", reason: "ok", ...extra },
               ],
-            }
+            },
           );
           // Both are DERIVED by the server. A caller-supplied approver would
           // file one person's approval under another's name, and a
@@ -564,7 +567,7 @@ describe("v1 write routes", () => {
           // invalidated the claim.
           expect(res.status).toBe(400);
           expect(prepareEvalRunMock).not.toHaveBeenCalled();
-        }
+        },
       );
 
       it.each([
@@ -579,7 +582,7 @@ describe("v1 write routes", () => {
           {
             suiteId: "suite_1",
             importApprovals: [{ testCaseId: "case_1", reason }],
-          }
+          },
         );
         expect(res.status).toBe(400);
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
@@ -625,7 +628,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite_1", idempotencyKey: "same-key" },
         );
 
         expect(res.status).toBe(202);
@@ -639,7 +642,7 @@ describe("v1 write routes", () => {
         // `.finally` that normally does it belongs to an execution that never
         // happened.
         await vi.waitFor(() =>
-          expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
         );
       });
 
@@ -652,7 +655,7 @@ describe("v1 write routes", () => {
             makeApp(),
             "POST",
             "/api/v1/projects/p1/eval-runs",
-            { suiteId: "suite_1", idempotencyKey: `key_${i}` }
+            { suiteId: "suite_1", idempotencyKey: `key_${i}` },
           );
           expect(res.status).toBe(202);
         }
@@ -668,7 +671,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite_1", idempotencyKey: "same-key" },
         );
 
         expect(res.status).toBe(202);
@@ -705,7 +708,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", idempotencyKey: "same-key" }
+          { suiteId: "suite_1", idempotencyKey: "same-key" },
         );
 
         expect(res.status).toBe(202);
@@ -715,7 +718,6 @@ describe("v1 write routes", () => {
         expect(execute).toHaveBeenCalledTimes(1);
       });
     });
-
 
     describe("environment-backed runs", () => {
       // Attach-ordered environments on the suite; the route's selection rule
@@ -798,22 +800,22 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite_1", environmentId: "env_1" },
         );
 
         expect(res.status).toBe(202);
         // The 202 names the environment the run is pinned to.
         expect(
-          ((await res.json()) as { environment?: unknown }).environment
+          ((await res.json()) as { environment?: unknown }).environment,
         ).toEqual({ id: "env_1", name: "Staging", revision: 7 });
         expect(convexQueryMock).toHaveBeenCalledWith(
           "projectEnvironments:resolveEnvironmentForLaunch",
-          { projectId: "p1", environmentId: "env_1" }
+          { projectId: "p1", environmentId: "env_1" },
         );
         // The suite's saved selection is never consulted for an env run.
         expect(convexQueryMock).not.toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
-          expect.anything()
+          expect.anything(),
         );
         expect(createAuthorizedManagerMock.mock.calls[0][3]).toEqual([
           "s_env_live",
@@ -838,7 +840,11 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1", serverIds: ["s_bogus"] }
+          {
+            suiteId: "suite_1",
+            environmentId: "env_1",
+            serverIds: ["s_bogus"],
+          },
         );
 
         expect(res.status).toBe(400);
@@ -860,7 +866,7 @@ describe("v1 write routes", () => {
             suiteName: "fresh suite",
             environmentId: "env_1",
             tests: [inlineTest],
-          }
+          },
         );
 
         expect(res.status).toBe(400);
@@ -880,7 +886,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_other" }
+          { suiteId: "suite_1", environmentId: "env_other" },
         );
 
         expect(res.status).toBe(400);
@@ -924,7 +930,7 @@ describe("v1 write routes", () => {
             suiteId: "suite_1",
             environmentId: "env_other",
             ephemeralEnvironment: true,
-          }
+          },
         );
 
         expect(res.status).toBe(202);
@@ -942,18 +948,18 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(202);
         expect(
-          ((await res.json()) as { environment?: unknown }).environment
+          ((await res.json()) as { environment?: unknown }).environment,
         ).toEqual({ id: "env_1", name: "Staging", revision: 7 });
         // Never falls back to the legacy saved selection — that is exactly the
         // drift this rule closes (connect one set, snapshot another).
         expect(convexQueryMock).not.toHaveBeenCalledWith(
           "testSuites:getSuiteRunServerSelection",
-          expect.anything()
+          expect.anything(),
         );
         expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
           environmentId: "env_1",
@@ -969,7 +975,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1" }
+          { suiteId: "suite_1" },
         );
 
         expect(res.status).toBe(400);
@@ -992,7 +998,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", serverIds: ["s_bogus"] }
+          { suiteId: "suite_1", serverIds: ["s_bogus"] },
         );
 
         expect(res.status).toBe(400);
@@ -1001,7 +1007,7 @@ describe("v1 write routes", () => {
           details?: { reason?: string };
         };
         expect(body.details?.reason).toBe(
-          "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE"
+          "ENVIRONMENT_SERVERS_NOT_OVERRIDABLE",
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
@@ -1025,7 +1031,7 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite_1", environmentId: "env_1" },
         );
 
         expect(res.status).toBe(409);
@@ -1056,12 +1062,12 @@ describe("v1 write routes", () => {
           makeApp(),
           "POST",
           "/api/v1/projects/p1/eval-runs",
-          { suiteId: "suite_1", environmentId: "env_1" }
+          { suiteId: "suite_1", environmentId: "env_1" },
         );
 
         expect(res.status).toBe(404);
         expect(((await res.json()) as { code?: string }).code).toBe(
-          "NOT_FOUND"
+          "NOT_FOUND",
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
@@ -1113,7 +1119,7 @@ describe("v1 write routes", () => {
             suiteName: "smoke",
             serverIds: ["s1"],
             tests: [inlineTest("claude-3-7-sonnet-latest")],
-          }
+          },
         );
         expect(res.status).toBe(400);
         const body = (await res.json()) as {
@@ -1122,7 +1128,7 @@ describe("v1 write routes", () => {
         };
         expect(body.code).toBe("VALIDATION_ERROR");
         expect(body.details?.hostedModels).toContain(
-          "anthropic/claude-haiku-4.5"
+          "anthropic/claude-haiku-4.5",
         );
         expect(prepareEvalRunMock).not.toHaveBeenCalled();
       });
@@ -1137,7 +1143,7 @@ describe("v1 write routes", () => {
             suiteName: "smoke",
             serverIds: ["s1"],
             tests: [inlineTest("anthropic/claude-haiku-4.5")],
-          }
+          },
         );
         expect(res.status).toBe(202);
       });
@@ -1153,7 +1159,7 @@ describe("v1 write routes", () => {
             serverIds: ["s1"],
             tests: [inlineTest("claude-3-7-sonnet-latest")],
             modelApiKeys: { anthropic: "sk-ant-test" },
-          }
+          },
         );
         expect(res.status).toBe(202);
       });
@@ -1168,7 +1174,7 @@ describe("v1 write routes", () => {
             suiteName: "smoke",
             serverIds: ["s1"],
             tests: [inlineTest("claude-sonnet-4-5")],
-          }
+          },
         );
         expect(res.status).toBe(202);
       });
@@ -1197,7 +1203,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite_1", serverIds: ["s1"] },
       );
 
       expect(res.status).toBe(202);
@@ -1222,7 +1228,7 @@ describe("v1 write routes", () => {
 
       resolveExecute();
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
     });
 
@@ -1254,12 +1260,12 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite_1", serverIds: ["s1"] },
       );
       expect(res.status).toBe(202);
       await vi.waitFor(() => expect(finalize).toHaveBeenCalledTimes(1));
       expect(finalize).toHaveBeenCalledWith(
-        expect.objectContaining({ status: "failed" })
+        expect.objectContaining({ status: "failed" }),
       );
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
     });
@@ -1288,12 +1294,12 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite_1", serverIds: ["s1"] },
       );
       expect(res.status).toBe(202);
       // The teardown still runs, but no second terminal write happens.
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
       expect(finalize).not.toHaveBeenCalled();
     });
@@ -1311,7 +1317,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"] }
+        { suiteId: "suite_1", serverIds: ["s1"] },
       );
       expect(res.status).toBe(500);
       expect(disconnectAllServers).toHaveBeenCalledTimes(1);
@@ -1329,7 +1335,7 @@ describe("v1 write routes", () => {
       // The only fetch on this path is the delegated-token mint.
       global.fetch = vi.fn(async (input: any, init: any) => {
         expect(String(input)).toBe(
-          "https://convex-http.example.com/web/delegated-token"
+          "https://convex-http.example.com/web/delegated-token",
         );
         expect(init?.headers?.["x-mcpjam-acting-as"]).toBe("workos_user_1");
         expect(init?.headers?.["x-mcpjam-acting-in-org"]).toBe("org_1");
@@ -1339,7 +1345,7 @@ describe("v1 write routes", () => {
             token: "delegated-jwt",
             expiresAt: Date.now() + 2 * 60 * 60 * 1000,
           }),
-          { status: 200, headers: { "Content-Type": "application/json" } }
+          { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }) as typeof fetch;
 
@@ -1362,7 +1368,7 @@ describe("v1 write routes", () => {
         "POST",
         "/api/v1/projects/p1/eval-runs",
         { suiteId: "suite_1", serverIds: ["s1"] },
-        "sk_live_secret"
+        "sk_live_secret",
       );
       expect(res.status).toBe(202);
 
@@ -1370,14 +1376,14 @@ describe("v1 write routes", () => {
       // secret reveal — both JWT-only Convex surfaces where the raw API key
       // would 401. Both seams must see the minted JWT.
       expect(createAuthorizedManagerMock.mock.calls[0][1]).toBe(
-        "delegated-jwt"
+        "delegated-jwt",
       );
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
         convexAuthToken: "delegated-jwt",
         source: "api",
       });
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
     });
 
@@ -1400,15 +1406,149 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-runs",
-        { suiteId: "suite_1", serverIds: ["s1"], suiteRerun: false }
+        { suiteId: "suite_1", serverIds: ["s1"], suiteRerun: false },
       );
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
         suiteRerun: true,
       });
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
+    });
+
+    /**
+     * RUN ORIGIN — the declared label beside the stamped one.
+     *
+     * `source: "api"` is stamped here and stays stamped; these rows are about
+     * the header that says WHICH `api` it was, and about the rule that keeps a
+     * cosmetic label from ever failing a launch.
+     */
+    describe("launch-context headers", () => {
+      function mockPendingLaunch() {
+        const disconnectAllServers = vi.fn().mockResolvedValue(undefined);
+        createAuthorizedManagerMock.mockResolvedValue({
+          manager: { disconnectAllServers },
+          oauthServerUrls: {},
+          authenticatedUserId: null,
+        });
+        prepareEvalRunMock.mockResolvedValue({
+          suiteId: "suite_1",
+          runId: "run_1",
+          caseUpsert: { committed: [], failed: [] },
+          recorder: { finalize: vi.fn() },
+          execute: vi.fn().mockResolvedValue(undefined),
+        });
+        return disconnectAllServers;
+      }
+
+      it("forwards a declared launcher and CI envelope alongside source: api", async () => {
+        const disconnectAllServers = mockPendingLaunch();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", serverIds: ["s1"] },
+          "tok",
+          {
+            "x-mcpjam-launcher":
+              '{"kind":"github_action","client":"mcpjam-cli","version":"8.1.0"}',
+            "x-mcpjam-ci":
+              '{"provider":"github_actions","runId":"99","job":"evals","commitSha":"abc"}',
+          },
+        );
+
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
+          // STAMPED, and untouched by the header. The declared label sits
+          // beside it — replacing it would hand a caller the audit field.
+          source: "api",
+          launcher: {
+            kind: "github_action",
+            client: "mcpjam-cli",
+            version: "8.1.0",
+          },
+          // Translated to the run's own vocabulary at this boundary: `runId` →
+          // `pipelineId`, `job` → `jobId`.
+          ciMetadata: {
+            provider: "github_actions",
+            pipelineId: "99",
+            jobId: "evals",
+            commitSha: "abc",
+          },
+        });
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
+        );
+      });
+
+      it("sends neither field when no header was supplied", async () => {
+        const disconnectAllServers = mockPendingLaunch();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", serverIds: ["s1"] },
+        );
+
+        expect(res.status).toBe(202);
+        const args = prepareEvalRunMock.mock.calls[0][1];
+        // ABSENT, not `undefined`: `startTestSuiteRun`'s validator is exact, so
+        // an explicit undefined would fail the launch on a backend that
+        // predates the field.
+        expect(args).not.toHaveProperty("launcher");
+        expect(args).not.toHaveProperty("ciMetadata");
+        expect(args).toMatchObject({ source: "api" });
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
+        );
+      });
+
+      it("launches anyway when the header claims a server-stamped kind", async () => {
+        const disconnectAllServers = mockPendingLaunch();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", serverIds: ["s1"] },
+          "tok",
+          { "x-mcpjam-launcher": '{"kind":"sdk"}' },
+        );
+
+        // NOT a 400. The label is dropped and the run proceeds under its real
+        // `source` — a badge must never be able to fail somebody's CI job.
+        expect(res.status).toBe(202);
+        expect(prepareEvalRunMock.mock.calls[0][1]).not.toHaveProperty(
+          "launcher",
+        );
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
+        );
+      });
+
+      it("launches anyway when the header is malformed JSON", async () => {
+        const disconnectAllServers = mockPendingLaunch();
+
+        const res = await request(
+          makeApp(),
+          "POST",
+          "/api/v1/projects/p1/eval-runs",
+          { suiteId: "suite_1", serverIds: ["s1"] },
+          "tok",
+          { "x-mcpjam-launcher": "{not json", "x-mcpjam-ci": "also not json" },
+        );
+
+        expect(res.status).toBe(202);
+        const args = prepareEvalRunMock.mock.calls[0][1];
+        expect(args).not.toHaveProperty("launcher");
+        expect(args).not.toHaveProperty("ciMetadata");
+        await vi.waitFor(() =>
+          expect(disconnectAllServers).toHaveBeenCalledTimes(1),
+        );
+      });
     });
 
     it("keeps suiteRerun false when inline tests are supplied", async () => {
@@ -1442,7 +1582,7 @@ describe("v1 write routes", () => {
               provider: "anthropic",
             },
           ],
-        }
+        },
       );
       expect(res.status).toBe(202);
       expect(prepareEvalRunMock.mock.calls[0][1]).toMatchObject({
@@ -1455,7 +1595,7 @@ describe("v1 write routes", () => {
         ],
       });
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
     });
   });
@@ -1487,11 +1627,11 @@ describe("v1 write routes", () => {
           serverIds: ["s1"],
           model: "anthropic/claude-haiku-4.5",
           tests: [],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
@@ -1507,7 +1647,7 @@ describe("v1 write routes", () => {
           serverIds: ["s1"],
           model: "anthropic/not-a-real-model",
           tests: [VALID_CASE],
-        }
+        },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -1527,11 +1667,11 @@ describe("v1 write routes", () => {
           serverIds: ["s1"],
           model: "anthropic/claude-haiku-4.5",
           tests: [{ title: "no steps" }],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
     });
@@ -1547,7 +1687,7 @@ describe("v1 write routes", () => {
           model: "anthropic/claude-haiku-4.5",
           tests: [VALID_CASE],
           hostIds: ["h1"],
-        }
+        },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as { code?: string; message?: string };
@@ -1567,11 +1707,11 @@ describe("v1 write routes", () => {
           serverIds: ["s1"],
           model: "anthropic/claude-haiku-4.5",
           tests: [{ title: "empty steps", steps: [] }],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
       expect(createAuthorizedManagerMock).not.toHaveBeenCalled();
       expect(authorEvalSuiteMock).not.toHaveBeenCalled();
@@ -1601,7 +1741,7 @@ describe("v1 write routes", () => {
           serverNames: ["Echo"],
           model: "anthropic/claude-haiku-4.5",
           tests: [VALID_CASE],
-        }
+        },
       );
 
       expect(res.status).toBe(201);
@@ -1670,7 +1810,7 @@ describe("v1 write routes", () => {
           model: "anthropic/claude-haiku-4.5",
           tests: [VALID_CASE],
           hosts: [{ host: "Claude", servers: ["Echo"] }],
-        }
+        },
       );
 
       expect(res.status).toBe(201);
@@ -1684,7 +1824,7 @@ describe("v1 write routes", () => {
           hostAttachments: [
             { namedHostId: "host_claude", selectedServerIds: ["s1"] },
           ],
-        }
+        },
       );
     });
 
@@ -1710,7 +1850,7 @@ describe("v1 write routes", () => {
           model: "anthropic/claude-haiku-4.5",
           tests: [VALID_CASE],
           hosts: [{ host: "Nope" }],
-        }
+        },
       );
 
       expect(res.status).toBe(404);
@@ -1745,7 +1885,7 @@ describe("v1 write routes", () => {
         caseUpsert: { committed: [], failed: [] },
         recorder: { finalize: vi.fn() },
         execute: vi.fn(
-          () => new Promise<void>((resolve) => releaseGates.push(resolve))
+          () => new Promise<void>((resolve) => releaseGates.push(resolve)),
         ),
       }));
       const post = (token: string) =>
@@ -1754,7 +1894,7 @@ describe("v1 write routes", () => {
           "POST",
           "/api/v1/projects/p1/eval-runs",
           { suiteId: "suite_1", serverIds: ["s1"] },
-          token
+          token,
         );
 
       // Limit pinned to 2 by the hoisted V1_MAX_CONCURRENT_EVAL_RUNS stub.
@@ -1775,18 +1915,17 @@ describe("v1 write routes", () => {
       // Finishing runs releases slots for the gated caller.
       for (const release of releaseGates.splice(0)) release();
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(3)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(3),
       );
       expect((await post("tok")).status).toBe(202);
 
       // Drain so later tests start with empty buckets.
       for (const release of releaseGates.splice(0)) release();
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(4)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(4),
       );
     });
   });
-
 
   describe("POST /eval-run-groups", () => {
     // A suite with two attached hosts — the shape a fan-out is for. The route
@@ -1821,7 +1960,7 @@ describe("v1 write routes", () => {
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn(
-            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+            () => new Promise<void>((resolve) => releaseGates.push(resolve)),
           ),
           ...(perCall ? perCall() : {}),
         };
@@ -1830,7 +1969,7 @@ describe("v1 write routes", () => {
     }
 
     function hostSuiteQueries(
-      extra: Record<string, (args: any) => unknown> = {}
+      extra: Record<string, (args: any) => unknown> = {},
     ) {
       mockConvexQueries({
         "testSuites:getTestSuite": () => HOST_SUITE,
@@ -1850,13 +1989,45 @@ describe("v1 write routes", () => {
     async function drain(
       releaseGates: Array<() => void>,
       disconnectAllServers: ReturnType<typeof vi.fn>,
-      expected: number
+      expected: number,
     ) {
       for (const release of releaseGates.splice(0)) release();
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(expected)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(expected),
       );
     }
+
+    it("stamps ONE declared launcher across every target of a fan-out", async () => {
+      hostSuiteQueries();
+      const { releaseGates, disconnectAllServers } = mockPendingLaunches();
+
+      const res = await request(
+        makeApp(),
+        "POST",
+        "/api/v1/projects/p1/eval-run-groups",
+        {
+          suiteId: "suite_1",
+          targets: [
+            { namedHostId: "host_claude" },
+            { namedHostId: "host_chatgpt" },
+          ],
+        },
+        "tok",
+        { "x-mcpjam-launcher": '{"kind":"cli","client":"mcpjam-cli"}' },
+      );
+
+      expect(res.status).toBe(202);
+      expect(prepareEvalRunMock).toHaveBeenCalledTimes(2);
+      // A fan-out is ONE launch by one client. Targets that disagreed about
+      // their launcher would be lying about at least one of themselves.
+      for (const call of prepareEvalRunMock.mock.calls) {
+        expect(call[1]).toMatchObject({
+          source: "api",
+          launcher: { kind: "cli", client: "mcpjam-cli" },
+        });
+      }
+      await drain(releaseGates, disconnectAllServers, 2);
+    });
 
     it("sends the SAME approvals to every target of a fan-out", async () => {
       hostSuiteQueries();
@@ -1876,7 +2047,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
 
       expect(res.status).toBe(202);
@@ -1908,7 +2079,7 @@ describe("v1 write routes", () => {
               'Case "c_refund" was imported as "approximated" — approve it for this run or exclude it.',
             reason: "approval_required",
           },
-        })
+        }),
       );
 
       const res = await request(
@@ -1918,7 +2089,7 @@ describe("v1 write routes", () => {
         {
           suiteId: "suite_1",
           targets: [{ namedHostId: "host_claude" }],
-        }
+        },
       );
 
       expect(res.status).toBe(202);
@@ -1947,7 +2118,7 @@ describe("v1 write routes", () => {
             { testCaseId: "case_1", reason: "ok", approvedBy: "user_9" },
           ],
           targets: [{ namedHostId: "host_claude" }],
-        }
+        },
       );
 
       expect(res.status).toBe(400);
@@ -1989,7 +2160,7 @@ describe("v1 write routes", () => {
           suiteId: "suite_1",
           ephemeralEnvironment: true,
           targets: [{ environmentId: "env_adhoc" }],
-        }
+        },
       );
 
       expect(res.status).toBe(202);
@@ -2014,7 +2185,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
 
       expect(res.status).toBe(202);
@@ -2027,9 +2198,9 @@ describe("v1 write routes", () => {
         "Claude",
         "ChatGPT",
       ]);
-      expect(body.targets.every((entry: any) => entry.status === "started")).toBe(
-        true
-      );
+      expect(
+        body.targets.every((entry: any) => entry.status === "started"),
+      ).toBe(true);
       // The entry discriminant owns `status`; the RUN's own status is
       // `runStatus`, so a reader can never branch on the wrong one.
       expect(body.targets[0].runStatus).toBe("running");
@@ -2040,12 +2211,12 @@ describe("v1 write routes", () => {
 
       // Every sibling carries the SAME group id, and each target's own host.
       const groupIds = prepareEvalRunMock.mock.calls.map(
-        (call) => call[1].runGroupId
+        (call) => call[1].runGroupId,
       );
       expect(new Set(groupIds).size).toBe(1);
       expect(groupIds[0]).toBe(body.runGroupId);
       expect(
-        prepareEvalRunMock.mock.calls.map((call) => call[1].namedHostId)
+        prepareEvalRunMock.mock.calls.map((call) => call[1].namedHostId),
       ).toEqual(["host_claude", "host_chatgpt"]);
 
       await drain(releaseGates, disconnectAllServers, 2);
@@ -2066,30 +2237,40 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
       expect(group.status).toBe(202);
 
       // Two targets under ONE slot: with the cap at 2, a single further launch
       // still fits. Charging per target would have exhausted the cap here,
       // which is what makes a 3-target fan-out unlaunchable.
-      const single = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-        suiteId: "suite_1",
-        serverIds: ["s1"],
-      });
+      const single = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        {
+          suiteId: "suite_1",
+          serverIds: ["s1"],
+        },
+      );
       expect(single.status).toBe(202);
 
       // …and the next one is gated, so the group's slot is genuinely held.
-      const gated = await request(app, "POST", "/api/v1/projects/p1/eval-runs", {
-        suiteId: "suite_1",
-        serverIds: ["s1"],
-      });
+      const gated = await request(
+        app,
+        "POST",
+        "/api/v1/projects/p1/eval-runs",
+        {
+          suiteId: "suite_1",
+          serverIds: ["s1"],
+        },
+      );
       expect(gated.status).toBe(429);
 
       // Release exactly ONE sibling: the group still owns its slot.
       releaseGates.splice(0, 1)[0]!();
       await vi.waitFor(() =>
-        expect(disconnectAllServers).toHaveBeenCalledTimes(1)
+        expect(disconnectAllServers).toHaveBeenCalledTimes(1),
       );
       expect(
         (
@@ -2097,7 +2278,7 @@ describe("v1 write routes", () => {
             suiteId: "suite_1",
             serverIds: ["s1"],
           })
-        ).status
+        ).status,
       ).toBe(429);
 
       await drain(releaseGates, disconnectAllServers, 3);
@@ -2107,7 +2288,7 @@ describe("v1 write routes", () => {
             suiteId: "suite_1",
             serverIds: ["s1"],
           })
-        ).status
+        ).status,
       ).toBe(202);
       await drain(releaseGates, disconnectAllServers, 4);
     });
@@ -2123,14 +2304,14 @@ describe("v1 write routes", () => {
               suiteId: "suite_1",
               serverIds: ["s1"],
             })
-          ).status
+          ).status,
         ).toBe(202);
       }
       const res = await request(
         app,
         "POST",
         "/api/v1/projects/p1/eval-run-groups",
-        { suiteId: "suite_1", targets: [{ namedHostId: "host_claude" }] }
+        { suiteId: "suite_1", targets: [{ namedHostId: "host_claude" }] },
       );
       expect(res.status).toBe(429);
       expect(await res.json()).toMatchObject({
@@ -2159,7 +2340,7 @@ describe("v1 write routes", () => {
           caseUpsert: { committed: [], failed: [] },
           recorder: { finalize: vi.fn() },
           execute: vi.fn(
-            () => new Promise<void>((resolve) => releaseGates.push(resolve))
+            () => new Promise<void>((resolve) => releaseGates.push(resolve)),
           ),
         };
       });
@@ -2175,7 +2356,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
       expect(res.status).toBe(202);
       const body = (await res.json()) as any;
@@ -2198,7 +2379,7 @@ describe("v1 write routes", () => {
             suiteId: "suite_1",
             serverIds: ["s1"],
           })
-        ).status
+        ).status,
       ).toBe(202);
       await drain(releaseGates, disconnectAllServers, 2);
     });
@@ -2224,7 +2405,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
       expect(res.status).toBe(202);
       const body = (await res.json()) as any;
@@ -2244,7 +2425,7 @@ describe("v1 write routes", () => {
               suiteId: "suite_1",
               serverIds: ["s1"],
             })
-          ).status
+          ).status,
         ).toBe(202);
       }
       await drain(releaseGates, d2, 2);
@@ -2263,7 +2444,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_nope" },
           ],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({
@@ -2284,11 +2465,8 @@ describe("v1 write routes", () => {
         "/api/v1/projects/p1/eval-run-groups",
         {
           suiteId: "suite_1",
-          targets: [
-            { namedHostId: "host_claude" },
-            { environmentId: "env_1" },
-          ],
-        }
+          targets: [{ namedHostId: "host_claude" }, { environmentId: "env_1" }],
+        },
       );
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({
@@ -2306,10 +2484,13 @@ describe("v1 write routes", () => {
         "/api/v1/projects/p1/eval-run-groups",
         {
           suiteId: "suite_1",
-          targets: Array.from({ length: MAX_RUN_GROUP_TARGETS + 1 }, (_, i) => ({
-            namedHostId: `host_${i}`,
-          })),
-        }
+          targets: Array.from(
+            { length: MAX_RUN_GROUP_TARGETS + 1 },
+            (_, i) => ({
+              namedHostId: `host_${i}`,
+            }),
+          ),
+        },
       );
       expect(res.status).toBe(400);
       expect(prepareEvalRunMock).not.toHaveBeenCalled();
@@ -2339,7 +2520,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_chatgpt" },
           ],
-        }
+        },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -2364,7 +2545,11 @@ describe("v1 write routes", () => {
           { environmentId: "env_2", name: "Prod" },
         ],
         "projectEnvironments:resolveEnvironmentForLaunch": () => ({
-          environmentRef: { environmentId: "env_1", name: "Staging", revision: 1 },
+          environmentRef: {
+            environmentId: "env_1",
+            name: "Staging",
+            revision: 1,
+          },
           hostId: "host_harness",
           selectedServerIds: ["s_env"],
         }),
@@ -2390,7 +2575,7 @@ describe("v1 write routes", () => {
         {
           suiteId: "suite_1",
           targets: [{ environmentId: "env_1" }, { environmentId: "env_2" }],
-        }
+        },
       );
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({
@@ -2405,7 +2590,10 @@ describe("v1 write routes", () => {
       // Stripping them would answer 202 while discarding the thing asked for.
       hostSuiteQueries();
       mockPendingLaunches();
-      for (const knob of [{ serverIds: ["s_alpha"] }, { refreshSnapshot: true }]) {
+      for (const knob of [
+        { serverIds: ["s_alpha"] },
+        { refreshSnapshot: true },
+      ]) {
         const res = await request(
           makeApp(),
           "POST",
@@ -2414,7 +2602,7 @@ describe("v1 write routes", () => {
             suiteId: "suite_1",
             targets: [{ namedHostId: "host_claude" }],
             ...knob,
-          }
+          },
         );
         expect(res.status).toBe(400);
         expect((await res.json()) as any).toMatchObject({
@@ -2437,7 +2625,7 @@ describe("v1 write routes", () => {
             { namedHostId: "host_claude" },
             { namedHostId: "host_claude" },
           ],
-        }
+        },
       );
       expect(res.status).toBe(202);
       expect(((await res.json()) as any).startedCount).toBe(1);
@@ -2465,7 +2653,7 @@ describe("v1 write routes", () => {
           skillsOverride: "exclude",
           notes: "nightly",
           passCriteria: { minimumPassRate: 80 },
-        }
+        },
       );
       expect(res.status).toBe(202);
       const forwarded = prepareEvalRunMock.mock.calls[0][1];
@@ -2499,7 +2687,7 @@ describe("v1 write routes", () => {
         await request(app, "POST", "/api/v1/projects/p1/eval-run-groups", body)
       ).json()) as any;
       const firstKeys = prepareEvalRunMock.mock.calls.map(
-        (call) => call[1].idempotencyKey
+        (call) => call[1].idempotencyKey,
       );
       // Each target gets its OWN derived key. One shared key would return
       // target 1's run for every target; no key at all would double-launch.
@@ -2516,7 +2704,7 @@ describe("v1 write routes", () => {
       ).json()) as any;
       expect(replay.runGroupId).toBe(first.runGroupId);
       expect(
-        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey)
+        prepareEvalRunMock.mock.calls.map((call) => call[1].idempotencyKey),
       ).toEqual(firstKeys);
       await drain(gates2, d2, 2);
     });
@@ -2564,7 +2752,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/environments",
-        { environmentId: "env_b" }
+        { environmentId: "env_b" },
       );
 
       expect(res.status).toBe(200);
@@ -2575,7 +2763,7 @@ describe("v1 write routes", () => {
       });
       expect(convexMutationMock).toHaveBeenCalledWith(
         "testSuites:attachEnvironment",
-        { suiteId: "suite_1", environmentId: "env_b" }
+        { suiteId: "suite_1", environmentId: "env_b" },
       );
     });
 
@@ -2590,7 +2778,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/environments",
-        { environmentId: "env_a" }
+        { environmentId: "env_a" },
       );
       expect(res.status).toBe(200);
       expect(((await res.json()) as any).attached).toBe(false);
@@ -2607,7 +2795,7 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/environments",
-        { environmentId: "env_b" }
+        { environmentId: "env_b" },
       );
       expect(res.status).toBe(404);
       expect(convexMutationMock).not.toHaveBeenCalled();
@@ -2616,13 +2804,13 @@ describe("v1 write routes", () => {
     it("names the alternative when the backend has no atomic append yet", async () => {
       mockConvexQueries();
       convexMutationMock.mockRejectedValue(
-        new Error("Could not find public function for 'testSuites'")
+        new Error("Could not find public function for 'testSuites'"),
       );
       const res = await request(
         makeApp(),
         "POST",
         "/api/v1/projects/p1/eval-suites/suite_1/environments",
-        { environmentId: "env_b" }
+        { environmentId: "env_b" },
       );
       expect(res.status).toBe(400);
       const body = (await res.json()) as any;
@@ -2637,7 +2825,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run_1",
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
@@ -2695,7 +2883,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run_1",
       );
       expect(res.status).toBe(200);
       expect((await res.json()) as any).toMatchObject({
@@ -2747,7 +2935,7 @@ describe("v1 write routes", () => {
         const res = await request(
           makeApp(),
           "GET",
-          "/api/v1/projects/p1/eval-runs/run_1"
+          "/api/v1/projects/p1/eval-runs/run_1",
         );
         expect(res.status).toBe(200);
         return (await res.json()) as { importEligibility?: unknown };
@@ -2755,7 +2943,7 @@ describe("v1 write routes", () => {
 
       it("projects the eligibility, receipts and issues field by field", async () => {
         expect((await readRun(ELIGIBILITY)).importEligibility).toEqual(
-          ELIGIBILITY
+          ELIGIBILITY,
         );
       });
 
@@ -2812,12 +3000,15 @@ describe("v1 write routes", () => {
           "an issue carrying no code",
           { ...ELIGIBILITY, issues: [{ testCaseId: "case_2" }] },
         ],
-      ] as const)("drops the whole projection given %s", async (_l, payload) => {
-        // Not partially projected: a gate cannot tell a missing field from a
-        // satisfied one, and absence is already handled correctly downstream
-        // as "older deployment, behave as before".
-        expect("importEligibility" in (await readRun(payload))).toBe(false);
-      });
+      ] as const)(
+        "drops the whole projection given %s",
+        async (_l, payload) => {
+          // Not partially projected: a gate cannot tell a missing field from a
+          // satisfied one, and absence is already handled correctly downstream
+          // as "older deployment, behave as before".
+          expect("importEligibility" in (await readRun(payload))).toBe(false);
+        },
+      );
 
       it("drops the whole projection for a receipt missing who, when, why, or which case", async () => {
         const body = await readRun({
@@ -2843,7 +3034,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run_1",
       );
       expect(res.status).toBe(404);
       expect(((await res.json()) as { code?: string }).code).toBe("NOT_FOUND");
@@ -2851,12 +3042,12 @@ describe("v1 write routes", () => {
 
     it("404s when Convex reports the run as not visible", async () => {
       convexQueryMock.mockRejectedValueOnce(
-        new Error("Test suite run not found or unauthorized")
+        new Error("Test suite run not found or unauthorized"),
       );
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1"
+        "/api/v1/projects/p1/eval-runs/run_1",
       );
       expect(res.status).toBe(404);
     });
@@ -2891,7 +3082,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations?limit=1"
+        "/api/v1/projects/p1/eval-runs/run_1/iterations?limit=1",
       );
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -2919,7 +3110,7 @@ describe("v1 write routes", () => {
       const res = await request(
         makeApp(),
         "GET",
-        "/api/v1/projects/p1/eval-runs/run_1/iterations/iter_1/trace"
+        "/api/v1/projects/p1/eval-runs/run_1/iterations/iter_1/trace",
       );
       expect(res.status).toBe(404);
       expect(await res.json()).toMatchObject({
@@ -2933,7 +3124,7 @@ describe("v1 write routes", () => {
     it("forwards to Convex and returns { imported: true }", async () => {
       global.fetch = vi.fn(async (input: any) => {
         expect(String(input)).toBe(
-          "https://convex-http.example.com/web/oauth/import-tokens"
+          "https://convex-http.example.com/web/oauth/import-tokens",
         );
         return new Response(JSON.stringify({ expiresAt: 123 }), {
           status: 200,
@@ -2948,7 +3139,7 @@ describe("v1 write routes", () => {
         {
           serverUrl: "https://server.example.com/mcp",
           tokens: { access_token: "at", refresh_token: "rt" },
-        }
+        },
       );
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ imported: true, expiresAt: 123 });
@@ -2969,11 +3160,11 @@ describe("v1 write routes", () => {
         makeApp(),
         "POST",
         "/api/v1/projects/p1/servers/s1/oauth/import-tokens",
-        { serverUrl: "https://server.example.com/mcp" }
+        { serverUrl: "https://server.example.com/mcp" },
       );
       expect(res.status).toBe(400);
       expect(((await res.json()) as { code?: string }).code).toBe(
-        "VALIDATION_ERROR"
+        "VALIDATION_ERROR",
       );
     });
   });

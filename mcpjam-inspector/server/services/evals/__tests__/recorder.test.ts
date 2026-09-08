@@ -11,7 +11,9 @@ describe("startSuiteRunWithRecorder", () => {
     // a field nobody names here never reaches Convex — and an approval that
     // never arrives surfaces to the caller as the backend refusing a run they
     // did approve. Asserting the exact args is the only thing that catches it.
-    const mutation = vi.fn().mockResolvedValue({ runId: "run-1", testCases: [] });
+    const mutation = vi
+      .fn()
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
     const convexClient = { mutation } as any;
     const importApprovals = [
       { testCaseId: "tc-1", reason: "Reviewed against the upstream rubric." },
@@ -34,6 +36,111 @@ describe("startSuiteRunWithRecorder", () => {
     // Absent rather than `[]`: an empty array is a claim ("I approved
     // nothing"), and the backend reads the two differently.
     expect("importApprovals" in mutation.mock.calls[0][1]).toBe(false);
+  });
+
+  it("retries without the provenance fields when the backend does not know them", async () => {
+    // The two repos deploy independently, and Convex validators are EXACT. An
+    // inspector running ahead of the backend sends `launcher` on every CLI and
+    // MCP launch, so without this the whole launch fails — a cosmetic badge
+    // taking down somebody's CI job, which is the outcome the header transport
+    // was chosen to prevent in the first place.
+    const mutation = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new Error(
+          "ArgumentValidationError: Object contains extra field `launcher` that is not in the validator.",
+        ),
+      )
+      .mockResolvedValue({ runId: "run-1", testCases: [] });
+    const convexClient = { mutation } as any;
+
+    await startSuiteRunWithRecorder({
+      convexClient,
+      suiteId: "suite-1",
+      serverIds: ["alpha"],
+      launcher: { kind: "cli", client: "mcpjam-cli" },
+      ciMetadata: { provider: "github_actions", commitSha: "a".repeat(40) },
+    } as any);
+
+    // Filtered by name: the recorder issues other mutations after a launch,
+    // and counting all of them would pin something this test is not about.
+    const launches = mutation.mock.calls.filter(
+      (call: unknown[]) => call[0] === "testSuites:startTestSuiteRun",
+    );
+    expect(launches).toHaveLength(2);
+    // The first attempt carried both, because a launch that CAN say where it
+    // came from should.
+    expect(launches[0][1]).toMatchObject({
+      launcher: { kind: "cli" },
+      ciMetadata: { commitSha: "a".repeat(40) },
+    });
+    // The retry drops exactly those two and nothing else — a retry that also
+    // lost `suiteId` would "succeed" against the wrong suite.
+    expect("launcher" in launches[1][1]).toBe(false);
+    expect("ciMetadata" in launches[1][1]).toBe(false);
+    expect(launches[1][1]).toMatchObject({ suiteId: "suite-1" });
+  });
+
+  it("does NOT retry a value error that merely QUOTES the provenance fields", async () => {
+    // The trap this detection has to avoid. Convex echoes the arguments it
+    // received and the whole validator, so once the backend declares these
+    // columns, every rejection on a CI launch mentions `ciMetadata` somewhere
+    // — including a genuine value error inside it. Reading that as "the
+    // backend doesn't support this" would answer a bad commit sha by dropping
+    // the commit, and `eval gate --baseline-sha` resolves through it.
+    const mutation = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "ArgumentValidationError: Value does not match validator. Path: .ciMetadata.commitSha\n" +
+            'Object: {ciMetadata: {commitSha: 12345}, launcher: {kind: "cli"}}\n' +
+            "Validator: v.object({ciMetadata: v.optional(...), launcher: v.optional(...)})",
+        ),
+      );
+    const convexClient = { mutation } as any;
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: "suite-1",
+        serverIds: ["alpha"],
+        launcher: { kind: "cli" },
+        ciMetadata: { provider: "github_actions" },
+      } as any),
+    ).rejects.toThrow(/Value does not match validator/);
+    expect(
+      mutation.mock.calls.filter(
+        (call: unknown[]) => call[0] === "testSuites:startTestSuiteRun",
+      ),
+    ).toHaveLength(1);
+  });
+
+  it("does NOT retry a rejection that is not about the provenance fields", async () => {
+    // The retry is narrow on purpose. Swallowing an unrelated validation error
+    // and quietly re-sending would turn a bug report into a second failure with
+    // a worse message.
+    const mutation = vi
+      .fn()
+      .mockRejectedValue(
+        new Error(
+          "ArgumentValidationError: Object is missing the required field `suiteId`.",
+        ),
+      );
+    const convexClient = { mutation } as any;
+
+    await expect(
+      startSuiteRunWithRecorder({
+        convexClient,
+        suiteId: "suite-1",
+        serverIds: ["alpha"],
+        launcher: { kind: "cli" },
+      } as any),
+    ).rejects.toThrow(/suiteId/);
+    expect(
+      mutation.mock.calls.filter(
+        (call: unknown[]) => call[0] === "testSuites:startTestSuiteRun",
+      ),
+    ).toHaveLength(1);
   });
 
   it("forwards the benchmark parent id that licenses the hidden source", async () => {
@@ -190,12 +297,12 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         toolSnapshot: sanitizedToolSnapshot,
         toolSnapshotDebug: sanitizedToolSnapshotDebug,
-      })
+      }),
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" }
+      { runId: "run-1" },
     );
     expect(result).toEqual(
       expect.objectContaining({
@@ -233,7 +340,7 @@ describe("startSuiteRunWithRecorder", () => {
             servers: ["alpha"],
           },
         },
-      })
+      }),
     );
   });
 
@@ -306,7 +413,7 @@ describe("startSuiteRunWithRecorder", () => {
         expectedEnvironmentRevision: 4,
         expectedEnvironmentHostConfigId: "hc_1",
         expectedEnvironmentServerIds: ["ps_1", "ps_plugin"],
-      })
+      }),
     );
   });
 
@@ -344,7 +451,7 @@ describe("startSuiteRunWithRecorder", () => {
         expectedEnvironmentRevision: 4,
         expectedEnvironmentHostConfigId: "hc_1",
         expectedEnvironmentServerIds: ["ps_1"],
-      })
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: expect.stringMatching(/host or server group changed/i),
@@ -359,7 +466,7 @@ describe("startSuiteRunWithRecorder", () => {
     const mutationMock = vi
       .fn()
       .mockRejectedValueOnce(
-        new ConvexError({ code: "ENV_REVISION_CONFLICT" })
+        new ConvexError({ code: "ENV_REVISION_CONFLICT" }),
       );
 
     await expect(
@@ -369,7 +476,7 @@ describe("startSuiteRunWithRecorder", () => {
         serverIds: ["ps_1"],
         environmentId: "env-1",
         expectedEnvironmentHostConfigId: "hc_1",
-      })
+      }),
     ).rejects.toMatchObject({ status: 409 });
   });
 
@@ -385,7 +492,7 @@ describe("startSuiteRunWithRecorder", () => {
         code: "ENV_MODEL_REQUIRED",
         message: 'Environment "Prod" has no model to run.',
         details: { environmentId: "env-1", hostId: "h1" },
-      })
+      }),
     );
 
     await expect(
@@ -394,7 +501,7 @@ describe("startSuiteRunWithRecorder", () => {
         suiteId: "suite-1",
         serverIds: ["ps_1"],
         environmentId: "env-1",
-      })
+      }),
     ).rejects.toMatchObject({
       status: 409,
       message: 'Environment "Prod" has no model to run.',
@@ -433,20 +540,20 @@ describe("startSuiteRunWithRecorder", () => {
         convexClient: { mutation: mutationMock } as any,
         suiteId: "suite-1",
         serverIds: ["alpha"],
-      })
+      }),
     ).rejects.toThrow(
-      "Could not start eval because MCPJam failed to prepare the test attempts. Try again."
+      "Could not start eval because MCPJam failed to prepare the test attempts. Try again.",
     );
 
     expect(mutationMock).toHaveBeenNthCalledWith(
       2,
       "testSuites:precreateIterationsForRun",
-      { runId: "run-1" }
+      { runId: "run-1" },
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       3,
       "testSuites:markSetupPendingIterationsFailed",
-      { runId: "run-1", error: "validation exploded" }
+      { runId: "run-1", error: "validation exploded" },
     );
     expect(mutationMock).toHaveBeenNthCalledWith(
       4,
@@ -456,7 +563,7 @@ describe("startSuiteRunWithRecorder", () => {
         status: "failed",
         summary: undefined,
         notes: "Failed to prepare eval test attempts.",
-      }
+      },
     );
   });
 });

@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { openSettingsRow, renderSettingsSheet, baseSuite } from "./settings-sheet-harness";
+import {
+  openSettingsRow,
+  renderSettingsSheet,
+  baseSuite,
+} from "./settings-sheet-harness";
 
 /**
  * The settings sheet as a DRAFT (S1).
@@ -40,9 +44,8 @@ vi.mock("convex/react", () => ({
 // written against; a real read here would also need `useConvex` on the mock
 // above, which this file deliberately does not provide.
 vi.mock("@/hooks/use-suite-capabilities", async (importOriginal) => {
-  const actual = await importOriginal<
-    typeof import("@/hooks/use-suite-capabilities")
-  >();
+  const actual =
+    await importOriginal<typeof import("@/hooks/use-suite-capabilities")>();
   return {
     ...actual,
     useSuiteCapabilities: () => ({
@@ -381,5 +384,22 @@ describe("degrading and refusing", () => {
   it("a read-only suite offers no bar to save from", () => {
     renderSettingsSheet({ readOnlyConfig: true } as never);
     expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+  });
+
+  it("a CI-owned suite offers no bar either, and says why on its rows", () => {
+    // Distinct from `readOnlyConfig`: this suite is fully visible and fully
+    // runnable — its CONFIGURATION just lives in a repository, where the CLI's
+    // sync would delete whatever was saved here on the next run.
+    const { container } = renderSettingsSheet({ configLocked: true } as never);
+    expect(screen.queryByTestId("suite-settings-commit-bar")).toBeNull();
+
+    // And the destructive row explains itself rather than just going quiet.
+    // The reason names both remedies and NO permission: every project member
+    // holds `suite.delete` here, so "ask an admin" would send them after
+    // access that changes nothing.
+    openSettingsRow(container, "deleteSuite");
+    const copy = document.body.textContent ?? "";
+    expect(copy).toMatch(/Managed by CI/i);
+    expect(copy).not.toMatch(/don't have permission to change this/i);
   });
 });

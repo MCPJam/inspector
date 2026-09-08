@@ -94,6 +94,7 @@ import { useSuiteData, useRunDetailData } from "./use-suite-data";
 import { useSuiteCapabilities } from "@/hooks/use-suite-capabilities";
 import {
   CAPABILITY_REASON_COPY,
+  CI_OWNED_REASON_COPY,
   DEPLOYMENT_REASON_COPY,
   featureDisabledReason,
   PERMISSION_REASON_COPY,
@@ -353,6 +354,8 @@ export function SuiteIterationsView({
   canDeleteRuns = true,
   canDeleteRun,
   readOnlyConfig = false,
+  configLocked = false,
+  onDuplicateSuite,
   hideRunActions = false,
   casesSidebarHidden,
   onShowCasesSidebar,
@@ -424,6 +427,27 @@ export function SuiteIterationsView({
   canDeleteRun?: (run: EvalSuiteRun) => boolean;
   /** When true, hide suite editing and other destructive controls (e.g. desktop CI). */
   readOnlyConfig?: boolean;
+  /**
+   * The suite's CONFIGURATION is owned elsewhere — a suite file or SDK ingest —
+   * so every write to it is refused by the platform.
+   *
+   * DISTINCT from `readOnlyConfig`, which is a surface decision (the desktop CI
+   * tab renders a viewer) and also hides Run. This one keeps Run, Run all,
+   * replay and compare — a CI-owned suite you cannot run is broken, not locked
+   * — and disables only the controls whose writes would 409, each carrying
+   * {@link CI_OWNED_REASON_COPY} and a Duplicate escape hatch.
+   *
+   * Both may be set. `readOnlyConfig` is the stricter of the two and wins
+   * wherever they overlap.
+   */
+  configLocked?: boolean;
+  /**
+   * Duplicate this suite — the escape hatch out of {@link configLocked}.
+   *
+   * Optional: a surface with no duplicate action (the desktop CI tab) simply
+   * does not offer the CTA, rather than showing a button that does nothing.
+   */
+  onDuplicateSuite?: (suite: EvalSuite) => void;
   /** When true, suppress suite-level run/replay entry points in shared chrome. */
   hideRunActions?: boolean;
   casesSidebarHidden?: boolean;
@@ -484,6 +508,17 @@ export function SuiteIterationsView({
 }) {
   const appState = useSharedAppState();
   // Derive view state from route
+  // DELIBERATELY NOT gated on `configLocked`.
+  //
+  // The settings sheet stays open on a CI-owned suite, with every row disabled
+  // and carrying `CI_OWNED_REASON_COPY`. Hiding it would be the exact failure
+  // `capability-reasons.ts` was written to replace: a page that simply does not
+  // mention the thing you were told to configure looks identical whether the
+  // cause is a permission, a flag, or CI ownership — and only one of those has
+  // a remedy the reader can act on.
+  //
+  // The CASE editor is different and does degrade (see `viewMode` below): there
+  // the disabled state has nowhere to live, and a viewer is the honest form.
   const isEditMode = route.type === "suite-edit" && !readOnlyConfig;
   const selectedTestId =
     route.type === "test-detail" || route.type === "test-edit"
@@ -495,7 +530,14 @@ export function SuiteIterationsView({
       ? "run-detail"
       : route.type === "test-detail"
         ? "test-detail"
-        : route.type === "test-edit" && !readOnlyConfig
+        : // A CI-owned suite's case editor degrades to the VIEWER, exactly as
+          // a read-only surface's does. Routing is the only place that can do
+          // this: hiding the entry points still leaves `?view=test-edit`
+          // reachable by URL, by browser back, and by the agent bridge's own
+          // navigation — and an editor whose every save 409s is worse than a
+          // viewer. `configLocked` (the prop) rather than `ciOwned`, which
+          // folds in a capabilities read that happens further down.
+          route.type === "test-edit" && !readOnlyConfig && !configLocked
           ? "test-edit"
           : route.type === "test-edit"
             ? "test-detail"
@@ -1096,7 +1138,11 @@ export function SuiteIterationsView({
       return;
     }
     const iter = caseGroupsForSelectedRun.find((i) => i._id === iterationId);
-    if (readOnlyConfig) {
+    // A CI-owned suite navigates to the RUN detail like a read-only surface
+    // does, rather than into the case editor: `test-edit` degrades to a viewer
+    // there anyway, and sending someone to an editing route they cannot edit
+    // is a worse landing than the run they clicked from.
+    if (readOnlyConfig || configLocked) {
       navigation.toRunDetail(route.suiteId, route.runId, iterationId, {
         testCaseId: selectedRunTestCaseId ?? iter?.testCaseId ?? undefined,
       });
@@ -1189,23 +1235,73 @@ export function SuiteIterationsView({
   const computerEnvironmentRowVisible = capabilitiesReady
     ? Boolean(projectId)
     : computersEnabled && Boolean(projectId);
+  /**
+   * CI ownership is threaded FIRST, ahead of every feature gate and permission
+   * check, because it is the reason that survives fixing the others.
+   *
+   * A person shown "Not enabled for this organization" on a CI-owned suite
+   * would go and enable the flag, come back, and be refused anyway — the write
+   * is 409'd by the platform whatever their role or their flags say. Ownership
+   * is the true answer, so it is the one they get.
+   *
+   * Belt AND braces on purpose: `configLocked` comes from the parent's own
+   * predicate, `capabilities.ownership?.ciOwned` from the backend. An older
+   * backend sends no `ownership` block at all, and the predicate still locks
+   * the suite; a newer backend that starts locking something the client's
+   * mirror does not know about still disables the row.
+   */
+  const ciOwned =
+    configLocked ||
+    (capabilitiesReady && capabilities.ownership?.ciOwned === true);
+  const ciOwnedReason = ciOwned ? CI_OWNED_REASON_COPY : undefined;
+
   const computerEnvironmentDisabledReason = !capabilitiesReady
-    ? undefined
-    : (featureDisabledReason(capabilities.features?.computers) ??
+    ? ciOwnedReason
+    : (ciOwnedReason ??
+      featureDisabledReason(capabilities.features?.computers) ??
       (capabilities.permissions?.["suite.configure"] === false
         ? PERMISSION_REASON_COPY
         : undefined));
   const scheduleDisabledReason = !capabilitiesReady
-    ? undefined
-    : capabilities.features?.scheduledEvals?.enabled === false
-      ? DEPLOYMENT_REASON_COPY
-      : capabilities.permissions?.["suite.schedule"] === false
-        ? PERMISSION_REASON_COPY
-        : undefined;
+    ? ciOwnedReason
+    : (ciOwnedReason ??
+      (capabilities.features?.scheduledEvals?.enabled === false
+        ? DEPLOYMENT_REASON_COPY
+        : capabilities.permissions?.["suite.schedule"] === false
+          ? PERMISSION_REASON_COPY
+          : undefined));
   const deleteDisabledReason =
-    capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
+    ciOwnedReason ??
+    (capabilitiesReady && capabilities.permissions?.["suite.delete"] === false
       ? PERMISSION_REASON_COPY
-      : undefined;
+      : undefined);
+
+  /**
+   * Batch case deletion, withheld on a CI-owned suite.
+   *
+   * WITHHELD rather than disabled, unlike the settings rows above: the whole
+   * affordance is a selection gutter plus a header that only exists while rows
+   * are ticked, and there is nowhere in it for a sentence explaining why the
+   * button refuses. The suite header already carries that sentence, next to
+   * the Duplicate that acts on it.
+   *
+   * Suppressing the callback is what actually removes it — `TestCasesOverview`
+   * derives the entire gutter from `Boolean(onDeleteTestCasesBatch)` — and it
+   * removes it everywhere the prop travels, the cross-host dashboards included.
+   */
+  const batchDeleteTestCases = ciOwned ? undefined : onDeleteTestCasesBatch;
+
+  /**
+   * Case GENERATION is disabled and explained rather than withheld: unlike the
+   * batch gutter it is a single button with a tooltip, so the reason has
+   * somewhere to live — and "Generate" vanishing without a word is the failure
+   * mode `capability-reasons.ts` exists to prevent. `ciOwnedReason` goes FIRST,
+   * ahead of "configure suite servers": on a CI-owned suite configuring the
+   * servers would not unblock it either.
+   */
+  const canGenerateTestCasesHere = ciOwned ? false : canGenerateTestCases;
+  const generateTestCasesReason =
+    ciOwnedReason ?? generateTestCasesDisabledReason;
 
   const visibleSettingsGroups = useMemo(
     () =>
@@ -1488,12 +1584,12 @@ export function SuiteIterationsView({
       )}
       runTestCaseDisabledReason={evalRunsDisabledReason}
       connectedServerNames={connectedServerNames}
-      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+      onDeleteTestCasesBatch={batchDeleteTestCases}
       testCasesClickHint="Click a case row to open the test case. Click the last-run summary to jump straight to compare results for that run."
       userMap={userMap}
       onGenerateTestCases={onGenerateTestCases}
-      canGenerateTestCases={canGenerateTestCases}
-      generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+      canGenerateTestCases={canGenerateTestCasesHere}
+      generateTestCasesDisabledReason={generateTestCasesReason}
       isGeneratingTestCases={isGeneratingTestCases}
       onCreateTestCase={onCreateTestCase}
       onRecordTestCase={onRecordTestCase}
@@ -1638,6 +1734,8 @@ export function SuiteIterationsView({
             allIterations={allIterations}
             aggregate={aggregate}
             testCases={cases}
+            configLocked={ciOwned}
+            onDuplicateSuite={onDuplicateSuite}
             onSetupCi={onSetupCi}
             onOpenExportSuite={handleOpenSuiteExport}
             readOnlyConfig={readOnlyConfig}
@@ -1647,8 +1745,8 @@ export function SuiteIterationsView({
             onShowCasesSidebar={onShowCasesSidebar}
             onCreateTestCase={onCreateTestCase}
             onGenerateTestCases={onGenerateTestCases}
-            canGenerateTestCases={canGenerateTestCases}
-            generateTestCasesDisabledReason={generateTestCasesDisabledReason}
+            canGenerateTestCases={canGenerateTestCasesHere}
+            generateTestCasesDisabledReason={generateTestCasesReason}
             evalRunsDisabledReason={evalRunsDisabledReason}
             isGeneratingTestCases={isGeneratingTestCases}
             onRunTestCase={onRunTestCaseWithOverride}
@@ -1846,6 +1944,7 @@ export function SuiteIterationsView({
               >
                 <SuiteDetailOverview
                   suite={suite}
+                  configLocked={ciOwned}
                   cases={cases}
                   runs={runs}
                   runsLoading={runsLoading}
@@ -1855,10 +1954,8 @@ export function SuiteIterationsView({
                   onEditSuite={() => navigation.toSuiteEdit(suite._id)}
                   onEditCases={onCreateTestCase}
                   onGenerateTestCases={onGenerateTestCases}
-                  canGenerateTestCases={canGenerateTestCases}
-                  generateTestCasesDisabledReason={
-                    generateTestCasesDisabledReason
-                  }
+                  canGenerateTestCases={canGenerateTestCasesHere}
+                  generateTestCasesDisabledReason={generateTestCasesReason}
                   isGeneratingTestCases={isGeneratingTestCases}
                   onRunClick={handleRunClick}
                   onTestCaseClick={(testCaseId) =>
@@ -2031,7 +2128,7 @@ export function SuiteIterationsView({
                           iteration: iterationId,
                         })
                       }
-                      onDeleteTestCasesBatch={onDeleteTestCasesBatch}
+                      onDeleteTestCasesBatch={batchDeleteTestCases}
                       onRunTestCase={onRunTestCaseWithOverride}
                       quickRunIterationOverride={iterationOverride}
                       runningTestCaseId={runningTestCaseId}
@@ -2043,10 +2140,8 @@ export function SuiteIterationsView({
                       runTestCaseDisabledReason={evalRunsDisabledReason}
                       connectedServerNames={connectedServerNames}
                       onGenerateTestCases={onGenerateTestCases}
-                      canGenerateTestCases={canGenerateTestCases}
-                      generateTestCasesDisabledReason={
-                        generateTestCasesDisabledReason
-                      }
+                      canGenerateTestCases={canGenerateTestCasesHere}
+                      generateTestCasesDisabledReason={generateTestCasesReason}
                       isGeneratingTestCases={isGeneratingTestCases}
                       onCreateTestCase={onCreateTestCase}
                       onRecordTestCase={onRecordTestCase}
@@ -2225,7 +2320,10 @@ export function SuiteIterationsView({
                           </>
                         )}
                         {isVerdictPolicyV2 ? (
-                          <div data-setting-key="validity" className="space-y-2">
+                          <div
+                            data-setting-key="validity"
+                            className="space-y-2"
+                          >
                             <p className="text-xs font-medium text-foreground">
                               Validity
                             </p>
@@ -2253,18 +2351,14 @@ export function SuiteIterationsView({
                               value: next,
                             })
                           }
-                          capabilities={
-                            capabilitiesReady ? capabilities : null
-                          }
+                          capabilities={capabilitiesReady ? capabilities : null}
                           capabilitiesState={capabilitiesState}
                         />
                       </SuiteSettingsRow>
 
                       <div data-setting-key="passOrFail" className="contents">
                         <SuitePassOrFailSection
-                          capabilities={
-                            capabilitiesReady ? capabilities : null
-                          }
+                          capabilities={capabilitiesReady ? capabilities : null}
                           unavailableReason={
                             capabilitiesState === "unavailable"
                               ? CAPABILITY_REASON_COPY.flag_unavailable
@@ -2385,6 +2479,7 @@ export function SuiteIterationsView({
                       <SuiteSettingsRow
                         settingKey="environments"
                         data-subsection-id="environments"
+                        disabledReason={ciOwnedReason}
                         label={
                           composeCapable ? undefined : LEGACY_CLIENTS_ROW_LABEL
                         }
@@ -2399,6 +2494,11 @@ export function SuiteIterationsView({
                           containerVariant="panel"
                           className="bg-transparent py-0"
                           suite={suite}
+                          // This row APPLIES IMMEDIATELY — it does not wait for
+                          // the commit bar — so hiding the bar was not enough
+                          // to stop a client, server-group or image change on a
+                          // CI-owned suite from submitting.
+                          readOnly={ciOwned}
                           onUpdate={handleUpdateHostAttachments}
                           onUpdateServerAttachment={
                             handleServerAttachmentUpdate
@@ -2543,7 +2643,7 @@ export function SuiteIterationsView({
                   </section>
                 ) : null}
 
-                {readOnlyConfig ? null : (
+                {readOnlyConfig || ciOwned ? null : (
                   <SuiteSettingsCommitBar
                     changeCount={draftChanges.length}
                     conflictCount={draft.conflicts.length}

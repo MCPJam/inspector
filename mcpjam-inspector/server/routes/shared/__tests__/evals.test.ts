@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { MCPClientManager } from "@mcpjam/sdk";
 import {
   MAX_TOTAL_LLM_CALLS,
@@ -6,6 +6,7 @@ import {
   RunTestCaseRequestSchema,
   assertSuiteRunWithinCap,
   assertBareRerunCasesRunnable,
+  authorEvalSuite,
   buildCapEntriesFromPersistedCases,
   buildUpsertCaseKey,
   probeIdentityKey,
@@ -102,21 +103,21 @@ describe("RunEvalsRequestSchema environmentId boundary", () => {
 describe("RunEvalsRequestSchema runs cap", () => {
   it("accepts runs up to 10", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 10 })
+      buildSuiteRequest({ runs: 10 }),
     );
     expect(result.success).toBe(true);
   });
 
   it("rejects runs above 10 at the Zod layer", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 11 })
+      buildSuiteRequest({ runs: 11 }),
     );
     expect(result.success).toBe(false);
   });
 
   it("rejects non-positive runs", () => {
     const result = RunEvalsRequestSchema.safeParse(
-      buildSuiteRequest({ runs: 0 })
+      buildSuiteRequest({ runs: 0 }),
     );
     expect(result.success).toBe(false);
   });
@@ -124,22 +125,24 @@ describe("RunEvalsRequestSchema runs cap", () => {
   it("accepts iterationOverride between 1 and 10", () => {
     const base = buildSuiteRequest() as Record<string, unknown>;
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 1 }).success
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 1 })
+        .success,
     ).toBe(true);
     expect(
       RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 10 })
-        .success
+        .success,
     ).toBe(true);
   });
 
   it("rejects iterationOverride outside [1, 10]", () => {
     const base = buildSuiteRequest() as Record<string, unknown>;
     expect(
-      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 0 }).success
+      RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 0 })
+        .success,
     ).toBe(false);
     expect(
       RunEvalsRequestSchema.safeParse({ ...base, iterationOverride: 11 })
-        .success
+        .success,
     ).toBe(false);
   });
 
@@ -174,7 +177,9 @@ describe("RunEvalsRequestSchema runs cap", () => {
         {
           ...withoutSteps,
           query: "weather",
-          expectedToolCalls: [{ toolName: "get_weather", arguments: { q: "x" } }],
+          expectedToolCalls: [
+            { toolName: "get_weather", arguments: { q: "x" } },
+          ],
         },
       ],
     });
@@ -213,7 +218,7 @@ describe("RunEvalsRequestSchema sourceHash", () => {
     });
     expect(result.success).toBe(true);
     expect(result.success ? result.data.sourceHash : undefined).toBe(
-      "a".repeat(64)
+      "a".repeat(64),
     );
   });
 
@@ -222,13 +227,13 @@ describe("RunEvalsRequestSchema sourceHash", () => {
       RunEvalsRequestSchema.safeParse({
         ...buildSuiteRequest(),
         sourceHash: "A".repeat(64),
-      }).success
+      }).success,
     ).toBe(false);
     expect(
       RunEvalsRequestSchema.safeParse({
         ...buildSuiteRequest(),
         sourceHash: "a".repeat(63),
-      }).success
+      }).success,
     ).toBe(false);
   });
 });
@@ -271,7 +276,7 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
             },
           ],
         },
-      ])
+      ]),
     );
     expect(result.success).toBe(true);
   });
@@ -288,7 +293,7 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
           provider: "anthropic",
           caseType: "widget_probe",
         },
-      ])
+      ]),
     );
     expect(result.success).toBe(false);
   });
@@ -303,7 +308,7 @@ describe("RunEvalsRequestSchema widget_probe invariant", () => {
           query: "q",
           probeConfig,
         },
-      ])
+      ]),
     );
     expect(result.success).toBe(false);
   });
@@ -337,14 +342,14 @@ describe("RunTestCaseRequestSchema runs cap", () => {
 describe("assertSuiteRunWithinCap", () => {
   it("passes when total LLM calls is within the cap", () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 })
+      buildSuiteRequest({ testCount: 10, runs: 10 }),
     );
     expect(() => assertSuiteRunWithinCap(req)).not.toThrow();
   });
 
   it(`rejects when total exceeds ${MAX_TOTAL_LLM_CALLS}`, () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 })
+      buildSuiteRequest({ testCount: 10, runs: 10 }),
     );
     try {
       assertSuiteRunWithinCap(req, 4); // 10 × 10 × 4 = 400 > 300
@@ -359,7 +364,7 @@ describe("assertSuiteRunWithinCap", () => {
 
   it(`accepts exactly ${MAX_TOTAL_LLM_CALLS}`, () => {
     const req = RunEvalsRequestSchema.parse(
-      buildSuiteRequest({ testCount: 10, runs: 10 })
+      buildSuiteRequest({ testCount: 10, runs: 10 }),
     );
     expect(() => assertSuiteRunWithinCap(req, 3)).not.toThrow();
   });
@@ -416,7 +421,7 @@ describe("assertTestCaseRunWithinCap", () => {
     const req = RunTestCaseRequestSchema.parse(buildTestCaseRequest(10));
     // 10 iterations × 31 configs > 300
     expect(() => assertTestCaseRunWithinCap(req, 31)).toThrowError(
-      WebRouteError
+      WebRouteError,
     );
   });
 
@@ -448,7 +453,7 @@ describe("assertTestCaseRunWithinCap", () => {
     });
     // 10 × 2 = 20, well within cap — persisted 999 steps are ignored.
     expect(() =>
-      assertTestCaseRunWithinCap(req, 1, { modelStepCount: 999 })
+      assertTestCaseRunWithinCap(req, 1, { modelStepCount: 999 }),
     ).not.toThrow();
   });
 });
@@ -476,31 +481,31 @@ describe("buildUpsertCaseKey (probe/prompt dedupe identity)", () => {
 
   it("keeps the historical title+query key for prompt rows", () => {
     expect(buildUpsertCaseKey({ title: "Case A", query: "do the thing" })).toBe(
-      "Case A-do the thing"
+      "Case A-do the thing",
     );
   });
 
   it("merges the per-model fan-out rows of one prompt case", () => {
     expect(buildUpsertCaseKey({ title: "Case A", query: "q" })).toBe(
-      buildUpsertCaseKey({ title: "Case A", query: "q" })
+      buildUpsertCaseKey({ title: "Case A", query: "q" }),
     );
   });
 
   it("never collides a probe with a prompt row sharing title and empty query", () => {
     expect(buildUpsertCaseKey(probe())).not.toBe(
-      buildUpsertCaseKey({ title: "Render check", query: "" })
+      buildUpsertCaseKey({ title: "Render check", query: "" }),
     );
   });
 
   it("keeps same-titled probes of different tools distinct", () => {
     expect(buildUpsertCaseKey(probe({ toolName: "show_map" }))).not.toBe(
-      buildUpsertCaseKey(probe({ toolName: "show_weather" }))
+      buildUpsertCaseKey(probe({ toolName: "show_weather" })),
     );
   });
 
   it("keeps same-titled probes of different servers distinct", () => {
     expect(buildUpsertCaseKey(probe({ serverId: "srv-1" }))).not.toBe(
-      buildUpsertCaseKey(probe({ serverId: "srv-2" }))
+      buildUpsertCaseKey(probe({ serverId: "srv-2" })),
     );
   });
 
@@ -525,7 +530,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["p170sbx_convex_id"],
-      ["Excalidraw (App)"]
+      ["Excalidraw (App)"],
     );
     expect(map.get("p170sbx_convex_id")).toBe("Excalidraw (App)");
   });
@@ -534,10 +539,10 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const manager = makeManagerStub(["srv_1", "srv_2"]);
     expect(
       buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], undefined)
-        .size
+        .size,
     ).toBe(0);
     expect(
-      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], ["A"]).size
+      buildManagerKeyToDisplayNameMap(manager, ["srv_1", "srv_2"], ["A"]).size,
     ).toBe(0);
   });
 
@@ -546,7 +551,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["EXCALIDRAW"],
-      ["Excalidraw (App)"]
+      ["Excalidraw (App)"],
     );
     expect(map.get("Excalidraw")).toBe("Excalidraw (App)");
   });
@@ -556,7 +561,7 @@ describe("buildManagerKeyToDisplayNameMap", () => {
     const map = buildManagerKeyToDisplayNameMap(
       manager,
       ["srv_present", "srv_disconnected"],
-      ["Present", "Missing"]
+      ["Present", "Missing"],
     );
     expect(map.size).toBe(1);
     expect(map.get("srv_present")).toBe("Present");
@@ -579,7 +584,7 @@ describe("remapSnapshotServerIdsForAttachment", () => {
       new Map([
         ["manager-key-1", "Excalidraw (App)"],
         ["manager-key-2", "Notion"],
-      ])
+      ]),
     );
     expect(remapped.servers.map((s) => s.serverId)).toEqual([
       "Excalidraw (App)",
@@ -595,7 +600,7 @@ describe("remapSnapshotServerIdsForAttachment", () => {
   it("leaves unmapped servers untouched", () => {
     const remapped = remapSnapshotServerIdsForAttachment(
       snapshot,
-      new Map([["manager-key-1", "Excalidraw (App)"]])
+      new Map([["manager-key-1", "Excalidraw (App)"]]),
     );
     expect(remapped.servers.map((s) => s.serverId)).toEqual([
       "Excalidraw (App)",
@@ -621,8 +626,8 @@ describe("filterAndRemapReplayConfigs", () => {
           },
         ],
         ["srv_asana"],
-        ["asana"]
-      )
+        ["asana"],
+      ),
     ).toEqual([
       {
         serverId: "asana",
@@ -654,7 +659,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     expect(entries[0].steps).toHaveLength(2);
     // 2 models x 3 runs x 2 prompt steps = 12 LLM calls
     expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never)
+      assertSuiteRunWithinCap({ tests: entries } as never),
     ).not.toThrow();
   });
 
@@ -671,7 +676,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
           steps: [{ id: "t1", kind: "prompt", prompt: "one" }],
         },
       ],
-      { environmentBacked: true }
+      { environmentBacked: true },
     );
     expect(entries).toHaveLength(1);
     expect(entries[0].runs).toBe(2);
@@ -699,7 +704,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
       { id: "legacy-cap-prompt", kind: "prompt", prompt: "" },
     ]);
     expect(() => assertSuiteRunWithinCap({ tests: entries } as never)).toThrow(
-      WebRouteError
+      WebRouteError,
     );
   });
 
@@ -762,7 +767,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     expect(entries).toHaveLength(1);
     // No prompt step → zero model calls, so a high `runs` doesn't trip the cap.
     expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never)
+      assertSuiteRunWithinCap({ tests: entries } as never),
     ).not.toThrow();
   });
 
@@ -786,7 +791,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     expect(entries).toHaveLength(1);
     expect(entries[0].steps.some((s) => s.kind === "prompt")).toBe(false);
     expect(() =>
-      assertSuiteRunWithinCap({ tests: entries } as never)
+      assertSuiteRunWithinCap({ tests: entries } as never),
     ).not.toThrow();
   });
 
@@ -800,7 +805,7 @@ describe("buildCapEntriesFromPersistedCases (bare suite reruns)", () => {
     }));
     const entries = buildCapEntriesFromPersistedCases(cases);
     expect(() => assertSuiteRunWithinCap({ tests: entries } as never)).toThrow(
-      WebRouteError
+      WebRouteError,
     );
   });
 });
@@ -810,7 +815,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
     expect(() =>
       assertBareRerunCasesRunnable([
         { title: "A", models: [{ model: "m", provider: "p" }] },
-      ])
+      ]),
     ).not.toThrow();
   });
 
@@ -818,7 +823,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
     expect(() =>
       assertBareRerunCasesRunnable([
         { title: "Legacy", model: "m", provider: "p" },
-      ])
+      ]),
     ).not.toThrow();
   });
 
@@ -837,7 +842,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
             },
           ],
         },
-      ])
+      ]),
     ).not.toThrow();
   });
 
@@ -848,7 +853,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
 
   it("rejects a model-less prompt case (would be silently dropped)", () => {
     expect(() =>
-      assertBareRerunCasesRunnable([{ title: "Default-only", models: [] }])
+      assertBareRerunCasesRunnable([{ title: "Default-only", models: [] }]),
     ).toThrow(WebRouteError);
   });
 
@@ -875,7 +880,7 @@ describe("assertBareRerunCasesRunnable (bare suite reruns)", () => {
 
   it("labels an untitled offending case rather than dropping it from the message", () => {
     expect(() => assertBareRerunCasesRunnable([{ models: [] }])).toThrow(
-      /\(untitled\)/
+      /\(untitled\)/,
     );
   });
 });
@@ -894,7 +899,7 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
     const result = await fetchRunPinnedSkillsWithRetry(
       { query },
       "run_1",
-      noSleep
+      noSleep,
     );
     expect(result).toEqual([pin]);
   });
@@ -908,7 +913,7 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
     const result = await fetchRunPinnedSkillsWithRetry(
       { query },
       "run_1",
-      noSleep
+      noSleep,
     );
     expect(result).toBeUndefined();
     expect(calls).toBe(1);
@@ -927,7 +932,7 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
       "run_1",
       async (ms) => {
         delays.push(ms);
-      }
+      },
     );
     expect(result).toEqual([pin]);
     expect(calls).toBe(3);
@@ -941,7 +946,7 @@ describe("fetchRunPinnedSkillsWithRetry (strict pin fetch)", () => {
       throw new Error("convex down");
     };
     await expect(
-      fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep)
+      fetchRunPinnedSkillsWithRetry({ query }, "run_1", noSleep),
     ).rejects.toThrow(/pinned skills after 3 attempts/);
     expect(calls).toBe(3);
   });
@@ -962,21 +967,21 @@ describe("shouldSkipExecution", () => {
     // opposite treatments, so this keeps the behaviour that predates the
     // check: a crashed run can still be driven to completion by a retry.
     expect(shouldSkipExecution({ deduped: true, status: "running" })).toBe(
-      false
+      false,
     );
     expect(shouldSkipExecution({ deduped: true, status: "pending" })).toBe(
-      false
+      false,
     );
   });
 
   it("executes a fresh start, whatever its status says", () => {
     expect(shouldSkipExecution({ deduped: false, status: "running" })).toBe(
-      false
+      false,
     );
     // A fresh start reporting a terminal status is nonsense, but it must not
     // be read as licence to skip: `deduped` is the field that decides.
     expect(shouldSkipExecution({ deduped: false, status: "completed" })).toBe(
-      false
+      false,
     );
   });
 
@@ -985,5 +990,81 @@ describe("shouldSkipExecution", () => {
     // "replayed" — and unknown must never start refusing to run work.
     expect(shouldSkipExecution({})).toBe(false);
     expect(shouldSkipExecution({ status: "completed" })).toBe(false);
+  });
+});
+
+// ============================================================================
+// A PLAIN RERUN WRITES NOTHING TO THE SUITE.
+//
+// Every launch with a `suiteId` used to call `testSuites:updateTestSuite`, even
+// on a bare rerun where `name` and `description` were the values just read back
+// off the suite. That was a no-op write, and nobody noticed — until a suite can
+// be CI-owned, where `suite.edit` is refused and every rerun of a
+// suite-file-managed suite would fail on a write that changed nothing.
+//
+// The refusals that remain are the ones worth having: `refreshSnapshot`, and a
+// non-rerun inline-test launch. Both genuinely rewrite configuration the
+// repository owns — which is the drift the lock exists to stop.
+// ============================================================================
+
+describe("authorEvalSuite — the suite write on a rerun", () => {
+  function stubConvexClient() {
+    const mutation = vi.fn(async (name: string) => {
+      if (name === "testSuites:updateTestSuite") return null;
+      return null;
+    });
+    return { mutation, query: vi.fn(async () => null) };
+  }
+
+  function authorArgs(
+    convexClient: ReturnType<typeof stubConvexClient>,
+    overrides: Record<string, unknown>,
+  ) {
+    return {
+      convexClient: convexClient as never,
+      tests: [] as never,
+      resolvedServerIds: ["srv_1"],
+      persistedServerRefs: ["srv_1"],
+      serverNames: undefined,
+      projectId: "p_1",
+      suiteId: "suite_1",
+      suiteName: "Smoke",
+      suiteDescription: undefined,
+      passCriteria: undefined,
+      suiteRerun: true,
+      refreshSnapshot: undefined,
+      ...overrides,
+    } as Parameters<typeof authorEvalSuite>[0];
+  }
+
+  function updateCalls(convexClient: ReturnType<typeof stubConvexClient>) {
+    return convexClient.mutation.mock.calls.filter(
+      (call) => call[0] === "testSuites:updateTestSuite",
+    );
+  }
+
+  it("issues no updateTestSuite on a plain rerun", async () => {
+    const convexClient = stubConvexClient();
+    await authorEvalSuite(authorArgs(convexClient, {}));
+    expect(updateCalls(convexClient)).toHaveLength(0);
+  });
+
+  it("still writes when the caller asked to refresh the snapshot", async () => {
+    const convexClient = stubConvexClient();
+    await authorEvalSuite(authorArgs(convexClient, { refreshSnapshot: true }));
+    // Refreshing IS a configuration edit: it repins the suite's environment
+    // and host config. A CI-owned suite refusing it is the correct outcome,
+    // not a regression.
+    const calls = updateCalls(convexClient);
+    expect(calls).toHaveLength(1);
+    expect(calls[0][1]).toMatchObject({
+      refreshHostConfigFromEnvironment: true,
+    });
+  });
+
+  it("still writes on a non-rerun launch against an existing suite", async () => {
+    const convexClient = stubConvexClient();
+    await authorEvalSuite(authorArgs(convexClient, { suiteRerun: false }));
+    expect(updateCalls(convexClient)).toHaveLength(1);
   });
 });

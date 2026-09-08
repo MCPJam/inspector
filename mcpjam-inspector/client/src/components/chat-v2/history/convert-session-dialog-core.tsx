@@ -45,6 +45,7 @@ import {
 import { ServerAttachmentPicker } from "@/components/evals/server-attachment-picker";
 import { deriveSessionServerDisplay } from "./session-server-display";
 import { cn } from "@/lib/utils";
+import { isCiOwnedSuite } from "@/lib/evals/is-ci-owned-suite";
 
 /**
  * Source-agnostic identity of the session being promoted. `sessionId` is the
@@ -161,16 +162,16 @@ export function ConvertSessionDialogCore({
   });
   const knownServerNames = useMemo(
     () => (servers ?? []).map((s) => s.name),
-    [servers]
+    [servers],
   );
   const suitesOverview = useQuery(
     "testSuites:getTestSuitesOverview" as any,
     open && isUserReady && effectiveProjectId
       ? ({ projectId: effectiveProjectId } as any)
-      : "skip"
+      : "skip",
   ) as EvalSuiteOverviewEntry[] | undefined;
   const importChatSession = useAction(
-    "testSuites:importChatSessionToTestCase" as any
+    "testSuites:importChatSessionToTestCase" as any,
   );
 
   const [caseTitle, setCaseTitle] = useState("");
@@ -193,10 +194,10 @@ export function ConvertSessionDialogCore({
   // first standalone serverAttachment / `defaultHostId` (falling back to the
   // first project host), mirroring CreateSuiteDialog.
   const [serverAttachmentId, setServerAttachmentId] = useState<string | null>(
-    null
+    null,
   );
   const [hostAttachments, setHostAttachments] = useState<HostAttachmentDraft[]>(
-    []
+    [],
   );
 
   const sessionServerDisplay = useMemo(
@@ -212,24 +213,25 @@ export function ConvertSessionDialogCore({
       detail.usedServerIds,
       knownServerNames,
       serversById,
-    ]
+    ],
   );
   const sessionServerLabels = useMemo(
     () => sessionServerDisplay.items.map((item) => item.label),
-    [sessionServerDisplay.items]
+    [sessionServerDisplay.items],
   );
 
   const availableSuites = useMemo(
     () =>
-      (suitesOverview ?? []).filter((entry) => entry.suite.source !== "sdk"),
-    [suitesOverview]
+      // Same predicate the suite lock uses — see `isCiOwnedSuite`.
+      (suitesOverview ?? []).filter((entry) => !isCiOwnedSuite(entry.suite)),
+    [suitesOverview],
   );
 
   const selectedSuiteEntry = useMemo(
     () =>
       availableSuites.find((entry) => entry.suite._id === selectedSuiteId) ??
       null,
-    [availableSuites, selectedSuiteId]
+    [availableSuites, selectedSuiteId],
   );
   const selectedSuiteServerDisplay = useMemo(() => {
     if (!selectedSuiteEntry) {
@@ -238,7 +240,7 @@ export function ConvertSessionDialogCore({
 
     return deriveSessionServerDisplay({
       usedServerRefs: normalizeServerNames(
-        selectedSuiteEntry.suite.environment?.servers
+        selectedSuiteEntry.suite.environment?.servers,
       ),
       selectedServers: [],
       serversById,
@@ -253,8 +255,8 @@ export function ConvertSessionDialogCore({
 
     const suiteServerLabels = new Set(
       (selectedSuiteServerDisplay?.items ?? []).map((item) =>
-        item.label.toLowerCase()
-      )
+        item.label.toLowerCase(),
+      ),
     );
 
     return sessionServerDisplay.items
@@ -269,8 +271,8 @@ export function ConvertSessionDialogCore({
     sessionServerDisplay.source === "used"
       ? "Derived from stored tool activity in this session."
       : sessionServerDisplay.source === "selected"
-      ? "Falls back to this session's stored server selection."
-      : "Uses stored session metadata when server activity is available.";
+        ? "Falls back to this session's stored server selection."
+        : "Uses stored session metadata when server activity is available.";
 
   useEffect(() => {
     if (!open || !summary) {
@@ -353,7 +355,7 @@ export function ConvertSessionDialogCore({
     }
 
     setNewSuiteName(
-      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`)
+      buildServerBasedSuiteName(sessionServerLabels, `${summary.title} suite`),
     );
     suiteDefaultsAppliedForSessionId.current = summary.sessionId;
   }, [open, summary, detail.loading, sessionServerLabels]);
@@ -380,7 +382,13 @@ export function ConvertSessionDialogCore({
     !isSubmitting &&
     (destinationMode === "new"
       ? newSuiteName.trim().length > 0 && newSuiteRequirementsMet
-      : Boolean(selectedSuiteId) &&
+      : // The ENTRY, not the id. A suite can leave `availableSuites` while the
+        // dialog is open — a CI sync stamps it file-owned, or someone deletes
+        // it — and the id in state then names a destination that is no longer
+        // offered. `missingServers` is computed from the entry, so it goes
+        // quietly empty at the same moment, and the submit would sail past the
+        // server check straight into a backend refusal.
+        Boolean(selectedSuiteEntry) &&
         (missingServers.length === 0 || updateSuiteEnvironment));
 
   const requiresContentTransferAck =
@@ -436,8 +444,8 @@ export function ConvertSessionDialogCore({
       ) {
         toast.success(
           `Session promoted to a test case. Added ${added.join(
-            ", "
-          )} to the suite.`
+            ", ",
+          )} to the suite.`,
         );
       } else {
         toast.success("Session promoted to a test case");
@@ -517,7 +525,7 @@ export function ConvertSessionDialogCore({
                           "inline-flex items-center rounded-md border px-2 py-0.5 text-xs font-medium",
                           server.unresolved
                             ? "border-dashed border-border/50 bg-transparent font-mono text-muted-foreground"
-                            : "border-border/50 bg-muted/50 text-foreground"
+                            : "border-border/50 bg-muted/50 text-foreground",
                         )}
                       >
                         {server.label}
@@ -562,7 +570,7 @@ export function ConvertSessionDialogCore({
                   "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
                   destinationMode === "new"
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
                 )}
                 onClick={() => setDestinationMode("new")}
               >
@@ -576,7 +584,7 @@ export function ConvertSessionDialogCore({
                   "h-8 flex-1 rounded-md text-sm font-medium shadow-none",
                   destinationMode === "existing"
                     ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    : "text-muted-foreground hover:bg-transparent hover:text-foreground",
                 )}
                 onClick={() => setDestinationMode("existing")}
               >

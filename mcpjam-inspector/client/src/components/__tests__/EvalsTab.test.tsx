@@ -203,6 +203,7 @@ vi.mock("../evals/use-eval-handlers", () => ({
     handleRerun: mocks.handleRerun,
     handleCancelRun: mocks.handleCancelRun,
     handleDelete: vi.fn(),
+    handleDuplicateSuite: vi.fn(),
     handleDeleteRun: vi.fn(),
     directDeleteRun: vi.fn().mockResolvedValue(undefined),
     directDeleteTestCase: vi.fn().mockResolvedValue(undefined),
@@ -224,12 +225,16 @@ function makeSuiteEntry(
   suiteId: string,
   overrides?: {
     source?: "ui" | "sdk";
+    declaredSuiteId?: string;
     latestRun?: { _id: string; completedAt: number } | null;
   },
 ) {
   return {
     suite: {
       _id: suiteId,
+      ...(overrides?.declaredSuiteId
+        ? { declaredSuiteId: overrides.declaredSuiteId }
+        : {}),
       createdBy: "user-1",
       name: `Suite ${suiteId}`,
       description: "",
@@ -287,12 +292,12 @@ describe("EvalsTab", () => {
     mocks.useQuery.mockImplementation((name: unknown) =>
       name === "billing:getEvalIterationQuota"
         ? mocks.evalIterationQuota
-        : undefined
+        : undefined,
     );
     mocks.route.current = { type: "suite-overview", suiteId: "suite-a" };
     mocks.useEvalQueries.mockImplementation(
       ({ selectedSuiteId }: { selectedSuiteId: string | null }) =>
-        makeQueryState(selectedSuiteId)
+        makeQueryState(selectedSuiteId),
     );
   });
 
@@ -316,6 +321,42 @@ describe("EvalsTab", () => {
     });
   });
 
+  /** Same rule as `EvaluateTab`: locked for editing here, still runnable. */
+  describe("CI-owned suites", () => {
+    function renderWithSuite(overrides: {
+      source?: "ui" | "sdk";
+      declaredSuiteId?: string;
+    }) {
+      mocks.useEvalQueries.mockImplementation(() => {
+        const entry = makeSuiteEntry(["server-a"], "suite-a", overrides);
+        return {
+          ...makeQueryState("suite-a"),
+          suiteOverview: [entry],
+          sortedSuites: [entry],
+          selectedSuiteEntry: entry,
+          selectedSuite: entry.suite,
+        };
+      });
+      render(<EvalsTab projectId="ws-1" />);
+      return mocks.suiteIterationsView.mock.calls.at(-1)?.[0];
+    }
+
+    it("locks a file-declared suite and offers the escape hatch", () => {
+      const props = renderWithSuite({ declaredSuiteId: "s_checkout" });
+      expect(props?.configLocked).toBe(true);
+      expect(props?.readOnlyConfig).toBeFalsy();
+      expect(typeof props?.onDuplicateSuite).toBe("function");
+    });
+
+    it("locks a suite SDK ingest authored", () => {
+      expect(renderWithSuite({ source: "sdk" })?.configLocked).toBe(true);
+    });
+
+    it("leaves an app-authored suite editable", () => {
+      expect(renderWithSuite({ source: "ui" })?.configLocked).toBe(false);
+    });
+  });
+
   it("redirects the bare eval list route into the most recent suite", async () => {
     mocks.route.current = { type: "list" };
     render(<EvalsTab projectId="ws-1" />);
@@ -323,7 +364,7 @@ describe("EvalsTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "suite-overview", suiteId: "suite-a" },
-        { replace: true }
+        { replace: true },
       );
     });
     expect(screen.queryByTestId("suite-sidebar")).toBeNull();
@@ -345,7 +386,7 @@ describe("EvalsTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "suite-overview", suiteId: "suite-b" },
-        { replace: true }
+        { replace: true },
       );
     });
   });
@@ -370,7 +411,7 @@ describe("EvalsTab", () => {
               : undefined,
           suiteRuns: selectedSuiteId === "suite-sdk" ? [] : undefined,
         };
-      }
+      },
     );
 
     render(<EvalsTab projectId="ws-1" />);
@@ -431,7 +472,7 @@ describe("EvalsTab", () => {
     await waitFor(() => {
       expect(mocks.navigatePlaygroundEvalsRoute).toHaveBeenCalledWith(
         { type: "list" },
-        { replace: true }
+        { replace: true },
       );
     });
   });
@@ -449,7 +490,7 @@ describe("EvalsTab", () => {
     expect(screen.queryByText(/eval iterations/i)).not.toBeInTheDocument();
     expect(mocks.suiteIterationsView.mock.calls.at(-1)?.[0]).toMatchObject({
       evalRunsDisabledReason: expect.stringMatching(
-        /^Eval iteration limit reached\. Resets /
+        /^Eval iteration limit reached\. Resets /,
       ),
     });
   });
@@ -461,7 +502,7 @@ describe("EvalsTab", () => {
 
     expect(mocks.useQuery).toHaveBeenCalledWith(
       "billing:getEvalIterationQuota",
-      { organizationId: "org-1" }
+      { organizationId: "org-1" },
     );
   });
 
@@ -472,7 +513,7 @@ describe("EvalsTab", () => {
     try {
       mocks.useEvalQueries.mockImplementation(() => {
         throw new Error(
-          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error"
+          "[CONVEX Q(testSuites:getTestSuitesOverview)] [Request ID: test] Server Error",
         );
       });
 
@@ -480,7 +521,7 @@ describe("EvalsTab", () => {
 
       expect(screen.getByText("Could not load Testing")).toBeInTheDocument();
       expect(
-        screen.getByRole("button", { name: "Try again" })
+        screen.getByRole("button", { name: "Try again" }),
       ).toBeInTheDocument();
       expect(screen.queryByTestId("suite-sidebar")).toBeNull();
     } finally {
@@ -539,8 +580,7 @@ describe("EvalsTab", () => {
         status: "error",
         error: { code: "execution_failed" },
       });
-      const message =
-        response.status === "error" ? response.error.message : "";
+      const message = response.status === "error" ? response.error.message : "";
       expect(message).toMatch(/Eval iteration limit reached/);
       expect(message).toMatch(/25\/25 eval iterations used/);
       // The raw un-gated run path must not have been touched.
@@ -607,9 +647,9 @@ describe("EvalsTab", () => {
       );
       expect(mocks.confirmDelete).toHaveBeenCalledTimes(1);
       // Staged before committed, and the staging dialog is closed after.
-      expect(
-        mocks.setSuiteToDelete.mock.invocationCallOrder[0],
-      ).toBeLessThan(mocks.confirmDelete.mock.invocationCallOrder[0]);
+      expect(mocks.setSuiteToDelete.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.confirmDelete.mock.invocationCallOrder[0],
+      );
       expect(mocks.setSuiteToDelete).toHaveBeenLastCalledWith(null);
     });
 

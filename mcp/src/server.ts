@@ -49,6 +49,25 @@ const SERVER_INSTRUCTIONS = [
 ].join("\n");
 
 /**
+ * The calling agent's user-agent, trimmed and capped, or `undefined`.
+ *
+ * 128 chars is generous for a real product token and short enough that a
+ * client sending its whole browser UA string does not turn a table cell into a
+ * paragraph. Absent stays absent: an empty string would render as a named
+ * client with no name.
+ */
+const MAX_CALLING_AGENT_CHARS = 128;
+
+function normalizeCallingAgent(
+  value: string | null | undefined
+): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return undefined;
+  return trimmed.slice(0, MAX_CALLING_AGENT_CHARS);
+}
+
+/**
  * Everything a platform tool needs from the request it is executing under.
  * Replaces the `McpJamMcpServer` Durable Object instance the tools used to
  * receive: statelessly there is no long-lived object to hang this off, just a
@@ -58,6 +77,20 @@ export interface PlatformToolContext {
   /** The bearer to authenticate Platform API calls with (see `getBearerToken`). */
   getBearerToken(): Promise<string | undefined>;
   runtimeEnv: { PLATFORM_API_URL: string; MCPJAM_APP_ORIGIN: string };
+  /**
+   * WHICH AGENT is driving this request, for the run's declared launcher.
+   *
+   * The inbound `user-agent`, not `initialize`'s `clientInfo`: this worker
+   * builds a fresh `McpServer` per HTTP request (see `buildServer`), so there
+   * is no session in which an `initialize` handshake could have been recorded —
+   * `clientInfo` is simply unavailable by the time a tool runs. The UA is what
+   * the request actually carries.
+   *
+   * Absent when the caller sent none. Descriptive only: it is a display string
+   * on a self-reported label, never an authorization input, and the platform
+   * caps it before storing.
+   */
+  callingAgent?: string;
 }
 
 // Re-mint a minted guest token this far before its expiry. A guest token is
@@ -171,12 +204,20 @@ function buildServer(env: Env, ctx: McpRequestContext): McpServer {
     jsonSchemaValidator: new CfWorkerJsonSchemaValidator(),
   });
 
+  // Read off the same `requestInfo` headers the client IP comes from, and
+  // trimmed to a display length here rather than at the call site so every
+  // consumer sees one value.
+  const callingAgent = normalizeCallingAgent(
+    ctx.requestInfo?.headers.get("user-agent")
+  );
+
   const toolContext: PlatformToolContext = {
     getBearerToken: () => getBearerToken(env, verifiedToken, clientIp),
     runtimeEnv: {
       PLATFORM_API_URL: requirePlatformApiUrl(env),
       MCPJAM_APP_ORIGIN: resolveAppOrigin(env),
     },
+    ...(callingAgent ? { callingAgent } : {}),
   };
 
   const registrar = createSessionToolRegistrar(server);

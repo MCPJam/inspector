@@ -80,6 +80,10 @@ import type {
   EvalSuiteOverviewEntry,
   EvalSuiteRun,
 } from "./evals/types";
+import {
+  CI_OWNED_REASON_COPY,
+  isCiOwnedSuite,
+} from "@/lib/evals/is-ci-owned-suite";
 
 /** Cap the agent snapshot's suite list — state overview, not a data dump. */
 const AGENT_SNAPSHOT_MAX_SUITES = 30;
@@ -88,7 +92,7 @@ interface EvalsTabProps {
   projectId?: string | null;
   onContinueInChat?: (handoff: Omit<EvalChatHandoff, "id">) => void;
   ensureServersReady?: (
-    serverNames: string[]
+    serverNames: string[],
   ) => Promise<EnsureServersReadyResult>;
   handleConnect?: (config: ServerFormData) => void;
 }
@@ -174,7 +178,7 @@ function EvalsTabContent({
   });
   const evalRunsDisabledReason = useMemo(
     () => getEvalIterationQuotaDisabledReason(evalIterationQuota),
-    [evalIterationQuota]
+    [evalIterationQuota],
   );
   const { servers: projectServers = [] } = useProjectServers({
     isAuthenticated,
@@ -183,14 +187,14 @@ function EvalsTabContent({
   const mutations = useEvalMutations({ isDirectGuest });
   const convex = useConvex();
   const createServerAttachmentMutation = useMutation(
-    "serverAttachments:createServerAttachment" as any
+    "serverAttachments:createServerAttachment" as any,
   ) as unknown as (args: {
     projectId: string;
     name: string;
     serverIds: string[];
   }) => Promise<{ _id: string }>;
   const setSuiteEnvironments = useMutation(
-    "testSuites:setSuiteEnvironments" as any
+    "testSuites:setSuiteEnvironments" as any,
   ) as unknown as (args: {
     suiteId: string;
     environmentIds: string[] | null;
@@ -234,9 +238,12 @@ function EvalsTabContent({
   const latestRunBySuiteId = useMemo(
     () =>
       new Map(
-        visibleSuites.map((entry) => [entry.suite._id, entry.latestRun ?? null])
+        visibleSuites.map((entry) => [
+          entry.suite._id,
+          entry.latestRun ?? null,
+        ]),
       ),
-    [visibleSuites]
+    [visibleSuites],
   );
 
   const handlers = useEvalHandlers({
@@ -291,7 +298,7 @@ function EvalsTabContent({
       }
       return handlers.handleRerun(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const handleRunTestCaseWithQuota = useCallback(
@@ -301,7 +308,7 @@ function EvalsTabContent({
       }
       return handlers.handleRunTestCase(...args);
     },
-    [guardEvalIterationQuota, handlers]
+    [guardEvalIterationQuota, handlers],
   );
 
   const queries = useEvalQueries({
@@ -324,12 +331,12 @@ function EvalsTabContent({
     return aggregateSuite(
       selectedSuite,
       suiteDetails.testCases,
-      activeIterations
+      activeIterations,
     );
   }, [selectedSuite, suiteDetails, activeIterations]);
   const playgroundNavigation = useMemo(
     () => createPlaygroundSuiteNavigation(),
-    []
+    [],
   );
 
   useEffect(() => {
@@ -364,11 +371,14 @@ function EvalsTabContent({
     if (overviewQueries.isOverviewLoading) {
       return;
     }
-    const mostRecent = sortSuiteOverviewEntries(visibleSuites, "recently_run")[0];
+    const mostRecent = sortSuiteOverviewEntries(
+      visibleSuites,
+      "recently_run",
+    )[0];
     if (mostRecent) {
       navigatePlaygroundEvalsRoute(
         { type: "suite-overview", suiteId: mostRecent.suite._id },
-        { replace: true }
+        { replace: true },
       );
     }
   }, [route.type, overviewQueries.isOverviewLoading, visibleSuites]);
@@ -414,7 +424,7 @@ function EvalsTabContent({
     const match = visibleSuites.find(
       (entry) =>
         isQuickstartSuite(entry.suite) ||
-        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME
+        entry.suite.name === EXCALIDRAW_QUICKSTART_SUITE_NAME,
     );
     return match?.suite._id ?? null;
   }, [visibleSuites]);
@@ -505,8 +515,8 @@ function EvalsTabContent({
             toast.error(
               getBillingErrorMessage(
                 error,
-                "Suite created, but attaching its environments failed"
-              )
+                "Suite created, but attaching its environments failed",
+              ),
             );
           }
         }
@@ -521,7 +531,7 @@ function EvalsTabContent({
         throw error;
       }
     },
-    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments]
+    [mutations.createTestSuiteMutation, projectId, setSuiteEnvironments],
   );
 
   const handleSelectSuite = useCallback((suiteId: string) => {
@@ -573,7 +583,7 @@ function EvalsTabContent({
         ...(generationOptions ? { generationOptions } : {}),
       });
     },
-    [handlers]
+    [handlers],
   );
 
   const handleGenerateMore = useCallback(async () => {
@@ -594,7 +604,7 @@ function EvalsTabContent({
     }
 
     const missingServers = suiteServers.filter(
-      (serverName) => !connectedServerNames.has(serverName)
+      (serverName) => !connectedServerNames.has(serverName),
     );
     if (missingServers.length > 0) {
       if (ensureServersReady) {
@@ -607,7 +617,7 @@ function EvalsTabContent({
       return {
         canGenerate: false,
         disabledReason: `Connect ${missingServers.join(
-          ", "
+          ", ",
         )} to generate cases for this suite.`,
       };
     }
@@ -657,6 +667,30 @@ function EvalsTabContent({
   // Exact (case-insensitive) matches only against the loaded overview: the
   // suite id, the stored name, or the switcher's display name (timestamp
   // suffix stripped). Unknown or ambiguous → invalid_request, never a guess.
+  /**
+   * Refuse an agent command that would write a CI-owned suite's configuration.
+   *
+   * The platform already refuses these writes, so nothing gets through either
+   * way — but "refused" and "refused for THIS reason" are different answers,
+   * and the agent only ever saw the first. `generateEvalTests` returned
+   * `generation_started` and let the failure land in a toast the agent cannot
+   * read; `deleteEvalSuite` reported "check for a backend or authorization
+   * error", which is precisely the misdirection this whole change exists to
+   * remove — it is not an authorization problem, and no amount of access will
+   * fix it.
+   *
+   * So the agent gets the same sentence the human gets, before anything runs.
+   * Only the CONFIGURATION commands guard: `runEvalSuite` and `cancelEvalRun`
+   * are deliberately untouched, because running a CI-owned suite is allowed.
+   */
+  const refuseIfCiOwned = (suite: EvalSuite, attempted: string): void => {
+    if (!isCiOwnedSuite(suite)) return;
+    throw createInspectorCommandClientError(
+      "invalid_request",
+      `Suite "${suiteDisplayName(suite)}" is managed by CI — ${attempted} is refused. ${CI_OWNED_REASON_COPY}.`,
+    );
+  };
+
   const resolveSuiteEntry = (raw: unknown): EvalSuiteOverviewEntry => {
     if (typeof raw !== "string" || raw.trim().length === 0) {
       throw createInspectorCommandClientError(
@@ -717,7 +751,7 @@ function EvalsTabContent({
     // The runs list displays formatRunId's shortened form; accept it when
     // it identifies exactly one visible run.
     const short = [...runsById.values()].filter(
-      (run) => formatRunId(run._id) === wanted
+      (run) => formatRunId(run._id) === wanted,
     );
     if (short.length === 1) {
       return short[0];
@@ -812,10 +846,17 @@ function EvalsTabContent({
         requireAgentOperable();
         const { payload } = command as GenerateEvalTestsInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite);
+        // BEFORE the servers check. On a CI-owned suite, "attach a client in
+        // the suite header" is advice the reader cannot take — attaching one is
+        // itself a configuration write the platform refuses — so leading with
+        // it would send an agent down a path that dead-ends twice.
+        refuseIfCiOwned(entry.suite, "generating cases");
         if (getEffectiveSuiteServers(entry.suite).length === 0) {
           throw createInspectorCommandClientError(
             "invalid_request",
-            `Suite "${suiteDisplayName(entry.suite)}" has no servers attached — attach a client in the suite header before generating cases.`,
+            `Suite "${suiteDisplayName(
+              entry.suite,
+            )}" has no servers attached — attach a client in the suite header before generating cases.`,
           );
         }
         const generateSuiteId = entry.suite._id;
@@ -848,6 +889,7 @@ function EvalsTabContent({
         requireAgentOperable();
         const { payload } = command as DeleteEvalSuiteInspectorCommand;
         const entry = resolveSuiteEntry(payload.suite);
+        refuseIfCiOwned(entry.suite, "deleting it");
         if (latestHandlersRef.current.deletingSuiteId) {
           throw createInspectorCommandClientError(
             "execution_failed",
@@ -868,7 +910,9 @@ function EvalsTabContent({
         if (!deleted) {
           throw createInspectorCommandClientError(
             "execution_failed",
-            `Deleting suite "${suiteDisplayName(entry.suite)}" failed — it is still present. Check for a backend or authorization error.`,
+            `Deleting suite "${suiteDisplayName(
+              entry.suite,
+            )}" failed — it is still present. Check for a backend or authorization error.`,
           );
         }
         return {
@@ -889,7 +933,8 @@ function EvalsTabContent({
       }
       const currentRun =
         route.type === "run-detail"
-          ? runsForSelectedSuite.find((run) => run._id === route.runId) ?? null
+          ? (runsForSelectedSuite.find((run) => run._id === route.runId) ??
+            null)
           : null;
       return {
         view: route.type,
@@ -947,16 +992,16 @@ function EvalsTabContent({
         testCaseIds.map(async (id) => {
           await directDeleteTestCase(id);
           return id;
-        })
+        }),
       );
       const deletedIds = new Set(
         settledDeletes.flatMap((result) =>
-          result.status === "fulfilled" ? [result.value] : []
-        )
+          result.status === "fulfilled" ? [result.value] : [],
+        ),
       );
       const failedDeletes = settledDeletes.filter(
         (result): result is PromiseRejectedResult =>
-          result.status === "rejected"
+          result.status === "rejected",
       );
 
       if (failedDeletes.length > 0) {
@@ -964,7 +1009,7 @@ function EvalsTabContent({
         toast.error(
           `Failed to delete ${failedDeletes.length} test case${
             failedDeletes.length === 1 ? "" : "s"
-          }.`
+          }.`,
         );
       }
 
@@ -975,11 +1020,11 @@ function EvalsTabContent({
             suiteId: selectedSuiteId,
             view: "test-cases",
           },
-          { replace: true }
+          { replace: true },
         );
       }
     },
-    [directDeleteTestCase, selectedSuiteId, selectedTestId]
+    [directDeleteTestCase, selectedSuiteId, selectedTestId],
   );
 
   const hasDetailRoute =
@@ -1145,6 +1190,10 @@ function EvalsTabContent({
           isDirectGuest={isDirectGuest}
           ensureServersReady={ensureServersReady}
           suite={selectedSuite}
+          // See `EvaluateTab`: a suite configured by a repository is locked for
+          // editing here and duplicable, but stays runnable.
+          configLocked={isCiOwnedSuite(selectedSuite)}
+          onDuplicateSuite={handlers.handleDuplicateSuite}
           cases={suiteDetails?.testCases ?? []}
           iterations={activeIterations}
           allIterations={sortedIterations}
@@ -1194,7 +1243,7 @@ function EvalsTabContent({
                 {
                   location: "test_cases_overview",
                   iterationOverride: opts?.iterationOverride,
-                }
+                },
               );
               const firstIterationId =
                 data?.iteration?._id ??
@@ -1207,7 +1256,7 @@ function EvalsTabContent({
                   {
                     openCompare: true,
                     iteration: firstIterationId,
-                  }
+                  },
                 );
               }
             })();

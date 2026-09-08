@@ -179,6 +179,110 @@ export interface PlatformApiClientOptions {
    * credential or the dedupe key through this door, whatever it passes.
    */
   extraHeaders?: Record<string, string>;
+  /**
+   * What this HOST PROCESS is — the declared half of run origin, sent as
+   * `x-mcpjam-launcher` on eval-run launches only.
+   *
+   * Set at CONSTRUCTION, deliberately. `source` is stamped by the server, so
+   * every CLI, Action and MCP launch is honestly `api` and the Runs table can
+   * say nothing more useful than that. What fills the gap is a label the
+   * process that OWNS the client supplies once — the CLI naming itself, the
+   * hosted MCP worker naming the agent that called it — rather than a
+   * per-operation parameter that would end up on an MCP tool's input schema
+   * where a model could write it.
+   *
+   * SELF-REPORTED and restricted to the three origins the server cannot see
+   * for itself. It is a display hint; the verified half is minted from the
+   * credential and reported back on the run as `attribution`.
+   */
+  launcher?: PlatformLauncher;
+  /**
+   * The CI job this process is running inside, sent as `x-mcpjam-ci` on eval-run
+   * launches only. `detectCiMetadata()` fills it from the environment.
+   *
+   * It becomes the run's `ciMetadata`, which is what makes the run findable by
+   * commit sha — the index `--baseline-sha` resolves through. Before this, only
+   * a run REPORTED by the SDK carried one, so a suite evaluated by the CLI
+   * inside Actions had no baseline at all.
+   */
+  ci?: PlatformCiMetadata;
+  /**
+   * The suite file this process syncs, if it is one. See
+   * {@link PlatformFileSync} for why this lives here and not on an operation.
+   */
+  fileSync?: PlatformFileSync;
+}
+
+/** The three origins a client may declare. See `launcher` above. */
+export type PlatformLauncherKind = "cli" | "mcp" | "github_action";
+
+export interface PlatformLauncher {
+  kind: PlatformLauncherKind;
+  /** This client's own name — `mcpjam-cli`, or a calling agent's user-agent. */
+  client?: string;
+  version?: string;
+}
+
+export interface PlatformCiMetadata {
+  provider?: string;
+  pipelineId?: string;
+  jobId?: string;
+  runUrl?: string;
+  branch?: string;
+  commitSha?: string;
+  /** GitHub-flavoured aliases the server maps onto `pipelineId` / `jobId`. */
+  runId?: string;
+  job?: string;
+}
+
+/**
+ * The suite FILE this process is the sync for.
+ *
+ * A client-construction option rather than an operation input, and that is the
+ * whole point. `declaredSuiteId` exempts a write from the CI-owned suite lock,
+ * and every `PlatformOperation` input is published verbatim as an MCP tool
+ * input — so a field there is one a model can assert about itself. The same
+ * argument that put `launcher` here puts this here: the PROCESS knows whether
+ * it is a file sync; the caller of a tool does not get to claim it.
+ *
+ * Set it with {@link PlatformApiClient.withFileSync} on the client the file
+ * sync uses, and leave it unset everywhere else.
+ */
+export interface PlatformFileSync {
+  declaredSuiteId: string;
+}
+
+/**
+ * Header names for the two launch-context fields.
+ *
+ * HEADERS, not body fields, and that is load-bearing: both `/v1` eval-run
+ * bodies are `.strict()`, so a new body field is a 400 on any deployment that
+ * predates it — self-hosted and staging included — while an unknown header is
+ * ignored everywhere. A cosmetic label must never be able to fail a launch.
+ */
+export const PLATFORM_LAUNCH_HEADERS = {
+  launcher: "x-mcpjam-launcher",
+  ci: "x-mcpjam-ci",
+} as const;
+
+/**
+ * Compact JSON for a launch-context header, or `undefined` when there is
+ * nothing worth sending.
+ *
+ * `undefined` entries are dropped rather than serialized as `null`: the server
+ * reads absence as absence, and a header full of nulls would claim the process
+ * looked and found nothing when it never looked. An object that empties out
+ * this way produces no header at all.
+ */
+function encodeLaunchHeader(
+  value: PlatformLauncher | PlatformCiMetadata | undefined
+): string | undefined {
+  if (!value) return undefined;
+  const entries = Object.entries(value as Record<string, unknown>).filter(
+    ([, v]) => v !== undefined && v !== null && v !== ""
+  );
+  if (entries.length === 0) return undefined;
+  return JSON.stringify(Object.fromEntries(entries));
 }
 
 const DEFAULT_TIMEOUT_MS = 30_000;
@@ -198,6 +302,16 @@ type RequestOptions = {
   /** Stable retry key forwarded to write routes. */
   idempotencyKey?: string;
 };
+
+/**
+ * Internal request flag: emit the launch-context headers on this call.
+ *
+ * Not part of `RequestOptions` — a caller has no business turning these on for
+ * an arbitrary request. The two launch methods set it; nothing else does, so
+ * `getMe` and `listEvalSuites` do not start announcing a CI job to the
+ * platform for no reason.
+ */
+type InternalRequestOptions = RequestOptions & { launchContext?: boolean };
 
 type ServerScope = {
   projectId: string;
@@ -258,9 +372,19 @@ export class PlatformApiClient {
   private readonly fetchFn: typeof fetch;
   private readonly timeoutMs: number;
   private readonly userAgent?: string;
+  /** Pre-encoded `x-mcpjam-launcher`, or absent when nothing was declared. */
+  private readonly launcherHeader?: string;
+  /** Pre-encoded `x-mcpjam-ci`, or absent when nothing was detected. */
+  private readonly ciHeader?: string;
   private readonly extraHeaders?: Record<string, string>;
+  /** The suite file this client syncs, if any. See {@link PlatformFileSync}. */
+  private readonly fileSync?: PlatformFileSync;
+  /** Kept so {@link withFileSync} can clone without re-deriving every field. */
+  private readonly options: PlatformApiClientOptions;
 
   constructor(options: PlatformApiClientOptions) {
+    this.options = options;
+    this.fileSync = options.fileSync;
     this.baseUrl = stripTrailingSlashes(
       options.baseUrl ?? DEFAULT_PLATFORM_API_BASE_URL
     );
@@ -271,6 +395,13 @@ export class PlatformApiClient {
     this.fetchFn = options.fetch ?? fetch.bind(globalThis);
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.userAgent = options.userAgent;
+    // Serialized ONCE, at construction, beside `userAgent`: the label describes
+    // the process, not the call, so re-encoding it per launch would be work
+    // repeated for a value that cannot change. An envelope with nothing usable
+    // in it stores no header at all rather than `{}`, which would read back as
+    // "we recorded CI metadata".
+    this.launcherHeader = encodeLaunchHeader(options.launcher);
+    this.ciHeader = encodeLaunchHeader(options.ci);
     // Lower-cased at construction so `request` cannot end up with two spellings
     // of one header — HTTP names are case-insensitive, but a plain object's
     // keys are not, and `{Authorization, authorization}` would send both.
@@ -282,6 +413,22 @@ export class PlatformApiClient {
           ])
         )
       : undefined;
+  }
+
+  /**
+   * A copy of this client that also declares itself the sync for one suite
+   * file, so its writes carry the marker that exempts them from the CI-owned
+   * suite lock.
+   *
+   * A COPY, not a mutation: the caller holds one client for a whole command,
+   * and flipping a flag on it would leave every later call — including ones
+   * about other suites — claiming to be this file's sync.
+   */
+  withFileSync(declaredSuiteId: string): PlatformApiClient {
+    return new PlatformApiClient({
+      ...this.options,
+      fileSync: { declaredSuiteId },
+    });
   }
 
   getMe(options?: RequestOptions): Promise<PlatformMe> {
@@ -370,8 +517,8 @@ export class PlatformApiClient {
             params.connectableOnly === undefined
               ? undefined
               : params.connectableOnly
-                ? "true"
-                : "false",
+              ? "true"
+              : "false",
           ...pageQuery({ cursor: params.cursor, limit: params.limit }),
         },
       },
@@ -1688,7 +1835,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-runs`,
       { body: params.body },
-      options
+      { ...options, launchContext: true }
     );
   }
 
@@ -1782,7 +1929,18 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}/environments`,
-      { body: { environmentId: params.environmentId } },
+      {
+        body: {
+          environmentId: params.environmentId,
+          // The owning FILE appending a cell it just minted.
+          // `suite.environments` is one of the locked actions, so without this
+          // a `--file` run with `--save-targets` 409s on a write the file is
+          // entitled to make.
+          ...(this.fileSync
+            ? { declaredSuiteId: this.fileSync.declaredSuiteId }
+            : {}),
+        },
+      },
       options
     );
   }
@@ -1810,7 +1968,7 @@ export class PlatformApiClient {
       "POST",
       `/projects/${encodeURIComponent(params.projectId)}/eval-run-groups`,
       { body: params.body },
-      options
+      { ...options, launchContext: true }
     );
   }
 
@@ -2778,7 +2936,12 @@ export class PlatformApiClient {
   }
 
   deleteEvalSuite(
-    params: { projectId: string; suiteId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      /** Same marker, same reason as {@link deleteEvalCase}: a DELETE has no body. */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalSuiteDeleted> {
     return this.request(
@@ -2786,7 +2949,7 @@ export class PlatformApiClient {
       `/projects/${encodeURIComponent(
         params.projectId
       )}/eval-suites/${encodeURIComponent(params.suiteId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -2902,7 +3065,19 @@ export class PlatformApiClient {
   }
 
   deleteEvalCase(
-    params: { projectId: string; suiteId: string; caseId: string },
+    params: {
+      projectId: string;
+      suiteId: string;
+      caseId: string;
+      /**
+       * The suite-file id that owns this suite, when the caller IS that file's
+       * sync — the platform refuses case deletes on a CI-owned suite otherwise.
+       *
+       * On the QUERY STRING because a DELETE has no body. That is the one place
+       * a caller can put it on this verb, so it is where the route reads it.
+       */
+      declaredSuiteId?: string;
+    },
     options?: RequestOptions
   ): Promise<PlatformEvalCaseDeleted> {
     return this.request(
@@ -2912,7 +3087,7 @@ export class PlatformApiClient {
       )}/eval-suites/${encodeURIComponent(
         params.suiteId
       )}/cases/${encodeURIComponent(params.caseId)}`,
-      {},
+      { query: { declaredSuiteId: params.declaredSuiteId } },
       options
     );
   }
@@ -4733,7 +4908,7 @@ export class PlatformApiClient {
     method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE",
     path: string,
     init: { query?: QueryParams; body?: unknown },
-    options?: RequestOptions
+    options?: InternalRequestOptions
   ): Promise<T> {
     const url = resolvePlatformRequestUrl(`${this.baseUrl}${path}`);
     for (const [name, value] of Object.entries(init.query ?? {})) {
@@ -4756,6 +4931,17 @@ export class PlatformApiClient {
     }
     if (options?.idempotencyKey) {
       headers["idempotency-key"] = options.idempotencyKey;
+    }
+    // Only on the two eval-run launch calls. A CI envelope on every request
+    // would announce the job to routes that have no use for it, and a launcher
+    // label on a read says nothing at all.
+    if (options?.launchContext) {
+      if (this.launcherHeader) {
+        headers[PLATFORM_LAUNCH_HEADERS.launcher] = this.launcherHeader;
+      }
+      if (this.ciHeader) {
+        headers[PLATFORM_LAUNCH_HEADERS.ci] = this.ciHeader;
+      }
     }
 
     const controller = new AbortController();

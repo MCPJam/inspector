@@ -1754,10 +1754,16 @@
         "summary": "Create an eval run (async)",
         "description": "Creates a suite run from an existing `suiteId` (rerun) and/or inline `tests`, then **detaches execution and responds `202` immediately** with the `runId`. Validation and quota errors surface on this request; poll `GET /eval-runs/{runId}` for progress. The run appears live in the hosted UI Runs tab, tagged `source: \"api\"`.\n\nA bare `suiteId` with no inline tests reruns the suite as configured. Per-organization concurrency is capped (default 2 concurrent runs); exceeding it returns `429` with `details.reason: \"CONCURRENT_RUN_LIMIT\"`.\n\nFor a suite with attached project environments, pass `environmentId` to choose which one the run uses; the `202` echoes the resolved `environment` triple, and `GET /eval-runs/{runId}` reports the same triple for the life of the run.",
         "parameters": [
-          {
-            "$ref": "#/components/parameters/projectId"
-          }
-        ],
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/launcherHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ciMetadataHeader"
+        }
+      ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3372,10 +3378,16 @@
         "summary": "Launch one run per target as a group (async)",
         "description": "Launches ONE run per target — attached project environments, or attached named hosts — under a single **server-minted** `runGroupId`, then detaches execution and responds `202` with a per-target receipt.\n\nThis is the only endpoint with grouped-launch semantics. `POST /eval-runs` also accepts a `runGroupId`, but purely as a display label: it groups sibling rows in the UI and gives N separate launches no group treatment. Here the server bounds the fan-out (max 10 targets), validates EVERY target before launching any of them (an unattached target, a heterogeneous target list, or a target whose host selects an unavailable harness returns `400` with zero runs started), and holds exactly ONE organization concurrency slot for the whole group — released only when the last sibling finishes.\n\nTargets fan out along ONE axis: all `environmentId` or all `namedHostId`, never a mix. Duplicates are deduplicated by id, preserving order.\n\nA per-target failure does NOT abort its siblings, so read `outcome` rather than treating the `202` as \"everything started\": `started` means every target launched, `partial` means some did, `failed` means none did.\n\nSend `Idempotency-Key` (or `idempotencyKey`) to make the launch replayable: the group id is DERIVED from the key, and each target carries a run key derived from that, so a retry after a crash mid-launch returns the original run ids instead of double-launching the targets that already started.",
         "parameters": [
-          {
-            "$ref": "#/components/parameters/projectId"
-          }
-        ],
+        {
+          "$ref": "#/components/parameters/projectId"
+        },
+        {
+          "$ref": "#/components/parameters/launcherHeader"
+        },
+        {
+          "$ref": "#/components/parameters/ciMetadataHeader"
+        }
+      ],
         "requestBody": {
           "required": true,
           "content": {
@@ -3777,6 +3789,9 @@
           },
           {
             "$ref": "#/components/parameters/suiteId"
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -4366,6 +4381,9 @@
               "type": "string"
             },
             "description": "Eval case id."
+          },
+          {
+            "$ref": "#/components/parameters/declaredSuiteIdQuery"
           }
         ],
         "responses": {
@@ -11625,6 +11643,35 @@
       }
     },
     "parameters": {
+      "declaredSuiteIdQuery": {
+        "name": "declaredSuiteId",
+        "in": "query",
+        "required": false,
+        "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). A DELETE has no body, so the marker rides the query string. Matching the suite's own `managedBy.declaredId`, it exempts this delete from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller.",
+        "schema": {
+          "type": "string"
+        }
+      },
+      "launcherHeader": {
+        "name": "x-mcpjam-launcher",
+        "in": "header",
+        "required": false,
+        "description": "What the launching client declares itself to be, as compact JSON (max 512 bytes): `{\"kind\":\"cli\"|\"mcp\"|\"github_action\",\"client\":\"…\",\"version\":\"…\"}`. It becomes the run's `launcher`, which the Runs table badges by. DECLARED, not verified — see `EvalRun.launcher`.\n\nA header rather than a body field because both eval-run bodies reject unknown properties, so a new body field would 400 on any deployment that predates it, while an unknown header is ignored everywhere. For the same reason an unparseable, oversized or unrecognized value is DROPPED and the run proceeds unlabelled: a cosmetic label must never fail a launch. Send `kind` only as one of the three values above — `api`, `sdk`, `ui` and `schedule` are server-stamped and refused here.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"kind\":\"github_action\",\"client\":\"mcpjam-cli\",\"version\":\"8.1.0\"}"
+      },
+      "ciMetadataHeader": {
+        "name": "x-mcpjam-ci",
+        "in": "header",
+        "required": false,
+        "description": "The CI job this launch is running inside, as compact JSON (max 2 KB): `provider`, `commitSha`, `branch`, `runUrl`, plus `pipelineId` / `jobId` (the GitHub-flavoured `runId` / `job` are accepted as aliases). It becomes the run's `ciMetadata`, which is what makes the run findable by commit sha — the index `mcpjam cloud eval gate --baseline-sha` resolves through.\n\nDropped rather than rejected when unparseable or oversized. Keys with no home in the run shape (`repository`, `workflow`, `pullRequestNumber`) are ignored rather than folded into a neighbour: a `jobId` that sometimes means the workflow name is worse than an absent one.",
+        "schema": {
+          "type": "string"
+        },
+        "example": "{\"provider\":\"github_actions\",\"commitSha\":\"a1b2c3d\",\"branch\":\"main\"}"
+      },
       "organizationId": {
         "name": "organizationId",
         "in": "path",
@@ -12132,6 +12179,10 @@
         "required": ["title", "steps"],
         "description": "Create one case. `title` and a non-empty `steps` array are both required — a case persisted without executable steps could never run.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -12247,6 +12298,10 @@
         "required": ["cases"],
         "description": "Author several cases in one call. Each entry takes the same fields as a single create. The 100-case cap is deliberately smaller than a suite file's 500-case limit, so a maximal file uploads in several calls.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "cases": {
             "type": "array",
             "minItems": 1,
@@ -12503,6 +12558,10 @@
         "type": "object",
         "description": "Partial update. Every field is optional; omitted fields are left as they are. `steps` REPLACES the definition rather than merging into it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "title": {
             "type": "string",
             "minLength": 1
@@ -13780,6 +13839,11 @@
           "projectId": {
             "type": ["string", "null"]
           },
+          "managedBy": {
+            "type": "string",
+            "description": "Who configures this suite. `\"ci\"` means its shape comes from a repository — a suite file declared it (`declaredId` above), or `@mcpjam/sdk` ingest authored it — and the platform REFUSES configuration writes to it: the CLI's as-code sync hard-deletes any case the file does not declare on the next `eval run --file`, so an edit made here would not merely be overwritten, it would be silently deleted.\n\nTwo ways forward when it is `\"ci\"`: edit the suite file in your repository, or `POST .../duplicate` for an app-owned copy. A client that IS the owning file sends `declaredSuiteId` on its writes and is allowed through. Running, replaying and comparing are unaffected. Absent on deployments that predate the field.",
+            "enum": ["ci", "app"]
+          },
           "environment": {
             "type": "object",
             "description": "LEGACY server bag, kept as rollback data, plus the suite's sandbox-image pin. Unrelated to `environmentIds`.",
@@ -14222,6 +14286,10 @@
         "required": ["environmentId"],
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "environmentId": {
             "type": "string"
           }
@@ -14662,8 +14730,83 @@
           },
           "source": {
             "type": "string",
-            "description": "Run origin. API-created runs are `api`.",
-            "enum": ["ui", "api", "sdk"]
+            "description": "Run origin as the SERVER stamped it, at the boundary the run entered by — never settable by a caller, which is what makes it usable for audit. It is coarse by design: everything reaching the platform through `/api/v1` is `api`, including the `mcpjam` CLI, a GitHub Action running it, and an MCP client driving the platform tools. Read `launcher` and `attribution` for which of those it was. `schedule` is a scheduled run, `github_check` a pull-request check, `sdk` a run reported by `@mcpjam/sdk`.",
+            "enum": [
+              "ui",
+              "api",
+              "sdk",
+              "schedule",
+              "github_check",
+              "benchmark"
+            ]
+          },
+          "launcher": {
+            "type": "object",
+            "description": "What the launching client DECLARED itself to be — the display half of run origin, sent as the `x-mcpjam-launcher` request header at launch. Restricted to the three origins the server cannot observe for itself; `api`, `sdk`, `ui` and `schedule` are refused here because `source` above already states them truthfully. SELF-REPORTED: use it for display, never for authorization or billing, and prefer `attribution` where the two disagree. ABSENT on runs launched without the header, and on every run predating the field.",
+            "required": ["kind"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["cli", "mcp", "github_action"]
+              },
+              "client": {
+                "type": "string",
+                "description": "The client's own name — `mcpjam-cli`, or an MCP agent's user-agent."
+              },
+              "version": {
+                "type": "string"
+              }
+            }
+          },
+          "attribution": {
+            "type": "object",
+            "description": "The VERIFIED channel this run was launched on, derived from the credential rather than from anything the caller sent — so where it disagrees with `launcher`, this is the one to believe. Absent for runs launched with a session credential (the app itself) and for every run predating the field. Narrowed on purpose: the stored audit envelope also carries correlation ids, which stay behind the audit surface.",
+            "required": ["surface"],
+            "properties": {
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "rest",
+                  "cli",
+                  "mcp",
+                  "slack",
+                  "discord",
+                  "workspace"
+                ]
+              },
+              "apiKeyId": {
+                "type": "string",
+                "description": "The API key id the request authenticated with — the key, never the secret."
+              }
+            }
+          },
+          "ciMetadata": {
+            "type": "object",
+            "description": "The CI job this run was launched from, sent as the `x-mcpjam-ci` request header at launch. Provider-neutral names, so a GitLab or Buildkite client is not asked to describe itself as GitHub. SELF-REPORTED like `launcher`, and absent for a run launched outside CI or predating the field. An unreadable, oversized or over-long field is dropped rather than truncated, so a `commitSha` present here is the whole sha.",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "description": "`github_actions` for a GitHub Action; whatever the client calls itself otherwise."
+              },
+              "pipelineId": {
+                "type": "string",
+                "description": "The CI run this belongs to — GitHub's `GITHUB_RUN_ID`, matching the id in `runUrl`. Re-running the workflow does not change it."
+              },
+              "jobId": {
+                "type": "string",
+                "description": "The job within that pipeline — GitHub's `GITHUB_JOB`."
+              },
+              "runUrl": {
+                "type": "string"
+              },
+              "branch": {
+                "type": "string"
+              },
+              "commitSha": {
+                "type": "string",
+                "description": "The commit under test. This is what makes a CI-launched run findable by `mcpjam cloud eval gate --baseline-sha`, which before this could only find runs REPORTED by the SDK."
+              }
+            }
           },
           "notes": {
             "type": ["string", "null"]
@@ -17301,6 +17444,10 @@
         "required": ["enabled"],
         "description": "Enable, repoint, or disable a suite's recurring runs. Disabling PRESERVES the existing environment pin — send `enabled: true` with a new `environmentId` to repoint it.",
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "enabled": {
             "type": "boolean"
           },
@@ -17322,6 +17469,10 @@
         "description": "Partial update of a suite's settings. Omitted fields are left as they are.",
         "additionalProperties": false,
         "properties": {
+          "declaredSuiteId": {
+            "type": "string",
+            "description": "The id the owning suite FILE declares for this suite, when the caller is that file's sync (`mcpjam cloud eval run --file`). Present and matching the suite's own `managedBy.declaredId`, it exempts this write from the CI-owned lock, which otherwise refuses it with 409 `CI_OWNED_SUITE_READ_ONLY`. Omit it for every other caller: a value that names a different suite is refused, and one sent by a caller that is not the owning file only widens what can trip the lock."
+          },
           "name": {
             "type": "string",
             "minLength": 1

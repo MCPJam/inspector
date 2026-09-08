@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, userEvent } from "@/test";
 import { SuiteDetailOverview } from "../suite-detail-overview";
-import type { EvalCase, EvalIteration, EvalSuite, EvalSuiteRun } from "../../evals/types";
+import type {
+  EvalCase,
+  EvalIteration,
+  EvalSuite,
+  EvalSuiteRun,
+} from "../../evals/types";
 
 vi.mock("@/hooks/useProjectEnvironmentsEnabled", () => ({
   useProjectEnvironmentsEnabled: () => false,
@@ -420,6 +425,39 @@ describe("SuiteDetailOverview", () => {
     expect(screen.getByTestId("suite-detail-generate-cases")).toBeDisabled();
   });
 
+  it("hides the edit controls on a CI-owned suite but keeps it runnable", () => {
+    renderWithProviders(
+      <SuiteDetailOverview
+        suite={makeSuite({ declaredSuiteId: "s_checkout" })}
+        cases={[makeCase({ _id: "case-1" })]}
+        runs={[]}
+        runsLoading={false}
+        allIterations={[]}
+        hostNamesById={hostNamesById}
+        onRerun={vi.fn()}
+        onEditSuite={vi.fn()}
+        onEditCases={vi.fn()}
+        onGenerateTestCases={vi.fn()}
+        canGenerateTestCases
+        onRunClick={vi.fn()}
+        onTestCaseClick={vi.fn()}
+        rerunningSuiteId={null}
+        configLocked
+      />,
+    );
+
+    // The suite is configured in a repository, and the CLI's sync deletes any
+    // case the file does not declare — so an edit made here would not merely be
+    // overwritten, it would be silently deleted.
+    expect(screen.queryByRole("button", { name: "Edit" })).toBeNull();
+    expect(screen.queryByTestId("suite-detail-generate-cases")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add case" })).toBeNull();
+
+    // But NOT the run controls. A CI-owned suite you cannot run is broken
+    // rather than locked — reading and executing were never the problem.
+    expect(screen.getByRole("button", { name: /run/i })).toBeTruthy();
+  });
+
   it("hides both case-authoring controls on a read-only suite", () => {
     renderWithProviders(
       <SuiteDetailOverview
@@ -467,7 +505,9 @@ describe("SuiteDetailOverview", () => {
     );
 
     expect(screen.getByTestId("suite-empty-action-generate")).toBeDisabled();
-    expect(screen.getByTestId("suite-empty-action-describe")).not.toBeDisabled();
+    expect(
+      screen.getByTestId("suite-empty-action-describe"),
+    ).not.toBeDisabled();
     expect(screen.getByTestId("suite-empty-action-import")).not.toBeDisabled();
   });
 
@@ -553,10 +593,7 @@ describe("SuiteDetailOverview", () => {
     expect(
       screen.getByRole("combobox", { name: "Filter by client" }),
     ).toHaveTextContent("Client");
-    expect(
-      screen.queryByText("No runs match these filters."),
-    ).toBeNull();
+    expect(screen.queryByText("No runs match these filters.")).toBeNull();
     expect(screen.getByTestId("suite-run-row-run-1")).toBeTruthy();
   });
-
 });

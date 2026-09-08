@@ -244,6 +244,14 @@ export type EvalSuite = {
   latestRunId?: string;
   source?: "ui" | "sdk";
   /**
+   * The suite-file id that declared this suite (`suite.id` in the file).
+   *
+   * Present on a file-owned suite, absent on one authored in the app. Half of
+   * `isCiOwnedSuite`, and the reason it is not just `source === "sdk"`: a
+   * file-owned suite is stamped `ui` and is still configured in a repository.
+   */
+  declaredSuiteId?: string;
+  /**
    * Epoch ms of the newest CI (SDK-ingested) run — the durable server-side
    * "suite has CI runs" signal (backfilled). The CI tab scopes on this.
    */
@@ -937,6 +945,30 @@ export type EvalSuiteRun = {
   stopReason?:
     "user_cancelled" | "run_timeout" | "iteration_timeout" | "stale_worker";
   source?: "ui" | "sdk" | "api" | "schedule" | "github_check";
+  /**
+   * What the launching client DECLARED itself to be — the display half of run
+   * origin, and the only thing that tells a CLI run, a GitHub Action and an
+   * MCP agent apart: all three are honestly `source: "api"`.
+   *
+   * SELF-REPORTED, so `resolveRunOrigin` prefers the verified `attribution`
+   * below wherever the two disagree. Optional because an older backend does not
+   * send it — read defensively.
+   */
+  launcher?: {
+    kind: "cli" | "mcp" | "github_action";
+    client?: string;
+    version?: string;
+  };
+  /**
+   * The VERIFIED channel, minted onto the credential rather than sent by the
+   * caller. Narrow by design: `surface` answers "which channel" and `apiKeyId`
+   * renders as "via API key ····last4"; the audit correlation ids stay behind
+   * the audit surface.
+   */
+  attribution?: {
+    surface: "rest" | "cli" | "mcp" | "slack" | "discord" | "workspace";
+    apiKeyId?: string | null;
+  };
   replayedFromRunId?: string;
   /** Set when this run was created by the Auto fix suite replay step. */
   traceRepairJobId?: string;

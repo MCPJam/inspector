@@ -717,6 +717,75 @@ export const PLATFORM_TOOL_WIDGET_VIEWS: Readonly<
   [getScenarioOperation.name]: "scenario",
 };
 
+/**
+ * Operation inputs the MCP catalog does NOT publish to the model.
+ *
+ * `declaredSuiteId` is the marker that identifies a write as coming from the
+ * suite file that owns the suite, and it exempts that write from the CI lock.
+ * It belongs on the SDK operation — the CLI's as-code sync calls those
+ * programmatically — and it does not belong on a tool schema, because a model
+ * holding the suite's public `declaredId` could copy it back and unlock an edit
+ * that the next `eval run --file` would then delete.
+ *
+ * The same rule the `launcher` label follows, for the same reason: an operation
+ * input becomes an MCP tool input verbatim, so anything a model must not assert
+ * about itself has to be stripped here rather than merely discouraged.
+ *
+ * Exported for its tests, which pin BOTH directions: every operation named
+ * here is one the catalog actually registers (a rename would otherwise leave
+ * the map silently guarding nothing), and every registered operation whose
+ * input declares the marker is named here (an operation that gains the field
+ * unguarded is the hole this exists to close).
+ *
+ * The DELETE operations are absent on purpose, and are not an oversight: an
+ * owning file deletes through the SDK client directly — `deleteEvalCase` and
+ * `deleteEvalSuite` take the marker on the query string — so the operation
+ * surface, which is the agent's surface, never needs it.
+ *
+ * This is a SAFETY rail, not an authorization boundary. A caller with an API
+ * key already holds `suite.edit` on these suites, and the platform's check
+ * compares the id to the suite's own — so this narrows who can trip over the
+ * lock, and does not pretend to make it unforgeable. Making it unforgeable
+ * needs a verified CI credential, which cannot live in a public package.
+ */
+export const CATALOG_OMITTED_INPUT_FIELDS: Readonly<
+  Record<string, readonly string[]>
+> = {
+  update_eval_suite: ["declaredSuiteId"],
+  set_eval_suite_environments: ["declaredSuiteId"],
+};
+
+/**
+ * Drop the catalog-omitted keys from a model-supplied input.
+ *
+ * Applied to the INPUT rather than to the schema, because several of these
+ * operations wrap their object in a `superRefine` chain and zod refuses
+ * `.omit()` on those — so a schema-level strip would silently no-op on exactly
+ * `update_eval_suite`, the one that matters most. Stripping the value is what
+ * actually decides the outcome; the schema still lists the field, which is a
+ * cosmetic leak and not a functional one.
+ */
+function stripOmittedInputFields(
+  operationName: string,
+  input: unknown
+): unknown {
+  // `hasOwnProperty` rather than a bare index: the map is keyed by name, and a
+  // plain object answers `constructor` with something inherited and truthy —
+  // which would then be iterated as a key list. Operation names are internal
+  // constants today, so this is belt for a brace that has not slipped.
+  const omitted = Object.prototype.hasOwnProperty.call(
+    CATALOG_OMITTED_INPUT_FIELDS,
+    operationName
+  )
+    ? CATALOG_OMITTED_INPUT_FIELDS[operationName]
+    : undefined;
+  if (!omitted?.length) return input;
+  if (!input || typeof input !== "object" || Array.isArray(input)) return input;
+  const rest = { ...(input as Record<string, unknown>) };
+  for (const key of omitted) delete rest[key];
+  return rest;
+}
+
 export function registerPlatformCatalogTools(
   registrar: SessionToolRegistrar,
   context: PlatformToolContext
@@ -731,7 +800,12 @@ export function registerPlatformCatalogTools(
         inputSchema: operation.inputSchema,
         annotations: operationAnnotations(operation),
       },
-      async (input) => runPlatformOperation(context, operation, input),
+      async (input) =>
+        runPlatformOperation(
+          context,
+          operation,
+          stripOmittedInputFields(operation.name, input)
+        ),
       view ? platformWidgetUi(context, operation, view) : undefined
     );
   }
@@ -821,6 +895,35 @@ export function operationDescription(
     : operation.description;
 }
 
+/**
+ * What this worker declares itself to be on the runs it launches.
+ *
+ * A run started through `run_eval_suite` reaches the platform at `/v1` like
+ * every other API call, so `source` stamps it `api` and the Runs table cannot
+ * tell an agent from a script. Declaring `mcp` is what makes it legible, and
+ * `client` names WHICH agent — half the question people actually ask.
+ *
+ * Declared at CLIENT CONSTRUCTION, not through the operation's input.
+ * `runEvalSuiteOperation.inputSchema` is exposed verbatim as this tool's input
+ * schema, so a launcher field there would be a label a model writes about a
+ * request it did not make. This is the worker speaking about itself.
+ *
+ * Exported for its test: it is one object literal, and a test that reached it
+ * through a launch would have to fixture the whole project/suite resolution
+ * chain to assert one label.
+ */
+export function workerLauncher(callingAgent: string | undefined): {
+  kind: "mcp";
+  client?: string;
+} {
+  // Absent stays absent. An empty `client` renders as a named client with no
+  // name, which is worse than an unnamed MCP run.
+  return {
+    kind: "mcp",
+    ...(callingAgent ? { client: callingAgent } : {}),
+  };
+}
+
 export async function runPlatformOperation<TInput, TOutput extends object>(
   context: PlatformToolContext,
   operation: PlatformOperation<TInput, TOutput>,
@@ -839,6 +942,7 @@ export async function runPlatformOperation<TInput, TOutput extends object>(
     baseUrl: context.runtimeEnv.PLATFORM_API_URL,
     getAuth: () => token,
     userAgent: "mcpjam-mcp-worker/0.2.0",
+    launcher: workerLauncher(context.callingAgent),
   });
 
   try {

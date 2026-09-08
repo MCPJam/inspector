@@ -90,6 +90,38 @@ export type SuiteCapabilities = {
   permissions: Record<SuiteCapabilityAction, boolean> & {
     "baseline.set"?: boolean;
   };
+  /**
+   * WHO CONFIGURES THIS SUITE — a sibling of `permissions`, not part of it.
+   *
+   * `permissions` answers "what does this ROLE allow"; CI ownership is a
+   * property of the SUITE, true for an org owner and a guest alike. Keeping
+   * them apart is what lets the UI disable a control for ownership and explain
+   * it differently from a missing role — the two need different copy and have
+   * different remedies.
+   *
+   * ABSENT on a backend that predates it, and every caller must still lock the
+   * suite in that case: `isCiOwnedSuite` on the suite row is the client's own
+   * answer, and this block only ADDS the platform's enumeration of what it
+   * refuses.
+   */
+  ownership?: {
+    ciOwned: boolean;
+    declaredSuiteId: string | null;
+    /**
+     * The actions the platform refuses, named — the wire's own enumeration,
+     * carried through verbatim.
+     *
+     * NOT what the UI locks on, and deliberately not: every control keys on
+     * `ciOwned` (or, on a backend that predates this block, `isCiOwnedSuite`
+     * over the suite row), because the lock has to hold when this block is
+     * absent and a per-action gate that silently unlocks everything on an older
+     * deployment is worse than a coarse one that holds. What the list is good
+     * for is saying WHICH write was refused when one is — the refusal carries
+     * the same `action` — and for seeing at a glance what a deployment
+     * actually enforces.
+     */
+    lockedActions: string[];
+  };
   features: {
     computers: SuiteFeatureGate;
     environments: SuiteFeatureGate;

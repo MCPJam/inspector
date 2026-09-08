@@ -28,7 +28,10 @@ const STAGE_ANALYTICS_DOCUMENT = {
   ...(JSON.parse(
     readFileSync(
       fileURLToPath(
-        new URL("../../sdk/tests/fixtures/stage-analytics-golden.json", import.meta.url)
+        new URL(
+          "../../sdk/tests/fixtures/stage-analytics-golden.json",
+          import.meta.url
+        )
       ),
       "utf8"
     )
@@ -441,10 +444,24 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
   /** Every path the CLI asked for, so a test can pin WHICH read happened. */
   requests: string[];
   requestUrls: string[];
+  /**
+   * The two launch-context headers, per request, so a test can pin BOTH that
+   * a launch carries them and that a read does not.
+   */
+  launchHeaders: Array<{
+    path: string;
+    launcher: string | undefined;
+    ci: string | undefined;
+  }>;
   stageAnalyticsListQueries: string[];
   close: () => Promise<void>;
 }> {
   const authHeaders: string[] = [];
+  const launchHeaders: Array<{
+    path: string;
+    launcher: string | undefined;
+    ci: string | undefined;
+  }> = [];
   const createBodies: unknown[] = [];
   const runBodies: unknown[] = [];
   const groupBodies: unknown[] = [];
@@ -483,6 +500,11 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     authHeaders.push(req.headers.authorization ?? "");
     const url = new URL(req.url ?? "/", "http://fixture");
     requests.push(url.pathname);
+    launchHeaders.push({
+      path: url.pathname,
+      launcher: req.headers["x-mcpjam-launcher"] as string | undefined,
+      ci: req.headers["x-mcpjam-ci"] as string | undefined,
+    });
     requestUrls.push(`${url.pathname}${url.search}`);
     res.setHeader("content-type", "application/json");
 
@@ -1679,6 +1701,7 @@ async function startEvalFixture(options: EvalFixtureOptions = {}): Promise<{
     disclosureRequests,
     requests,
     requestUrls,
+    launchHeaders,
     stageAnalyticsListQueries,
     close: () =>
       new Promise<void>((resolve, reject) => {
@@ -2185,6 +2208,154 @@ test("eval cases run starts a persisted single-case run with caseIds", async () 
     const runBody = fixture.createBodies.at(-1) as { caseIds?: string[] };
     assert.deepEqual(runBody.caseIds, ["case-1"]);
   } finally {
+    await fixture.close();
+  }
+});
+
+/**
+ * Run ORIGIN, declared by the CLI itself.
+ *
+ * `source` is stamped by the server at `/v1`, so every run this CLI launches is
+ * honestly `api` and the Runs table cannot tell a laptop from a GitHub Action.
+ * These headers are what fills that gap — and because a mislabelled run is
+ * worse than an unlabelled one, what matters is that they say what this process
+ * ACTUALLY is, and that they ride only the launch.
+ */
+test("a launch declares the CLI, and says so only on the launch", async () => {
+  const fixture = await startEvalFixture();
+  const previous = process.env.GITHUB_ACTIONS;
+  delete process.env.GITHUB_ACTIONS;
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+
+    const launch = fixture.launchHeaders.find(
+      (entry) => entry.path === "/api/v1/projects/proj-alpha/eval-runs"
+    );
+    assert.ok(launch, "no eval-run launch was recorded");
+    assert.deepEqual(JSON.parse(launch.launcher ?? "{}"), {
+      kind: "cli",
+      client: "mcpjam-cli",
+      version: JSON.parse(
+        readFileSync(
+          fileURLToPath(new URL("../package.json", import.meta.url)),
+          "utf8"
+        )
+      ).version,
+    });
+    // Not in CI, so no envelope at all. `{}` would read back as "we recorded
+    // CI metadata for this run".
+    assert.equal(launch.ci, undefined);
+
+    // And nowhere else: the project listing and the suite read carry neither.
+    for (const entry of fixture.launchHeaders) {
+      if (entry.path.endsWith("/eval-runs")) continue;
+      assert.equal(
+        entry.launcher,
+        undefined,
+        `${entry.path} carried a launcher header`
+      );
+      assert.equal(entry.ci, undefined, `${entry.path} carried a CI header`);
+    }
+  } finally {
+    if (previous === undefined) delete process.env.GITHUB_ACTIONS;
+    else process.env.GITHUB_ACTIONS = previous;
+    await fixture.close();
+  }
+});
+
+test("under GitHub Actions the launch declares the Action and its commit", async () => {
+  const fixture = await startEvalFixture();
+  // EVERY variable the detector reads is pinned, including the ones this test
+  // does not assert on. This suite itself runs under GitHub Actions, so an
+  // unpinned variable is not absent — it is the real runner's, and the test
+  // then asserts one thing on a laptop and another in CI. That is exactly how
+  // `GITHUB_RUN_ATTEMPT` first broke it.
+  const previous = {
+    GITHUB_ACTIONS: process.env.GITHUB_ACTIONS,
+    GITHUB_SHA: process.env.GITHUB_SHA,
+    GITHUB_REF_NAME: process.env.GITHUB_REF_NAME,
+    GITHUB_RUN_ID: process.env.GITHUB_RUN_ID,
+    GITHUB_RUN_ATTEMPT: process.env.GITHUB_RUN_ATTEMPT,
+    GITHUB_SERVER_URL: process.env.GITHUB_SERVER_URL,
+    GITHUB_JOB: process.env.GITHUB_JOB,
+    GITHUB_REPOSITORY: process.env.GITHUB_REPOSITORY,
+  };
+  process.env.GITHUB_ACTIONS = "true";
+  process.env.GITHUB_SHA = "a".repeat(40);
+  process.env.GITHUB_REF_NAME = "main";
+  process.env.GITHUB_RUN_ID = "12345";
+  process.env.GITHUB_RUN_ATTEMPT = "3";
+  process.env.GITHUB_SERVER_URL = "https://github.com";
+  process.env.GITHUB_JOB = "evals";
+  process.env.GITHUB_REPOSITORY = "acme/widgets";
+  try {
+    const run = await captureProcessOutput(() =>
+      main(
+        [
+          ...evalArgv(
+            fixture.baseUrl,
+            "run",
+            "--project",
+            "proj-alpha",
+            "--suite",
+            "suite-1"
+          ),
+          "--format",
+          "json",
+        ],
+        { telemetry: telemetryDisabled }
+      )
+    );
+    assert.equal(run.result.exitCode, 0);
+
+    const launch = fixture.launchHeaders.find(
+      (entry) => entry.path === "/api/v1/projects/proj-alpha/eval-runs"
+    );
+    assert.ok(launch, "no eval-run launch was recorded");
+    // The SAME `GITHUB_ACTIONS` probe the conformance reporter uses, so a
+    // composite run and an eval run from one job agree about where they came
+    // from.
+    assert.equal(JSON.parse(launch.launcher ?? "{}").kind, "github_action");
+
+    const ci = JSON.parse(launch.ci ?? "{}") as Record<string, unknown>;
+    // The commit is the load-bearing field: it is what makes this run findable
+    // by `eval gate --baseline-sha`, which before this could only find runs
+    // REPORTED by the SDK.
+    assert.equal(ci.commitSha, "a".repeat(40));
+    assert.equal(ci.branch, "main");
+    assert.equal(ci.provider, "github_actions");
+    // The ATTEMPT is set, and deliberately does NOT leak into `pipelineId`:
+    // the run row's pipeline id has to be the number `runUrl` points at and
+    // the Actions API answers to. (The conformance reporter's `runId` keeps
+    // the `12345.3` suffix, because THAT identity is per-attempt.)
+    assert.equal(ci.pipelineId, "12345");
+    assert.equal(ci.jobId, "evals");
+    assert.equal(
+      ci.runUrl,
+      "https://github.com/acme/widgets/actions/runs/12345"
+    );
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     await fixture.close();
   }
 });
@@ -3142,7 +3313,10 @@ test("eval status leads with the first break, and expands the chain on --stages"
 
     assert.match(detailed.stdout, /Chain:/);
     assert.match(detailed.stdout, /Connection: passed/);
-    assert.match(detailed.stdout, /Response: never ran \(an earlier stage failed\)/);
+    assert.match(
+      detailed.stdout,
+      /Response: never ran \(an earlier stage failed\)/
+    );
     // Every value through the label maps, on the detailed layer too.
     assert.equal(detailed.stdout.includes("notReached"), false);
     assert.equal(detailed.stdout.includes("argumentMismatch"), false);
@@ -3860,7 +4034,10 @@ test("eval run --wait --format json carries the decision summary", async () => {
     );
 
     const receipt = JSON.parse(run.stdout.trim());
-    assert.ok(receipt.decisionSummary, "expected a decisionSummary in the receipt");
+    assert.ok(
+      receipt.decisionSummary,
+      "expected a decisionSummary in the receipt"
+    );
     // The CONTRACT shape, not a CLI-local restatement of it: same schema
     // version, same verdict vocabulary, same diagnostics envelope the API
     // returns and `get_eval_run` hands a model.
@@ -3917,8 +4094,17 @@ test("eval run --wait --format human never leaks the wire enums", async () => {
       false,
       "the raw summary must not ride on the human receipt"
     );
-    for (const wire of ["notEstablished", "caseVariant", "argumentMismatch", "userValue"]) {
-      assert.equal(run.stdout.includes(wire), false, `raw ${wire} leaked into human output`);
+    for (const wire of [
+      "notEstablished",
+      "caseVariant",
+      "argumentMismatch",
+      "userValue",
+    ]) {
+      assert.equal(
+        run.stdout.includes(wire),
+        false,
+        `raw ${wire} leaked into human output`
+      );
     }
   } finally {
     process.exitCode = 0;
@@ -7672,7 +7858,9 @@ const SUITE_GATE_FAILED = {
 };
 
 test("a stored suite-gate failure fails a passing run, and names the condition", async () => {
-  const fixture = await startEvalFixture({ runOneSuiteGate: SUITE_GATE_FAILED });
+  const fixture = await startEvalFixture({
+    runOneSuiteGate: SUITE_GATE_FAILED,
+  });
   try {
     const run = await captureProcessOutput(() =>
       main(

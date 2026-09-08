@@ -3,6 +3,7 @@ import {
   isPlatformApiError,
   PlatformApiClient,
 } from "@mcpjam/sdk/platform";
+import { detectCiMetadata, detectLauncherKind } from "@mcpjam/sdk";
 import packageJson from "../../package.json" with { type: "json" };
 import { getAuthFilePath, readStoredAuth } from "./auth-store.js";
 import { CliError, cliError, usageError } from "./output.js";
@@ -90,6 +91,14 @@ const RESERVED_HEADER_NAMES = new Set([
   "authorization",
   "idempotency-key",
   "content-type",
+  // The two launch-context headers. The CLI declares itself — `cli`, or
+  // `github_action` when Actions is running it — and a caller that overrode
+  // that would be labelling its runs as something they are not. The label is
+  // only a display hint, so this is not a security boundary; it is the same
+  // rule the other three follow, that a header the client derives from its own
+  // contract is not a knob.
+  "x-mcpjam-launcher",
+  "x-mcpjam-ci",
 ]);
 
 /** RFC 7230 token. Anything else cannot be a header name. */
@@ -206,6 +215,25 @@ export function buildPlatformClient(
       ? { timeoutMs: options.timeoutMs }
       : {}),
     userAgent: `mcpjam-cli/${packageJson.version}`,
+    // WHAT THIS PROCESS IS, declared once at construction beside the
+    // user-agent. Every run this CLI launches goes through `/v1`, where the
+    // server stamps `source: "api"` — true, and unable to tell a laptop from a
+    // GitHub Action. `detectLauncherKind` reads the same `GITHUB_ACTIONS`
+    // probe the conformance reporter uses, so a composite run and an eval run
+    // from one job agree about where they came from.
+    launcher: {
+      kind: detectLauncherKind(env, "cli"),
+      client: "mcpjam-cli",
+      version: packageJson.version,
+    },
+    // Absent outside CI, which is the honest answer: a run launched from a
+    // laptop has no pipeline. Inside Actions it fills the run's `ciMetadata`,
+    // which is what makes the run findable by commit sha — the index
+    // `--baseline-sha` resolves through.
+    ...(() => {
+      const ci = detectCiMetadata(env);
+      return ci ? { ci } : {};
+    })(),
     ...(extraHeaders ? { extraHeaders } : {}),
   });
   return { client, credentialKind: credential.kind, baseUrl: resolvedBaseUrl };
@@ -226,6 +254,32 @@ export function webOriginForApiBaseUrl(baseUrl: string): string {
 }
 
 /**
+ * The refusal a CI-owned suite raises, rewritten for someone at a terminal.
+ *
+ * The platform's own message is written for the app ("duplicate the suite to
+ * edit it here"), which is the wrong advice at a shell prompt: the person
+ * running `mcpjam` HAS the file, and editing it is the fix. The `hint` in the
+ * response covers both audiences, so this replaces it with the half that
+ * applies rather than appending a second one.
+ *
+ * `undefined` for anything else, so the caller falls through to the platform's
+ * own message — the one place this could go wrong is swallowing a refusal it
+ * did not recognize.
+ */
+function ciOwnedSuiteGuidance(error: {
+  details?: unknown;
+  message: string;
+}): string | undefined {
+  const details = error.details as { reason?: unknown } | undefined;
+  if (details?.reason !== "CI_OWNED_SUITE_READ_ONLY") return undefined;
+  return (
+    "This suite is managed by CI — its configuration lives in your suite file. " +
+    "Edit the file and re-run, or duplicate the suite in the app to edit it there. " +
+    "(If this WAS a `--file` run, the file's `suite.id` did not match the suite's own declared id.)"
+  );
+}
+
+/**
  * Map platform API failures onto CLI errors: the stable wire code becomes
  * the CLI error code (exit 1), with login guidance on auth failures.
  */
@@ -237,7 +291,7 @@ export function toCliError(error: unknown): CliError {
     const message =
       error.code === "UNAUTHORIZED"
         ? `${error.message} Run \`mcpjam cloud login\` or pass a valid sk_ API key.`
-        : error.message;
+        : ciOwnedSuiteGuidance(error) ?? error.message;
     return cliError(error.code, message, 1, error.details);
   }
   return cliError(
