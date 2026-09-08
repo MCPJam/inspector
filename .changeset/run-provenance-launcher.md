@@ -1,5 +1,6 @@
 ---
 "@mcpjam/sdk": minor
+"@mcpjam/cli": minor
 "@mcpjam/inspector": patch
 ---
 
@@ -31,3 +32,11 @@ own sync is allowed through. Omit it for ordinary edits.
 `PlatformEvalRun` gains `launcher` and `attribution`, and
 `PlatformEvalSuiteDetail` gains `managedBy: "ci" | "app"` — the answer an API
 caller previously could not get until a write came back 409.
+
+The CLI is released WITH the SDK, deliberately. It declares `cli` (or
+`github_action` inside Actions) and names its declared suite id on every
+`--file` sync. `@mcpjam/cli` depends on `@mcpjam/sdk` at `^8.6.0`, so a minor
+bump stays inside that range and would NOT schedule a CLI release on its own —
+and a user left on the old CLI after the lock deploys gets a 409 on every
+file-owned case write, because the old CLI names no declared id. The two ship
+together or the feature is a regression for exactly the people it is for.

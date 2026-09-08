@@ -317,7 +317,23 @@ export function SuiteHeader(props: SuiteHeaderProps) {
     return (
       <div className="mb-1 w-full max-w-5xl px-6 pt-8 mx-auto min-w-0">
         <div className="min-w-0" data-setting-key="name">
-          {isEditingName ? (
+          {/*
+            The name is the ONE setting that lives outside the sheet's
+            `fieldset[disabled]`, so it needs its own lock. It became reachable
+            when the sheet started rendering for a CI-owned suite — the settings
+            are that suite's documentation and a reader has to be able to open
+            them — and an editable name there would feed `settingsDraftName`,
+            put the suite in the commit flow, and end in the 409 the rest of
+            the sheet exists to avoid offering.
+          */}
+          {configLocked ? (
+            <h2
+              className="block h-8 min-w-0 max-w-full truncate text-left text-lg font-semibold leading-8 tracking-tight"
+              title={nameValue}
+            >
+              {nameValue}
+            </h2>
+          ) : isEditingName ? (
             <input
               type="text"
               value={editedName}

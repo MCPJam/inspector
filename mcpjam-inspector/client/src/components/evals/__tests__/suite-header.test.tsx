@@ -588,6 +588,36 @@ describe("SuiteHeader", () => {
       await user.type(input, "Renamed");
       expect(onChange).toHaveBeenCalled();
     });
+
+    it("does NOT edit the name when CI owns the suite", async () => {
+      const user = userEvent.setup();
+      const onChange = vi.fn();
+      renderWithProviders(
+        <SuiteHeader
+          {...editProps}
+          configLocked
+          settingsDraftName={{ value: "Test Suite", onChange }}
+        />,
+      );
+
+      // The name is the one setting outside the sheet's `fieldset[disabled]`,
+      // and this header became reachable for a CI-owned suite on purpose — its
+      // settings are that suite's documentation. Editable, it would feed the
+      // draft, put the suite in the commit flow, and end in the 409 the rest
+      // of the sheet exists to avoid offering.
+      expect(screen.getByText("Test Suite")).toBeInTheDocument();
+      expect(
+        screen.queryByRole("button", { name: "Test Suite" }),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("textbox", { name: "Suite name" }),
+      ).toBeNull();
+      await user.click(screen.getByText("Test Suite"));
+      expect(
+        screen.queryByRole("textbox", { name: "Suite name" }),
+      ).toBeNull();
+      expect(onChange).not.toHaveBeenCalled();
+    });
   });
 });
 
