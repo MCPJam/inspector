@@ -538,6 +538,46 @@ describe("a token pin survives an approval resume", () => {
     });
   });
 
+  it("remembers NOTHING when the surface cannot name its conversation", () => {
+    // Sharing one unscoped entry between callers would never be more
+    // permissive than the no-memory baseline — the guard only ever refuses —
+    // but it WOULD be more permissive than a correctly scoped pin, and a pin
+    // that is right for the wrong conversation reads downstream exactly like
+    // one that is right. Where the flow cannot be named, say nothing.
+    const memory = new BrowserTokenMemory();
+    const token = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
+
+    memory.remember("boot-1", undefined, token, undefined);
+
+    expect(memory.recall("boot-1", undefined, undefined)).toBeUndefined();
+    // And a token another flow DID record is not readable without one either.
+    memory.remember("boot-1", undefined, token, "chat-A");
+    expect(memory.recall("boot-1", undefined, undefined)).toBeUndefined();
+  });
+
+  it("does not pin across requests when the surface has no run key", async () => {
+    const memory = new BrowserTokenMemory();
+    const commands: any[] = [];
+    const build = () => {
+      const fake = fakeSession(async (command: any) => {
+        commands.push(command);
+        return OK;
+      });
+      return buildBrowserTools({
+        authHeader: "Bearer user",
+        projectId: "project-1",
+        approvalDelivery: { kind: "attested" },
+        ensureSession: fake.ensureSession,
+        tokenMemory: memory,
+      })!;
+    };
+
+    await run(build().tools, "browser_observe", {});
+    await run(build().tools, "browser_act", { verb: "click", x: 1, y: 2 });
+
+    expect(commands.at(-1).action.expectedState).toBeUndefined();
+  });
+
   it("evicts the oldest entry rather than growing without bound", () => {
     const memory = new BrowserTokenMemory(() => 0, 60_000, 2);
     const token = (n: number) => ({
@@ -546,25 +586,27 @@ describe("a token pin survives an approval resume", () => {
       urlHash: "u",
       domHash: "d",
     });
-    memory.remember("boot-1", "t1", token(1));
-    memory.remember("boot-1", "t2", token(2));
-    memory.remember("boot-1", "t3", token(3));
+    memory.remember("boot-1", "t1", token(1), "chat-A");
+    memory.remember("boot-1", "t2", token(2), "chat-A");
+    memory.remember("boot-1", "t3", token(3), "chat-A");
 
-    expect(memory.recall("boot-1", "t1")).toBeUndefined();
-    expect(memory.recall("boot-1", "t2")).toMatchObject({ navCounter: 2 });
-    expect(memory.recall("boot-1", "t3")).toMatchObject({ navCounter: 3 });
+    expect(memory.recall("boot-1", "t1", "chat-A")).toBeUndefined();
+    expect(memory.recall("boot-1", "t2", "chat-A")).toMatchObject({ navCounter: 2 });
+    expect(memory.recall("boot-1", "t3", "chat-A")).toMatchObject({ navCounter: 3 });
   });
 
   it("keeps one boot's tokens when another boot's are forgotten", () => {
     const memory = new BrowserTokenMemory();
     const token = { tabId: "@session", navCounter: 1, urlHash: "u", domHash: "d" };
-    memory.remember("boot-1", undefined, token);
-    memory.remember("boot-2", undefined, token);
+    memory.remember("boot-1", undefined, token, "chat-A");
+    memory.remember("boot-2", undefined, token, "chat-A");
 
     memory.forget("boot-1");
 
-    expect(memory.recall("boot-1", undefined)).toBeUndefined();
-    expect(memory.recall("boot-2", undefined)).toMatchObject({ navCounter: 1 });
+    expect(memory.recall("boot-1", undefined, "chat-A")).toBeUndefined();
+    expect(memory.recall("boot-2", undefined, "chat-A")).toMatchObject({
+      navCounter: 1,
+    });
   });
 });
 
@@ -1255,6 +1297,56 @@ describe("two acts in one step", () => {
     const [first, second] = [daemon.seen[1], daemon.seen[2]];
     expect(first.action.expectedState).toBeDefined();
     expect(second.action.expectedState).toEqual(first.action.expectedState);
+  });
+
+  it("does not let a CANCELLED command release the one behind it early", async () => {
+    // A holds the lock, B waits, C waits behind B. Aborting B must not resolve
+    // B's tail while A is still in flight — C would then send concurrently
+    // with A, which is exactly the interleaving this lock exists to prevent,
+    // reached by cancelling the command in the middle.
+    const daemon = deferredDaemon();
+    const { result } = build({}, daemon.send);
+    const tools = result!.tools as any;
+    const controller = new AbortController();
+
+    const observed = run(tools, "browser_observe", {});
+    await settle();
+    daemon.pending.shift()!();
+    await observed;
+    expect(daemon.seen).toHaveLength(1);
+
+    const a = tools.browser_act.execute(
+      { verb: "click", selector: "#a" },
+      { toolCallId: "a" },
+    );
+    const b = tools.browser_act
+      .execute(
+        { verb: "click", selector: "#b" },
+        { toolCallId: "b", abortSignal: controller.signal },
+      )
+      .catch(() => "aborted");
+    const c = tools.browser_act.execute(
+      { verb: "click", selector: "#c" },
+      { toolCallId: "c" },
+    );
+
+    await settle();
+    // A is in flight; nobody else has sent.
+    expect(daemon.seen).toHaveLength(2);
+
+    controller.abort();
+    await settle();
+    expect(await b).toBe("aborted");
+    // C MUST STILL BE WAITING: A has not finished.
+    expect(daemon.seen).toHaveLength(2);
+
+    daemon.pending.shift()!(); // A answers
+    await settle();
+    expect(daemon.seen).toHaveLength(3);
+    expect(daemon.seen[2].action).toMatchObject({ target: { selector: "#c" } });
+
+    daemon.pending.shift()!();
+    await Promise.all([a, c]);
   });
 
   it("does not deadlock on the origin recovery, which sends from inside the lock", async () => {

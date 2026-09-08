@@ -1620,14 +1620,28 @@ export class ChromiumDriver implements BrowserDriver {
       // token it already had, the next act pins to that, and `guardStaleness`
       // refuses it with a fresh look rather than acting on a page nobody has
       // seen. `settled: false` tells the model to look again.
+      //
+      // AND NO CAPTURE WITHOUT A URL TO ATTRIBUTE IT TO. This return does not
+      // pass through `observation`, so it has to keep that funnel's promise
+      // itself: the unattended origin allowlist is enforced against a result's
+      // `url` and fails OPEN without one, so a tree or a screenshot handed back
+      // here unnamed would reach the model past a boundary it was never
+      // checked against. `page.url()` throws on a closed page — the very case
+      // that brought us here — and then there is nothing to check, so the
+      // captures go rather than the check.
+      const url = safeUrl(page);
       return {
         ok: true,
-        output: this.withHandoffNote({
-          url: safeUrl(page),
-          ...a11yFields,
-          ...(screenshot ? { screenshot } : {}),
-          observationFailed: true,
-        }),
+        output: this.withHandoffNote(
+          url
+            ? {
+                url,
+                ...a11yFields,
+                ...(screenshot ? { screenshot } : {}),
+                observationFailed: true,
+              }
+            : { observationFailed: true },
+        ),
         settled: false,
       };
     }
@@ -1663,9 +1677,12 @@ export class ChromiumDriver implements BrowserDriver {
         );
       }
       if (refMap) this.refs.delete(tabId);
+      // `url` explicitly, for the same reason as above: `observation` is what
+      // normally stamps it, and skipping that funnel must not also skip the
+      // field the origin allowlist is enforced against.
       return {
         ok: true,
-        output: this.withHandoffNote(output),
+        output: this.withHandoffNote({ url: frame.url, ...output }),
         settled: false,
       };
     }

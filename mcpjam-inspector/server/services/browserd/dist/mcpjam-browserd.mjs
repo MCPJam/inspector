@@ -4288,14 +4288,17 @@ var ChromiumDriver = class {
           blockedDetail ?? "a person has taken control of this browser; nothing was observed"
         );
       }
+      const url = safeUrl(page);
       return {
         ok: true,
-        output: this.withHandoffNote({
-          url: safeUrl(page),
-          ...a11yFields,
-          ...screenshot ? { screenshot } : {},
-          observationFailed: true
-        }),
+        output: this.withHandoffNote(
+          url ? {
+            url,
+            ...a11yFields,
+            ...screenshot ? { screenshot } : {},
+            observationFailed: true
+          } : { observationFailed: true }
+        ),
         settled: false
       };
     }
@@ -4317,7 +4320,7 @@ var ChromiumDriver = class {
       if (refMap) this.refs.delete(tabId);
       return {
         ok: true,
-        output: this.withHandoffNote(output),
+        output: this.withHandoffNote({ url: frame.url, ...output }),
         settled: false
       };
     }

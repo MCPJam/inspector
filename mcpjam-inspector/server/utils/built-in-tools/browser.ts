@@ -301,10 +301,14 @@ function transportError(status: string): string {
  * — a pin that looks like protection and is not. The flow is the chat session
  * (`runKey`), which is the identity that spans the approval pause.
  *
- * A caller that names no flow falls back to the boot alone, which is where
- * every act sat before this existed: two flows may then share an entry, and a
- * shared entry can only ever REFUSE an act the unpinned path would have run,
- * never permit one it would have refused.
+ * A caller that names NO FLOW remembers nothing and recalls nothing, which is
+ * where every act sat before this existed. Sharing one unscoped entry between
+ * such callers would never be more permissive than that baseline — the guard
+ * only ever refuses — but it would be more permissive than a correctly scoped
+ * pin, which is the thing this is supposed to be. A pin that is right for the
+ * wrong conversation reads downstream exactly like one that is right, and
+ * nothing below here can tell them apart; the honest answer where we cannot
+ * name the flow is to say nothing.
  *
  * PER PROCESS, deliberately not shared. A resume served by another replica
  * finds nothing and runs unpinned, which is today's behaviour for every act:
@@ -330,7 +334,7 @@ export class BrowserTokenMemory {
     token: ObservationStateToken,
     flow?: string,
   ): void {
-    if (!bootId) return;
+    if (!bootId || !flow) return;
     const key = memoryKey(bootId, tabId, flow);
     // Re-inserted rather than updated in place, so the insertion order Map
     // keeps is a true LRU-by-write and the eviction below drops the oldest.
@@ -348,7 +352,7 @@ export class BrowserTokenMemory {
     tabId: string | undefined,
     flow?: string,
   ): ObservationStateToken | undefined {
-    if (!bootId) return undefined;
+    if (!bootId || !flow) return undefined;
     const key = memoryKey(bootId, tabId, flow);
     const found = this.entries.get(key);
     if (!found) return undefined;
@@ -392,9 +396,9 @@ const BROWSER_TOKEN_MEMORY_MAX = 512;
 function memoryKey(
   bootId: string,
   tabId: string | undefined,
-  flow: string | undefined,
+  flow: string,
 ): string {
-  return `${flow ?? "@unscoped"}\u0000${bootId}\u0000${tabId ?? "@session"}`;
+  return `${flow}\u0000${bootId}\u0000${tabId ?? "@session"}`;
 }
 
 /** The process-wide default. Tests inject their own via `tokenMemory`. */
@@ -527,10 +531,14 @@ class BrowserTurnState {
     });
     return new Promise<() => void>((resolve, reject) => {
       const onAbort = () => {
-        // Hand the turn back its own release so the chain still advances: a
-        // waiter that simply rejected would leave every sibling behind it
-        // parked on a promise nobody resolves.
-        release();
+        // The chain must still advance — a waiter that simply rejected would
+        // leave every sibling behind it parked on a promise nobody resolves —
+        // but NOT BEFORE ITS PREDECESSOR FINISHES. Releasing immediately
+        // resolves this waiter's tail while the command ahead of it is still
+        // in flight, so the one behind it sends concurrently: the exact
+        // interleaving this lock exists to prevent, reached by cancelling the
+        // command in the middle.
+        void previous.then(release, release);
         reject(new DOMException("aborted", "AbortError"));
       };
       if (signal?.aborted) return onAbort();

@@ -1123,6 +1123,47 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     // and the guard refuses it with a fresh look rather than acting blind.
     expect(res.stateToken).toBeUndefined();
     expect(res.settled).toBe(false);
+    // WHERE IT HAPPENED, on this path too. The unattended origin allowlist is
+    // enforced against a result's `url` and fails OPEN without one, and this
+    // return does not go through the `observation` funnel that normally stamps
+    // it.
+    expect(res.output).toMatchObject({ url: "https://x.test/" });
+  });
+
+  it("hands back NO capture when it cannot even name the page it came from", async () => {
+    // A closed page answers no URL, and without one the allowlist has nothing
+    // to check — so what goes is the capture, not the check.
+    const page = fakePage({ url: "https://secret.test/", cdpReplies: oneButton() });
+    const { context } = fakeContext({ pages: [page] });
+    const driver = new ChromiumDriver(context);
+    await driver.execute(cmd({ kind: "navigate", url: "https://secret.test/" }));
+    let acted = false;
+    page.onAct = () => {
+      acted = true;
+    };
+    const original = page.domStructureSignal.bind(page);
+    page.domStructureSignal = async () => {
+      if (!acted) return original();
+      throw new Error("Execution context was destroyed");
+    };
+    page.url = () => {
+      if (!acted) return "https://secret.test/";
+      throw new Error("page has been closed");
+    };
+
+    const res = await driver.execute(
+      cmd({
+        kind: "act",
+        verb: "click",
+        target: { coordinates: [1, 1] },
+        observe: "both",
+      }),
+    );
+
+    expect(res.ok).toBe(true);
+    expect(res.output).toEqual({ observationFailed: true });
+    expect(JSON.stringify(res)).not.toContain("BASE64PNG");
+    expect(JSON.stringify(res)).not.toContain("Sign in");
   });
 
   it("does not fail an act because the TREE could not be read", async () => {
@@ -1280,6 +1321,9 @@ describe("ChromiumDriver — act verbs (W3)", () => {
     expect(res.output).toMatchObject({ screenshot: "BASE64PNG" });
     expect(res.stateToken).toBeUndefined();
     expect(res.settled).toBe(false);
+    // And the URL the capture belongs to, which the origin allowlist reads and
+    // which this return has to stamp itself — `observation` is skipped here.
+    expect(res.output).toMatchObject({ url: "https://x.test/" });
   });
 
   it("keeps the token when the page held still across the capture", async () => {
