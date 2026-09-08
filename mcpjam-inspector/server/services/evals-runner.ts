@@ -1,3 +1,9 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "./browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import { type ModelMessage } from "ai";
 import {
   extractToolCallsExcludingPolicyBlocks,
@@ -4777,14 +4783,41 @@ const runHostedIterationWithBrowser = async (
   // This used to run here, unconditionally, which is why it is a thunk rather
   // than a value: the one call site below is inside the try that turns a
   // provisioning failure into a cleanly recorded failed iteration.
-  const buildBuiltInTools = (
-    sandboxBinding?: {
-      sandboxId: string;
-      sandboxRowId: string;
-      runtimeKind: "terminal" | "desktop-browser";
-    },
-  ) =>
-    resolveHostTools(
+  const buildBuiltInTools = async (sandboxBinding?: {
+    sandboxId: string;
+    sandboxRowId: string;
+    runtimeKind: "terminal" | "desktop-browser";
+  }) => {
+    // WHAT THE RUN'S OWN PAGE OFFERS. Read from the box this iteration
+    // provisioned, never the project computer: an unattended run drives a
+    // disposable desktop nothing else can reach, and asking about the project's
+    // would answer for a different browser entirely.
+    //
+    // Read-only and fail-empty (see `peekPageTools`), and skipped altogether
+    // unless the run declared a browser policy — an eval with no browser must
+    // not pay a daemon round trip to discover it has no browser.
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds: resolvedExecution.builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            // An eval is never a harness turn for this purpose: it either has
+            // the hosted loop or it has no page tools at all, and the flag
+            // below decides which.
+            isHarnessTurn: Boolean(resolvedExecution.harness),
+            hasV1PageTools: false,
+            engine: "hosted",
+            ...(builtInTarget && "projectId" in builtInTarget
+              ? { projectId: builtInTarget.projectId }
+              : { projectId: undefined }),
+            bearer: convexAuthToken,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+          })
+        : undefined,
+    );
+    return resolveHostTools(
       { builtInToolIds: resolvedExecution.builtInToolIds },
       builtInTarget && "projectId" in builtInTarget
         ? {
@@ -4799,9 +4832,13 @@ const runHostedIterationWithBrowser = async (
             // resolver on `ctx`, never on the host config, so nothing in a
             // member-readable snapshot can forge one.
             ...(sandboxBinding ? { sandboxBinding } : {}),
+            ...(pageToolsSnapshot
+              ? { browserPageTools: pageToolsSnapshot }
+              : {}),
           }
         : null,
     );
+  };
   let builtInTools: ReturnType<typeof resolveHostTools>;
   // ── Harness execution inputs, resolved once per iteration.
   //
@@ -4944,7 +4981,7 @@ const runHostedIterationWithBrowser = async (
           "tool from this host config, or update the deployment.",
       );
     }
-    builtInTools = buildBuiltInTools(sandboxBinding);
+    builtInTools = await buildBuiltInTools(sandboxBinding);
 
     prepared = await prepareChatV2({
       mcpClientManager,

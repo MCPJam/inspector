@@ -1,3 +1,9 @@
+import {
+  peekPageToolsForChatTurn,
+  pageToolsSnapshotFrom,
+} from "../browserd/page-tools-peek.js";
+import { webmcpPageToolsMode } from "../../config.js";
+import { BROWSER_BUILT_IN_TOOL_ID } from "@/shared/client-fulfilled-tools";
 import type { ModelMessage } from "@ai-sdk/provider-utils";
 import type { ToolSet } from "ai";
 import type { MCPClientManager, Harness } from "@mcpjam/sdk";
@@ -622,6 +628,26 @@ export async function runSyntheticHostSession(
       browserToolPolicy,
       { source: "sessionSimulation" },
     );
+    // WHAT THE RUN'S OWN PAGE OFFERS, from the box this session provisioned.
+    // Read-only and fail-empty, and skipped entirely unless this session
+    // declared a browser policy AND brought a desktop box — a journey session
+    // with neither must not pay a daemon round trip to learn it has no browser.
+    const pageToolsSnapshot = pageToolsSnapshotFrom(
+      sandboxBinding?.runtimeKind === "desktop-browser" &&
+        browserApprovalDelivery
+        ? await peekPageToolsForChatTurn({
+            builtInToolIds,
+            browserToolId: BROWSER_BUILT_IN_TOOL_ID,
+            firstClass: webmcpPageToolsMode() === "first_class",
+            isHarnessTurn: false,
+            hasV1PageTools: false,
+            engine: "hosted",
+            projectId,
+            bearer: authHeader,
+            sandboxRowId: sandboxBinding.sandboxRowId,
+          })
+        : undefined,
+    );
     const builtInTools = resolveHostTools(
       { builtInToolIds, computer },
       {
@@ -641,6 +667,7 @@ export async function runSyntheticHostSession(
         // binding rides `ctx`, never `config`, so it cannot be forged from the
         // snapshot this runtime was built from.
         ...(sandboxBinding ? { sandboxBinding } : {}),
+        ...(pageToolsSnapshot ? { browserPageTools: pageToolsSnapshot } : {}),
         requireToolApproval,
         // Surface the suppression in the run instead of letting the tool go
         // quietly missing (which reads as a host-config bug).
