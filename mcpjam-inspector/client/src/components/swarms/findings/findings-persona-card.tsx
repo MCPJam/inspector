@@ -20,7 +20,6 @@ export function FindingsPersonaCard({
   selectedStage,
   onSelectStage,
   onOpenSession,
-  projectId,
 }: {
   persona: PersonaFindingsModel;
   /** id of the tab that labels this panel (aria wiring). */
@@ -30,7 +29,6 @@ export function FindingsPersonaCard({
   selectedStage: JourneyStageId;
   onSelectStage: (stage: JourneyStageId) => void;
   onOpenSession?: (sessionId: string) => void;
-  projectId?: string;
 }) {
   return (
     <section
@@ -113,7 +111,6 @@ export function FindingsPersonaCard({
                     selectedStage={selectedStage}
                     onSelectStage={onSelectStage}
                     onOpenSession={onOpenSession}
-                    projectId={projectId}
                   />
                 </div>
               ) : null}

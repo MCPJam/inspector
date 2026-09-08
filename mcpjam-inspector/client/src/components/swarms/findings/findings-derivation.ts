@@ -43,6 +43,28 @@ export interface SentimentPillModel {
   tone: SentimentTone;
 }
 
+/**
+ * Which sessions a piece of evidence implicates.
+ *
+ * Carried by the evidence rather than inferred by the panel from its goal: a
+ * goal-scoped list renders the same rows under all six stages, and puts a
+ * count beside them that disagrees with the evidence's own denominator.
+ */
+export type EvidenceSessions =
+  /** Nothing to open — a launch failure has no transcript, a pass no exemplar. */
+  | { kind: "none" }
+  /** Sessions in this run carrying a failing verdict for this criterion. */
+  | { kind: "criterion"; criterionId: string }
+  /** Sessions in this run whose goal-completion grade came back failed. */
+  | { kind: "goalScoreFail" }
+  /**
+   * Sessions the miner named, worst-first. The list is BOUNDED, so `affected`
+   * may exceed `ids.length` — a label over these has to admit the sample.
+   * Persona-scoped candidates fan across a persona's runs, so an id here is
+   * not guaranteed to belong to the goal being inspected.
+   */
+  | { kind: "ids"; ids: string[]; affected: number };
+
 export interface StageEvidence {
   tone: StageTone;
   /** Deterministic sentence — detector phrasing reuses `signalSentence`. */
@@ -51,8 +73,19 @@ export interface StageEvidence {
   meta: string;
   /** Evidence fanned from a persona-scoped detector, not this goal's slice. */
   personaScoped?: boolean;
-  /** Worst exemplar session, when the detector named one. */
-  sessionId?: string;
+  /** The sessions this row can open. Required: silence here would list a goal. */
+  sessions: EvidenceSessions;
+}
+
+/**
+ * "3 shown" when the named ids are a sample of a larger affected set, else
+ * null. Without it a bounded exemplar list sits under a claim of 12.
+ */
+export function evidenceSampleNote(sessions: EvidenceSessions): string | null {
+  if (sessions.kind !== "ids") return null;
+  if (sessions.ids.length === 0) return null;
+  if (sessions.ids.length >= sessions.affected) return null;
+  return `${sessions.ids.length} shown`;
 }
 
 export interface GoalStageModel {
@@ -179,6 +212,9 @@ function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
       tone: "warn",
       observation: parts.join(", "),
       meta: CONNECTION_CAVEAT,
+      // A session that never launched has no transcript to open, and the
+      // ones that did launch are not evidence for this row.
+      sessions: { kind: "none" },
     };
   }
   if (runIsTerminal(run) && total > 0 && succeeded === total) {
@@ -186,6 +222,7 @@ function connectionEvidence(run: SwarmOverviewRun): StageEvidence | null {
       tone: "ok",
       observation: `All ${plural(total, "session")} launched`,
       meta: CONNECTION_CAVEAT,
+      sessions: { kind: "none" },
     };
   }
   return null;
@@ -196,6 +233,7 @@ function rubricEvidence(run: SwarmOverviewRun): StageEvidence[] {
     tone: findingSeverity(finding) === "blocking" ? "fail" : ("warn" as const),
     observation: `Rubric check "${findingName(finding)}" failed`,
     meta: findingSessionLabel(finding),
+    sessions: { kind: "criterion", criterionId: finding.criterionId },
   }));
 }
 
@@ -209,6 +247,9 @@ function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
       tone: "ok",
       observation: "Goal completion passed for every graded session",
       meta: `${passedCount} of ${plural(gradedCount, "graded session")}`,
+      // A pass has no exemplar. Listing the sessions that passed would
+      // invite reading the list as the finding.
+      sessions: { kind: "none" },
     };
   }
   const missed = gradedCount - passedCount;
@@ -219,6 +260,7 @@ function judgeEvidence(run: SwarmOverviewRun): StageEvidence | null {
       "graded session"
     )}`,
     meta: `${missed} of ${plural(gradedCount, "graded session")}`,
+    sessions: { kind: "goalScoreFail" },
   };
 }
 
@@ -240,9 +282,11 @@ function detectorEvidence(
         "session"
       )}${opts.personaScoped ? " · persona-scoped" : ""}`,
       ...(opts.personaScoped ? { personaScoped: true } : {}),
-      ...(candidate.exemplarSessionIds[0]
-        ? { sessionId: candidate.exemplarSessionIds[0] }
-        : {}),
+      sessions: {
+        kind: "ids",
+        ids: candidate.exemplarSessionIds,
+        affected: candidate.affectedSessions,
+      },
     },
   };
 }
